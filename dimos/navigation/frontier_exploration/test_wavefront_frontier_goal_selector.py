@@ -12,50 +12,99 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
 import time
-from typing import List, Optional, Tuple
-from unittest.mock import MagicMock
 
 import numpy as np
 import pytest
 from PIL import Image, ImageDraw
-from reactivex import operators as ops
 
-from dimos import core
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
+from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.navigation.frontier_exploration.utils import costmap_to_pil_image
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
 
 
-def create_test_costmap(width=100, height=100, resolution=0.1):
-    """Create a simple test costmap with free, occupied, and unknown regions."""
+@pytest.fixture
+def explorer():
+    """Create a WavefrontFrontierExplorer instance for testing."""
+    explorer = WavefrontFrontierExplorer(
+        min_frontier_perimeter=0.3,  # Smaller for faster tests
+        safe_distance=0.5,  # Smaller for faster distance calculations
+        info_gain_threshold=0.02,
+    )
+    yield explorer
+    # Cleanup after test
+    try:
+        explorer.cleanup()
+    except:
+        pass
+
+
+@pytest.fixture
+def quick_costmap():
+    """Create a very small costmap for quick tests."""
+    width, height = 20, 20
     grid = np.full((height, width), CostValues.UNKNOWN, dtype=np.int8)
 
-    # Create a larger free space region with more complex shape
-    # Central room
-    grid[40:60, 40:60] = CostValues.FREE
+    # Simple free space in center
+    grid[8:12, 8:12] = CostValues.FREE
 
-    # Corridors extending from central room
-    grid[45:55, 20:40] = CostValues.FREE  # Left corridor
-    grid[45:55, 60:80] = CostValues.FREE  # Right corridor
-    grid[20:40, 45:55] = CostValues.FREE  # Top corridor
-    grid[60:80, 45:55] = CostValues.FREE  # Bottom corridor
+    # Small extensions
+    grid[9:11, 6:8] = CostValues.FREE  # Left
+    grid[9:11, 12:14] = CostValues.FREE  # Right
 
-    # Add some obstacles
-    grid[48:52, 48:52] = CostValues.OCCUPIED  # Central obstacle
-    grid[35:38, 45:55] = CostValues.OCCUPIED  # Top corridor obstacle
-    grid[62:65, 45:55] = CostValues.OCCUPIED  # Bottom corridor obstacle
+    # One obstacle
+    grid[9:10, 9:10] = CostValues.OCCUPIED
 
-    # Create origin at bottom-left
     from dimos.msgs.geometry_msgs import Pose
 
     origin = Pose()
-    origin.position.x = -5.0  # Center the map
-    origin.position.y = -5.0
+    origin.position.x = -1.0
+    origin.position.y = -1.0
+    origin.position.z = 0.0
+    origin.orientation.w = 1.0
+
+    occupancy_grid = OccupancyGrid(
+        grid=grid, resolution=0.1, origin=origin, frame_id="map", ts=time.time()
+    )
+
+    class MockLidar:
+        def __init__(self):
+            self.origin = Vector3(0.0, 0.0, 0.0)
+
+    return occupancy_grid, MockLidar()
+
+
+def create_test_costmap(width=40, height=40, resolution=0.1):
+    """Create a simple test costmap with free, occupied, and unknown regions.
+
+    Default size reduced from 100x100 to 40x40 for faster tests.
+    """
+    grid = np.full((height, width), CostValues.UNKNOWN, dtype=np.int8)
+
+    # Create a smaller free space region with simple shape
+    # Central room
+    grid[15:25, 15:25] = CostValues.FREE
+
+    # Small corridors extending from central room
+    grid[18:22, 10:15] = CostValues.FREE  # Left corridor
+    grid[18:22, 25:30] = CostValues.FREE  # Right corridor
+    grid[10:15, 18:22] = CostValues.FREE  # Top corridor
+    grid[25:30, 18:22] = CostValues.FREE  # Bottom corridor
+
+    # Add fewer obstacles for faster processing
+    grid[19:21, 19:21] = CostValues.OCCUPIED  # Central obstacle
+    grid[13:14, 18:22] = CostValues.OCCUPIED  # Top corridor obstacle
+
+    # Create origin at bottom-left, adjusted for map size
+    from dimos.msgs.geometry_msgs import Pose
+
+    origin = Pose()
+    # Center the map around (0, 0) in world coordinates
+    origin.position.x = -(width * resolution) / 2.0
+    origin.position.y = -(height * resolution) / 2.0
     origin.position.z = 0.0
     origin.orientation.w = 1.0
 
@@ -71,10 +120,10 @@ def create_test_costmap(width=100, height=100, resolution=0.1):
     return occupancy_grid, MockLidar()
 
 
-def test_frontier_detection_with_office_lidar():
+def test_frontier_detection_with_office_lidar(explorer, quick_costmap):
     """Test frontier detection using a test costmap."""
     # Get test costmap
-    costmap, first_lidar = create_test_costmap()
+    costmap, first_lidar = quick_costmap
 
     # Verify we have a valid costmap
     assert costmap is not None, "Costmap should not be None"
@@ -85,9 +134,6 @@ def test_frontier_detection_with_office_lidar():
     print(f"Unknown percent: {costmap.unknown_percent:.1f}%")
     print(f"Free percent: {costmap.free_percent:.1f}%")
     print(f"Occupied percent: {costmap.occupied_percent:.1f}%")
-
-    # Initialize frontier explorer with default parameters
-    explorer = WavefrontFrontierExplorer()
 
     # Set robot pose near the center of free space in the costmap
     # We'll use the lidar origin as a reasonable robot position
@@ -115,16 +161,11 @@ def test_frontier_detection_with_office_lidar():
     else:
         print("No frontiers detected - map may be fully explored or parameters too restrictive")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
 
-
-def test_exploration_goal_selection():
+def test_exploration_goal_selection(explorer):
     """Test the complete exploration goal selection pipeline."""
-    # Get test costmap
+    # Get test costmap - use regular size for more realistic test
     costmap, first_lidar = create_test_costmap()
-
-    # Initialize frontier explorer with default parameters
-    explorer = WavefrontFrontierExplorer()
 
     # Use lidar origin as robot position
     robot_pose = first_lidar.origin
@@ -152,24 +193,22 @@ def test_exploration_goal_selection():
     else:
         print("No exploration goal selected - map may be fully explored")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
 
-
-def test_exploration_session_reset():
+def test_exploration_session_reset(explorer):
     """Test exploration session reset functionality."""
     # Get test costmap
     costmap, first_lidar = create_test_costmap()
 
-    # Initialize explorer and select a goal
-    explorer = WavefrontFrontierExplorer()
+    # Use lidar origin as robot position
     robot_pose = first_lidar.origin
 
     # Select a goal to populate exploration state
     goal = explorer.get_exploration_goal(robot_pose, costmap)
 
-    # Verify state is populated
-    initial_explored_count = len(explorer.explored_goals)
-    initial_direction = explorer.exploration_direction
+    # Verify state is populated (skip if no goals available)
+    if goal:
+        initial_explored_count = len(explorer.explored_goals)
+        assert initial_explored_count > 0, "Should have at least one explored goal"
 
     # Reset exploration session
     explorer.reset_exploration_session()
@@ -183,18 +222,12 @@ def test_exploration_session_reset():
     assert explorer.no_gain_counter == 0, "No-gain counter should be reset"
 
     print("Exploration session reset successfully")
-    explorer.cleanup()  # TODO: this should be a in try-finally
 
 
-def test_frontier_ranking():
+def test_frontier_ranking(explorer):
     """Test frontier ranking and scoring logic."""
     # Get test costmap
     costmap, first_lidar = create_test_costmap()
-
-    # Initialize explorer with custom parameters
-    explorer = WavefrontFrontierExplorer(
-        min_frontier_perimeter=0.5, safe_distance=0.5, info_gain_threshold=0.02
-    )
 
     robot_pose = first_lidar.origin
 
@@ -234,8 +267,6 @@ def test_frontier_ranking():
     else:
         print("No frontiers found for ranking test")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
-
 
 def test_exploration_with_no_gain_detection():
     """Test information gain detection and exploration termination."""
@@ -245,34 +276,35 @@ def test_exploration_with_no_gain_detection():
     # Initialize explorer with low no-gain threshold for testing
     explorer = WavefrontFrontierExplorer(info_gain_threshold=0.01, num_no_gain_attempts=2)
 
-    robot_pose = first_lidar.origin
+    try:
+        robot_pose = first_lidar.origin
 
-    # Select multiple goals to populate history
-    for i in range(6):
+        # Select multiple goals to populate history
+        for i in range(6):
+            goal = explorer.get_exploration_goal(robot_pose, costmap1)
+            if goal:
+                print(f"Goal {i + 1}: ({goal.x:.2f}, {goal.y:.2f})")
+
+        # Now use same costmap repeatedly to trigger no-gain detection
+        initial_counter = explorer.no_gain_counter
+
+        # This should increment no-gain counter
         goal = explorer.get_exploration_goal(robot_pose, costmap1)
-        if goal:
-            print(f"Goal {i + 1}: ({goal.x:.2f}, {goal.y:.2f})")
+        assert explorer.no_gain_counter > initial_counter, "No-gain counter should increment"
 
-    # Now use same costmap repeatedly to trigger no-gain detection
-    initial_counter = explorer.no_gain_counter
+        # Continue until exploration stops
+        for _ in range(3):
+            goal = explorer.get_exploration_goal(robot_pose, costmap1)
+            if goal is None:
+                break
 
-    # This should increment no-gain counter
-    goal = explorer.get_exploration_goal(robot_pose, costmap1)
-    assert explorer.no_gain_counter > initial_counter, "No-gain counter should increment"
+        # Should have stopped due to no information gain
+        assert goal is None, "Exploration should stop after no-gain threshold"
+        assert explorer.no_gain_counter == 0, "Counter should reset after stopping"
 
-    # Continue until exploration stops
-    for _ in range(3):
-        goal = explorer.get_exploration_goal(robot_pose, costmap1)
-        if goal is None:
-            break
-
-    # Should have stopped due to no information gain
-    assert goal is None, "Exploration should stop after no-gain threshold"
-    assert explorer.no_gain_counter == 0, "Counter should reset after stopping"
-
-    print("No-gain detection test passed")
-
-    explorer.cleanup()  # TODO: this should be a in try-finally
+        print("No-gain detection test passed")
+    finally:
+        explorer.cleanup()
 
 
 @pytest.mark.vis
@@ -284,78 +316,138 @@ def test_frontier_detection_visualization():
     # Initialize frontier explorer with default parameters
     explorer = WavefrontFrontierExplorer()
 
-    # Use lidar origin as robot position
-    robot_pose = first_lidar.origin
+    try:
+        # Use lidar origin as robot position
+        robot_pose = first_lidar.origin
 
-    # Detect all frontiers for visualization
-    all_frontiers = explorer.detect_frontiers(robot_pose, costmap)
+        # Detect all frontiers for visualization
+        all_frontiers = explorer.detect_frontiers(robot_pose, costmap)
 
-    # Get selected goal
-    selected_goal = explorer.get_exploration_goal(robot_pose, costmap)
+        # Get selected goal
+        selected_goal = explorer.get_exploration_goal(robot_pose, costmap)
 
-    print(f"Visualizing {len(all_frontiers)} frontier candidates")
-    if selected_goal:
-        print(f"Selected goal: ({selected_goal.x:.2f}, {selected_goal.y:.2f})")
+        print(f"Visualizing {len(all_frontiers)} frontier candidates")
+        if selected_goal:
+            print(f"Selected goal: ({selected_goal.x:.2f}, {selected_goal.y:.2f})")
 
-    # Create visualization
-    image_scale_factor = 4
-    base_image = costmap_to_pil_image(costmap, image_scale_factor)
+        # Create visualization
+        image_scale_factor = 4
+        base_image = costmap_to_pil_image(costmap, image_scale_factor)
 
-    # Helper function to convert world coordinates to image coordinates
-    def world_to_image_coords(world_pos: Vector3) -> tuple[int, int]:
-        grid_pos = costmap.world_to_grid(world_pos)
-        img_x = int(grid_pos.x * image_scale_factor)
-        img_y = int((costmap.height - grid_pos.y) * image_scale_factor)  # Flip Y
-        return img_x, img_y
+        # Helper function to convert world coordinates to image coordinates
+        def world_to_image_coords(world_pos: Vector3) -> tuple[int, int]:
+            grid_pos = costmap.world_to_grid(world_pos)
+            img_x = int(grid_pos.x * image_scale_factor)
+            img_y = int((costmap.height - grid_pos.y) * image_scale_factor)  # Flip Y
+            return img_x, img_y
 
-    # Draw visualization
-    draw = ImageDraw.Draw(base_image)
+        # Draw visualization
+        draw = ImageDraw.Draw(base_image)
 
-    # Draw frontier candidates as gray dots
-    for frontier in all_frontiers[:20]:  # Limit to top 20
-        x, y = world_to_image_coords(frontier)
-        radius = 6
-        draw.ellipse(
-            [x - radius, y - radius, x + radius, y + radius],
-            fill=(128, 128, 128),  # Gray
-            outline=(64, 64, 64),
-            width=1,
-        )
+        # Draw frontier candidates as gray dots
+        for frontier in all_frontiers[:20]:  # Limit to top 20
+            x, y = world_to_image_coords(frontier)
+            radius = 6
+            draw.ellipse(
+                [x - radius, y - radius, x + radius, y + radius],
+                fill=(128, 128, 128),  # Gray
+                outline=(64, 64, 64),
+                width=1,
+            )
 
-    # Draw robot position as blue dot
-    robot_x, robot_y = world_to_image_coords(robot_pose)
-    robot_radius = 10
-    draw.ellipse(
-        [
-            robot_x - robot_radius,
-            robot_y - robot_radius,
-            robot_x + robot_radius,
-            robot_y + robot_radius,
-        ],
-        fill=(0, 0, 255),  # Blue
-        outline=(0, 0, 128),
-        width=3,
-    )
-
-    # Draw selected goal as red dot
-    if selected_goal:
-        goal_x, goal_y = world_to_image_coords(selected_goal)
-        goal_radius = 12
+        # Draw robot position as blue dot
+        robot_x, robot_y = world_to_image_coords(robot_pose)
+        robot_radius = 10
         draw.ellipse(
             [
-                goal_x - goal_radius,
-                goal_y - goal_radius,
-                goal_x + goal_radius,
-                goal_y + goal_radius,
+                robot_x - robot_radius,
+                robot_y - robot_radius,
+                robot_x + robot_radius,
+                robot_y + robot_radius,
             ],
-            fill=(255, 0, 0),  # Red
-            outline=(128, 0, 0),
+            fill=(0, 0, 255),  # Blue
+            outline=(0, 0, 128),
             width=3,
         )
 
-    # Display the image
-    base_image.show(title="Frontier Detection - Office Lidar")
+        # Draw selected goal as red dot
+        if selected_goal:
+            goal_x, goal_y = world_to_image_coords(selected_goal)
+            goal_radius = 12
+            draw.ellipse(
+                [
+                    goal_x - goal_radius,
+                    goal_y - goal_radius,
+                    goal_x + goal_radius,
+                    goal_y + goal_radius,
+                ],
+                fill=(255, 0, 0),  # Red
+                outline=(128, 0, 0),
+                width=3,
+            )
 
-    print("Visualization displayed. Close the image window to continue.")
+        # Display the image
+        base_image.show(title="Frontier Detection - Office Lidar")
 
-    explorer.cleanup()  # TODO: this should be a in try-finally
+        print("Visualization displayed. Close the image window to continue.")
+    finally:
+        explorer.cleanup()
+
+
+def test_performance_timing():
+    """Test performance by timing frontier detection operations."""
+    import time
+
+    # Test with different costmap sizes
+    sizes = [(20, 20), (40, 40), (60, 60)]
+    results = []
+
+    for width, height in sizes:
+        # Create costmap of specified size
+        costmap, lidar = create_test_costmap(width, height)
+
+        # Create explorer with optimized parameters
+        explorer = WavefrontFrontierExplorer(
+            min_frontier_perimeter=0.3,
+            safe_distance=0.5,
+            info_gain_threshold=0.02,
+        )
+
+        try:
+            robot_pose = lidar.origin
+
+            # Time frontier detection
+            start = time.time()
+            frontiers = explorer.detect_frontiers(robot_pose, costmap)
+            detect_time = time.time() - start
+
+            # Time goal selection
+            start = time.time()
+            goal = explorer.get_exploration_goal(robot_pose, costmap)
+            goal_time = time.time() - start
+
+            results.append(
+                {
+                    "size": f"{width}x{height}",
+                    "cells": width * height,
+                    "detect_time": detect_time,
+                    "goal_time": goal_time,
+                    "frontiers": len(frontiers),
+                }
+            )
+
+            print(f"\nSize {width}x{height}:")
+            print(f"  Cells: {width * height}")
+            print(f"  Frontier detection: {detect_time:.4f}s")
+            print(f"  Goal selection: {goal_time:.4f}s")
+            print(f"  Frontiers found: {len(frontiers)}")
+        finally:
+            explorer.cleanup()
+
+    # Check that larger maps take more time (expected behavior)
+    # But verify times are reasonable
+    for result in results:
+        assert result["detect_time"] < 1.0, f"Detection too slow: {result['detect_time']}s"
+        assert result["goal_time"] < 1.5, f"Goal selection too slow: {result['goal_time']}s"
+
+    print("\nPerformance test passed - all operations completed within time limits")

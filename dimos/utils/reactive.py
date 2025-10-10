@@ -214,8 +214,8 @@ def quality_barrier(quality_func: Callable[[T], float], target_frequency: float)
 
     def _quality_barrier(source: Observable[T]) -> Observable[T]:
         return source.pipe(
-            # Create time-based windows
-            ops.window_with_time(window_duration),
+            # Create non-overlapping time-based windows
+            ops.window_with_time(window_duration, window_duration),
             # For each window, find the highest quality item
             ops.flat_map(
                 lambda window: window.pipe(

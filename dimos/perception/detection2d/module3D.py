@@ -24,8 +24,9 @@ from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.type import (
     ImageDetections2D,
     ImageDetections3D,
+    ImageDetections3DPC,
 )
-from dimos.perception.detection2d.type.detection3d import Detection3D
+from dimos.perception.detection2d.type.detection3dpc import Detection3DPC
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
@@ -40,7 +41,7 @@ class Detection3DModule(Detection2DModule):
     detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
 
-    detection_3d_stream: Observable[ImageDetections3D] = None
+    detection_3d_stream: Observable[ImageDetections3DPC] = None
 
     def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -55,10 +56,9 @@ class Detection3DModule(Detection2DModule):
         if not transform:
             return ImageDetections3D(detections.image, [])
 
-        print("3d projection", detections, pointcloud, transform)
         detection3d_list = []
         for detection in detections:
-            detection3d = Detection3D.from_2d(
+            detection3d = Detection3DPC.from_2d(
                 detection,
                 world_pointcloud=pointcloud,
                 camera_info=self.camera_info,
@@ -67,9 +67,7 @@ class Detection3DModule(Detection2DModule):
             if detection3d is not None:
                 detection3d_list.append(detection3d)
 
-        ret = ImageDetections3D(detections.image, detection3d_list)
-        print("3d projection finished", ret)
-        return ret
+        return ImageDetections3D(detections.image, detection3d_list)
 
     @rpc
     def start(self):

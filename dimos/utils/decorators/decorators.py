@@ -100,3 +100,46 @@ def limit(max_freq: float, accumulator: Optional[Accumulator] = None):
         return wrapper
 
     return decorator
+
+
+def simple_mcache(method: Callable) -> Callable:
+    """
+    Decorator to cache the result of a method call on the instance.
+
+    The cached value is stored as an attribute on the instance with the name
+    `_cached_<method_name>`. Subsequent calls to the method will return the
+    cached value instead of recomputing it.
+
+    Thread-safe: Uses a lock per instance to ensure the cached value is
+    computed only once even in multi-threaded environments.
+
+    Args:
+        method: The method to be decorated.
+
+    Returns:
+        The decorated method with caching behavior.
+    """
+
+    attr_name = f"_cached_{method.__name__}"
+    lock_name = f"_lock_{method.__name__}"
+
+    @wraps(method)
+    def getter(self):
+        # Get or create the lock for this instance
+        if not hasattr(self, lock_name):
+            # This is a one-time operation, race condition here is acceptable
+            # as worst case we create multiple locks but only one gets stored
+            setattr(self, lock_name, threading.Lock())
+
+        lock = getattr(self, lock_name)
+
+        if hasattr(self, attr_name):
+            return getattr(self, attr_name)
+
+        with lock:
+            # Check again inside the lock
+            if not hasattr(self, attr_name):
+                setattr(self, attr_name, method(self))
+            return getattr(self, attr_name)
+
+    return getter
