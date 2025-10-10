@@ -16,8 +16,6 @@
 
 import sys
 
-sys.path.insert(0, "/home/lesh/coding/dimensional/dimos")
-
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection2d.detectors.person.yolo import YoloPersonDetector
 from dimos.utils.data import get_data
