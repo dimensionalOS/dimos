@@ -121,8 +121,8 @@ Examples:
     parser.add_argument(
         "--max-duration",
         type=float,
-        default=30.0,
-        help="Maximum duration in seconds (default: 30.0)",
+        default=45.0,
+        help="Maximum duration in seconds (default: 45.0)",
     )
     parser.add_argument(
         "--end-angle", type=float, default=None, help="Maximum rotation angle in degrees (optional)"
