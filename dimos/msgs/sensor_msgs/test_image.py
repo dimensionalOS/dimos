@@ -118,6 +118,8 @@ def test_sharpness_barrier():
     # Emit images at 100Hz to get ~5 per window
     from reactivex import from_iterable, interval
 
+    window_duration = 0.05  # 20Hz = 0.05s windows
+
     source = from_iterable(mock_images).pipe(
         ops.zip(interval(0.01)),  # 100Hz emission rate
         ops.map(lambda x: x[0]),  # Extract just the image
@@ -132,28 +134,17 @@ def test_sharpness_barrier():
     # Only need 0.08s for 1 full window at 20Hz plus buffer
     time.sleep(0.08)
 
-    # Verify we got correct emissions
-    assert len(emitted_images) >= 1, f"Expected at least 1 emission, got {len(emitted_images)}"
+    # Verify we got correct emissions (items span across 2 windows due to timing)
+    # Items 1-4 arrive in first window (0-50ms), item 5 arrives in second window (50-100ms)
+    assert len(emitted_images) == 2, (
+        f"Expected exactly 2 emissions (one per window), got {len(emitted_images)}"
+    )
 
     # Group inputs by wall-clock windows and verify we got the sharpest
-    window_duration = 0.05  # 20Hz
 
-    # Test just the first window
-    for window_idx in range(min(1, len(emitted_images))):
-        window_start = window_idx * window_duration
-        window_end = window_start + window_duration
+    # Verify each window emitted the sharpest image from that window
+    # First window (0-50ms): items 1-4
+    assert emitted_images[0].sharpness == 0.3711  # Highest among first 4 items
 
-        # Get all images that arrived during this wall-clock window
-        window_imgs = [
-            img for wall_time, img in window_contents if window_start <= wall_time < window_end
-        ]
-
-        if window_imgs:
-            max_sharp = max(img.sharpness for img in window_imgs)
-            emitted_sharp = emitted_images[window_idx].sharpness
-
-            # Verify we emitted the sharpest
-            assert abs(emitted_sharp - max_sharp) < 0.0001, (
-                f"Window {window_idx}: Emitted image (sharp={emitted_sharp}) "
-                f"is not the sharpest (max={max_sharp})"
-            )
+    # Second window (50-100ms): only item 5
+    assert emitted_images[1].sharpness == 0.3665  # Only item in second window

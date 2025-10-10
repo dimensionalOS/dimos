@@ -15,8 +15,9 @@
 from __future__ import annotations
 
 import hashlib
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -43,8 +44,12 @@ from dimos.msgs.std_msgs import Header
 from dimos.perception.detection2d.type.imageDetections import ImageDetections
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 
+if TYPE_CHECKING:
+    from dimos.perception.detection2d.type.person import Person
+
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
+
 # yolo and detic have bad output formats
 InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[str]]
 
@@ -89,8 +94,16 @@ def better_detection_format(inconvinient_detections: InconvinientDetectionFormat
     ]
 
 
-@dataclass
 class Detection2D(Timestamped):
+    @abstractmethod
+    def cropped_image(self, padding: int = 20) -> Image: ...
+
+    @abstractmethod
+    def to_image_annotations(self) -> ImageAnnotations: ...
+
+
+@dataclass
+class Detection2DBBox(Detection2D):
     bbox: Bbox
     track_id: int
     class_id: int
@@ -215,7 +228,7 @@ class Detection2D(Timestamped):
             TextAnnotation(
                 timestamp=to_ros_stamp(self.ts),
                 position=Point2(x=x1, y=y1),
-                text=f"{self.name}_{self.track_id}",
+                text=f"{self.name}_{self.class_id}_{self.track_id}",
                 font_size=font_size,
                 text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
                 background_color=Color(r=0, g=0, b=0, a=1),
@@ -320,10 +333,26 @@ class Detection2D(Timestamped):
 
 class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
-    def from_detector(
+    def from_bbox_detector(
         cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
     ) -> "ImageDetections2D":
         return cls(
             image=image,
-            detections=Detection2D.from_detector(raw_detections, image=image, ts=image.ts),
+            detections=Detection2DBBox.from_detector(raw_detections, image=image, ts=image.ts),
+        )
+
+    @classmethod
+    def from_pose_detector(
+        cls, image: Image, people: List["Person"], **kwargs
+    ) -> "ImageDetections2D":
+        """Create ImageDetections2D from a list of Person detections.
+        Args:
+            image: Source image
+            people: List of Person objects with pose keypoints
+        Returns:
+            ImageDetections2D containing the pose detections
+        """
+        return cls(
+            image=image,
+            detections=people,  # Person objects are already Detection2D subclasses
         )

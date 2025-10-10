@@ -17,6 +17,7 @@ import logging
 import os
 import pickle
 import re
+import shutil
 import time
 from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
@@ -107,13 +108,13 @@ class SensorReplay(Generic[T]):
 
 
 class SensorStorage(Generic[T]):
-    """Generic sensor data storage utility.
+    """Generic sensor data storage utility
+    .
+        Creates a directory in the test data directory and stores pickled sensor data.
 
-    Creates a directory in the test data directory and stores pickled sensor data.
-
-    Args:
-        name: The name of the storage directory
-        autocast: Optional function that takes data and returns a processed result before storage.
+        Args:
+            name: The name of the storage directory
+            autocast: Optional function that takes data and returns a processed result before storage.
     """
 
     def __init__(self, name: str, autocast: Optional[Callable[[T], Any]] = None):
@@ -135,6 +136,10 @@ class SensorStorage(Generic[T]):
         else:
             # Create the directory
             self.root_dir.mkdir(parents=True, exist_ok=True)
+
+    def consume_stream(self, observable: Observable[Union[T, Any]]) -> None:
+        """Consume an observable stream of sensor data without saving."""
+        return observable.subscribe(self.save_one)
 
     def save_stream(self, observable: Observable[Union[T, Any]]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
@@ -296,50 +301,77 @@ class TimedSensorReplay(SensorReplay[T]):
         def _subscribe(observer, scheduler=None):
             from reactivex.disposable import CompositeDisposable, Disposable
 
-            scheduler = scheduler or TimeoutScheduler()  # default thread-based
+            scheduler = scheduler or TimeoutScheduler()
+            disp = CompositeDisposable()
+            is_disposed = False
 
             iterator = self.iterate_ts(
                 seek=seek, duration=duration, from_timestamp=from_timestamp, loop=loop
             )
 
+            # Get first message
             try:
-                prev_ts, first_data = next(iterator)
+                first_ts, first_data = next(iterator)
             except StopIteration:
                 observer.on_completed()
                 return Disposable()
 
-            # Emit the first sample immediately
+            # Establish timing reference
+            start_local_time = time.time()
+            start_replay_time = first_ts
+
+            # Emit first sample immediately
             observer.on_next(first_data)
 
-            disp = CompositeDisposable()
-            completed = [False]  # Use list to allow mutation in nested function
+            # Pre-load next message
+            try:
+                next_message = next(iterator)
+            except StopIteration:
+                observer.on_completed()
+                return disp
 
-            def emit_next(prev_timestamp):
-                if completed[0]:
+            def schedule_emission(message):
+                nonlocal next_message, is_disposed
+
+                if is_disposed:
                     return
 
+                ts, data = message
+
+                # Pre-load the following message while we have time
                 try:
-                    ts, data = next(iterator)
+                    next_message = next(iterator)
                 except StopIteration:
-                    completed[0] = True
-                    observer.on_completed()
-                    return
+                    next_message = None
 
-                delay = max(0.0, ts - prev_timestamp) / speed
+                # Calculate absolute emission time
+                target_time = start_local_time + (ts - start_replay_time) / speed
+                delay = max(0.0, target_time - time.time())
 
-                def _action(sc, _state=None):
-                    if not completed[0]:
-                        observer.on_next(data)
-                        emit_next(ts)  # schedule the following sample
+                def emit():
+                    if is_disposed:
+                        return
+                    observer.on_next(data)
+                    if next_message is not None:
+                        schedule_emission(next_message)
+                    else:
+                        observer.on_completed()
+                        # Dispose of the scheduler to clean up threads
+                        if hasattr(scheduler, "dispose"):
+                            scheduler.dispose()
 
-                # Schedule the next emission relative to previous timestamp
-                disp.add(scheduler.schedule_relative(delay, _action))
+                disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
 
-            emit_next(prev_ts)
+            schedule_emission(next_message)
 
+            # Create a custom disposable that properly cleans up
             def dispose():
-                completed[0] = True
+                nonlocal is_disposed
+                is_disposed = True
                 disp.dispose()
+                # Ensure scheduler is disposed to clean up any threads
+                if hasattr(scheduler, "dispose"):
+                    scheduler.dispose()
 
             return Disposable(dispose)
 

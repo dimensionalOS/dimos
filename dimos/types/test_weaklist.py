@@ -15,18 +15,20 @@
 """Tests for WeakList implementation."""
 
 import gc
+
 import pytest
+
 from dimos.types.weaklist import WeakList
 
 
-class TestObject:
+class SampleObject:
     """Simple test object."""
 
     def __init__(self, value):
         self.value = value
 
     def __repr__(self):
-        return f"TestObject({self.value})"
+        return f"SampleObject({self.value})"
 
 
 def test_weaklist_basic_operations():
@@ -34,9 +36,9 @@ def test_weaklist_basic_operations():
     wl = WeakList()
 
     # Add objects
-    obj1 = TestObject(1)
-    obj2 = TestObject(2)
-    obj3 = TestObject(3)
+    obj1 = SampleObject(1)
+    obj2 = SampleObject(2)
+    obj3 = SampleObject(3)
 
     wl.append(obj1)
     wl.append(obj2)
@@ -49,16 +51,16 @@ def test_weaklist_basic_operations():
     # Check contains
     assert obj1 in wl
     assert obj2 in wl
-    assert TestObject(4) not in wl
+    assert SampleObject(4) not in wl
 
 
 def test_weaklist_auto_removal():
     """Test that objects are automatically removed when garbage collected."""
     wl = WeakList()
 
-    obj1 = TestObject(1)
-    obj2 = TestObject(2)
-    obj3 = TestObject(3)
+    obj1 = SampleObject(1)
+    obj2 = SampleObject(2)
+    obj3 = SampleObject(3)
 
     wl.append(obj1)
     wl.append(obj2)
@@ -79,8 +81,8 @@ def test_weaklist_explicit_remove():
     """Test explicit removal of objects."""
     wl = WeakList()
 
-    obj1 = TestObject(1)
-    obj2 = TestObject(2)
+    obj1 = SampleObject(1)
+    obj2 = SampleObject(2)
 
     wl.append(obj1)
     wl.append(obj2)
@@ -93,16 +95,16 @@ def test_weaklist_explicit_remove():
 
     # Try to remove non-existent object
     with pytest.raises(ValueError):
-        wl.remove(TestObject(3))
+        wl.remove(SampleObject(3))
 
 
 def test_weaklist_indexing():
     """Test index access."""
     wl = WeakList()
 
-    obj1 = TestObject(1)
-    obj2 = TestObject(2)
-    obj3 = TestObject(3)
+    obj1 = SampleObject(1)
+    obj2 = SampleObject(2)
+    obj3 = SampleObject(3)
 
     wl.append(obj1)
     wl.append(obj2)
@@ -121,8 +123,8 @@ def test_weaklist_clear():
     """Test clearing the list."""
     wl = WeakList()
 
-    obj1 = TestObject(1)
-    obj2 = TestObject(2)
+    obj1 = SampleObject(1)
+    obj2 = SampleObject(2)
 
     wl.append(obj1)
     wl.append(obj2)
@@ -138,7 +140,7 @@ def test_weaklist_iteration_during_modification():
     """Test that iteration works even if objects are deleted during iteration."""
     wl = WeakList()
 
-    objects = [TestObject(i) for i in range(5)]
+    objects = [SampleObject(i) for i in range(5)]
     for obj in objects:
         wl.append(obj)
 
@@ -151,7 +153,7 @@ def test_weaklist_iteration_during_modification():
         seen_values.append(obj.value)
         if obj.value == 2:
             # Delete another object (not the current one)
-            del objects[3]  # Delete TestObject(3)
+            del objects[3]  # Delete SampleObject(3)
             gc.collect()
 
     # The object with value 3 gets garbage collected during iteration
