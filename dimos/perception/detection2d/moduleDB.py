@@ -37,18 +37,17 @@ class Object3D(Detection3D):
     best_detection: Detection3D = None
     center: Vector3 = None
     track_id: str = None
-    detections: List[Detection3D]
+    detections: int = 0
 
     def to_repr_dict(self) -> Dict[str, Any]:
         return {
             "object_id": self.track_id,
-            "detections": len(self.detections),
+            "detections": self.detections,
             "center": "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]",
         }
 
     def __init__(self, track_id: str, detection: Optional[Detection3D] = None, *args, **kwargs):
         if detection is None:
-            self.detections = []
             return
         self.ts = detection.ts
         self.track_id = track_id
@@ -60,7 +59,7 @@ class Object3D(Detection3D):
         self.transform = detection.transform
         self.center = detection.center
         self.frame_id = detection.frame_id
-        self.detections = [detection]
+        self.detections = self.detections + 1
         self.best_detection = detection
 
     def __add__(self, detection: Detection3D) -> "Object3D":
@@ -75,7 +74,7 @@ class Object3D(Detection3D):
         new_object.pointcloud = self.pointcloud + detection.pointcloud
         new_object.frame_id = self.frame_id
         new_object.center = (self.center + detection.center) / 2
-        new_object.detections = self.detections + [detection]
+        new_object.detections = self.detections + 1
 
         if detection.bbox_2d_volume() > self.bbox_2d_volume():
             new_object.best_detection = detection
@@ -89,13 +88,13 @@ class Object3D(Detection3D):
         return self.best_detection.image
 
     def scene_entity_label(self) -> str:
-        return f"{self.name} ({len(self.detections)})"
+        return f"{self.name} ({self.detections})"
 
     def agent_encode(self):
         return {
             "id": self.track_id,
             "name": self.name,
-            "detections": len(self.detections),
+            "detections": self.detections,
             "last_seen": f"{round((time.time() - self.ts))}s ago",
             # "position": self.to_pose().position.agent_encode(),
         }
@@ -302,7 +301,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     @rpc
     def start(self):
-        super().start()
+        Detection3DModule.start(self)
 
         def update_objects(imageDetections: ImageDetections3D):
             for detection in imageDetections.detections:
@@ -339,8 +338,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            if obj.class_id != -100 and len(obj.detections) < 3:
-                continue
+            # if obj.class_id != -100 and obj.detections < 2:
+            #    continue
 
             # print(
             #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"
@@ -349,7 +348,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
             scene_update.entities.append(
                 obj.to_foxglove_scene_entity(
-                    entity_id=f"object_{obj.name}_{obj.track_id}_{len(obj.detections)}"
+                    entity_id=f"object_{obj.name}_{obj.track_id}_{obj.detections}"
                 )
             )
 
@@ -358,6 +357,3 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def __len__(self):
         return len(self.objects.values())
-
-    def __iter__(self):
-        return iter(self.detections.values())
