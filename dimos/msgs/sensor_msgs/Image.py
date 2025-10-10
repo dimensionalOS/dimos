@@ -264,22 +264,7 @@ class Image:
         if isinstance(self._impl, NumpyImage):
             return self.copy()
 
-        # Special handling for formats with alpha channel
-        if self._impl.format in (ImageFormat.RGBA, ImageFormat.BGRA):
-            data = self._impl.data.get()  # CuPy array to NumPy
-        else:
-            # Use existing to_opencv() logic for other formats
-            bgr_data = np.asarray(self._impl.to_opencv())
-
-            if self._impl.format == ImageFormat.RGB:
-                data = cv2.cvtColor(bgr_data, cv2.COLOR_BGR2RGB)
-            elif self._impl.format == ImageFormat.GRAY:
-                if bgr_data.ndim == 3:
-                    data = cv2.cvtColor(bgr_data, cv2.COLOR_BGR2GRAY)
-                else:
-                    data = bgr_data
-            else:  # BGR, DEPTH, DEPTH16, GRAY16
-                data = bgr_data
+        data = self._impl.data.get()  # CuPy array to NumPy
 
         return Image(
             NumpyImage(
