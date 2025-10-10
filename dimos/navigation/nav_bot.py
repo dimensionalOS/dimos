@@ -44,8 +44,9 @@ from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 from geometry_msgs.msg import PointStamped as ROSPointStamped
 from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy, Image as ROSImage
-from std_msgs.msg import Bool as ROSBool
+from nav_msgs.msg import Path as ROSPath
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
+from std_msgs.msg import Bool as ROSBool, Header, Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
