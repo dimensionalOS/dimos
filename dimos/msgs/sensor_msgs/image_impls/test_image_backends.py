@@ -23,7 +23,6 @@ from dimos.utils.data import get_data
 
 IMAGE_PATH = get_data("chair-image.png")
 
-# Print whether we're running in CPU or GPU mode
 if HAS_CUDA:
     print("Running image backend tests with CUDA/CuPy support (GPU mode)")
 else:
