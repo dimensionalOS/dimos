@@ -19,7 +19,11 @@
 
 from typing import ClassVar
 from dimos_lcm.std_msgs import Int8 as LCMInt8
-from std_msgs.msg import Int8 as ROSInt8
+
+try:
+    from std_msgs.msg import Int8 as ROSInt8
+except ImportError:
+    ROSInt8 = None
 
 
 class Int8(LCMInt8):
@@ -49,6 +53,8 @@ class Int8(LCMInt8):
         Returns:
             ROS Int8 message
         """
+        if ROSInt8 is None:
+            raise ImportError("ROS std_msgs not available")
         ros_msg = ROSInt8()
         ros_msg.data = self.data
         return ros_msg
