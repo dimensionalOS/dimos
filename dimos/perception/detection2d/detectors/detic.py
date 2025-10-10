@@ -22,7 +22,9 @@ from dimos.perception.detection2d.detectors.types import Detector
 from dimos.perception.detection2d.utils import plot_results
 
 # Add Detic to Python path
-detic_path = os.path.join(os.path.dirname(__file__), "..", "..", "..", "models", "Detic")
+from dimos.constants import DIMOS_PROJECT_ROOT
+
+detic_path = DIMOS_PROJECT_ROOT / "dimos/models/Detic"
 if detic_path not in sys.path:
     sys.path.append(detic_path)
     sys.path.append(os.path.join(detic_path, "third_party/CenterNet2"))
