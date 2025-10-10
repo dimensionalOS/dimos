@@ -23,11 +23,12 @@ import threading
 import time
 from typing import Optional
 
-from dimos.core import In, Out, Module, rpc
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, PoseStamped
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
 from dimos.utils.logging_config import setup_logger
+
 from .b1_command import B1Command
 
 # Setup logger with DEBUG level for troubleshooting
@@ -354,7 +355,7 @@ class B1ConnectionModule(Module):
         self.stop()
 
 
-class TestB1ConnectionModule(B1ConnectionModule):
+class MockB1ConnectionModule(B1ConnectionModule):
     """Test connection module that prints commands instead of sending UDP."""
 
     def __init__(self, ip: str = "127.0.0.1", port: int = 9090, *args, **kwargs):

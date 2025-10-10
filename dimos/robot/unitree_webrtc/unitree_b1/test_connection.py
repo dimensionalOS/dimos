@@ -22,12 +22,13 @@
 # should be used and tested. Additionally, tests should always use `try-finally`
 # to clean up even if the test fails.
 
-import time
 import threading
+import time
 
-from .connection import TestB1ConnectionModule
 from dimos.msgs.geometry_msgs import TwistStamped, Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
+
+from .connection import MockB1ConnectionModule
 
 
 class TestB1Connection:
@@ -35,7 +36,7 @@ class TestB1Connection:
 
     def test_watchdog_actually_zeros_commands(self):
         """Test that watchdog thread zeros commands after timeout."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -76,7 +77,7 @@ class TestB1Connection:
 
     def test_watchdog_resets_on_new_command(self):
         """Test that watchdog timeout resets when new command arrives."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -124,7 +125,7 @@ class TestB1Connection:
 
     def test_watchdog_thread_efficiency(self):
         """Test that watchdog uses only one thread regardless of command rate."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -158,7 +159,7 @@ class TestB1Connection:
 
     def test_watchdog_with_send_loop_blocking(self):
         """Test that watchdog still works if send loop blocks."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
 
         # Mock the send loop to simulate blocking
         original_send_loop = conn._send_loop
@@ -205,7 +206,7 @@ class TestB1Connection:
 
     def test_continuous_commands_prevent_timeout(self):
         """Test that continuous commands prevent watchdog timeout."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -240,7 +241,7 @@ class TestB1Connection:
 
     def test_watchdog_timing_accuracy(self):
         """Test that watchdog zeros commands at approximately 200ms."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -281,7 +282,7 @@ class TestB1Connection:
 
     def test_mode_changes_with_watchdog(self):
         """Test that mode changes work correctly with watchdog."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -321,7 +322,7 @@ class TestB1Connection:
 
     def test_watchdog_stops_movement_when_commands_stop(self):
         """Verify watchdog zeros commands when packets stop being sent."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)
@@ -379,7 +380,7 @@ class TestB1Connection:
 
     def test_rapid_command_thread_safety(self):
         """Test thread safety with rapid commands from multiple threads."""
-        conn = TestB1ConnectionModule(ip="127.0.0.1", port=9090)
+        conn = MockB1ConnectionModule(ip="127.0.0.1", port=9090)
         conn.running = True
         conn.watchdog_running = True
         conn.send_thread = threading.Thread(target=conn._send_loop, daemon=True)

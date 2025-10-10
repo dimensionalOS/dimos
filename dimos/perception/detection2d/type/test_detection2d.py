@@ -14,7 +14,8 @@
 import pytest
 
 
-def test_detection_basic_properties(detection2d):
+def test_detection2d(detection2d):
+    # def test_detection_basic_properties(detection2d):
     """Test basic detection properties."""
     assert detection2d.track_id >= 0
     assert detection2d.class_id >= 0
@@ -22,8 +23,7 @@ def test_detection_basic_properties(detection2d):
     assert detection2d.name is not None
     assert detection2d.ts > 0
 
-
-def test_bounding_box_format(detection2d):
+    # def test_bounding_box_format(detection2d):
     """Test bounding box format and validity."""
     bbox = detection2d.bbox
     assert len(bbox) == 4, "Bounding box should have 4 values"
@@ -34,8 +34,7 @@ def test_bounding_box_format(detection2d):
     assert x1 >= 0, "x1 should be non-negative"
     assert y1 >= 0, "y1 should be non-negative"
 
-
-def test_bbox_2d_volume(detection2d):
+    # def test_bbox_2d_volume(detection2d):
     """Test bounding box volume calculation."""
     volume = detection2d.bbox_2d_volume()
     assert volume > 0, "Bounding box volume should be positive"
@@ -45,8 +44,7 @@ def test_bbox_2d_volume(detection2d):
     expected_volume = (x2 - x1) * (y2 - y1)
     assert volume == pytest.approx(expected_volume, abs=0.001)
 
-
-def test_bbox_center_calculation(detection2d):
+    # def test_bbox_center_calculation(detection2d):
     """Test bounding box center calculation."""
     center_bbox = detection2d.get_bbox_center()
     assert len(center_bbox) == 4, "Center bbox should have 4 values"
@@ -60,8 +58,7 @@ def test_bbox_center_calculation(detection2d):
     assert width == pytest.approx(x2 - x1, abs=0.001)
     assert height == pytest.approx(y2 - y1, abs=0.001)
 
-
-def test_cropped_image(detection2d):
+    # def test_cropped_image(detection2d):
     """Test cropped image generation."""
     padding = 20
     cropped = detection2d.cropped_image(padding=padding)
@@ -73,8 +70,7 @@ def test_cropped_image(detection2d):
     assert cropped.height == 260
     assert cropped.shape == (260, 192, 3)
 
-
-def test_to_ros_bbox(detection2d):
+    # def test_to_ros_bbox(detection2d):
     """Test ROS bounding box conversion."""
     ros_bbox = detection2d.to_ros_bbox()
 

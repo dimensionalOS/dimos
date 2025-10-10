@@ -19,17 +19,20 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
 
+from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.module2D import Detection2DModule
 from dimos.perception.detection2d.module3D import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.detection2d.type import (
     Detection2D,
     Detection3D,
+    Detection3DPC,
     ImageDetections2D,
     ImageDetections3D,
+    ImageDetections3DPC,
 )
 from dimos.protocol.tf import TF
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -47,7 +50,7 @@ class Moment(TypedDict, total=False):
     transforms: list[Transform]
     tf: TF
     annotations: Optional[ImageAnnotations]
-    detections: Optional[ImageDetections3D]
+    detections: Optional[ImageDetections3DPC]
     markers: Optional[MarkerArray]
     scene_update: Optional[SceneUpdate]
 
@@ -57,7 +60,7 @@ class Moment2D(Moment):
 
 
 class Moment3D(Moment):
-    detections3d: ImageDetections3D
+    detections3dpc: ImageDetections3D
 
 
 @pytest.fixture
@@ -103,6 +106,47 @@ def get_moment(tf):
 
 
 @pytest.fixture
+def publish_moment():
+    def publisher(moment: Moment | Moment2D | Moment3D):
+        if moment.get("detections2d"):
+            # 2d annotations
+            annotations = LCMTransport("/annotations", ImageAnnotations)
+            annotations.publish(moment.get("detections2d").to_foxglove_annotations())
+
+            detections = LCMTransport("/detections", Detection2DArray)
+            detections.publish(moment.get("detections2d").to_ros_detection2d_array())
+
+            annotations.lcm.stop()
+            detections.lcm.stop()
+
+        if moment.get("detections3dpc"):
+            scene_update = LCMTransport("/scene_update", SceneUpdate)
+            # 3d scene update
+            scene_update.publish(moment.get("detections3dpc").to_foxglove_scene_update())
+            scene_update.lcm.stop()
+
+        lidar = LCMTransport("/lidar", PointCloud2)
+        lidar.publish(moment.get("lidar_frame"))
+        lidar.lcm.stop()
+
+        image = LCMTransport("/image", Image)
+        image.publish(moment.get("image_frame"))
+        image.lcm.stop()
+
+        camera_info = LCMTransport("/camera_info", CameraInfo)
+        camera_info.publish(moment.get("camera_info"))
+        camera_info.lcm.stop()
+
+        tf = moment.get("tf")
+        tf.publish(*moment.get("transforms"))
+
+    # moduleDB.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
+    # moduleDB.target.transport = LCMTransport("/target", PoseStamped)
+
+    return publisher
+
+
+@pytest.fixture
 def detection2d(get_moment_2d) -> Detection2D:
     moment = get_moment_2d(seek=10.0)
     assert len(moment["detections2d"]) > 0, "No detections found in the moment"
@@ -110,11 +154,10 @@ def detection2d(get_moment_2d) -> Detection2D:
 
 
 @pytest.fixture
-def detection3d(get_moment_3d) -> Detection3D:
-    moment = get_moment_3d(seek=10.0)
-    assert len(moment["detections3d"]) > 0, "No detections found in the moment"
-    print(moment["detections3d"])
-    return moment["detections3d"][0]
+def detection3dpc(get_moment_3dpc) -> Detection3DPC:
+    moment = get_moment_3dpc(seek=10.0)
+    assert len(moment["detections3dpc"]) > 0, "No detections found in the moment"
+    return moment["detections3dpc"][0]
 
 
 @pytest.fixture
@@ -135,22 +178,22 @@ def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
 
 
 @pytest.fixture
-def get_moment_3d(get_moment_2d) -> Callable[[], Moment2D]:
+def get_moment_3dpc(get_moment_2d) -> Callable[[], Moment2D]:
     module = None
 
     def moment_provider(**kwargs) -> Moment2D:
         nonlocal module
         moment = get_moment_2d(**kwargs)
 
-        module = Detection3DModule(camera_info=moment["camera_info"])
+        if not module:
+            module = Detection3DModule(camera_info=moment["camera_info"])
 
         camera_transform = moment["tf"].get("camera_optical", moment.get("lidar_frame").frame_id)
         if camera_transform is None:
             raise ValueError("No camera_optical transform in tf")
-
         return {
             **moment,
-            "detections3d": module.process_frame(
+            "detections3dpc": module.process_frame(
                 moment["detections2d"], moment["lidar_frame"], camera_transform
             ),
         }

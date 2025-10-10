@@ -45,3 +45,6 @@ FastSAM-x.pt
 yolo11n.pt
 
 /thread_monitor_report.csv
+
+# symlink one of .envrc.* if you'd like to use
+.envrc
