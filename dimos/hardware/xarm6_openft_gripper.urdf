@@ -647,7 +647,7 @@
   <joint name="zed_fixed_joint" type="fixed">
     <parent link="link_openft"/>
     <child link="zed_camera_link"/>
-    <origin rpy="0 -1.5707 -1.5707" xyz="0 .08605 .02325"/>
+    <origin rpy="0 -1.5707 1.5707" xyz="0 -.08605 .02325"/>
   </joint>
   <!-- Camera mounting point (the threaded screw hole in the bottom) -->
   <link name="zed_camera_link"/>
