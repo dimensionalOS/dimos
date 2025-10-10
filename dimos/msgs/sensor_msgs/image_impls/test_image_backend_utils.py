@@ -16,6 +16,17 @@ import numpy as np
 import pytest
 
 from dimos.msgs.sensor_msgs import Image, ImageFormat
+
+# Print whether we're running in CPU or GPU mode
+try:
+    import cupy as cp
+
+    HAS_CUDA = True
+    print("Running image backend utils tests with CUDA/CuPy support (GPU mode)")
+except:
+    HAS_CUDA = False
+    print("Running image backend utils tests in CPU-only mode")
+
 from dimos.perception.common.utils import (
     rectify_image,
     project_3d_points_to_2d,
