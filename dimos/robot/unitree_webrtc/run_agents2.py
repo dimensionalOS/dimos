@@ -66,7 +66,7 @@ class UnitreeAgents2Runner(Resource):
 
     def stop(self):
         if self._navigation_skill:
-            self._navigation_skill.__exit(None, None, None)
+            self._navigation_skill.stop()
         if self._robot_debugger:
             self._robot_debugger.stop()
         if self._agent:
@@ -85,7 +85,7 @@ class UnitreeAgents2Runner(Resource):
             robot=self._robot,
             video_stream=self._robot.connection.video,
         )
-        self._navigation_skill.__enter__()
+        self._navigation_skill.start()
 
         skill_containers = [
             UnitreeSkillContainer(robot=self._robot),

@@ -54,7 +54,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    video: In[Image] = None
+    color_image: In[Image] = None
     odom: In[PoseStamped] = None
 
     def __init__(
@@ -193,7 +193,7 @@ class SpatialMemory(Module):
         def set_odom(odom_msg: PoseStamped):
             self._latest_odom = odom_msg
 
-        unsub = self.video.subscribe(set_video)
+        unsub = self.color_image.subscribe(set_video)
         self._disposables.add(Disposable(unsub))
 
         unsub = self.odom.subscribe(set_odom)

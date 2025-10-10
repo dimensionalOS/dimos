@@ -17,6 +17,7 @@ from typing import Any, Optional
 import cv2
 from reactivex import Observable
 
+from dimos.core.resource import Resource
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.visual.query import get_object_bbox_from_image
@@ -33,7 +34,7 @@ from reactivex.disposable import Disposable, CompositeDisposable
 logger = setup_logger(__file__)
 
 
-class NavigationSkillContainer(SkillContainer):
+class NavigationSkillContainer(SkillContainer, Resource):
     _robot: UnitreeRobot
     _disposables: CompositeDisposable
     _latest_image: Optional[Image]
@@ -50,16 +51,14 @@ class NavigationSkillContainer(SkillContainer):
         self._started = False
         self._vl_model = QwenVlModel()
 
-    def __enter__(self) -> "NavigationSkillContainer":
+    def start(self) -> None:
         unsub = self._video_stream.subscribe(self._on_video)
         self._disposables.add(Disposable(unsub) if callable(unsub) else unsub)
         self._started = True
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def stop(self) -> None:
         self._disposables.dispose()
-        self.stop()
-        return False
+        super().stop()
 
     def _on_video(self, image: Image) -> None:
         self._latest_image = image

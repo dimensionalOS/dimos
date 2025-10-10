@@ -477,7 +477,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         )
         self.frontier_explorer = self._dimos.deploy(WavefrontFrontierExplorer)
 
-        self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
+        self.navigator.target.transport = core.LCMTransport("/navigation_goal", PoseStamped)
         self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)

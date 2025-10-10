@@ -99,6 +99,11 @@ class Map(Module):
     def add_frame(self, frame: LidarMessage) -> "Map":
         """Voxelise *frame* and splice it into the running map."""
         new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
+
+        # Skip empty pointclouds (can occur during initialization or sensor failures)
+        if len(new_pct.points) == 0:
+            return self
+
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
         local_costmap = OccupancyGrid.from_pointcloud(
             frame,

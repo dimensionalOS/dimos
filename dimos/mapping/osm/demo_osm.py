@@ -22,12 +22,11 @@ from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
 from dimos.agents2.skills.osm import OsmSkillContainer
+from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
 from dimos.robot.robot import Robot
 from dimos.robot.utils.robot_debugger import RobotDebugger
 from dimos.utils.logging_config import setup_logger
-
-from contextlib import ExitStack
 
 logger = setup_logger(__file__)
 
@@ -41,19 +40,19 @@ class FakeRobot(Robot):
     pass
 
 
-class UnitreeAgents2Runner:
+class UnitreeAgents2Runner(Resource):
     def __init__(self):
         self._robot = None
         self._agent = None
         self._robot_debugger = None
-        self._exit_stack = ExitStack()
+        self._osm_skill_container = None
 
-    def __enter__(self):
+    def start(self):
         self._robot = FakeRobot()
         self._agent = Agent(system_prompt=SYSTEM_PROMPT)
-        self._agent.register_skills(
-            self._exit_stack.enter_context(OsmSkillContainer(self._robot, _get_fake_location()))
-        )
+        self._osm_skill_container = OsmSkillContainer(self._robot, _get_fake_location())
+        self._osm_skill_container.__enter__()
+        self._agent.register_skills(self._osm_skill_container)
         self._agent.register_skills(HumanInput())
         self._agent.run_implicit_skill("human")
         self._agent.start()
@@ -61,15 +60,13 @@ class UnitreeAgents2Runner:
         self._robot_debugger = RobotDebugger(self._robot)
         self._robot_debugger.start()
 
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self._agent:
-            self._agent.stop()
-        self._exit_stack.close()
+    def stop(self):
         if self._robot_debugger:
             self._robot_debugger.stop()
-        return False
+        if self._osm_skill_container:
+            self._osm_skill_container.__exit__(None, None, None)
+        if self._agent:
+            self._agent.stop()
 
     def run(self):
         while True:
@@ -80,8 +77,10 @@ class UnitreeAgents2Runner:
 
 
 def main():
-    with UnitreeAgents2Runner() as runner:
-        runner.run()
+    runner = UnitreeAgents2Runner()
+    runner.start()
+    runner.run()
+    runner.stop()
 
 
 def _get_fake_location() -> Observable[LatLon]:

@@ -24,15 +24,14 @@ from typing import Optional
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
 
-from dimos.core.blueprints import (
-    autoconnect,
-    build_blueprint,
-)
+from dimos.core.blueprints import autoconnect
 from dimos.core.dimos import Dimos
 from dimos.core.resource import Resource
+from dimos.core.transport import LCMTransport
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.sensor_msgs import Image
+from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.perception.spatial_perception import SpatialMemory, spatial_memory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
@@ -142,7 +141,14 @@ class UnitreeGo2(UnitreeRobot, Resource):
             utilization(),
         )
 
-        self._dimos = build_blueprint(enhanced_robot)
+        self._dimos = enhanced_robot.with_transports(
+            {
+                ("color_image", Image): LCMTransport("/go2/color_image", Image),
+                ("depth_image", Image): LCMTransport("/go2/depth_image", Image),
+                ("camera_pose", PoseStamped): LCMTransport("/go2/camera_pose", PoseStamped),
+                ("camera_info", CameraInfo): LCMTransport("/go2/camera_info", CameraInfo),
+            }
+        ).build()
 
         self._start_skills()
 
