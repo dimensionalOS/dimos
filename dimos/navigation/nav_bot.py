@@ -70,7 +70,7 @@ class NavigationModule(Module):
     path_active: Out[Path] = None
     goal_reached: Out[Bool] = None
     odom: Out[Odometry] = None
-    cmd_vel: Out[TwistStamped] = None
+    cmd_vel: Out[Twist] = None
     odom_pose: Out[PoseStamped] = None
 
     def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
@@ -155,7 +155,11 @@ class NavigationModule(Module):
         self.goal_active.publish(dimos_pose)
 
     def _on_ros_cmd_vel(self, msg: ROSTwistStamped):
-        dimos_twist = TwistStamped.from_ros_msg(msg)
+        # Extract the twist from the stamped message
+        dimos_twist = Twist(
+            linear=Vector3(msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z),
+            angular=Vector3(msg.twist.angular.x, msg.twist.angular.y, msg.twist.angular.z),
+        )
         self.cmd_vel.publish(dimos_twist)
 
     def _on_ros_odom(self, msg: ROSOdometry):
@@ -466,7 +470,7 @@ class NavBot(Resource):
         self.navigation_module.path_active.transport = core.LCMTransport("/path_active", Path)
         self.navigation_module.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.navigation_module.odom.transport = core.LCMTransport("/odom", Odometry)
-        self.navigation_module.cmd_vel.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        self.navigation_module.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.navigation_module.odom_pose.transport = core.LCMTransport("/odom_pose", PoseStamped)
 
         # Deploy ROS bridge

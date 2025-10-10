@@ -23,24 +23,34 @@ import os
 import time
 
 from dimos import core
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
+from dimos.agents2 import Agent
+from dimos.agents2.cli.human import HumanInput
+from dimos.agents2.skills.ros_navigation import RosNavigation
+from dimos.agents2.spec import Model, Provider
+from dimos.core import In, Module, Out, rpc
+from dimos.hardware.camera import zed
+from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.camera.webcam import Webcam
+from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,
+    Quaternion,
+    Transform,
+    Twist,
+    TwistStamped,
+    Vector3,
+)
 from dimos.msgs.nav_msgs.Odometry import Odometry
-from dimos.msgs.sensor_msgs import CameraInfo, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
+from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection2d import Detection3DModule
+from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from tf2_msgs.msg import TFMessage as ROSTFMessage
-from dimos.skills.skills import SkillLibrary
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
@@ -130,6 +140,7 @@ class UnitreeG1(Robot):
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
+        enable_perception: bool = False,
         enable_camera: bool = False,
     ):
         """Initialize the G1 robot.
@@ -144,7 +155,7 @@ class UnitreeG1(Robot):
             enable_joystick: Enable pygame joystick control
             enable_connection: Enable robot connection module
             enable_ros_bridge: Enable ROS bridge
-            enable_camera: Enable ZED camera module
+            enable_camera: Enable web camera module
         """
         super().__init__()
         self.ip = ip
@@ -154,6 +165,7 @@ class UnitreeG1(Robot):
         self.enable_joystick = enable_joystick
         self.enable_connection = enable_connection
         self.enable_ros_bridge = enable_ros_bridge
+        self.enable_perception = enable_perception
         self.enable_camera = enable_camera
         self.websocket_port = websocket_port
         self.lcm = LCM()
@@ -176,8 +188,7 @@ class UnitreeG1(Robot):
         self.spatial_memory_module = None
         self.joystick = None
         self.ros_bridge = None
-        self.zed_camera = None
-
+        self.camera = None
         self._setup_directories()
 
     def _setup_directories(self):
@@ -230,7 +241,7 @@ class UnitreeG1(Robot):
 
     def start(self):
         """Start the robot system with all modules."""
-        self.dimos = core.start(4)  # 2 workers for connection and visualization
+        self.dimos = core.start(8)  # 2 workers for connection and visualization
 
         if self.enable_connection:
             self._deploy_connection()
@@ -246,7 +257,15 @@ class UnitreeG1(Robot):
         if self.enable_ros_bridge:
             self._deploy_ros_bridge()
 
-        self._start_modules()
+        self.nav = self.dimos.deploy(NavigationModule)
+        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
+        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        self.nav.joy.transport = core.LCMTransport("/joy", Joy)
+        self.nav.start()
+
+        self._deploy_camera()
+        self._deploy_detection(self.nav.go_to)
 
         self.lcm.start()
 
@@ -385,9 +404,30 @@ class UnitreeG1(Robot):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        # Add /registered_scan topic from ROS to DIMOS
+        from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+        from std_msgs.msg import Bool as ROSBool
+
+        from dimos.msgs.std_msgs import Bool
+
+        # Navigation control topics from autonomy stack
         self.ros_bridge.add_topic(
-            "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
+            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
+        )
+        self.ros_bridge.add_topic(
+            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
+        )
+
+        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
+
+        self.ros_bridge.add_topic(
+            "/registered_scan",
+            PointCloud2,
+            ROSPointCloud2,
+            direction=BridgeDirection.ROS_TO_DIMOS,
+            remap_topic="/map",
         )
 
         logger.info(
@@ -473,9 +513,23 @@ def main():
         enable_camera=args.camera,
         enable_connection=os.getenv("ROBOT_IP") is not None,
         enable_ros_bridge=True,
+        enable_perception=True,
     )
     robot.start()
 
+    # time.sleep(7)
+    # print("Starting navigation...")
+    # print(
+    #     robot.nav.go_to(
+    #         PoseStamped(
+    #             ts=time.time(),
+    #             frame_id="map",
+    #             position=Vector3(0.0, 0.0, 0.03),
+    #             orientation=Quaternion(0, 0, 0, 0),
+    #         ),
+    #         timeout=10,
+    #     ),
+    # )
     try:
         if args.joystick:
             print("\n" + "=" * 50)
