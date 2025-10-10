@@ -85,7 +85,7 @@ class Image:
         # Raw constructor path
         if data is None:
             raise TypeError("'data' is required when constructing Image without 'impl'")
-        fmt = format if format is not None else ImageFormat.RGB
+        fmt = format if format is not None else ImageFormat.BGR
         fid = frame_id if frame_id is not None else ""
         tstamp = ts if ts is not None else time.time()
 
@@ -118,7 +118,7 @@ class Image:
     def from_numpy(
         cls,
         np_image: np.ndarray,
-        format: ImageFormat = ImageFormat.RGB,
+        format: ImageFormat = ImageFormat.BGR,
         to_cuda: bool = False,
         **kwargs,
     ) -> "Image":
@@ -350,10 +350,15 @@ class Image:
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
+        """Convert to LCM Image message."""
         msg = LCMImage()
+
+        # Header
         msg.header = Header()
         msg.header.seq = 0
         msg.header.frame_id = frame_id or self.frame_id
+
+        # Set timestamp
         if self.ts is not None:
             msg.header.stamp.sec = int(self.ts)
             msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
@@ -362,20 +367,21 @@ class Image:
             msg.header.stamp.sec = int(now)
             msg.header.stamp.nsec = int((now - int(now)) * 1e9)
 
-        arr = (
-            self.to_opencv()
-            if self.format in (ImageFormat.BGR, ImageFormat.RGB, ImageFormat.RGBA, ImageFormat.BGRA)
-            else self.to_opencv()
-        )
-        msg.height = int(arr.shape[0])
-        msg.width = int(arr.shape[1])
-        msg.encoding = _get_lcm_encoding(self.format, arr.dtype)
+        # Image properties
+        msg.height = self.height
+        msg.width = self.width
+        msg.encoding = _get_lcm_encoding(self.format, self.dtype)
         msg.is_bigendian = False
-        channels = 1 if arr.ndim == 2 else int(arr.shape[2])
-        msg.step = int(arr.shape[1] * arr.dtype.itemsize * channels)
-        img_bytes = arr.tobytes()
-        msg.data_length = len(img_bytes)
-        msg.data = img_bytes
+
+        # Calculate step (bytes per row)
+        channels = 1 if self.data.ndim == 2 else self.data.shape[2]
+        msg.step = self.width * self.dtype.itemsize * channels
+
+        # Image data - use raw data to preserve format
+        image_bytes = self.data.tobytes()
+        msg.data_length = len(image_bytes)
+        msg.data = image_bytes
+
         return msg.lcm_encode()
 
     @classmethod
