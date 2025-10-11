@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import time
 from typing import Optional
 
@@ -21,6 +22,7 @@ from reactivex import interval
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -159,3 +161,6 @@ def splice_cylinder(
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
+
+
+mapper = partial(create_module_blueprint, Map)

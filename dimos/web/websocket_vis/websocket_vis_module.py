@@ -19,6 +19,7 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
+from functools import partial
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -33,6 +34,7 @@ from starlette.routing import Route
 
 from dimos.core import Module, In, Out, rpc
 from dimos_lcm.std_msgs import Bool
+from dimos.core.blueprints import create_module_blueprint
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -293,3 +295,6 @@ class WebsocketVisModule(Module):
     def _emit(self, event: str, data: Any):
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
+
+
+websocket_vis = partial(create_module_blueprint, WebsocketVisModule)

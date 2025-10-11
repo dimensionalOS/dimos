@@ -23,12 +23,13 @@ import threading
 import re
 import os
 import shutil
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Optional
 from distributed.client import Client
 
 from distributed import get_client
 from dimos.core import Module, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
 
@@ -183,6 +184,9 @@ class UtilizationModule(Module):
             self._utilization_thread.stop()
             self._utilization_thread.join(timeout=2)
         super().stop()
+
+
+utilization = partial(create_module_blueprint, UtilizationModule)
 
 
 def _can_use_py_spy():
