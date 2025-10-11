@@ -103,6 +103,8 @@ def run_demo_skills():
     except KeyboardInterrupt:
         print("\nDemo stopped.")
 
+    agent_interface.stop()
+
 
 if __name__ == "__main__":
     run_demo_skills()

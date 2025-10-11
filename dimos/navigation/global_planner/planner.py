@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import abstractmethod
-from dataclasses import dataclass
 from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
@@ -22,8 +20,9 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
+from reactivex.disposable import Disposable
 
-logger = setup_logger("dimos.robot.unitree.global_planner")
+logger = setup_logger(__file__)
 
 import math
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
@@ -140,16 +139,7 @@ def resample_path(path: Path, spacing: float) -> Path:
     return Path(frame_id=path.frame_id, poses=resampled)
 
 
-@dataclass
-class Planner(Module):
-    target: In[PoseStamped] = None
-    path: Out[Path] = None
-
-    def __init__(self):
-        Module.__init__(self)
-
-
-class AstarPlanner(Planner):
+class AstarPlanner(Module):
     # LCM inputs
     target: In[PoseStamped] = None
     global_costmap: In[OccupancyGrid] = None
@@ -167,12 +157,22 @@ class AstarPlanner(Planner):
 
     @rpc
     def start(self):
-        # Subscribe to inputs
-        self.target.subscribe(self._on_target)
-        self.global_costmap.subscribe(self._on_costmap)
-        self.odom.subscribe(self._on_odom)
+        super().start()
+
+        unsub = self.target.subscribe(self._on_target)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.global_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.odom.subscribe(self._on_odom)
+        self._disposables.add(Disposable(unsub))
 
         logger.info("A* planner started")
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _on_costmap(self, msg: OccupancyGrid):
         """Handle incoming costmap messages."""

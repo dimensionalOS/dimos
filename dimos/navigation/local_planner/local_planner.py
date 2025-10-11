@@ -29,8 +29,9 @@ from dimos.msgs.geometry_msgs import Twist, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, quaternion_to_euler, normalize_angle
+from reactivex.disposable import Disposable
 
-logger = setup_logger("dimos.robot.local_planner")
+logger = setup_logger(__file__)
 
 
 class BaseLocalPlanner(Module):
@@ -89,13 +90,21 @@ class BaseLocalPlanner(Module):
 
     @rpc
     def start(self):
-        """Start the local planner module."""
-        # Subscribe to inputs
-        self.local_costmap.subscribe(self._on_costmap)
-        self.odom.subscribe(self._on_odom)
-        self.path.subscribe(self._on_path)
+        super().start()
 
-        logger.info("Local planner module started")
+        unsub = self.local_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.odom.subscribe(self._on_odom)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.path.subscribe(self._on_path)
+        self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self) -> None:
+        self.cancel_planning()
+        super().stop()
 
     def _on_costmap(self, msg: OccupancyGrid):
         self.latest_costmap = msg
@@ -186,11 +195,11 @@ class BaseLocalPlanner(Module):
         self.latest_path = None
         self.latest_odom = None
         self.latest_costmap = None
-        self.stop()
+        self.cancel_planning()
         logger.info("Local planner reset")
 
     @rpc
-    def stop(self):
+    def cancel_planning(self) -> None:
         """Stop the local planner and any running threads."""
         if self.planning_thread and self.planning_thread.is_alive():
             self.stop_planning.set()
@@ -198,10 +207,3 @@ class BaseLocalPlanner(Module):
             self.planning_thread = None
         stop_cmd = Twist()
         self.cmd_vel.publish(stop_cmd)
-
-        logger.info("Local planner stopped")
-
-    @rpc
-    def stop_planner_module(self):
-        self.stop()
-        self._close_module()

@@ -18,6 +18,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Quaternion
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.utils.logging_config import setup_logger
 import logging
+from reactivex.disposable import Disposable
 
 logger = setup_logger(__name__, level=logging.DEBUG)
 
@@ -36,10 +37,17 @@ class BBoxNavigationModule(Module):
 
     @rpc
     def start(self):
-        self.camera_info.subscribe(
+        unsub = self.camera_info.subscribe(
             lambda msg: setattr(self, "camera_intrinsics", [msg.K[0], msg.K[4], msg.K[2], msg.K[5]])
         )
-        self.detection2d.subscribe(self._on_detection)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.detection2d.subscribe(self._on_detection)
+        self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _on_detection(self, det: Detection2DArray):
         if det.detections_length == 0 or not self.camera_intrinsics:

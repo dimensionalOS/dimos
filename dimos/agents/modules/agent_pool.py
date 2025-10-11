@@ -14,17 +14,14 @@
 
 """Agent pool module for managing multiple agents."""
 
-import logging
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Union
 
 from reactivex import operators as ops
-from reactivex.disposable import CompositeDisposable
 from reactivex.subject import Subject
 
 from dimos.core import Module, In, Out, rpc
 from dimos.agents.modules.base_agent import BaseAgentModule
 from dimos.agents.modules.unified_agent import UnifiedAgentModule
-from dimos.skills.skills import SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.modules.agent_pool")
@@ -64,7 +61,6 @@ class AgentPoolModule(Module):
         self._config = agents_config
         self._default_agent = default_agent or next(iter(agents_config.keys()))
         self._agents = {}
-        self._disposables = CompositeDisposable()
 
         # Response routing
         self._response_subject = Subject()
@@ -72,6 +68,7 @@ class AgentPoolModule(Module):
     @rpc
     def start(self):
         """Deploy and start all agents."""
+        super().start()
         logger.info(f"Starting agent pool with {len(self._config)} agents")
 
         # Deploy agents based on config
@@ -117,11 +114,9 @@ class AgentPoolModule(Module):
             except Exception as e:
                 logger.error(f"Error stopping agent {agent_id}: {e}")
 
-        # Dispose subscriptions
-        self._disposables.dispose()
-
         # Clear agents
         self._agents.clear()
+        super().stop()
 
     @rpc
     def add_agent(self, agent_id: str, config: Dict[str, Any]):

@@ -22,13 +22,14 @@ from dimos.models.vl.qwen import QwenVlModel
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import Robot
 from dimos.utils.logging_config import setup_logger
+from dimos.core.resource import Resource
 
 from reactivex.disposable import CompositeDisposable
 
 logger = setup_logger(__file__)
 
 
-class OsmSkillContainer(SkillContainer):
+class OsmSkillContainer(SkillContainer, Resource):
     _robot: Robot
     _disposables: CompositeDisposable
     _latest_location: Optional[LatLon]
@@ -45,15 +46,13 @@ class OsmSkillContainer(SkillContainer):
         self._current_location_map = CurrentLocationMap(QwenVlModel())
         self._started = False
 
-    def __enter__(self) -> "OsmSkillContainer":
+    def start(self):
         self._started = True
         self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def stop(self):
         self._disposables.dispose()
-        self.stop()
-        return False
+        super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location

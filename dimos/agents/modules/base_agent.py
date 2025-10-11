@@ -109,6 +109,7 @@ class BaseAgentModule(BaseAgent, Module):
     @rpc
     def start(self):
         """Start the agent module and connect streams."""
+        super().start()
         logger.info(f"Starting agent module with model: {self.model}")
 
         # Primary AgentMessage input
@@ -141,9 +142,10 @@ class BaseAgentModule(BaseAgent, Module):
         self._module_disposables.clear()
 
         # Dispose BaseAgent resources
-        self.dispose()
+        self.base_agent_dispose()
 
         logger.info("Agent module stopped")
+        super().stop()
 
     @rpc
     def clear_history(self):

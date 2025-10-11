@@ -18,7 +18,7 @@ from typing import Generator, Optional
 
 import pytest
 
-from dimos.core import Module
+from dimos.core import Module, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import skill
@@ -27,6 +27,14 @@ from dimos.utils.data import get_data
 
 
 class SkillContainerTest(Module):
+    @rpc
+    def start(self):
+        super().start()
+
+    @rpc
+    def stop(self):
+        super().stop()
+
     @skill()
     def add(self, x: int, y: int) -> int:
         """adds x and y."""
@@ -145,5 +153,5 @@ async def test_coordinator_generator():
 
     print("coordinator loop finished")
     print(skillCoordinator)
-    container._close_module()
+    container.stop()
     skillCoordinator.stop()

@@ -17,7 +17,7 @@ from __future__ import annotations
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Optional, Union
+from typing import Any, Deque, List, Optional, Union
 
 from langchain_core.messages import (
     AIMessage,
@@ -25,18 +25,11 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, ScrollableContainer
-from textual.reactive import reactive
 from textual.widgets import Footer, RichLog
 
-from dimos.protocol.pubsub import lcm
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
-from dimos.utils.logging_config import setup_logger
 
 # Type alias for all message types we might receive
 AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]

@@ -37,7 +37,7 @@ def explorer():
     yield explorer
     # Cleanup after test
     try:
-        explorer.cleanup()
+        explorer.stop()
     except:
         pass
 
@@ -161,6 +161,8 @@ def test_frontier_detection_with_office_lidar(explorer, quick_costmap):
     else:
         print("No frontiers detected - map may be fully explored or parameters too restrictive")
 
+    explorer.stop()  # TODO: this should be a in try-finally
+
 
 def test_exploration_goal_selection(explorer):
     """Test the complete exploration goal selection pipeline."""
@@ -193,6 +195,8 @@ def test_exploration_goal_selection(explorer):
     else:
         print("No exploration goal selected - map may be fully explored")
 
+    explorer.stop()  # TODO: this should be a in try-finally
+
 
 def test_exploration_session_reset(explorer):
     """Test exploration session reset functionality."""
@@ -222,6 +226,7 @@ def test_exploration_session_reset(explorer):
     assert explorer.no_gain_counter == 0, "No-gain counter should be reset"
 
     print("Exploration session reset successfully")
+    explorer.stop()  # TODO: this should be a in try-finally
 
 
 def test_frontier_ranking(explorer):
@@ -267,6 +272,8 @@ def test_frontier_ranking(explorer):
     else:
         print("No frontiers found for ranking test")
 
+    explorer.stop()  # TODO: this should be a in try-finally
+
 
 def test_exploration_with_no_gain_detection():
     """Test information gain detection and exploration termination."""
@@ -301,10 +308,8 @@ def test_exploration_with_no_gain_detection():
         # Should have stopped due to no information gain
         assert goal is None, "Exploration should stop after no-gain threshold"
         assert explorer.no_gain_counter == 0, "Counter should reset after stopping"
-
-        print("No-gain detection test passed")
     finally:
-        explorer.cleanup()
+        explorer.stop()
 
 
 @pytest.mark.vis
@@ -388,10 +393,9 @@ def test_frontier_detection_visualization():
 
         # Display the image
         base_image.show(title="Frontier Detection - Office Lidar")
-
         print("Visualization displayed. Close the image window to continue.")
     finally:
-        explorer.cleanup()
+        explorer.stop()
 
 
 def test_performance_timing():
@@ -442,7 +446,7 @@ def test_performance_timing():
             print(f"  Goal selection: {goal_time:.4f}s")
             print(f"  Frontiers found: {len(frontiers)}")
         finally:
-            explorer.cleanup()
+            explorer.stop()
 
     # Check that larger maps take more time (expected behavior)
     # But verify times are reasonable

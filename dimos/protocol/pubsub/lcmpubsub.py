@@ -26,7 +26,6 @@ import lcm
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
-from dimos.protocol.service.spec import Service
 from dimos.utils.deprecation import deprecated
 from dimos.utils.logging_config import setup_logger
 

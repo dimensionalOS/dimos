@@ -31,6 +31,7 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.connection_interface import ConnectionInterface
@@ -70,7 +71,7 @@ class SerializableVideoFrame:
         return self.data
 
 
-class UnitreeWebRTCConnection:
+class UnitreeWebRTCConnection(Resource):
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
@@ -110,6 +111,32 @@ class UnitreeWebRTCConnection:
         self.thread = threading.Thread(target=start_background_loop, daemon=True)
         self.thread.start()
         self.connection_ready.wait()
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        # Cancel timer
+        if self.stop_timer:
+            self.stop_timer.cancel()
+            self.stop_timer = None
+
+        if self.task:
+            self.task.cancel()
+
+        async def async_disconnect() -> None:
+            try:
+                await self.conn.disconnect()
+            except Exception:
+                pass
+
+        if self.loop.is_running():
+            asyncio.run_coroutine_threadsafe(async_disconnect(), self.loop)
+
+            self.loop.call_soon_threadsafe(self.loop.stop)
+
+        if self.thread.is_alive():
+            self.thread.join(timeout=2.0)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
