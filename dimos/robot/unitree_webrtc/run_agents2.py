@@ -21,6 +21,7 @@ from dotenv import load_dotenv
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
+from dimos.core.resource import Resource
 from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
@@ -28,9 +29,7 @@ from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.robot.utils.robot_debugger import RobotDebugger
 from dimos.utils.logging_config import setup_logger
 
-from contextlib import ExitStack
-
-logger = setup_logger("dimos.robot.unitree_webrtc.run_agents2")
+logger = setup_logger(__file__)
 
 load_dotenv()
 
@@ -38,24 +37,22 @@ with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
     SYSTEM_PROMPT = f.read()
 
 
-class UnitreeAgents2Runner:
+class UnitreeAgents2Runner(Resource):
     _robot: Optional[UnitreeRobot]
     _agent: Optional[Agent]
-    _exit_stack: ExitStack
+    _robot_debugger: Optional[RobotDebugger]
+    _navigation_skill: Optional[NavigationSkillContainer]
 
     def __init__(self):
         self._robot: UnitreeRobot = None
         self._agent = None
-        self._exit_stack = ExitStack()
+        self._robot_debugger = None
+        self._navigation_skill = None
 
-    def __enter__(self):
-        logger.info("Initializing Unitree Go2 robot...")
-
-        self._robot = self._exit_stack.enter_context(
-            UnitreeGo2(
-                ip=os.getenv("ROBOT_IP"),
-                connection_type=os.getenv("CONNECTION_TYPE", "webrtc"),
-            )
+    def start(self) -> None:
+        self._robot = UnitreeGo2(
+            ip=os.getenv("ROBOT_IP"),
+            connection_type=os.getenv("CONNECTION_TYPE", "webrtc"),
         )
 
         time.sleep(3)
@@ -64,26 +61,18 @@ class UnitreeAgents2Runner:
 
         self.setup_agent()
 
-        self._exit_stack.enter_context(RobotDebugger(self._robot))
+        self._robot_debugger = RobotDebugger(self._robot)
+        self._robot_debugger.start()
 
-        logger.info("=" * 60)
-        logger.info("Unitree Go2 Agent Ready (agents2 framework)!")
-        logger.info("You can:")
-        logger.info("  - Type commands in the human CLI")
-        logger.info("  - Ask the robot to navigate to locations")
-        logger.info("  - Ask the robot to observe and describe surroundings")
-        logger.info("  - Ask the robot to follow people or explore areas")
-        logger.info("  - Ask the robot to perform actions (sit, stand, dance, etc.)")
-        logger.info("  - Ask the robot to speak text")
-        logger.info("=" * 60)
-
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        logger.info("Shutting down...")
-        self._exit_stack.close()
-        logger.info("Shutdown complete")
-        return False
+    def stop(self) -> None:
+        if self._navigation_skill:
+            self._navigation_skill.stop()
+        if self._robot_debugger:
+            self._robot_debugger.stop()
+        if self._agent:
+            self._agent.stop()
+        if self._robot:
+            self._robot.stop()
 
     def setup_agent(self) -> None:
         if not self._robot:
@@ -92,15 +81,15 @@ class UnitreeAgents2Runner:
         logger.info("Setting up agent with skills...")
 
         self._agent = Agent(system_prompt=SYSTEM_PROMPT)
+        self._navigation_skill = NavigationSkillContainer(
+            robot=self._robot,
+            video_stream=self._robot.connection.video,
+        )
+        self._navigation_skill.start()
 
         skill_containers = [
             UnitreeSkillContainer(robot=self._robot),
-            self._exit_stack.enter_context(
-                NavigationSkillContainer(
-                    robot=self._robot,
-                    video_stream=self._robot.connection.video,
-                )
-            ),
+            self._navigation_skill,
             HumanInput(),
         ]
 
@@ -110,7 +99,7 @@ class UnitreeAgents2Runner:
 
         self._agent.run_implicit_skill("human")
 
-        self._exit_stack.enter_context(self._agent)
+        self._agent.start()
 
         # Log available skills
         tools = self._agent.get_tools()
@@ -129,8 +118,10 @@ class UnitreeAgents2Runner:
 
 
 def main():
-    with UnitreeAgents2Runner() as runner:
-        runner.run()
+    runner = UnitreeAgents2Runner()
+    runner.start()
+    runner.run()
+    runner.stop()
 
 
 if __name__ == "__main__":

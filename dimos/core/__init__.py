@@ -22,8 +22,31 @@ from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 
-__all__ = ["TF", "LCMTF", "PubSubTF", "TFSpec", "TFConfig"]
-
+__all__ = [
+    "DimosCluster",
+    "In",
+    "LCMRPC",
+    "LCMTF",
+    "LCMTransport",
+    "Module",
+    "ModuleBase",
+    "ModuleConfig",
+    "Out",
+    "PubSubTF",
+    "RPCSpec",
+    "RemoteIn",
+    "RemoteOut",
+    "SHMTransport",
+    "TF",
+    "TFConfig",
+    "TFSpec",
+    "Transport",
+    "ZenohTransport",
+    "pLCMTransport",
+    "pSHMTransport",
+    "rpc",
+    "start",
+]
 
 class CudaCleanupPlugin:
     """Dask worker plugin to cleanup CUDA resources on shutdown."""
@@ -53,6 +76,7 @@ class CudaCleanupPlugin:
 
 
 def patch_actor(actor, cls): ...
+
 
 
 class RPCClient:

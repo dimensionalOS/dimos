@@ -12,24 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import queue
 import threading
 import time
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
+from typing import Literal, Optional
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
 
-from dimos.hardware.camera.spec import (
-    CameraConfig,
-    CameraHardware,
-)
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
+from dimos.hardware.camera.spec import CameraConfig, CameraHardware
 from dimos.utils.reactive import backpressure
 
 

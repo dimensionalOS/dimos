@@ -50,10 +50,44 @@ class MujocoConnection:
         self._is_cleaned_up = False
 
         # Register cleanup on exit
-        atexit.register(self.cleanup)
+        atexit.register(self.stop)
 
-    def start(self):
+    def start(self) -> None:
         self.mujoco_thread.start()
+
+    def stop(self) -> None:
+        """Clean up all resources. Can be called multiple times safely."""
+        if self._is_cleaned_up:
+            return
+
+        self._is_cleaned_up = True
+
+        # Stop all stream threads
+        for stop_event in self._stop_events:
+            stop_event.set()
+
+        # Wait for threads to finish
+        for thread in self._stream_threads:
+            if thread.is_alive():
+                thread.join(timeout=2.0)
+                if thread.is_alive():
+                    logger.warning(f"Stream thread {thread.name} did not stop gracefully")
+
+        # Clean up the MuJoCo thread
+        if hasattr(self, "mujoco_thread") and self.mujoco_thread:
+            self.mujoco_thread.cleanup()
+
+        # Clear references
+        self._stream_threads.clear()
+        self._stop_events.clear()
+
+        # Clear cached methods to prevent memory leaks
+        if hasattr(self, "lidar_stream"):
+            self.lidar_stream.cache_clear()
+        if hasattr(self, "odom_stream"):
+            self.odom_stream.cache_clear()
+        if hasattr(self, "video_stream"):
+            self.video_stream.cache_clear()
 
     def standup(self):
         print("standup supressed")
@@ -202,49 +236,3 @@ class MujocoConnection:
 
     def publish_request(self, topic: str, data: dict):
         pass
-
-    def stop(self):
-        """Stop the MuJoCo connection gracefully."""
-        self.cleanup()
-
-    def cleanup(self):
-        """Clean up all resources. Can be called multiple times safely."""
-        if self._is_cleaned_up:
-            return
-
-        logger.debug("Cleaning up MuJoCo connection resources")
-        self._is_cleaned_up = True
-
-        # Stop all stream threads
-        for stop_event in self._stop_events:
-            stop_event.set()
-
-        # Wait for threads to finish
-        for thread in self._stream_threads:
-            if thread.is_alive():
-                thread.join(timeout=2.0)
-                if thread.is_alive():
-                    logger.warning(f"Stream thread {thread.name} did not stop gracefully")
-
-        # Clean up the MuJoCo thread
-        if hasattr(self, "mujoco_thread") and self.mujoco_thread:
-            self.mujoco_thread.cleanup()
-
-        # Clear references
-        self._stream_threads.clear()
-        self._stop_events.clear()
-
-        # Clear cached methods to prevent memory leaks
-        if hasattr(self, "lidar_stream"):
-            self.lidar_stream.cache_clear()
-        if hasattr(self, "odom_stream"):
-            self.odom_stream.cache_clear()
-        if hasattr(self, "video_stream"):
-            self.video_stream.cache_clear()
-
-    def __del__(self):
-        """Destructor to ensure cleanup on object deletion."""
-        try:
-            self.cleanup()
-        except Exception:
-            pass

@@ -172,6 +172,8 @@ class UtilizationModule(Module):
 
     @rpc
     def start(self):
+        super().start()
+
         if self._utilization_thread:
             self._utilization_thread.start()
 
@@ -180,7 +182,7 @@ class UtilizationModule(Module):
         if self._utilization_thread:
             self._utilization_thread.stop()
             self._utilization_thread.join(timeout=2)
-        self._close_module()
+        super().stop()
 
 
 def _can_use_py_spy():

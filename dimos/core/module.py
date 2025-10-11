@@ -29,6 +29,7 @@ from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
+from dimos.core.resource import Resource
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
@@ -70,7 +71,7 @@ class ModuleConfig:
     tf_transport: type[TFSpec] = LCMTF
 
 
-class ModuleBase(Configurable[ModuleConfig], SkillContainer):
+class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     _rpc: Optional[RPCSpec] = None
     _tf: Optional[TFSpec] = None
     _loop: Optional[asyncio.AbstractEventLoop] = None
@@ -93,6 +94,15 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
             self.rpc.start()
         except ValueError:
             ...
+
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @rpc
+    def stop(self) -> None:
+        self._close_module()
+        super().stop()
 
     def _close_module(self):
         self._close_rpc()

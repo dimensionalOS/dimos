@@ -1,0 +1,267 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Test that all Module subclasses implement required resource management methods."""
+
+import ast
+import inspect
+from pathlib import Path
+from typing import Dict, List, Set, Tuple
+
+import pytest
+
+from dimos.core.module import Module
+
+
+class ModuleVisitor(ast.NodeVisitor):
+    """AST visitor to find classes and their base classes."""
+
+    def __init__(self, filepath: str):
+        self.filepath = filepath
+        self.classes: List[
+            Tuple[str, List[str], Set[str]]
+        ] = []  # (class_name, base_classes, methods)
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        """Visit a class definition."""
+        # Get base class names
+        base_classes = []
+        for base in node.bases:
+            if isinstance(base, ast.Name):
+                base_classes.append(base.id)
+            elif isinstance(base, ast.Attribute):
+                # Handle cases like dimos.core.Module
+                parts = []
+                current = base
+                while isinstance(current, ast.Attribute):
+                    parts.append(current.attr)
+                    current = current.value
+                if isinstance(current, ast.Name):
+                    parts.append(current.id)
+                base_classes.append(".".join(reversed(parts)))
+
+        # Get method names defined in this class
+        methods = set()
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef):
+                methods.add(item.name)
+
+        self.classes.append((node.name, base_classes, methods))
+        self.generic_visit(node)
+
+
+def get_import_aliases(tree: ast.AST) -> Dict[str, str]:
+    """Extract import aliases from the AST."""
+    aliases = {}
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                key = alias.asname if alias.asname else alias.name
+                aliases[key] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            for alias in node.names:
+                key = alias.asname if alias.asname else alias.name
+                full_name = f"{module}.{alias.name}" if module else alias.name
+                aliases[key] = full_name
+
+    return aliases
+
+
+def is_module_subclass(
+    base_classes: List[str], aliases: Dict[str, str], class_hierarchy: Dict[str, List[str]] = None
+) -> bool:
+    """Check if any base class is or resolves to dimos.core.Module or its variants (recursively)."""
+    target_classes = {
+        "Module",
+        "ModuleBase",
+        "DaskModule",
+        "dimos.core.Module",
+        "dimos.core.ModuleBase",
+        "dimos.core.DaskModule",
+        "dimos.core.module.Module",
+        "dimos.core.module.ModuleBase",
+        "dimos.core.module.DaskModule",
+    }
+
+    def check_base(base: str, visited: Set[str] = None) -> bool:
+        if visited is None:
+            visited = set()
+
+        # Avoid infinite recursion
+        if base in visited:
+            return False
+        visited.add(base)
+
+        # Check direct match
+        if base in target_classes:
+            return True
+
+        # Check if it's an alias
+        if base in aliases:
+            resolved = aliases[base]
+            if resolved in target_classes:
+                return True
+            # Continue checking with resolved name
+            base = resolved
+
+        # If we have a class hierarchy, recursively check parent classes
+        if class_hierarchy and base in class_hierarchy:
+            for parent_base in class_hierarchy[base]:
+                if check_base(parent_base, visited):
+                    return True
+
+        return False
+
+    for base in base_classes:
+        if check_base(base):
+            return True
+
+    return False
+
+
+def scan_file(
+    filepath: Path, class_hierarchy: Dict[str, List[str]] = None
+) -> List[Tuple[str, str, bool, bool, Set[str]]]:
+    """
+    Scan a Python file for Module subclasses.
+
+    Returns:
+        List of (class_name, filepath, has_start, has_stop, forbidden_methods)
+    """
+    forbidden_method_names = {"acquire", "release", "open", "close", "shutdown", "clean", "cleanup"}
+
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        tree = ast.parse(content, filename=str(filepath))
+        aliases = get_import_aliases(tree)
+
+        visitor = ModuleVisitor(str(filepath))
+        visitor.visit(tree)
+
+        results = []
+        for class_name, base_classes, methods in visitor.classes:
+            if is_module_subclass(base_classes, aliases, class_hierarchy):
+                has_start = "start" in methods
+                has_stop = "stop" in methods
+                forbidden_found = methods & forbidden_method_names
+                results.append((class_name, str(filepath), has_start, has_stop, forbidden_found))
+
+        return results
+
+    except (SyntaxError, UnicodeDecodeError):
+        # Skip files that can't be parsed
+        return []
+
+
+def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
+    """Build a complete class hierarchy by scanning all Python files."""
+    hierarchy = {}
+
+    for filepath in root_path.rglob("*.py"):
+        # Skip __pycache__ and other irrelevant directories
+        if "__pycache__" in filepath.parts or ".venv" in filepath.parts:
+            continue
+
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+
+            tree = ast.parse(content, filename=str(filepath))
+            visitor = ModuleVisitor(str(filepath))
+            visitor.visit(tree)
+
+            for class_name, base_classes, _ in visitor.classes:
+                hierarchy[class_name] = base_classes
+
+        except (SyntaxError, UnicodeDecodeError):
+            # Skip files that can't be parsed
+            continue
+
+    return hierarchy
+
+
+def scan_directory(root_path: Path) -> List[Tuple[str, str, bool, bool, Set[str]]]:
+    """Scan all Python files in the directory tree."""
+    # First, build the complete class hierarchy
+    class_hierarchy = build_class_hierarchy(root_path)
+
+    # Then scan for Module subclasses using the complete hierarchy
+    results = []
+
+    for filepath in root_path.rglob("*.py"):
+        # Skip __pycache__ and other irrelevant directories
+        if "__pycache__" in filepath.parts or ".venv" in filepath.parts:
+            continue
+
+        file_results = scan_file(filepath, class_hierarchy)
+        results.extend(file_results)
+
+    return results
+
+
+def get_all_module_subclasses():
+    """Find all Module subclasses in the dimos codebase."""
+    # Get the dimos package directory
+    dimos_file = inspect.getfile(Module)
+    dimos_path = Path(dimos_file).parent.parent  # Go up from dimos/core/module.py to dimos/
+
+    results = scan_directory(dimos_path)
+
+    # Filter out test modules and base classes
+    filtered_results = []
+    for class_name, filepath, has_start, has_stop, forbidden_methods in results:
+        # Skip base module classes themselves
+        if class_name in ("Module", "ModuleBase", "DaskModule"):
+            continue
+
+        # Skip test-only modules (those defined in test_ files)
+        if "test_" in Path(filepath).name:
+            continue
+
+        filtered_results.append((class_name, filepath, has_start, has_stop, forbidden_methods))
+
+    return filtered_results
+
+
+@pytest.mark.parametrize(
+    "class_name,filepath,has_start,has_stop,forbidden_methods",
+    get_all_module_subclasses(),
+    ids=lambda val: val[0] if isinstance(val, str) else str(val),
+)
+def test_module_has_start_and_stop(class_name, filepath, has_start, has_stop, forbidden_methods):
+    """Test that Module subclasses implement start and stop methods and don't use forbidden methods."""
+    # Get relative path for better error messages
+    try:
+        rel_path = Path(filepath).relative_to(Path.cwd())
+    except ValueError:
+        rel_path = filepath
+
+    errors = []
+
+    # Check for missing required methods
+    if not has_start:
+        errors.append("missing required method: start")
+    if not has_stop:
+        errors.append("missing required method: stop")
+
+    # Check for forbidden methods
+    if forbidden_methods:
+        forbidden_list = ", ".join(sorted(forbidden_methods))
+        errors.append(f"has forbidden method(s): {forbidden_list}")
+
+    assert not errors, f"{class_name} in {rel_path} has issues:\n  - " + "\n  - ".join(errors)

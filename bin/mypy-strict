@@ -1,0 +1,98 @@
+#!/bin/bash
+#
+# Run mypy with strict settings on the dimos codebase.
+#
+# Usage:
+#   ./bin/mypy-strict                          # Run mypy and show all errors
+#   ./bin/mypy-strict --user me                # Filter for your git user.email
+#   ./bin/mypy-strict --after cutoff           # Filter for lines committed on or after 2025-10-08
+#   ./bin/mypy-strict --after 2025-11-11       # Filter for lines committed on or after specific date
+#   ./bin/mypy-strict --user me --after cutoff # Chain filters
+#
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+cd "$ROOT"
+
+. .venv/bin/activate
+
+run_mypy() {
+  export MYPYPATH=/opt/ros/jazzy/lib/python3.12/site-packages
+
+  mypy_args=(
+    --config-file mypy_strict.ini
+    --show-error-codes
+    --hide-error-context
+    --no-pretty
+    dimos
+  )
+  mypy "${mypy_args[@]}"
+}
+
+main() {
+  local user_email="none"
+  local after_date=""
+
+  # Parse arguments
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --user)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --user requires an argument" >&2
+          exit 1
+        fi
+        case "$2" in
+          me)
+            user_email="$(git config user.email || echo none)"
+            ;;
+          all)
+            user_email="none"
+            ;;
+          *)
+            user_email="$2"
+            ;;
+        esac
+        shift 2
+        ;;
+      --after)
+        if [[ $# -lt 2 ]]; then
+          echo "Error: --after requires an argument" >&2
+          exit 1
+        fi
+        case "$2" in
+          cutoff)
+            after_date="2025-10-10"
+            ;;
+          start)
+            after_date=""
+            ;;
+          *)
+            after_date="$2"
+            ;;
+        esac
+        shift 2
+        ;;
+      *)
+        echo "Error: Unknown argument '$1'" >&2
+        exit 1
+        ;;
+    esac
+  done
+
+  # Build filter pipeline
+  local pipeline="run_mypy"
+
+  if [[ -n "$after_date" ]]; then
+    pipeline="$pipeline | ./bin/filter-errors-after-date '$after_date'"
+  fi
+
+  if [[ "$user_email" != "none" ]]; then
+    pipeline="$pipeline | ./bin/filter-errors-for-user '$user_email'"
+  fi
+
+  eval "$pipeline"
+}
+
+main "$@"

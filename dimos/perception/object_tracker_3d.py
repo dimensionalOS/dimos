@@ -61,7 +61,6 @@ class ObjectTracker3D(ObjectTracker2D):
         self.camera_intrinsics = None
         self._latest_depth_frame: Optional[np.ndarray] = None
         self._latest_camera_info: Optional[CameraInfo] = None
-        self._aligned_frames_subscription = None
 
         # TF publisher for tracked object
         self.tf = TF()
@@ -71,7 +70,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
     @rpc
     def start(self):
-        """Start the 3D tracking module with depth stream alignment."""
+        super().start()
 
         # Subscribe to aligned RGB and depth streams
         def on_aligned_frames(frames_tuple):
@@ -92,7 +91,8 @@ class ObjectTracker3D(ObjectTracker2D):
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
-        self._aligned_frames_subscription = aligned_frames.subscribe(on_aligned_frames)
+        unsub = aligned_frames.subscribe(on_aligned_frames)
+        self._disposables.add(unsub)
 
         # Subscribe to camera info
         def on_camera_info(camera_info_msg: CameraInfo):
@@ -108,6 +108,10 @@ class ObjectTracker3D(ObjectTracker2D):
         self.camera_info.subscribe(on_camera_info)
 
         logger.info("ObjectTracker3D module started with aligned frame subscription")
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _process_tracking(self):
         """Override to add 3D detection creation after 2D tracking."""
@@ -298,12 +302,3 @@ class ObjectTracker3D(ObjectTracker2D):
         cv2.putText(viz_image, text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         return viz_image
-
-    @rpc
-    def cleanup(self):
-        """Clean up resources."""
-        super().cleanup()
-
-        if self._aligned_frames_subscription:
-            self._aligned_frames_subscription.dispose()
-            self._aligned_frames_subscription = None

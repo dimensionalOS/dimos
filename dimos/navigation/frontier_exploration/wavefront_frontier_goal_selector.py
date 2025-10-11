@@ -33,6 +33,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
 from dimos.utils.transform_utils import get_distance
+from reactivex.disposable import Disposable
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 
@@ -90,8 +91,8 @@ class WavefrontFrontierExplorer(Module):
     """
 
     # LCM inputs
-    costmap: In[OccupancyGrid] = None
-    odometry: In[PoseStamped] = None
+    global_costmap: In[OccupancyGrid] = None
+    odom: In[PoseStamped] = None
     goal_reached: In[Bool] = None
     explore_cmd: In[Bool] = None
     stop_explore_cmd: In[Bool] = None
@@ -152,29 +153,30 @@ class WavefrontFrontierExplorer(Module):
 
     @rpc
     def start(self):
-        """Start the frontier exploration module."""
-        # Subscribe to inputs
-        self.costmap.subscribe(self._on_costmap)
-        self.odometry.subscribe(self._on_odometry)
+        super().start()
 
-        # Subscribe to goal_reached if available
+        unsub = self.global_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.odom.subscribe(self._on_odometry)
+        self._disposables.add(Disposable(unsub))
+
         if self.goal_reached.transport is not None:
-            self.goal_reached.subscribe(self._on_goal_reached)
+            unsub = self.goal_reached.subscribe(self._on_goal_reached)
+            self._disposables.add(Disposable(unsub))
 
-        # Subscribe to exploration commands
         if self.explore_cmd.transport is not None:
-            self.explore_cmd.subscribe(self._on_explore_cmd)
-        if self.stop_explore_cmd.transport is not None:
-            self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+            unsub = self.explore_cmd.subscribe(self._on_explore_cmd)
+            self._disposables.add(Disposable(unsub))
 
-        logger.info("WavefrontFrontierExplorer started")
+        if self.stop_explore_cmd.transport is not None:
+            unsub = self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+            self._disposables.add(Disposable(unsub))
 
     @rpc
-    def cleanup(self):
-        """Clean up resources."""
+    def stop(self) -> None:
         self.stop_exploration()
-        self._close_module()
-        logger.info("WavefrontFrontierExplorer cleanup complete")
+        super().stop()
 
     def _on_costmap(self, msg: OccupancyGrid):
         """Handle incoming costmap messages."""

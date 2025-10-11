@@ -21,16 +21,6 @@ Minimal implementation using WebRTC connection for robot control.
 import logging
 import os
 import time
-from typing import Optional
-
-from dimos_lcm.foxglove_msgs import SceneUpdate
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import Image as ROSImage
-from sensor_msgs.msg import Joy as ROSJoy
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import core
 from dimos.agents2 import Agent
@@ -38,6 +28,8 @@ from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.agents2.spec import Model, Provider
 from dimos.core import In, Module, Out, rpc
+from dimos.core.dimos import Dimos
+from dimos.core.resource import Resource
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
@@ -55,7 +47,6 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d import Detection3DModule
 from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
@@ -71,6 +62,14 @@ from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos_lcm.foxglove_msgs import SceneUpdate
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from reactivex.disposable import Disposable
+from sensor_msgs.msg import Joy as ROSJoy
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from tf2_msgs.msg import TFMessage as ROSTFMessage
+from typing import Optional
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
@@ -101,10 +100,21 @@ class G1ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
+
+        super().start()
+
         # Use the exact same UnitreeWebRTCConnection as Go2
         self.connection = UnitreeWebRTCConnection(self.ip)
-        self.movecmd.subscribe(self.move)
-        self.odom_in.subscribe(self._publish_odom_pose)
+        self.connection.start()
+        unsub = self.movecmd.subscribe(self.move)
+        self._disposables.add(Disposable(unsub))
+        unsub = self.odom_in.subscribe(self._publish_odom_pose)
+        self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self) -> None:
+        self.connection.stop()
+        super().stop()
 
     def _publish_odom_pose(self, msg: Odometry):
         self.odom_pose.publish(
@@ -128,7 +138,7 @@ class G1ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeG1(Robot):
+class UnitreeG1(Robot, Resource):
     """Unitree G1 humanoid robot."""
 
     def __init__(
@@ -183,7 +193,7 @@ class UnitreeG1(Robot):
         self.capabilities = [RobotCapability.LOCOMOTION]
 
         # Module references
-        self.dimos = None
+        self._dimos = Dimos(n=4)
         self.connection = None
         self.websocket_vis = None
         self.foxglove_bridge = None
@@ -242,8 +252,8 @@ class UnitreeG1(Robot):
         self.detection = detection
 
     def start(self):
-        """Start the robot system with all modules."""
-        self.dimos = core.start(8)  # 2 workers for connection and visualization
+        self.lcm.start()
+        self._dimos.start()
 
         if self.enable_connection:
             self._deploy_connection()
@@ -308,20 +318,13 @@ class UnitreeG1(Robot):
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
         self._start_modules()
 
-    def stop(self):
+    def stop(self) -> None:
+        self._dimos.stop()
         self.lcm.stop()
-
-    def __enter__(self) -> "UnitreeG1":
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
-        return False
 
     def _deploy_connection(self):
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(G1ConnectionModule, self.ip)
+        self.connection = self._dimos.deploy(G1ConnectionModule, self.ip)
 
         # Configure LCM transports
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
@@ -332,7 +335,7 @@ class UnitreeG1(Robot):
         """Deploy and configure a standard webcam module."""
         logger.info("Deploying standard webcam module...")
 
-        self.camera = self.dimos.deploy(
+        self.camera = self._dimos.deploy(
             CameraModule,
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
@@ -355,7 +358,7 @@ class UnitreeG1(Robot):
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
         # Deploy WebSocket visualization module
-        self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
         # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
@@ -367,6 +370,7 @@ class UnitreeG1(Robot):
                 "/zed/depth_image#sensor_msgs.Image",
             ]
         )
+        self.foxglove_bridge.start()
 
     def _deploy_perception(self):
         self.spatial_memory_module = self.dimos.deploy(
@@ -387,7 +391,7 @@ class UnitreeG1(Robot):
         from dimos.robot.unitree_webrtc.g1_joystick_module import G1JoystickModule
 
         logger.info("Deploying G1 joystick module...")
-        self.joystick = self.dimos.deploy(G1JoystickModule)
+        self.joystick = self._dimos.deploy(G1JoystickModule)
         self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
         logger.info("Joystick module deployed - pygame window will open")
 
@@ -436,25 +440,15 @@ class UnitreeG1(Robot):
             remap_topic="/map",
         )
 
+        self.ros_bridge.start()
+
         logger.info(
             "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
         )
 
     def _start_modules(self):
         """Start all deployed modules."""
-        if self.connection:
-            self.connection.start()
-        # self.websocket_vis.start()
-        self.foxglove_bridge.start()
-
-        # if self.joystick:
-        #    self.joystick.start()
-
-        self.camera.start()
-        self.detection.start()
-
-        if self.enable_perception:
-            self.spatial_memory_module.start()
+        self._dimos.start_all_modules()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -474,27 +468,6 @@ class UnitreeG1(Robot):
         """Get the robot's odometry."""
         # Note: odom functionality removed from G1ConnectionModule
         return None
-
-    def shutdown(self):
-        """Shutdown the robot and clean up resources."""
-        logger.info("Shutting down UnitreeG1...")
-
-        # Shutdown ROS bridge if it exists
-        if self.ros_bridge is not None:
-            try:
-                self.ros_bridge.shutdown()
-                logger.info("ROS bridge shut down successfully")
-            except Exception as e:
-                logger.error(f"Error shutting down ROS bridge: {e}")
-
-        # Stop other modules if needed
-        if self.websocket_vis:
-            try:
-                self.websocket_vis.stop()
-            except Exception as e:
-                logger.error(f"Error stopping websocket vis: {e}")
-
-        logger.info("UnitreeG1 shutdown complete")
 
     @property
     def spatial_memory(self) -> Optional[SpatialMemory]:
@@ -566,7 +539,7 @@ def main():
             time.sleep(1)
     except KeyboardInterrupt:
         logger.info("Shutting down...")
-        robot.shutdown()
+        robot.stop()
 
 
 if __name__ == "__main__":

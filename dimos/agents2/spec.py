@@ -160,13 +160,11 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
         if self.transport:
             self.transport.publish(self.config.agent_topic, msg)
 
-    @rpc
-    @abstractmethod
-    def start(self): ...
+    def start(self) -> None:
+        super().start()
 
-    @rpc
-    @abstractmethod
-    def stop(self): ...
+    def stop(self) -> None:
+        super().stop()
 
     @rpc
     @abstractmethod

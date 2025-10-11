@@ -189,27 +189,20 @@ class Agent(AgentSpec):
                 model_provider=self.config.provider, model=self.config.model
             )
 
-    def __enter__(self) -> "Agent":
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
-        return False
-
     @rpc
     def get_agent_id(self) -> str:
         return self._agent_id
 
     @rpc
     def start(self):
+        super().start()
         self.coordinator.start()
 
     @rpc
     def stop(self):
-        self._close_module()
         self.coordinator.stop()
         self._agent_stopped = True
+        super().stop()
 
     def clear_history(self):
         self._history.clear()

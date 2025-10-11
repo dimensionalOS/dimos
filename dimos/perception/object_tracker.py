@@ -22,7 +22,8 @@ from dimos.core import In, Out, Module, rpc
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose, PoseStamped
+from reactivex.disposable import Disposable
+from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 
@@ -101,7 +102,6 @@ class ObjectTracking(Module):
         self._latest_rgb_frame: Optional[np.ndarray] = None
         self._latest_depth_frame: Optional[np.ndarray] = None
         self._latest_camera_info: Optional[CameraInfo] = None
-        self._aligned_frames_subscription = None
 
         # Tracking thread control
         self.tracking_thread: Optional[threading.Thread] = None
@@ -119,7 +119,7 @@ class ObjectTracking(Module):
 
     @rpc
     def start(self):
-        """Start the object tracking module and subscribe to LCM streams."""
+        super().start()
 
         # Subscribe to aligned rgb and depth streams
         def on_aligned_frames(frames_tuple):
@@ -140,7 +140,8 @@ class ObjectTracking(Module):
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
-        self._aligned_frames_subscription = aligned_frames.subscribe(on_aligned_frames)
+        unsub = aligned_frames.subscribe(on_aligned_frames)
+        self._disposables.add(unsub)
 
         # Subscribe to camera info stream separately (doesn't need alignment)
         def on_camera_info(camera_info_msg: CameraInfo):
@@ -154,9 +155,19 @@ class ObjectTracking(Module):
                 camera_info_msg.K[5],
             ]
 
-        self.camera_info.subscribe(on_camera_info)
+        unsub = self.camera_info.subscribe(on_camera_info)
+        self._disposables.add(Disposable(unsub))
 
-        logger.info("ObjectTracking module started with aligned frame subscription")
+    @rpc
+    def stop(self) -> None:
+        self.stop_track()
+
+        self.stop_tracking.set()
+
+        if self.tracking_thread and self.tracking_thread.is_alive():
+            self.tracking_thread.join(timeout=2.0)
+
+        super().stop()
 
     @rpc
     def track(
@@ -611,18 +622,3 @@ class ObjectTracking(Module):
             return depth_25th_percentile
 
         return None
-
-    @rpc
-    def cleanup(self):
-        """Clean up resources."""
-        self.stop_track()
-
-        # Ensure thread is stopped
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            self.stop_tracking.set()
-            self.tracking_thread.join(timeout=2.0)
-
-        # Unsubscribe from aligned frames
-        if self._aligned_frames_subscription:
-            self._aligned_frames_subscription.dispose()
-            self._aligned_frames_subscription = None

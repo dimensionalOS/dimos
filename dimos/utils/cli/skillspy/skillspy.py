@@ -28,7 +28,6 @@ from textual.widgets import DataTable, Footer, RichLog
 
 from dimos.protocol.skill.comms import SkillMsg
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
-from dimos.protocol.skill.type import MsgType
 
 
 class AgentSpy:

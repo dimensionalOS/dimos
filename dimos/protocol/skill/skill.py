@@ -166,21 +166,9 @@ class SkillContainer:
             self._skill_thread_pool.shutdown(wait=True)
             self._skill_thread_pool = None
 
-        # If this container is also a Module, close the module properly
-        if hasattr(self, "_close_module"):
-            self._close_module()
-        elif hasattr(self, "_close_rpc"):
-            self._close_rpc()
-
-        if hasattr(self, "_loop") and hasattr(self, "_loop_thread") and self._loop_thread:
-            if self._loop_thread.is_alive():
-                self._loop.call_soon_threadsafe(self._loop.stop)
-                self._loop_thread.join(timeout=2)
-            self._loop = None
-            self._loop_thread = None
-
-        if hasattr(self, "_disposables"):
-            self._disposables.dispose()
+        # Continue the MRO chain if there's a parent stop() method
+        if hasattr(super(), "stop"):
+            super().stop()
 
     # TODO: figure out standard args/kwargs passing format,
     # use same interface as skill coordinator call_skill method

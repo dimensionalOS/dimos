@@ -610,6 +610,8 @@ class ZEDModule(Module):
             logger.warning("ZED module already running")
             return
 
+        super().start()
+
         try:
             # Initialize ZED camera
             self.zed_camera = ZEDCamera(
@@ -671,7 +673,7 @@ class ZEDModule(Module):
             self.zed_camera.close()
             self.zed_camera = None
 
-        logger.info("ZED module stopped")
+        super().stop()
 
     def _capture_and_publish(self):
         """Capture frame and publish all data."""
@@ -868,7 +870,3 @@ class ZEDModule(Module):
         if self.zed_camera and self.enable_tracking:
             return self.zed_camera.get_pose()
         return None
-
-    def cleanup(self):
-        """Clean up resources on module destruction."""
-        self.stop()
