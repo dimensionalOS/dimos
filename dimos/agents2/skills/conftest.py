@@ -66,21 +66,27 @@ def fake_gps_position_stream():
 
 @pytest.fixture
 def navigation_skill_container(fake_robot, fake_video_stream):
-    with NavigationSkillContainer(fake_robot, fake_video_stream) as container:
-        yield container
+    container = NavigationSkillContainer(fake_robot, fake_video_stream)
+    container.start()
+    yield container
+    container.stop()
 
 
 @pytest.fixture
 def gps_nav_skill_container(fake_gps_robot, fake_gps_position_stream):
-    with GpsNavSkillContainer(fake_gps_robot, fake_gps_position_stream) as container:
-        yield container
+    container = GpsNavSkillContainer(fake_gps_robot, fake_gps_position_stream)
+    container.start()
+    yield container
+    container.stop()
 
 
 @pytest.fixture
 def google_maps_skill_container(fake_gps_robot, fake_gps_position_stream, mocker):
-    with GoogleMapsSkillContainer(fake_gps_robot, fake_gps_position_stream) as container:
-        container._client = mocker.MagicMock()
-        yield container
+    container = GoogleMapsSkillContainer(fake_gps_robot, fake_gps_position_stream)
+    container.start()
+    container._client = mocker.MagicMock()
+    yield container
+    container.stop()
 
 
 @pytest.fixture

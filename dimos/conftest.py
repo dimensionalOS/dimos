@@ -52,7 +52,7 @@ def monitor_threads(request):
     if not new_leaks:
         return
 
-    thread_names = [t.name for f in new_leaks]
+    thread_names = [t.name for t in new_leaks]
 
     pytest.fail(
         f"Non-closed threads before or during this test. The thread names: {thread_names}. "

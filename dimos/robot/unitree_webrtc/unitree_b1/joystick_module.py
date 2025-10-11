@@ -48,6 +48,9 @@ class JoystickModule(Module):
     @rpc
     def start(self):
         """Initialize pygame and start control loop."""
+
+        super().start()
+
         try:
             import pygame
         except ImportError:
@@ -63,6 +66,27 @@ class JoystickModule(Module):
         self._thread.start()
 
         return True
+
+    @rpc
+    def stop(self) -> None:
+        """Stop the joystick module."""
+
+        self.running = False
+        self.pygame_ready = False
+
+        # Send stop command
+        stop_twist = Twist()
+        stop_twist_stamped = TwistStamped(
+            ts=time.time(),
+            frame_id="base_link",
+            linear=stop_twist.linear,
+            angular=stop_twist.angular,
+        )
+        self.twist_out.publish(stop_twist_stamped)
+
+        self._thread.join(2)
+
+        super().stop()
 
     def _pygame_loop(self):
         """Main pygame event loop - ALL pygame operations happen here."""
@@ -255,23 +279,3 @@ class JoystickModule(Module):
             y_pos += 25
 
         pygame.display.flip()
-
-    @rpc
-    def stop(self):
-        """Stop the joystick module."""
-        self.running = False
-        # Send stop command
-        stop_twist = Twist()
-        stop_twist_stamped = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=stop_twist.linear,
-            angular=stop_twist.angular,
-        )
-        self.twist_out.publish(stop_twist_stamped)
-        return True
-
-    def cleanup(self):
-        """Clean up pygame resources."""
-        self.running = False
-        self.pygame_ready = False

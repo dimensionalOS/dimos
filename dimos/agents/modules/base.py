@@ -516,7 +516,7 @@ class BaseAgent:
 
         return await self._process_query_async(agent_msg)
 
-    def dispose(self):
+    def base_agent_dispose(self) -> None:
         """Dispose of all resources and close gateway."""
         self.response_subject.on_completed()
         if self._executor:

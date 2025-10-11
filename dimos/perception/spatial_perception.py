@@ -38,7 +38,7 @@ from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.types.vector import Vector
 from dimos.types.robot_location import RobotLocation
 
-logger = setup_logger("dimos.perception.spatial_memory")
+logger = setup_logger(__file__)
 
 
 class SpatialMemory(Module):
@@ -52,7 +52,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    video: In[Image] = None
+    color_image: In[Image] = None
     odom: In[PoseStamped] = None
 
     def __init__(
@@ -176,7 +176,7 @@ class SpatialMemory(Module):
 
     @rpc
     def start(self):
-        """Start the spatial memory module and subscribe to LCM streams."""
+        super().start()
 
         # Subscribe to LCM streams
         def set_video(image_msg: Image):
@@ -191,8 +191,9 @@ class SpatialMemory(Module):
         def set_odom(odom_msg: PoseStamped):
             self._latest_odom = odom_msg
 
-        unsub = self.video.subscribe(set_video)
+        unsub = self.color_image.subscribe(set_video)
         self._disposables.add(Disposable(unsub))
+
         unsub = self.odom.subscribe(set_odom)
         self._disposables.add(Disposable(unsub))
 
@@ -200,11 +201,17 @@ class SpatialMemory(Module):
         unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())
         self._disposables.add(Disposable(unsub))
 
-        logger.info("SpatialMemory module started and subscribed to LCM streams")
-
     @rpc
     def stop(self):
-        self._close_module()
+        self.stop_continuous_processing()
+
+        # Save data before shutdown
+        self.save()
+
+        if self._visual_memory:
+            self._visual_memory.clear()
+
+        super().stop()
 
     def _process_frame(self):
         """Process the latest frame with pose data if available."""
@@ -627,18 +634,6 @@ class SpatialMemory(Module):
                 - stored_frame_count: Number of frames actually stored
         """
         return {"frame_count": self.frame_count, "stored_frame_count": self.stored_frame_count}
-
-    def cleanup(self):
-        """Clean up resources."""
-        # Stop any ongoing processing
-        self.stop_continuous_processing()
-
-        # Save data if possible
-        self.save()
-
-        # Log cleanup
-        if self.vector_db:
-            logger.info(f"Cleaning up SpatialMemory, stored {self.stored_frame_count} frames")
 
     @rpc
     def tag_location(self, robot_location: RobotLocation) -> bool:

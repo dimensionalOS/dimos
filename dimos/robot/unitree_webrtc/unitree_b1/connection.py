@@ -21,7 +21,6 @@ import logging
 import socket
 import threading
 import time
-from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
@@ -30,6 +29,7 @@ from dimos.msgs.std_msgs import Int32
 from dimos.utils.logging_config import setup_logger
 
 from .b1_command import B1Command
+from reactivex.disposable import Disposable
 
 # Setup logger with DEBUG level for troubleshooting
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1.connection", level=logging.DEBUG)
@@ -90,6 +90,8 @@ class B1ConnectionModule(Module):
     def start(self):
         """Start the connection and subscribe to command streams."""
 
+        super().start()
+
         # Setup UDP socket (unless in test mode)
         if not self.test_mode:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -99,11 +101,14 @@ class B1ConnectionModule(Module):
 
         # Subscribe to input streams
         if self.cmd_vel:
-            self.cmd_vel.subscribe(self.handle_twist_stamped)
+            unsub = self.cmd_vel.subscribe(self.handle_twist_stamped)
+            self._disposables.add(Disposable(unsub))
         if self.mode_cmd:
-            self.mode_cmd.subscribe(self.handle_mode)
+            unsub = self.mode_cmd.subscribe(self.handle_mode)
+            self._disposables.add(Disposable(unsub))
         if self.odom_in:
-            self.odom_in.subscribe(self._publish_odom_pose)
+            unsub = self.odom_in.subscribe(self._publish_odom_pose)
+            self._disposables.add(Disposable(unsub))
 
         # Start threads
         self.running = True
@@ -117,11 +122,10 @@ class B1ConnectionModule(Module):
         self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self.watchdog_thread.start()
 
-        return True
-
     @rpc
     def stop(self):
         """Stop the connection and send stop commands."""
+
         self.set_mode(RobotMode.IDLE)  # IDLE
         with self.cmd_lock:
             self._current_cmd = B1Command(mode=RobotMode.IDLE)  # Zero all velocities
@@ -146,7 +150,7 @@ class B1ConnectionModule(Module):
             self.socket.close()
             self.socket = None
 
-        return True
+        super().stop()
 
     def handle_twist_stamped(self, twist_stamped: TwistStamped):
         """Handle timestamped Twist message and convert to B1Command.
@@ -350,10 +354,6 @@ class B1ConnectionModule(Module):
         self.handle_twist_stamped(twist_stamped)
         return True
 
-    def cleanup(self):
-        """Clean up resources when module is destroyed."""
-        self.stop()
-
 
 class MockB1ConnectionModule(B1ConnectionModule):
     """Test connection module that prints commands instead of sending UDP."""
@@ -389,3 +389,11 @@ class MockB1ConnectionModule(B1ConnectionModule):
 
             self.packet_count += 1
             time.sleep(0.020)
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()

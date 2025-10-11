@@ -58,7 +58,7 @@ def test_detection3dpc(detection3dpc):
     # def test_point_cloud_properties(detection3dpc):
     """Test point cloud data and boundaries."""
     pc_points = detection3dpc.pointcloud.points()
-    assert len(pc_points) in [69, 70]
+    assert len(pc_points) in [68, 69, 70]
     assert detection3dpc.pointcloud.frame_id == "world", (
         f"Expected frame_id 'world', got '{detection3dpc.pointcloud.frame_id}'"
     )

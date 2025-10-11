@@ -15,7 +15,7 @@
 from typing import Optional, Union
 from datetime import datetime
 from dimos_lcm import tf
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, Service
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.protocol.tf.tf import TFSpec, TFConfig
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
