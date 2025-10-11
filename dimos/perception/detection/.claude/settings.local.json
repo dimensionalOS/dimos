@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//home/lesh/coding/dimensional/dimos/dimos/**)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

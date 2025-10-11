@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(grep:*)",
+      "Read(//home/lesh/coding/dimensional/dimos/dimos/perception/detection2d/**)"
+    ],
+    "deny": []
+  }
+}

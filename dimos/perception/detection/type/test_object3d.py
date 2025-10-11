@@ -14,10 +14,10 @@
 
 import pytest
 
-from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.moduleDB import Object3D, ObjectDBModule
-from dimos.perception.detection2d.type.detection3d import ImageDetections3D
+from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.module3D import Detection3DModule
+from dimos.perception.detection.moduleDB import Object3D, ObjectDBModule
+from dimos.perception.detection.type.detection3d import ImageDetections3D
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 
 

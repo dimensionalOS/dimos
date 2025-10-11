@@ -15,7 +15,7 @@
 from abc import ABC, abstractmethod
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.type import (
+from dimos.perception.detection.type import (
     InconvinientDetectionFormat,
 )
 

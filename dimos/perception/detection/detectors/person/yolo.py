@@ -21,11 +21,11 @@ from ultralytics import YOLO
 from ultralytics.engine.results import Boxes, Keypoints, Results
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.detectors.types import Detector
+from dimos.perception.detection.detectors.types import Detector
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.detection2d.yolo.person")
+logger = setup_logger("dimos.perception.detection.yolo.person")
 
 
 # Type alias for YOLO person detection results
@@ -64,7 +64,7 @@ Each Results object in the list contains:
 
 Note: All tensor data is on GPU by default. Use .cpu() to move to CPU.
 """
-from dimos.perception.detection2d.type.person import Person
+from dimos.perception.detection.type.person import Person
 
 
 class YoloPersonDetector(Detector):

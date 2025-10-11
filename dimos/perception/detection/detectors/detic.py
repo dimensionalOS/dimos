@@ -18,7 +18,7 @@ import sys
 import numpy as np
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.detectors.types import Detector
+from dimos.perception.detection.detectors.types import Detector
 from dimos.perception.detection2d.utils import plot_results
 
 # Add Detic to Python path

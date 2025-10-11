@@ -14,7 +14,6 @@
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
@@ -26,9 +25,9 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.detectors import Detector, Yolo2DDetector
-from dimos.perception.detection2d.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection2d.type import (
+from dimos.perception.detection.detectors import Detector, Yolo2DDetector
+from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
+from dimos.perception.detection.type import (
     ImageDetections2D,
 )
 from dimos.utils.decorators.decorators import simple_mcache
@@ -37,7 +36,7 @@ from dimos.utils.reactive import backpressure
 
 @dataclass
 class Config:
-    max_freq: float = 5  # hz
+    max_freq: float = 10  # hz
     detector: Optional[Callable[[Any], Detector]] = lambda: Yolo2DDetector()
 
 
@@ -79,11 +78,7 @@ class Detection2DModule(Module):
 
     @simple_mcache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        # return self.vlm_detections_subject
-        # Regular detection stream from the detector
-        regular_detections = self.sharp_image_stream().pipe(ops.map(self.process_image_frame))
-        # Merge with VL model detections
-        return backpressure(regular_detections.pipe(ops.merge(self.vlm_detections_subject)))
+        return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     @rpc
     def start(self):
