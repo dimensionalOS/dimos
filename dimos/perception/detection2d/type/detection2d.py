@@ -19,6 +19,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
+from dimos.utils.decorators.decorators import simple_mcache
+
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
     TextAnnotation,
@@ -167,6 +169,31 @@ class Detection2DBBox(Detection2D):
         width = max(0.0, x2 - x1)
         height = max(0.0, y2 - y1)
         return width * height
+
+    @simple_mcache
+    def is_valid(self) -> bool:
+        """Check if detection bbox is valid.
+
+        Validates that:
+        - Bounding box has positive dimensions
+        - Bounding box is within image bounds (if image has shape)
+
+        Returns:
+            True if bbox is valid, False otherwise
+        """
+        x1, y1, x2, y2 = self.bbox
+
+        # Check positive dimensions
+        if x2 <= x1 or y2 <= y1:
+            return False
+
+        # Check if within image bounds (if image has shape)
+        if self.image.shape:
+            h, w = self.image.shape[:2]
+            if not (0 <= x1 <= w and 0 <= y1 <= h and 0 <= x2 <= w and 0 <= y2 <= h):
+                return False
+
+        return True
 
     @classmethod
     def from_detector(

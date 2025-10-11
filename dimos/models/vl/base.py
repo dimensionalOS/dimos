@@ -3,10 +3,9 @@ import re
 from abc import ABC, abstractmethod
 from typing import Union
 
-import numpy as np
-
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection2d.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection2d.type.detection2d import Detection
 from dimos.utils.decorators import retry
 
 
@@ -38,10 +37,10 @@ def extract_json(response: str) -> Union[dict, list]:
 
     # Pattern to match JSON arrays (including nested arrays/objects)
     # This finds the outermost [...] structure
-    array_pattern = r'\[(?:[^\[\]]*|\[(?:[^\[\]]*|\[[^\[\]]*\])*\])*\]'
+    array_pattern = r"\[(?:[^\[\]]*|\[(?:[^\[\]]*|\[[^\[\]]*\])*\])*\]"
 
     # Pattern to match JSON objects
-    object_pattern = r'\{(?:[^{}]*|\{(?:[^{}]*|\{[^{}]*\})*\})*\}'
+    object_pattern = r"\{(?:[^{}]*|\{(?:[^{}]*|\{[^{}]*\})*\})*\}"
 
     # Try to find JSON arrays first (most common for detections)
     matches = re.findall(array_pattern, response, re.DOTALL)
@@ -64,15 +63,38 @@ def extract_json(response: str) -> Union[dict, list]:
 
     # If nothing worked, raise an error with the original response
     raise json.JSONDecodeError(
-        f"Could not extract valid JSON from response: {response[:200]}...",
-        response, 0
+        f"Could not extract valid JSON from response: {response[:200]}...", response, 0
     )
+
+
+def vlm_detection_to_yolo(vlm_detection: list, track_id: int) -> Detection | None:
+    """Convert a single VLM detection [label, x1, y1, x2, y2] to Detection tuple.
+
+    Args:
+        vlm_detection: Single detection list containing [label, x1, y1, x2, y2]
+        track_id: Track ID to assign to this detection
+
+    Returns:
+        Detection tuple (bbox, track_id, class_id, confidence, name) or None if invalid
+    """
+    if len(vlm_detection) != 5:
+        return None
+
+    name = str(vlm_detection[0])
+    try:
+        bbox = tuple(map(float, vlm_detection[1:]))
+        # Use -1 for class_id since VLM doesn't provide it
+        # confidence defaults to 1.0 for VLM
+        return (bbox, track_id, -1, 1.0, name)
+    except (ValueError, TypeError):
+        return None
 
 
 class VlModel(ABC):
     @abstractmethod
-    def query(self, image: Image | np.ndarray, query: str) -> str: ...
+    def query(self, image: Image, query: str) -> str: ...
 
+    # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)
     def query_json(self, image: Image, query: str) -> dict:
         response = self.query(image, query)
@@ -93,55 +115,18 @@ class VlModel(ABC):
         Only respond with the coordinates, no other text."""
 
         image_detections = ImageDetections2D(image)
+
         try:
-            coords = self.query_json(image, full_query)
+            detection_tuples = self.query_json(image, full_query)
         except Exception:
             return image_detections
 
-        img_height, img_width = image.shape[:2] if image.shape else (float("inf"), float("inf"))
-
-        for track_id, detection_list in enumerate(coords):
-            if len(detection_list) != 5:
+        for track_id, detection_tuple in enumerate(detection_tuples):
+            detection = vlm_detection_to_yolo(detection_tuple, track_id)
+            if detection is None:
                 continue
+            detection2d = Detection2DBBox.from_detection(detection, ts=image.ts, image=image)
+            if detection2d.is_valid():
+                image_detections.detections.append(detection2d)
 
-            name = detection_list[0]
-
-            # Convert to floats with error handling
-            try:
-                bbox = list(map(float, detection_list[1:]))
-            except (ValueError, TypeError):
-                print(
-                    f"Warning: Invalid bbox coordinates for detection '{name}': {detection_list[1:]}"
-                )
-                continue
-
-            # Validate bounding box
-            x1, y1, x2, y2 = bbox
-
-            # Check if coordinates are valid
-            if x2 <= x1 or y2 <= y1:
-                print(
-                    f"Warning: Invalid bbox dimensions for '{name}': x1={x1}, y1={y1}, x2={x2}, y2={y2}"
-                )
-                continue
-
-            # Clamp to image bounds if we have image dimensions
-            if image.shape:
-                x1 = max(0, min(x1, img_width))
-                y1 = max(0, min(y1, img_height))
-                x2 = max(0, min(x2, img_width))
-                y2 = max(0, min(y2, img_height))
-                bbox = [x1, y1, x2, y2]
-
-            image_detections.detections.append(
-                Detection2DBBox(
-                    bbox=bbox,
-                    track_id=track_id,
-                    class_id=-100,  # Using -100 to indicate VLModel-generated detection
-                    confidence=1.0,
-                    name=name,
-                    ts=image.ts,
-                    image=image,
-                )
-            )
         return image_detections
