@@ -29,6 +29,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos_lcm.std_msgs import String
 from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
 from dimos.navigation.bt_navigator.recovery_server import RecoveryServer
+from reactivex.disposable import Disposable
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
@@ -65,7 +66,7 @@ class BehaviorTreeNavigator(Module):
     global_costmap: In[OccupancyGrid] = None
 
     # LCM outputs
-    goal: Out[PoseStamped] = None
+    target: Out[PoseStamped] = None
     goal_reached: Out[Bool] = None
     navigation_state: Out[String] = None
 
@@ -122,11 +123,17 @@ class BehaviorTreeNavigator(Module):
 
     @rpc
     def start(self):
-        """Start the navigator module."""
+        super().start()
+
         # Subscribe to inputs
-        self.odom.subscribe(self._on_odom)
-        self.goal_request.subscribe(self._on_goal_request)
-        self.global_costmap.subscribe(self._on_costmap)
+        unsub = self.odom.subscribe(self._on_odom)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.goal_request.subscribe(self._on_goal_request)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.global_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
 
         # Start control thread
         self.stop_event.clear()
@@ -136,6 +143,18 @@ class BehaviorTreeNavigator(Module):
         logger.info("Navigator started")
 
     @rpc
+    def stop(self) -> None:
+        """Clean up resources including stopping the control thread."""
+
+        self.stop_navigation()
+
+        self.stop_event.set()
+        if self.control_thread and self.control_thread.is_alive():
+            self.control_thread.join(timeout=2.0)
+
+        super().stop()
+
+    @rpc
     def cancel_goal(self) -> bool:
         """
         Cancel the current navigation goal.
@@ -143,21 +162,8 @@ class BehaviorTreeNavigator(Module):
         Returns:
             True if goal was cancelled, False if no goal was active
         """
-        self.stop()
+        self.stop_navigation()
         return True
-
-    @rpc
-    def cleanup(self):
-        """Clean up resources including stopping the control thread."""
-        # First stop navigation
-        self.stop()
-
-        # Then clean up the control thread
-        self.stop_event.set()
-        if self.control_thread and self.control_thread.is_alive():
-            self.control_thread.join(timeout=2.0)
-
-        logger.info("Navigator cleanup complete")
 
     @rpc
     def set_goal(self, goal: PoseStamped) -> bool:
@@ -292,7 +298,7 @@ class BehaviorTreeNavigator(Module):
                             frame_id=goal.frame_id,
                             ts=goal.ts,
                         )
-                        self.goal.publish(safe_goal)
+                        self.target.publish(safe_goal)
                         self.current_goal = safe_goal
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
@@ -303,7 +309,7 @@ class BehaviorTreeNavigator(Module):
                         reached_msg = Bool()
                         reached_msg.data = True
                         self.goal_reached.publish(reached_msg)
-                        self.stop()
+                        self.stop_navigation()
                         self._goal_reached = True
                         logger.info("Goal reached, resetting local planner")
 
@@ -322,7 +328,7 @@ class BehaviorTreeNavigator(Module):
         """
         return self._goal_reached
 
-    def stop(self):
+    def stop_navigation(self) -> None:
         """Stop navigation and return to IDLE state."""
         with self.goal_lock:
             self.current_goal = None

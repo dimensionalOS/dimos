@@ -14,6 +14,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# $$$$$$$$\  $$$$$$\  $$$$$$$\   $$$$$$\
+# \__$$  __|$$  __$$\ $$  __$$\ $$  __$$\
+#    $$ |   $$ /  $$ |$$ |  $$ |$$ /  $$ |
+#    $$ |   $$ |  $$ |$$ |  $$ |$$ |  $$ |
+#    $$ |   $$ |  $$ |$$ |  $$ |$$ |  $$ |
+#    $$ |   $$ |  $$ |$$ |  $$ |$$ |  $$ |
+#    $$ |    $$$$$$  |$$$$$$$  | $$$$$$  |
+#    \__|    \______/ \_______/  \______/
+# DOES anyone use this? The imports are broken which tells me it's unused.
 
 import functools
 import logging
@@ -29,11 +38,13 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.std_msgs import Header
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 
+from dimos.perception.common.utils import load_camera_info, load_camera_info_opencv, rectify_image
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
@@ -162,6 +173,7 @@ class ConnectionModule(Module):
 
     @rpc
     def start(self):
+        super().start()
         """Start the connection and subscribe to sensor streams."""
         match self.connection_type:
             case "webrtc":
@@ -177,10 +189,23 @@ class ConnectionModule(Module):
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
         # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
-        self.connection.odom_stream().subscribe(self._publish_tf)
-        self.connection.video_stream().subscribe(self._on_video)
-        self.movecmd.subscribe(self.move)
+        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
+        self._disposables.add(unsub)
+
+        unsub = self.connection.odom_stream().subscribe(self._publish_tf)
+        self._disposables.add(unsub)
+
+        unsub = self.connection.video_stream().subscribe(self._on_video)
+        self._disposables.add(unsub)
+
+        unsub = self.movecmd.subscribe(self.move)
+        self._disposables.add(unsub)
+
+    @rpc
+    def stop(self) -> None:
+        if self.connection:
+            self.connection.stop()
+        super().stop()
 
     def _on_video(self, msg: Image):
         """Handle incoming video frames and publish synchronized camera data."""
@@ -312,6 +337,7 @@ class UnitreeGo2NavOnly(Robot):
         self.navigator = None
         self.frontier_explorer = None
         self.websocket_vis = None
+        self.foxglove_bridge = None
 
     def start(self):
         """Start the robot system with navigation modules only."""
@@ -321,8 +347,7 @@ class UnitreeGo2NavOnly(Robot):
         self._deploy_mapping()
         self._deploy_navigation()
 
-        foxglove_bridge = self.dimos.deploy(FoxgloveBridge)
-        foxglove_bridge.start()
+        self.foxglove_bridge = self.dimos.deploy(FoxgloveBridge)
 
         self._start_modules()
 
@@ -410,6 +435,7 @@ class UnitreeGo2NavOnly(Robot):
         self.local_planner.start()
         self.navigator.start()
         self.frontier_explorer.start()
+        self.foxglove_bridge.start()
 
     def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""

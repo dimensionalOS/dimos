@@ -26,6 +26,7 @@ from collections import deque
 
 import numpy as np
 
+from reactivex.disposable import Disposable
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion
@@ -221,10 +222,15 @@ class ManipulationModule(Module):
     @rpc
     def start(self):
         """Start the manipulation module."""
-        # Subscribe to camera data
-        self.rgb_image.subscribe(self._on_rgb_image)
-        self.depth_image.subscribe(self._on_depth_image)
-        self.camera_info.subscribe(self._on_camera_info)
+
+        unsub = self.rgb_image.subscribe(self._on_rgb_image)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.depth_image.subscribe(self._on_depth_image)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.camera_info.subscribe(self._on_camera_info)
+        self._disposables.add(Disposable(unsub))
 
         logger.info("Manipulation module started")
 
@@ -237,6 +243,11 @@ class ManipulationModule(Module):
             self.task_thread.join(timeout=5.0)
 
         self.reset_to_idle()
+
+        if self.detector and hasattr(self.detector, "cleanup"):
+            self.detector.cleanup()
+        self.arm.disable()
+
         logger.info("Manipulation module stopped")
 
     def _on_rgb_image(self, msg: Image):
@@ -935,10 +946,3 @@ class ManipulationModule(Module):
         )
 
         return place_pose
-
-    @rpc
-    def cleanup(self):
-        """Clean up resources on module destruction."""
-        if self.detector and hasattr(self.detector, "cleanup"):
-            self.detector.cleanup()
-        self.arm.disable()

@@ -17,15 +17,7 @@ from threading import Event, Thread
 
 import pytest
 
-from dimos.core import (
-    In,
-    LCMTransport,
-    Module,
-    Out,
-    RemoteOut,
-    rpc,
-    start,
-)
+from dimos.core import In, Module, Out, start, rpc
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -55,10 +47,21 @@ class MockRobotClient(Module):
         self._stop_event = Event()
         self._thread = None
 
+    @rpc
     def start(self):
+        super().start()
+
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
         self.mov.subscribe(self.mov_callback)
+
+    @rpc
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+
+        super().stop()
 
     def odomloop(self):
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
@@ -78,8 +81,3 @@ class MockRobotClient(Module):
                 lidarmsg.pubtime = time.perf_counter()
                 self.lidar.publish(lidarmsg)
                 time.sleep(0.1)
-
-    def stop(self):
-        self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)  # Wait up to 1 second for clean shutdown

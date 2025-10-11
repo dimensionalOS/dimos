@@ -24,6 +24,7 @@ import time
 from typing import TYPE_CHECKING, Optional
 
 from dimos.core import Module
+from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
@@ -51,6 +52,15 @@ class UnitreeSkillContainer(Module):
 
         # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
         self._generate_unitree_skills()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        # TODO: Do I need to clean up dynamic skills?
+        super().stop()
 
     def _generate_unitree_skills(self):
         """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""

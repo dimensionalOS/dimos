@@ -14,14 +14,11 @@
 
 # dimos/hardware/piper_arm.py
 
-from typing import (
-    Optional,
-    Tuple,
-)
+from reactivex.disposable import Disposable
+from typing import Tuple
 from piper_sdk import *  # from the official Piper SDK
 import numpy as np
 import time
-import subprocess
 import kinpy as kp
 import sys
 import termios
@@ -40,7 +37,7 @@ import dimos.protocol.service.lcmservice as lcmservice
 from dimos.core import In, Module, rpc
 from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
 
-logger = setup_logger("dimos.hardware.piper_arm")
+logger = setup_logger(__file__)
 
 
 class PiperArm:
@@ -362,10 +359,14 @@ class VelocityController(Module):
         self.period = period
         self.latest_cmd = None
         self.last_cmd_time = None
+        self._thread = None
 
     @rpc
     def start(self):
-        self.cmd_vel.subscribe(self.handle_cmd_vel)
+        super().start()
+
+        unsub = self.cmd_vel.subscribe(self.handle_cmd_vel)
+        self._disposables.add(Disposable(unsub))
 
         def control_loop():
             while True:
@@ -434,8 +435,15 @@ class VelocityController(Module):
                 )
                 time.sleep(self.period)
 
-        thread = threading.Thread(target=control_loop, daemon=True)
-        thread.start()
+        self._thread = threading.Thread(target=control_loop, daemon=True)
+        self._thread.start()
+
+    @rpc
+    def stop(self) -> None:
+        if self._thread:
+            # TODO: trigger the thread to stop
+            self._thread.join(2)
+        super().stop()
 
     def handle_cmd_vel(self, cmd_vel: Twist):
         self.latest_cmd = cmd_vel
@@ -455,6 +463,8 @@ def run_velocity_controller():
     logger.info("Velocity controller started")
     while True:
         time.sleep(1)
+
+    # velocity_controller.stop()
 
 
 if __name__ == "__main__":

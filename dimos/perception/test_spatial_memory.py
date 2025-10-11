@@ -55,7 +55,7 @@ class TestSpatialMemory:
         )
         yield memory
         # Clean up
-        memory.cleanup()
+        memory.stop()
 
     def test_spatial_memory_initialization(self, spatial_memory):
         """Test SpatialMemory initializes correctly with CLIP model."""

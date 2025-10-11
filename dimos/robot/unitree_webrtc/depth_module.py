@@ -18,7 +18,6 @@ import time
 import threading
 from typing import Optional
 
-import cv2
 import numpy as np
 
 from dimos.core import Module, In, Out, rpc
@@ -82,7 +81,8 @@ class DepthModule(Module):
 
     @rpc
     def start(self):
-        """Start the camera module."""
+        super().start()
+
         if self._running:
             logger.warning("Camera module already running")
             return
@@ -101,7 +101,6 @@ class DepthModule(Module):
 
     @rpc
     def stop(self):
-        """Stop the camera module."""
         if not self._running:
             return
 
@@ -112,7 +111,7 @@ class DepthModule(Module):
         if self._processing_thread and self._processing_thread.is_alive():
             self._processing_thread.join(timeout=2.0)
 
-        logger.info("Depth module stopped")
+        super().stop()
 
     def _on_camera_info(self, msg: CameraInfo):
         """Process camera info to extract intrinsics."""
@@ -233,9 +232,3 @@ class DepthModule(Module):
 
         except Exception as e:
             logger.error(f"Error publishing depth data: {e}", exc_info=True)
-
-    def cleanup(self):
-        """Clean up resources on module destruction."""
-        self.stop()
-        if self.metric3d:
-            self.metric3d.cleanup()
