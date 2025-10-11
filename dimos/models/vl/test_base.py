@@ -140,24 +140,20 @@ def test_query_detections_mocked():
         # Verify attributes
         assert detection.name == "humans"
         assert detection.confidence == 1.0
-        assert detection.class_id == -100
+        assert detection.class_id == -1  # VLM detections use -1 for class_id
         assert detection.track_id == i
         assert len(detection.bbox) == 4
 
-        # Verify bbox coordinates are valid and clamped
+        # Verify bbox coordinates are valid (out-of-bounds detections are discarded)
         x1, y1, x2, y2 = detection.bbox
         assert x2 > x1, f"Detection {i}: Invalid x coordinates: x1={x1}, x2={x2}"
         assert y2 > y1, f"Detection {i}: Invalid y coordinates: y1={y1}, y2={y2}"
 
-        # Check bounds
+        # Check bounds (out-of-bounds detections would have been discarded)
         assert 0 <= x1 <= img_width, f"Detection {i}: x1={x1} out of bounds"
         assert 0 <= x2 <= img_width, f"Detection {i}: x2={x2} out of bounds"
         assert 0 <= y1 <= img_height, f"Detection {i}: y1={y1} out of bounds"
         assert 0 <= y2 <= img_height, f"Detection {i}: y2={y2} out of bounds"
-
-        # Verify clamping worked (the 3rd detection has y2=748 which exceeds image height of 771)
-        if i == 2:  # Third detection
-            assert y2 <= img_height, f"Detection {i}: y2={y2} should be clamped to {img_height}"
 
     print(f"✓ Successfully processed {len(detections.detections)} mocked detections")
 
@@ -187,7 +183,7 @@ def test_query_detections_real():
             assert len(detection.bbox) == 4
             assert detection.name
             assert detection.confidence == 1.0
-            assert detection.class_id == -100
+            assert detection.class_id == -1  # VLM detections use -1 for class_id
 
             # Verify bbox coordinates are valid
             x1, y1, x2, y2 = detection.bbox
