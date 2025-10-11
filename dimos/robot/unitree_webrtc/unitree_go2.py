@@ -514,6 +514,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
             self.set_gps_travel_goal_points([goal])
 
         unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
+        self._disposables.add(unsub)
 
     def _deploy_foxglove_bridge(self):
         self.foxglove_bridge = FoxgloveBridge(
@@ -572,7 +573,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         """Deploy and configure the camera module."""
         # Connect object tracker inputs
         if self.object_tracker:
-            self.object_tracker.color_image.connect(self.connection.video)
+            self.object_tracker.color_image.connect(self.connection.color_image)
             logger.info("Object tracker connected to camera")
 
         # Connect bbox navigator inputs
