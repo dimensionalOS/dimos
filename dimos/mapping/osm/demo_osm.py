@@ -51,7 +51,7 @@ class UnitreeAgents2Runner(Resource):
         self._robot = FakeRobot()
         self._agent = Agent(system_prompt=SYSTEM_PROMPT)
         self._osm_skill_container = OsmSkillContainer(self._robot, _get_fake_location())
-        self._osm_skill_container.__enter__()
+        self._osm_skill_container.start()
         self._agent.register_skills(self._osm_skill_container)
         self._agent.register_skills(HumanInput())
         self._agent.run_implicit_skill("human")
@@ -64,7 +64,7 @@ class UnitreeAgents2Runner(Resource):
         if self._robot_debugger:
             self._robot_debugger.stop()
         if self._osm_skill_container:
-            self._osm_skill_container.__exit__(None, None, None)
+            self._osm_skill_container.stop()
         if self._agent:
             self._agent.stop()
 
