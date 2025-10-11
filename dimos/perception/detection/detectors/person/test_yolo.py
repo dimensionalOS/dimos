@@ -14,27 +14,25 @@
 
 import pytest
 
-from dimos.perception.detection.type import Detection2DBBox, Detection2DPerson, ImageDetections2D
+from dimos.perception.detection.type import Detection2DPerson, ImageDetections2D
 
 
 @pytest.fixture()
 def people(person_detector, test_image):
-    """Get ImageDetections2D from person detector."""
     return person_detector.process_image(test_image)
 
 
 @pytest.fixture()
-def people_list(people, test_image):
-    """Get list of Detection2DPerson objects."""
-    return people.detections
+def person(people):
+    return people[0]
 
 
-def test_person_detection(people_list):
+def test_person_detection(people):
     """Test that we can detect people with pose keypoints."""
-    assert len(people_list) > 0
+    assert len(people) > 0
 
     # Check first person
-    person = people_list[0]
+    person = people[0]
     assert isinstance(person, Detection2DPerson)
     assert person.confidence > 0
     assert len(person.bbox) == 4  # bbox is now a tuple
@@ -42,9 +40,9 @@ def test_person_detection(people_list):
     assert person.keypoint_scores.shape == (17,)
 
 
-def test_person_properties(people_list):
+def test_person_properties(people):
     """Test Detection2DPerson object properties and methods."""
-    person = people_list[0]
+    person = people[0]
 
     # Test bounding box properties
     assert person.width > 0
@@ -64,9 +62,9 @@ def test_person_properties(people_list):
     assert all(0 <= conf <= 1 for _, _, conf in visible)
 
 
-def test_person_normalized_coords(people_list):
+def test_person_normalized_coords(people):
     """Test normalized coordinates if available."""
-    person = people_list[0]
+    person = people[0]
 
     if person.keypoints_normalized is not None:
         assert person.keypoints_normalized.shape == (17, 2)
@@ -80,11 +78,11 @@ def test_person_normalized_coords(people_list):
         assert (person.bbox_normalized <= 1).all()
 
 
-def test_multiple_people(people_list):
+def test_multiple_people(people):
     """Test that multiple people can be detected."""
-    print(f"\nDetected {len(people_list)} people in test image")
+    print(f"\nDetected {len(people)} people in test image")
 
-    for i, person in enumerate(people_list[:3]):  # Show first 3
+    for i, person in enumerate(people[:3]):  # Show first 3
         print(f"\nPerson {i}:")
         print(f"  Confidence: {person.confidence:.3f}")
         print(f"  Size: {person.width:.1f} x {person.height:.1f}")
@@ -123,3 +121,40 @@ def test_invalid_keypoint(test_image):
 
     with pytest.raises(ValueError):
         person.get_keypoint("invalid_keypoint")
+
+
+def test_person_annotations(person):
+    # Test text annotations
+    text_anns = person.to_text_annotation()
+    print(f"\nText annotations: {len(text_anns)}")
+    for i, ann in enumerate(text_anns):
+        print(f"  {i}: {ann.text}")
+    assert len(text_anns) == 3  # confidence, name/track_id, keypoints count
+    assert any("keypoints:" in ann.text for ann in text_anns)
+
+    # Test points annotations
+    points_anns = person.to_points_annotation()
+    print(f"\nPoints annotations: {len(points_anns)}")
+
+    # Count different types (use actual LCM constants)
+    from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation
+
+    bbox_count = sum(1 for ann in points_anns if ann.type == PointsAnnotation.LINE_LOOP)  # 2
+    keypoint_count = sum(1 for ann in points_anns if ann.type == PointsAnnotation.POINTS)  # 1
+    skeleton_count = sum(1 for ann in points_anns if ann.type == PointsAnnotation.LINE_LIST)  # 4
+
+    print(f"  - Bounding boxes: {bbox_count}")
+    print(f"  - Keypoint circles: {keypoint_count}")
+    print(f"  - Skeleton lines: {skeleton_count}")
+
+    assert bbox_count >= 1  # At least the person bbox
+    assert keypoint_count >= 1  # At least some visible keypoints
+    assert skeleton_count >= 1  # At least some skeleton connections
+
+    # Test full image annotations
+    img_anns = person.to_image_annotations()
+    assert img_anns.texts_length == len(text_anns)
+    assert img_anns.points_length == len(points_anns)
+
+    print(f"\n✓ Person annotations working correctly!")
+    print(f"  - {len(person.get_visible_keypoints(0.5))}/17 visible keypoints")

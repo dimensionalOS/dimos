@@ -23,19 +23,12 @@ def bboxes(bbox_detector, test_image):
     return bbox_detector.process_image(test_image)
 
 
-@pytest.fixture()
-def bbox_list(bbox_detector, test_image):
-    """Get list of Detection2DBBox objects."""
-    detections = bbox_detector.process_image(test_image)
-    return detections.detections
-
-
-def test_bbox_detection(bbox_list):
+def test_bbox_detection(bboxes):
     """Test that we can detect objects with bounding boxes."""
-    assert len(bbox_list) > 0
+    assert len(bboxes) > 0
 
     # Check first detection
-    detection = bbox_list[0]
+    detection = bboxes[0]
     assert isinstance(detection, Detection2DBBox)
     assert detection.confidence > 0
     assert len(detection.bbox) == 4  # bbox is a tuple (x1, y1, x2, y2)
@@ -43,9 +36,9 @@ def test_bbox_detection(bbox_list):
     assert detection.name is not None
 
 
-def test_bbox_properties(bbox_list):
+def test_bbox_properties(bboxes):
     """Test Detection2DBBox object properties and methods."""
-    detection = bbox_list[0]
+    detection = bboxes[0]
 
     # Test bounding box is valid
     x1, y1, x2, y2 = detection.bbox
@@ -67,9 +60,9 @@ def test_bbox_properties(bbox_list):
     assert height == y2 - y1
 
 
-def test_bbox_cropped_image(bbox_list, test_image):
+def test_bbox_cropped_image(bboxes, test_image):
     """Test cropping image to detection bbox."""
-    detection = bbox_list[0]
+    detection = bboxes[0]
 
     # Test cropped image
     cropped = detection.cropped_image(padding=20)
@@ -81,9 +74,9 @@ def test_bbox_cropped_image(bbox_list, test_image):
         assert cropped.shape[1] <= test_image.shape[1]
 
 
-def test_bbox_annotations(bbox_list):
+def test_bbox_annotations(bboxes):
     """Test annotation generation for bboxes."""
-    detection = bbox_list[0]
+    detection = bboxes[0]
 
     # Test text annotations
     text_annotations = detection.to_text_annotation()
@@ -99,9 +92,9 @@ def test_bbox_annotations(bbox_list):
     assert annotations.points_length == 1
 
 
-def test_bbox_ros_conversion(bbox_list):
+def test_bbox_ros_conversion(bboxes):
     """Test conversion to ROS Detection2D message."""
-    detection = bbox_list[0]
+    detection = bboxes[0]
 
     ros_det = detection.to_ros_detection2d()
 
@@ -118,9 +111,9 @@ def test_bbox_ros_conversion(bbox_list):
     assert ros_det.results[0].hypothesis.class_id == detection.class_id
 
 
-def test_bbox_is_valid(bbox_list):
+def test_bbox_is_valid(bboxes):
     """Test bbox validation."""
-    detection = bbox_list[0]
+    detection = bboxes[0]
 
     # Detection from real detector should be valid
     assert detection.is_valid()
@@ -147,9 +140,9 @@ def test_multiple_detections(bboxes):
         print(f"  Track ID: {detection.track_id}")
 
 
-def test_detection_string_representation(bbox_list):
+def test_detection_string_representation(bboxes):
     """Test string representation of detections."""
-    detection = bbox_list[0]
+    detection = bboxes[0]
     str_repr = str(detection)
 
     # Should contain class name
