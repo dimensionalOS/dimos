@@ -11,11 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
@@ -23,7 +21,9 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
+from dimos.agents2.test_agent_direct import partial
 from dimos.core import In, Module, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.models.vl import QwenVlModel, VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
@@ -31,7 +31,6 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.type import ImageDetections2D
 from dimos.perception.detection2d.detectors import Detector, Yolo2DDetector
 from dimos.perception.detection2d.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection2d.type import ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -111,3 +110,6 @@ class Detection2DModule(Module):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+
+detection_2d = partial(create_module_blueprint, Detection2DModule)

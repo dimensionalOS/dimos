@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.algo import astar
@@ -216,3 +218,6 @@ class AstarPlanner(Module):
 
         logger.warning("No path found to the goal.")
         return None
+
+
+astar_planner = partial(create_module_blueprint, AstarPlanner)
