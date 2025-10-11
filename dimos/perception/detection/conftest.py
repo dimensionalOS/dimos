@@ -23,10 +23,10 @@ from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
-from dimos.perception.detection2d.type import (
+from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.module3D import Detection3DModule
+from dimos.perception.detection.moduleDB import ObjectDBModule
+from dimos.perception.detection.type import (
     Detection2D,
     Detection3D,
     Detection3DPC,

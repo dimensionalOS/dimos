@@ -1,18 +1,17 @@
-import json
 import os
 from unittest.mock import MagicMock
 
 import pytest
 
-from dimos.models.vl.base import extract_json
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.type import ImageDetections2D
+from dimos.perception.detection.type import ImageDetections2D
 from dimos.utils.data import get_data
 
 # Captured actual response from Qwen API for cafe.jpg with query "humans"
+# Added garbage around JSON to ensure we are robustly extracting it
 MOCK_QWEN_RESPONSE = """
-   Here you go bro:
+   Locating humans for you 😊😊
 
    [
     ["humans", 76, 368, 219, 580],
@@ -22,94 +21,9 @@ MOCK_QWEN_RESPONSE = """
     ["humans", 785, 323, 960, 650]
    ]
 
-   Hope this helps!😀😊 :)"""
-
-
-def test_extract_json_clean_response():
-    """Test extract_json with clean JSON response."""
-    clean_json = '[["object", 1, 2, 3, 4]]'
-    result = extract_json(clean_json)
-    assert result == [["object", 1, 2, 3, 4]]
-
-
-def test_extract_json_with_text_before_after():
-    """Test extract_json with text before and after JSON."""
-    messy = """Here's what I found:
-    [
-        ["person", 10, 20, 30, 40],
-        ["car", 50, 60, 70, 80]
-    ]
-    Hope this helps!"""
-    result = extract_json(messy)
-    assert result == [["person", 10, 20, 30, 40], ["car", 50, 60, 70, 80]]
-
-
-def test_extract_json_with_emojis():
-    """Test extract_json with emojis and markdown code blocks."""
-    messy = """Sure! 😊 Here are the detections:
-
-    ```json
-    [["human", 100, 200, 300, 400]]
-    ```
-
-    Let me know if you need anything else! 👍"""
-    result = extract_json(messy)
-    assert result == [["human", 100, 200, 300, 400]]
-
-
-def test_extract_json_multiple_json_blocks():
-    """Test extract_json when there are multiple JSON blocks."""
-    messy = """First attempt (wrong format):
-    {"error": "not what we want"}
-
-    Correct format:
-    [
-        ["cat", 10, 10, 50, 50],
-        ["dog", 60, 60, 100, 100]
-    ]
-
-    Another block: {"also": "not needed"}"""
-    result = extract_json(messy)
-    # Should return the first valid array
-    assert result == [["cat", 10, 10, 50, 50], ["dog", 60, 60, 100, 100]]
-
-
-def test_extract_json_object():
-    """Test extract_json with JSON object instead of array."""
-    response = 'The result is: {"status": "success", "count": 5}'
-    result = extract_json(response)
-    assert result == {"status": "success", "count": 5}
-
-
-def test_extract_json_nested_structures():
-    """Test extract_json with nested arrays and objects."""
-    response = """Processing complete:
-    [
-        ["label1", 1, 2, 3, 4],
-        {"nested": {"value": 10}},
-        ["label2", 5, 6, 7, 8]
-    ]"""
-    result = extract_json(response)
-    assert result[0] == ["label1", 1, 2, 3, 4]
-    assert result[1] == {"nested": {"value": 10}}
-    assert result[2] == ["label2", 5, 6, 7, 8]
-
-
-def test_extract_json_invalid():
-    """Test extract_json raises error when no valid JSON found."""
-    response = "This response has no valid JSON at all!"
-    with pytest.raises(json.JSONDecodeError) as exc_info:
-        extract_json(response)
-    assert "Could not extract valid JSON" in str(exc_info.value)
-
-
-def test_extract_json_with_real_llm_response():
-    """Test extract_json with the actual messy response."""
-    result = extract_json(MOCK_QWEN_RESPONSE)
-    assert isinstance(result, list)
-    assert len(result) == 5
-    assert result[0] == ["humans", 76, 368, 219, 580]
-    assert result[-1] == ["humans", 785, 323, 960, 650]
+   Here is some trash at the end of the response :)
+   Let me know if you need anything else 😀😊
+   """
 
 
 def test_query_detections_mocked():
@@ -143,6 +57,8 @@ def test_query_detections_mocked():
         assert detection.class_id == -1  # VLM detections use -1 for class_id
         assert detection.track_id == i
         assert len(detection.bbox) == 4
+
+        assert detection.is_valid()
 
         # Verify bbox coordinates are valid (out-of-bounds detections are discarded)
         x1, y1, x2, y2 = detection.bbox
@@ -184,17 +100,6 @@ def test_query_detections_real():
             assert detection.name
             assert detection.confidence == 1.0
             assert detection.class_id == -1  # VLM detections use -1 for class_id
-
-            # Verify bbox coordinates are valid
-            x1, y1, x2, y2 = detection.bbox
-            assert x2 > x1, f"Invalid x coordinates: x1={x1}, x2={x2}"
-            assert y2 > y1, f"Invalid y coordinates: y1={y1}, y2={y2}"
-
-            # Verify coordinates are within image bounds
-            img_height, img_width = image.shape[:2]
-            assert 0 <= x1 <= img_width
-            assert 0 <= x2 <= img_width
-            assert 0 <= y1 <= img_height
-            assert 0 <= y2 <= img_height
+            assert detection.is_valid()
 
     print(f"Found {len(detections.detections)} detections for query '{query}'")

@@ -25,8 +25,8 @@ from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.module3D import Detection3DModule
-from dimos.perception.detection2d.type import Detection3D, ImageDetections3D, TableStr
+from dimos.perception.detection.module3D import Detection3DModule
+from dimos.perception.detection.type import Detection3D, ImageDetections3D, TableStr
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.types.timestamped import to_datetime

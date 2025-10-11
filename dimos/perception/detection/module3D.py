@@ -20,13 +20,14 @@ from reactivex.observable import Observable
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.perception.detection2d.module2D import Detection2DModule
-from dimos.perception.detection2d.type import (
+from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.type import (
+    Detection2D,
     ImageDetections2D,
     ImageDetections3D,
     ImageDetections3DPC,
 )
-from dimos.perception.detection2d.type.detection3dpc import Detection3DPC
+from dimos.perception.detection.type.detection3dpc import Detection3DPC
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
@@ -37,9 +38,16 @@ class Detection3DModule(Detection2DModule):
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
 
+    # just for visualization,
+    # emits latest pointclouds of detected objects in a frame
     detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
     detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
+
+    # just for visualization, emits latest top 3 detections in a frame
+    detected_image_0: Out[Image] = None  # type: ignore
+    detected_image_1: Out[Image] = None  # type: ignore
+    detected_image_2: Out[Image] = None  # type: ignore
 
     detection_3d_stream: Observable[ImageDetections3DPC] = None
 
@@ -69,6 +77,8 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3D(detections.image, detection3d_list)
 
+    def process_detection(self, detections: ImageDetections2D) -> ImageDetections3DPC: ...
+
     @rpc
     def start(self):
         super().start()
@@ -78,6 +88,7 @@ class Detection3DModule(Detection2DModule):
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
+        # does align message timestamps
         self.detection_stream_3d = align_timestamped(
             backpressure(self.detection_stream_2d()),
             self.pointcloud.observable(),
@@ -85,6 +96,8 @@ class Detection3DModule(Detection2DModule):
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))
 
+        # doesn't align message timestamps
+        #
         # self.detection_stream_3d = backpressure(self.detection_stream_2d()).pipe(
         #    ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
         # )

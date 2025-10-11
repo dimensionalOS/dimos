@@ -28,9 +28,9 @@ from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection2d.type.detection2d import Detection2D
-from dimos.perception.detection2d.type.detection3d import Detection3D
-from dimos.perception.detection2d.type.imageDetections import ImageDetections
+from dimos.perception.detection.type.detection2d import Detection2D
+from dimos.perception.detection.type.detection3d import Detection3D
+from dimos.perception.detection.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
 Detection3DPCFilter = Callable[

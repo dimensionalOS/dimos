@@ -28,7 +28,7 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.types.timestamped import to_timestamp
 
 if TYPE_CHECKING:
-    from dimos.perception.detection2d.type.detection2d import Detection2D
+    from dimos.perception.detection.type.detection2d import Detection2D
 
 T = TypeVar("T", bound="Detection2D")
 

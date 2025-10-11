@@ -19,7 +19,7 @@ import onnxruntime
 from ultralytics import YOLO
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.detectors.types import Detector
+from dimos.perception.detection.detectors.types import Detector
 from dimos.perception.detection2d.utils import (
     extract_detection_results,
     filter_detections,
@@ -29,7 +29,7 @@ from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
+logger = setup_logger("dimos.perception.detection.yolo_2d_det")
 
 
 class Yolo2DDetector(Detector):

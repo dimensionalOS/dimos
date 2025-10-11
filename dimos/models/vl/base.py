@@ -1,70 +1,11 @@
 import json
-import re
 from abc import ABC, abstractmethod
-from typing import Union
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection2d.type import Detection2DBBox, ImageDetections2D
-from dimos.perception.detection2d.type.detection2d import Detection
+from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type.detection2d import Detection
 from dimos.utils.decorators import retry
-
-
-def extract_json(response: str) -> Union[dict, list]:
-    """Extract JSON from potentially messy LLM response.
-
-    Tries multiple strategies:
-    1. Parse the entire response as JSON
-    2. Find and parse JSON arrays in the response
-    3. Find and parse JSON objects in the response
-
-    Args:
-        response: Raw text response that may contain JSON
-
-    Returns:
-        Parsed JSON object (dict or list)
-
-    Raises:
-        json.JSONDecodeError: If no valid JSON can be extracted
-    """
-    # First try to parse the whole response as JSON
-    try:
-        return json.loads(response)
-    except json.JSONDecodeError:
-        pass
-
-    # If that fails, try to extract JSON from the messy response
-    # Look for JSON arrays or objects in the text
-
-    # Pattern to match JSON arrays (including nested arrays/objects)
-    # This finds the outermost [...] structure
-    array_pattern = r"\[(?:[^\[\]]*|\[(?:[^\[\]]*|\[[^\[\]]*\])*\])*\]"
-
-    # Pattern to match JSON objects
-    object_pattern = r"\{(?:[^{}]*|\{(?:[^{}]*|\{[^{}]*\})*\})*\}"
-
-    # Try to find JSON arrays first (most common for detections)
-    matches = re.findall(array_pattern, response, re.DOTALL)
-    for match in matches:
-        try:
-            parsed = json.loads(match)
-            # For detection arrays, we expect a list
-            if isinstance(parsed, list):
-                return parsed
-        except json.JSONDecodeError:
-            continue
-
-    # Try JSON objects if no arrays found
-    matches = re.findall(object_pattern, response, re.DOTALL)
-    for match in matches:
-        try:
-            return json.loads(match)
-        except json.JSONDecodeError:
-            continue
-
-    # If nothing worked, raise an error with the original response
-    raise json.JSONDecodeError(
-        f"Could not extract valid JSON from response: {response[:200]}...", response, 0
-    )
+from dimos.utils.llm_utils import extract_json
 
 
 def vlm_detection_to_yolo(vlm_detection: list, track_id: int) -> Detection | None:
