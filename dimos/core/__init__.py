@@ -48,6 +48,7 @@ __all__ = [
     "start",
 ]
 
+
 class CudaCleanupPlugin:
     """Dask worker plugin to cleanup CUDA resources on shutdown."""
 
@@ -76,7 +77,6 @@ class CudaCleanupPlugin:
 
 
 def patch_actor(actor, cls): ...
-
 
 
 class RPCClient:
