@@ -201,6 +201,7 @@ class UnitreeG1(Robot, Resource):
         self.joystick = None
         self.ros_bridge = None
         self.camera = None
+        self._ros_nav = None
         self._setup_directories()
 
     def _setup_directories(self):
@@ -223,7 +224,7 @@ class UnitreeG1(Robot, Resource):
         os.makedirs(self.db_path, exist_ok=True)
 
     def _deploy_detection(self, goto):
-        detection = self.dimos.deploy(
+        detection = self._dimos.deploy(
             ObjectDBModule, goto=goto, camera_info=zed.CameraInfo.SingleWebcam
         )
 
@@ -269,7 +270,7 @@ class UnitreeG1(Robot, Resource):
         if self.enable_ros_bridge:
             self._deploy_ros_bridge()
 
-        self.nav = self.dimos.deploy(NavigationModule)
+        self.nav = self._dimos.deploy(NavigationModule)
         self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.nav.goal_pose.transport = core.LCMTransport("/goal_pose", PoseStamped)
         self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
@@ -294,16 +295,16 @@ class UnitreeG1(Robot, Resource):
         g1_skills = UnitreeG1SkillContainer(robot=self)
         agent.register_skills(g1_skills)
 
-        human_input = self.dimos.deploy(HumanInput)
+        human_input = self._dimos.deploy(HumanInput)
         agent.register_skills(human_input)
 
         if self.enable_perception:
             agent.register_skills(self.detection)
 
         # Register ROS navigation
-        ros_nav = RosNavigation(self)
-        ros_nav.__enter__()
-        agent.register_skills(ros_nav)
+        self._ros_nav = RosNavigation(self)
+        self._ros_nav.start()
+        agent.register_skills(self._ros_nav)
 
         agent.run_implicit_skill("human")
         agent.start()
@@ -320,6 +321,8 @@ class UnitreeG1(Robot, Resource):
 
     def stop(self) -> None:
         self._dimos.stop()
+        if self._ros_nav:
+            self._ros_nav.stop()
         self.lcm.stop()
 
     def _deploy_connection(self):
@@ -373,7 +376,7 @@ class UnitreeG1(Robot, Resource):
         self.foxglove_bridge.start()
 
     def _deploy_perception(self):
-        self.spatial_memory_module = self.dimos.deploy(
+        self.spatial_memory_module = self._dimos.deploy(
             SpatialMemory,
             collection_name=self.spatial_memory_collection,
             db_path=self.db_path,
