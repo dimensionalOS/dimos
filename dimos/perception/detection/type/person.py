@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
 
 @dataclass
-class Person(Detection2DBBox):
+class Detection2DPerson(Detection2DBBox):
     """Represents a detected person with pose keypoints."""
 
     # Pose keypoints - additional fields beyond Detection2DBBox
@@ -68,16 +68,48 @@ class Person(Detection2DBBox):
     ]
 
     @classmethod
-    def from_yolo(cls, result: "Results", person_idx: int, image: Image) -> "Person":
-        """Create Person instance from YOLO results.
+    def from_ultralytics_result(
+        cls, result: "Results", idx: int, image: Image
+    ) -> "Detection2DPerson":
+        """Create Detection2DPerson from ultralytics Results object with pose keypoints.
 
         Args:
-            result: Single Results object from YOLO
-            person_idx: Index of the person in the detection results
-            image: Original image for the detection
+            result: Ultralytics Results object containing detection and keypoint data
+            idx: Index of the detection in the results
+            image: Source image
+
+        Returns:
+            Detection2DPerson instance
+
+        Raises:
+            ValueError: If the result doesn't contain keypoints or is not a person detection
         """
+        # Validate that this is a pose detection result
+        if not hasattr(result, "keypoints") or result.keypoints is None:
+            raise ValueError(
+                f"Cannot create Detection2DPerson from result without keypoints. "
+                f"This appears to be a regular detection result, not a pose detection. "
+                f"Use Detection2DBBox.from_ultralytics_result() instead."
+            )
+
+        if not hasattr(result, "boxes") or result.boxes is None:
+            raise ValueError("Cannot create Detection2DPerson from result without bounding boxes")
+
+        # Check if this is actually a person detection (class 0 in COCO)
+        class_id = int(result.boxes.cls[idx].cpu())
+        if class_id != 0:  # Person is class 0 in COCO
+            class_name = (
+                result.names.get(class_id, f"class_{class_id}")
+                if hasattr(result, "names")
+                else f"class_{class_id}"
+            )
+            raise ValueError(
+                f"Cannot create Detection2DPerson from non-person detection. "
+                f"Got class {class_id} ({class_name}), expected class 0 (person)."
+            )
+
         # Extract bounding box as tuple for Detection2DBBox
-        bbox_array = result.boxes.xyxy[person_idx].cpu().numpy()
+        bbox_array = result.boxes.xyxy[idx].cpu().numpy()
 
         bbox: Bbox = (
             float(bbox_array[0]),
@@ -87,31 +119,37 @@ class Person(Detection2DBBox):
         )
 
         bbox_norm = (
-            result.boxes.xyxyn[person_idx].cpu().numpy() if hasattr(result.boxes, "xyxyn") else None
+            result.boxes.xyxyn[idx].cpu().numpy() if hasattr(result.boxes, "xyxyn") else None
         )
 
-        confidence = float(result.boxes.conf[person_idx].cpu())
-        class_id = int(result.boxes.cls[person_idx].cpu())
+        confidence = float(result.boxes.conf[idx].cpu())
+        class_id = int(result.boxes.cls[idx].cpu())
 
         # Extract keypoints
-        keypoints = result.keypoints.xy[person_idx].cpu().numpy()
-        keypoint_scores = result.keypoints.conf[person_idx].cpu().numpy()
+        keypoints = result.keypoints.xy[idx].cpu().numpy()
+        keypoint_scores = result.keypoints.conf[idx].cpu().numpy()
         keypoints_norm = (
-            result.keypoints.xyn[person_idx].cpu().numpy()
-            if hasattr(result.keypoints, "xyn")
-            else None
+            result.keypoints.xyn[idx].cpu().numpy() if hasattr(result.keypoints, "xyn") else None
         )
 
         # Get image dimensions
         height, width = result.orig_shape
 
+        # Extract track ID if available
+        track_id = idx  # Use index as default
+        if hasattr(result.boxes, "id") and result.boxes.id is not None:
+            track_id = int(result.boxes.id[idx].cpu())
+
+        # Get class name
+        name = result.names.get(class_id, "person") if hasattr(result, "names") else "person"
+
         return cls(
             # Detection2DBBox fields
             bbox=bbox,
-            track_id=person_idx,  # Use person index as track_id for now
+            track_id=track_id,
             class_id=class_id,
             confidence=confidence,
-            name="person",
+            name=name,
             ts=image.ts,
             image=image,
             # Person specific fields
@@ -122,6 +160,11 @@ class Person(Detection2DBBox):
             image_width=width,
             image_height=height,
         )
+
+    @classmethod
+    def from_yolo(cls, result: "Results", idx: int, image: Image) -> "Detection2DPerson":
+        """Alias for from_ultralytics_result for backward compatibility."""
+        return cls.from_ultralytics_result(result, idx, image)
 
     def get_keypoint(self, name: str) -> Tuple[np.ndarray, float]:
         """Get specific keypoint by name.

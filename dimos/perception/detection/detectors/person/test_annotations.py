@@ -25,10 +25,10 @@ def test_person_annotations():
     """Test that Person annotations include keypoints and skeleton."""
     image = Image.from_file(get_data("cafe.jpg"))
     detector = YoloPersonDetector()
-    people = detector.detect_people(image)
+    detections = detector.process_image(image)
 
-    assert len(people) > 0
-    person = people[0]
+    assert len(detections.detections) > 0
+    person = detections.detections[0]
 
     # Test text annotations
     text_anns = person.to_text_annotation()
@@ -64,7 +64,3 @@ def test_person_annotations():
 
     print(f"\n✓ Person annotations working correctly!")
     print(f"  - {len(person.get_visible_keypoints(0.5))}/17 visible keypoints")
-
-
-if __name__ == "__main__":
-    test_person_annotations()

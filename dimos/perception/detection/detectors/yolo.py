@@ -20,11 +20,7 @@ from ultralytics import YOLO
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector
-from dimos.perception.detection2d.utils import (
-    extract_detection_results,
-    filter_detections,
-    plot_results,
-)
+from dimos.perception.detection.type import ImageDetections2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
@@ -56,20 +52,15 @@ class Yolo2DDetector(Detector):
             self.device = "cpu"
             logger.debug("Using CPU for YOLO 2d detector")
 
-    def process_image(self, image: Image):
+    def process_image(self, image: Image) -> ImageDetections2D:
         """
         Process an image and return detection results.
 
         Args:
-            image: Input image in BGR format (OpenCV)
+            image: Input image
 
         Returns:
-            tuple: (bboxes, track_ids, class_ids, confidences, names)
-                - bboxes: list of [x1, y1, x2, y2] coordinates
-                - track_ids: list of tracking IDs (or -1 if no tracking)
-                - class_ids: list of class indices
-                - confidences: list of detection confidences
-                - names: list of class names
+            ImageDetections2D containing all detected objects
         """
         results = self.model.track(
             source=image.to_opencv(),
@@ -81,29 +72,7 @@ class Yolo2DDetector(Detector):
             tracker=self.tracker_config,
         )
 
-        if len(results) > 0:
-            # Extract detection results
-            bboxes, track_ids, class_ids, confidences, names = extract_detection_results(results[0])
-            return bboxes, track_ids, class_ids, confidences, names
-
-        return [], [], [], [], []
-
-    def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):
-        """
-        Generate visualization of detection results.
-
-        Args:
-            image: Original input image
-            bboxes: List of bounding boxes
-            track_ids: List of tracking IDs
-            class_ids: List of class indices
-            confidences: List of detection confidences
-            names: List of class names
-
-        Returns:
-            Image with visualized detections
-        """
-        return plot_results(image, bboxes, track_ids, class_ids, confidences, names)
+        return ImageDetections2D.from_ultralytics_result(image, results)
 
     def stop(self):
         """
@@ -118,55 +87,3 @@ class Yolo2DDetector(Detector):
                         if hasattr(gmc, "executor") and gmc.executor is not None:
                             gmc.executor.shutdown(wait=True)
             self.model.predictor = None
-
-
-def main():
-    """Example usage of the Yolo2DDetector class."""
-    # Initialize video capture
-    cap = cv2.VideoCapture(0)
-
-    # Initialize detector
-    detector = Yolo2DDetector()
-
-    enable_person_filter = True
-
-    try:
-        while cap.isOpened():
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            # Process frame
-            bboxes, track_ids, class_ids, confidences, names = detector.process_image(frame)
-
-            # Apply person filtering if enabled
-            if enable_person_filter and len(bboxes) > 0:
-                # Person is class_id 0 in COCO dataset
-                bboxes, track_ids, class_ids, confidences, names = filter_detections(
-                    bboxes,
-                    track_ids,
-                    class_ids,
-                    confidences,
-                    names,
-                    class_filter=[0],  # 0 is the class_id for person
-                    name_filter=["person"],
-                )
-
-            # Visualize results
-            if len(bboxes) > 0:
-                frame = detector.visualize_results(
-                    frame, bboxes, track_ids, class_ids, confidences, names
-                )
-
-            # Display results
-            cv2.imshow("YOLO Detection", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                break
-
-    finally:
-        cap.release()
-        cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()

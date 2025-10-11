@@ -12,12 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+import pytest
 
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
+from dimos.perception.detection.detectors.yolo import Yolo2DDetector
+from dimos.utils.data import get_data
 
 
-class Detector(ABC):
-    @abstractmethod
-    def process_image(self, image: Image) -> ImageDetections2D: ...
+@pytest.fixture()
+def test_image():
+    """Load the test image used for detector tests."""
+    return Image.from_file(get_data("cafe.jpg"))
+
+
+@pytest.fixture()
+def person_detector():
+    """Create a YoloPersonDetector instance."""
+    return YoloPersonDetector()
+
+
+@pytest.fixture()
+def bbox_detector():
+    """Create a Yolo2DDetector instance for general object detection."""
+    return Yolo2DDetector()

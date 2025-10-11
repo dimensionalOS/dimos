@@ -60,13 +60,7 @@ class Detection2DModule(Module):
         self.vlm_detections_subject = Subject()
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
-        # Use person detection specifically if it's a YoloPersonDetector
-        if isinstance(self.detector, YoloPersonDetector):
-            people = self.detector.detect_people(image)
-            return ImageDetections2D.from_pose_detector(image, people)
-        else:
-            # Fallback to generic dettection for other detectors
-            return ImageDetections2D.from_bbox_detector(image, self.detector.process_image(image))
+        return self.detector.process_image(image)
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:

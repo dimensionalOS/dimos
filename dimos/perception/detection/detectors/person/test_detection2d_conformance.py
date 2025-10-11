@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection.type.person import Person
 from dimos.utils.data import get_data
 
 
 def test_person_detection2d_bbox_conformance():
-    """Test that Person conforms to Detection2DBBox interface."""
+    """Test that Detection2DPerson conforms to Detection2DBBox interface."""
     image = Image.from_file(get_data("cafe.jpg"))
     detector = YoloPersonDetector()
-    people = detector.detect_people(image)
+    detections = detector.process_image(image)
 
-    assert len(people) > 0
-    person = people[0]
+    assert len(detections.detections) > 0
+    person = detections.detections[0]
 
     # Test Detection2DBBox methods
     # Test bbox operations
@@ -68,15 +66,11 @@ def test_person_detection2d_bbox_conformance():
 
     # Test string representation
     str_repr = str(person)
-    assert "Person" in str_repr
+    assert "Detection2DPerson" in str_repr
     assert "person" in str_repr  # name field
 
-    print("\n✓ Person class fully conforms to Detection2DBBox interface")
-    print(f"  - Detected {len(people)} people")
+    print("\n✓ Detection2DPerson class fully conforms to Detection2DBBox interface")
+    print(f"  - Detected {len(detections.detections)} people")
     print(f"  - First person confidence: {person.confidence:.3f}")
     print(f"  - Bbox volume: {volume:.1f}")
     print(f"  - Has {len(person.get_visible_keypoints(0.5))} visible keypoints")
-
-
-if __name__ == "__main__":
-    test_person_detection2d_bbox_conformance()

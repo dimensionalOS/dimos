@@ -25,31 +25,24 @@ def test_image_detections_2d_with_person():
     # Load image and detect people
     image = Image.from_file(get_data("cafe.jpg"))
     detector = YoloPersonDetector()
-    people = detector.detect_people(image)
-
-    # Create ImageDetections2D using from_pose_detector
-    image_detections = ImageDetections2D.from_pose_detector(image, people)
+    image_detections = detector.process_image(image)
 
     # Verify structure
     assert image_detections.image is image
-    assert len(image_detections.detections) == len(people)
-    assert all(det in people for det in image_detections.detections)
+    assert len(image_detections.detections) > 0
 
     # Test image annotations (includes pose keypoints)
     annotations = image_detections.to_foxglove_annotations()
-    print(f"\nImageDetections2D created with {len(people)} people")
+    num_people = len(image_detections.detections)
+    print(f"\nImageDetections2D created with {num_people} people")
     print(f"Total text annotations: {annotations.texts_length}")
     print(f"Total points annotations: {annotations.points_length}")
 
     # Points should include: bounding boxes + keypoints + skeleton lines
     # At least 3 annotations per person (bbox, keypoints, skeleton)
-    assert annotations.points_length >= len(people) * 3
+    assert annotations.points_length >= num_people * 3
 
     # Text annotations should include confidence, name/id, and keypoint count
-    assert annotations.texts_length >= len(people) * 3
+    assert annotations.texts_length >= num_people * 3
 
-    print("\n✓ ImageDetections2D.from_pose_detector working correctly!")
-
-
-if __name__ == "__main__":
-    test_image_detections_2d_with_person()
+    print("\n✓ ImageDetections2D from person detector working correctly!")

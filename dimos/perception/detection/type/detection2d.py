@@ -19,8 +19,6 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
-from dimos.utils.decorators.decorators import simple_mcache
-
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
     TextAnnotation,
@@ -38,6 +36,7 @@ from dimos_lcm.vision_msgs import (
 )
 from rich.console import Console
 from rich.text import Text
+from ultralytics.engine.results import Boxes, Keypoints, Results
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
@@ -45,9 +44,10 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection.type.imageDetections import ImageDetections
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
+from dimos.utils.decorators.decorators import simple_mcache
 
 if TYPE_CHECKING:
-    from dimos.perception.detection.type.person import Person
+    from dimos.perception.detection.type.person import Detection2DPerson
 
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
@@ -216,6 +216,53 @@ class Detection2DBBox(Detection2D):
             **kwargs,
         )
 
+    @classmethod
+    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> "Detection2DBBox":
+        """Create Detection2DBBox from ultralytics Results object.
+
+        Args:
+            result: Ultralytics Results object containing detection data
+            idx: Index of the detection in the results
+            image: Source image
+
+        Returns:
+            Detection2DBBox instance
+        """
+        # Extract bounding box coordinates
+        bbox_array = result.boxes.xyxy[idx].cpu().numpy()
+        bbox: Bbox = (
+            float(bbox_array[0]),
+            float(bbox_array[1]),
+            float(bbox_array[2]),
+            float(bbox_array[3]),
+        )
+
+        # Extract confidence
+        confidence = float(result.boxes.conf[idx].cpu())
+
+        # Extract class ID and name
+        class_id = int(result.boxes.cls[idx].cpu())
+        name = (
+            result.names.get(class_id, f"class_{class_id}")
+            if hasattr(result, "names")
+            else f"class_{class_id}"
+        )
+
+        # Extract track ID if available
+        track_id = -1
+        if hasattr(result.boxes, "id") and result.boxes.id is not None:
+            track_id = int(result.boxes.id[idx].cpu())
+
+        return cls(
+            bbox=bbox,
+            track_id=track_id,
+            class_id=class_id,
+            confidence=confidence,
+            name=name,
+            ts=image.ts,
+            image=image,
+        )
+
     def get_bbox_center(self) -> CenteredBbox:
         x1, y1, x2, y2 = self.bbox
         center_x = (x1 + x2) / 2.0
@@ -359,6 +406,43 @@ class Detection2DBBox(Detection2D):
 
 
 class ImageDetections2D(ImageDetections[Detection2D]):
+    @classmethod
+    def from_ultralytics_result(
+        cls, image: Image, results: List[Results], **kwargs
+    ) -> "ImageDetections2D":
+        """Create ImageDetections2D from ultralytics Results.
+
+        Dispatches to appropriate Detection2D subclass based on result type:
+        - If keypoints present: creates Detection2DPerson
+        - Otherwise: creates Detection2DBBox
+
+        Args:
+            image: Source image
+            results: List of ultralytics Results objects
+            **kwargs: Additional arguments passed to detection constructors
+
+        Returns:
+            ImageDetections2D containing appropriate detection types
+        """
+        from dimos.perception.detection.type.person import Detection2DPerson
+
+        detections = []
+        for result in results:
+            if result.boxes is None:
+                continue
+
+            num_detections = len(result.boxes.xyxy)
+            for i in range(num_detections):
+                if result.keypoints is not None:
+                    # Pose detection with keypoints
+                    detection = Detection2DPerson.from_ultralytics_result(result, i, image)
+                else:
+                    # Regular bbox detection
+                    detection = Detection2DBBox.from_ultralytics_result(result, i, image)
+                detections.append(detection)
+
+        return cls(image=image, detections=detections)
+
     @classmethod
     def from_bbox_detector(
         cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs

@@ -13,4 +13,4 @@ from dimos.perception.detection.type.detection3dpc import (
     ImageDetections3DPC,
 )
 from dimos.perception.detection.type.imageDetections import ImageDetections, TableStr
-from dimos.perception.detection.type.person import Person
+from dimos.perception.detection.type.person import Detection2DPerson
