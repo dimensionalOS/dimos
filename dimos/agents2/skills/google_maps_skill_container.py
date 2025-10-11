@@ -16,6 +16,7 @@ import json
 from typing import Any, Optional, Union
 from reactivex import Observable
 
+from dimos.core.resource import Resource
 from dimos.mapping.google_maps.google_maps import GoogleMaps
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
 from dimos.mapping.types import LatLon
@@ -28,7 +29,7 @@ from reactivex.disposable import CompositeDisposable
 logger = setup_logger(__file__)
 
 
-class GoogleMapsSkillContainer(SkillContainer):
+class GoogleMapsSkillContainer(SkillContainer, Resource):
     _robot: Robot
     _disposables: CompositeDisposable
     _latest_location: Optional[LatLon]
@@ -45,15 +46,13 @@ class GoogleMapsSkillContainer(SkillContainer):
         self._client = GoogleMaps()
         self._started = False
 
-    def __enter__(self) -> "GoogleMapsSkillContainer":
+    def start(self) -> None:
         self._started = True
         self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def stop(self) -> None:
         self._disposables.dispose()
-        self.stop()
-        return False
+        super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location

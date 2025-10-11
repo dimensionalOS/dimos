@@ -11,6 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import functools
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -27,11 +28,10 @@ from dimos.models.vl import QwenVlModel, VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection2d.type import ImageDetections2D
 from dimos.perception.detection2d.detectors import Detector, Yolo2DDetector
 from dimos.perception.detection2d.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection2d.type import (
-    ImageDetections2D,
-)
+from dimos.perception.detection2d.type import ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -90,13 +90,16 @@ class Detection2DModule(Module):
 
     @rpc
     def start(self):
-        self.detection_stream_2d().subscribe(
+        super().start()
+        unsub = self.detection_stream_2d().subscribe(
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
         )
+        self._disposables.add(unsub)
 
-        self.detection_stream_2d().subscribe(
+        unsub = self.detection_stream_2d().subscribe(
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
+        self._disposables.add(unsub)
 
         def publish_cropped_images(detections: ImageDetections2D):
             for index, detection in enumerate(detections[:3]):
@@ -106,4 +109,5 @@ class Detection2DModule(Module):
         self.detection_stream_2d().subscribe(publish_cropped_images)
 
     @rpc
-    def stop(self): ...
+    def stop(self) -> None:
+        super().stop()

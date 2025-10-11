@@ -17,7 +17,6 @@
 import asyncio
 import base64
 import io
-import logging
 import threading
 from typing import Optional
 
@@ -28,8 +27,9 @@ from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
 from dimos.agents.modules.gateway import UnifiedGatewayClient
+from reactivex.disposable import Disposable
 
-logger = setup_logger("dimos.agents.modules.simple_vision_agent")
+logger = setup_logger(__file__)
 
 
 class SimpleVisionAgentModule(Module):
@@ -74,6 +74,8 @@ class SimpleVisionAgentModule(Module):
     @rpc
     def start(self):
         """Initialize and start the agent."""
+        super().start()
+
         logger.info(f"Starting simple vision agent with model: {self.model}")
 
         # Initialize gateway
@@ -81,19 +83,22 @@ class SimpleVisionAgentModule(Module):
 
         # Subscribe to inputs
         if self.query_in:
-            self.query_in.subscribe(self._handle_query)
+            unsub = self.query_in.subscribe(self._handle_query)
+            self._disposables.add(Disposable(unsub))
 
         if self.image_in:
-            self.image_in.subscribe(self._handle_image)
+            unsub = self.image_in.subscribe(self._handle_image)
+            self._disposables.add(Disposable(unsub))
 
         logger.info("Simple vision agent started")
 
     @rpc
     def stop(self):
-        """Stop the agent."""
         logger.info("Stopping simple vision agent")
         if self.gateway:
             self.gateway.close()
+
+        super().stop()
 
     def _handle_image(self, image: Image):
         """Handle incoming image."""

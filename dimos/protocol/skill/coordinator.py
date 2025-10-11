@@ -34,8 +34,10 @@ from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
 from dimos.protocol.skill.utils import interpret_tool_call_args
 from dimos.utils.logging_config import setup_logger
+from dimos.core.module import Module
 
-logger = setup_logger("dimos.protocol.skill.coordinator")
+
+logger = setup_logger(__file__)
 
 
 @dataclass
@@ -257,9 +259,6 @@ class SkillStateDict(dict[str, SkillState]):
         return capture.get().strip()
 
 
-from dimos.core.module import Module
-
-
 # This class is responsible for managing the lifecycle of skills,
 # handling skill calls, and coordinating communication between the agent and skills.
 #
@@ -320,6 +319,7 @@ class SkillCoordinator(Module):
 
     @rpc
     def start(self) -> None:
+        super().start()
         self.skill_transport.start()
         self._transport_unsub_fn = self.skill_transport.subscribe(self.handle_message)
 
@@ -336,6 +336,8 @@ class SkillCoordinator(Module):
             container.stop()
         for container in self._dynamic_containers:
             container.stop()
+
+        super().stop()
 
     def len(self) -> int:
         return len(self._skills)

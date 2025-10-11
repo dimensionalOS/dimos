@@ -276,7 +276,7 @@ async def test_object_tracking_module():
         cv2.destroyAllWindows()
 
         if tracker:
-            tracker.cleanup()
+            tracker.stop()
         if zed:
             zed.stop()
         if foxglove_bridge:

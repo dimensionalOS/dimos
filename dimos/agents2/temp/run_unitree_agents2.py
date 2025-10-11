@@ -170,7 +170,7 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
 
         if self.robot:
             try:
-                # WebRTC robot doesn't have a stop method
+                self.robot.stop()
                 logger.info("Robot connection closed")
             except Exception as e:
                 logger.error(f"Error stopping robot: {e}")

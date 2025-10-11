@@ -16,6 +16,7 @@ from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.perception.detection2d.utils import filter_detections
 from dimos.perception.common.ibvs import PersonDistanceEstimator
 from reactivex import Observable, interval
+from reactivex.disposable import Disposable
 from reactivex import operators as ops
 import numpy as np
 import cv2
@@ -94,6 +95,8 @@ class PersonTrackingStream(Module):
     def start(self):
         """Start the person tracking module and subscribe to LCM streams."""
 
+        super().start()
+
         # Subscribe to video stream
         def set_video(image_msg: Image):
             if hasattr(image_msg, "data"):
@@ -101,12 +104,18 @@ class PersonTrackingStream(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        self.video.subscribe(set_video)
+        unsub = self.video.subscribe(set_video)
+        self._disposables.add(Disposable(unsub))
 
         # Start periodic processing
-        interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        self._disposables.add(unsub)
 
         logger.info("PersonTracking module started and subscribed to LCM streams")
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _process_frame(self):
         """Process the latest frame if available."""
@@ -250,9 +259,3 @@ class PersonTrackingStream(Module):
         """
 
         return video_stream.pipe(ops.map(self._process_tracking))
-
-    @rpc
-    def cleanup(self):
-        """Clean up resources."""
-        # CUDA cleanup is now handled by WorkerPlugin in dimos.core
-        pass

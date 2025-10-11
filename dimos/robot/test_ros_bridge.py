@@ -71,7 +71,7 @@ class TestROSBridge(unittest.TestCase):
     def tearDown(self):
         """Clean up test fixtures."""
         self.test_node.destroy_node()
-        self.bridge.shutdown()
+        self.bridge.stop()
         if rclpy.ok():
             rclpy.try_shutdown()
 

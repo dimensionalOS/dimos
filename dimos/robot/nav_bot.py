@@ -23,6 +23,7 @@ import time
 
 from dimos import core
 from dimos.core import Module, In, Out, rpc
+from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import PointCloud2, Joy, Image
@@ -39,6 +40,7 @@ from std_msgs.msg import Bool as ROSBool
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from reactivex.disposable import Disposable
 
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
@@ -65,10 +67,14 @@ class NavigationModule(Module):
 
     @rpc
     def start(self):
-        """Start the navigation module."""
+        super().start()
         if self.goal_reached:
-            self.goal_reached.subscribe(self._on_goal_reached)
-        logger.info("NavigationModule started")
+            unsub = self.goal_reached.subscribe(self._on_goal_reached)
+            self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _on_goal_reached(self, msg: Bool):
         """Handle goal reached status messages."""
@@ -137,13 +143,13 @@ class NavigationModule(Module):
                 return self.goal_reach
             time.sleep(0.1)
 
-        self.stop()
+        self.stop_navigation()
 
         logger.warning(f"Navigation timed out after {timeout} seconds")
         return False
 
     @rpc
-    def stop(self) -> bool:
+    def stop_navigation(self) -> bool:
         """
         Cancel current navigation by publishing to cancel_goal.
 
@@ -180,8 +186,13 @@ class TopicRemapModule(Module):
 
     @rpc
     def start(self):
-        self.odom.subscribe(self._publish_odom_pose)
-        logger.info("TopicRemapModule started")
+        super().start()
+        unsub = self.odom.subscribe(self._publish_odom_pose)
+        self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _publish_odom_pose(self, msg: Odometry):
         pose_msg = PoseStamped(
@@ -225,7 +236,7 @@ class TopicRemapModule(Module):
         self.tf.publish(sensor_to_base_link_tf, map_to_world_tf)
 
 
-class NavBot:
+class NavBot(Resource):
     """
     NavBot class for navigation-related functionality.
     Manages ROS bridge and topic remapping for navigation.
@@ -251,12 +262,26 @@ class NavBot:
         self.lcm = LCM()
 
     def start(self):
+        super().start()
+
         if self.topic_remap_module:
             self.topic_remap_module.start()
             logger.info("Topic remap module started")
 
         if self.ros_bridge:
             logger.info("ROS bridge started")
+
+    def stop(self) -> None:
+        logger.info("Shutting down navigation modules...")
+
+        if self.ros_bridge is not None:
+            try:
+                self.ros_bridge.shutdown()
+                logger.info("ROS bridge shut down successfully")
+            except Exception as e:
+                logger.error(f"Error shutting down ROS bridge: {e}")
+
+        super().stop()
 
     def deploy_navigation_modules(self, bridge_name="nav_bot_ros_bridge"):
         # Deploy topic remap module
@@ -396,13 +421,3 @@ class NavBot:
         self.lcm.publish(cancel_topic, cancel_msg)
 
         return True
-
-    def shutdown(self):
-        logger.info("Shutting down navigation modules...")
-
-        if self.ros_bridge is not None:
-            try:
-                self.ros_bridge.shutdown()
-                logger.info("ROS bridge shut down successfully")
-            except Exception as e:
-                logger.error(f"Error shutting down ROS bridge: {e}")

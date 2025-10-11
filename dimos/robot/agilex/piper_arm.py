@@ -150,7 +150,6 @@ class PiperArmRobot(Robot):
         try:
             if self.manipulation_interface:
                 self.manipulation_interface.stop()
-                self.manipulation_interface.cleanup()
 
             if self.stereo_camera:
                 self.stereo_camera.stop()
