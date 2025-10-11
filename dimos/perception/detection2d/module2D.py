@@ -23,7 +23,6 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
-from dimos.models.vl import QwenVlModel, VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -40,7 +39,6 @@ from dimos.utils.reactive import backpressure
 class Config:
     max_freq: float = 5  # hz
     detector: Optional[Callable[[Any], Detector]] = lambda: Yolo2DDetector()
-    vlmodel: VlModel = QwenVlModel
 
 
 class Detection2DModule(Module):
@@ -60,7 +58,6 @@ class Detection2DModule(Module):
         super().__init__(*args, **kwargs)
         self.config: Config = Config(**kwargs)
         self.detector = self.config.detector()
-        self.vlmodel = self.config.vlmodel()
         self.vlm_detections_subject = Subject()
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
