@@ -15,7 +15,7 @@
 import threading
 import time
 from functools import wraps
-from typing import Callable, Optional
+from typing import Callable, Optional, Type
 
 from .accumulators import Accumulator, LatestAccumulator
 
@@ -143,3 +143,59 @@ def simple_mcache(method: Callable) -> Callable:
             return getattr(self, attr_name)
 
     return getter
+
+
+def retry(max_retries: int = 3, on_exception: Type[Exception] = Exception, delay: float = 0.0):
+    """
+    Decorator that retries a function call if it raises an exception.
+
+    Args:
+        max_retries: Maximum number of retry attempts (default: 3)
+        on_exception: Exception type to catch and retry on (default: Exception)
+        delay: Fixed delay in seconds between retries (default: 0.0)
+
+    Returns:
+        Decorated function that will retry on failure
+
+    Example:
+        @retry(max_retries=5, on_exception=ConnectionError, delay=0.5)
+        def connect_to_server():
+            # connection logic that might fail
+            pass
+
+        @retry()  # Use defaults: 3 retries on any Exception, no delay
+        def risky_operation():
+            # might fail occasionally
+            pass
+    """
+    if max_retries < 0:
+        raise ValueError("max_retries must be non-negative")
+    if delay < 0:
+        raise ValueError("delay must be non-negative")
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            last_exception = None
+
+            for attempt in range(max_retries + 1):
+                try:
+                    return func(*args, **kwargs)
+                except on_exception as e:
+                    last_exception = e
+                    if attempt < max_retries:
+                        # Still have retries left
+                        if delay > 0:
+                            time.sleep(delay)
+                        continue
+                    else:
+                        # Out of retries, re-raise the last exception
+                        raise
+
+            # This should never be reached, but just in case
+            if last_exception:
+                raise last_exception
+
+        return wrapper
+
+    return decorator
