@@ -516,7 +516,7 @@ class Image:
         if not isinstance(other, Image):
             return False
         return (
-            np.array_equal(self.to_opencv(), other.to_opencv())
+            np.array_equal(self.data, other.data)
             and self.format == other.format
             and self.frame_id == other.frame_id
             and abs(self.ts - other.ts) < 1e-6
