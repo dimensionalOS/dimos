@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
-    from dimos.perception.detection.type.person import Detection2DPerson
+    from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -389,7 +389,7 @@ class ImageDetections2D(ImageDetections[Detection2D]):
         Returns:
             ImageDetections2D containing appropriate detection types
         """
-        from dimos.perception.detection.type.person import Detection2DPerson
+        from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
         detections: List[Detection2D] = []
         for result in results:

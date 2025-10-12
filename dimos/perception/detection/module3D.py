@@ -26,7 +26,7 @@ from dimos.perception.detection.type import (
     ImageDetections2D,
     ImageDetections3DPC,
 )
-from dimos.perception.detection.type.detection3dpc import Detection3DPC
+from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
