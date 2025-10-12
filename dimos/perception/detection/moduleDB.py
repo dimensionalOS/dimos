@@ -35,16 +35,22 @@ from dimos.types.timestamped import to_datetime
 
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3DPC):
-    best_detection: Detection3DPC = None
-    center: Vector3 = None
-    track_id: str = None
+    best_detection: Optional[Detection3DPC] = None  # type: ignore
+    center: Optional[Vector3] = None  # type: ignore
+    track_id: Optional[str] = None  # type: ignore
     detections: int = 0
 
     def to_repr_dict(self) -> Dict[str, Any]:
+        if self.center is None:
+            center_str = "None"
+        else:
+            center_str = (
+                "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]"
+            )
         return {
             "object_id": self.track_id,
             "detections": self.detections,
-            "center": "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]",
+            "center": center_str,
         }
 
     def __init__(self, track_id: str, detection: Optional[Detection3DPC] = None, *args, **kwargs):
@@ -64,6 +70,8 @@ class Object3D(Detection3DPC):
         self.best_detection = detection
 
     def __add__(self, detection: Detection3DPC) -> "Object3D":
+        if self.track_id is None:
+            raise ValueError("Cannot add detection to object with None track_id")
         new_object = Object3D(self.track_id)
         new_object.bbox = detection.bbox
         new_object.confidence = max(self.confidence, detection.confidence)
@@ -84,9 +92,8 @@ class Object3D(Detection3DPC):
 
         return new_object
 
-    @property
-    def image(self) -> Image:
-        return self.best_detection.image
+    def get_image(self) -> Optional[Image]:
+        return self.best_detection.image if self.best_detection else None
 
     def scene_entity_label(self) -> str:
         return f"{self.name} ({self.detections})"
@@ -101,6 +108,9 @@ class Object3D(Detection3DPC):
         }
 
     def to_pose(self) -> PoseStamped:
+        if self.best_detection is None or self.center is None:
+            raise ValueError("Cannot compute pose without best_detection and center")
+
         optical_inverse = Transform(
             translation=Vector3(0.0, 0.0, 0.0),
             rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
@@ -127,9 +137,9 @@ class Object3D(Detection3DPC):
 class ObjectDBModule(Detection3DModule, TableStr):
     cnt: int = 0
     objects: dict[str, Object3D]
-    object_stream: Observable[Object3D] = None
+    object_stream: Optional[Observable[Object3D]] = None
 
-    goto: Callable[[PoseStamped], Any] = None
+    goto: Optional[Callable[[PoseStamped], Any]] = None
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
@@ -184,16 +194,18 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def add_to_object(self, closest: Object3D, detection: Detection3DPC):
         new_object = closest + detection
-        self.objects[closest.track_id] = new_object
+        if closest.track_id is not None:
+            self.objects[closest.track_id] = new_object
         return new_object
 
     def create_new_object(self, detection: Detection3DPC):
         new_object = Object3D(f"obj_{self.cnt}", detection)
-        self.objects[new_object.track_id] = new_object
+        if new_object.track_id is not None:
+            self.objects[new_object.track_id] = new_object
         self.cnt += 1
         return new_object
 
-    def agent_encode(self) -> List[Any]:
+    def agent_encode(self) -> str:
         ret = []
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
@@ -205,8 +217,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
             return "No objects detected yet."
         return "\n".join(ret)
 
-    def vlm_query(self, description: str) -> str:
-        imageDetections2D = super().vlm_query(description)
+    def vlm_query(self, description: str) -> Optional[Object3D]:  # type: ignore[override]
+        imageDetections2D = super().ask_vlm(description)
         print("VLM query found", imageDetections2D, "detections")
         time.sleep(3)
 
@@ -234,67 +246,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
         ret.sort(key=lambda x: x.ts)
 
         return ret[0] if ret else None
-
-    @skill()
-    def remember_location(self, name: str) -> str:
-        """Remember the current location with a name."""
-        transform = self.tf.get("map", "sensor", time_point=time.time(), time_tolerance=1.0)
-        if not transform:
-            return f"Could not get current location transform from map to sensor"
-
-        pose = transform.to_pose()
-        pose.frame_id = "map"
-        self.remembered_locations[name] = pose
-        return f"Location '{name}' saved at position: {pose.position}"
-
-    @skill()
-    def goto_remembered_location(self, name: str) -> str:
-        """Go to a remembered location by name."""
-        pose = self.remembered_locations.get(name, None)
-        if not pose:
-            return f"Location {name} not found. Known locations: {list(self.remembered_locations.keys())}"
-        self.goto(pose)
-        return f"Navigating to remembered location {name} and pose {pose}"
-
-    @skill()
-    def list_remembered_locations(self) -> List[str]:
-        """List all remembered locations."""
-        return str(list(self.remembered_locations.keys()))
-
-    def nav_to(self, target_pose) -> str:
-        target_pose.orientation = Quaternion(0.0, 0.0, 0.0, 0.0)
-        self.target.publish(target_pose)
-        time.sleep(0.1)
-        self.target.publish(target_pose)
-        self.goto(target_pose)
-
-    @skill()
-    def navigate_to_object_in_view(self, query: str) -> str:
-        """Navigate to an object in your current image view via natural language query using vision-language model to find it."""
-        target_obj = self.vlm_query(query)
-        if not target_obj:
-            return f"No objects found matching '{query}'"
-        return self.navigate_to_object_by_id(target_obj.track_id)
-
-    @skill(reducer=Reducer.all)
-    def list_objects(self):
-        """List all detected objects that the system remembers and can navigate to."""
-        data = self.agent_encode()
-        return data
-
-    @skill()
-    def navigate_to_object_by_id(self, object_id: str):
-        """Navigate to an object by an object id"""
-        target_obj = self.objects.get(object_id, None)
-        if not target_obj:
-            return f"Object {object_id} not found\nHere are the known objects:\n{str(self.agent_encode())}"
-        target_pose = target_obj.to_pose()
-        target_pose.frame_id = "map"
-        self.target.publish(target_pose)
-        time.sleep(0.1)
-        self.target.publish(target_pose)
-        self.nav_to(target_pose)
-        return f"Navigating to f{object_id} f{target_obj.name}"
 
     def lookup(self, label: str) -> List[Detection3DPC]:
         """Look up a detection by label."""

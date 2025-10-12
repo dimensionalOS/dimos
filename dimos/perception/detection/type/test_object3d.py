@@ -86,9 +86,9 @@ def test_object3d_repr_dict(first_object):
     assert encoded["last_seen"].endswith("s ago")
 
     # def test_object3d_image_property(first_object):
-    """Test image property returns best_detection's image."""
-    assert first_object.image is not None
-    assert first_object.image is first_object.best_detection.image
+    """Test get_image method returns best_detection's image."""
+    assert first_object.get_image() is not None
+    assert first_object.get_image() is first_object.best_detection.image
 
 
 def test_all_objeects(all_objects):

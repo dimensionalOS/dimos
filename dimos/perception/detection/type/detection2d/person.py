@@ -126,10 +126,15 @@ class Detection2DPerson(Detection2DBBox):
         class_id = int(result.boxes.cls[idx].cpu())
 
         # Extract keypoints
+        if result.keypoints.xy is None or result.keypoints.conf is None:
+            raise ValueError("Keypoints xy or conf data is missing from the result")
+
         keypoints = result.keypoints.xy[idx].cpu().numpy()
         keypoint_scores = result.keypoints.conf[idx].cpu().numpy()
         keypoints_norm = (
-            result.keypoints.xyn[idx].cpu().numpy() if hasattr(result.keypoints, "xyn") else None
+            result.keypoints.xyn[idx].cpu().numpy()
+            if hasattr(result.keypoints, "xyn") and result.keypoints.xyn is not None
+            else None
         )
 
         # Get image dimensions

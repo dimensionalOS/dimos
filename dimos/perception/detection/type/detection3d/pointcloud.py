@@ -259,7 +259,7 @@ class Detection3DPC(Detection3D):
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
         filters: Optional[list[PointCloudFilter]] = None,
-    ) -> Optional["Detection3D"]:
+    ) -> Optional["Detection3DPC"]:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
         This method handles:
