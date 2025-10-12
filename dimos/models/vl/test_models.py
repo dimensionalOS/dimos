@@ -32,7 +32,16 @@ def test_vlm(model_class, model_name):
     print(f"Loading {model_name} model...")
     model: VlModel = model_class()
 
-    queries = ["glasses", "blue shirt", "lightbulbs", "dog", "flowers on the table", "shoes"]
+    queries = [
+        "glasses",
+        "blue shirt",
+        "bulb",
+        "dog",
+        "flowers on the left table",
+        "shoes",
+        "leftmost persons ear",
+        "rightmost arm",
+    ]
 
     all_detections = ImageDetections2D(image)
     query_times = []

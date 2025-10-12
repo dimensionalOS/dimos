@@ -248,34 +248,54 @@ class Detection2DBBox(Detection2D):
 
         font_size = 20
 
-        return [
-            TextAnnotation(
-                timestamp=to_ros_stamp(self.ts),
-                position=Point2(x=x1, y=y2 + font_size),
-                text=f"confidence: {self.confidence:.3f}",
-                font_size=font_size,
-                text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
-                background_color=Color(r=0, g=0, b=0, a=1),
-            ),
+        # Build label text - exclude class_id if it's -1 (VLM detection)
+        if self.class_id == -1:
+            label_text = f"{self.name}_{self.track_id}"
+        else:
+            label_text = f"{self.name}_{self.class_id}_{self.track_id}"
+
+        annotations = [
             TextAnnotation(
                 timestamp=to_ros_stamp(self.ts),
                 position=Point2(x=x1, y=y1),
-                text=f"{self.name}_{self.class_id}_{self.track_id}",
+                text=label_text,
                 font_size=font_size,
                 text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
                 background_color=Color(r=0, g=0, b=0, a=1),
             ),
         ]
 
+        # Only show confidence if it's not 1.0
+        if self.confidence != 1.0:
+            annotations.append(
+                TextAnnotation(
+                    timestamp=to_ros_stamp(self.ts),
+                    position=Point2(x=x1, y=y2 + font_size),
+                    text=f"confidence: {self.confidence:.3f}",
+                    font_size=font_size,
+                    text_color=Color(r=1.0, g=1.0, b=1.0, a=1),
+                    background_color=Color(r=0, g=0, b=0, a=1),
+                )
+            )
+
+        return annotations
+
     def to_points_annotation(self) -> List[PointsAnnotation]:
         x1, y1, x2, y2 = self.bbox
 
         thickness = 1
 
+        # Use bright green for confidence 1.0, black otherwise
+        outline_color = (
+            Color(r=0.0, g=1.0, b=0.0, a=1.0)
+            if self.confidence == 1.0
+            else Color(r=0.0, g=0.0, b=0.0, a=1.0)
+        )
+
         return [
             PointsAnnotation(
                 timestamp=to_ros_stamp(self.ts),
-                outline_color=Color(r=0.0, g=0.0, b=0.0, a=1.0),
+                outline_color=outline_color,
                 fill_color=Color.from_string(self.name, alpha=0.15),
                 thickness=thickness,
                 points_length=4,
