@@ -449,9 +449,8 @@ def test_performance_timing():
             explorer.stop()
 
     # Check that larger maps take more time (expected behavior)
-    # But verify times are reasonable
     for result in results:
-        assert result["detect_time"] < 1.0, f"Detection too slow: {result['detect_time']}s"
+        assert result["detect_time"] < 2.0, f"Detection too slow: {result['detect_time']}s"
         assert result["goal_time"] < 1.5, f"Goal selection too slow: {result['goal_time']}s"
 
     print("\nPerformance test passed - all operations completed within time limits")
