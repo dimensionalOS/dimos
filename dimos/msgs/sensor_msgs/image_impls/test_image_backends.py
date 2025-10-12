@@ -620,45 +620,86 @@ def test_solve_pnp_batch(alloc_timer):
 
 
 def test_nvimgcodec_flag_and_fallback(monkeypatch):
-    # Force nvimgcodec flag on, then reload Image and ensure fallback works
-    monkeypatch.setenv("USE_NVIMGCODEC", "1")
-    import importlib as _importlib
+    # Test that to_base64() works with and without nvimgcodec by patching runtime flags
+    import dimos.msgs.sensor_msgs.image_impls.AbstractImage as AbstractImageMod
 
-    ImageMod = _importlib.import_module("dimos.msgs.sensor_msgs.Image")
-    _importlib.reload(ImageMod)
-    # Even if nvimgcodec missing, to_base64 should work (fallback)
     arr = _prepare_image(ImageFormat.BGR, (32, 32, 3))
-    img = ImageMod.Image.from_numpy(
-        arr, format=ImageMod.ImageFormat.BGR, to_cuda=bool(ImageMod.HAS_CUDA)
-    )
-    b64 = img.to_base64()
-    assert isinstance(b64, str) and len(b64) > 0
-    # Turn flag off and reload
-    monkeypatch.setenv("USE_NVIMGCODEC", "0")
-    _importlib.reload(ImageMod)
-    img2 = ImageMod.Image.from_numpy(arr, format=ImageMod.ImageFormat.BGR)
-    b64_2 = img2.to_base64()
-    assert isinstance(b64_2, str) and len(b64_2) > 0
+
+    # Save original values
+    original_has_nvimgcodec = AbstractImageMod.HAS_NVIMGCODEC
+    original_nvimgcodec = AbstractImageMod.nvimgcodec
+
+    try:
+        # Test 1: Simulate nvimgcodec not available
+        monkeypatch.setattr(AbstractImageMod, "HAS_NVIMGCODEC", False)
+        monkeypatch.setattr(AbstractImageMod, "nvimgcodec", None)
+
+        # Should work via cv2 fallback for CPU
+        img_cpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=False)
+        b64_cpu = img_cpu.to_base64()
+        assert isinstance(b64_cpu, str) and len(b64_cpu) > 0
+
+        # If CUDA available, test GPU fallback to CPU encoding
+        if HAS_CUDA:
+            img_gpu = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
+            b64_gpu = img_gpu.to_base64()
+            assert isinstance(b64_gpu, str) and len(b64_gpu) > 0
+            # Should have fallen back to CPU encoding
+            assert not AbstractImageMod.NVIMGCODEC_LAST_USED
+
+        # Test 2: Restore nvimgcodec if it was originally available
+        if original_has_nvimgcodec:
+            monkeypatch.setattr(AbstractImageMod, "HAS_NVIMGCODEC", True)
+            monkeypatch.setattr(AbstractImageMod, "nvimgcodec", original_nvimgcodec)
+
+            # Test it still works with nvimgcodec "available"
+            img2 = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=HAS_CUDA)
+            b64_2 = img2.to_base64()
+            assert isinstance(b64_2, str) and len(b64_2) > 0
+
+    finally:
+        pass
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
 def test_nvimgcodec_gpu_path(monkeypatch):
-    # Enable flag and reload; skip if nvimgcodec not present
-    monkeypatch.setenv("USE_NVIMGCODEC", "1")
-    import importlib as _importlib
+    """Test nvimgcodec GPU encoding path when CUDA is available.
 
-    ImageMod = _importlib.import_module("dimos.msgs.sensor_msgs.Image")
-    _importlib.reload(ImageMod)
-    if not ImageMod.HAS_NVIMGCODEC:
+    This test specifically verifies that when nvimgcodec is available,
+    GPU images can be encoded directly without falling back to CPU.
+    """
+    import dimos.msgs.sensor_msgs.image_impls.AbstractImage as AbstractImageMod
+
+    # Check if nvimgcodec was originally available
+    if not AbstractImageMod.HAS_NVIMGCODEC:
         pytest.skip("nvimgcodec library not available")
-    # Create a CUDA image and encode
+
+    # Save original nvimgcodec module reference
+    original_nvimgcodec = AbstractImageMod.nvimgcodec
+
+    # Create a CUDA image and encode using the actual nvimgcodec if available
     arr = _prepare_image(ImageFormat.BGR, (32, 32, 3))
-    img = ImageMod.Image.from_numpy(arr, format=ImageMod.ImageFormat.BGR, to_cuda=True)
+
+    # Test with nvimgcodec enabled (should be the default if available)
+    img = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
     b64 = img.to_base64()
     assert isinstance(b64, str) and len(b64) > 0
-    # Some builds may import nvimgcodec but not support CuPy device buffers; allow skip
-    if not getattr(ImageMod, "NVIMGCODEC_LAST_USED", False):
+
+    # Check if GPU encoding was actually used
+    # Some builds may import nvimgcodec but not support CuPy device buffers
+    if not getattr(AbstractImageMod, "NVIMGCODEC_LAST_USED", False):
         pytest.skip("nvimgcodec present but encode fell back to CPU in this environment")
+
+    # Now test that we can disable nvimgcodec and still encode via fallback
+    monkeypatch.setattr(AbstractImageMod, "HAS_NVIMGCODEC", False)
+    monkeypatch.setattr(AbstractImageMod, "nvimgcodec", None)
+
+    # Create another GPU image - should fall back to CPU encoding
+    img2 = Image.from_numpy(arr, format=ImageFormat.BGR, to_cuda=True)
+    b64_2 = img2.to_base64()
+    assert isinstance(b64_2, str) and len(b64_2) > 0
+    # Should have fallen back to CPU encoding
+    assert not AbstractImageMod.NVIMGCODEC_LAST_USED
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
