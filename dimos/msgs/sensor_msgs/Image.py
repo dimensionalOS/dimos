@@ -33,7 +33,7 @@ from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
-from dimos.types.timestamped import TimestampedBufferCollection, to_human_readable
+from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -59,7 +59,7 @@ class AgentImageMessage(TypedDict):
     data: str  # Base64 encoded image data
 
 
-class Image:
+class Image(Timestamped):
     msg_name = "sensor_msgs.Image"
 
     def __init__(
