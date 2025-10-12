@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import functools
 from typing import Callable, Generator, Optional, TypedDict, Union
 
 import pytest
@@ -62,16 +63,18 @@ class Moment3D(Moment):
     detections3dpc: ImageDetections3DPC
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def tf():
     t = TF()
     yield t
     t.stop()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def get_moment(tf):
+    @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment:
+        print("MOMENT PROVIDER ARGS:", kwargs)
         seek = kwargs.get("seek", 10.0)
 
         data_dir = "unitree_go2_lidar_corrected"
@@ -118,7 +121,7 @@ def get_moment(tf):
     return moment_provider
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def publish_moment():
     def publisher(moment: Moment | Moment2D | Moment3D):
         detections2d_val = moment.get("detections2d")
@@ -175,26 +178,27 @@ def publish_moment():
     return publisher
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def detection2d(get_moment_2d) -> Detection2D:
-    moment = get_moment_2d(seek=10.0)
+    moment = get_moment_2d()
     assert len(moment["detections2d"]) > 0, "No detections found in the moment"
     return moment["detections2d"][0]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def detection3dpc(get_moment_3dpc) -> Detection3DPC:
     moment = get_moment_3dpc(seek=10.0)
     assert len(moment["detections3dpc"]) > 0, "No detections found in the moment"
     return moment["detections3dpc"][0]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
     from dimos.perception.detection.detectors import Yolo2DDetector
 
     module = Detection2DModule(detector=Yolo2DDetector)
 
+    @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment2D:
         moment = get_moment(**kwargs)
         detections = module.process_image_frame(moment.get("image_frame"))
@@ -205,13 +209,15 @@ def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
         }
 
     yield moment_provider
+
     module._close_module()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, None]:
     module: Optional[Detection3DModule] = None
 
+    @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment3D:
         nonlocal module
         moment = get_moment_2d(**kwargs)
@@ -237,12 +243,11 @@ def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, No
         }
 
     yield moment_provider
-    print("Closing 3D detection module", module)
     if module is not None:
         module._close_module()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def object_db_module(get_moment):
     """Create and populate an ObjectDBModule with detections from multiple frames."""
     from dimos.perception.detection.detectors import Yolo2DDetector
@@ -274,12 +279,13 @@ def object_db_module(get_moment):
         moduleDB.add_detections(imageDetections3d)
 
     yield moduleDB
+
     module2d._close_module()
     module3d._close_module()
     moduleDB._close_module()
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def first_object(object_db_module):
     """Get the first object from the database."""
     objects = list(object_db_module.objects.values())
@@ -287,7 +293,7 @@ def first_object(object_db_module):
     return objects[0]
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def all_objects(object_db_module):
     """Get all objects from the database."""
     return list(object_db_module.objects.values())

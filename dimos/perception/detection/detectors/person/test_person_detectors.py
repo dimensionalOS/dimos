@@ -17,12 +17,12 @@ import pytest
 from dimos.perception.detection.type import Detection2DPerson, ImageDetections2D
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def people(person_detector, test_image):
     return person_detector.process_image(test_image)
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def person(people):
     return people[0]
 

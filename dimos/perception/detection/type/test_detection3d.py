@@ -18,7 +18,7 @@ from dimos.perception.detection.type.detection3d import Detection3D
 
 
 def test_guess_projection(get_moment_2d, publish_moment):
-    moment = get_moment_2d(seek=10.0)
+    moment = get_moment_2d()
     for key, value in moment.items():
         print(key, "====================================")
         print(value)

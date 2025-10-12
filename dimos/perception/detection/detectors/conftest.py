@@ -20,19 +20,19 @@ from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.utils.data import get_data
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def test_image():
     """Load the test image used for detector tests."""
     return Image.from_file(get_data("cafe.jpg"))
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def person_detector():
     """Create a YoloPersonDetector instance."""
     return YoloPersonDetector()
 
 
-@pytest.fixture()
+@pytest.fixture(scope="session")
 def bbox_detector():
     """Create a Yolo2DDetector instance for general object detection."""
     return Yolo2DDetector()
