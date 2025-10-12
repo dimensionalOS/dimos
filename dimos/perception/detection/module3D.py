@@ -17,12 +17,12 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
+from dimos.agents2 import skill
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type import (
-    Detection2D,
     ImageDetections2D,
     ImageDetections3D,
     ImageDetections3DPC,
@@ -77,7 +77,27 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3D(detections.image, detection3d_list)
 
-    def process_detection(self, detections: ImageDetections2D) -> ImageDetections3DPC: ...
+    @skill
+    def ask_vlm(self, question: str):
+        """
+        query visual model about the view in front of the camera
+        you can ask to mark objects like:
+
+        "red cup on the table left of the pencil"
+        "laptop on the desk"
+        "a person wearing a red shirt"
+        """
+        from dimos.models.vl.qwen import QwenVLModel
+
+        model = QwenVLModel()
+        detections: ImageDetections2D = model.query(self.image.get_next(), question)
+
+        if not detections or not len(detections):
+            return "No detections"
+
+        pc = self.pointcloud.get_next()
+        transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
+        return self.process_frame(detections, pc, transform)
 
     @rpc
     def start(self):
@@ -88,19 +108,12 @@ class Detection3DModule(Detection2DModule):
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
-        # does align message timestamps
         self.detection_stream_3d = align_timestamped(
             backpressure(self.detection_stream_2d()),
             self.pointcloud.observable(),
             match_tolerance=0.25,
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))
-
-        # doesn't align message timestamps
-        #
-        # self.detection_stream_3d = backpressure(self.detection_stream_2d()).pipe(
-        #    ops.with_latest_from(self.pointcloud.observable()), ops.map(detection2d_to_3d)
-        # )
 
         self.detection_stream_3d.subscribe(self._publish_detections)
 

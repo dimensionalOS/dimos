@@ -37,7 +37,7 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config:
     max_freq: float = 10  # hz
-    detector: Optional[Callable[[Any], Detector]] = lambda: Yolo2DDetector()
+    detector: Optional[Callable[[Any], Detector]] = lambda: YoloPersonDetector()
 
 
 class Detection2DModule(Module):

@@ -18,16 +18,11 @@ Run script for Unitree Go2 robot with agents2 framework.
 This is the migrated version using the new LangChain-based agent system.
 """
 
-import asyncio  # Needed for event loop management in setup_agent
-import os
-import sys
 import time
-from pathlib import Path
 from threading import Thread
 
 import reactivex as rx
 import reactivex.operators as ops
-from dotenv import load_dotenv
 
 from dimos.agents2 import Agent, Output, Reducer, Stream, skill
 from dimos.agents2.cli.human import HumanInput
@@ -41,9 +36,6 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 # from dimos.hardware.webcam import ColorCameraModule, Webcam
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
 
