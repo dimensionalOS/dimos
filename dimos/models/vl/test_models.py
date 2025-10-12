@@ -8,6 +8,7 @@ from dimos.models.vl.base import VlModel
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
+from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type import ImageDetections2D
 from dimos.utils.data import get_data
 
@@ -24,19 +25,26 @@ from dimos.utils.data import get_data
 def test_vlm(model_class, model_name):
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
-    print(f"\n{'=' * 60}")
     print(f"Testing {model_name}")
-    print(f"{'=' * 60}")
 
     # Initialize model
     print(f"Loading {model_name} model...")
     model: VlModel = model_class()
 
+    model.warmup()
+
+    # Publish to LCM with model-specific channel names
+    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
+        "/annotations", ImageAnnotations
+    )
+    image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
+    image_transport.publish(image)
+
     queries = [
         "glasses",
         "blue shirt",
         "bulb",
-        "dog",
+        "old man's face",
         "flowers on the left table",
         "shoes",
         "leftmost persons ear",
@@ -46,6 +54,15 @@ def test_vlm(model_class, model_name):
     all_detections = ImageDetections2D(image)
     query_times = []
 
+    # # First, run YOLO detection
+    # print("\nRunning YOLO detection...")
+    # yolo_detector = Yolo2DDetector()
+    # yolo_detections = yolo_detector.process_image(image)
+    # print(f"  YOLO found {len(yolo_detections.detections)} objects")
+    # all_detections.detections.extend(yolo_detections.detections)
+    # annotations_transport.publish(all_detections.to_foxglove_annotations())
+
+    # Then run VLM queries
     for query in queries:
         print(f"\nQuerying for: {query}")
         start_time = time.time()
@@ -55,6 +72,7 @@ def test_vlm(model_class, model_name):
 
         print(f"  Found {len(detections)} detections in {query_time:.3f}s")
         all_detections.detections.extend(detections.detections)
+        annotations_transport.publish(all_detections.to_foxglove_annotations())
 
     avg_time = sum(query_times) / len(query_times) if query_times else 0
     print(f"\n{model_name} Results:")
@@ -62,16 +80,7 @@ def test_vlm(model_class, model_name):
     print(f"  Total detections: {len(all_detections)}")
     print(all_detections)
 
-    # Publish to LCM with model-specific channel names
-    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
-        "/annotations", ImageAnnotations
-    )
     annotations_transport.publish(all_detections.to_foxglove_annotations())
-
-    image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
-    image_transport.publish(image)
 
     annotations_transport.lcm.stop()
     image_transport.lcm.stop()
-
-    print(f"Published {model_name} annotations and image to LCM")

@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import hashlib
-from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple, Union
 
@@ -246,7 +245,7 @@ class Detection2DBBox(Detection2D):
     def to_text_annotation(self) -> List[TextAnnotation]:
         x1, y1, x2, y2 = self.bbox
 
-        font_size = 20
+        font_size = self.image.width / 80
 
         # Build label text - exclude class_id if it's -1 (VLM detection)
         if self.class_id == -1:
