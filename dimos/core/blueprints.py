@@ -98,7 +98,7 @@ class ModuleBlueprintSet:
         # Gather all RPC methods.
         rpc_methods = {}
         for blueprint in self.blueprints:
-            for method_name in blueprint.module.rpcs.items():
+            for method_name in blueprint.module.rpcs.keys():
                 method = getattr(dimos.get_instance(blueprint.module), method_name)
                 rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method
 

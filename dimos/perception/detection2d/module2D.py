@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
+from functools import partial
 from typing import Any, Callable, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
@@ -21,7 +22,6 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.agents2.test_agent_direct import partial
 from dimos.core import In, Module, Out, rpc
 from dimos.core.blueprints import create_module_blueprint
 from dimos.models.vl import QwenVlModel, VlModel
