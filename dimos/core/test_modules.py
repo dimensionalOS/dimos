@@ -81,7 +81,10 @@ def get_import_aliases(tree: ast.AST) -> Dict[str, str]:
 
 
 def is_module_subclass(
-    base_classes: List[str], aliases: Dict[str, str], class_hierarchy: Dict[str, List[str]] = None
+    base_classes: List[str],
+    aliases: Dict[str, str],
+    class_hierarchy: Dict[str, List[str]] = None,
+    current_module_path: str = None,
 ) -> bool:
     """Check if any base class is or resolves to dimos.core.Module or its variants (recursively)."""
     target_classes = {
@@ -96,7 +99,34 @@ def is_module_subclass(
         "dimos.core.module.DaskModule",
     }
 
-    def check_base(base: str, visited: Set[str] = None) -> bool:
+    def find_qualified_name(base: str, context_module: str = None) -> str:
+        """Find the qualified name for a base class, using import context if available."""
+        if not class_hierarchy:
+            return base
+
+        # First try exact match (already fully qualified or in hierarchy)
+        if base in class_hierarchy:
+            return base
+
+        # Check if it's in our aliases (from imports)
+        if base in aliases:
+            resolved = aliases[base]
+            if resolved in class_hierarchy:
+                return resolved
+            # The resolved name might be a qualified name that exists
+            return resolved
+
+        # If we have a context module and base is a simple name,
+        # try to find it in the same module first (for local classes)
+        if context_module and "." not in base:
+            same_module_qualified = f"{context_module}.{base}"
+            if same_module_qualified in class_hierarchy:
+                return same_module_qualified
+
+        # Otherwise return the base as-is
+        return base
+
+    def check_base(base: str, visited: Set[str] = None, context_module: str = None) -> bool:
         if visited is None:
             visited = set()
 
@@ -118,22 +148,27 @@ def is_module_subclass(
             base = resolved
 
         # If we have a class hierarchy, recursively check parent classes
-        if class_hierarchy and base in class_hierarchy:
-            for parent_base in class_hierarchy[base]:
-                if check_base(parent_base, visited):
-                    return True
+        if class_hierarchy:
+            # Resolve the base class name to a qualified name
+            qualified_name = find_qualified_name(base, context_module)
+
+            if qualified_name in class_hierarchy:
+                # Check all parent classes
+                for parent_base in class_hierarchy[qualified_name]:
+                    if check_base(parent_base, visited, None):  # Parent lookups don't use context
+                        return True
 
         return False
 
     for base in base_classes:
-        if check_base(base):
+        if check_base(base, context_module=current_module_path):
             return True
 
     return False
 
 
 def scan_file(
-    filepath: Path, class_hierarchy: Dict[str, List[str]] = None
+    filepath: Path, class_hierarchy: Dict[str, List[str]] = None, root_path: Path = None
 ) -> List[Tuple[str, str, bool, bool, Set[str]]]:
     """
     Scan a Python file for Module subclasses.
@@ -153,9 +188,21 @@ def scan_file(
         visitor = ModuleVisitor(str(filepath))
         visitor.visit(tree)
 
+        # Get module path for this file to properly resolve base classes
+        current_module_path = None
+        if root_path:
+            try:
+                rel_path = filepath.relative_to(root_path.parent)
+                module_parts = list(rel_path.parts[:-1])
+                if rel_path.stem != "__init__":
+                    module_parts.append(rel_path.stem)
+                current_module_path = ".".join(module_parts)
+            except ValueError:
+                pass
+
         results = []
         for class_name, base_classes, methods in visitor.classes:
-            if is_module_subclass(base_classes, aliases, class_hierarchy):
+            if is_module_subclass(base_classes, aliases, class_hierarchy, current_module_path):
                 has_start = "start" in methods
                 has_stop = "stop" in methods
                 forbidden_found = methods & forbidden_method_names
@@ -172,7 +219,7 @@ def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
     """Build a complete class hierarchy by scanning all Python files."""
     hierarchy = {}
 
-    for filepath in root_path.rglob("*.py"):
+    for filepath in sorted(root_path.rglob("*.py")):
         # Skip __pycache__ and other irrelevant directories
         if "__pycache__" in filepath.parts or ".venv" in filepath.parts:
             continue
@@ -185,12 +232,31 @@ def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
             visitor = ModuleVisitor(str(filepath))
             visitor.visit(tree)
 
+            # Convert filepath to module path (e.g., dimos/core/module.py -> dimos.core.module)
+            try:
+                rel_path = filepath.relative_to(root_path.parent)
+            except ValueError:
+                # If we can't get relative path, skip this file
+                continue
+
+            # Convert path to module notation
+            module_parts = list(rel_path.parts[:-1])  # Exclude filename
+            if rel_path.stem != "__init__":
+                module_parts.append(rel_path.stem)  # Add filename without .py
+            module_name = ".".join(module_parts)
+
             for class_name, base_classes, _ in visitor.classes:
-                hierarchy[class_name] = base_classes
+                # Use fully qualified name as key to avoid conflicts
+                qualified_name = f"{module_name}.{class_name}" if module_name else class_name
+                hierarchy[qualified_name] = base_classes
 
         except (SyntaxError, UnicodeDecodeError):
             # Skip files that can't be parsed
             continue
+
+    from pprint import pprint
+
+    pprint(hierarchy)
 
     return hierarchy
 
@@ -203,12 +269,12 @@ def scan_directory(root_path: Path) -> List[Tuple[str, str, bool, bool, Set[str]
     # Then scan for Module subclasses using the complete hierarchy
     results = []
 
-    for filepath in root_path.rglob("*.py"):
+    for filepath in sorted(root_path.rglob("*.py")):
         # Skip __pycache__ and other irrelevant directories
         if "__pycache__" in filepath.parts or ".venv" in filepath.parts:
             continue
 
-        file_results = scan_file(filepath, class_hierarchy)
+        file_results = scan_file(filepath, class_hierarchy, root_path)
         results.extend(file_results)
 
     return results
