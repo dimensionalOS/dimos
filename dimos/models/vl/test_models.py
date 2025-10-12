@@ -30,7 +30,6 @@ def test_vlm(model_class, model_name):
     # Initialize model
     print(f"Loading {model_name} model...")
     model: VlModel = model_class()
-
     model.warmup()
 
     # Publish to LCM with model-specific channel names
@@ -44,7 +43,9 @@ def test_vlm(model_class, model_name):
         "glasses",
         "blue shirt",
         "bulb",
-        "old man's face",
+        "cigarette",
+        "reflection of a car",
+        "knee",
         "flowers on the left table",
         "shoes",
         "leftmost persons ear",
