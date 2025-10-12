@@ -14,31 +14,37 @@
 
 import pytest
 
-from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type import Detection2D, ImageDetections2D
+
+
+@pytest.fixture(params=["bbox_detector", "person_detector"])
+def detector(request):
+    """Parametrized fixture that provides both bbox and person detectors."""
+    return request.getfixturevalue(request.param)
 
 
 @pytest.fixture()
-def bboxes(bbox_detector, test_image):
-    """Get ImageDetections2D from bbox detector."""
-    return bbox_detector.process_image(test_image)
+def detections(detector, test_image):
+    """Get ImageDetections2D from any detector."""
+    return detector.process_image(test_image)
 
 
-def test_bbox_detection(bboxes):
-    """Test that we can detect objects with bounding boxes."""
-    assert len(bboxes) > 0
+def test_detection_basic(detections):
+    """Test that we can detect objects with all detectors."""
+    assert len(detections.detections) > 0
 
     # Check first detection
-    detection = bboxes[0]
-    assert isinstance(detection, Detection2DBBox)
+    detection = detections.detections[0]
+    assert isinstance(detection, Detection2D)
     assert detection.confidence > 0
     assert len(detection.bbox) == 4  # bbox is a tuple (x1, y1, x2, y2)
     assert detection.class_id >= 0
     assert detection.name is not None
 
 
-def test_bbox_properties(bboxes):
-    """Test Detection2DBBox object properties and methods."""
-    detection = bboxes[0]
+def test_detection_bbox_properties(detections):
+    """Test Detection2D bbox properties work for all detectors."""
+    detection = detections.detections[0]
 
     # Test bounding box is valid
     x1, y1, x2, y2 = detection.bbox
@@ -60,9 +66,9 @@ def test_bbox_properties(bboxes):
     assert height == y2 - y1
 
 
-def test_bbox_cropped_image(bboxes, test_image):
+def test_detection_cropped_image(detections, test_image):
     """Test cropping image to detection bbox."""
-    detection = bboxes[0]
+    detection = detections.detections[0]
 
     # Test cropped image
     cropped = detection.cropped_image(padding=20)
@@ -74,27 +80,27 @@ def test_bbox_cropped_image(bboxes, test_image):
         assert cropped.shape[1] <= test_image.shape[1]
 
 
-def test_bbox_annotations(bboxes):
-    """Test annotation generation for bboxes."""
-    detection = bboxes[0]
+def test_detection_annotations(detections):
+    """Test annotation generation for detections."""
+    detection = detections.detections[0]
 
-    # Test text annotations
+    # Test text annotations - all detections should have at least 2
     text_annotations = detection.to_text_annotation()
-    assert len(text_annotations) == 2  # confidence and name/track_id
+    assert len(text_annotations) >= 2  # confidence and name/track_id (person has keypoints too)
 
-    # Test points annotations (bounding box)
+    # Test points annotations - at least bbox
     points_annotations = detection.to_points_annotation()
-    assert len(points_annotations) == 1  # Just the bbox polygon
+    assert len(points_annotations) >= 1  # At least the bbox polygon
 
     # Test image annotations
     annotations = detection.to_image_annotations()
-    assert annotations.texts_length == 2
-    assert annotations.points_length == 1
+    assert annotations.texts_length >= 2
+    assert annotations.points_length >= 1
 
 
-def test_bbox_ros_conversion(bboxes):
+def test_detection_ros_conversion(detections):
     """Test conversion to ROS Detection2D message."""
-    detection = bboxes[0]
+    detection = detections.detections[0]
 
     ros_det = detection.to_ros_detection2d()
 
@@ -111,26 +117,26 @@ def test_bbox_ros_conversion(bboxes):
     assert ros_det.results[0].hypothesis.class_id == detection.class_id
 
 
-def test_bbox_is_valid(bboxes):
+def test_detection_is_valid(detections):
     """Test bbox validation."""
-    detection = bboxes[0]
+    detection = detections.detections[0]
 
     # Detection from real detector should be valid
     assert detection.is_valid()
 
 
-def test_image_detections2d_structure(bboxes):
+def test_image_detections2d_structure(detections):
     """Test that process_image returns ImageDetections2D."""
-    assert isinstance(bboxes, ImageDetections2D)
-    assert len(bboxes.detections) > 0
-    assert all(isinstance(d, Detection2DBBox) for d in bboxes.detections)
+    assert isinstance(detections, ImageDetections2D)
+    assert len(detections.detections) > 0
+    assert all(isinstance(d, Detection2D) for d in detections.detections)
 
 
-def test_multiple_detections(bboxes):
+def test_multiple_detections(detections):
     """Test that multiple objects can be detected."""
-    print(f"\nDetected {len(bboxes.detections)} objects in test image")
+    print(f"\nDetected {len(detections.detections)} objects in test image")
 
-    for i, detection in enumerate(bboxes.detections[:5]):  # Show first 5
+    for i, detection in enumerate(detections.detections[:5]):  # Show first 5
         print(f"\nDetection {i}:")
         print(f"  Class: {detection.name} (id: {detection.class_id})")
         print(f"  Confidence: {detection.confidence:.3f}")
@@ -140,13 +146,13 @@ def test_multiple_detections(bboxes):
         print(f"  Track ID: {detection.track_id}")
 
 
-def test_detection_string_representation(bboxes):
+def test_detection_string_representation(detections):
     """Test string representation of detections."""
-    detection = bboxes[0]
+    detection = detections.detections[0]
     str_repr = str(detection)
 
-    # Should contain class name
-    assert "Detection2DBBox" in str_repr
+    # Should contain class name (either Detection2DBBox or Detection2DPerson)
+    assert "Detection2D" in str_repr
 
     # Should show object name
     assert detection.name in str_repr or f"class_{detection.class_id}" in str_repr
