@@ -289,6 +289,12 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         except Exception:
             pass
 
+        # Give threads time to clean up
+        # Dask's IO loop and Profile threads are daemon threads
+        # that will be cleaned up when the process exits
+        # This is needed, solves race condition in CI thread check
+        time.sleep(0.5)
+
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
     dask_client.stop = lambda: dask_client.close()
@@ -325,8 +331,7 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
     )
 
     patched_client = patchdask(client, cluster)
-    patched_client._closed = False  # Initialize the flag
-    patched_client._shutting_down = False  # Track if we're shutting down
+    patched_client._shutting_down = False
 
     # Signal handler with proper exit handling
     def signal_handler(sig, frame):
