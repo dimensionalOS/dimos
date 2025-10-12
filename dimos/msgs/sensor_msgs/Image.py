@@ -17,7 +17,7 @@ from __future__ import annotations
 import base64
 import functools
 import time
-from typing import Optional
+from typing import Literal, Optional, TypedDict
 
 import cv2
 import numpy as np
@@ -48,6 +48,15 @@ try:
     from sensor_msgs.msg import Image as ROSImage
 except ImportError:
     ROSImage = None
+
+
+class AgentImageMessage(TypedDict):
+    """Type definition for agent-compatible image representation."""
+
+    type: Literal["image"]
+    source_type: Literal["base64"]
+    mime_type: Literal["image/jpeg", "image/png"]
+    data: str  # Base64 encoded image data
 
 
 class Image:
@@ -347,9 +356,13 @@ class Image:
 
         return base64.b64encode(buffer.tobytes()).decode("utf-8")
 
-    def agent_encode(self, quality: int = 80) -> str:
-        """Return a base64-encoded JPEG suitable for agent pipelines."""
-        return self.to_base64(quality=quality)
+    def agent_encode(self) -> AgentImageMessage:
+        return [
+            {
+                "type": "image_url",
+                "image_url": {"url": f"data:image/jpeg;base64,{self.to_base64()}"},
+            }
+        ]
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
