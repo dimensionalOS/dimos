@@ -31,7 +31,6 @@ from dimos.perception.detection.type import (
     Detection3D,
     Detection3DPC,
     ImageDetections2D,
-    ImageDetections3D,
     ImageDetections3DPC,
 )
 from dimos.protocol.tf import TF
@@ -60,7 +59,7 @@ class Moment2D(Moment):
 
 
 class Moment3D(Moment):
-    detections3dpc: ImageDetections3D
+    detections3dpc: ImageDetections3DPC
 
 
 @pytest.fixture

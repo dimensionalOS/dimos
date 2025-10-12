@@ -5,7 +5,7 @@ from dimos.perception.detection.type.detection2d import (
 )
 from dimos.perception.detection.type.detection3d import (
     Detection3D,
-    ImageDetections3D,
+    Detection3DBBox,
 )
 from dimos.perception.detection.type.detection3dpc import (
     Detection3DPC,

@@ -26,15 +26,16 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.type import Detection3D, ImageDetections3D, TableStr
+from dimos.perception.detection.type import Detection3D, ImageDetections3DPC, TableStr
+from dimos.perception.detection.type.detection3dpc import Detection3DPC
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.types.timestamped import to_datetime
 
 
 # Represents an object in space, as collection of 3d detections over time
-class Object3D(Detection3D):
-    best_detection: Detection3D = None
+class Object3D(Detection3DPC):
+    best_detection: Detection3DPC = None
     center: Vector3 = None
     track_id: str = None
     detections: int = 0
@@ -46,7 +47,7 @@ class Object3D(Detection3D):
             "center": "[" + ", ".join(list(map(lambda n: f"{n:1f}", self.center.to_list()))) + "]",
         }
 
-    def __init__(self, track_id: str, detection: Optional[Detection3D] = None, *args, **kwargs):
+    def __init__(self, track_id: str, detection: Optional[Detection3DPC] = None, *args, **kwargs):
         if detection is None:
             return
         self.ts = detection.ts
@@ -62,7 +63,7 @@ class Object3D(Detection3D):
         self.detections = self.detections + 1
         self.best_detection = detection
 
-    def __add__(self, detection: Detection3D) -> "Object3D":
+    def __add__(self, detection: Detection3DPC) -> "Object3D":
         new_object = Object3D(self.track_id)
         new_object.bbox = detection.bbox
         new_object.confidence = max(self.confidence, detection.confidence)
@@ -156,7 +157,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.objects = {}
         self.remembered_locations = {}
 
-    def closest_object(self, detection: Detection3D) -> Optional[Object3D]:
+    def closest_object(self, detection: Detection3DPC) -> Optional[Object3D]:
         # Filter objects to only those with matching names
         matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
 
@@ -168,12 +169,12 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         return distances[0]
 
-    def add_detections(self, detections: List[Detection3D]) -> List[Object3D]:
+    def add_detections(self, detections: List[Detection3DPC]) -> List[Object3D]:
         return [
             detection for detection in map(self.add_detection, detections) if detection is not None
         ]
 
-    def add_detection(self, detection: Detection3D):
+    def add_detection(self, detection: Detection3DPC):
         """Add detection to existing object or create new one."""
         closest = self.closest_object(detection)
         if closest and closest.bounding_box_intersects(detection):
@@ -181,12 +182,12 @@ class ObjectDBModule(Detection3DModule, TableStr):
         else:
             return self.create_new_object(detection)
 
-    def add_to_object(self, closest: Object3D, detection: Detection3D):
+    def add_to_object(self, closest: Object3D, detection: Detection3DPC):
         new_object = closest + detection
         self.objects[closest.track_id] = new_object
         return new_object
 
-    def create_new_object(self, detection: Detection3D):
+    def create_new_object(self, detection: Detection3DPC):
         new_object = Object3D(f"obj_{self.cnt}", detection)
         self.objects[new_object.track_id] = new_object
         self.cnt += 1
@@ -295,7 +296,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.nav_to(target_pose)
         return f"Navigating to f{object_id} f{target_obj.name}"
 
-    def lookup(self, label: str) -> List[Detection3D]:
+    def lookup(self, label: str) -> List[Detection3DPC]:
         """Look up a detection by label."""
         return []
 
@@ -303,7 +304,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def start(self):
         Detection3DModule.start(self)
 
-        def update_objects(imageDetections: ImageDetections3D):
+        def update_objects(imageDetections: ImageDetections3DPC):
             for detection in imageDetections.detections:
                 # print(detection)
                 return self.add_detection(detection)

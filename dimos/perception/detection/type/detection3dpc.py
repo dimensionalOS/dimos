@@ -28,23 +28,24 @@ from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection.type.detection2d import Detection2D
+from dimos.perception.detection.type.detection2d import Detection2D, Detection2DBBox
 from dimos.perception.detection.type.detection3d import Detection3D
 from dimos.perception.detection.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
-Detection3DPCFilter = Callable[
-    [Detection2D, PointCloud2, CameraInfo, Transform], Optional["Detection3DPC"]
+# Filters take Detection2DBBox, PointCloud2, CameraInfo, Transform and return filtered PointCloud2 or None
+PointCloudFilter = Callable[
+    [Detection2DBBox, PointCloud2, CameraInfo, Transform], Optional[PointCloud2]
 ]
 
 
-def height_filter(height=0.1) -> Detection3DPCFilter:
+def height_filter(height=0.1) -> PointCloudFilter:
     return lambda det, pc, ci, tf: pc.filter_by_height(height)
 
 
-def statistical(nb_neighbors=40, std_ratio=0.5) -> Detection3DPCFilter:
+def statistical(nb_neighbors=40, std_ratio=0.5) -> PointCloudFilter:
     def filter_func(
-        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> Optional[PointCloud2]:
         try:
             statistical, removed = pc.pointcloud.remove_statistical_outlier(
@@ -58,9 +59,9 @@ def statistical(nb_neighbors=40, std_ratio=0.5) -> Detection3DPCFilter:
     return filter_func
 
 
-def raycast() -> Detection3DPCFilter:
+def raycast() -> PointCloudFilter:
     def filter_func(
-        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> Optional[PointCloud2]:
         try:
             camera_pos = tf.inverse().translation
@@ -75,14 +76,14 @@ def raycast() -> Detection3DPCFilter:
     return filter_func
 
 
-def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> Detection3DPCFilter:
+def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> PointCloudFilter:
     """
     Remove isolated points: keep only points that have at least `min_neighbors`
     neighbors within `radius` meters (same units as your point cloud).
     """
 
     def filter_func(
-        det: Detection2D, pc: PointCloud2, ci: CameraInfo, tf: Transform
+        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> Optional[PointCloud2]:
         filtered_pcd, removed = pc.pointcloud.remove_radius_outlier(
             nb_points=min_neighbors, radius=radius
@@ -96,21 +97,168 @@ def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> Detection3DP
 class Detection3DPC(Detection3D):
     pointcloud: PointCloud2
 
+    @functools.cached_property
+    def center(self) -> Vector3:
+        return Vector3(*self.pointcloud.center)
+
+    @functools.cached_property
+    def pose(self) -> PoseStamped:
+        """Convert detection to a PoseStamped using pointcloud center.
+
+        Returns pose in world frame with identity rotation.
+        The pointcloud is already in world frame.
+        """
+        return PoseStamped(
+            ts=self.ts,
+            frame_id=self.frame_id,
+            position=self.center,
+            orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
+        )
+
+    def get_bounding_box(self):
+        """Get axis-aligned bounding box of the detection's pointcloud."""
+        return self.pointcloud.get_axis_aligned_bounding_box()
+
+    def get_oriented_bounding_box(self):
+        """Get oriented bounding box of the detection's pointcloud."""
+        return self.pointcloud.get_oriented_bounding_box()
+
+    def get_bounding_box_dimensions(self) -> tuple[float, float, float]:
+        """Get dimensions (width, height, depth) of the detection's bounding box."""
+        return self.pointcloud.get_bounding_box_dimensions()
+
+    def bounding_box_intersects(self, other: "Detection3DPC") -> bool:
+        """Check if this detection's bounding box intersects with another's."""
+        return self.pointcloud.bounding_box_intersects(other.pointcloud)
+
+    def to_repr_dict(self) -> Dict[str, Any]:
+        # Calculate distance from camera
+        # The pointcloud is in world frame, and transform gives camera position in world
+        center_world = self.center
+        # Camera position in world frame is the translation part of the transform
+        camera_pos = self.transform.translation
+        # Use Vector3 subtraction and magnitude
+        distance = (center_world - camera_pos).magnitude()
+
+        parent_dict = super().to_repr_dict()
+        # Remove bbox key if present
+        parent_dict.pop("bbox", None)
+
+        return {
+            **parent_dict,
+            "dist": f"{distance:.2f}m",
+            "points": str(len(self.pointcloud)),
+        }
+
+    def to_foxglove_scene_entity(self, entity_id: Optional[str] = None) -> "SceneEntity":
+        """Convert detection to a Foxglove SceneEntity with cube primitive and text label.
+
+        Args:
+            entity_id: Optional custom entity ID. If None, generates one from name and hash.
+
+        Returns:
+            SceneEntity with cube bounding box and text label
+        """
+
+        # Create a cube primitive for the bounding box
+        cube = CubePrimitive()
+
+        # Get the axis-aligned bounding box
+        aabb = self.get_bounding_box()
+
+        # Set pose from axis-aligned bounding box
+        cube.pose = Pose()
+        cube.pose.position = Point()
+        # Get center of the axis-aligned bounding box
+        aabb_center = aabb.get_center()
+        cube.pose.position.x = aabb_center[0]
+        cube.pose.position.y = aabb_center[1]
+        cube.pose.position.z = aabb_center[2]
+
+        # For axis-aligned box, use identity quaternion (no rotation)
+        cube.pose.orientation = Quaternion()
+        cube.pose.orientation.x = 0
+        cube.pose.orientation.y = 0
+        cube.pose.orientation.z = 0
+        cube.pose.orientation.w = 1
+
+        # Set size from axis-aligned bounding box
+        cube.size = LCMVector3()
+        aabb_extent = aabb.get_extent()
+        cube.size.x = aabb_extent[0]  # width
+        cube.size.y = aabb_extent[1]  # height
+        cube.size.z = aabb_extent[2]  # depth
+
+        # Set color based on name hash
+        cube.color = Color.from_string(self.name, alpha=0.2)
+
+        # Create text label
+        text = TextPrimitive()
+        text.pose = Pose()
+        text.pose.position = Point()
+        text.pose.position.x = aabb_center[0]
+        text.pose.position.y = aabb_center[1]
+        text.pose.position.z = aabb_center[2] + aabb_extent[2] / 2 + 0.1  # Above the box
+        text.pose.orientation = Quaternion()
+        text.pose.orientation.x = 0
+        text.pose.orientation.y = 0
+        text.pose.orientation.z = 0
+        text.pose.orientation.w = 1
+        text.billboard = True
+        text.font_size = 20.0
+        text.scale_invariant = True
+        text.color = Color()
+        text.color.r = 1.0
+        text.color.g = 1.0
+        text.color.b = 1.0
+        text.color.a = 1.0
+        text.text = self.scene_entity_label()
+
+        # Create scene entity
+        entity = SceneEntity()
+        entity.timestamp = to_ros_stamp(self.ts)
+        entity.frame_id = self.frame_id
+        entity.id = str(self.track_id)
+        entity.lifetime = Duration()
+        entity.lifetime.sec = 0  # Persistent
+        entity.lifetime.nanosec = 0
+        entity.frame_locked = False
+
+        # Initialize all primitive arrays
+        entity.metadata_length = 0
+        entity.metadata = []
+        entity.arrows_length = 0
+        entity.arrows = []
+        entity.cubes_length = 1
+        entity.cubes = [cube]
+        entity.spheres_length = 0
+        entity.spheres = []
+        entity.cylinders_length = 0
+        entity.cylinders = []
+        entity.lines_length = 0
+        entity.lines = []
+        entity.triangles_length = 0
+        entity.triangles = []
+        entity.texts_length = 1
+        entity.texts = [text]
+        entity.models_length = 0
+        entity.models = []
+
+        return entity
+
+    def scene_entity_label(self) -> str:
+        return f"{self.track_id}/{self.name} ({self.confidence:.0%})"
+
     @classmethod
-    def from_2d(
+    def from_2d(  # type: ignore[override]
         cls,
-        det: Detection2D,
+        det: Detection2DBBox,
         world_pointcloud: PointCloud2,
         camera_info: CameraInfo,
         world_to_optical_transform: Transform,
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
-        filters: list[Callable[[PointCloud2], PointCloud2]] = [
-            # height_filter(0.1),
-            raycast(),
-            radius_outlier(),
-            statistical(),
-        ],
+        filters: Optional[list[PointCloudFilter]] = None,
     ) -> Optional["Detection3D"]:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
@@ -129,6 +277,15 @@ class Detection3DPC(Detection3D):
         Returns:
             Detection3D with filtered pointcloud, or None if no valid points
         """
+        # Set default filters if none provided
+        if filters is None:
+            filters = [
+                # height_filter(0.1),
+                raycast(),
+                radius_outlier(),
+                statistical(),
+            ]
+
         # Extract camera parameters
         fx, fy = camera_info.K[0], camera_info.K[4]
         cx, cy = camera_info.K[2], camera_info.K[5]
@@ -195,7 +352,7 @@ class Detection3DPC(Detection3D):
             timestamp=world_pointcloud.ts,
         )
 
-        # Apply filters - each filter needs all 4 arguments
+        # Apply filters - each filter gets all arguments
         detection_pc = initial_pc
         for filter_func in filters:
             result = filter_func(det, detection_pc, camera_info, world_to_optical_transform)

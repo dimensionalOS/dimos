@@ -17,7 +17,7 @@ import pytest
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.moduleDB import Object3D, ObjectDBModule
-from dimos.perception.detection.type.detection3d import ImageDetections3D
+from dimos.perception.detection.type.detection3dpc import ImageDetections3DPC
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 
 
@@ -158,7 +158,7 @@ def test_objectdb_module(object_db_module):
     assert combined.center is not None
 
     # def test_image_detections3d_scene_update(object_db_module):
-    """Test ImageDetections3D to Foxglove scene update conversion."""
+    """Test ImageDetections3DPC to Foxglove scene update conversion."""
     # Get some detections
     objects = list(object_db_module.objects.values())
     if not objects:
@@ -166,7 +166,7 @@ def test_objectdb_module(object_db_module):
 
     detections = [obj.best_detection for obj in objects[:3]]  # Take up to 3
 
-    image_detections = ImageDetections3D(image=detections[0].image, detections=detections)
+    image_detections = ImageDetections3DPC(image=detections[0].image, detections=detections)
 
     scene_update = image_detections.to_foxglove_scene_update()
 

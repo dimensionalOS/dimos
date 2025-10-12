@@ -17,7 +17,7 @@ from __future__ import annotations
 import hashlib
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.person import Detection2DPerson
@@ -190,6 +190,9 @@ class Detection2DBBox(Detection2D):
         Returns:
             Detection2DBBox instance
         """
+        if result.boxes is None:
+            raise ValueError("Result has no boxes")
+
         # Extract bounding box coordinates
         bbox_array = result.boxes.xyxy[idx].cpu().numpy()
         bbox: Bbox = (
@@ -388,13 +391,14 @@ class ImageDetections2D(ImageDetections[Detection2D]):
         """
         from dimos.perception.detection.type.person import Detection2DPerson
 
-        detections = []
+        detections: List[Detection2D] = []
         for result in results:
             if result.boxes is None:
                 continue
 
             num_detections = len(result.boxes.xyxy)
             for i in range(num_detections):
+                detection: Detection2D
                 if result.keypoints is not None:
                     # Pose detection with keypoints
                     detection = Detection2DPerson.from_ultralytics_result(result, i, image)
@@ -407,16 +411,17 @@ class ImageDetections2D(ImageDetections[Detection2D]):
 
     @classmethod
     def from_pose_detector(
-        cls, image: Image, people: List["Detection2DPerson"], **kwargs
+        cls, image: Image, people: Sequence["Detection2DPerson"], **kwargs
     ) -> "ImageDetections2D":
         """Create ImageDetections2D from a list of Detection2DPerson detections.
         Args:
             image: Source image
-            people: List of Detection2DPerson objects with pose keypoints
+            people: Sequence of Detection2DPerson objects with pose keypoints
         Returns:
             ImageDetections2D containing the pose detections
         """
+        detections: List[Detection2D] = list(people)
         return cls(
             image=image,
-            detections=people,  # Detection2DPerson objects are already Detection2D subclasses
+            detections=detections,
         )

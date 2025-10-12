@@ -24,7 +24,6 @@ from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type import (
     ImageDetections2D,
-    ImageDetections3D,
     ImageDetections3DPC,
 )
 from dimos.perception.detection.type.detection3dpc import Detection3DPC
@@ -60,9 +59,9 @@ class Detection3DModule(Detection2DModule):
         detections: ImageDetections2D,
         pointcloud: PointCloud2,
         transform: Transform,
-    ) -> ImageDetections3D:
+    ) -> ImageDetections3DPC:
         if not transform:
-            return ImageDetections3D(detections.image, [])
+            return ImageDetections3DPC(detections.image, [])
 
         detection3d_list = []
         for detection in detections:
@@ -75,7 +74,7 @@ class Detection3DModule(Detection2DModule):
             if detection3d is not None:
                 detection3d_list.append(detection3d)
 
-        return ImageDetections3D(detections.image, detection3d_list)
+        return ImageDetections3DPC(detections.image, detection3d_list)
 
     @skill
     def ask_vlm(self, question: str):
@@ -117,7 +116,7 @@ class Detection3DModule(Detection2DModule):
 
         self.detection_stream_3d.subscribe(self._publish_detections)
 
-    def _publish_detections(self, detections: ImageDetections3D):
+    def _publish_detections(self, detections: ImageDetections3DPC):
         if not detections:
             return
 
