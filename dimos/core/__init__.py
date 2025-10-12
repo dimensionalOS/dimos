@@ -49,6 +49,11 @@ __all__ = [
 ]
 
 
+def _unpickle_rpc_call(client, method_name):
+    """Unpickle helper for RPC call closures."""
+    return getattr(client, method_name)
+
+
 class RPCClient:
     def __init__(self, actor_instance, actor_class):
         self.rpc = LCMRPC()
@@ -116,6 +121,12 @@ class RPCClient:
                 rpc_call.__doc__ = original_method.__doc__
                 rpc_call.__name__ = original_method.__name__
                 rpc_call.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
+
+            # Make the rpc_call picklable by storing the client and method name
+            def _pickle_rpc_call():
+                return (_unpickle_rpc_call, (self, name))
+
+            rpc_call.__reduce__ = _pickle_rpc_call
 
             return rpc_call
 
