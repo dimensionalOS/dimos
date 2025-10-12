@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
 from dimos.utils.llm_utils import extract_json
 
@@ -62,6 +63,13 @@ def vlm_detection_to_detection2d(
 class VlModel(ABC):
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...
+
+    def warmup(self) -> None:
+        try:
+            image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
+            self._model.detect(image, "person", settings={"max_objects": 1})
+        except Exception:
+            pass
 
     # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)

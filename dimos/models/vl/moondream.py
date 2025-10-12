@@ -36,6 +36,7 @@ class MoondreamVlModel(VlModel):
         )
         model = model.to(self._device)
         model.compile()
+
         return model
 
     def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:
