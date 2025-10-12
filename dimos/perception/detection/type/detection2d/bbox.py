@@ -284,12 +284,8 @@ class Detection2DBBox(Detection2D):
 
         thickness = 1
 
-        # Use bright green for confidence 1.0, black otherwise
-        outline_color = (
-            Color(r=0.0, g=1.0, b=0.0, a=1.0)
-            if self.confidence == 1.0
-            else Color(r=0.0, g=0.0, b=0.0, a=1.0)
-        )
+        # Use consistent color based on object name, brighter for outline
+        outline_color = Color.from_string(self.name, alpha=1.0, brightness=1.25)
 
         return [
             PointsAnnotation(
