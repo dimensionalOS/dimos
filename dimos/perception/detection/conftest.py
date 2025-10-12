@@ -162,7 +162,9 @@ def detection3dpc(get_moment_3dpc) -> Detection3DPC:
 
 @pytest.fixture
 def get_moment_2d(get_moment) -> Callable[[], Moment2D]:
-    module = Detection2DModule()
+    from dimos.perception.detection.detectors import Yolo2DDetector
+
+    module = Detection2DModule(detector=Yolo2DDetector)
 
     def moment_provider(**kwargs) -> Moment2D:
         moment = get_moment(**kwargs)
@@ -206,7 +208,9 @@ def get_moment_3dpc(get_moment_2d) -> Callable[[], Moment2D]:
 @pytest.fixture
 def object_db_module(get_moment):
     """Create and populate an ObjectDBModule with detections from multiple frames."""
-    module2d = Detection2DModule()
+    from dimos.perception.detection.detectors import Yolo2DDetector
+
+    module2d = Detection2DModule(detector=Yolo2DDetector)
     module3d = Detection3DModule(camera_info=ConnectionModule._camera_info())
     moduleDB = ObjectDBModule(
         camera_info=ConnectionModule._camera_info(),

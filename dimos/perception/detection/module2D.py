@@ -22,10 +22,11 @@ from reactivex.observable import Observable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.module import ModuleConfig
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.detectors import Detector, Yolo2DDetector
+from dimos.perception.detection.detectors import Detector
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.type import (
     ImageDetections2D,
@@ -35,12 +36,13 @@ from dimos.utils.reactive import backpressure
 
 
 @dataclass
-class Config:
+class Config(ModuleConfig):
     max_freq: float = 10  # hz
-    detector: Optional[Callable[[Any], Detector]] = lambda: YoloPersonDetector()
+    detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
 
 
 class Detection2DModule(Module):
+    default_config = Config
     config: Config
     detector: Detector
 
