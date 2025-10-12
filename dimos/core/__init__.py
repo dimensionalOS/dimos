@@ -86,6 +86,8 @@ class RPCClient:
 
     # passthrough
     def __getattr__(self, name: str):
+        if "atgl" in name:
+            print("RPCClient __getattr__:", name, name in self.rpcs)
         # Check if accessing a known safe attribute to avoid recursion
         if name in {
             "__class__",
@@ -127,6 +129,9 @@ class RPCClient:
                 return (_unpickle_rpc_call, (self, name))
 
             rpc_call.__reduce__ = _pickle_rpc_call
+
+            if "atgl" in name:
+                print("rpc call", rpc_call, rpc_call.__name__)
 
             return rpc_call
 
