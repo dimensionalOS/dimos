@@ -401,9 +401,13 @@ class Image:
                 arr,
                 fmt,
                 msg.header.frame_id if hasattr(msg, "header") else "",
-                msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
-                if hasattr(msg, "header") and getattr(msg.header, "stamp", None)
-                else time.time(),
+                (
+                    msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                    if hasattr(msg, "header")
+                    and hasattr(msg.header, "stamp")
+                    and msg.header.stamp.sec > 0
+                    else time.time()
+                ),
             )
         )
 
