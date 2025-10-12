@@ -224,13 +224,13 @@ def test_sharpness(alloc_timer):
     cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR)
 
     # Always test CPU backend
-    s_cpu = cpu.sharpness()
+    s_cpu = cpu.sharpness
     assert s_cpu >= 0  # Sharpness should be non-negative
     assert s_cpu < 1000  # Reasonable upper bound
 
     # Optionally test GPU parity when CUDA is available
     if gpu is not None:
-        s_gpu = gpu.sharpness()
+        s_gpu = gpu.sharpness
         # Values should be very close; minor border/rounding differences allowed
         assert abs(s_cpu - s_gpu) < 5e-2
 
@@ -366,7 +366,7 @@ def test_perf_sharpness(alloc_timer):
     # Always test CPU performance
     t0 = time.perf_counter()
     for _ in range(runs):
-        _ = cpu.sharpness()
+        _ = cpu.sharpness
     cpu_t = (time.perf_counter() - t0) / runs
     assert cpu_t > 0
 
@@ -374,7 +374,7 @@ def test_perf_sharpness(alloc_timer):
     if gpu is not None:
         t0 = time.perf_counter()
         for _ in range(runs):
-            _ = gpu.sharpness()
+            _ = gpu.sharpness
         gpu_t = (time.perf_counter() - t0) / runs
         print(f"sharpness (avg per call) cpu={cpu_t:.6f}s gpu={gpu_t:.6f}s")
         assert gpu_t > 0
