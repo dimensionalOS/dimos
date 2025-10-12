@@ -29,6 +29,7 @@ from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.perception.detection.type.detection2d import Detection2D, Detection2DBBox
+from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp
 
@@ -73,21 +74,3 @@ class Detection3DBBox(Detection2DBBox):
             "dist": f"{distance:.2f}m",
             "size": f"[{self.size.x:.2f},{self.size.y:.2f},{self.size.z:.2f}]",
         }
-
-
-@dataclass
-class Detection3D(Detection2DBBox):
-    """Base class for 3D detections (deprecated, use Detection3DBBox or Detection3DPC)."""
-
-    transform: Transform
-    frame_id: str
-
-    @classmethod
-    def from_2d(
-        cls,
-        det: Detection2DBBox,
-        distance: float,
-        camera_info: CameraInfo,
-        world_to_optical_transform: Transform,
-    ) -> Optional["Detection3D"]:
-        raise NotImplementedError()

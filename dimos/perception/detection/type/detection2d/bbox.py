@@ -45,8 +45,9 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
+from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.imageDetections import ImageDetections
-from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
+from dimos.types.timestamped import to_ros_stamp, to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
 Bbox = Tuple[float, float, float, float]
@@ -77,14 +78,6 @@ def _hash_to_color(name: str) -> str:
     # Hash the name and pick a color
     hash_value = hashlib.md5(name.encode()).digest()[0]
     return colors[hash_value % len(colors)]
-
-
-class Detection2D(Timestamped):
-    @abstractmethod
-    def cropped_image(self, padding: int = 20) -> Image: ...
-
-    @abstractmethod
-    def to_image_annotations(self) -> ImageAnnotations: ...
 
 
 @dataclass

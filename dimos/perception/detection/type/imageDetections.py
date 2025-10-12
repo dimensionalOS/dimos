@@ -28,9 +28,13 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.types.timestamped import to_timestamp
 
 if TYPE_CHECKING:
-    from dimos.perception.detection.type.detection2d import Detection2D
+    from dimos.perception.detection.type.detection2d.base import Detection2D
 
-T = TypeVar("T", bound="Detection2D")
+    T = TypeVar("T", bound=Detection2D)
+else:
+    from dimos.perception.detection.type.detection2d.base import Detection2D
+
+    T = TypeVar("T", bound=Detection2D)
 
 
 def _hash_to_color(name: str) -> str:

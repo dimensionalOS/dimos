@@ -25,9 +25,9 @@ from dimos.perception.detection2d.utils import plot_results
 from dimos.constants import DIMOS_PROJECT_ROOT
 
 detic_path = DIMOS_PROJECT_ROOT / "dimos/models/Detic"
-if detic_path not in sys.path:
-    sys.path.append(detic_path)
-    sys.path.append(os.path.join(detic_path, "third_party/CenterNet2"))
+if str(detic_path) not in sys.path:
+    sys.path.append(str(detic_path))
+    sys.path.append(str(detic_path / "third_party/CenterNet2"))
 
 # PIL patch for compatibility
 import PIL.Image

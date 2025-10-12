@@ -12,17 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection.type.detection3d.detection import (
-    Detection3D,
-    Detection3DBBox,
-)
-from dimos.perception.detection.type.detection3d.detection_pc import (
+from dimos.perception.detection.type.detection3d.base import Detection3D
+from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
+from dimos.perception.detection.type.detection3d.pointcloud import (
     Detection3DPC,
     ImageDetections3DPC,
     PointCloudFilter,
     height_filter,
-    raycast,
     radius_outlier,
+    raycast,
     statistical,
 )
 
