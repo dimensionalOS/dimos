@@ -311,8 +311,9 @@ class Image(Timestamped):
     def crop(self, x: int, y: int, width: int, height: int) -> "Image":
         return Image(self._impl.crop(x, y, width, height))
 
-    def sharpness(self):
-        """Return sharpness score as a callable float for backward compatibility."""
+    @property
+    def sharpness(self) -> float:
+        """Return sharpness score."""
         return self._impl.sharpness()
 
     def save(self, filepath: str) -> bool:
