@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from typing import Optional
+
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
@@ -48,7 +50,7 @@ class Detection3DModule(Detection2DModule):
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
 
-    detection_3d_stream: Observable[ImageDetections3DPC] = None
+    detection_3d_stream: Optional[Observable[ImageDetections3DPC]] = None
 
     def __init__(self, camera_info: CameraInfo, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -63,7 +65,7 @@ class Detection3DModule(Detection2DModule):
         if not transform:
             return ImageDetections3DPC(detections.image, [])
 
-        detection3d_list = []
+        detection3d_list: list[Detection3DPC] = []
         for detection in detections:
             detection3d = Detection3DPC.from_2d(
                 detection,
@@ -76,8 +78,8 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3DPC(detections.image, detection3d_list)
 
-    @skill
-    def ask_vlm(self, question: str):
+    @skill  # type: ignore[arg-type]
+    def ask_vlm(self, question: str) -> str | ImageDetections3DPC:
         """
         query visual model about the view in front of the camera
         you can ask to mark objects like:
@@ -86,14 +88,15 @@ class Detection3DModule(Detection2DModule):
         "laptop on the desk"
         "a person wearing a red shirt"
         """
-        from dimos.models.vl.qwen import QwenVLModel
+        from dimos.models.vl.qwen import QwenVlModel
 
-        model = QwenVLModel()
-        detections: ImageDetections2D = model.query(self.image.get_next(), question)
+        model = QwenVlModel()
+        result = model.query(self.image.get_next(), question)
 
-        if not detections or not len(detections):
+        if isinstance(result, str) or not result or not len(result):
             return "No detections"
 
+        detections: ImageDetections2D = result
         pc = self.pointcloud.get_next()
         transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
         return self.process_frame(detections, pc, transform)
