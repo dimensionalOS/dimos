@@ -61,7 +61,7 @@ def vlm_detection_to_detection2d(
 
 class VlModel(ABC):
     @abstractmethod
-    def query(self, image: Image, query: str) -> str: ...
+    def query(self, image: Image, query: str, **kwargs) -> str: ...
 
     # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)
@@ -69,7 +69,7 @@ class VlModel(ABC):
         response = self.query(image, query)
         return extract_json(response)
 
-    def query_detections(self, image: Image, query: str) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
         format should be:
