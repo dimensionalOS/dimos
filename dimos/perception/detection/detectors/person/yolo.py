@@ -12,20 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import onnxruntime
 from ultralytics import YOLO
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector
 from dimos.perception.detection.type import ImageDetections2D
 from dimos.utils.data import get_data
+from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.detection.yolo.person")
 
 
 class YoloPersonDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11n-pose.pt"):
+    def __init__(self, model_path="models_yolo", model_name="yolo11n-pose.pt", device="cpu"):
+        """Initialize the YOLO person detector.
+
+        Args:
+            model_path (str): Path to the YOLO model weights in tests/data LFS directory
+            model_name (str): Name of the YOLO model weights file
+            device (str): Device to run inference on ('cuda' or 'cpu')
+        """
+        self.device = device
         self.model = YOLO(get_data(model_path) / model_name, task="pose")
+
+        if is_cuda_available():
+            if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
+                onnxruntime.preload_dlls(cuda=True, cudnn=True)
+            self.device = "cuda"
+            logger.debug("Using CUDA for YOLO person detector")
+        else:
+            self.device = "cpu"
+            logger.debug("Using CPU for YOLO person detector")
 
     def process_image(self, image: Image) -> ImageDetections2D:
         """Process image and return detection results.
@@ -36,5 +55,5 @@ class YoloPersonDetector(Detector):
         Returns:
             ImageDetections2D containing Detection2DPerson objects with pose keypoints
         """
-        results = self.model(source=image.to_opencv())
+        results = self.model(source=image.to_opencv(), device=self.device)
         return ImageDetections2D.from_ultralytics_result(image, results)
