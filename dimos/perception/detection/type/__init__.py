@@ -2,7 +2,6 @@ from dimos.perception.detection.type.detection2d import (
     Detection2D,
     Detection2DBBox,
     ImageDetections2D,
-    InconvinientDetectionFormat,
 )
 from dimos.perception.detection.type.detection3d import (
     Detection3D,

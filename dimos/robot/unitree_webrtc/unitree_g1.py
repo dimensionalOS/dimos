@@ -27,7 +27,6 @@ from dimos_lcm.foxglove_msgs import SceneUpdate
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
 from nav_msgs.msg import Odometry as ROSOdometry
-from sensor_msgs.msg import Image as ROSImage
 from sensor_msgs.msg import Joy as ROSJoy
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
@@ -55,8 +54,7 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d import Detection3DModule
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
@@ -410,7 +408,6 @@ class UnitreeG1(Robot):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        from geometry_msgs.msg import PoseStamped as ROSPoseStamped
         from std_msgs.msg import Bool as ROSBool
 
         from dimos.msgs.std_msgs import Bool

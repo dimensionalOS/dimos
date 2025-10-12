@@ -21,7 +21,7 @@ import threading
 import traceback
 from dataclasses import dataclass
 from functools import cache
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import Optional, Protocol, runtime_checkable
 
 import lcm
 

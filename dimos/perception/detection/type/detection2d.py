@@ -15,9 +15,12 @@
 from __future__ import annotations
 
 import hashlib
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+
+if TYPE_CHECKING:
+    from dimos.perception.detection.type.person import Detection2DPerson
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -36,7 +39,7 @@ from dimos_lcm.vision_msgs import (
 )
 from rich.console import Console
 from rich.text import Text
-from ultralytics.engine.results import Boxes, Keypoints, Results
+from ultralytics.engine.results import Results
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
@@ -46,17 +49,8 @@ from dimos.perception.detection.type.imageDetections import ImageDetections
 from dimos.types.timestamped import Timestamped, to_ros_stamp, to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
-if TYPE_CHECKING:
-    from dimos.perception.detection.type.person import Detection2DPerson
-
 Bbox = Tuple[float, float, float, float]
 CenteredBbox = Tuple[float, float, float, float]
-
-# yolo and detic have bad output formats
-InconvinientDetectionFormat = Tuple[List[Bbox], List[int], List[int], List[float], List[str]]
-
-Detection = Tuple[Bbox, int, int, float, str]
-Detections = List[Detection]
 
 
 def _hash_to_color(name: str) -> str:
@@ -83,17 +77,6 @@ def _hash_to_color(name: str) -> str:
     # Hash the name and pick a color
     hash_value = hashlib.md5(name.encode()).digest()[0]
     return colors[hash_value % len(colors)]
-
-
-# yolo and detic have bad formats this translates into list of detections
-def better_detection_format(inconvinient_detections: InconvinientDetectionFormat) -> Detections:
-    bboxes, track_ids, class_ids, confidences, names = inconvinient_detections
-    return [
-        (bbox, track_id, class_id, confidence, name if name else "")
-        for bbox, track_id, class_id, confidence, name in zip(
-            bboxes, track_ids, class_ids, confidences, names
-        )
-    ]
 
 
 class Detection2D(Timestamped):
@@ -194,27 +177,6 @@ class Detection2DBBox(Detection2D):
                 return False
 
         return True
-
-    @classmethod
-    def from_detector(
-        cls, raw_detections: InconvinientDetectionFormat, **kwargs
-    ) -> List["Detection2D"]:
-        return [
-            cls.from_detection(raw, **kwargs) for raw in better_detection_format(raw_detections)
-        ]
-
-    @classmethod
-    def from_detection(cls, raw_detection: Detection, **kwargs) -> "Detection2D":
-        bbox, track_id, class_id, confidence, name = raw_detection
-
-        return cls(
-            bbox=bbox,
-            track_id=track_id,
-            class_id=class_id,
-            confidence=confidence,
-            name=name,
-            **kwargs,
-        )
 
     @classmethod
     def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> "Detection2DBBox":
@@ -444,26 +406,17 @@ class ImageDetections2D(ImageDetections[Detection2D]):
         return cls(image=image, detections=detections)
 
     @classmethod
-    def from_bbox_detector(
-        cls, image: Image, raw_detections: InconvinientDetectionFormat, **kwargs
-    ) -> "ImageDetections2D":
-        return cls(
-            image=image,
-            detections=Detection2DBBox.from_detector(raw_detections, image=image, ts=image.ts),
-        )
-
-    @classmethod
     def from_pose_detector(
-        cls, image: Image, people: List["Person"], **kwargs
+        cls, image: Image, people: List["Detection2DPerson"], **kwargs
     ) -> "ImageDetections2D":
-        """Create ImageDetections2D from a list of Person detections.
+        """Create ImageDetections2D from a list of Detection2DPerson detections.
         Args:
             image: Source image
-            people: List of Person objects with pose keypoints
+            people: List of Detection2DPerson objects with pose keypoints
         Returns:
             ImageDetections2D containing the pose detections
         """
         return cls(
             image=image,
-            detections=people,  # Person objects are already Detection2D subclasses
+            detections=people,  # Detection2DPerson objects are already Detection2D subclasses
         )
