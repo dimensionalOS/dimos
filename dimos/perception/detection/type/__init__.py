@@ -15,7 +15,8 @@ from dimos.perception.detection.type.detection3d import (
     raycast,
     statistical,
 )
-from dimos.perception.detection.type.imageDetections import ImageDetections, TableStr
+from dimos.perception.detection.type.imageDetections import ImageDetections
+from dimos.perception.detection.type.utils import TableStr
 
 __all__ = [
     # 2D Detection types

@@ -14,18 +14,13 @@
 
 from __future__ import annotations
 
-import hashlib
-from typing import TYPE_CHECKING, Any, Dict, Generic, List, Optional, Tuple, TypeVar
-
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
+from typing import TYPE_CHECKING, Generic, List, Optional, TypeVar
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.types.timestamped import to_timestamp
+from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:
     from dimos.perception.detection.type.detection2d.base import Detection2D
@@ -35,84 +30,6 @@ else:
     from dimos.perception.detection.type.detection2d.base import Detection2D
 
     T = TypeVar("T", bound=Detection2D)
-
-
-def _hash_to_color(name: str) -> str:
-    """Generate a consistent color for a given name using hash."""
-    # List of rich colors to choose from
-    colors = [
-        "cyan",
-        "magenta",
-        "yellow",
-        "blue",
-        "green",
-        "red",
-        "bright_cyan",
-        "bright_magenta",
-        "bright_yellow",
-        "bright_blue",
-        "bright_green",
-        "bright_red",
-        "purple",
-        "white",
-        "pink",
-    ]
-
-    # Hash the name and pick a color
-    hash_value = hashlib.md5(name.encode()).digest()[0]
-    return colors[hash_value % len(colors)]
-
-
-class TableStr:
-    def __str__(self):
-        console = Console(force_terminal=True, legacy_windows=False)
-
-        # Create a table for detections
-        table = Table(
-            title=f"{self.__class__.__name__} [{len(self.detections)} detections @ {to_timestamp(self.image.ts):.3f}]",
-            show_header=True,
-            show_edge=True,
-        )
-
-        # Dynamically build columns based on the first detection's dict keys
-        if not self.detections:
-            return (
-                f"   {self.__class__.__name__} [0 detections @ {to_timestamp(self.image.ts):.3f}]"
-            )
-
-        # Cache all repr_dicts to avoid double computation
-        detection_dicts = [det.to_repr_dict() for det in self]
-
-        first_dict = detection_dicts[0]
-        table.add_column("#", style="dim")
-        for col in first_dict.keys():
-            color = _hash_to_color(col)
-            table.add_column(col.title(), style=color)
-
-        # Add each detection to the table
-        for i, d in enumerate(detection_dicts):
-            row = [str(i)]
-
-            for key in first_dict.keys():
-                if key == "conf":
-                    # Color-code confidence
-                    conf_color = (
-                        "green"
-                        if float(d[key]) > 0.8
-                        else "yellow"
-                        if float(d[key]) > 0.5
-                        else "red"
-                    )
-                    row.append(Text(f"{d[key]}", style=conf_color))
-                elif key == "points" and d.get(key) == "None":
-                    row.append(Text(d.get(key, ""), style="dim"))
-                else:
-                    row.append(str(d.get(key, "")))
-            table.add_row(*row)
-
-        with console.capture() as capture:
-            console.print(table)
-        return capture.get().strip()
 
 
 class ImageDetections(Generic[T], TableStr):
