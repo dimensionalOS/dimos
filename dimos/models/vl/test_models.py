@@ -32,13 +32,6 @@ def test_vlm(model_class, model_name):
     model: VlModel = model_class()
     model.warmup()
 
-    # Publish to LCM with model-specific channel names
-    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
-        "/annotations", ImageAnnotations
-    )
-    image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
-    image_transport.publish(image)
-
     queries = [
         "glasses",
         "blue shirt",
@@ -62,6 +55,15 @@ def test_vlm(model_class, model_name):
     # print(f"  YOLO found {len(yolo_detections.detections)} objects")
     # all_detections.detections.extend(yolo_detections.detections)
     # annotations_transport.publish(all_detections.to_foxglove_annotations())
+
+    # Publish to LCM with model-specific channel names
+    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
+        "/annotations", ImageAnnotations
+    )
+
+    image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
+
+    image_transport.publish(image)
 
     # Then run VLM queries
     for query in queries:

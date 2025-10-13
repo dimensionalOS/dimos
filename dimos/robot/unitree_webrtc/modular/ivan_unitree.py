@@ -15,7 +15,7 @@
 import logging
 import time
 
-from lcm_msgs.foxglove_msgs import SceneUpdate
+from dimos_lcm.foxglove_msgs import SceneUpdate
 
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, start
@@ -24,8 +24,10 @@ from dimos.core import LCMTransport, start
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.moduleDB import ObjectDBModule
+from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.module3D import Detection3DModule
 from dimos.protocol.pubsub import lcm
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
@@ -44,30 +46,37 @@ def detection_unitree():
         return True
 
     module3D = dimos.deploy(
-        ObjectDBModule,
-        goto=goto,
+        Detection2DModule,
+        # goto=goto,
         camera_info=ConnectionModule._camera_info(),
     )
 
     module3D.image.connect(connection.video)
     # module3D.pointcloud.connect(mapper.global_map)
-    module3D.pointcloud.connect(connection.lidar)
+    # module3D.pointcloud.connect(connection.lidar)
 
     module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     module3D.detections.transport = LCMTransport("/detections", Detection2DArray)
 
-    module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
-    module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
-    module3D.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
+    # module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
+    # module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
+    # module3D.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
 
     module3D.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
     module3D.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
     module3D.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
-
-    module3D.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
+    # module3D.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
 
     module3D.start()
     connection.start()
+    bridge = FoxgloveBridge(
+        #        shm_channels=[
+        #            "/image#sensor_msgs.Image",
+        #            "/lidar#sensor_msgs.PointCloud2",
+        #        ]
+    )
+    # bridge = FoxgloveBridge()
+    bridge.start()
 
     from dimos.agents2 import Agent, Output, Reducer, Stream, skill
     from dimos.agents2.cli.human import HumanInput
@@ -84,10 +93,10 @@ def detection_unitree():
     agent.register_skills(module3D)
 
     # agent.run_implicit_skill("video_stream_tool")
-    agent.run_implicit_skill("human")
+    # agent.run_implicit_skill("human")
 
-    agent.start()
-    agent.loop_thread()
+    # agent.start()
+    # agent.loop_thread()
 
     try:
         while True:

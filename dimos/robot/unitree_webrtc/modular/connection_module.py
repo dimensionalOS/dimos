@@ -30,7 +30,8 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.agents2 import Agent, Output, Reducer, Stream, skill
-from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, rpc
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
+from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, pSHMTransport, rpc
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
@@ -175,7 +176,7 @@ class ConnectionModule(Module):
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(**self.connection_config)
             case "fake":
-                self.connection = FakeRTC(**self.connection_config)
+                self.connection = FakeRTC(**self.connection_config, seek=12.0)
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
@@ -223,10 +224,19 @@ class ConnectionModule(Module):
             ts=odom.ts,
         )
 
+        sensor = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="world",
+            child_frame_id="sensor",
+            ts=odom.ts,
+        )
+
         return [
             Transform.from_pose("base_link", odom),
             camera_link,
             camera_optical,
+            sensor,
         ]
 
     def _publish_tf(self, msg):
@@ -302,9 +312,19 @@ def deploy_connection(dimos: DimosCluster, **kwargs):
         **kwargs,
     )
 
-    connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
     connection.odom.transport = LCMTransport("/odom", PoseStamped)
+
+    #    connection.video.transport = pSHMTransport(
+    #        "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    #    )
+
+    #    connection.lidar.transport = pSHMTransport(
+    #        "/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    #    )
+
     connection.video.transport = LCMTransport("/image", Image)
+    connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
+
     connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
     connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
 
