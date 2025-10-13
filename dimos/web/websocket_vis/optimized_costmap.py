@@ -30,7 +30,7 @@ class OptimizedCostmapEncoder:
     def __init__(self, chunk_size: int = 64):
         self.chunk_size = chunk_size
         self.last_full_grid: Optional[np.ndarray] = None
-        self.last_sent_time: float = 0
+        self.last_full_sent_time: float = 0  # Track when last full update was sent
         self.chunk_hashes: Dict[Tuple[int, int], str] = {}
         self.full_update_interval = 3.0  # Send full update every 3 seconds
 
@@ -51,7 +51,7 @@ class OptimizedCostmapEncoder:
             force_full
             or self.last_full_grid is None
             or self.last_full_grid.shape != grid.shape
-            or (current_time - self.last_sent_time) > self.full_update_interval
+            or (current_time - self.last_full_sent_time) > self.full_update_interval
         )
 
         if send_full:
@@ -76,7 +76,7 @@ class OptimizedCostmapEncoder:
 
         # Update state
         self.last_full_grid = grid.copy()
-        self.last_sent_time = current_time
+        self.last_full_sent_time = current_time
         self._update_chunk_hashes(grid)
 
         return {
@@ -124,9 +124,8 @@ class OptimizedCostmapEncoder:
                     # Update hash
                     self.chunk_hashes[chunk_key] = chunk_hash
 
-        # Update state
+        # Update state - only update the grid, not the timer
         self.last_full_grid = grid.copy()
-        self.last_sent_time = current_time
 
         # If too many chunks changed, send full update instead
         total_chunks = ((height + self.chunk_size - 1) // self.chunk_size) * (
