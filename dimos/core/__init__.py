@@ -49,9 +49,37 @@ __all__ = [
 ]
 
 
-def _unpickle_rpc_call(client, method_name):
-    """Unpickle helper for RPC call closures."""
-    return getattr(client, method_name)
+class RpcCall:
+    def __init__(self, original_method, rpc, name, remote_name, unsub_fns):
+        self.original_method = original_method
+        self.rpc = rpc
+        self.name = name
+        self.remote_name = remote_name
+        self._unsub_fns = unsub_fns
+
+        if original_method:
+            self.__doc__ = original_method.__doc__
+            self.__name__ = original_method.__name__
+            self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
+
+    def __call__(self, *args, **kwargs):
+        # For stop/close/shutdown, use call_nowait to avoid deadlock
+        # (the remote side stops its RPC service before responding)
+        if self.name in ("stop"):
+            if self.rpc:
+                self.rpc.call_nowait(f"{self.remote_name}/{self.name}", (args, kwargs))
+            self.stop_client()
+            return None
+
+        result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{self.name}", (args, kwargs))
+        self._unsub_fns.append(unsub_fn)
+        return result
+
+    def __getstate__(self):
+        return (self.original_method, self.name, self.remote_name, self._unsub_fns)
+
+    def __setstate__(self, state):
+        self.original_method, self.name, self.remote_name, self._unsub_fns = state
 
 
 class RPCClient:
@@ -86,8 +114,6 @@ class RPCClient:
 
     # passthrough
     def __getattr__(self, name: str):
-        if "atgl" in name:
-            print("RPCClient __getattr__:", name, name in self.rpcs)
         # Check if accessing a known safe attribute to avoid recursion
         if name in {
             "__class__",
@@ -102,38 +128,8 @@ class RPCClient:
             raise AttributeError(f"{name} is not found.")
 
         if name in self.rpcs:
-            # Get the original method to preserve its docstring
             original_method = getattr(self.actor_class, name, None)
-
-            def rpc_call(*args, **kwargs):
-                # For stop/close/shutdown, use call_nowait to avoid deadlock
-                # (the remote side stops its RPC service before responding)
-                if name in ("stop", "close", "shutdown"):
-                    if self.rpc:
-                        self.rpc.call_nowait(f"{self.remote_name}/{name}", (args, kwargs))
-                    self.stop_client()
-                    return None
-
-                result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
-                self._unsub_fns.append(unsub_fn)
-                return result
-
-            # Copy docstring and other attributes from original method
-            if original_method:
-                rpc_call.__doc__ = original_method.__doc__
-                rpc_call.__name__ = original_method.__name__
-                rpc_call.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
-
-            # Make the rpc_call picklable by storing the client and method name
-            def _pickle_rpc_call():
-                return (_unpickle_rpc_call, (self, name))
-
-            rpc_call.__reduce__ = _pickle_rpc_call
-
-            if "atgl" in name:
-                print("rpc call", rpc_call, rpc_call.__name__)
-
-            return rpc_call
+            return RpcCall(original_method, self.rpc, name, self.remote_name, self._unsub_fns)
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known

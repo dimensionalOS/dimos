@@ -126,10 +126,12 @@ class BehaviorTreeNavigator(Module):
     @rpc
     def set_HolonomicLocalPlanner_reset(self, callable) -> None:
         self.reset_local_planner = callable
+        self.reset_local_planner.rpc = self.rpc
 
     @rpc
     def set_HolonomicLocalPlanner_atgl(self, callable) -> None:
         self.check_goal_reached = callable
+        self.check_goal_reached.rpc = self.rpc
 
     @rpc
     def start(self):
