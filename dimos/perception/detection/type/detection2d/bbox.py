@@ -28,6 +28,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
+    Detection2DArray,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
@@ -385,7 +386,7 @@ class Detection2DBBox(Detection2D):
 class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
     def from_ros_detection2d_array(
-        cls, image: Image, ros_detections: Sequence[ROSDetection2D], **kwargs
+        cls, image: Image, ros_detections: Detection2DArray, **kwargs
     ) -> "ImageDetections2D":
         """Convert from ROS Detection2DArray message to ImageDetections2D object."""
         detections: List[Detection2D] = []
