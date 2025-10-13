@@ -35,9 +35,9 @@ from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import PointCloud2, Joy, Image
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.tf import TF
 from dimos.utils.transform_utils import euler_to_quaternion
 from dimos.utils.logging_config import setup_logger
+from dimos.navigation.rosnav import ROSNav
 
 # ROS2 message imports
 from geometry_msgs.msg import TwistStamped as ROSTwistStamped
@@ -46,7 +46,7 @@ from geometry_msgs.msg import PointStamped as ROSPointStamped
 from nav_msgs.msg import Odometry as ROSOdometry
 from nav_msgs.msg import Path as ROSPath
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
-from std_msgs.msg import Bool as ROSBool, Header, Int8 as ROSInt8
+from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
@@ -55,7 +55,7 @@ from reactivex.disposable import Disposable
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
 
-class NavigationModule(Module):
+class ROSNavigationModule(ROSNav):
     """
     Handles navigation control and odometry remapping.
     """
@@ -116,6 +116,7 @@ class NavigationModule(Module):
             ROSPointCloud2, "/terrain_map_ext", self._on_ros_global_pointcloud, 10
         )
         self.path_sub = self._node.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
+        self.tf_sub = self._node.create_subscription(ROSTFMessage, "/tf", self._on_ros_tf, 10)
 
         logger.info("NavigationModule initialized with ROS2 node")
 
@@ -189,7 +190,6 @@ class NavigationModule(Module):
     def _on_ros_tf(self, msg: ROSTFMessage):
         ros_tf = TFMessage.from_ros_msg(msg)
 
-        # Publish static transforms
         translation = Vector3(
             self.sensor_to_base_link_transform[0],
             self.sensor_to_base_link_transform[1],
@@ -207,7 +207,7 @@ class NavigationModule(Module):
             rotation=rotation,
             frame_id="sensor",
             child_frame_id="base_link",
-            ts=msg.ts,
+            ts=time.time(),
         )
 
         map_to_world_tf = Transform(
@@ -215,10 +215,10 @@ class NavigationModule(Module):
             rotation=euler_to_quaternion(Vector3(0.0, 0.0, 0.0)),
             frame_id="map",
             child_frame_id="world",
-            ts=msg.ts,
+            ts=time.time(),
         )
 
-        self.tf.publish(sensor_to_base_link_tf, map_to_world_tf, ros_tf)
+        self.tf.publish(sensor_to_base_link_tf, map_to_world_tf, *ros_tf.transforms)
 
     def _on_goal_pose(self, msg: PoseStamped):
         self.navigate_to(msg)
@@ -456,7 +456,6 @@ class NavBot(Resource):
 
         self.navigation_module.goal_req.transport = core.LCMTransport("/goal", PoseStamped)
         self.navigation_module.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
-        self.navigation_module.soft_stop.transport = core.LCMTransport("/soft_stop", Int8)
 
         self.navigation_module.pointcloud.transport = core.LCMTransport(
             "/pointcloud_map", PointCloud2
