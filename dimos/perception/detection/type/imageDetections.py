@@ -16,10 +16,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Generic, List, Optional, TypeVar
 
+from dimos_lcm.vision_msgs import Detection2DArray
+
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:

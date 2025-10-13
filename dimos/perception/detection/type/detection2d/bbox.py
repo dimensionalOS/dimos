@@ -384,6 +384,19 @@ class Detection2DBBox(Detection2D):
 
 class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
+    def from_ros_detection2d_array(
+        cls, image: Image, ros_detections: Sequence[ROSDetection2D], **kwargs
+    ) -> "ImageDetections2D":
+        """Convert from ROS Detection2DArray message to ImageDetections2D object."""
+        detections: List[Detection2D] = []
+        for ros_det in ros_detections.detections:
+            detection = Detection2DBBox.from_ros_detection2d(ros_det, image=image, **kwargs)
+            if detection.is_valid():
+                detections.append(detection)
+
+        return cls(image=image, detections=detections)
+
+    @classmethod
     def from_ultralytics_result(
         cls, image: Image, results: List[Results], **kwargs
     ) -> "ImageDetections2D":

@@ -29,7 +29,7 @@ logger = setup_logger("dimos.perception.detection.yolo_2d_det")
 
 
 class Yolo2DDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11n.onnx", device="cpu"):
+    def __init__(self, model_path="models_yolo", model_name="yolo11n.onnx", device: str = None):
         """
         Initialize the YOLO detector.
 
@@ -38,11 +38,14 @@ class Yolo2DDetector(Detector):
             model_name (str): Name of the YOLO model weights file
             device (str): Device to run inference on ('cuda' or 'cpu')
         """
-        self.device = device
         self.model = YOLO(get_data(model_path) / model_name, task="detect")
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
+
+        if device:
+            self.device = device
+            return
         if is_cuda_available():
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
                 onnxruntime.preload_dlls(cuda=True, cudnn=True)

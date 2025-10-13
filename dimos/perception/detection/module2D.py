@@ -153,9 +153,9 @@ class Detection2DModule(Module):
     def start(self):
         self.detection_stream_2d().subscribe(self.track)
 
-        # self.detection_stream_2d().subscribe(
-        #    lambda det: self.detections.publish(det.to_ros_detection2d_array())
-        # )
+        self.detection_stream_2d().subscribe(
+            lambda det: self.detections.publish(det.to_ros_detection2d_array())
+        )
 
         self.detection_stream_2d().subscribe(
             lambda det: self.annotations.publish(det.to_foxglove_annotations())

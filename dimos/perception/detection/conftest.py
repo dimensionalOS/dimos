@@ -196,7 +196,7 @@ def detection3dpc(get_moment_3dpc) -> Detection3DPC:
 def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
     from dimos.perception.detection.detectors import Yolo2DDetector
 
-    module = Detection2DModule(detector=Yolo2DDetector)
+    module = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"))
 
     @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment2D:
