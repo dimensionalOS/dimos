@@ -112,11 +112,7 @@ class G1ConnectionModule(Module):
         self._disposables.add(Disposable(unsub))
 
     @rpc
-<<<<<<< HEAD
     def stop(self) -> None:
-=======
-    def stop(self):
->>>>>>> deac770f (squash)
         self.connection.stop()
         super().stop()
 

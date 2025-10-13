@@ -6,6 +6,7 @@ from typing import Optional
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
 
+import signal
 import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
@@ -50,12 +51,13 @@ __all__ = [
 
 
 class RpcCall:
-    def __init__(self, original_method, rpc, name, remote_name, unsub_fns):
-        self.original_method = original_method
-        self.rpc = rpc
-        self.name = name
-        self.remote_name = remote_name
+    def __init__(self, original_method, rpc, name, remote_name, unsub_fns, stop_client=None):
+        self._original_method = original_method
+        self._rpc = rpc
+        self._name = name
+        self._remote_name = remote_name
         self._unsub_fns = unsub_fns
+        self._stop_client = stop_client
 
         if original_method:
             self.__doc__ = original_method.__doc__
@@ -63,23 +65,29 @@ class RpcCall:
             self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
 
     def __call__(self, *args, **kwargs):
-        # For stop/close/shutdown, use call_nowait to avoid deadlock
-        # (the remote side stops its RPC service before responding)
-        if self.name in ("stop"):
-            if self.rpc:
-                self.rpc.call_nowait(f"{self.remote_name}/{self.name}", (args, kwargs))
-            self.stop_client()
+        if not self._rpc:
             return None
 
-        result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{self.name}", (args, kwargs))
+        # TODO: This may not be needed anymore.
+        #
+        # For stop/close/shutdown, use call_nowait to avoid deadlock
+        # (the remote side stops its RPC service before responding)
+        if self._name == "stop":
+            if self._rpc:
+                self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))
+            if self._stop_client:
+                self._stop_client()
+            return None
+
+        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))
         self._unsub_fns.append(unsub_fn)
         return result
 
     def __getstate__(self):
-        return (self.original_method, self.name, self.remote_name, self._unsub_fns)
+        return (self._original_method, self._name, self._remote_name, self._unsub_fns)
 
     def __setstate__(self, state):
-        self.original_method, self.name, self.remote_name, self._unsub_fns = state
+        self._original_method, self._name, self._remote_name, self._unsub_fns = state
 
 
 class CudaCleanupPlugin:
@@ -159,7 +167,9 @@ class RPCClient:
 
         if name in self.rpcs:
             original_method = getattr(self.actor_class, name, None)
-            return RpcCall(original_method, self.rpc, name, self.remote_name, self._unsub_fns)
+            return RpcCall(
+                original_method, self.rpc, name, self.remote_name, self._unsub_fns, self.stop_client
+            )
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
@@ -321,8 +331,6 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
         n: Number of workers (defaults to CPU count)
         memory_limit: Memory limit per worker (e.g., '4GB', '2GiB', or 'auto' for Dask's default)
     """
-    import signal
-    import atexit
 
     console = Console()
     if not n:
