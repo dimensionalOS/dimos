@@ -62,9 +62,7 @@ class MoondreamVlModel(VlModel):
 
         return str(result)
 
-    def query_detections(
-        self, image: Image, query: str, max_objects: int = 10
-    ) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:
         """Detect objects using Moondream's native detect method.
 
         Args:
@@ -77,7 +75,7 @@ class MoondreamVlModel(VlModel):
         """
         pil_image = PILImage.fromarray(image.data)
 
-        settings = {"max_objects": max_objects}
+        settings = {"max_objects": kwargs.get("max_objects", 5)}
         result = self._model.detect(pil_image, query, settings=settings)
 
         # Convert to ImageDetections2D
@@ -114,24 +112,3 @@ class MoondreamVlModel(VlModel):
                 image_detections.detections.append(detection)
 
         return image_detections
-
-
-if __name__ == "__main__":
-    from dimos.utils.data import get_data
-
-    # Load test image
-    image = Image.from_file(get_data("cafe.jpg"))
-
-    # Initialize the model
-    print("Loading Moondream model...")
-    model = MoondreamVlModel()
-
-    # Test text query
-    #    print("\nQuerying: 'What's in this image?'")
-    #    answer = model.query(image, "What's in this image?")
-    #    print(f"Answer: {answer}")
-
-    # Test detection query
-    print(model.query_detections(image, "person", max_objects=5))
-    print("detect glass")
-    print(model.query_detections(image, "glass", max_objects=5))

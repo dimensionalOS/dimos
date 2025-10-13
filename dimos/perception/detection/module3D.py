@@ -15,7 +15,9 @@
 
 from typing import Optional
 
+from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo
+from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -23,6 +25,8 @@ from dimos.agents2 import skill
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.perception.detection.module2D import Config as Module2DConfig
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type import (
     ImageDetections2D,
@@ -33,11 +37,16 @@ from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
 
-class Detection3DModule(Detection2DModule):
-    camera_info: CameraInfo
+class Config(Module2DConfig): ...
 
+
+class Detection3DModule(Detection2DModule):
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
+
+    detections: Out[Detection2DArray] = None  # type: ignore
+    annotations: Out[ImageAnnotations] = None  # type: ignore
+    scene_update: Out[SceneUpdate] = None  # type: ignore
 
     # just for visualization,
     # emits latest pointclouds of detected objects in a frame
@@ -51,10 +60,6 @@ class Detection3DModule(Detection2DModule):
     detected_image_2: Out[Image] = None  # type: ignore
 
     detection_3d_stream: Optional[Observable[ImageDetections3DPC]] = None
-
-    def __init__(self, camera_info: CameraInfo, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.camera_info = camera_info
 
     def process_frame(
         self,
@@ -70,7 +75,7 @@ class Detection3DModule(Detection2DModule):
             detection3d = Detection3DPC.from_2d(
                 detection,
                 world_pointcloud=pointcloud,
-                camera_info=self.camera_info,
+                camera_info=self.config.camera_info,
                 world_to_optical_transform=transform,
             )
             if detection3d is not None:

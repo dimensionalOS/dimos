@@ -25,6 +25,7 @@ from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type.detection2d.bbox import Bbox, Detection2DBBox
 from dimos.types.timestamped import to_ros_stamp
+from dimos.utils.decorators.decorators import simple_mcache
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
@@ -192,6 +193,11 @@ class Detection2DPerson(Detection2DBBox):
             if score > threshold:
                 visible.append((name, self.keypoints[i], score))
         return visible
+
+    @simple_mcache
+    def is_valid(self) -> bool:
+        valid_keypoints = sum(1 for score in self.keypoint_scores if score > 0.8)
+        return valid_keypoints >= 5
 
     @property
     def width(self) -> float:

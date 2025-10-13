@@ -139,6 +139,12 @@ class Detection2DBBox(Detection2D):
             console.print(*parts, end="")
         return capture.get().strip()
 
+    @property
+    def center_bbox(self) -> Tuple[float, float]:
+        """Get center point of bounding box."""
+        x1, y1, x2, y2 = self.bbox
+        return ((x1 + x2) / 2, (y1 + y2) / 2)
+
     def bbox_2d_volume(self) -> float:
         x1, y1, x2, y2 = self.bbox
         width = max(0.0, x2 - x1)
@@ -291,7 +297,7 @@ class Detection2DBBox(Detection2D):
             PointsAnnotation(
                 timestamp=to_ros_stamp(self.ts),
                 outline_color=outline_color,
-                fill_color=Color.from_string(self.name, alpha=0.15),
+                fill_color=Color.from_string(self.name, alpha=0.2),
                 thickness=thickness,
                 points_length=4,
                 points=[
@@ -348,8 +354,6 @@ class Detection2DBBox(Detection2D):
         # Extract timestamp
         ts = to_timestamp(ros_det.header.stamp)
 
-        # Name is not stored in ROS Detection2D, so we'll use a placeholder
-        # Remove 'name' from kwargs if present to avoid duplicate
         name = kwargs.pop("name", f"class_{class_id}")
 
         return cls(
@@ -413,23 +417,7 @@ class ImageDetections2D(ImageDetections[Detection2D]):
                 else:
                     # Regular bbox detection
                     detection = Detection2DBBox.from_ultralytics_result(result, i, image)
-                detections.append(detection)
+                if detection.is_valid():
+                    detections.append(detection)
 
         return cls(image=image, detections=detections)
-
-    @classmethod
-    def from_pose_detector(
-        cls, image: Image, people: Sequence["Detection2DPerson"], **kwargs
-    ) -> "ImageDetections2D":
-        """Create ImageDetections2D from a list of Detection2DPerson detections.
-        Args:
-            image: Source image
-            people: Sequence of Detection2DPerson objects with pose keypoints
-        Returns:
-            ImageDetections2D containing the pose detections
-        """
-        detections: List[Detection2D] = list(people)
-        return cls(
-            image=image,
-            detections=detections,
-        )
