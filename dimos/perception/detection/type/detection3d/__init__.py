@@ -14,9 +14,9 @@
 
 from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.detection3d.bbox import Detection3DBBox
-from dimos.perception.detection.type.detection3d.pointcloud import (
-    Detection3DPC,
-    ImageDetections3DPC,
+from dimos.perception.detection.type.detection3d.imageDetections3DPC import ImageDetections3DPC
+from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
+from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     PointCloudFilter,
     height_filter,
     radius_outlier,

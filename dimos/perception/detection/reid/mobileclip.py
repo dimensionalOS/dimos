@@ -42,7 +42,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
 
     def __init__(
         self,
-        model_name: str = "MobileCLIP2-S0",
+        model_name: str = "MobileCLIP2-S4",
         model_path: Path | str | None = None,
         device: str | None = None,
         normalize: bool = True,

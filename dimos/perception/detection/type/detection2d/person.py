@@ -172,6 +172,25 @@ class Detection2DPerson(Detection2DBBox):
         """Alias for from_ultralytics_result for backward compatibility."""
         return cls.from_ultralytics_result(result, idx, image)
 
+    @classmethod
+    def from_ros_detection2d(cls, *args, **kwargs) -> "Detection2DPerson":
+        """Conversion from ROS Detection2D is not supported for Detection2DPerson.
+
+        The ROS Detection2D message format does not include keypoint data,
+        which is required for Detection2DPerson. Use Detection2DBBox for
+        round-trip ROS conversions, or store keypoints separately.
+
+        Raises:
+            NotImplementedError: Always raised as this conversion is impossible
+        """
+        raise NotImplementedError(
+            "Cannot convert from ROS Detection2D to Detection2DPerson. "
+            "The ROS Detection2D message format does not contain keypoint data "
+            "(keypoints and keypoint_scores) which are required fields for Detection2DPerson. "
+            "Consider using Detection2DBBox for ROS conversions, or implement a custom "
+            "message format that includes pose keypoints."
+        )
+
     def get_keypoint(self, name: str) -> Tuple[np.ndarray, float]:
         """Get specific keypoint by name.
         Returns:

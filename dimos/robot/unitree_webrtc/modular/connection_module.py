@@ -314,13 +314,13 @@ def deploy_connection(dimos: DimosCluster, **kwargs):
 
     connection.odom.transport = LCMTransport("/odom", PoseStamped)
 
-    #    connection.video.transport = pSHMTransport(
-    #        "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    #    )
+    connection.video.transport = pSHMTransport(
+        "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    )
 
-    #    connection.lidar.transport = pSHMTransport(
-    #        "/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-    #    )
+    connection.lidar.transport = pSHMTransport(
+        "/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    )
 
     connection.video.transport = LCMTransport("/image", Image)
     connection.lidar.transport = LCMTransport("/lidar", LidarMessage)

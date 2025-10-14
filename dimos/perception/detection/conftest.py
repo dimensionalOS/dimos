@@ -252,7 +252,7 @@ def object_db_module(get_moment):
     """Create and populate an ObjectDBModule with detections from multiple frames."""
     from dimos.perception.detection.detectors import Yolo2DDetector
 
-    module2d = Detection2DModule(detector=Yolo2DDetector)
+    module2d = Detection2DModule(detector=lambda: Yolo2DDetector(device="cpu"))
     module3d = Detection3DModule(camera_info=ConnectionModule._camera_info())
     moduleDB = ObjectDBModule(
         camera_info=ConnectionModule._camera_info(),

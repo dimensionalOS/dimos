@@ -28,7 +28,6 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
-    Detection2DArray,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
@@ -46,7 +45,6 @@ from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
-from dimos.perception.detection.type.imageDetections import ImageDetections
 from dimos.types.timestamped import to_ros_stamp, to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
@@ -100,6 +98,33 @@ class Detection2DBBox(Detection2D):
             "conf": f"{self.confidence:.2f}",
             "bbox": f"[{x1:.0f},{y1:.0f},{x2:.0f},{y2:.0f}]",
         }
+
+    def center_to_3d(
+        self,
+        pixel: Tuple[int, int],
+        camera_info: CameraInfo,
+        assumed_depth: float = 1.0,
+    ) -> PoseStamped:
+        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
+
+        Args:
+            camera_info: Camera calibration information
+            assumed_depth: Assumed depth in meters (default 1.0m from camera)
+
+        Returns:
+            Vector3 position in camera optical frame coordinates
+        """
+        # Extract camera intrinsics
+        fx, fy = camera_info.K[0], camera_info.K[4]
+        cx, cy = camera_info.K[2], camera_info.K[5]
+
+        # Unproject pixel to normalized camera coordinates
+        x_norm = (pixel[0] - cx) / fx
+        y_norm = (pixel[1] - cy) / fy
+
+        # Create 3D point at assumed depth in camera optical frame
+        # Camera optical frame: X right, Y down, Z forward
+        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
 
     # return focused image, only on the bbox
     def cropped_image(self, padding: int = 20) -> Image:
@@ -381,57 +406,3 @@ class Detection2DBBox(Detection2D):
             ],
             id=str(self.track_id),
         )
-
-
-class ImageDetections2D(ImageDetections[Detection2D]):
-    @classmethod
-    def from_ros_detection2d_array(
-        cls, image: Image, ros_detections: Detection2DArray, **kwargs
-    ) -> "ImageDetections2D":
-        """Convert from ROS Detection2DArray message to ImageDetections2D object."""
-        detections: List[Detection2D] = []
-        for ros_det in ros_detections.detections:
-            detection = Detection2DBBox.from_ros_detection2d(ros_det, image=image, **kwargs)
-            if detection.is_valid():
-                detections.append(detection)
-
-        return cls(image=image, detections=detections)
-
-    @classmethod
-    def from_ultralytics_result(
-        cls, image: Image, results: List[Results], **kwargs
-    ) -> "ImageDetections2D":
-        """Create ImageDetections2D from ultralytics Results.
-
-        Dispatches to appropriate Detection2D subclass based on result type:
-        - If keypoints present: creates Detection2DPerson
-        - Otherwise: creates Detection2DBBox
-
-        Args:
-            image: Source image
-            results: List of ultralytics Results objects
-            **kwargs: Additional arguments passed to detection constructors
-
-        Returns:
-            ImageDetections2D containing appropriate detection types
-        """
-        from dimos.perception.detection.type.detection2d.person import Detection2DPerson
-
-        detections: List[Detection2D] = []
-        for result in results:
-            if result.boxes is None:
-                continue
-
-            num_detections = len(result.boxes.xyxy)
-            for i in range(num_detections):
-                detection: Detection2D
-                if result.keypoints is not None:
-                    # Pose detection with keypoints
-                    detection = Detection2DPerson.from_ultralytics_result(result, i, image)
-                else:
-                    # Regular bbox detection
-                    detection = Detection2DBBox.from_ultralytics_result(result, i, image)
-                if detection.is_valid():
-                    detections.append(detection)
-
-        return cls(image=image, detections=detections)

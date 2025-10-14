@@ -13,7 +13,8 @@
 # limitations under the License.
 
 from dimos.perception.detection.type.detection2d.base import Detection2D
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
+from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
 __all__ = [

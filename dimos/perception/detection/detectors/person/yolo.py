@@ -68,5 +68,6 @@ class YoloPersonDetector(Detector):
             conf=0.5,
             tracker=self.tracker,
             persist=True,
+            device=self.device,
         )
         return ImageDetections2D.from_ultralytics_result(image, results)

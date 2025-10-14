@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import functools
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, Dict, Optional
 
 import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -28,69 +28,15 @@ from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection.type.detection2d import Detection2D, Detection2DBBox
+from dimos.perception.detection.type.detection2d import Detection2DBBox
 from dimos.perception.detection.type.detection3d.base import Detection3D
-from dimos.perception.detection.type.imageDetections import ImageDetections
+from dimos.perception.detection.type.detection3d.pointcloud_filters import (
+    PointCloudFilter,
+    radius_outlier,
+    raycast,
+    statistical,
+)
 from dimos.types.timestamped import to_ros_stamp
-
-# Filters take Detection2DBBox, PointCloud2, CameraInfo, Transform and return filtered PointCloud2 or None
-PointCloudFilter = Callable[
-    [Detection2DBBox, PointCloud2, CameraInfo, Transform], Optional[PointCloud2]
-]
-
-
-def height_filter(height=0.1) -> PointCloudFilter:
-    return lambda det, pc, ci, tf: pc.filter_by_height(height)
-
-
-def statistical(nb_neighbors=40, std_ratio=0.5) -> PointCloudFilter:
-    def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
-    ) -> Optional[PointCloud2]:
-        try:
-            statistical, removed = pc.pointcloud.remove_statistical_outlier(
-                nb_neighbors=nb_neighbors, std_ratio=std_ratio
-            )
-            return PointCloud2(statistical, pc.frame_id, pc.ts)
-        except Exception as e:
-            # print("statistical filter failed:", e)
-            return None
-
-    return filter_func
-
-
-def raycast() -> PointCloudFilter:
-    def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
-    ) -> Optional[PointCloud2]:
-        try:
-            camera_pos = tf.inverse().translation
-            camera_pos_np = camera_pos.to_numpy()
-            _, visible_indices = pc.pointcloud.hidden_point_removal(camera_pos_np, radius=100.0)
-            visible_pcd = pc.pointcloud.select_by_index(visible_indices)
-            return PointCloud2(visible_pcd, pc.frame_id, pc.ts)
-        except Exception as e:
-            # print("raycast filter failed:", e)
-            return None
-
-    return filter_func
-
-
-def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> PointCloudFilter:
-    """
-    Remove isolated points: keep only points that have at least `min_neighbors`
-    neighbors within `radius` meters (same units as your point cloud).
-    """
-
-    def filter_func(
-        det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
-    ) -> Optional[PointCloud2]:
-        filtered_pcd, removed = pc.pointcloud.remove_radius_outlier(
-            nb_points=min_neighbors, radius=radius
-        )
-        return PointCloud2(filtered_pcd, pc.frame_id, pc.ts)
-
-    return filter_func
 
 
 @dataclass
@@ -377,28 +323,3 @@ class Detection3DPC(Detection3D):
             transform=world_to_optical_transform,
             frame_id=world_pointcloud.frame_id,
         )
-
-
-class ImageDetections3DPC(ImageDetections[Detection3DPC]):
-    """Specialized class for 3D detections in an image."""
-
-    def to_foxglove_scene_update(self) -> "SceneUpdate":
-        """Convert all detections to a Foxglove SceneUpdate message.
-
-        Returns:
-            SceneUpdate containing SceneEntity objects for all detections
-        """
-
-        # Create SceneUpdate message with all detections
-        scene_update = SceneUpdate()
-        scene_update.deletions_length = 0
-        scene_update.deletions = []
-        scene_update.entities = []
-
-        # Process each detection
-        for i, detection in enumerate(self.detections):
-            entity = detection.to_foxglove_scene_entity(entity_id=f"detection_{detection.name}_{i}")
-            scene_update.entities.append(entity)
-
-        scene_update.entities_length = len(scene_update.entities)
-        return scene_update
