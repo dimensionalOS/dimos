@@ -29,6 +29,7 @@ from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
@@ -123,6 +124,27 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         if hasattr(self, "rpc") and self.rpc:
             self.rpc.stop()
             self.rpc = None
+
+    def __getstate__(self):
+        """Exclude unpicklable runtime attributes when serializing."""
+        state = self.__dict__.copy()
+        # Remove unpicklable attributes
+        state.pop("_disposables", None)
+        state.pop("_loop", None)
+        state.pop("_loop_thread", None)
+        state.pop("_rpc", None)
+        state.pop("_tf", None)
+        return state
+
+    def __setstate__(self, state):
+        """Restore object from pickled state."""
+        self.__dict__.update(state)
+        # Reinitialize runtime attributes
+        self._disposables = CompositeDisposable()
+        self._loop = None
+        self._loop_thread = None
+        self._rpc = None
+        self._tf = None
 
     @property
     def tf(self):

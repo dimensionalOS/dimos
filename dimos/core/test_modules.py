@@ -254,10 +254,6 @@ def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
             # Skip files that can't be parsed
             continue
 
-    from pprint import pprint
-
-    pprint(hierarchy)
-
     return hierarchy
 
 

@@ -15,6 +15,7 @@
 import asyncio
 from functools import partial
 import threading
+import logging
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
 from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
@@ -39,6 +40,12 @@ class FoxgloveBridge(Module):
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             try:
+                for logger in ["lcm_foxglove_bridge", "FoxgloveServer"]:
+                    logger = logging.getLogger(logger)
+                    logger.setLevel(logging.ERROR)
+                    for handler in logger.handlers:
+                        handler.setLevel(logging.ERROR)
+
                 bridge = LCMFoxgloveBridge(
                     host="0.0.0.0",
                     port=8765,

@@ -44,6 +44,18 @@ def monitor_threads(request):
     if not threads:
         return
 
+    # Filter out expected persistent threads from Dask that are shared globally
+    # These threads are intentionally left running and cleaned up on process exit
+    expected_persistent_thread_prefixes = ["Dask-Offload"]
+    threads = [
+        t
+        for t in threads
+        if not any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes)
+    ]
+
+    if not threads:
+        return
+
     with _seen_threads_lock:
         new_leaks = [t for t in threads if t.ident not in _seen_threads]
         for t in threads:

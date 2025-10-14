@@ -29,7 +29,8 @@ from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import In, Module, Out, rpc
 from dimos.core.blueprints import create_module_blueprint
-from dimos.core.dimos import Dimos
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
 from dimos.msgs.std_msgs import Header
@@ -151,15 +152,17 @@ class ConnectionModule(Module):
 
     def __init__(
         self,
-        ip: str = None,
-        connection_type: str = "webrtc",
+        ip: str | None = None,
+        connection_type: str | None = None,
         rectify_image: bool = True,
+        global_config: GlobalConfig | None = None,
         *args,
         **kwargs,
     ):
-        self.ip = ip
-        self.connection_type = connection_type
-        self.rectify_image = rectify_image
+        cfg = global_config or GlobalConfig()
+        self.ip = ip if ip is not None else cfg.robot_ip
+        self.connection_type = connection_type or cfg.unitree_connection_type
+        self.rectify_image = not cfg.use_simulation
         self.tf = TF()
         self.connection = None
 
@@ -332,7 +335,7 @@ connection = functools.partial(create_module_blueprint, ConnectionModule)
 class UnitreeGo2(UnitreeRobot, Resource):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
-    _dimos: Dimos
+    _dimos: ModuleCoordinator
     _disposables: CompositeDisposable = CompositeDisposable()
 
     def __init__(
@@ -353,7 +356,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
             connection_type: webrtc, replay, or mujoco
         """
         super().__init__()
-        self._dimos = Dimos(n=8, memory_limit="8GiB")
+        self._dimos = ModuleCoordinator(n=8, memory_limit="8GiB")
         self.ip = ip
         self.connection_type = connection_type or "webrtc"
         if ip is None and self.connection_type == "webrtc":

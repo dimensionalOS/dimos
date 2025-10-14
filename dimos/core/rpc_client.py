@@ -12,48 +12,73 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
+from typing import Any, Callable
 
 
 from dimos.protocol.rpc.lcmrpc import LCMRPC
+from dimos.utils.logging_config import setup_logger
+
+
+logger = setup_logger(__file__)
 
 
 class RpcCall:
-    def __init__(self, original_method, rpc, name, remote_name, unsub_fns):
-        self.original_method = original_method
-        self.rpc = rpc
-        self.name = name
-        self.remote_name = remote_name
+    _original_method: Callable[..., Any] | None
+    _rpc: LCMRPC | None
+    _name: str
+    _remote_name: str
+    _unsub_fns: list
+    _stop_rpc_client: Callable[[], None] | None = None
+
+    def __init__(
+        self,
+        original_method: Callable[..., Any] | None,
+        rpc: LCMRPC,
+        name: str,
+        remote_name: str,
+        unsub_fns: list,
+        stop_client: Callable[[], None] | None = None,
+    ):
+        self._original_method = original_method
+        self._rpc = rpc
+        self._name = name
+        self._remote_name = remote_name
         self._unsub_fns = unsub_fns
+        self._stop_rpc_client = stop_client
 
         if original_method:
             self.__doc__ = original_method.__doc__
             self.__name__ = original_method.__name__
             self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
 
+    def set_rpc(self, rpc: LCMRPC):
+        self._rpc = rpc
+
     def __call__(self, *args, **kwargs):
-        # For stop/close/shutdown, use call_nowait to avoid deadlock
-        # (the remote side stops its RPC service before responding)
-        if self.name in ("stop"):
-            if self.rpc:
-                self.rpc.call_nowait(f"{self.remote_name}/{self.name}", (args, kwargs))
-            self.stop_client()
+        if not self._rpc:
+            logger.warning("RPC client not initialized")
             return None
 
-        result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{self.name}", (args, kwargs))
-        print(
-            f"RPC call to {self.remote_name}/{self.name} with args={args}, kwargs={kwargs}",
-            self.rpc,
-            result,
-        )
+        # For stop, use call_nowait to avoid deadlock
+        # (the remote side stops its RPC service before responding)
+        if self._name == "stop":
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))
+            if self._stop_rpc_client:
+                self._stop_rpc_client()
+            return None
+
+        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))
         self._unsub_fns.append(unsub_fn)
         return result
 
     def __getstate__(self):
-        return (self.original_method, self.name, self.remote_name, self._unsub_fns)
+        return (self._original_method, self._name, self._remote_name)
 
     def __setstate__(self, state):
-        self.original_method, self.name, self.remote_name, self._unsub_fns = state
+        self._original_method, self._name, self._remote_name = state
+        self._unsub_fns = []
+        self._rpc = None
+        self._stop_rpc_client = None
 
 
 class RPCClient:
@@ -66,7 +91,7 @@ class RPCClient:
         self.rpc.start()
         self._unsub_fns = []
 
-    def stop_client(self):
+    def stop_rpc_client(self):
         for unsub in self._unsub_fns:
             try:
                 unsub()
@@ -103,7 +128,14 @@ class RPCClient:
 
         if name in self.rpcs:
             original_method = getattr(self.actor_class, name, None)
-            return RpcCall(original_method, self.rpc, name, self.remote_name, self._unsub_fns)
+            return RpcCall(
+                original_method,
+                self.rpc,
+                name,
+                self.remote_name,
+                self._unsub_fns,
+                self.stop_rpc_client,
+            )
 
         # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known

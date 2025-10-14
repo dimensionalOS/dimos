@@ -100,7 +100,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             ).result()
 
             worker = actor.set_ref(actor).result()
-            print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+            print((f"deployed: {colors.blue(actor)} @ {colors.orange('worker ' + str(worker))}"))
 
             # Register actor deployment in shared memory
             ActorRegistry.update(str(actor), str(worker))
@@ -207,14 +207,10 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             except Exception:
                 pass
 
-        # Shutdown the Dask offload thread pool
-        try:
-            from distributed.utils import _offload_executor
-
-            if _offload_executor:
-                _offload_executor.shutdown(wait=False)
-        except Exception:
-            pass
+        # Note: We do NOT shutdown the _offload_executor here because it's a global
+        # module-level ThreadPoolExecutor shared across all Dask clients in the process.
+        # Shutting it down here would break subsequent Dask client usage (e.g., in tests).
+        # The executor will be cleaned up when the Python process exits.
 
         # Give threads time to clean up
         # Dask's IO loop and Profile threads are daemon threads

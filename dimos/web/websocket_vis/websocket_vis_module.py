@@ -126,21 +126,17 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        if self.odom.connection is not None:
-            unsub = self.odom.subscribe(self._on_robot_pose)
-            self._disposables.add(Disposable(unsub))
+        unsub = self.odom.subscribe(self._on_robot_pose)
+        self._disposables.add(Disposable(unsub))
 
-        if self.gps_location.connection is not None:
-            unsub = self.gps_location.subscribe(self._on_gps_location)
-            self._disposables.add(Disposable(unsub))
+        unsub = self.gps_location.subscribe(self._on_gps_location)
+        self._disposables.add(Disposable(unsub))
 
-        if self.path.connection is not None:
-            unsub = self.path.subscribe(self._on_path)
-            self._disposables.add(Disposable(unsub))
+        unsub = self.path.subscribe(self._on_path)
+        self._disposables.add(Disposable(unsub))
 
-        if self.global_costmap.connection is not None:
-            unsub = self.global_costmap.subscribe(self._on_global_costmap)
-            self._disposables.add(Disposable(unsub))
+        unsub = self.global_costmap.subscribe(self._on_global_costmap)
+        self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self):

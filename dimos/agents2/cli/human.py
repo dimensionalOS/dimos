@@ -12,19 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 import queue
 
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, pLCMTransport, rpc
 from reactivex.disposable import Disposable
 
+from dimos.core.blueprints import create_module_blueprint
+from dimos.core.rpc_client import RpcCall
+
 
 class HumanInput(Module):
     running: bool = False
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.string, output=Output.human)
+    @skill(stream=Stream.call_agent, reducer=Reducer.string, output=Output.human, hide_skill=True)
     def human(self):
-        """receives human input, no need to run this, it's running implicitly"""
+        """
+        receives human input, no need to run this, it's running implicitly
+        """
         if self.running:
             return "already running"
         self.running = True
@@ -43,3 +49,11 @@ class HumanInput(Module):
     @rpc
     def stop(self) -> None:
         super().stop()
+
+    @rpc
+    def set_AutoLlmAgent_register_skills(self, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)
+        callable(self, run_implicit_name="human")
+
+
+human_input = partial(create_module_blueprint, HumanInput)

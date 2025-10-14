@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from functools import partial
 import json
 import datetime
 import os
@@ -30,6 +31,7 @@ from langchain_core.messages import (
 
 from dimos.agents2.spec import AgentSpec
 from dimos.core import rpc
+from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
@@ -331,8 +333,14 @@ class Agent(AgentSpec):
     async def query_async(self, query: str):
         return await self.agent_loop(query)
 
-    def register_skills(self, container):
-        return self.coordinator.register_skills(container)
+    @rpc
+    def register_skills(self, container, run_implicit_name: str | None = None):
+        ret = self.coordinator.register_skills(container)
+
+        if run_implicit_name:
+            self.run_implicit_skill(run_implicit_name)
+
+        return ret
 
     def get_tools(self):
         return self.coordinator.get_tools()
@@ -346,3 +354,6 @@ class Agent(AgentSpec):
 
         with open(file_path, "w") as f:
             json.dump(history, f, default=lambda x: repr(x), indent=2)
+
+
+agent = partial(create_module_blueprint, Agent)

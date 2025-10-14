@@ -67,6 +67,7 @@ def skill(
     stream: Stream = Stream.none,
     ret: Return = Return.call_agent,
     output: Output = Output.standard,
+    hide_skill: bool = False,
 ) -> Callable:
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
@@ -100,6 +101,7 @@ def skill(
             ret=ret.passive if stream == Stream.passive else ret,
             output=output,
             schema=function_to_schema(f),
+            hide_skill=hide_skill,
         )
 
         wrapper.__rpc__ = True  # type: ignore[attr-defined]
@@ -242,3 +244,9 @@ class SkillContainer:
         if self._skill_transport is None:
             self._skill_transport = self.skill_transport_class()
         return self._skill_transport
+
+    def __getstate__(self):
+        pass
+
+    def __setstate__(self, _state):
+        pass

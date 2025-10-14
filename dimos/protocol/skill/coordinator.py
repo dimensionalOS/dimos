@@ -349,14 +349,11 @@ class SkillCoordinator(Module):
     # and langchain takes this output as well
     # just faster for now
     def get_tools(self) -> list[dict]:
-        # return [skill.schema for skill in self.skills().values()]
-
-        ret = []
-        for name, skill_config in self.skills().items():
-            # print(f"Tool {name} config: {skill_config}, {skill_config.f}")
-            ret.append(langchain_tool(skill_config.f))
-
-        return ret
+        return [
+            langchain_tool(skill_config.f)
+            for skill_config in self.skills().values()
+            if not skill_config.hide_skill
+        ]
 
     # internal skill call
     def call_skill(
@@ -364,6 +361,7 @@ class SkillCoordinator(Module):
     ) -> None:
         if not call_id:
             call_id = str(time.time())
+        print(f"Calling skill {skill_name} with call_id {call_id} and args {args}")
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(

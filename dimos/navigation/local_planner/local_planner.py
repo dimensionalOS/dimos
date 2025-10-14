@@ -159,10 +159,6 @@ class BaseLocalPlanner(Module):
         pass
 
     @rpc
-    def atgl(self) -> bool:
-        return self.is_goal_reached()
-
-    @rpc
     def is_goal_reached(self) -> bool:
         """
         Check if the robot has reached the goal position and orientation.

@@ -12,46 +12,44 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
 from typing import Optional
-from reactivex import Observable
 
+from dimos.core.blueprints import create_module_blueprint
+from dimos.core.core import rpc
+from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient, RpcCall
+from dimos.core.stream import In
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.mapping.types import LatLon
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.robot.robot import Robot
+from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-from dimos.core.resource import Resource
 
-from reactivex.disposable import CompositeDisposable
 
 logger = setup_logger(__file__)
 
 
-class OsmSkillContainer(SkillContainer, Resource):
-    _robot: Robot
-    _disposables: CompositeDisposable
+class OsmSkill(Module):
     _latest_location: Optional[LatLon]
-    _position_stream: Observable[LatLon]
     _current_location_map: CurrentLocationMap
-    _started: bool
+    _skill_started: bool
 
-    def __init__(self, robot: Robot, position_stream: Observable[LatLon]):
+    gps_location: In[LatLon] = None
+
+    def __init__(self):
         super().__init__()
-        self._robot = robot
-        self._disposables = CompositeDisposable()
         self._latest_location = None
-        self._position_stream = position_stream
         self._current_location_map = CurrentLocationMap(QwenVlModel())
-        self._started = False
+        self._skill_started = False
 
     def start(self):
-        self._started = True
-        self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
+        super().start()
+        self._skill_started = True
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
 
     def stop(self):
-        self._disposables.dispose()
         super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:
@@ -71,7 +69,7 @@ class OsmSkillContainer(SkillContainer, Resource):
             query_sentence (str): The query sentence.
         """
 
-        if not self._started:
+        if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
 
         self._current_location_map.update_position(self._latest_location)
@@ -86,3 +84,11 @@ class OsmSkillContainer(SkillContainer, Resource):
         distance = int(distance_in_meters(latlon, self._latest_location))
 
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
+
+    @rpc
+    def set_AutoLlmAgent_register_skills(self, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)
+        callable(RPCClient(self, self.__class__))
+
+
+osm_skill = partial(create_module_blueprint, OsmSkill)

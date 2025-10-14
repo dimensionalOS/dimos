@@ -26,6 +26,7 @@ from typing import Callable, Optional
 
 from dimos.core import Module, In, Out, rpc
 from dimos.core.blueprints import create_module_blueprint
+from dimos.core.rpc_client import RpcCall
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos_lcm.std_msgs import String
@@ -124,14 +125,14 @@ class BehaviorTreeNavigator(Module):
         logger.info("Navigator initialized with stuck detection")
 
     @rpc
-    def set_HolonomicLocalPlanner_reset(self, callable) -> None:
+    def set_HolonomicLocalPlanner_reset(self, callable: RpcCall) -> None:
         self.reset_local_planner = callable
-        self.reset_local_planner.rpc = self.rpc
+        self.reset_local_planner.set_rpc(self.rpc)
 
     @rpc
-    def set_HolonomicLocalPlanner_atgl(self, callable) -> None:
+    def set_HolonomicLocalPlanner_is_goal_reached(self, callable: RpcCall) -> None:
         self.check_goal_reached = callable
-        self.check_goal_reached.rpc = self.rpc
+        self.check_goal_reached.set_rpc(self.rpc)
 
     @rpc
     def start(self):
