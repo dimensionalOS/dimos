@@ -32,6 +32,12 @@ class ROSNav(Module):
     # Global3DMapSpec attributes
     global_pointcloud: Out[PointCloud2] = None  # type: ignore
 
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        pass
+
     def navigate_to(self, target: PoseStamped) -> None:
         # TODO: Implement navigation logic
         pass
