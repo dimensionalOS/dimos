@@ -28,11 +28,10 @@ from rclpy.executors import SingleThreadedExecutor
 
 from dimos import core
 from dimos.protocol import pubsub
-from dimos.core import Module, In, Out, rpc
-from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped, Transform, Vector3
-from dimos.msgs.nav_msgs import Odometry
-from dimos.msgs.sensor_msgs import PointCloud2, Joy, Image
+from dimos.core import In, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, Transform, Vector3, Quaternion
+from dimos.msgs.nav_msgs import Odometry, Path
+from dimos.msgs.sensor_msgs import PointCloud2, Joy
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.utils.transform_utils import euler_to_quaternion
@@ -48,9 +47,6 @@ from nav_msgs.msg import Path as ROSPath
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
 from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
-from dimos.utils.logging_config import setup_logger
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from reactivex.disposable import Disposable
 
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
@@ -122,14 +118,12 @@ class ROSNavigationModule(ROSNav):
 
     @rpc
     def start(self):
-        super().start()
-        if self.goal_reached:
-            unsub = self.goal_reached.subscribe(self._on_goal_reached)
-            self._disposables.add(Disposable(unsub))
+        self._running = True
+        self.spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+        self.spin_thread.start()
 
-    @rpc
-    def stop(self) -> None:
-        super().stop()
+        self.goal_req.subscribe(self._on_goal_pose)
+        self.cancel_goal.subscribe(self._on_cancel_goal)
 
         logger.info("NavigationModule started with ROS2 spinning")
 
@@ -291,8 +285,7 @@ class ROSNavigationModule(ROSNav):
                 return self.goal_reach
             time.sleep(0.1)
 
-        self.stop_navigation()
-
+        self.stop()
         logger.warning(f"Navigation timed out after {timeout} seconds")
         return False
 
@@ -327,77 +320,7 @@ class ROSNavigationModule(ROSNav):
             logger.error(f"Error during shutdown: {e}")
 
 
-class TopicRemapModule(Module):
-    """Module that remaps Odometry to PoseStamped and publishes static transforms."""
-
-    odom: In[Odometry] = None
-    odom_pose: Out[PoseStamped] = None
-
-    def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
-        Module.__init__(self, *args, **kwargs)
-        self.tf = TF()
-        self.sensor_to_base_link_transform = sensor_to_base_link_transform or [
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-            0.0,
-        ]
-
-    @rpc
-    def start(self):
-        super().start()
-        unsub = self.odom.subscribe(self._publish_odom_pose)
-        self._disposables.add(Disposable(unsub))
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-
-    def _publish_odom_pose(self, msg: Odometry):
-        pose_msg = PoseStamped(
-            ts=msg.ts,
-            frame_id=msg.frame_id,
-            position=msg.pose.pose.position,
-            orientation=msg.pose.pose.orientation,
-        )
-        self.odom_pose.publish(pose_msg)
-
-        # Publish static transform from sensor to base_link
-        translation = Vector3(
-            self.sensor_to_base_link_transform[0],
-            self.sensor_to_base_link_transform[1],
-            self.sensor_to_base_link_transform[2],
-        )
-        euler_angles = Vector3(
-            self.sensor_to_base_link_transform[3],
-            self.sensor_to_base_link_transform[4],
-            self.sensor_to_base_link_transform[5],
-        )
-        rotation = euler_to_quaternion(euler_angles)
-
-        sensor_to_base_link_tf = Transform(
-            translation=translation,
-            rotation=rotation,
-            frame_id="sensor",
-            child_frame_id="base_link",
-            ts=msg.ts,
-        )
-
-        # map to world static transform
-        map_to_world_tf = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=euler_to_quaternion(Vector3(0.0, 0.0, 0.0)),
-            frame_id="map",
-            child_frame_id="world",
-            ts=msg.ts,
-        )
-
-        self.tf.publish(sensor_to_base_link_tf, map_to_world_tf)
-
-
-class NavBot(Resource):
+class NavBot:
     """
     NavBot wrapper that deploys NavigationModule with proper DIMOS/ROS2 integration.
     """
@@ -426,32 +349,9 @@ class NavBot(Resource):
         self.navigation_module = None
 
     def start(self):
-        super().start()
-
-        if self.topic_remap_module:
-            self.topic_remap_module.start()
-            logger.info("Topic remap module started")
-
-        if self.ros_bridge:
-            logger.info("ROS bridge started")
-
-    def stop(self) -> None:
-        logger.info("Shutting down navigation modules...")
-
-        if self.ros_bridge is not None:
-            try:
-                self.ros_bridge.shutdown()
-                logger.info("ROS bridge shut down successfully")
-            except Exception as e:
-                logger.error(f"Error shutting down ROS bridge: {e}")
-
-        super().stop()
-
-    def deploy_navigation_modules(self, bridge_name="nav_bot_ros_bridge"):
-        # Deploy topic remap module
-        logger.info("Deploying topic remap module...")
-        self.topic_remap_module = self.dimos.deploy(
-            TopicRemapModule, sensor_to_base_link_transform=self.sensor_to_base_link_transform
+        logger.info("Deploying navigation module...")
+        self.navigation_module = self.dimos.deploy(
+            ROSNavigationModule, sensor_to_base_link_transform=self.sensor_to_base_link_transform
         )
 
         self.navigation_module.goal_req.transport = core.LCMTransport("/goal", PoseStamped)
@@ -472,135 +372,52 @@ class NavBot(Resource):
         self.navigation_module.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.navigation_module.odom_pose.transport = core.LCMTransport("/odom_pose", PoseStamped)
 
-        # Deploy ROS bridge
-        logger.info("Deploying ROS bridge...")
-        self.ros_bridge = ROSBridge(bridge_name)
+        self.navigation_module.start()
 
-        # Configure ROS topics
-        self.ros_bridge.add_topic(
-            "/cmd_vel", TwistStamped, ROSTwistStamped, direction=BridgeDirection.ROS_TO_DIMOS
-        )
-        self.ros_bridge.add_topic(
-            "/state_estimation",
-            Odometry,
-            ROSOdometry,
-            direction=BridgeDirection.ROS_TO_DIMOS,
-            remap_topic="/odom",
-        )
-        self.ros_bridge.add_topic(
-            "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
-        )
-        self.ros_bridge.add_topic(
-            "/registered_scan", PointCloud2, ROSPointCloud2, direction=BridgeDirection.ROS_TO_DIMOS
-        )
-        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
-        # Navigation control topics from autonomy stack
-        self.ros_bridge.add_topic(
-            "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
-        )
-        self.ros_bridge.add_topic(
-            "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
-        )
-        self.ros_bridge.add_topic(
-            "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
-        )
+    def shutdown(self):
+        logger.info("Shutting down NavBot...")
 
-        # self.ros_bridge.add_topic(
-        #     "/camera/image", Image, ROSImage, direction=BridgeDirection.ROS_TO_DIMOS
-        # )
-
-    def _set_autonomy_mode(self):
-        """
-        Set autonomy mode by publishing Joy message.
-        """
-
-        joy_msg = Joy(
-            frame_id="dimos",
-            axes=[
-                0.0,  # axis 0
-                0.0,  # axis 1
-                -1.0,  # axis 2
-                0.0,  # axis 3
-                1.0,  # axis 4
-                1.0,  # axis 5
-                0.0,  # axis 6
-                0.0,  # axis 7
-            ],
-            buttons=[
-                0,  # button 0
-                0,  # button 1
-                0,  # button 2
-                0,  # button 3
-                0,  # button 4
-                0,  # button 5
-                0,  # button 6
-                1,  # button 7 - controls autonomy mode
-                0,  # button 8
-                0,  # button 9
-                0,  # button 10
-            ],
-        )
-
-        # Start the navigation module
         if self.navigation_module:
-            self.navigation_module.start()
-            logger.info("Navigation module started")
+            self.navigation_module.stop()
 
-    def navigate_to_goal(self, pose: PoseStamped, blocking: bool = True, timeout: float = 30.0):
-        """Navigate to a target pose using ROS topics.
+        if rclpy.ok():
+            rclpy.shutdown()
 
-        Args:
-            pose: Target pose to navigate to
-            blocking: If True, block until goal is reached. If False, return immediately.
-            timeout: Maximum time to wait for goal to be reached (seconds)
+        logger.info("NavBot shutdown complete")
 
-        Returns:
-            If blocking=True: True if navigation was successful, False otherwise
-            If blocking=False: True if goal was sent successfully
-        """
-        logger.info(
-            f"Navigating to goal: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
-        )
 
-        # Publish goal to /goal_pose topic
-        self._set_autonomy_mode()
-        goal_topic = Topic("/goal_pose", PoseStamped)
-        self.lcm.publish(goal_topic, pose)
+def main():
+    pubsub.lcm.autoconf()
+    nav_bot = NavBot()
+    nav_bot.start()
 
-        if not blocking:
-            return True
+    logger.info("\nTesting navigation in 2 seconds...")
+    time.sleep(2)
 
-        # Wait for goal_reached signal
-        goal_reached_topic = Topic("/goal_reached", Bool)
-        start_time = time.time()
+    test_pose = PoseStamped(
+        ts=time.time(),
+        frame_id="map",
+        position=Vector3(1.0, 1.0, 0.0),
+        orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+    )
 
-        while time.time() - start_time < timeout:
-            try:
-                msg = self.lcm.wait_for_message(goal_reached_topic, timeout=0.5)
-                if msg and msg.data:
-                    logger.info("Navigation goal reached")
-                    return True
-                elif msg and not msg.data:
-                    logger.info("Navigation was cancelled or failed")
-                    return False
-            except Exception:
-                # Timeout on wait_for_message, continue looping
-                pass
+    logger.info(f"Sending navigation goal to: (1.0, 1.0, 0.0)")
 
-        logger.warning(f"Navigation timed out after {timeout} seconds")
-        return False
+    if nav_bot.navigation_module:
+        success = nav_bot.navigation_module.navigate_to(test_pose, timeout=30.0)
+        if success:
+            logger.info("✓ Navigation goal reached!")
+        else:
+            logger.warning("✗ Navigation failed or timed out")
 
-    def cancel_navigation(self) -> bool:
-        """Cancel the current navigation goal using ROS topics.
+    try:
+        logger.info("\nNavBot running. Press Ctrl+C to stop.")
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("\nShutting down...")
+        nav_bot.shutdown()
 
-        Returns:
-            True if cancel command was sent successfully
-        """
-        logger.info("Cancelling navigation goal")
 
-        # Publish cancel command to /cancel_goal topic
-        cancel_topic = Topic("/cancel_goal", Bool)
-        cancel_msg = Bool(data=True)
-        self.lcm.publish(cancel_topic, cancel_msg)
-
-        return True
+if __name__ == "__main__":
+    main()
