@@ -12,30 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
-from typing import Any, Callable, Generic, Optional, Tuple, TypeVar
+from typing import Tuple
 
-import numpy as np
-import torch
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,
-    TextAnnotation,
-)
-from dimos_lcm.foxglove_msgs.Point2 import Point2
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents2 import skill
-from dimos.core import In, Module, ModuleConfig, Out, rpc
-from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.reid.base import EmbeddingModel
-from dimos.perception.detection.reid.mobileclip import MobileCLIPModel
-from dimos.perception.detection.reid.trackAssociator import TrackAssociator
 from dimos.perception.detection.type import ImageDetections2D
-from dimos.types.timestamped import Timestamped, align_timestamped, to_ros_stamp
+from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
 
 
@@ -106,7 +93,6 @@ class PersonTracker(Module):
             return
 
         target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())
-
         vector = self.center_to_3d(target.center_bbox, self.camera_info, 1.0)
 
         pose_in_camera = PoseStamped(
@@ -115,20 +101,12 @@ class PersonTracker(Module):
             frame_id="camera_link",
         )
 
-        print("Pose in camera frame:", pose_in_camera)
-
-        tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 2)
+        tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 0.5)
         if not tf_world_to_camera:
-            print("no tf")
             return
-
-        # Transform the pose from camera frame to world frame
-        # Convert pose to transform, compose with world-to-camera, then convert back
-        from dimos.msgs.geometry_msgs import Transform
 
         tf_camera_to_target = Transform.from_pose("target", pose_in_camera)
         tf_world_to_target = tf_world_to_camera + tf_camera_to_target
         pose_in_world = tf_world_to_target.to_pose(ts=detections2D.ts)
 
-        print("Target at", pose_in_world)
         self.target.publish(pose_in_world)
