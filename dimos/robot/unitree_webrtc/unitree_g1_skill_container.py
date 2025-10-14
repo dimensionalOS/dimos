@@ -23,6 +23,7 @@ import datetime
 import time
 from typing import TYPE_CHECKING, Optional, Union
 
+from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
@@ -79,6 +80,14 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
         # Add G1-specific skills on top
         self._generate_arm_skills()
         self._generate_mode_skills()
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _generate_arm_skills(self):
         """Dynamically generate arm control skills from G1_ARM_CONTROLS list."""

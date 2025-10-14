@@ -33,7 +33,9 @@
     "typescript": "5.9.2"
   },
   "dependencies": {
+    "@types/pako": "^2.0.4",
     "d3": "^7.9.0",
+    "pako": "^2.1.0",
     "react-leaflet": "^4.2.1",
     "socket.io-client": "^4.8.1"
   }

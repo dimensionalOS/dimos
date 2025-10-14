@@ -86,8 +86,8 @@ warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
 
-class FakeRTC(Resource):
-    """Fake WebRTC connection for testing with recorded data."""
+class ReplayRTC(Resource):
+    """Replay WebRTC connection for testing with recorded data."""
 
     def __init__(self, *args, **kwargs):
         get_data("unitree_office_walk")  # Preload data for testing
@@ -194,8 +194,8 @@ class ConnectionModule(Module):
         match self.connection_type:
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(self.ip)
-            case "fake":
-                self.connection = FakeRTC(self.ip)
+            case "replay":
+                self.connection = ReplayRTC(self.ip)
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
@@ -346,18 +346,18 @@ class UnitreeGo2(UnitreeRobot, Resource):
         """Initialize the robot system.
 
         Args:
-            ip: Robot IP address (or None for fake connection)
+            ip: Robot IP address (or None for replay connection)
             output_dir: Directory for saving outputs (default: assets/output)
             websocket_port: Port for web visualization
             skill_library: Skill library instance
-            connection_type: webrtc, fake, or mujoco
+            connection_type: webrtc, replay, or mujoco
         """
         super().__init__()
         self._dimos = Dimos(n=8, memory_limit="8GiB")
         self.ip = ip
         self.connection_type = connection_type or "webrtc"
         if ip is None and self.connection_type == "webrtc":
-            self.connection_type = "fake"  # Auto-enable playback if no IP provided
+            self.connection_type = "replay"  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
         self.lcm = LCM()
@@ -410,7 +410,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self._deploy_connection()
         self._deploy_mapping()
         self._deploy_navigation()
-        # self._deploy_visualization()
+        self._deploy_visualization()
         self._deploy_foxglove_bridge()
         self._deploy_perception()
         self._deploy_camera()
@@ -512,13 +512,6 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.websocket_vis.gps_location.connect(self.connection.gps_location)
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
-
-        # TODO: This should be moved.
-        def _set_goal(goal: LatLon):
-            self.set_gps_travel_goal_points([goal])
-
-        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
-        self._disposables.add(unsub)
 
     def _deploy_foxglove_bridge(self):
         self.foxglove_bridge = FoxgloveBridge(
