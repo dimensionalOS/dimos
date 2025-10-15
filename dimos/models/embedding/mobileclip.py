@@ -48,7 +48,6 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.normalize = normalize
 
-        print(f"[DEBUG] MobileCLIPModel.__init__: model_name={model_name}, model_path={model_path}, device={self.device}")
         # Load model
         pretrained = str(model_path) if model_path else None
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
@@ -56,7 +55,6 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         )
         self.tokenizer = open_clip.get_tokenizer(model_name)
         self.model = self.model.eval().to(self.device)
-        print(f"[DEBUG] MobileCLIPModel.__init__: COMPLETE")
 
     def embed(self, *images: Image) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
         """Embed one or more images.

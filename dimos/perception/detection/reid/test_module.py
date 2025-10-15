@@ -17,7 +17,7 @@ import pytest
 import torch
 
 from dimos.core import LCMTransport, start
-from dimos.models.embedding import CLIPModel
+from dimos.models.embedding import TorchReIDModel
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -29,12 +29,10 @@ from dimos.perception.detection.reid.type import (
 
 
 def test_reid_ingress():
-    # Clear GPU cache before loading CLIP to avoid OOM
-
-    # Create CLIP-based IDSystem for testing
-    clip_model = CLIPModel(model_name="openai/clip-vit-base-patch32")
-    clip_model.warmup()
-    # feature_extractor = EmbeddingFeatureExtractor(model=clip_model, padding=20)
+    # Create TorchReID-based IDSystem for testing
+    reid_model = TorchReIDModel(model_name="osnet_x1_0")
+    reid_model.warmup()
+    # feature_extractor = EmbeddingFeatureExtractor(model=reid_model, padding=20)
     # idsystem = EmbeddingIDSystem(
     #     feature_extractor=feature_extractor,  # type: ignore[arg-type]
     #     similarity_threshold=0.75,

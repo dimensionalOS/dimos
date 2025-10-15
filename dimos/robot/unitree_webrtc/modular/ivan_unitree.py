@@ -74,20 +74,21 @@ def detection_unitree():
     # reidModule.detections.connect(detector.detections)
     # reidModule.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
 
-    nav = deploy_navigation(dimos, connection)
+    # nav = deploy_navigation(dimos, connection)
 
-    person_tracker = dimos.deploy(PersonTracker, cameraInfo=ConnectionModule._camera_info())
-    person_tracker.image.connect(connection.video)
-    person_tracker.detections.connect(detector.detections)
-    person_tracker.target.transport = LCMTransport("/goal_request", PoseStamped)
+    # person_tracker = dimos.deploy(PersonTracker, cameraInfo=ConnectionModule._camera_info())
+    # person_tracker.image.connect(connection.video)
+    # person_tracker.detections.connect(detector.detections)
+    # person_tracker.target.transport = LCMTransport("/goal_request", PoseStamped)
 
     reid = dimos.deploy(ReidModule)
 
     reid.image.connect(connection.video)
     reid.detections.connect(detector.detections)
+    reid.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
 
     detector.start()
-    person_tracker.start()
+    # person_tracker.start()
     connection.start()
     reid.start()
 

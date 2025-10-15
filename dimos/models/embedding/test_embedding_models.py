@@ -17,20 +17,21 @@ import pytest
 
 from dimos.models.embedding.clip import CLIPModel
 from dimos.models.embedding.mobileclip import MobileCLIPModel
+from dimos.models.embedding.treid import TorchReIDModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
 
-@pytest.fixture(scope="session", params=["mobileclip", "clip"])
+@pytest.fixture(scope="session", params=["mobileclip", "clip", "treid"])
 def embedding_model(request):
     """Load embedding model once for all tests. Parametrized for different models."""
     if request.param == "mobileclip":
         model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
         model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
-        model.warmup()
     elif request.param == "clip":
         model = CLIPModel(model_name="openai/clip-vit-base-patch32")
-        model.warmup()
+    elif request.param == "treid":
+        model = TorchReIDModel(model_name="osnet_x1_0")
     else:
         raise ValueError(f"Unknown model: {request.param}")
 
@@ -92,6 +93,9 @@ def test_single_text_embedding(embedding_model):
     """Test embedding a single text string."""
     import torch
 
+    if isinstance(embedding_model, TorchReIDModel):
+        pytest.skip("TorchReID does not support text embeddings")
+
     embedding = embedding_model.embed_text("a cafe")
 
     # Should be torch.Tensor
@@ -114,6 +118,9 @@ def test_batch_text_embedding(embedding_model):
     """Test embedding multiple text strings at once."""
     import torch
 
+    if isinstance(embedding_model, TorchReIDModel):
+        pytest.skip("TorchReID does not support text embeddings")
+
     embeddings = embedding_model.embed_text("a cafe", "a person", "a dog")
 
     assert isinstance(embeddings, list), "Batch text embedding should return list"
@@ -129,6 +136,9 @@ def test_batch_text_embedding(embedding_model):
 @pytest.mark.heavy
 def test_text_image_similarity(embedding_model, test_image):
     """Test cross-modal text-image similarity using @ operator."""
+    if isinstance(embedding_model, TorchReIDModel):
+        pytest.skip("TorchReID does not support text embeddings")
+
     img_embedding = embedding_model.embed(test_image)
 
     # Embed text queries
@@ -169,6 +179,9 @@ def test_cosine_distance(embedding_model, test_image):
 @pytest.mark.heavy
 def test_query_functionality(embedding_model, test_image):
     """Test query method for top-k retrieval."""
+    if isinstance(embedding_model, TorchReIDModel):
+        pytest.skip("TorchReID does not support text embeddings")
+
     # Create a query and some candidates
     query_text = embedding_model.embed_text("a cafe")
 
@@ -240,6 +253,9 @@ def test_compare_one_to_many(embedding_model, test_image):
 def test_compare_many_to_many(embedding_model):
     """Test GPU-accelerated many-to-many comparison."""
     import torch
+
+    if isinstance(embedding_model, TorchReIDModel):
+        pytest.skip("TorchReID does not support text embeddings")
 
     # Create queries and candidates
     queries = embedding_model.embed_text("a cafe", "a person")
@@ -351,33 +367,35 @@ def test_embedding_performance(embedding_model):
     assert all(e.vector is not None for e in batch_embeddings)
 
     # Sanity check: verify embeddings are meaningful by testing text-image similarity
-    print("\n" + "=" * 60)
-    print("Sanity Check: Text-Image Similarity on First Frame")
-    print("=" * 60)
-    first_frame_emb = batch_embeddings[0]
+    # Skip for TorchReID since it doesn't support text embeddings
+    if not isinstance(embedding_model, TorchReIDModel):
+        print("\n" + "=" * 60)
+        print("Sanity Check: Text-Image Similarity on First Frame")
+        print("=" * 60)
+        first_frame_emb = batch_embeddings[0]
 
-    # Test common object/scene queries
-    test_queries = [
-        "indoor scene",
-        "outdoor scene",
-        "a person",
-        "a dog",
-        "a robot",
-        "grass and trees",
-        "furniture",
-        "a car",
-    ]
+        # Test common object/scene queries
+        test_queries = [
+            "indoor scene",
+            "outdoor scene",
+            "a person",
+            "a dog",
+            "a robot",
+            "grass and trees",
+            "furniture",
+            "a car",
+        ]
 
-    text_embeddings = embedding_model.embed_text(*test_queries)
-    similarities = []
-    for query, text_emb in zip(test_queries, text_embeddings):
-        sim = first_frame_emb @ text_emb
-        similarities.append((query, sim))
+        text_embeddings = embedding_model.embed_text(*test_queries)
+        similarities = []
+        for query, text_emb in zip(test_queries, text_embeddings):
+            sim = first_frame_emb @ text_emb
+            similarities.append((query, sim))
 
-    # Sort by similarity
-    similarities.sort(key=lambda x: x[1], reverse=True)
+        # Sort by similarity
+        similarities.sort(key=lambda x: x[1], reverse=True)
 
-    print("Top matching concepts:")
-    for query, sim in similarities[:5]:
-        print(f"  '{query}': {sim:.4f}")
-    print("=" * 60)
+        print("Top matching concepts:")
+        for query, sim in similarities[:5]:
+            print(f"  '{query}': {sim:.4f}")
+        print("=" * 60)

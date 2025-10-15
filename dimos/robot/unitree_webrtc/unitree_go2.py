@@ -22,50 +22,48 @@ import time
 import warnings
 from typing import Optional
 
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import Bool, String
 from reactivex import Observable
 
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos_lcm.std_msgs import String
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.perception.spatial_perception import SpatialMemory
+from dimos.navigation.bbox_navigation import BBoxNavigationModule
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 from dimos.perception.common.utils import (
     load_camera_info,
     load_camera_info_opencv,
     rectify_image,
 )
+from dimos.perception.object_tracker_2d import ObjectTracker2D
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.utils.monitoring import UtilizationModule
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
+from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
-from dimos.perception.object_tracker_2d import ObjectTracker2D
-from dimos.navigation.bbox_navigation import BBoxNavigationModule
-from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import UnitreeRobot
-from dimos.types.robot_capabilities import RobotCapability
-
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
@@ -387,10 +385,10 @@ class UnitreeGo2(UnitreeRobot):
         self._deploy_connection()
         self._deploy_mapping()
         self._deploy_navigation()
-        # self._deploy_visualization()
+        self._deploy_visualization()
         self._deploy_foxglove_bridge()
-        self._deploy_perception()
         self._deploy_camera()
+        # self._deploy_perception()
 
         self._start_modules()
 
@@ -568,11 +566,11 @@ class UnitreeGo2(UnitreeRobot):
             logger.info("Object tracker connected to camera")
 
         # Connect bbox navigator inputs
-        if self.bbox_navigator:
-            self.bbox_navigator.detection2d.connect(self.object_tracker.detection2darray)
-            self.bbox_navigator.camera_info.connect(self.connection.camera_info)
-            self.bbox_navigator.goal_request.connect(self.navigator.goal_request)
-            logger.info("BBox navigator connected")
+        # if self.bbox_navigator:
+        #    self.bbox_navigator.detection2d.connect(self.object_tracker.detection2darray)
+        #    self.bbox_navigator.camera_info.connect(self.connection.camera_info)
+        #    self.bbox_navigator.goal_request.connect(self.navigator.goal_request)
+        #    logger.info("BBox navigator connected")
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""
@@ -582,12 +580,12 @@ class UnitreeGo2(UnitreeRobot):
         self.local_planner.start()
         self.navigator.start()
         self.frontier_explorer.start()
-        # self.websocket_vis.start()
+        self.websocket_vis.start()
         self.foxglove_bridge.start()
-        self.spatial_memory_module.start()
-        self.object_tracker.start()
-        self.bbox_navigator.start()
-        self.utilization_module.start()
+        # self.spatial_memory_module.start()
+        # self.object_tracker.start()
+        # self.bbox_navigator.start()
+        # self.utilization_module.start()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:

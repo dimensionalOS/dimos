@@ -65,6 +65,12 @@ class Embedding(Timestamped):
             return self.vector.to(device)
         return self.vector
 
+    def to_cpu(self) -> "Embedding":
+        """Move embedding to CPU, returning self for chaining."""
+        if isinstance(self.vector, torch.Tensor):
+            self.vector = self.vector.cpu()
+        return self
+
 
 E = TypeVar("E", bound="Embedding")
 

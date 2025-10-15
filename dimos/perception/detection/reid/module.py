@@ -21,7 +21,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.core import In, Module, ModuleConfig, Out, rpc
-from dimos.models.embedding import MobileCLIPModel
+from dimos.models.embedding import TorchReIDModel
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -49,12 +49,14 @@ class ReidModule(Module):
     def __init__(self, idsystem: IDSystem | None = None, warmup: bool = True, **kwargs):
         super().__init__(**kwargs)
 
-        # Create default MobileCLIP-based IDSystem if none provided
+        # Create default TorchReID-based IDSystem if none provided
         if idsystem is None:
-            mobileclip_model = MobileCLIPModel()
+            # osnet_x1_0
+            # se_resnet50
+            reid_model = TorchReIDModel()
             if warmup:
-                mobileclip_model.warmup()
-            feature_extractor = EmbeddingFeatureExtractor(model=mobileclip_model, padding=20)
+                reid_model.warmup()
+            feature_extractor = EmbeddingFeatureExtractor(model=reid_model, padding=20)
             idsystem = EmbeddingIDSystem(
                 feature_extractor=feature_extractor,  # type: ignore[arg-type]
                 similarity_threshold=0.75,
@@ -89,6 +91,10 @@ class ReidModule(Module):
                 f"({detection.name}, conf={detection.confidence:.2f})"
             )
 
+            # Skip annotation if not ready yet (long_term_id == -1)
+            if long_term_id == -1:
+                continue
+
             # Create text annotation for long_term_id above the detection
             x1, y1, _, _ = detection.bbox
             font_size = imageDetections.image.width / 60
@@ -104,12 +110,11 @@ class ReidModule(Module):
                 )
             )
 
-        # Publish annotations
-        if text_annotations:
-            annotations = ImageAnnotations(
-                texts=text_annotations,
-                texts_length=len(text_annotations),
-                points=[],
-                points_length=0,
-            )
-            self.annotations.publish(annotations)
+        # Publish annotations (even if empty to clear previous annotations)
+        annotations = ImageAnnotations(
+            texts=text_annotations,
+            texts_length=len(text_annotations),
+            points=[],
+            points_length=0,
+        )
+        self.annotations.publish(annotations)

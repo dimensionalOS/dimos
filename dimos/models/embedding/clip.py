@@ -21,6 +21,8 @@ from transformers import CLIPProcessor
 from dimos.models.embedding.type import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
 
+_CUDA_INITIALIZED = False
+
 
 class CLIPEmbedding(Embedding): ...
 
@@ -32,7 +34,7 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
         self,
         model_name: str = "openai/clip-vit-base-patch32",
         device: str | None = None,
-        normalize: bool = True,
+        normalize: bool = False,
     ):
         """
         Initialize CLIP model.
@@ -45,11 +47,9 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.normalize = normalize
 
-        print(f"[DEBUG] CLIPModel.__init__: model_name={model_name}, device={self.device}")
         # Load model and processor
         self.model = HFCLIPModel.from_pretrained(model_name).eval().to(self.device)
         self.processor = CLIPProcessor.from_pretrained(model_name)
-        print(f"[DEBUG] CLIPModel.__init__: COMPLETE")
 
     def embed(self, *images: Image) -> CLIPEmbedding | list[CLIPEmbedding]:
         """Embed one or more images.
@@ -98,6 +98,20 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
 
     def warmup(self) -> None:
         """Warmup the model with a dummy forward pass."""
+        # WORKAROUND: HuggingFace CLIP fails with CUBLAS_STATUS_ALLOC_FAILED when it's
+        # the first model to use CUDA. Initialize CUDA context with a dummy operation.
+        # This only needs to happen once per process.
+        global _CUDA_INITIALIZED
+        if self.device == "cuda" and not _CUDA_INITIALIZED:
+            try:
+                # Initialize CUDA with a small matmul operation to setup cuBLAS properly
+                _ = torch.zeros(1, 1, device="cuda") @ torch.zeros(1, 1, device="cuda")
+                torch.cuda.synchronize()
+                _CUDA_INITIALIZED = True
+            except Exception:
+                # If initialization fails, continue anyway - the warmup might still work
+                pass
+
         dummy_image = torch.randn(1, 3, 224, 224).to(self.device)
         dummy_text_inputs = self.processor(text=["warmup"], return_tensors="pt", padding=True).to(
             self.device

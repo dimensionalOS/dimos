@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import onnxruntime
 from ultralytics import YOLO
 
 from dimos.msgs.sensor_msgs import Image
@@ -26,32 +25,21 @@ logger = setup_logger("dimos.perception.detection.yolo.person")
 
 
 class YoloPersonDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11s-pose.pt", device: str = None):
-        """Initialize the YOLO person detector.
+    def __init__(self, model_path="models_yolo", model_name="yolo11n-pose.pt", device: str = None):
+        self.model = YOLO(get_data(model_path) / model_name, task="track")
 
-        Args:
-            model_path (str): Path to the YOLO model weights in tests/data LFS directory
-            model_name (str): Name of the YOLO model weights file
-            device (str): Device to run inference on ('cuda' or 'cpu')
-        """
-        self.model = YOLO(
-            get_data(model_path) / model_name,
-            task="track",
-        )
         self.tracker = get_data(model_path) / "botsort.yaml"
 
         if device:
             self.device = device
             return
+
+        if is_cuda_available():
+            self.device = "cuda"
+            logger.info("Using CUDA for YOLO person detector")
         else:
-            if is_cuda_available():
-                if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
-                    onnxruntime.preload_dlls(cuda=True, cudnn=True)
-                self.device = "cuda"
-                logger.info("Using CUDA for YOLO person detector")
-            else:
-                self.device = "cpu"
-                logger.info("Using CPU for YOLO person detector")
+            self.device = "cpu"
+            logger.info("Using CPU for YOLO person detector")
 
     def process_image(self, image: Image) -> ImageDetections2D:
         """Process image and return detection results.
@@ -71,3 +59,17 @@ class YoloPersonDetector(Detector):
             device=self.device,
         )
         return ImageDetections2D.from_ultralytics_result(image, results)
+
+    def stop(self):
+        """
+        Clean up resources used by the detector, including tracker threads.
+        """
+        if hasattr(self.model, "predictor") and self.model.predictor is not None:
+            predictor = self.model.predictor
+            if hasattr(predictor, "trackers") and predictor.trackers:
+                for tracker in predictor.trackers:
+                    if hasattr(tracker, "tracker") and hasattr(tracker.tracker, "gmc"):
+                        gmc = tracker.tracker.gmc
+                        if hasattr(gmc, "executor") and gmc.executor is not None:
+                            gmc.executor.shutdown(wait=True)
+            self.model.predictor = None

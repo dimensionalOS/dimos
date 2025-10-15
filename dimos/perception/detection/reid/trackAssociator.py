@@ -12,10 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Set
+from typing import Dict, List, Literal, Set
 
-import torch
-import torch.nn.functional as F
+import numpy as np
 
 from dimos.models.embedding.type import Embedding
 
@@ -24,23 +23,39 @@ class TrackAssociator:
     """Associates short-term track_ids to long-term unique detection IDs via embedding similarity.
 
     Maintains:
-    - Running average embeddings per track_id (on GPU)
+    - All embeddings per track_id (as numpy arrays) for robust group comparison
     - Negative constraints from co-occurrence (tracks in same frame = different objects)
     - Mapping from track_id to unique long-term ID
     """
 
-    def __init__(self, similarity_threshold: float = 0.75):
+    def __init__(
+        self,
+        similarity_threshold: float = 0.8,
+        comparison_mode: Literal["max", "mean", "top_k_mean"] = "top_k_mean",
+        top_k: int = 10,
+        max_embeddings_per_track: int = 500,
+        min_embeddings_for_matching: int = 10,
+    ):
         """Initialize track associator.
 
         Args:
-            model: Embedding model for GPU-accelerated comparisons
             similarity_threshold: Minimum similarity for associating tracks (0-1)
+            comparison_mode: How to aggregate similarities between embedding groups
+                - "max": Use maximum similarity between any pair
+                - "mean": Use mean of all pairwise similarities
+                - "top_k_mean": Use mean of top-k similarities
+            top_k: Number of top similarities to average (if using top_k_mean)
+            max_embeddings_per_track: Maximum number of embeddings to keep per track
+            min_embeddings_for_matching: Minimum embeddings before attempting to match tracks
         """
-        self.similarity_threshold = similarity_threshold
+        self.similarity_threshold = 0.7
+        self.comparison_mode = comparison_mode
+        self.top_k = top_k
+        self.max_embeddings_per_track = max_embeddings_per_track
+        self.min_embeddings_for_matching = min_embeddings_for_matching
 
-        # Track embeddings (running average, kept on GPU)
-        self.track_embeddings: Dict[int, torch.Tensor] = {}
-        self.embedding_counts: Dict[int, int] = {}
+        # Track embeddings (list of all embeddings as numpy arrays)
+        self.track_embeddings: Dict[int, List[np.ndarray]] = {}
 
         # Negative constraints (track_ids that co-occurred = different objects)
         self.negative_pairs: Dict[int, Set[int]] = {}
@@ -53,37 +68,66 @@ class TrackAssociator:
         self.similarity_history: List[float] = []
 
     def update_embedding(self, track_id: int, new_embedding: Embedding) -> None:
-        """Update running average embedding for a track_id.
+        """Add new embedding to track's embedding collection.
 
         Args:
             track_id: Short-term track ID from detector
-            new_embedding: New embedding to incorporate into average
+            new_embedding: New embedding to add to collection
         """
-        # Convert to torch (infer device from embedding)
-        new_vec = new_embedding.to_torch()
+        # Convert to numpy array (already on CPU from feature extractor)
+        new_vec = new_embedding.to_numpy()
 
-        # Debug: check embedding diversity
-        print(
-            f"Track {track_id}: embedding norm={new_vec.norm().item():.3f}, first 3 values={new_vec[:3].cpu().tolist()}"
-        )
+        # Ensure normalized for cosine similarity
+        norm = np.linalg.norm(new_vec)
+        if norm > 0:
+            new_vec = new_vec / norm
 
-        if track_id in self.track_embeddings:
-            # Running average
-            count = self.embedding_counts[track_id]
-            old_avg = self.track_embeddings[track_id]
+        if track_id not in self.track_embeddings:
+            self.track_embeddings[track_id] = []
 
-            # Compute average on GPU
-            new_avg = (old_avg * count + new_vec) / (count + 1)
+        embeddings = self.track_embeddings[track_id]
+        embeddings.append(new_vec)
 
-            # Re-normalize (important for cosine similarity)
-            new_avg = F.normalize(new_avg, dim=-1)
+        # Keep only most recent embeddings if limit exceeded
+        if len(embeddings) > self.max_embeddings_per_track:
+            embeddings.pop(0)  # Remove oldest
 
-            self.track_embeddings[track_id] = new_avg
-            self.embedding_counts[track_id] += 1
+    def _compute_group_similarity(
+        self, query_embeddings: List[np.ndarray], candidate_embeddings: List[np.ndarray]
+    ) -> float:
+        """Compute similarity between two groups of embeddings.
+
+        Args:
+            query_embeddings: List of embeddings for query track
+            candidate_embeddings: List of embeddings for candidate track
+
+        Returns:
+            Aggregated similarity score
+        """
+        # Compute all pairwise similarities efficiently
+        query_matrix = np.stack(query_embeddings)  # [M, D]
+        candidate_matrix = np.stack(candidate_embeddings)  # [N, D]
+
+        # Cosine similarity via matrix multiplication (already normalized)
+        similarities = query_matrix @ candidate_matrix.T  # [M, N]
+
+        if self.comparison_mode == "max":
+            # Maximum similarity across all pairs
+            return float(np.max(similarities))
+
+        elif self.comparison_mode == "mean":
+            # Mean of all pairwise similarities
+            return float(np.mean(similarities))
+
+        elif self.comparison_mode == "top_k_mean":
+            # Mean of top-k similarities
+            flat_sims = similarities.flatten()
+            k = min(self.top_k, len(flat_sims))
+            top_k_sims = np.partition(flat_sims, -k)[-k:]
+            return float(np.mean(top_k_sims))
+
         else:
-            # First embedding for this track (normalize for consistency)
-            self.track_embeddings[track_id] = F.normalize(new_vec, dim=-1)
-            self.embedding_counts[track_id] = 1
+            raise ValueError(f"Unknown comparison mode: {self.comparison_mode}")
 
     def add_negative_constraints(self, track_ids: List[int]) -> None:
         """Record that these track_ids co-occurred in same frame (different objects).
@@ -104,70 +148,81 @@ class TrackAssociator:
             track_id: Short-term track ID to associate
 
         Returns:
-            Long-term unique detection ID, or -1 if not ready yet
+            Long-term unique detection ID
         """
         # Already has assignment
         if track_id in self.track_to_long_term:
             return self.track_to_long_term[track_id]
 
-        # Need embedding to compare
-        if track_id not in self.track_embeddings:
-            return -1  # Not ready yet
+        # Need embeddings to compare
+        if track_id not in self.track_embeddings or not self.track_embeddings[track_id]:
+            # Create new ID if no embeddings yet
+            new_id = self.long_term_counter
+            self.long_term_counter += 1
+            self.track_to_long_term[track_id] = new_id
+            return new_id
+
+        # Get query embeddings
+        query_embeddings = self.track_embeddings[track_id]
+
+        # Don't attempt matching until we have enough embeddings for the query track
+        if len(query_embeddings) < self.min_embeddings_for_matching:
+            # Not ready yet - return -1
+            return -1
 
         # Build candidate list (only tracks with assigned long_term_ids)
-        query_vec = self.track_embeddings[track_id]
+        best_similarity = -1.0
+        best_track_id = None
 
-        candidates = []
-        candidate_track_ids = []
-
-        for other_tid, other_vec in self.track_embeddings.items():
+        for other_tid, other_embeddings in self.track_embeddings.items():
             # Skip self
             if other_tid == track_id:
                 continue
+
             # Skip if negative constraint (co-occurred)
             if other_tid in self.negative_pairs.get(track_id, set()):
                 continue
+
             # Skip if no long_term_id yet
             if other_tid not in self.track_to_long_term:
                 continue
 
-            candidates.append(other_vec)
-            candidate_track_ids.append(other_tid)
+            # Skip if not enough embeddings
+            if len(other_embeddings) < self.min_embeddings_for_matching:
+                continue
 
-        if candidates:
-            # GPU-accelerated comparison (single matrix multiplication)
-            candidate_stack = torch.stack(candidates)  # [N, D]
-            similarities = query_vec @ candidate_stack.T  # [N]
+            # Compute group similarity
+            similarity = self._compute_group_similarity(query_embeddings, other_embeddings)
 
-            # Find best match
-            best_sim, best_idx = similarities.max(dim=0)
-            best_sim_value = best_sim.item()  # Move to CPU only for comparison
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_track_id = other_tid
 
-            # Debug: show similarity values and check for exact match
-            matched_track_id = candidate_track_ids[best_idx]
-            matched_long_term_id = self.track_to_long_term[matched_track_id]
-
-            # Check if embeddings are actually identical
-            matched_vec = self.track_embeddings[matched_track_id]
-            diff = (query_vec - matched_vec).abs().max().item()
-
+        # Check if best match exceeds threshold
+        if best_track_id is not None and best_similarity >= self.similarity_threshold:
+            matched_long_term_id = self.track_to_long_term[best_track_id]
             print(
-                f"Track {track_id}: best similarity = {best_sim_value:.6f} with track {matched_track_id} "
-                f"(long_term_id={matched_long_term_id}, max_diff={diff:.6f}, counts: {self.embedding_counts[track_id]} vs {self.embedding_counts[matched_track_id]})"
+                f"Track {track_id}: matched with track {best_track_id} "
+                f"(long_term_id={matched_long_term_id}, similarity={best_similarity:.4f}, "
+                f"mode={self.comparison_mode}, embeddings: {len(query_embeddings)} vs {len(self.track_embeddings[best_track_id])}), threshold: {self.similarity_threshold}"
             )
 
-            # Track similarity distribution (for future adaptive thresholding)
-            self.similarity_history.append(best_sim_value)
+            # Track similarity history
+            self.similarity_history.append(best_similarity)
 
-            if best_sim_value >= self.similarity_threshold:
-                # Associate with existing long_term_id
-                matched_track_id = candidate_track_ids[best_idx]
-                long_term_id = self.track_to_long_term[matched_track_id]
-                self.track_to_long_term[track_id] = long_term_id
-                return long_term_id
+            # Associate with existing long_term_id
+            self.track_to_long_term[track_id] = matched_long_term_id
+            return matched_long_term_id
 
         # Create new unique detection ID
         new_id = self.long_term_counter
         self.long_term_counter += 1
         self.track_to_long_term[track_id] = new_id
+
+        if best_track_id is not None:
+            print(
+                f"Track {track_id}: creating new ID {new_id} "
+                f"(best similarity={best_similarity:.4f} below threshold={self.similarity_threshold})"
+            )
+
         return new_id

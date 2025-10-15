@@ -12,10 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-
-import cv2
-import onnxruntime
 from ultralytics import YOLO
 
 from dimos.msgs.sensor_msgs import Image
@@ -29,26 +25,17 @@ logger = setup_logger("dimos.perception.detection.yolo_2d_det")
 
 
 class Yolo2DDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11n.onnx", device: str = None):
-        """
-        Initialize the YOLO detector.
-
-        Args:
-            model_path (str): Path to the YOLO model weights in tests/data LFS directory
-            model_name (str): Name of the YOLO model weights file
-            device (str): Device to run inference on ('cuda' or 'cpu')
-        """
-        self.model = YOLO(get_data(model_path) / model_name, task="detect")
-
-        module_dir = os.path.dirname(__file__)
-        self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
+    def __init__(self, model_path="models_yolo", model_name="yolo11n.pt", device: str = None):
+        self.model = YOLO(
+            get_data(model_path) / model_name,
+            task="detect",
+        )
 
         if device:
             self.device = device
             return
+
         if is_cuda_available():
-            if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
-                onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
             logger.debug("Using CUDA for YOLO 2d detector")
         else:
@@ -72,7 +59,6 @@ class Yolo2DDetector(Detector):
             iou=0.6,
             persist=True,
             verbose=False,
-            tracker=self.tracker_config,
         )
 
         return ImageDetections2D.from_ultralytics_result(image, results)

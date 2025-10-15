@@ -20,7 +20,6 @@ from typing import Generic, TypeVar
 from dimos.models.embedding.type import Embedding, EmbeddingModel
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 
-
 E = TypeVar("E", bound="Embedding")
 F = TypeVar("F")  # Generic feature type
 
@@ -45,7 +44,7 @@ class FeatureExtractor(ABC, Generic[F]):
 class EmbeddingFeatureExtractor(FeatureExtractor[E], Generic[E]):
     """Feature extractor that uses an embedding model to extract features from detection crops."""
 
-    def __init__(self, model: EmbeddingModel[E], padding: int = 20):
+    def __init__(self, model: EmbeddingModel[E], padding: int = 0):
         """
         Initialize embedding feature extractor.
 
@@ -64,11 +63,13 @@ class EmbeddingFeatureExtractor(FeatureExtractor[E], Generic[E]):
             detection: Detection to extract embedding from
 
         Returns:
-            Embedding feature
+            Embedding feature (moved to CPU to save GPU memory)
         """
         cropped_image = detection.cropped_image(padding=self.padding)
         embedding = self.model.embed(cropped_image)
         assert not isinstance(embedding, list), "Expected single embedding for single image"
+        # Move embedding to CPU immediately to free GPU memory
+        embedding = embedding.to_cpu()
         return embedding
 
 
