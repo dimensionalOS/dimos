@@ -22,19 +22,16 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.reid.module import ReidModule
-from dimos.perception.detection.reid.type import (
-    EmbeddingFeatureExtractor,
-    EmbeddingIDSystem,
-)
+from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 
 
 def test_reid_ingress():
     # Create TorchReID-based IDSystem for testing
     reid_model = TorchReIDModel(model_name="osnet_x1_0")
     reid_model.warmup()
-    # feature_extractor = EmbeddingFeatureExtractor(model=reid_model, padding=20)
     # idsystem = EmbeddingIDSystem(
-    #     feature_extractor=feature_extractor,  # type: ignore[arg-type]
+    #     model=lambda: reid_model,
+    #     padding=20,
     #     similarity_threshold=0.75,
     # )
 

@@ -17,7 +17,7 @@ import torch
 
 from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.reid.trackAssociator import TrackAssociator
+from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.utils.data import get_data
 
 
@@ -31,9 +31,9 @@ def mobileclip_model():
 
 
 @pytest.fixture
-def track_associator():
-    """Create fresh TrackAssociator for each test."""
-    return TrackAssociator(similarity_threshold=0.75)
+def track_associator(mobileclip_model):
+    """Create fresh EmbeddingIDSystem for each test."""
+    return EmbeddingIDSystem(model=lambda: mobileclip_model, similarity_threshold=0.75)
 
 
 @pytest.fixture(scope="session")
@@ -226,10 +226,10 @@ def test_gpu_performance(track_associator, mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_similarity_threshold_configurable():
+def test_similarity_threshold_configurable(mobileclip_model):
     """Test that similarity threshold is configurable."""
-    associator_strict = TrackAssociator(similarity_threshold=0.95)
-    associator_loose = TrackAssociator(similarity_threshold=0.50)
+    associator_strict = EmbeddingIDSystem(model=lambda: mobileclip_model, similarity_threshold=0.95)
+    associator_loose = EmbeddingIDSystem(model=lambda: mobileclip_model, similarity_threshold=0.50)
 
     assert associator_strict.similarity_threshold == 0.95
     assert associator_loose.similarity_threshold == 0.50

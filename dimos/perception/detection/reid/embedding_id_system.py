@@ -12,14 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Literal, Set
+from typing import Callable, Dict, List, Literal, Set
 
 import numpy as np
 
-from dimos.models.embedding.type import Embedding
+from dimos.models.embedding.type import Embedding, EmbeddingModel
+from dimos.perception.detection.reid.type import IDSystem
+from dimos.perception.detection.type import Detection2DBBox
 
 
-class TrackAssociator:
+class EmbeddingIDSystem(IDSystem):
     """Associates short-term track_ids to long-term unique detection IDs via embedding similarity.
 
     Maintains:
@@ -30,15 +32,19 @@ class TrackAssociator:
 
     def __init__(
         self,
-        similarity_threshold: float = 0.8,
+        model: Callable[[], EmbeddingModel[Embedding]],
+        padding: int = 0,
+        similarity_threshold: float = 0.63,
         comparison_mode: Literal["max", "mean", "top_k_mean"] = "top_k_mean",
-        top_k: int = 10,
+        top_k: int = 30,
         max_embeddings_per_track: int = 500,
         min_embeddings_for_matching: int = 10,
     ):
         """Initialize track associator.
 
         Args:
+            model: Callable (class or function) that returns an embedding model for feature extraction
+            padding: Padding to add around detection bbox when cropping (default: 0)
             similarity_threshold: Minimum similarity for associating tracks (0-1)
             comparison_mode: How to aggregate similarities between embedding groups
                 - "max": Use maximum similarity between any pair
@@ -48,7 +54,15 @@ class TrackAssociator:
             max_embeddings_per_track: Maximum number of embeddings to keep per track
             min_embeddings_for_matching: Minimum embeddings before attempting to match tracks
         """
-        self.similarity_threshold = 0.7
+        # Call model factory (class or function) to get model instance
+        self.model = model()
+
+        # Call warmup if available
+        if hasattr(self.model, "warmup"):
+            self.model.warmup()
+
+        self.padding = padding
+        self.similarity_threshold = similarity_threshold
         self.comparison_mode = comparison_mode
         self.top_k = top_k
         self.max_embeddings_per_track = max_embeddings_per_track
@@ -66,6 +80,27 @@ class TrackAssociator:
 
         # Similarity history for optional adaptive thresholding
         self.similarity_history: List[float] = []
+
+    def register_detection(self, detection: Detection2DBBox) -> int:
+        """
+        Register detection and return long-term ID.
+
+        Args:
+            detection: Detection to register
+
+        Returns:
+            Long-term unique ID for this detection
+        """
+        # Extract embedding from detection's cropped image
+        cropped_image = detection.cropped_image(padding=self.padding)
+        embedding = self.model.embed(cropped_image)
+        assert not isinstance(embedding, list), "Expected single embedding for single image"
+        # Move embedding to CPU immediately to free GPU memory
+        embedding = embedding.to_cpu()
+
+        # Update and associate track
+        self.update_embedding(detection.track_id, embedding)
+        return self.associate(detection.track_id)
 
     def update_embedding(self, track_id: int, new_embedding: Embedding) -> None:
         """Add new embedding to track's embedding collection.
@@ -222,7 +257,7 @@ class TrackAssociator:
         if best_track_id is not None:
             print(
                 f"Track {track_id}: creating new ID {new_id} "
-                f"(best similarity={best_similarity:.4f} below threshold={self.similarity_threshold})"
+                f"(best similarity={best_similarity:.4f} with id={self.track_to_long_term[best_track_id]} below threshold={self.similarity_threshold})"
             )
 
         return new_id

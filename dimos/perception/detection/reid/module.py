@@ -25,11 +25,8 @@ from dimos.models.embedding import TorchReIDModel
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.reid.type import (
-    EmbeddingFeatureExtractor,
-    EmbeddingIDSystem,
-    IDSystem,
-)
+from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
+from dimos.perception.detection.reid.type import IDSystem
 from dimos.perception.detection.type import ImageDetections2D
 from dimos.types.timestamped import align_timestamped, to_ros_stamp
 from dimos.utils.reactive import backpressure
@@ -46,21 +43,10 @@ class ReidModule(Module):
     image: In[Image] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
-    def __init__(self, idsystem: IDSystem | None = None, warmup: bool = True, **kwargs):
+    def __init__(self, idsystem: IDSystem | None = None, **kwargs):
         super().__init__(**kwargs)
-
-        # Create default TorchReID-based IDSystem if none provided
         if idsystem is None:
-            # osnet_x1_0
-            # se_resnet50
-            reid_model = TorchReIDModel()
-            if warmup:
-                reid_model.warmup()
-            feature_extractor = EmbeddingFeatureExtractor(model=reid_model, padding=20)
-            idsystem = EmbeddingIDSystem(
-                feature_extractor=feature_extractor,  # type: ignore[arg-type]
-                similarity_threshold=0.75,
-            )
+            idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
 
         self.idsystem = idsystem
 
@@ -86,10 +72,6 @@ class ReidModule(Module):
         for detection in imageDetections:
             # Register detection and get long-term ID
             long_term_id = self.idsystem.register_detection(detection)
-            print(
-                f"track_id={detection.track_id} -> long_term_id={long_term_id} "
-                f"({detection.name}, conf={detection.confidence:.2f})"
-            )
 
             # Skip annotation if not ready yet (long_term_id == -1)
             if long_term_id == -1:
