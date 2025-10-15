@@ -15,7 +15,7 @@
 from dimos_lcm.std_msgs import Bool, String
 
 from dimos.core import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
@@ -27,7 +27,7 @@ from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 
 def deploy_navigation(dimos, connection):
-    mapper = dimos.deploy(Map, voxel_size=0.5, cost_resolution=0.05, global_publish_interval=0.5)
+    mapper = dimos.deploy(Map, voxel_size=0.5, cost_resolution=0.05, global_publish_interval=2.5)
     mapper.lidar.connect(connection.lidar)
     mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
     mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
@@ -49,7 +49,7 @@ def deploy_navigation(dimos, connection):
     navigator.navigation_state.transport = LCMTransport("/navigation_state", String)
     navigator.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
     global_planner.path.transport = LCMTransport("/global_path", Path)
-    local_planner.cmd_vel.transport = LCMTransport("/cmd_vel", Vector3)
+    local_planner.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
     frontier_explorer.goal_request.transport = LCMTransport("/goal_request", PoseStamped)
     frontier_explorer.goal_reached.transport = LCMTransport("/goal_reached", Bool)
     frontier_explorer.explore_cmd.transport = LCMTransport("/explore_cmd", Bool)
@@ -83,4 +83,11 @@ def deploy_navigation(dimos, connection):
     navigator.start()
     websocket_vis.start()
 
-    return mapper
+    return {
+        "mapper": mapper,
+        "global_planner": global_planner,
+        "local_planner": local_planner,
+        "navigator": navigator,
+        "frontier_explorer": frontier_explorer,
+        "websocket_vis": websocket_vis,
+    }

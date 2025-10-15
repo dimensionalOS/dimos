@@ -17,7 +17,7 @@ from typing import Dict, List, Set
 import torch
 import torch.nn.functional as F
 
-from dimos.perception.detection.reid.base import Embedding, EmbeddingModel
+from dimos.models.embedding.type import Embedding
 
 
 class TrackAssociator:
@@ -29,15 +29,13 @@ class TrackAssociator:
     - Mapping from track_id to unique long-term ID
     """
 
-    def __init__(self, model: EmbeddingModel, similarity_threshold: float = 0.75):
+    def __init__(self, similarity_threshold: float = 0.75):
         """Initialize track associator.
 
         Args:
             model: Embedding model for GPU-accelerated comparisons
             similarity_threshold: Minimum similarity for associating tracks (0-1)
         """
-        self.model = model
-        self.device = model.device
         self.similarity_threshold = similarity_threshold
 
         # Track embeddings (running average, kept on GPU)
@@ -61,8 +59,8 @@ class TrackAssociator:
             track_id: Short-term track ID from detector
             new_embedding: New embedding to incorporate into average
         """
-        # Convert to torch on device (no-op if already on device)
-        new_vec = new_embedding.to_torch(self.device)
+        # Convert to torch (infer device from embedding)
+        new_vec = new_embedding.to_torch()
 
         # Debug: check embedding diversity
         print(

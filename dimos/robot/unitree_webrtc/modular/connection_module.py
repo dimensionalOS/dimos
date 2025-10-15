@@ -324,8 +324,7 @@ def deploy_connection(dimos: DimosCluster, **kwargs):
 
     connection.video.transport = LCMTransport("/image", Image)
     connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
-
-    connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
+    connection.movecmd.transport = LCMTransport("/cmd_vel", Twist)
     connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
 
     return connection

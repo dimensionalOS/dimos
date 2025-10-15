@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
+
+import time
 from abc import ABC, abstractmethod
-from typing import Generic, TypeVar
+from typing import Generic, Optional, TypeVar
 
 import numpy as np
 import torch
@@ -30,6 +33,13 @@ class Embedding(Timestamped):
     """
 
     vector: torch.Tensor | np.ndarray
+
+    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: Optional[float] = None):
+        self.vector = vector
+        if timestamp:
+            self.timestamp = timestamp
+        else:
+            self.timestamp = time.time()
 
     def __matmul__(self, other: "Embedding") -> float:
         """Compute cosine similarity via @ operator."""
@@ -50,7 +60,7 @@ class Embedding(Timestamped):
         if isinstance(self.vector, np.ndarray):
             tensor = torch.from_numpy(self.vector)
             return tensor.to(device) if device else tensor
-        # Already a tensor
+
         if device is not None and self.vector.device != torch.device(device):
             return self.vector.to(device)
         return self.vector
