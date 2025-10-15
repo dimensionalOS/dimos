@@ -16,11 +16,7 @@ import pytest
 
 
 @pytest.mark.skip
-def test_to_foxglove_scene_update(get_moment_3dpc):
-    """Test conversion of ImageDetections3DPC to Foxglove SceneUpdate."""
-    moment = get_moment_3dpc(seek=10.0)
-    detections3dpc = moment["detections3dpc"]
-
+def test_to_foxglove_scene_update(detections3dpc):
     # Convert to scene update
     scene_update = detections3dpc.to_foxglove_scene_update()
 

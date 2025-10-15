@@ -193,10 +193,15 @@ def detection2d(get_moment_2d) -> Detection2D:
 
 
 @pytest.fixture(scope="session")
-def detection3dpc(get_moment_3dpc) -> Detection3DPC:
+def detections3dpc(get_moment_3dpc) -> Detection3DPC:
     moment = get_moment_3dpc(seek=10.0)
     assert len(moment["detections3dpc"]) > 0, "No detections found in the moment"
-    return moment["detections3dpc"][0]
+    return moment["detections3dpc"]
+
+
+@pytest.fixture(scope="session")
+def detection3dpc(detections3dpc) -> Detection3DPC:
+    return detections3dpc[0]
 
 
 @pytest.fixture(scope="session")

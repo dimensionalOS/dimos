@@ -33,15 +33,9 @@ _before_test_threads = {}  # Map test name to set of thread IDs before test
 _skip_for = ["lcm", "heavy", "ros"]
 
 
-@pytest.fixture(scope="session", autouse=True)
-def track_session_threads():
+@pytest.hookimpl()
+def pytest_sessionfinish(session):
     """Track threads that exist at session start - these are not leaks."""
-    # Capture initial threads before any tests run
-    initial = threading.enumerate()
-    with _seen_threads_lock:
-        for t in initial:
-            if t.ident is not None:
-                _session_threads.add(t.ident)
 
     yield
 
