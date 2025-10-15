@@ -12,7 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 
+
+@pytest.mark.heavy
 def test_to_foxglove_scene_update(get_moment_3dpc):
     """Test conversion of ImageDetections3DPC to Foxglove SceneUpdate."""
     moment = get_moment_3dpc(seek=10.0)
