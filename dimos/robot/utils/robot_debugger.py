@@ -14,17 +14,18 @@
 
 import os
 
+from dimos.core.resource import Resource
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
 
 
-class RobotDebugger:
+class RobotDebugger(Resource):
     def __init__(self, robot):
         self._robot = robot
         self._threaded_server = None
 
-    def __enter__(self):
+    def start(self) -> None:
         if not os.getenv("ROBOT_DEBUGGER"):
             return
 
@@ -52,9 +53,7 @@ class RobotDebugger:
             },
         )
         self._threaded_server.start()
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def stop(self) -> None:
         if self._threaded_server:
             self._threaded_server.close()
-        return False

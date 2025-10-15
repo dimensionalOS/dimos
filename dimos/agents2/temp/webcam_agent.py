@@ -27,13 +27,12 @@ import reactivex.operators as ops
 from dimos.agents2 import Agent, Output, Reducer, Stream, skill
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
-from dimos.core import LCMTransport, Module, pLCMTransport, start
+from dimos.core import LCMTransport, Module, start, rpc
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
-# from dimos.hardware.webcam import ColorCameraModule, Webcam
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -53,7 +52,10 @@ class WebModule(Module):
         self.agent_response = rx.subject.Subject()
         self.human_query = rx.subject.Subject()
 
+    @rpc
     def start(self):
+        super().start()
+
         text_streams = {
             "agent_responses": self.agent_response,
         }
@@ -64,15 +66,18 @@ class WebModule(Module):
             audio_subject=rx.subject.Subject(),
         )
 
-        self.web_interface.query_stream.subscribe(self.human_query.on_next)
+        unsub = self.web_interface.query_stream.subscribe(self.human_query.on_next)
+        self._disposables.add(unsub)
 
         self.thread = Thread(target=self.web_interface.run, daemon=True)
         self.thread.start()
 
+    @rpc
     def stop(self):
         if self.web_interface:
             self.web_interface.stop()
         if self.thread:
+            # TODO, you can't just wait for a server to close, you have to signal it to end.
             self.thread.join(timeout=1.0)
 
         super().stop()
@@ -139,6 +144,8 @@ def main():
 
     while True:
         time.sleep(1)
+
+    # webcam.stop()
 
 
 if __name__ == "__main__":

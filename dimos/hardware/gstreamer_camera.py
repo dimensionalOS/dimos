@@ -88,24 +88,13 @@ class GstreamerCameraModule(Module):
             logger.warning("GStreamer camera module is already running")
             return
 
+        super().start()
+
         self.should_reconnect = True
         self._connect()
 
-    def _connect(self):
-        if not self.should_reconnect:
-            return
-
-        try:
-            self._create_pipeline()
-            self._start_pipeline()
-            self.running = True
-            logger.info(f"GStreamer TCP camera module connected to {self.host}:{self.port}")
-        except Exception as e:
-            logger.error(f"Failed to connect to {self.host}:{self.port}: {e}")
-            self._schedule_reconnect()
-
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         self.should_reconnect = False
         self._cleanup_reconnect_timer()
 
@@ -124,7 +113,20 @@ class GstreamerCameraModule(Module):
         if self.main_loop_thread and self.main_loop_thread != threading.current_thread():
             self.main_loop_thread.join(timeout=2.0)
 
-        logger.info("GStreamer camera module stopped")
+        super().stop()
+
+    def _connect(self) -> None:
+        if not self.should_reconnect:
+            return
+
+        try:
+            self._create_pipeline()
+            self._start_pipeline()
+            self.running = True
+            logger.info(f"GStreamer TCP camera module connected to {self.host}:{self.port}")
+        except Exception as e:
+            logger.error(f"Failed to connect to {self.host}:{self.port}: {e}")
+            self._schedule_reconnect()
 
     def _cleanup_reconnect_timer(self):
         if self.reconnect_timer_id:
@@ -305,6 +307,3 @@ class GstreamerCameraModule(Module):
             buffer.unmap(map_info)
 
         return Gst.FlowReturn.OK
-
-    def __del__(self):
-        self.stop()

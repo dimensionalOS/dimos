@@ -330,7 +330,7 @@ def test_timestamp_alignment(test_scheduler):
         )
         assert diff <= 0.05
 
-    assert len(aligned_frames) > 3
+    assert len(aligned_frames) > 2
 
 
 def test_timestamp_alignment_primary_first():

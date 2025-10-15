@@ -99,7 +99,7 @@ pytest -s dimos/
 
 #### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
-CONNECTION_TYPE=fake python dimos/robot/unitree_webrtc/unitree_go2.py 
+CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py 
 ```
 
 #### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)

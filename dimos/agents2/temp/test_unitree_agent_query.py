@@ -75,7 +75,6 @@ async def test_async_query():
     else:
         logger.warning("Future not completed yet")
 
-    # Clean up
     agent.stop()
 
     return future
@@ -132,8 +131,6 @@ def test_sync_query_with_thread():
 
         traceback.print_exc()
 
-    # Clean up properly
-    # First stop the agent (this should stop its internal loop if any)
     agent.stop()
 
     # Then stop the manually created event loop thread if we created one

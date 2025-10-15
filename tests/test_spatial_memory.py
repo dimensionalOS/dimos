@@ -198,9 +198,7 @@ def main():
     saved_path = spatial_memory.vector_db.visual_memory.save("visual_memory.pkl")
     print(f"Saved {spatial_memory.vector_db.visual_memory.count()} images to disk at {saved_path}")
 
-    # Final cleanup
-    print("Performing final cleanup...")
-    spatial_memory.cleanup()
+    spatial_memory.stop()
 
     print("Test completed successfully")
 

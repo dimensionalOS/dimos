@@ -14,6 +14,9 @@
 
 import os
 import json
+import uuid
+import string
+import hashlib
 from typing import Any, Optional
 
 
@@ -48,3 +51,21 @@ def extract_json_from_llm_response(response: str) -> Any:
             pass
 
     return None
+
+
+def short_id(from_string: str | None = None) -> str:
+    alphabet = string.digits + string.ascii_letters
+    base = len(alphabet)
+
+    if from_string is None:
+        num = uuid.uuid4().int
+    else:
+        hash_bytes = hashlib.sha1(from_string.encode()).digest()[:16]
+        num = int.from_bytes(hash_bytes, "big")
+
+    chars = []
+    while num:
+        num, rem = divmod(num, base)
+        chars.append(alphabet[rem])
+
+    return "".join(reversed(chars))[:18]

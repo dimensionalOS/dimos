@@ -36,12 +36,10 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
 from dimos.msgs.std_msgs import Header
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -172,6 +170,9 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
+
+        super().start()
+
         match self.connection_type:
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(**self.connection_config)
@@ -184,12 +185,15 @@ class ConnectionModule(Module):
                 self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
-        self.connection.odom_stream().subscribe(
+
+        unsub = self.connection.odom_stream().subscribe(
             lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
         )
+        self._disposables.add(unsub)
 
         # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
+        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
+        self._disposables.add(unsub)
 
         # self.connection.lidar_stream().subscribe(lambda lidar: print("LIDAR", lidar.ts))
         # self.connection.video_stream().subscribe(lambda video: print("IMAGE", video.ts))
@@ -200,11 +204,19 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        self.connection.video_stream().subscribe(self.video.publish)
-        # sharpness_window(15.0, self.connection.video_stream()).subscribe(self.video.publish)
-        # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
-        self.camera_info_stream().subscribe(self.camera_info.publish)
-        self.movecmd.subscribe(self.connection.move)
+        unsub = self.connection.video_stream().subscribe(self.video.publish)
+        self._disposables.add(unsub)
+        unsub = self.camera_info_stream().subscribe(self.camera_info.publish)
+        self._disposables.add(unsub)
+        unsub = self.movecmd.subscribe(self.connection.move)
+        self._disposables.add(unsub)
+
+    @rpc
+    def stop(self) -> None:
+        if self.connection:
+            self.connection.stop()
+
+        super().stop()
 
     @classmethod
     def _odom_to_tf(self, odom: PoseStamped) -> List[Transform]:

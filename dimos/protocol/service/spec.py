@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from typing import Generic, Type, TypeVar
 
 # Generic type for service configuration
@@ -27,8 +27,8 @@ class Configurable(Generic[ConfigT]):
 
 
 class Service(Configurable[ConfigT], ABC):
-    @abstractmethod
-    def start(self) -> None: ...
+    def start(self) -> None:
+        super().start()
 
-    @abstractmethod
-    def stop(self) -> None: ...
+    def stop(self) -> None:
+        super().stop()

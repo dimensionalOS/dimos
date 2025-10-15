@@ -16,7 +16,6 @@
 from typing import Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex import operators as ops
 from reactivex.observable import Observable

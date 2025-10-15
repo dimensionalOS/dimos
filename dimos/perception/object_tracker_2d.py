@@ -24,6 +24,7 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
+from reactivex.disposable import Disposable
 
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
@@ -86,7 +87,7 @@ class ObjectTracker2D(Module):
 
     @rpc
     def start(self):
-        """Start the object tracking module and subscribe to video stream."""
+        super().start()
 
         def on_frame(frame_msg: Image):
             arrival_time = time.perf_counter()
@@ -94,8 +95,18 @@ class ObjectTracker2D(Module):
                 self._latest_rgb_frame = frame_msg.data
                 self._frame_arrival_time = arrival_time
 
-        self.color_image.subscribe(on_frame)
+        unsub = self.color_image.subscribe(on_frame)
+        self._disposables.add(Disposable(unsub))
         logger.info("ObjectTracker2D module started")
+
+    @rpc
+    def stop(self) -> None:
+        self.stop_track()
+        if self.tracking_thread and self.tracking_thread.is_alive():
+            self.stop_tracking_event.set()
+            self.tracking_thread.join(timeout=2.0)
+
+        super().stop()
 
     @rpc
     def track(self, bbox: List[float]) -> Dict:
@@ -286,11 +297,3 @@ class ObjectTracker2D(Module):
         cv2.rectangle(viz_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
         cv2.putText(viz_image, "TRACKING", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         return viz_image
-
-    @rpc
-    def cleanup(self):
-        """Clean up resources."""
-        self.stop_track()
-        if self.tracking_thread and self.tracking_thread.is_alive():
-            self.stop_tracking_event.set()
-            self.tracking_thread.join(timeout=2.0)

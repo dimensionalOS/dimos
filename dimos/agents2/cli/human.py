@@ -15,7 +15,8 @@
 import queue
 
 from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, pLCMTransport
+from dimos.core import Module, pLCMTransport, rpc
+from reactivex.disposable import Disposable
 
 
 class HumanInput(Module):
@@ -30,6 +31,15 @@ class HumanInput(Module):
         transport = pLCMTransport("/human_input")
 
         msg_queue = queue.Queue()
-        transport.subscribe(msg_queue.put)
+        unsub = transport.subscribe(msg_queue.put)
+        self._disposables.add(Disposable(unsub))
         for message in iter(msg_queue.get, None):
             yield message
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()

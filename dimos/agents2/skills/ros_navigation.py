@@ -19,6 +19,7 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
+from dimos.core.resource import Resource
 
 from typing import TYPE_CHECKING
 
@@ -28,7 +29,7 @@ if TYPE_CHECKING:
 logger = setup_logger(__file__)
 
 
-class RosNavigation(SkillContainer):
+class RosNavigation(SkillContainer, Resource):
     _robot: "UnitreeG1"
     _started: bool
 
@@ -37,13 +38,11 @@ class RosNavigation(SkillContainer):
         self._similarity_threshold = 0.23
         self._started = False
 
-    def __enter__(self) -> "RosNavigation":
+    def start(self) -> None:
         self._started = True
-        return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._close_module()
-        return False
+    def stop(self) -> None:
+        super().stop()
 
     @skill()
     def navigate_with_text(self, query: str) -> str:

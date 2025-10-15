@@ -25,7 +25,9 @@ import os
 from typing import Optional
 
 from dimos import core
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
+from dimos.core.dimos import Dimos
+from dimos.core.resource import Resource
+from dimos.msgs.geometry_msgs import TwistStamped, PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -56,7 +58,7 @@ except ImportError:
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1", level=logging.INFO)
 
 
-class UnitreeB1(Robot):
+class UnitreeB1(Robot, Resource):
     """Unitree B1 quadruped robot with UDP control.
 
     Simplified architecture:
@@ -97,6 +99,7 @@ class UnitreeB1(Robot):
         self.connection = None
         self.joystick = None
         self.ros_bridge = None
+        self._dimos = Dimos(n=2)
 
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
@@ -105,13 +108,13 @@ class UnitreeB1(Robot):
         """Start the B1 robot - initialize DimOS, deploy modules, and start them."""
 
         logger.info("Initializing DimOS...")
-        self.dimos = core.start(2)
+        self._dimos.start()
 
         logger.info("Deploying connection module...")
         if self.test_mode:
-            self.connection = self.dimos.deploy(MockB1ConnectionModule, self.ip, self.port)
+            self.connection = self._dimos.deploy(MockB1ConnectionModule, self.ip, self.port)
         else:
-            self.connection = self.dimos.deploy(B1ConnectionModule, self.ip, self.port)
+            self.connection = self._dimos.deploy(B1ConnectionModule, self.ip, self.port)
 
         # Configure LCM transports for connection (matching G1 pattern)
         self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", TwistStamped)
@@ -123,17 +126,15 @@ class UnitreeB1(Robot):
         if self.enable_joystick:
             from dimos.robot.unitree_webrtc.unitree_b1.joystick_module import JoystickModule
 
-            self.joystick = self.dimos.deploy(JoystickModule)
+            self.joystick = self._dimos.deploy(JoystickModule)
             self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", TwistStamped)
             self.joystick.mode_out.transport = core.LCMTransport("/b1/mode", Int32)
             logger.info("Joystick module deployed - pygame window will open")
 
-        self.connection.start()
+        self._dimos.start_all_modules()
+
         self.connection.idle()  # Start in IDLE mode for safety
         logger.info("B1 started in IDLE mode (safety)")
-
-        if self.joystick:
-            self.joystick.start()
 
         # Deploy ROS bridge if enabled (matching G1 pattern)
         if self.enable_ros_bridge:
@@ -144,6 +145,11 @@ class UnitreeB1(Robot):
             logger.info("Pygame joystick module enabled for testing")
         if self.enable_ros_bridge:
             logger.info("ROS bridge enabled for external control")
+
+    def stop(self) -> None:
+        self._dimos.stop()
+        if self.ros_bridge:
+            self.ros_bridge.stop()
 
     def _deploy_ros_bridge(self):
         """Deploy and configure ROS bridge (matching G1 implementation)."""
@@ -164,6 +170,8 @@ class UnitreeB1(Robot):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
+        self.ros_bridge.start()
+
         logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf (ROS → DIMOS)")
 
     # Robot control methods (standard interface)
@@ -176,11 +184,6 @@ class UnitreeB1(Robot):
         """
         if self.connection:
             self.connection.move(twist_stamped, duration)
-
-    def stop(self):
-        """Stop all robot movement."""
-        if self.connection:
-            self.connection.stop()
 
     def stand(self):
         """Put robot in stand mode."""
@@ -199,35 +202,6 @@ class UnitreeB1(Robot):
         if self.connection:
             self.connection.idle()
             logger.info("B1 switched to IDLE mode")
-
-    def shutdown(self):
-        """Shutdown the robot and clean up resources."""
-        logger.info("Shutting down UnitreeB1...")
-
-        # Stop robot movement
-        self.stop()
-
-        # Shutdown ROS bridge if it exists
-        if self.ros_bridge is not None:
-            try:
-                self.ros_bridge.shutdown()
-                logger.info("ROS bridge shut down successfully")
-            except Exception as e:
-                logger.error(f"Error shutting down ROS bridge: {e}")
-
-        # Clean up connection module
-        if self.connection:
-            self.connection.cleanup()
-
-        logger.info("UnitreeB1 shutdown complete")
-
-    def cleanup(self):
-        """Clean up robot resources (calls shutdown for consistency)."""
-        self.shutdown()
-
-    def __del__(self):
-        """Destructor to ensure cleanup."""
-        self.shutdown()
 
 
 def main():
@@ -296,7 +270,7 @@ def main():
     except KeyboardInterrupt:
         print("\nShutting down...")
     finally:
-        robot.cleanup()
+        robot.stop()
 
 
 if __name__ == "__main__":
