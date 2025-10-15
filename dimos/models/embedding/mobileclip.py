@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image as PILImage
 
-from dimos.models.embedding.type import Embedding, EmbeddingModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
 
 

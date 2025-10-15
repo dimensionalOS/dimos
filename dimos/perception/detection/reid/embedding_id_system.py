@@ -16,7 +16,7 @@ from typing import Callable, Dict, List, Literal, Set
 
 import numpy as np
 
-from dimos.models.embedding.type import Embedding, EmbeddingModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.perception.detection.reid.type import IDSystem
 from dimos.perception.detection.type import Detection2DBBox
 

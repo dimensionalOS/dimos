@@ -18,7 +18,7 @@ import torch
 import torch.nn.functional as F
 from torchreid import utils as torchreid_utils
 
-from dimos.models.embedding.type import Embedding, EmbeddingModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
 
 _CUDA_INITIALIZED = False

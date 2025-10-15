@@ -1,7 +1,7 @@
+from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.models.embedding.clip import CLIPEmbedding, CLIPModel
 from dimos.models.embedding.mobileclip import MobileCLIPEmbedding, MobileCLIPModel
 from dimos.models.embedding.treid import TorchReIDEmbedding, TorchReIDModel
-from dimos.models.embedding.type import Embedding, EmbeddingModel
 
 __all__ = [
     "Embedding",

@@ -18,7 +18,7 @@ from PIL import Image as PILImage
 from transformers import CLIPModel as HFCLIPModel
 from transformers import CLIPProcessor
 
-from dimos.models.embedding.type import Embedding, EmbeddingModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
 
 _CUDA_INITIALIZED = False
