@@ -416,9 +416,6 @@ def test_perf_solvepnp(alloc_timer):
         print(f"solvePnP (avg per call) cpu={cpu_t:.6f}s")
 
 
-# this test is failing with
-#  raise RuntimeError("OpenCV CSRT tracker not available")
-@pytest.mark.skip
 def test_perf_tracker(alloc_timer):
     """Test tracker performance with NumpyImage always, add CudaImage when available."""
     # Don't check - just let it fail if CSRT isn't available
@@ -464,6 +461,9 @@ def test_perf_tracker(alloc_timer):
         print(f"tracker (avg per call) cpu={cpu_t:.6f}s")
 
 
+# this test is failing with
+#  raise RuntimeError("OpenCV CSRT tracker not available")
+@pytest.mark.skip
 def test_csrt_tracker(alloc_timer):
     """Test CSRT tracker with NumpyImage always, add CudaImage parity when available."""
     # Don't check - just let it fail if CSRT isn't available
