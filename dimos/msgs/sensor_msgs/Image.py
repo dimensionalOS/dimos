@@ -21,14 +21,11 @@ from typing import Literal, Optional, Tuple, TypedDict
 
 import cv2
 import numpy as np
-import reactivex as rx
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
-from reactivex import operators as ops
 from reactivex.observable import Observable
-from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
+from dimos.types.timestamped import Timestamped, to_human_readable
 from dimos.utils.reactive import quality_barrier
 
 try:
@@ -301,7 +298,7 @@ class Image(Timestamped):
             ts=self.ts,
         )
 
-    @functools.cached_property
+    @property
     def sharpness(self) -> float:
         """
         Compute the Tenengrad focus measure for an image.

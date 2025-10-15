@@ -14,27 +14,16 @@
 
 from pathlib import Path
 
-import numpy as np
 import open_clip
 import torch
 import torch.nn.functional as F
 from PIL import Image as PILImage
 
+from dimos.models.embedding.type import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.reid.base import Embedding, EmbeddingModel
 
 
-class MobileCLIPEmbedding(Embedding):
-    """Embedding produced by MobileCLIP model.
-
-    Keeps embeddings as torch.Tensor on device for efficient GPU comparisons.
-    """
-
-    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float = 0.0):
-        self.vector = vector
-        # Set timestamp from parent Timestamped class
-        if timestamp > 0:
-            self.timestamp = timestamp
+class MobileCLIPEmbedding(Embedding): ...
 
 
 class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
@@ -59,6 +48,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.normalize = normalize
 
+        print(f"[DEBUG] MobileCLIPModel.__init__: model_name={model_name}, model_path={model_path}, device={self.device}")
         # Load model
         pretrained = str(model_path) if model_path else None
         self.model, _, self.preprocess = open_clip.create_model_and_transforms(
@@ -66,6 +56,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         )
         self.tokenizer = open_clip.get_tokenizer(model_name)
         self.model = self.model.eval().to(self.device)
+        print(f"[DEBUG] MobileCLIPModel.__init__: COMPLETE")
 
     def embed(self, *images: Image) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
         """Embed one or more images.

@@ -93,7 +93,7 @@ class PersonTracker(Module):
             return
 
         target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())
-        vector = self.center_to_3d(target.center_bbox, self.camera_info, 1.0)
+        vector = self.center_to_3d(target.center_bbox, self.camera_info, 2.0)
 
         pose_in_camera = PoseStamped(
             ts=detections2D.ts,
@@ -101,7 +101,7 @@ class PersonTracker(Module):
             frame_id="camera_link",
         )
 
-        tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 0.5)
+        tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 5.0)
         if not tf_world_to_camera:
             return
 

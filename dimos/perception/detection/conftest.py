@@ -179,6 +179,13 @@ def publish_moment():
 
 
 @pytest.fixture(scope="session")
+def imageDetections2d(get_moment_2d) -> ImageDetections2D:
+    moment = get_moment_2d()
+    assert len(moment["detections2d"]) > 0, "No detections found in the moment"
+    return moment["detections2d"]
+
+
+@pytest.fixture(scope="session")
 def detection2d(get_moment_2d) -> Detection2D:
     moment = get_moment_2d()
     assert len(moment["detections2d"]) > 0, "No detections found in the moment"

@@ -15,16 +15,25 @@
 import numpy as np
 import pytest
 
+from dimos.models.embedding.clip import CLIPModel
+from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.reid.mobileclip import MobileCLIPModel
 from dimos.utils.data import get_data
 
 
-@pytest.fixture(scope="session")
-def mobileclip_model():
-    """Load MobileCLIP model once for all tests."""
-    model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
-    model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
+@pytest.fixture(scope="session", params=["mobileclip", "clip"])
+def embedding_model(request):
+    """Load embedding model once for all tests. Parametrized for different models."""
+    if request.param == "mobileclip":
+        model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
+        model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
+        model.warmup()
+    elif request.param == "clip":
+        model = CLIPModel(model_name="openai/clip-vit-base-patch32")
+        model.warmup()
+    else:
+        raise ValueError(f"Unknown model: {request.param}")
+
     model.warmup()
     return model
 
@@ -36,9 +45,9 @@ def test_image():
 
 
 @pytest.mark.heavy
-def test_single_image_embedding(mobileclip_model, test_image):
+def test_single_image_embedding(embedding_model, test_image):
     """Test embedding a single image."""
-    embedding = mobileclip_model.embed(test_image)
+    embedding = embedding_model.embed(test_image)
 
     # Embedding should be torch.Tensor on device
     import torch
@@ -61,9 +70,9 @@ def test_single_image_embedding(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_batch_image_embedding(mobileclip_model, test_image):
+def test_batch_image_embedding(embedding_model, test_image):
     """Test embedding multiple images at once."""
-    embeddings = mobileclip_model.embed(test_image, test_image, test_image)
+    embeddings = embedding_model.embed(test_image, test_image, test_image)
 
     assert isinstance(embeddings, list), "Batch embedding should return list"
     assert len(embeddings) == 3, "Should return 3 embeddings"
@@ -79,11 +88,11 @@ def test_batch_image_embedding(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_single_text_embedding(mobileclip_model):
+def test_single_text_embedding(embedding_model):
     """Test embedding a single text string."""
     import torch
 
-    embedding = mobileclip_model.embed_text("a cafe")
+    embedding = embedding_model.embed_text("a cafe")
 
     # Should be torch.Tensor
     assert isinstance(embedding.vector, torch.Tensor), "Text embedding should be torch.Tensor"
@@ -101,11 +110,11 @@ def test_single_text_embedding(mobileclip_model):
 
 
 @pytest.mark.heavy
-def test_batch_text_embedding(mobileclip_model):
+def test_batch_text_embedding(embedding_model):
     """Test embedding multiple text strings at once."""
     import torch
 
-    embeddings = mobileclip_model.embed_text("a cafe", "a person", "a dog")
+    embeddings = embedding_model.embed_text("a cafe", "a person", "a dog")
 
     assert isinstance(embeddings, list), "Batch text embedding should return list"
     assert len(embeddings) == 3, "Should return 3 text embeddings"
@@ -118,13 +127,13 @@ def test_batch_text_embedding(mobileclip_model):
 
 
 @pytest.mark.heavy
-def test_text_image_similarity(mobileclip_model, test_image):
+def test_text_image_similarity(embedding_model, test_image):
     """Test cross-modal text-image similarity using @ operator."""
-    img_embedding = mobileclip_model.embed(test_image)
+    img_embedding = embedding_model.embed(test_image)
 
     # Embed text queries
     queries = ["a cafe", "a person", "a car", "a dog", "potato", "food"]
-    text_embeddings = mobileclip_model.embed_text(*queries)
+    text_embeddings = embedding_model.embed_text(*queries)
 
     # Compute similarities using @ operator
     similarities = {}
@@ -139,10 +148,10 @@ def test_text_image_similarity(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_cosine_distance(mobileclip_model, test_image):
+def test_cosine_distance(embedding_model, test_image):
     """Test cosine distance computation (1 - similarity)."""
-    emb1 = mobileclip_model.embed(test_image)
-    emb2 = mobileclip_model.embed(test_image)
+    emb1 = embedding_model.embed(test_image)
+    emb2 = embedding_model.embed(test_image)
 
     # Similarity using @ operator
     similarity = emb1 @ emb2
@@ -158,17 +167,17 @@ def test_cosine_distance(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_query_functionality(mobileclip_model, test_image):
+def test_query_functionality(embedding_model, test_image):
     """Test query method for top-k retrieval."""
     # Create a query and some candidates
-    query_text = mobileclip_model.embed_text("a cafe")
+    query_text = embedding_model.embed_text("a cafe")
 
     # Create candidate embeddings
     candidate_texts = ["a cafe", "a restaurant", "a person", "a dog", "a car"]
-    candidates = mobileclip_model.embed_text(*candidate_texts)
+    candidates = embedding_model.embed_text(*candidate_texts)
 
     # Query for top-3
-    results = mobileclip_model.query(query_text, candidates, top_k=3)
+    results = embedding_model.query(query_text, candidates, top_k=3)
 
     print("\nTop-3 results:")
     for idx, sim in results:
@@ -181,10 +190,10 @@ def test_query_functionality(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_embedding_operator(mobileclip_model, test_image):
+def test_embedding_operator(embedding_model, test_image):
     """Test that @ operator works on embeddings."""
-    emb1 = mobileclip_model.embed(test_image)
-    emb2 = mobileclip_model.embed(test_image)
+    emb1 = embedding_model.embed(test_image)
+    emb2 = embedding_model.embed(test_image)
 
     # Use @ operator
     similarity = emb1 @ emb2
@@ -195,25 +204,25 @@ def test_embedding_operator(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_warmup(mobileclip_model):
+def test_warmup(embedding_model):
     """Test that warmup runs without error."""
     # Warmup is already called in fixture, but test it explicitly
-    mobileclip_model.warmup()
+    embedding_model.warmup()
     # Just verify no exceptions raised
     assert True
 
 
 @pytest.mark.heavy
-def test_compare_one_to_many(mobileclip_model, test_image):
+def test_compare_one_to_many(embedding_model, test_image):
     """Test GPU-accelerated one-to-many comparison."""
     import torch
 
     # Create query and gallery
-    query_emb = mobileclip_model.embed(test_image)
-    gallery_embs = mobileclip_model.embed(test_image, test_image, test_image)
+    query_emb = embedding_model.embed(test_image)
+    gallery_embs = embedding_model.embed(test_image, test_image, test_image)
 
     # Compare on GPU
-    similarities = mobileclip_model.compare_one_to_many(query_emb, gallery_embs)
+    similarities = embedding_model.compare_one_to_many(query_emb, gallery_embs)
 
     print(f"\nOne-to-many similarities: {similarities}")
 
@@ -228,16 +237,16 @@ def test_compare_one_to_many(mobileclip_model, test_image):
 
 
 @pytest.mark.heavy
-def test_compare_many_to_many(mobileclip_model):
+def test_compare_many_to_many(embedding_model):
     """Test GPU-accelerated many-to-many comparison."""
     import torch
 
     # Create queries and candidates
-    queries = mobileclip_model.embed_text("a cafe", "a person")
-    candidates = mobileclip_model.embed_text("a cafe", "a restaurant", "a dog")
+    queries = embedding_model.embed_text("a cafe", "a person")
+    candidates = embedding_model.embed_text("a cafe", "a restaurant", "a dog")
 
     # Compare on GPU
-    similarities = mobileclip_model.compare_many_to_many(queries, candidates)
+    similarities = embedding_model.compare_many_to_many(queries, candidates)
 
     print(f"\nMany-to-many similarities:\n{similarities}")
 
@@ -252,17 +261,17 @@ def test_compare_many_to_many(mobileclip_model):
 
 
 @pytest.mark.heavy
-def test_gpu_query_performance(mobileclip_model, test_image):
+def test_gpu_query_performance(embedding_model, test_image):
     """Test that query method uses GPU acceleration."""
     # Create a larger gallery
     gallery_size = 20
     gallery_images = [test_image] * gallery_size
-    gallery_embs = mobileclip_model.embed(*gallery_images)
+    gallery_embs = embedding_model.embed(*gallery_images)
 
-    query_emb = mobileclip_model.embed(test_image)
+    query_emb = embedding_model.embed(test_image)
 
     # Query should use GPU-accelerated comparison
-    results = mobileclip_model.query(query_emb, gallery_embs, top_k=5)
+    results = embedding_model.query(query_emb, gallery_embs, top_k=5)
 
     print(f"\nTop-5 results from gallery of {gallery_size}")
     for idx, sim in results:
@@ -272,3 +281,103 @@ def test_gpu_query_performance(mobileclip_model, test_image):
     # All should be high similarity (same image, allow some variation for image preprocessing)
     for idx, sim in results:
         assert sim > 0.90, f"Same images should have high similarity, got {sim}"
+
+
+@pytest.mark.heavy
+def test_embedding_performance(embedding_model):
+    """Measure embedding performance over multiple real video frames."""
+    import time
+
+    from dimos.utils.testing import TimedSensorReplay
+
+    # Load actual video frames
+    data_dir = "unitree_go2_lidar_corrected"
+    get_data(data_dir)
+
+    video_replay = TimedSensorReplay(f"{data_dir}/video")
+
+    # Collect 10 real frames from the video
+    test_images = []
+    for ts, frame in video_replay.iterate_ts(duration=1.0):
+        test_images.append(frame.to_rgb())
+        if len(test_images) >= 10:
+            break
+
+    if len(test_images) < 10:
+        pytest.skip(f"Not enough video frames found (got {len(test_images)})")
+
+    # Measure single image embedding time
+    times = []
+    for img in test_images:
+        start = time.perf_counter()
+        _ = embedding_model.embed(img)
+        end = time.perf_counter()
+        elapsed_ms = (end - start) * 1000
+        times.append(elapsed_ms)
+
+    # Calculate statistics
+    avg_time = sum(times) / len(times)
+    min_time = min(times)
+    max_time = max(times)
+    std_time = (sum((t - avg_time) ** 2 for t in times) / len(times)) ** 0.5
+
+    print("\n" + "=" * 60)
+    print("Embedding Performance Statistics:")
+    print("=" * 60)
+    print(f"Number of images: {len(test_images)}")
+    print(f"Average time: {avg_time:.2f} ms")
+    print(f"Min time: {min_time:.2f} ms")
+    print(f"Max time: {max_time:.2f} ms")
+    print(f"Std dev: {std_time:.2f} ms")
+    print(f"Throughput: {1000 / avg_time:.1f} images/sec")
+    print("=" * 60)
+
+    # Also test batch embedding performance
+    start = time.perf_counter()
+    batch_embeddings = embedding_model.embed(*test_images)
+    end = time.perf_counter()
+    batch_time = (end - start) * 1000
+    batch_per_image = batch_time / len(test_images)
+
+    print("\nBatch Embedding Performance:")
+    print(f"Total batch time: {batch_time:.2f} ms")
+    print(f"Time per image (batched): {batch_per_image:.2f} ms")
+    print(f"Batch throughput: {1000 / batch_per_image:.1f} images/sec")
+    print(f"Speedup vs single: {avg_time / batch_per_image:.2f}x")
+    print("=" * 60)
+
+    # Verify embeddings are valid
+    assert len(batch_embeddings) == len(test_images)
+    assert all(e.vector is not None for e in batch_embeddings)
+
+    # Sanity check: verify embeddings are meaningful by testing text-image similarity
+    print("\n" + "=" * 60)
+    print("Sanity Check: Text-Image Similarity on First Frame")
+    print("=" * 60)
+    first_frame_emb = batch_embeddings[0]
+
+    # Test common object/scene queries
+    test_queries = [
+        "indoor scene",
+        "outdoor scene",
+        "a person",
+        "a dog",
+        "a robot",
+        "grass and trees",
+        "furniture",
+        "a car",
+    ]
+
+    text_embeddings = embedding_model.embed_text(*test_queries)
+    similarities = []
+    for query, text_emb in zip(test_queries, text_embeddings):
+        sim = first_frame_emb @ text_emb
+        similarities.append((query, sim))
+
+    # Sort by similarity
+    similarities.sort(key=lambda x: x[1], reverse=True)
+
+    print("Top matching concepts:")
+    for query, sim in similarities[:5]:
+        print(f"  '{query}': {sim:.4f}")
+    print("=" * 60)

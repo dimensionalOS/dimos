@@ -40,7 +40,7 @@ from dimos.utils.reactive import backpressure
 
 @dataclass
 class Config(ModuleConfig):
-    max_freq: float = 10  # hz
+    max_freq: float = 10
     detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
     camera_info: CameraInfo = CameraInfo()
 
@@ -81,7 +81,7 @@ class Detection2DModule(Module):
 
     @simple_mcache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
+        return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     def pixel_to_3d(
         self,

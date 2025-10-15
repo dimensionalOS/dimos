@@ -15,8 +15,8 @@
 import pytest
 import torch
 
+from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.reid.mobileclip import MobileCLIPModel
 from dimos.perception.detection.reid.trackAssociator import TrackAssociator
 from dimos.utils.data import get_data
 
@@ -31,9 +31,9 @@ def mobileclip_model():
 
 
 @pytest.fixture
-def track_associator(mobileclip_model):
+def track_associator():
     """Create fresh TrackAssociator for each test."""
-    return TrackAssociator(model=mobileclip_model, similarity_threshold=0.75)
+    return TrackAssociator(similarity_threshold=0.75)
 
 
 @pytest.fixture(scope="session")
@@ -214,21 +214,22 @@ def test_gpu_performance(track_associator, mobileclip_model, test_image):
     emb_vec = track_associator.track_embeddings[1]
     assert isinstance(emb_vec, torch.Tensor)
     # Device comparison (handle "cuda" vs "cuda:0")
-    assert emb_vec.device.type == torch.device(track_associator.device).type
+    expected_device = mobileclip_model.device
+    assert emb_vec.device.type == torch.device(expected_device).type
 
     # Running average should happen on GPU
     embedding2 = mobileclip_model.embed(test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding2)
 
     avg_vec = track_associator.track_embeddings[1]
-    assert avg_vec.device.type == torch.device(track_associator.device).type
+    assert avg_vec.device.type == torch.device(expected_device).type
 
 
 @pytest.mark.heavy
-def test_similarity_threshold_configurable(mobileclip_model):
+def test_similarity_threshold_configurable():
     """Test that similarity threshold is configurable."""
-    associator_strict = TrackAssociator(model=mobileclip_model, similarity_threshold=0.95)
-    associator_loose = TrackAssociator(model=mobileclip_model, similarity_threshold=0.50)
+    associator_strict = TrackAssociator(similarity_threshold=0.95)
+    associator_loose = TrackAssociator(similarity_threshold=0.50)
 
     assert associator_strict.similarity_threshold == 0.95
     assert associator_loose.similarity_threshold == 0.50

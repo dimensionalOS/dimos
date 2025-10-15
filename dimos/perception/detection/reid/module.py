@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable, Optional
-
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
     TextAnnotation,
@@ -23,20 +21,22 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.core import In, Module, ModuleConfig, Out, rpc
+from dimos.models.embedding import MobileCLIPModel
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.reid.base import EmbeddingModel
-from dimos.perception.detection.reid.mobileclip import MobileCLIPModel
-from dimos.perception.detection.reid.trackAssociator import TrackAssociator
+from dimos.perception.detection.reid.type import (
+    EmbeddingFeatureExtractor,
+    EmbeddingIDSystem,
+    IDSystem,
+)
 from dimos.perception.detection.type import ImageDetections2D
 from dimos.types.timestamped import align_timestamped, to_ros_stamp
 from dimos.utils.reactive import backpressure
 
 
 class Config(ModuleConfig):
-    embedding_model: Optional[Callable[..., "EmbeddingModel"]] = None
-    similarity_threshold: float = 0.99
+    idsystem: IDSystem
 
 
 class ReidModule(Module):
@@ -46,19 +46,21 @@ class ReidModule(Module):
     image: In[Image] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
-    def __init__(self, **kwargs):
+    def __init__(self, idsystem: IDSystem | None = None, warmup: bool = True, **kwargs):
         super().__init__(**kwargs)
-        self.config = Config(**kwargs)
-        self.embedding_model = (
-            self.config.embedding_model() if self.config.embedding_model else MobileCLIPModel()
-        )
-        self.associator = (
-            TrackAssociator(
-                model=self.embedding_model, similarity_threshold=self.config.similarity_threshold
+
+        # Create default MobileCLIP-based IDSystem if none provided
+        if idsystem is None:
+            mobileclip_model = MobileCLIPModel()
+            if warmup:
+                mobileclip_model.warmup()
+            feature_extractor = EmbeddingFeatureExtractor(model=mobileclip_model, padding=20)
+            idsystem = EmbeddingIDSystem(
+                feature_extractor=feature_extractor,  # type: ignore[arg-type]
+                similarity_threshold=0.75,
             )
-            if self.embedding_model
-            else None
-        )
+
+        self.idsystem = idsystem
 
     def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
@@ -77,27 +79,11 @@ class ReidModule(Module):
         self.detections_stream().subscribe(self.ingress)
 
     def ingress(self, imageDetections: ImageDetections2D):
-        if not self.associator or not self.embedding_model:
-            print("No embedding model or associator configured")
-            return
-
-        track_ids = []
-
-        # Update embeddings for all detections
-        for detection in imageDetections:
-            embedding = self.embedding_model.embed(detection.cropped_image(padding=0))
-            # embed() with single image returns single Embedding
-            assert not isinstance(embedding, list), "Expected single embedding"
-            self.associator.update_embedding(detection.track_id, embedding)
-            track_ids.append(detection.track_id)
-
-        # Record negative constraints (co-occurrence = different objects)
-        self.associator.add_negative_constraints(track_ids)
-
-        # Associate and create annotations
         text_annotations = []
+
         for detection in imageDetections:
-            long_term_id = self.associator.associate(detection.track_id)
+            # Register detection and get long-term ID
+            long_term_id = self.idsystem.register_detection(detection)
             print(
                 f"track_id={detection.track_id} -> long_term_id={long_term_id} "
                 f"({detection.name}, conf={detection.confidence:.2f})"
