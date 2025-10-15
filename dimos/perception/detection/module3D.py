@@ -123,6 +123,10 @@ class Detection3DModule(Detection2DModule):
 
         self.detection_stream_3d.subscribe(self._publish_detections)
 
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
     def _publish_detections(self, detections: ImageDetections3DPC):
         if not detections:
             return

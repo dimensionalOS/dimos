@@ -118,7 +118,7 @@ human-cli = "dimos.agents2.cli.human_cli:main"
 
 [project.optional-dependencies]
 manipulation = [
-    
+
     # Contact Graspnet Dependencies
     "h5py>=3.7.0",
     "pyrender>=0.1.45",
@@ -131,13 +131,17 @@ manipulation = [
     "tqdm>=4.65.0",
     "pyyaml>=6.0",
     "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
-    
+
     # piper arm
     "piper-sdk",
-    
+
     # Visualization (Optional)
     "kaleido>=0.2.1",
     "plotly>=5.9.0",
+]
+
+openclip = [
+    "open_clip_torch>=3.0.0",
 ]
 
 cpu = [

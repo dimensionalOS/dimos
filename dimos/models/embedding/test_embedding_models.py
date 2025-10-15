@@ -16,16 +16,34 @@ import numpy as np
 import pytest
 
 from dimos.models.embedding.clip import CLIPModel
-from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.models.embedding.treid import TorchReIDModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
+# Try to import MobileCLIP, skip if not available
+try:
+    from dimos.models.embedding.mobileclip import MobileCLIPModel
 
-@pytest.fixture(scope="session", params=["mobileclip", "clip", "treid"])
+    HAS_OPENCLIP = True
+except ImportError:
+    HAS_OPENCLIP = False
+    MobileCLIPModel = None
+
+
+def _get_test_params():
+    """Get test parameters based on available packages."""
+    params = ["clip", "treid"]
+    if HAS_OPENCLIP:
+        params.insert(0, "mobileclip")
+    return params
+
+
+@pytest.fixture(scope="session", params=_get_test_params())
 def embedding_model(request):
     """Load embedding model once for all tests. Parametrized for different models."""
     if request.param == "mobileclip":
+        if not HAS_OPENCLIP:
+            pytest.skip("open_clip_torch not installed. Install with: pip install dimos[openclip]")
         model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
         model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
     elif request.param == "clip":

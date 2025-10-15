@@ -88,6 +88,10 @@ class PersonTracker(Module):
     def start(self):
         self.detections_stream().subscribe(self.track)
 
+    @rpc
+    def stop(self):
+        super().stop()
+
     def track(self, detections2D: ImageDetections2D):
         if len(detections2D) == 0:
             return

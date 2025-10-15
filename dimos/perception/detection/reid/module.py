@@ -66,6 +66,10 @@ class ReidModule(Module):
     def start(self):
         self.detections_stream().subscribe(self.ingress)
 
+    @rpc
+    def stop(self):
+        super().stop()
+
     def ingress(self, imageDetections: ImageDetections2D):
         text_annotations = []
 
