@@ -14,7 +14,13 @@
 
 from pathlib import Path
 
-import open_clip
+try:
+    import open_clip
+
+    OPEN_CLIP_AVAILABLE = True
+except ImportError:
+    OPEN_CLIP_AVAILABLE = False
+
 import torch
 import torch.nn.functional as F
 from PIL import Image as PILImage
@@ -45,6 +51,12 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
             device: Device to run on (cuda/cpu), auto-detects if None
             normalize: Whether to L2 normalize embeddings
         """
+        if not OPEN_CLIP_AVAILABLE:
+            raise ImportError(
+                "open_clip is required for MobileCLIPModel. "
+                "Install it with: pip install open-clip-torch"
+            )
+
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.normalize = normalize
 

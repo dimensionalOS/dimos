@@ -1,6 +1,5 @@
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.models.embedding.clip import CLIPEmbedding, CLIPModel
-from dimos.models.embedding.mobileclip import MobileCLIPEmbedding, MobileCLIPModel
 from dimos.models.embedding.treid import TorchReIDEmbedding, TorchReIDModel
 
 __all__ = [
@@ -8,8 +7,14 @@ __all__ = [
     "EmbeddingModel",
     "CLIPEmbedding",
     "CLIPModel",
-    "MobileCLIPEmbedding",
-    "MobileCLIPModel",
     "TorchReIDEmbedding",
     "TorchReIDModel",
 ]
+
+# Optional: MobileCLIP (requires open-clip-torch)
+try:
+    from dimos.models.embedding.mobileclip import MobileCLIPEmbedding, MobileCLIPModel
+
+    __all__.extend(["MobileCLIPEmbedding", "MobileCLIPModel"])
+except ImportError:
+    pass
