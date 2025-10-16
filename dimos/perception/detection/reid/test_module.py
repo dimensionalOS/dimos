@@ -22,7 +22,10 @@ from dimos.perception.detection.reid.module import ReidModule
 
 @pytest.mark.tool
 def test_reid_ingress(imageDetections2d):
-    from dimos.models.embedding import TorchReIDModel
+    try:
+        from dimos.models.embedding import TorchReIDModel
+    except Exception:
+        pytest.skip("TorchReIDModel not available")
 
     # Create TorchReID-based IDSystem for testing
     reid_model = TorchReIDModel(model_name="osnet_x1_0")
