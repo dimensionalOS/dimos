@@ -23,6 +23,7 @@ import os
 import time
 
 from dimos import core
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
@@ -30,9 +31,6 @@ from dimos.agents2.spec import Model, Provider
 from dimos.core import In, Module, Out, rpc
 from dimos.core.dimos import Dimos
 from dimos.core.resource import Resource
-from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import CameraModule
-from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -44,6 +42,7 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -88,6 +87,8 @@ class G1ConnectionModule(Module):
     odom_in: In[Odometry] = None
 
     odom_pose: Out[PoseStamped] = None
+    color_image: Out[Image] = None
+    camera_info: Out[CameraInfo] = None
     ip: str
     connection_type: str = "webrtc"
 
@@ -111,6 +112,10 @@ class G1ConnectionModule(Module):
         unsub = self.odom_in.subscribe(self._publish_odom_pose)
         self._disposables.add(Disposable(unsub))
 
+        # Subscribe to video stream
+        unsub = self.connection.video_stream().subscribe(self._on_video)
+        self._disposables.add(unsub)
+
     @rpc
     def stop(self) -> None:
         self.connection.stop()
@@ -131,6 +136,17 @@ class G1ConnectionModule(Module):
         """Send movement command to robot."""
         twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
         self.connection.move(twist, duration)
+
+    def _on_video(self, msg: Image):
+        """Handle incoming video frames."""
+        self.color_image.publish(msg)
+
+        # Publish camera info (you might want to load this from params)
+        # For now, just publish a basic camera info
+        timestamp = msg.ts if msg.ts else time.time()
+        camera_info_msg = CameraInfo()
+        camera_info_msg.header = Header(timestamp, "camera_link")
+        self.camera_info.publish(camera_info_msg)
 
     @rpc
     def publish_request(self, topic: str, data: dict):
@@ -333,30 +349,14 @@ class UnitreeG1(Robot, Resource):
         self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
         self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)
         self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
+        self.connection.color_image.transport = core.pSHMTransport(
+            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
+        self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
 
     def _deploy_camera(self):
-        """Deploy and configure a standard webcam module."""
-        logger.info("Deploying standard webcam module...")
-
-        self.camera = self._dimos.deploy(
-            CameraModule,
-            transform=Transform(
-                translation=Vector3(0.05, 0.0, 0.0),
-                rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
-                frame_id="sensor",
-                child_frame_id="camera_link",
-            ),
-            hardware=lambda: Webcam(
-                camera_index=0,
-                frequency=15,
-                stereo_slice="left",
-                camera_info=zed.CameraInfo.SingleWebcam,
-            ),
-        )
-
-        self.camera.image.transport = core.LCMTransport("/image", Image)
-        self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
-        logger.info("Webcam module configured")
+        """Camera is now handled by G1ConnectionModule."""
+        logger.info("Camera stream handled by G1ConnectionModule")
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
@@ -369,8 +369,7 @@ class UnitreeG1(Robot, Resource):
         # Deploy Foxglove bridge
         self.foxglove_bridge = FoxgloveBridge(
             shm_channels=[
-                "/zed/color_image#sensor_msgs.Image",
-                "/zed/depth_image#sensor_msgs.Image",
+                "/go2/color_image#sensor_msgs.Image",
             ]
         )
         self.foxglove_bridge.start()
@@ -384,7 +383,7 @@ class UnitreeG1(Robot, Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.color_image.connect(self.camera.image)
+        self.spatial_memory_module.color_image.connect(self.connection.color_image)
         self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
