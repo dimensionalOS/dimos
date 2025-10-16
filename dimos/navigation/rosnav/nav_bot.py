@@ -285,7 +285,7 @@ class ROSNavigationModule(ROSNav):
                 return self.goal_reach
             time.sleep(0.1)
 
-        self.stop()
+        self.stop_navigation()
         logger.warning(f"Navigation timed out after {timeout} seconds")
         return False
 
