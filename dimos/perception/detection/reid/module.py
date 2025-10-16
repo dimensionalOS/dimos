@@ -45,9 +45,14 @@ class ReidModule(Module):
     def __init__(self, idsystem: IDSystem | None = None, **kwargs):
         super().__init__(**kwargs)
         if idsystem is None:
-            from dimos.models.embedding import TorchReIDModel
+            try:
+                from dimos.models.embedding import TorchReIDModel
 
-            idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
+                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
+            except Exception as e:
+                raise RuntimeError(
+                    "TorchReIDModel not available. Please install with: pip install dimos[torchreid]"
+                ) from e
 
         self.idsystem = idsystem
 
