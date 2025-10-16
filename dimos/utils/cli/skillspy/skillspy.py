@@ -113,22 +113,22 @@ class AgentSpyApp(App):
 
     CSS_PATH = theme.CSS_PATH
 
-    CSS = """
-    Screen {
+    CSS = f"""
+    Screen {{
         layout: vertical;
-        background: black;
-    }
-    DataTable {
+        background: {theme.BACKGROUND};
+    }}
+    DataTable {{
         height: 100%;
         border: solid $border;
-        background: black;
-    }
-    DataTable > .datatable--header {
+        background: {theme.BACKGROUND};
+    }}
+    DataTable > .datatable--header {{
         background: transparent;
-    }
-    Footer {
+    }}
+    Footer {{
         background: transparent;
-    }
+    }}
     """
 
     BINDINGS = [
@@ -244,11 +244,11 @@ class AgentSpyApp(App):
             # Add row with colored state
             self.table.add_row(
                 Text(display_call_id, style=theme.BRIGHT_BLUE),
-                Text(skill_state.name, style=theme.FOREGROUND),
+                Text(skill_state.name, style=theme.YELLOW),
                 Text(skill_state.state.name, style=state_color(skill_state.state)),
-                Text(duration_str, style=theme.DIM),
-                Text(str(msg_count), style=theme.DIM),
-                Text(details, style=theme.DIM),
+                Text(duration_str, style=theme.WHITE),
+                Text(str(msg_count), style=theme.YELLOW),
+                Text(details, style=theme.FOREGROUND),
             )
 
     def action_clear(self):

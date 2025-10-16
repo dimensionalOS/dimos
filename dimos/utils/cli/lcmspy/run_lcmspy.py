@@ -66,6 +66,7 @@ class LCMSpyApp(App):
     CSS = f"""
     Screen {{
         layout: vertical;
+        background: {theme.BACKGROUND};
     }}
     DataTable {{
         height: 2fr;

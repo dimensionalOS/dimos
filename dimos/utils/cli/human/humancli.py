@@ -52,14 +52,18 @@ class HumanCLIApp(App):
 
     CSS_PATH = theme.CSS_PATH
 
-    CSS = """
-    #chat-container {
-        height: 1fr;
-    }
+    CSS = f"""
+    Screen {{
+        background: {theme.BACKGROUND};
+    }}
 
-    Input {
+    #chat-container {{
+        height: 1fr;
+    }}
+
+    Input {{
         dock: bottom;
-    }
+    }}
     """
 
     BINDINGS = [
