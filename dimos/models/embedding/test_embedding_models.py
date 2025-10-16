@@ -16,7 +16,6 @@ import numpy as np
 import pytest
 
 from dimos.models.embedding.clip import CLIPModel
-from dimos.models.embedding.treid import TorchReIDModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
@@ -29,12 +28,23 @@ except ImportError:
     HAS_OPENCLIP = False
     MobileCLIPModel = None
 
+# Try to import MobileCLIP, skip if not available
+try:
+    from dimos.models.embedding.treid import TorchReIDModel
+
+    HAS_TORCHREID = True
+except ImportError:
+    HAS_TORCHREID = False
+    TorchReIDModel = None
+
 
 def _get_test_params():
     """Get test parameters based on available packages."""
-    params = ["clip", "treid"]
+    params = ["clip"]
     if HAS_OPENCLIP:
-        params.insert(0, "mobileclip")
+        params.append("mobileclip")
+    if HAS_TORCHREID:
+        params.append("treid")
     return params
 
 

@@ -21,7 +21,6 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos.core import In, Module, ModuleConfig, Out, rpc
-from dimos.models.embedding import TorchReIDModel
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -46,6 +45,8 @@ class ReidModule(Module):
     def __init__(self, idsystem: IDSystem | None = None, **kwargs):
         super().__init__(**kwargs)
         if idsystem is None:
+            from dimos.models.embedding import TorchReIDModel
+
             idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
 
         self.idsystem = idsystem
