@@ -46,6 +46,11 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
             device: Device to run on (cuda/cpu), auto-detects if None
             normalize: Whether to L2 normalize embeddings
         """
+        if not TORCHREID_AVAILABLE:
+            raise ImportError(
+                "torchreid is required for TorchReIDModel. Install it with: pip install torchreid"
+            )
+
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.normalize = normalize
 

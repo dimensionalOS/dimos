@@ -14,13 +14,7 @@
 
 from pathlib import Path
 
-try:
-    import open_clip
-
-    OPEN_CLIP_AVAILABLE = True
-except ImportError:
-    OPEN_CLIP_AVAILABLE = False
-
+import open_clip
 import torch
 import torch.nn.functional as F
 from PIL import Image as PILImage

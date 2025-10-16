@@ -15,7 +15,6 @@
 import pytest
 import torch
 
-from dimos.models.embedding.mobileclip import MobileCLIPModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.reid.embedding_id_system import EmbeddingIDSystem
 from dimos.utils.data import get_data
@@ -24,6 +23,8 @@ from dimos.utils.data import get_data
 @pytest.fixture(scope="session")
 def mobileclip_model():
     """Load MobileCLIP model once for all tests."""
+    from dimos.models.embedding.mobileclip import MobileCLIPModel
+
     model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
     model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
     model.warmup()
