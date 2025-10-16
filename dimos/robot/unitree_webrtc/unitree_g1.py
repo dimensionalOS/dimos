@@ -275,10 +275,10 @@ class UnitreeG1(Robot, Resource):
         self.nav.start()
 
         self._deploy_camera()
-        self._deploy_detection(self.nav.go_to)
+        # self._deploy_detection(self.nav.go_to)
 
-        if self.enable_perception:
-            self._deploy_perception()
+        # if self.enable_perception:
+        #     self._deploy_perception()
 
         self.lcm.start()
 
@@ -298,8 +298,8 @@ class UnitreeG1(Robot, Resource):
         human_input = self._dimos.deploy(HumanInput)
         agent.register_skills(human_input)
 
-        if self.enable_perception:
-            agent.register_skills(self.detection)
+        # if self.enable_perception:
+        #     agent.register_skills(self.detection)
 
         # Register ROS navigation
         self._ros_nav = RosNavigation(self)
@@ -361,8 +361,8 @@ class UnitreeG1(Robot, Resource):
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
         # Deploy WebSocket visualization module
-        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        # self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        # self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
         # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
 
