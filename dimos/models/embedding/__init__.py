@@ -1,7 +1,6 @@
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.models.embedding.clip import CLIPEmbedding, CLIPModel
 from dimos.models.embedding.mobileclip import MobileCLIPEmbedding, MobileCLIPModel
-from dimos.models.embedding.treid import TorchReIDEmbedding, TorchReIDModel
 
 __all__ = [
     "Embedding",
@@ -10,6 +9,12 @@ __all__ = [
     "CLIPModel",
     "MobileCLIPEmbedding",
     "MobileCLIPModel",
-    "TorchReIDEmbedding",
-    "TorchReIDModel",
 ]
+
+# Optional: TorchReID support (requires torchreid package)
+try:
+    from dimos.models.embedding.treid import TorchReIDEmbedding, TorchReIDModel
+
+    __all__.extend(["TorchReIDEmbedding", "TorchReIDModel"])
+except ImportError:
+    pass
