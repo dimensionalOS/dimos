@@ -666,3 +666,5 @@ class SpatialMemory(Module):
 
 
 spatial_memory = partial(create_module_blueprint, SpatialMemory)
+
+__all__ = ["SpatialMemory", "spatial_memory"]

@@ -244,9 +244,3 @@ class SkillContainer:
         if self._skill_transport is None:
             self._skill_transport = self.skill_transport_class()
         return self._skill_transport
-
-    def __getstate__(self):
-        pass
-
-    def __setstate__(self, _state):
-        pass

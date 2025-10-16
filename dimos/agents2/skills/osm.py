@@ -19,6 +19,7 @@ from dimos.core.blueprints import create_module_blueprint
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RPCClient, RpcCall
+from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
 from dimos.mapping.utils.distance import distance_in_meters
@@ -31,7 +32,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(__file__)
 
 
-class OsmSkill(Module):
+class OsmSkill(SkillModule):
     _latest_location: Optional[LatLon]
     _current_location_map: CurrentLocationMap
     _skill_started: bool
@@ -85,10 +86,7 @@ class OsmSkill(Module):
 
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
 
-    @rpc
-    def set_AutoLlmAgent_register_skills(self, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)
-        callable(RPCClient(self, self.__class__))
-
 
 osm_skill = partial(create_module_blueprint, OsmSkill)
+
+__all__ = ["OsmSkill", "osm_skill"]

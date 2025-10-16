@@ -627,3 +627,5 @@ class ObjectTracking(Module):
 
 
 object_tracking = partial(create_module_blueprint, ObjectTracking)
+
+__all__ = ["ObjectTracking", "object_tracking"]

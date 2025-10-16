@@ -30,6 +30,7 @@ from langchain_core.messages import (
 )
 
 from dimos.agents2.spec import AgentSpec
+from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import rpc
 from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.sensor_msgs import Image
@@ -180,6 +181,8 @@ class Agent(AgentSpec):
             else:
                 self.config.system_prompt.content += SYSTEM_MSG_APPEND
                 self.system_message = self.config.system_prompt
+        else:
+            self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
 
         self.publish(self.system_message)
 
@@ -265,6 +268,7 @@ class Agent(AgentSpec):
                 # we are getting tools from the coordinator on each turn
                 # since this allows for skillcontainers to dynamically provide new skills
                 tools = self.get_tools()
+                print("Available tools:", [tool.name for tool in tools])
                 self._llm = self._llm.bind_tools(tools)
 
                 # publish to /agent topic for observability
@@ -356,4 +360,18 @@ class Agent(AgentSpec):
             json.dump(history, f, default=lambda x: repr(x), indent=2)
 
 
-agent = partial(create_module_blueprint, Agent)
+class LlmAgent(Agent):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.loop_thread()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+llm_agent = partial(create_module_blueprint, LlmAgent)
+
+
+__all__ = ["Agent", "llm_agent"]

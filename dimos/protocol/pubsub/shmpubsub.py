@@ -206,32 +206,6 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
         return _unsub
 
-    # Optional utility like in LCMPubSubBase
-    def wait_for_message(self, topic: str, timeout: float = 1.0) -> Any:
-        """Wait once; if an encoder mixin is present, returned value is decoded."""
-        received: Any = None
-        evt = threading.Event()
-
-        def _handler(msg: bytes, _topic: str):
-            nonlocal received
-            try:
-                if hasattr(self, "decode"):  # provided by encoder mixin
-                    received = self.decode(msg, topic)  # type: ignore[misc]
-                else:
-                    received = msg
-            finally:
-                evt.set()
-
-        unsub = self.subscribe(topic, _handler)
-        try:
-            evt.wait(timeout)
-            return received
-        finally:
-            try:
-                unsub()
-            except Exception:
-                pass
-
     # ----- Capacity mgmt ----------------------------------------------------
 
     def reconfigure(self, topic: str, *, capacity: int) -> dict:

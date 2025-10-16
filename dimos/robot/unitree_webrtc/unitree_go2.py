@@ -597,10 +597,6 @@ class UnitreeGo2(UnitreeRobot, Resource):
                 self.skill_library.init()
                 self.skill_library.initialize_skills()
 
-    def get_single_rgb_frame(self, timeout: float = 2.0) -> Image:
-        topic = Topic("/go2/color_image", Image)
-        return self.lcm.wait_for_message(topic, timeout=timeout)
-
     def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
         self.connection.move(twist, duration)
@@ -708,3 +704,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+__all__ = ["ConnectionModule", "connection", "UnitreeGo2", "ReplayRTC"]

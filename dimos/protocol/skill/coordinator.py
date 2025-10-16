@@ -361,7 +361,6 @@ class SkillCoordinator(Module):
     ) -> None:
         if not call_id:
             call_id = str(time.time())
-        print(f"Calling skill {skill_name} with call_id {call_id} and args {args}")
         skill_config = self.get_skill_config(skill_name)
         if not skill_config:
             logger.error(

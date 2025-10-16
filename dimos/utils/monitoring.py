@@ -189,6 +189,9 @@ class UtilizationModule(Module):
 utilization = partial(create_module_blueprint, UtilizationModule)
 
 
+__all__ = ["UtilizationModule", "utilization"]
+
+
 def _can_use_py_spy():
     try:
         with open("/proc/sys/kernel/yama/ptrace_scope") as f:

@@ -358,3 +358,5 @@ class BehaviorTreeNavigator(Module):
 
 
 behavior_tree_navigator = partial(create_module_blueprint, BehaviorTreeNavigator)
+
+__all__ = ["BehaviorTreeNavigator", "behavior_tree_navigator"]

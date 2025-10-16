@@ -292,3 +292,5 @@ class WebsocketVisModule(Module):
 
 
 websocket_vis = partial(create_module_blueprint, WebsocketVisModule)
+
+__all__ = ["WebsocketVisModule", "websocket_vis"]

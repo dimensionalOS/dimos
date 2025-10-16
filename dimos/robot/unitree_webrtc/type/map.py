@@ -23,6 +23,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.blueprints import create_module_blueprint
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -43,6 +44,7 @@ class Map(Module):
         global_publish_interval: Optional[float] = None,
         min_height: float = 0.15,
         max_height: float = 0.6,
+        global_config: GlobalConfig | None = None,
         **kwargs,
     ):
         self.voxel_size = voxel_size
@@ -50,6 +52,11 @@ class Map(Module):
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height
         self.max_height = max_height
+
+        if global_config:
+            if global_config.use_simulation:
+                self.min_height = 0.3
+
         super().__init__(**kwargs)
 
     @rpc
@@ -164,3 +171,6 @@ def splice_cylinder(
 
 
 mapper = partial(create_module_blueprint, Map)
+
+
+__all__ = ["Map", "mapper"]

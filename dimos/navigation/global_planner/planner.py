@@ -221,3 +221,5 @@ class AstarPlanner(Module):
 
 
 astar_planner = partial(create_module_blueprint, AstarPlanner)
+
+__all__ = ["AstarPlanner", "astar_planner"]

@@ -288,7 +288,7 @@ def get_all_module_subclasses():
     filtered_results = []
     for class_name, filepath, has_start, has_stop, forbidden_methods in results:
         # Skip base module classes themselves
-        if class_name in ("Module", "ModuleBase", "DaskModule"):
+        if class_name in ("Module", "ModuleBase", "DaskModule", "SkillModule"):
             continue
 
         # Skip test-only modules (those defined in test_ files)

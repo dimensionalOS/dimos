@@ -70,3 +70,6 @@ class FoxgloveBridge(Module):
 
 
 foxglove_bridge = partial(create_module_blueprint, FoxgloveBridge)
+
+
+__all__ = ["FoxgloveBridge", "foxglove_bridge"]

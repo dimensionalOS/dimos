@@ -111,3 +111,5 @@ class Detection2DModule(Module):
 
 
 detection_2d = partial(create_module_blueprint, Detection2DModule)
+
+__all__ = ["Detection2DModule", "detection_2d"]

@@ -38,15 +38,15 @@ from dimos.navigation.frontier_exploration import (
 from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.depth_module import depth_module
 from dimos.perception.object_tracker import object_tracking
+from dimos.agents2.agent import llm_agent
+from dimos.agents2.cli.human import human_input
+from dimos.agents2.skills.navigation import navigation_skill
 
-
-min_height = 0.3  # if self.connection_type == "mujoco" else 0.15
-gt_depth_scale = 1.0  # if self.connection_type == "mujoco" else 0.5
 
 basic = (
     autoconnect(
         connection(),
-        mapper(voxel_size=0.5, global_publish_interval=2.5, min_height=min_height),
+        mapper(voxel_size=0.5, global_publish_interval=2.5),
         astar_planner(),
         holonomic_local_planner(),
         behavior_tree_navigator(),
@@ -71,7 +71,7 @@ standard = (
         basic,
         spatial_memory(),
         object_tracking(frame_id="camera_link"),
-        depth_module(gt_depth_scale=gt_depth_scale),
+        depth_module(),
         utilization(),
     )
     .with_global_config(n_dask_workers=8)
@@ -99,4 +99,11 @@ standard_with_shm = autoconnect(
             "/go2/depth_image#sensor_msgs.Image",
         ]
     ),
+)
+
+agentic = autoconnect(
+    standard,
+    llm_agent(),
+    human_input(),
+    navigation_skill(),
 )

@@ -17,7 +17,7 @@ from functools import partial
 from dotenv import load_dotenv
 from reactivex import interval
 
-from dimos.agents2 import agent
+from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.osm import osm_skill
 from dimos.agents2.system_prompt import get_system_prompt
@@ -25,20 +25,8 @@ from dimos.core.blueprints import autoconnect, create_module_blueprint
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.mapping.types import LatLon
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger(__file__)
 
 load_dotenv()
-
-
-class AutoLlmAgent(agent.Agent):
-    def start(self) -> None:
-        super().start()
-        self.loop_thread()
-
-
-auto_llm_agent = partial(create_module_blueprint, AutoLlmAgent)
 
 
 class DemoRobot(Module):
@@ -62,5 +50,5 @@ demo_osm = autoconnect(
     demo_robot(),
     osm_skill(),
     human_input(),
-    auto_llm_agent(system_prompt=get_system_prompt()),
+    llm_agent(system_prompt=get_system_prompt()),
 )

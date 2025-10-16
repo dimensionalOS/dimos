@@ -820,3 +820,5 @@ class WavefrontFrontierExplorer(Module):
 
 
 wavefront_frontier_explorer = partial(create_module_blueprint, WavefrontFrontierExplorer)
+
+__all__ = ["WavefrontFrontierExplorer", "wavefront_frontier_explorer"]

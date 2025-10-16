@@ -265,3 +265,5 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
 
 
 holonomic_local_planner = partial(create_module_blueprint, HolonomicLocalPlanner)
+
+__all__ = ["HolonomicLocalPlanner", "holonomic_local_planner"]

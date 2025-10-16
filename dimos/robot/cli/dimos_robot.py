@@ -18,8 +18,9 @@ from typing import Optional, get_args, get_origin
 
 import typer
 
+from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
-from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name
+from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 from dimos.protocol import pubsub
 
 
@@ -98,11 +99,19 @@ main.callback()(create_dynamic_callback())
 def run(
     ctx: typer.Context,
     robot_type: RobotType = typer.Argument(..., help="Type of robot to run"),
+    extra_modules: list[str] = typer.Option(
+        [], "--extra-module", help="Extra modules to add to the blueprint"
+    ),
 ):
     """Run the robot with the specified configuration."""
     config: GlobalConfig = ctx.obj
     pubsub.lcm.autoconf()
     blueprint = get_blueprint_by_name(robot_type.value)
+
+    if extra_modules:
+        loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]
+        blueprint = autoconnect(blueprint, *loaded_modules)
+
     dimos = blueprint.build(global_config=config)
     dimos.wait_until_shutdown()
 
