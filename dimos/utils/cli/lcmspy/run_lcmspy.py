@@ -73,6 +73,7 @@ class LCMSpyApp(App):
         width: 1fr;
         border: solid {theme.BORDER};
         background: {theme.BG};
+        scrollbar-size: 0 0;
     }}
     DataTable > .datatable--header {{
         color: {theme.ACCENT};

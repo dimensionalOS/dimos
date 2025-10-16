@@ -61,6 +61,10 @@ class HumanCLIApp(App):
         height: 1fr;
     }}
 
+    RichLog {{
+        scrollbar-size: 0 0;
+    }}
+
     Input {{
         dock: bottom;
     }}
