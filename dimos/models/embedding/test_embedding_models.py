@@ -15,9 +15,6 @@
 import numpy as np
 import pytest
 
-from dimos.models.embedding.clip import CLIPModel
-from dimos.models.embedding.mobileclip import MobileCLIPModel
-from dimos.models.embedding.treid import TorchReIDModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
@@ -26,11 +23,17 @@ from dimos.utils.data import get_data
 def embedding_model(request):
     """Load embedding model once for all tests. Parametrized for different models."""
     if request.param == "mobileclip":
+        from dimos.models.embedding.mobileclip import MobileCLIPModel
+
         model_path = get_data("models_mobileclip") / "mobileclip2_s0.pt"
         model = MobileCLIPModel(model_name="MobileCLIP2-S0", model_path=model_path)
     elif request.param == "clip":
+        from dimos.models.embedding.clip import CLIPModel
+
         model = CLIPModel(model_name="openai/clip-vit-base-patch32")
     elif request.param == "treid":
+        from dimos.models.embedding.treid import TorchReIDModel
+
         model = TorchReIDModel(model_name="osnet_x1_0")
     else:
         raise ValueError(f"Unknown model: {request.param}")
@@ -93,8 +96,8 @@ def test_single_text_embedding(embedding_model):
     """Test embedding a single text string."""
     import torch
 
-    if isinstance(embedding_model, TorchReIDModel):
-        pytest.skip("TorchReID does not support text embeddings")
+    if not hasattr(embedding_model, "embed_text"):
+        pytest.skip("Model does not support text embeddings")
 
     embedding = embedding_model.embed_text("a cafe")
 
@@ -118,8 +121,8 @@ def test_batch_text_embedding(embedding_model):
     """Test embedding multiple text strings at once."""
     import torch
 
-    if isinstance(embedding_model, TorchReIDModel):
-        pytest.skip("TorchReID does not support text embeddings")
+    if not hasattr(embedding_model, "embed_text"):
+        pytest.skip("Model does not support text embeddings")
 
     embeddings = embedding_model.embed_text("a cafe", "a person", "a dog")
 
@@ -136,8 +139,8 @@ def test_batch_text_embedding(embedding_model):
 @pytest.mark.heavy
 def test_text_image_similarity(embedding_model, test_image):
     """Test cross-modal text-image similarity using @ operator."""
-    if isinstance(embedding_model, TorchReIDModel):
-        pytest.skip("TorchReID does not support text embeddings")
+    if not hasattr(embedding_model, "embed_text"):
+        pytest.skip("Model does not support text embeddings")
 
     img_embedding = embedding_model.embed(test_image)
 
@@ -179,8 +182,8 @@ def test_cosine_distance(embedding_model, test_image):
 @pytest.mark.heavy
 def test_query_functionality(embedding_model, test_image):
     """Test query method for top-k retrieval."""
-    if isinstance(embedding_model, TorchReIDModel):
-        pytest.skip("TorchReID does not support text embeddings")
+    if not hasattr(embedding_model, "embed_text"):
+        pytest.skip("Model does not support text embeddings")
 
     # Create a query and some candidates
     query_text = embedding_model.embed_text("a cafe")
@@ -254,8 +257,8 @@ def test_compare_many_to_many(embedding_model):
     """Test GPU-accelerated many-to-many comparison."""
     import torch
 
-    if isinstance(embedding_model, TorchReIDModel):
-        pytest.skip("TorchReID does not support text embeddings")
+    if not hasattr(embedding_model, "embed_text"):
+        pytest.skip("Model does not support text embeddings")
 
     # Create queries and candidates
     queries = embedding_model.embed_text("a cafe", "a person")
@@ -367,8 +370,8 @@ def test_embedding_performance(embedding_model):
     assert all(e.vector is not None for e in batch_embeddings)
 
     # Sanity check: verify embeddings are meaningful by testing text-image similarity
-    # Skip for TorchReID since it doesn't support text embeddings
-    if not isinstance(embedding_model, TorchReIDModel):
+    # Skip for models that don't support text embeddings
+    if hasattr(embedding_model, "embed_text"):
         print("\n" + "=" * 60)
         print("Sanity Check: Text-Image Similarity on First Frame")
         print("=" * 60)
