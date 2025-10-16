@@ -46,7 +46,8 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
+
+# from dimos.perception.detection2d.moduleDB import ObjectDBModule
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
@@ -301,35 +302,35 @@ class UnitreeG1(Robot, Resource):
         # Setup agent with G1 skills
         logger.info("Setting up agent with G1 skills...")
 
-        agent = Agent(
-            system_prompt="You are a helpful assistant controlling a Unitree G1 humanoid robot. You can control the robot's arms, movement modes, and navigation.",
-            model=Model.GPT_4O,
-            provider=Provider.OPENAI,
-        )
+        # agent = Agent(
+        #     system_prompt="You are a helpful assistant controlling a Unitree G1 humanoid robot. You can control the robot's arms, movement modes, and navigation.",
+        #     model=Model.GPT_4O,
+        #     provider=Provider.OPENAI,
+        # )
 
         # Register G1-specific skill container
-        g1_skills = UnitreeG1SkillContainer(robot=self)
-        agent.register_skills(g1_skills)
+        # g1_skills = UnitreeG1SkillContainer(robot=self)
+        # agent.register_skills(g1_skills)
 
-        human_input = self._dimos.deploy(HumanInput)
-        agent.register_skills(human_input)
+        # human_input = self._dimos.deploy(HumanInput)
+        # agent.register_skills(human_input)
 
-        # if self.enable_perception:
-        #     agent.register_skills(self.detection)
+        # # if self.enable_perception:
+        # #     agent.register_skills(self.detection)
 
-        # Register ROS navigation
-        self._ros_nav = RosNavigation(self)
-        self._ros_nav.start()
-        agent.register_skills(self._ros_nav)
+        # # Register ROS navigation
+        # self._ros_nav = RosNavigation(self)
+        # self._ros_nav.start()
+        # agent.register_skills(self._ros_nav)
 
-        agent.run_implicit_skill("human")
-        agent.start()
+        # agent.run_implicit_skill("human")
+        # agent.start()
 
-        # For logging
-        skills = [tool.name for tool in agent.get_tools()]
-        logger.info(f"Agent configured with {len(skills)} skills: {', '.join(skills)}")
+        # # For logging
+        # skills = [tool.name for tool in agent.get_tools()]
+        # logger.info(f"Agent configured with {len(skills)} skills: {', '.join(skills)}")
 
-        agent.loop_thread()
+        # agent.loop_thread()
 
         logger.info("UnitreeG1 initialized and started")
         logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
