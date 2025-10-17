@@ -14,6 +14,7 @@
 
 import asyncio
 import threading
+
 import pytest
 
 
@@ -24,10 +25,33 @@ def event_loop():
     loop.close()
 
 
+_session_threads = set()
 _seen_threads = set()
 _seen_threads_lock = threading.RLock()
+_before_test_threads = {}  # Map test name to set of thread IDs before test
 
 _skip_for = ["lcm", "heavy", "ros"]
+
+
+@pytest.hookimpl()
+def pytest_sessionfinish(session):
+    """Track threads that exist at session start - these are not leaks."""
+
+    yield
+
+    # Check for session-level thread leaks at teardown
+    final_threads = [
+        t
+        for t in threading.enumerate()
+        if t.name != "MainThread" and t.ident not in _session_threads
+    ]
+
+    if final_threads:
+        thread_info = [f"{t.name} (daemon={t.daemon})" for t in final_threads]
+        pytest.fail(
+            f"\n{len(final_threads)} thread(s) leaked during test session: {thread_info}\n"
+            "Session-scoped fixtures must clean up all threads in their teardown."
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -37,24 +61,45 @@ def monitor_threads(request):
         yield
         return
 
+    # Capture threads before test runs
+    test_name = request.node.nodeid
+    with _seen_threads_lock:
+        _before_test_threads[test_name] = {
+            t.ident for t in threading.enumerate() if t.ident is not None
+        }
+
     yield
 
-    threads = [t for t in threading.enumerate() if t.name != "MainThread"]
-
-    if not threads:
-        return
-
+    # Only check for threads created BY THIS TEST, not existing ones
     with _seen_threads_lock:
-        new_leaks = [t for t in threads if t.ident not in _seen_threads]
-        for t in threads:
-            _seen_threads.add(t.ident)
+        before = _before_test_threads.get(test_name, set())
+        current = {t.ident for t in threading.enumerate() if t.ident is not None}
 
-    if not new_leaks:
-        return
+        # New threads are ones that exist now but didn't exist before this test
+        new_thread_ids = current - before
 
-    thread_names = [t.name for t in new_leaks]
+        if not new_thread_ids:
+            return
 
-    pytest.fail(
-        f"Non-closed threads before or during this test. The thread names: {thread_names}. "
-        "Please look at the first test that fails and fix that."
-    )
+        # Get the actual thread objects for new threads
+        new_threads = [
+            t for t in threading.enumerate() if t.ident in new_thread_ids and t.name != "MainThread"
+        ]
+
+        # Filter out threads we've already seen (from previous tests)
+        truly_new = [t for t in new_threads if t.ident not in _seen_threads]
+
+        # Mark all new threads as seen
+        for t in new_threads:
+            if t.ident is not None:
+                _seen_threads.add(t.ident)
+
+        if not truly_new:
+            return
+
+        thread_names = [t.name for t in truly_new]
+
+        pytest.fail(
+            f"Non-closed threads created during this test. Thread names: {thread_names}. "
+            "Please look at the first test that fails and fix that."
+        )

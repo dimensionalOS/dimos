@@ -22,12 +22,11 @@ from typing import Callable, Dict, Optional
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
-from textual.reactive import reactive
-from textual.widgets import DataTable, Footer, RichLog
+from textual.widgets import DataTable, Footer
 
 from dimos.protocol.skill.comms import SkillMsg
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
+from dimos.utils.cli import theme
 
 
 class AgentSpy:
@@ -38,9 +37,11 @@ class AgentSpy:
         self.message_callbacks: list[Callable[[Dict[str, SkillState]], None]] = []
         self._lock = threading.Lock()
         self._latest_state: Dict[str, SkillState] = {}
+        self._running = False
 
     def start(self):
         """Start spying on agent messages."""
+        self._running = True
         # Start the agent interface
         self.agent_interface.start()
 
@@ -49,14 +50,21 @@ class AgentSpy:
 
     def stop(self):
         """Stop spying."""
+        self._running = False
+        # Give threads a moment to finish processing
+        time.sleep(0.2)
         self.agent_interface.stop()
 
     def _handle_message(self, msg: SkillMsg):
         """Handle incoming skill messages."""
+        if not self._running:
+            return
 
         # Small delay to ensure agent_interface has processed the message
         def delayed_update():
             time.sleep(0.1)
+            if not self._running:
+                return
             with self._lock:
                 self._latest_state = self.agent_interface.generate_snapshot(clear=False)
                 for callback in self.message_callbacks:
@@ -78,14 +86,14 @@ class AgentSpy:
 def state_color(state: SkillStateEnum) -> str:
     """Get color for skill state."""
     if state == SkillStateEnum.pending:
-        return "yellow"
+        return theme.WARNING
     elif state == SkillStateEnum.running:
-        return "green"
+        return theme.AGENT
     elif state == SkillStateEnum.completed:
-        return "cyan"
+        return theme.SUCCESS
     elif state == SkillStateEnum.error:
-        return "red"
-    return "white"
+        return theme.ERROR
+    return theme.FOREGROUND
 
 
 def format_duration(duration: float) -> str:
@@ -100,87 +108,40 @@ def format_duration(duration: float) -> str:
         return f"{duration / 3600:.1f}h"
 
 
-class AgentSpyLogFilter(logging.Filter):
-    """Filter to suppress specific log messages in agentspy."""
-
-    def filter(self, record):
-        # Suppress the "Skill state not found" warning as it's expected in agentspy
-        if (
-            record.levelname == "WARNING"
-            and "Skill state for" in record.getMessage()
-            and "not found" in record.getMessage()
-        ):
-            return False
-        return True
-
-
-class TextualLogHandler(logging.Handler):
-    """Custom log handler that sends logs to a Textual RichLog widget."""
-
-    def __init__(self, log_widget: RichLog):
-        super().__init__()
-        self.log_widget = log_widget
-        # Add filter to suppress expected warnings
-        self.addFilter(AgentSpyLogFilter())
-
-    def emit(self, record):
-        """Emit a log record to the RichLog widget."""
-        try:
-            msg = self.format(record)
-            # Color based on level
-            if record.levelno >= logging.ERROR:
-                style = "bold red"
-            elif record.levelno >= logging.WARNING:
-                style = "yellow"
-            elif record.levelno >= logging.INFO:
-                style = "green"
-            else:
-                style = "dim"
-
-            self.log_widget.write(Text(msg, style=style))
-        except Exception:
-            self.handleError(record)
-
-
 class AgentSpyApp(App):
     """A real-time CLI dashboard for agent skill monitoring using Textual."""
 
-    CSS = """
-    Screen {
+    CSS_PATH = theme.CSS_PATH
+
+    CSS = f"""
+    Screen {{
         layout: vertical;
-    }
-    Vertical {
+        background: {theme.BACKGROUND};
+    }}
+    DataTable {{
         height: 100%;
-    }
-    DataTable {
-        height: 70%;
-        border: none;
-        background: black;
-    }
-    RichLog {
-        height: 30%;
-        border: none;
-        background: black;
-        border-top: solid $primary;
-    }
+        border: solid $border;
+        background: {theme.BACKGROUND};
+    }}
+    DataTable > .datatable--header {{
+        background: transparent;
+    }}
+    Footer {{
+        background: transparent;
+    }}
     """
 
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("c", "clear", "Clear History"),
-        Binding("l", "toggle_logs", "Toggle Logs"),
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
-
-    show_logs = reactive(True)
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.spy = AgentSpy()
         self.table: Optional[DataTable] = None
-        self.log_view: Optional[RichLog] = None
         self.skill_history: list[tuple[str, SkillState, float]] = []  # (call_id, state, start_time)
-        self.log_handler: Optional[TextualLogHandler] = None
 
     def compose(self) -> ComposeResult:
         self.table = DataTable(zebra_stripes=False, cursor_type=None)
@@ -191,79 +152,20 @@ class AgentSpyApp(App):
         self.table.add_column("Messages")
         self.table.add_column("Details")
 
-        self.log_view = RichLog(markup=True, wrap=True)
-
-        with Vertical():
-            yield self.table
-            yield self.log_view
-
+        yield self.table
         yield Footer()
 
     def on_mount(self):
         """Start the spy when app mounts."""
-        self.theme = "flexoki"
-
-        # Remove ALL existing handlers from ALL loggers to prevent console output
-        # This is needed because setup_logger creates loggers with propagate=False
-        for name in logging.root.manager.loggerDict:
-            logger = logging.getLogger(name)
-            logger.handlers.clear()
-            logger.propagate = True
-
-        # Clear root logger handlers too
-        logging.root.handlers.clear()
-
-        # Set up custom log handler to show logs in the UI
-        if self.log_view:
-            self.log_handler = TextualLogHandler(self.log_view)
-
-            # Custom formatter that shortens the logger name and highlights call_ids
-            class ShortNameFormatter(logging.Formatter):
-                def format(self, record):
-                    # Remove the common prefix from logger names
-                    if record.name.startswith("dimos.protocol.skill."):
-                        record.name = record.name.replace("dimos.protocol.skill.", "")
-
-                    # Highlight call_ids in the message
-                    msg = record.getMessage()
-                    if "call_id=" in msg:
-                        # Extract and colorize call_id
-                        import re
-
-                        msg = re.sub(r"call_id=([^\s\)]+)", r"call_id=\033[94m\1\033[0m", msg)
-                        record.msg = msg
-                        record.args = ()
-
-                    return super().format(record)
-
-            self.log_handler.setFormatter(
-                ShortNameFormatter(
-                    "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
-                )
-            )
-            # Add handler to root logger
-            root_logger = logging.getLogger()
-            root_logger.addHandler(self.log_handler)
-            root_logger.setLevel(logging.INFO)
-
-        # Set initial visibility
-        if not self.show_logs:
-            self.log_view.visible = False
-            self.table.styles.height = "100%"
-
         self.spy.subscribe(self.update_state)
         self.spy.start()
 
-        # Also set up periodic refresh to update durations
+        # Set up periodic refresh to update durations
         self.set_interval(1.0, self.refresh_table)
 
     def on_unmount(self):
         """Stop the spy when app unmounts."""
         self.spy.stop()
-        # Remove log handler to prevent errors on shutdown
-        if self.log_handler:
-            root_logger = logging.getLogger()
-            root_logger.removeHandler(self.log_handler)
 
     def update_state(self, state: Dict[str, SkillState]):
         """Update state from spy callback. State dict is keyed by call_id."""
@@ -341,27 +243,18 @@ class AgentSpyApp(App):
 
             # Add row with colored state
             self.table.add_row(
-                Text(display_call_id, style="bright_blue"),
-                Text(skill_state.name, style="white"),
+                Text(display_call_id, style=theme.BRIGHT_BLUE),
+                Text(skill_state.name, style=theme.YELLOW),
                 Text(skill_state.state.name, style=state_color(skill_state.state)),
-                Text(duration_str, style="dim"),
-                Text(str(msg_count), style="dim"),
-                Text(details, style="dim white"),
+                Text(duration_str, style=theme.WHITE),
+                Text(str(msg_count), style=theme.YELLOW),
+                Text(details, style=theme.FOREGROUND),
             )
 
     def action_clear(self):
         """Clear the skill history."""
         self.skill_history.clear()
         self.refresh_table()
-
-    def action_toggle_logs(self):
-        """Toggle the log view visibility."""
-        self.show_logs = not self.show_logs
-        if self.show_logs:
-            self.table.styles.height = "70%"
-        else:
-            self.table.styles.height = "100%"
-        self.log_view.visible = self.show_logs
 
 
 def main():

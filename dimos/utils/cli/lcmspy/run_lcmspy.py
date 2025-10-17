@@ -26,49 +26,62 @@ from textual.color import Color
 from textual.containers import Container
 from textual.reactive import reactive
 from textual.renderables.sparkline import Sparkline as SparklineRenderable
-from textual.widgets import DataTable, Footer, Header, Label, Sparkline
+from textual.widgets import DataTable, Header, Label, Sparkline
 
+from dimos.utils.cli import theme
 from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy
 from dimos.utils.cli.lcmspy.lcmspy import GraphTopic as SpyTopic
 
 
 def gradient(max_value: float, value: float) -> str:
+    """Gradient from cyan (low) to yellow (high) using DimOS theme colors"""
     ratio = min(value / max_value, 1.0)
-    green = Color(0, 255, 0)
-    red = Color(255, 0, 0)
-    color = green.blend(red, ratio)
+    # Parse hex colors from theme
+    cyan = Color.parse(theme.CYAN)
+    yellow = Color.parse(theme.YELLOW)
+    color = cyan.blend(yellow, ratio)
 
     return color.hex
 
 
 def topic_text(topic_name: str) -> Text:
+    """Format topic name with DimOS theme colors"""
     if "#" in topic_name:
         parts = topic_name.split("#", 1)
-        return Text(parts[0], style="white") + Text("#" + parts[1], style="blue")
+        return Text(parts[0], style=theme.BRIGHT_WHITE) + Text("#" + parts[1], style=theme.BLUE)
 
     if topic_name[:4] == "/rpc":
-        return Text(topic_name[:4], style="red") + Text(topic_name[4:], style="white")
+        return Text(topic_name[:4], style=theme.BLUE) + Text(
+            topic_name[4:], style=theme.BRIGHT_WHITE
+        )
 
-    return Text(topic_name, style="white")
+    return Text(topic_name, style=theme.BRIGHT_WHITE)
 
 
 class LCMSpyApp(App):
     """A real-time CLI dashboard for LCM traffic statistics using Textual."""
 
-    CSS = """
-    Screen {
+    CSS_PATH = "../dimos.tcss"
+
+    CSS = f"""
+    Screen {{
         layout: vertical;
-    }
-    DataTable {
+        background: {theme.BACKGROUND};
+    }}
+    DataTable {{
         height: 2fr;
         width: 1fr;
-        border: none;
-        background: black;
-    }
+        border: solid {theme.BORDER};
+        background: {theme.BG};
+        scrollbar-size: 0 0;
+    }}
+    DataTable > .datatable--header {{
+        color: {theme.ACCENT};
+        background: transparent;
+    }}
     """
 
     refresh_interval: float = 0.5  # seconds
-    show_command_palette = reactive(True)
 
     BINDINGS = [
         ("q", "quit"),
@@ -81,18 +94,14 @@ class LCMSpyApp(App):
         self.table: DataTable | None = None
 
     def compose(self) -> ComposeResult:
-        # yield Header()
-
         self.table = DataTable(zebra_stripes=False, cursor_type=None)
         self.table.add_column("Topic")
         self.table.add_column("Freq (Hz)")
         self.table.add_column("Bandwidth")
         self.table.add_column("Total Traffic")
         yield self.table
-        yield Footer()
 
     def on_mount(self):
-        self.theme = "flexoki"
         self.spy.start()
         self.set_interval(self.refresh_interval, self.refresh_table)
 

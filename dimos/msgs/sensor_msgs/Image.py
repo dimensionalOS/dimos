@@ -22,22 +22,22 @@ from typing import Literal, Optional, TypedDict
 import cv2
 import numpy as np
 import reactivex as rx
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
+from reactivex import operators as ops
+from reactivex.observable import Observable
+
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
-    AbstractImage,
     HAS_CUDA,
     HAS_NVIMGCODEC,
-    ImageFormat,
     NVIMGCODEC_LAST_USED,
+    AbstractImage,
+    ImageFormat,
 )
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
-from dimos_lcm.sensor_msgs.Image import Image as LCMImage
-from dimos_lcm.std_msgs.Header import Header
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
-from reactivex import operators as ops
-from reactivex.observable import Observable
-from reactivex.scheduler import ThreadPoolScheduler
 
 try:
     import cupy as cp  # type: ignore
