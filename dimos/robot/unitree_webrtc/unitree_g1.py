@@ -386,7 +386,7 @@ class UnitreeG1(Robot, Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.color_image.connect(self.camera.image)        
+        self.spatial_memory_module.color_image.connect(self.camera.image)
         self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
