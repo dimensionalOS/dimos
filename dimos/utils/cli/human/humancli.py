@@ -20,6 +20,8 @@ from datetime import datetime
 from typing import Optional
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
+from rich.highlighter import JSONHighlighter
+from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
@@ -27,30 +29,45 @@ from textual.events import Key
 from textual.widgets import Input, RichLog
 
 from dimos.core import pLCMTransport
+from dimos.utils.cli import theme
 from dimos.utils.generic import truncate_display_string
+
+
+# Custom theme for JSON highlighting
+JSON_THEME = Theme(
+    {
+        "json.key": theme.CYAN,
+        "json.str": theme.ACCENT,
+        "json.number": theme.ACCENT,
+        "json.bool_true": theme.ACCENT,
+        "json.bool_false": theme.ACCENT,
+        "json.null": theme.DIM,
+        "json.brace": theme.BRIGHT_WHITE,
+    }
+)
 
 
 class HumanCLIApp(App):
     """IRC-like interface for interacting with DimOS agents."""
 
-    CSS = """
-    Screen {
-        background: black;
-    }
-    
-    #chat-container {
+    CSS_PATH = theme.CSS_PATH
+
+    CSS = f"""
+    Screen {{
+        background: {theme.BACKGROUND};
+    }}
+
+    #chat-container {{
         height: 1fr;
-        background: black;
-    }
-    
-    Input {
-        background: black;
+    }}
+
+    RichLog {{
+        scrollbar-size: 0 0;
+    }}
+
+    Input {{
         dock: bottom;
-    }
-    
-    RichLog {
-        background: black;
-    }
+    }}
     """
 
     BINDINGS = [
@@ -79,8 +96,13 @@ class HumanCLIApp(App):
 
     def on_mount(self) -> None:
         """Initialize the app when mounted."""
-        self.theme = "flexoki"
         self._running = True
+
+        # Apply custom JSON theme to app console
+        self.console.push_theme(JSON_THEME)
+
+        # Set custom highlighter for RichLog
+        self.chat_log.highlighter = JSONHighlighter()
 
         # Start subscription thread
         self._subscription_thread = threading.Thread(target=self._subscribe_to_agent, daemon=True)
@@ -88,6 +110,17 @@ class HumanCLIApp(App):
 
         # Focus on input
         self.input_widget.focus()
+
+        # Display ASCII art banner
+        ascii_art = """
+  ██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗
+  ██╔══██╗██║████╗ ████║██╔════╝████╗  ██║██╔════╝██║██╔═══██╗████╗  ██║██╔══██╗██║
+  ██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║
+  ██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║
+  ██████╔╝██║██║ ╚═╝ ██║███████╗██║ ╚████║███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗
+  ╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝
+"""
+        self.chat_log.write(f"[{theme.ACCENT}]{ascii_art}[/{theme.ACCENT}]")
 
         # Welcome message
         self._add_system_message("Connected to DimOS Agent Interface")
@@ -111,7 +144,7 @@ class HumanCLIApp(App):
                     timestamp,
                     "system",
                     truncate_display_string(msg.content, 1000),
-                    "red",
+                    theme.YELLOW,
                 )
             elif isinstance(msg, AIMessage):
                 content = msg.content or ""
@@ -119,25 +152,31 @@ class HumanCLIApp(App):
 
                 # Display the main content first
                 if content:
-                    self.call_from_thread(self._add_message, timestamp, "agent", content, "orange")
+                    self.call_from_thread(
+                        self._add_message, timestamp, "agent", content, theme.AGENT
+                    )
 
                 # Display tool calls separately with different formatting
                 if tool_calls:
                     for tc in tool_calls:
                         tool_info = self._format_tool_call(tc)
                         self.call_from_thread(
-                            self._add_message, timestamp, "tool", tool_info, "cyan"
+                            self._add_message, timestamp, "tool", tool_info, theme.TOOL
                         )
 
                 # If neither content nor tool calls, show a placeholder
                 if not content and not tool_calls:
                     self.call_from_thread(
-                        self._add_message, timestamp, "agent", "<no response>", "dim"
+                        self._add_message, timestamp, "agent", "<no response>", theme.DIM
                     )
             elif isinstance(msg, ToolMessage):
-                self.call_from_thread(self._add_message, timestamp, "tool", msg.content, "yellow")
+                self.call_from_thread(
+                    self._add_message, timestamp, "tool", msg.content, theme.TOOL_RESULT
+                )
             elif isinstance(msg, HumanMessage):
-                self.call_from_thread(self._add_message, timestamp, "human", msg.content, "green")
+                self.call_from_thread(
+                    self._add_message, timestamp, "human", msg.content, theme.HUMAN
+                )
 
         self.agent_transport.subscribe(receive_msg)
 
@@ -156,9 +195,9 @@ class HumanCLIApp(App):
         time_parts = timestamp.split(":")
         if len(time_parts) == 3:
             # Format as HH:MM:SS with colored colons
-            timestamp_formatted = f" [dim white]{time_parts[0]}[/dim white][bright_black]:[/bright_black][dim white]{time_parts[1]}[/dim white][bright_black]:[/bright_black][dim white]{time_parts[2]}[/dim white]"
+            timestamp_formatted = f" [{theme.TIMESTAMP}]{time_parts[0]}:{time_parts[1]}:{time_parts[2]}[/{theme.TIMESTAMP}]"
         else:
-            timestamp_formatted = f" [dim white]{timestamp}[/dim white]"
+            timestamp_formatted = f" [{theme.TIMESTAMP}]{timestamp}[/{theme.TIMESTAMP}]"
 
         # Format sender with consistent width
         sender_formatted = f"[{color}]{sender:>8}[/{color}]"
@@ -206,7 +245,7 @@ class HumanCLIApp(App):
     def _add_system_message(self, content: str) -> None:
         """Add a system message to the chat."""
         timestamp = datetime.now().strftime("%H:%M:%S")
-        self._add_message(timestamp, "system", content, "red")
+        self._add_message(timestamp, "system", content, theme.YELLOW)
 
     def on_key(self, event: Key) -> None:
         """Handle key events."""
