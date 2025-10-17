@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from typing import Optional
+import time
+from typing import Any, Optional, Protocol
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
@@ -10,7 +11,6 @@ import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.utils.actor_registry import ActorRegistry
 from dimos.core.transport import (
     LCMTransport,
     SHMTransport,
@@ -21,6 +21,7 @@ from dimos.core.transport import (
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
+from dimos.utils.actor_registry import ActorRegistry
 
 __all__ = [
     "DimosCluster",
@@ -154,7 +155,42 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
-DimosCluster = Client
+class DimosCluster(Protocol):
+    """Extended Dask Client with DimOS-specific methods.
+
+    This protocol defines the interface of a Dask Client that has been
+    patched with additional methods via patchdask().
+    """
+
+    def deploy(
+        self,
+        actor_class: type,
+        *args: Any,
+        **kwargs: Any,
+    ) -> RPCClient:
+        """Deploy an actor to the cluster and return an RPC client.
+
+        Args:
+            actor_class: The actor class to deploy
+            *args: Positional arguments to pass to the actor constructor
+            **kwargs: Keyword arguments to pass to the actor constructor
+
+        Returns:
+            RPCClient: A client for making RPC calls to the deployed actor
+        """
+        ...
+
+    def check_worker_memory(self) -> None:
+        """Check and display memory usage of all workers."""
+        ...
+
+    def stop(self) -> None:
+        """Stop the client (alias for close)."""
+        ...
+
+    def close_all(self) -> None:
+        """Close all resources including cluster, client, and shared memory transports."""
+        ...
 
 
 def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
@@ -244,8 +280,9 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:
-            from dimos.protocol.pubsub import shmpubsub
             import gc
+
+            from dimos.protocol.pubsub import shmpubsub
 
             for obj in gc.get_objects():
                 if isinstance(obj, (shmpubsub.SharedMemory, shmpubsub.PickleSharedMemory)):
@@ -299,18 +336,21 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     dask_client.check_worker_memory = check_worker_memory
     dask_client.stop = lambda: dask_client.close()
     dask_client.close_all = close_all
-    return dask_client
+    return dask_client  # type: ignore[return-value]
 
 
-def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
+def start(n: Optional[int] = None, memory_limit: str = "auto") -> DimosCluster:
     """Start a Dask LocalCluster with specified workers and memory limits.
 
     Args:
         n: Number of workers (defaults to CPU count)
         memory_limit: Memory limit per worker (e.g., '4GB', '2GiB', or 'auto' for Dask's default)
+
+    Returns:
+        DimosCluster: A patched Dask client with deploy(), check_worker_memory(), stop(), and close_all() methods
     """
-    import signal
     import atexit
+    import signal
 
     console = Console()
     if not n:
@@ -358,3 +398,11 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
     signal.signal(signal.SIGTERM, signal_handler)
 
     return patched_client
+
+
+def wait_exit():
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            print("exiting...")

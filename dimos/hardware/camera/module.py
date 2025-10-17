@@ -107,7 +107,7 @@ class CameraModule(Module):
         for image in iter(_queue.get, None):
             yield image
 
-    def camera_info_stream(self, frequency: float = 5.0) -> Observable[CameraInfo]:
+    def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
         def camera_info(_) -> CameraInfo:
             self.hardware.camera_info.ts = time.time()
             return self.hardware.camera_info

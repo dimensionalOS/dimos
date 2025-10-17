@@ -17,12 +17,19 @@
 This module sets up a logger with color output for different log levels.
 """
 
-import os
 import logging
-import colorlog
+import os
 from typing import Optional
 
+import colorlog
+
 logging.basicConfig(format="%(name)s - %(levelname)s - %(message)s")
+
+logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
+logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
+logging.getLogger("websockets.server").setLevel(logging.ERROR)
+logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
+logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 
 def setup_logger(
