@@ -30,7 +30,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import DimosCluster, In, Module, Out, rpc
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -402,3 +402,18 @@ class UnitreeWebRTCConnection(Resource):
 
         if hasattr(self, "thread") and self.thread.is_alive():
             self.thread.join(timeout=2.0)
+
+
+def deploy(dimos: DimosCluster, ip: str) -> None:
+    from dimos.robot.foxglove_bridge import FoxgloveBridge
+
+    connection = dimos.deploy(UnitreeWebRTCConnection, ip=ip)
+
+    bridge = FoxgloveBridge(
+        shm_channels=[
+            "/image#sensor_msgs.Image",
+            "/lidar#sensor_msgs.PointCloud2",
+        ]
+    )
+    bridge.start()
+    connection.start()
