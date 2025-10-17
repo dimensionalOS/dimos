@@ -1,4 +1,5 @@
 import os
+from functools import cached_property
 from typing import Optional
 
 import numpy as np
@@ -9,19 +10,22 @@ from dimos.msgs.sensor_msgs import Image
 
 
 class QwenVlModel(VlModel):
-    _client: OpenAI
     _model_name: str
+    _api_key: Optional[str]
 
     def __init__(self, api_key: Optional[str] = None, model_name: str = "qwen2.5-vl-72b-instruct"):
         self._model_name = model_name
+        self._api_key = api_key
 
-        api_key = api_key or os.getenv("ALIBABA_API_KEY")
+    @cached_property
+    def _client(self) -> OpenAI:
+        api_key = self._api_key or os.getenv("ALIBABA_API_KEY")
         if not api_key:
             raise ValueError(
                 "Alibaba API key must be provided or set in ALIBABA_API_KEY environment variable"
             )
 
-        self._client = OpenAI(
+        return OpenAI(
             base_url="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
             api_key=api_key,
         )

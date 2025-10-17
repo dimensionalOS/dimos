@@ -38,6 +38,7 @@ from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
@@ -224,15 +225,15 @@ class UnitreeWebRTCConnection(Resource):
         )
         return future.result()
 
-    @functools.cache
+    @simple_mcache
     def raw_lidar_stream(self) -> Subject[LidarMessage]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
 
-    @functools.cache
+    @simple_mcache
     def raw_odom_stream(self) -> Subject[Pose]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
 
-    @functools.cache
+    @simple_mcache
     def lidar_stream(self) -> Subject[LidarMessage]:
         return backpressure(
             self.raw_lidar_stream().pipe(
@@ -240,22 +241,23 @@ class UnitreeWebRTCConnection(Resource):
             )
         )
 
-    @functools.cache
+    @simple_mcache
     def tf_stream(self) -> Subject[Transform]:
         base_link = functools.partial(Transform.from_pose, "base_link")
         return backpressure(self.odom_stream().pipe(ops.map(base_link)))
 
-    @functools.cache
+    @simple_mcache
     def odom_stream(self) -> Subject[Pose]:
         return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
 
-    @functools.cache
+    @simple_mcache
     def video_stream(self) -> Observable[Image]:
         return backpressure(
             self.raw_video_stream().pipe(
                 ops.filter(lambda frame: frame is not None),
                 ops.map(
                     lambda frame: Image.from_numpy(
+                        # np.ascontiguousarray(frame.to_ndarray("rgb24")),
                         frame.to_ndarray(format="rgb24"),
                         frame_id="camera_optical",
                     )
@@ -263,7 +265,7 @@ class UnitreeWebRTCConnection(Resource):
             )
         )
 
-    @functools.cache
+    @simple_mcache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
@@ -306,7 +308,7 @@ class UnitreeWebRTCConnection(Resource):
             },
         )
 
-    @functools.lru_cache(maxsize=None)
+    @simple_mcache
     def raw_video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
