@@ -37,6 +37,7 @@ logger = setup_logger(__name__)
 def deploy_monozed(dimos) -> CameraModule:
     camera = dimos.deploy(
         CameraModule,
+        frequency=4.0,
         transform=Transform(
             translation=Vector3(0.05, 0.0, 0.0),
             rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
