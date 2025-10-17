@@ -47,6 +47,7 @@ class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Optional[Transform] = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
+    frequency: float = 5.0
 
 
 class CameraModule(Module):
@@ -60,9 +61,6 @@ class CameraModule(Module):
 
     default_config = CameraModuleConfig
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
     @rpc
     def start(self):
         if callable(self.config.hardware):
@@ -73,9 +71,7 @@ class CameraModule(Module):
         if self._module_subscription:
             return "already started"
 
-        stream = self.hardware.image_stream().pipe(sharpness_barrier(5))
-
-        # camera_info_stream = self.camera_info_stream(frequency=5.0)
+        stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))
 
         def publish_info(camera_info: CameraInfo):
             self.camera_info.publish(camera_info)
