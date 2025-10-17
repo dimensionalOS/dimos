@@ -21,6 +21,16 @@ Minimal implementation using WebRTC connection for robot control.
 import logging
 import os
 import time
+from typing import Optional
+
+from dimos_lcm.foxglove_msgs import SceneUpdate
+from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from nav_msgs.msg import Odometry as ROSOdometry
+from reactivex.disposable import Disposable
+from sensor_msgs.msg import Joy as ROSJoy
+from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import core
 from dimos.agents2 import Agent
@@ -47,7 +57,7 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image, Joy, PointCloud2
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
@@ -62,14 +72,6 @@ from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos_lcm.foxglove_msgs import SceneUpdate
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from reactivex.disposable import Disposable
-from sensor_msgs.msg import Joy as ROSJoy
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from tf2_msgs.msg import TFMessage as ROSTFMessage
-from typing import Optional
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
@@ -417,7 +419,6 @@ class UnitreeG1(Robot, Resource):
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        from geometry_msgs.msg import PoseStamped as ROSPoseStamped
         from std_msgs.msg import Bool as ROSBool
 
         from dimos.msgs.std_msgs import Bool

@@ -15,19 +15,22 @@
 import logging
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo
-from lcm_msgs.foxglove_msgs import SceneUpdate
+from dimos_lcm.foxglove_msgs import SceneUpdate
 
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, start
 
 # from dimos.msgs.detection2d import Detection2DArray
 from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection2d import Detection3DModule
-from dimos.perception.detection2d.moduleDB import ObjectDBModule
+from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.module3D import Detection3DModule
+from dimos.perception.detection.person_tracker import PersonTracker
+from dimos.perception.detection.reid import ReidModule
 from dimos.protocol.pubsub import lcm
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
@@ -36,46 +39,64 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.IN
 
 
 def detection_unitree():
-    dimos = start(6)
+    dimos = start(8)
     connection = deploy_connection(dimos)
-    # mapper = deploy_navigation(dimos, connection)
-    # mapper.start()
 
     def goto(pose):
         print("NAVIGATION REQUESTED:", pose)
         return True
 
-    module3D = dimos.deploy(
-        ObjectDBModule,
-        goto=goto,
+    detector = dimos.deploy(
+        Detection2DModule,
+        # goto=goto,
         camera_info=ConnectionModule._camera_info(),
     )
 
-    module3D.image.connect(connection.video)
-    # module3D.pointcloud.connect(mapper.global_map)
-    module3D.pointcloud.connect(connection.lidar)
+    detector.image.connect(connection.video)
+    # detector.pointcloud.connect(mapper.global_map)
+    # detector.pointcloud.connect(connection.lidar)
 
-    module3D.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
-    module3D.detections.transport = LCMTransport("/detections", Detection2DArray)
+    detector.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
+    detector.detections.transport = LCMTransport("/detections", Detection2DArray)
 
-    module3D.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
-    module3D.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
-    module3D.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
+    # detector.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
+    # detector.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
+    # detector.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
 
-    module3D.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
-    module3D.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
-    module3D.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
+    detector.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
+    detector.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
+    detector.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
+    # detector.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
 
-    module3D.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
+    # reidModule = dimos.deploy(ReidModule)
 
-    module3D.start()
+    # reidModule.image.connect(connection.video)
+    # reidModule.detections.connect(detector.detections)
+    # reidModule.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
+
+    # nav = deploy_navigation(dimos, connection)
+
+    # person_tracker = dimos.deploy(PersonTracker, cameraInfo=ConnectionModule._camera_info())
+    # person_tracker.image.connect(connection.video)
+    # person_tracker.detections.connect(detector.detections)
+    # person_tracker.target.transport = LCMTransport("/goal_request", PoseStamped)
+
+    reid = dimos.deploy(ReidModule)
+
+    reid.image.connect(connection.video)
+    reid.detections.connect(detector.detections)
+    reid.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
+
+    detector.start()
+    # person_tracker.start()
     connection.start()
+    reid.start()
 
     from dimos.agents2 import Agent, Output, Reducer, Stream, skill
     from dimos.agents2.cli.human import HumanInput
 
     agent = Agent(
-        system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot. ",
+        system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot.",
         model=Model.GPT_4O,  # Could add CLAUDE models to enum
         provider=Provider.OPENAI,  # Would need ANTHROPIC provider
     )
@@ -83,13 +104,23 @@ def detection_unitree():
     human_input = dimos.deploy(HumanInput)
     agent.register_skills(human_input)
     # agent.register_skills(connection)
-    agent.register_skills(module3D)
+    agent.register_skills(detector)
+
+    bridge = FoxgloveBridge(
+        shm_channels=[
+            "/image#sensor_msgs.Image",
+            "/lidar#sensor_msgs.PointCloud2",
+        ]
+    )
+    # bridge = FoxgloveBridge()
+    time.sleep(1)
+    bridge.start()
 
     # agent.run_implicit_skill("video_stream_tool")
-    agent.run_implicit_skill("human")
+    # agent.run_implicit_skill("human")
 
-    agent.start()
-    agent.loop_thread()
+    # agent.start()
+    # agent.loop_thread()
 
     try:
         while True:
