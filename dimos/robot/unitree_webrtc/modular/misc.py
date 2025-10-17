@@ -25,8 +25,8 @@ def deploy_foxglove(dimos: DimosCluster) -> FoxgloveBridge:
         FoxgloveBridge,
         shm_channels=[
             "/image#sensor_msgs.Image",
-            # "/lidar#sensor_msgs.PointCloud2",
-            # "/map#sensor_msgs.PointCloud2",
+            "/lidar#sensor_msgs.PointCloud2",
+            "/map#sensor_msgs.PointCloud2",
         ],
     )
     foxglove_bridge.start()
