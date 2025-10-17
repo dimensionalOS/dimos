@@ -21,7 +21,7 @@ from dimos.utils.data import get_data
     ],
     ids=["moondream", "qwen"],
 )
-@pytest.mark.heavy
+@pytest.mark.gpu
 def test_vlm(model_class, model_name):
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
