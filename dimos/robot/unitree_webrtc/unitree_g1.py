@@ -263,9 +263,6 @@ class UnitreeG1(Robot, Resource):
 
         self._deploy_visualization()
 
-        if self.enable_perception:
-            self._deploy_perception()
-
         if self.enable_joystick:
             self._deploy_joystick()
 
@@ -281,6 +278,9 @@ class UnitreeG1(Robot, Resource):
 
         self._deploy_camera()
         self._deploy_detection(self.nav.go_to)
+
+        if self.enable_perception:
+            self._deploy_perception()
 
         self.lcm.start()
 
@@ -386,7 +386,7 @@ class UnitreeG1(Robot, Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
+        self.spatial_memory_module.color_image.connect(self.camera.image)
         self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
