@@ -21,6 +21,7 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 import logging
 import threading
 import time
+from typing import Optional
 
 import rclpy
 from geometry_msgs.msg import PointStamped as ROSPointStamped
@@ -63,6 +64,9 @@ class ROSNav(Module):
     goal_active: Out[PoseStamped] = None
     path_active: Out[Path] = None
     cmd_vel: Out[TwistStamped] = None
+
+    _local_pointcloud: Optional[ROSPointCloud2] = None
+    _global_pointcloud: Optional[ROSPointCloud2] = None
 
     def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -113,28 +117,32 @@ class ROSNav(Module):
     @rpc
     def start(self):
         self._running = True
-        self.spin_thread = threading.Thread(target=self._spin_node, daemon=True)
-        self.spin_thread.start()
 
+        # TODO these should be rxpy streams, rxpy has a way to convert callbacks to streams
         def broadcast_lidar():
             while self._running:
-                if not hasattr(self, "_local_pointcloud"):
-                    return
-                self.pointcloud.publish(PointCloud2.from_ros_msg(self._local_pointcloud))
+                if self._local_pointcloud:
+                    self.pointcloud.publish(
+                        PointCloud2.from_ros_msg(self._local_pointcloud),
+                    )
                 time.sleep(0.5)
 
         def broadcast_map():
             while self._running:
-                if not hasattr(self, "_global_pointcloud"):
-                    return
-                self.global_pointcloud.publish(PointCloud2.from_ros_msg(self.global_pointcloud))
+                if self._global_pointcloud:
+                    self.global_pointcloud.publish(
+                        PointCloud2.from_ros_msg(self._global_pointcloud)
+                    )
                 time.sleep(1.0)
 
         self.map_broadcast_thread = threading.Thread(target=broadcast_map, daemon=True)
         self.lidar_broadcast_thread = threading.Thread(target=broadcast_lidar, daemon=True)
+        self.map_broadcast_thread.start()
+        self.lidar_broadcast_thread.start()
+        self.spin_thread = threading.Thread(target=self._spin_node, daemon=True)
+        self.spin_thread.start()
 
         self.goal_req.subscribe(self._on_goal_pose)
-
         logger.info("NavigationModule started with ROS2 spinning")
 
     def _spin_node(self):
@@ -311,10 +319,10 @@ class ROSNav(Module):
 
 def deploy(dimos: DimosCluster):
     nav = dimos.deploy(ROSNav)
-    # nav.pointcloud.transport = pSHMTransport("/lidar")
-    # nav.global_pointcloud.transport = pSHMTransport("/map")
-    nav.pointcloud.transport = LCMTransport("/lidar", PointCloud2)
-    nav.global_pointcloud.transport = LCMTransport("/map", PointCloud2)
+    nav.pointcloud.transport = pSHMTransport("/lidar")
+    nav.global_pointcloud.transport = pSHMTransport("/map")
+    # nav.pointcloud.transport = LCMTransport("/lidar", PointCloud2)
+    # nav.global_pointcloud.transport = LCMTransport("/map", PointCloud2)
 
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
