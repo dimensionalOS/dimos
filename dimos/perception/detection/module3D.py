@@ -13,17 +13,18 @@
 # limitations under the License.
 
 
-from typing import Optional
+from typing import Optional, Tuple
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
+from dimos import spec
 from dimos.agents2 import skill
-from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import Transform
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.core import DimosCluster, In, Out, rpc
+from dimos.msgs.geometry_msgs import Transform, Vector3
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Config as Module2DConfig
 from dimos.perception.detection.module2D import Detection2DModule
@@ -82,6 +83,32 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3DPC(detections.image, detection3d_list)
 
+    def pixel_to_3d(
+        self,
+        pixel: Tuple[int, int],
+        assumed_depth: float = 1.0,
+    ) -> Vector3:
+        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
+
+        Args:
+            camera_info: Camera calibration information
+            assumed_depth: Assumed depth in meters (default 1.0m from camera)
+
+        Returns:
+            Vector3 position in camera optical frame coordinates
+        """
+        # Extract camera intrinsics
+        fx, fy = self.camera_info.K[0], self.camera_info.K[4]
+        cx, cy = self.camera_info.K[2], self.camera_info.K[5]
+
+        # Unproject pixel to normalized camera coordinates
+        x_norm = (pixel[0] - cx) / fx
+        y_norm = (pixel[1] - cy) / fy
+
+        # Create 3D point at assumed depth in camera optical frame
+        # Camera optical frame: X right, Y down, Z forward
+        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
+
     @skill  # type: ignore[arg-type]
     def ask_vlm(self, question: str) -> str | ImageDetections3DPC:
         """
@@ -134,3 +161,35 @@ class Detection3DModule(Detection2DModule):
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
+
+
+def deploy(
+    dimos: DimosCluster,
+    camera_info: CameraInfo,
+    lidar: spec.Pointcloud,
+    camera: spec.Camera,
+    prefix: str = "/detector3d",
+) -> Detection3DModule:
+    from dimos.core import LCMTransport
+
+    detector = Detection3DModule(
+        camera_info=camera.config.camera_info,
+    )
+
+    detector.image.connect(camera.image)
+    detector.pointcloud.connect(lidar.pointcloud)
+
+    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
+    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.scene_update.transport = LCMTransport(f"{prefix}/scene_update", SceneUpdate)
+
+    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
+    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
+    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
+
+    detector.detected_pointcloud_0.transport = LCMTransport(f"{prefix}/pointcloud/0", PointCloud2)
+    detector.detected_pointcloud_1.transport = LCMTransport(f"{prefix}/pointcloud/1", PointCloud2)
+    detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
+
+    detector.start()
+    return detector

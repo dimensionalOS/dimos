@@ -20,17 +20,14 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex.observable import Observable
 
-from dimos.agents2 import Agent, Output, Reducer, Stream, skill
-from dimos.core import In, Out, rpc
+from dimos import spec
+from dimos.core import DimosCluster, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.type import Detection3D, ImageDetections3DPC, TableStr
+from dimos.perception.detection.type import ImageDetections3DPC, TableStr
 from dimos.perception.detection.type.detection3d import Detection3DPC
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output, Reducer, Stream
-from dimos.types.timestamped import to_datetime
 
 
 # Represents an object in space, as collection of 3d detections over time
@@ -309,3 +306,34 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     def __len__(self):
         return len(self.objects.values())
+
+
+def deploy(
+    dimos: DimosCluster,
+    camera_info: CameraInfo,
+    lidar: spec.Pointcloud,
+    camera: spec.Camera,
+    prefix: str = "/objectdb",
+    **kwargs,
+) -> ObjectDBModule:
+    from dimos.core import LCMTransport
+
+    detector = ObjectDBModule(camera_info=camera.config.camera_info, **kwargs)
+
+    detector.image.connect(camera.image)
+    detector.pointcloud.connect(lidar.pointcloud)
+
+    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
+    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.scene_update.transport = LCMTransport(f"{prefix}/scene_update", SceneUpdate)
+
+    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
+    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
+    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
+
+    detector.detected_pointcloud_0.transport = LCMTransport(f"{prefix}/pointcloud/0", PointCloud2)
+    detector.detected_pointcloud_1.transport = LCMTransport(f"{prefix}/pointcloud/1", PointCloud2)
+    detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
+
+    detector.start()
+    return detector
