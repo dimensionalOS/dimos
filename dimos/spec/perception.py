@@ -14,6 +14,8 @@
 
 from typing import Protocol
 
+from dimos_lcm.sensor_msgs import CameraInfo
+
 from dimos.core import Out
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 
@@ -22,7 +24,7 @@ class Image(Protocol):
     image: Out[Image]
 
 
-Camera = Image
+class Camera(Image): ...
 
 
 class Pointcloud(Protocol):

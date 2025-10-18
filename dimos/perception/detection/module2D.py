@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
-from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
@@ -26,7 +25,7 @@ from dimos import spec
 from dimos.core import DimosCluster, In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Transform, Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.detectors import Detector
@@ -42,8 +41,9 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
+    detector: Optional[Callable[[Any], Detector]] = Yolo2DDetector
     publish_detection_images: bool = True
+    camera_info: CameraInfo = None  # type: ignore
 
 
 class Detection2DModule(Module):
@@ -64,7 +64,6 @@ class Detection2DModule(Module):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.config: Config = Config(**kwargs)
         self.detector = self.config.detector()
         self.vlm_detections_subject = Subject()
         self.previous_detection_count = 0
@@ -82,7 +81,7 @@ class Detection2DModule(Module):
 
     @simple_mcache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
+        return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
     def track(self, detections: ImageDetections2D):
         sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
@@ -125,7 +124,7 @@ class Detection2DModule(Module):
 
     @rpc
     def start(self):
-        self.detection_stream_2d().subscribe(self.track)
+        # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
@@ -144,19 +143,19 @@ class Detection2DModule(Module):
             self.detection_stream_2d().subscribe(publish_cropped_images)
 
     @rpc
-    def stop(self): ...
+    def stop(self):
+        return super().stop()
 
 
 def deploy(
     dimos: DimosCluster,
-    camera_info: CameraInfo,
     camera: spec.Camera,
     prefix: str = "/detector2d",
     **kwargs,
 ) -> Detection2DModule:
     from dimos.core import LCMTransport
 
-    detector = Detection2DModule(camera_info=camera.config.camera_info, **kwargs)
+    detector = Detection2DModule(**kwargs)
 
     detector.image.connect(camera.image)
 

@@ -169,12 +169,11 @@ def deploy(
     lidar: spec.Pointcloud,
     camera: spec.Camera,
     prefix: str = "/detector3d",
+    **kwargs,
 ) -> Detection3DModule:
     from dimos.core import LCMTransport
 
-    detector = Detection3DModule(
-        camera_info=camera.config.camera_info,
-    )
+    detector = dimos.deploy(Detection3DModule, camera_info=camera_info, **kwargs)
 
     detector.image.connect(camera.image)
     detector.pointcloud.connect(lidar.pointcloud)

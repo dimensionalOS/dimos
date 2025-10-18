@@ -57,11 +57,12 @@ def deploy_monozed(dimos) -> CameraModule:
     return camera
 
 
-def ivan_g1(dimos: DimosCluster, ip: str) -> None:
+def deploy(dimos: DimosCluster, ip: str) -> None:
     nav = rosnav.deploy(dimos)
     connection = g1.deploy(dimos, ip, nav)
     zed = deploy_monozed(dimos)
-    fg = deploy_foxglove(dimos)
+
+    deploy_foxglove(dimos)
 
     time.sleep(5)
 
@@ -73,8 +74,12 @@ def ivan_g1(dimos: DimosCluster, ip: str) -> None:
     )
 
     nav.navigate_to(test_pose)
-    wait_exit()
-    dimos.close_all()
+
+    return {
+        "nav": nav,
+        "connection": connection,
+        "zed": zed,
+    }
 
 
 if __name__ == "__main__":
@@ -89,4 +94,8 @@ if __name__ == "__main__":
     parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
 
     args = parser.parse_args()
-    ivan_g1(start(8), args.ip)
+
+    dimos = start(8)
+    deploy(dimos, args.ip)
+    wait_exit()
+    dimos.close_all()
