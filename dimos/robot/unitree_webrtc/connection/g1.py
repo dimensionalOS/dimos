@@ -12,12 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol
-
-from reactivex.disposable import Disposable
-
 from dimos import spec
-from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
+from dimos.core import DimosCluster, In, Module, rpc
 from dimos.msgs.geometry_msgs import (
     Twist,
     TwistStamped,
@@ -39,8 +35,9 @@ class G1Connection(Module):
         self.connection = UnitreeWebRTCConnection(self.ip)
         self.connection.start()
 
-        unsub = self.cmd_vel.subscribe(self.move)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(
+            self.cmd_vel.subscribe(self.move),
+        )
 
     @rpc
     def stop(self) -> None:
