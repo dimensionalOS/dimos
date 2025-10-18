@@ -18,8 +18,8 @@ import time
 from dimos import agents2
 from dimos.core import DimosCluster, start, wait_exit
 from dimos.perception.detection import module3D, moduleDB
+from dimos.robot import foxglove_bridge
 from dimos.robot.unitree_webrtc.connection import go2
-from dimos.robot.unitree_webrtc.modular.misc import deploy_foxglove
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -27,7 +27,7 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.IN
 
 def deploy(dimos: DimosCluster, ip: str):
     connection = go2.deploy(dimos, ip)
-    deploy_foxglove(dimos)
+    foxglove_bridge.deploy(dimos)
 
     detector = moduleDB.deploy(
         dimos,

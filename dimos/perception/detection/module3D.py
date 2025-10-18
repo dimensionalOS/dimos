@@ -23,7 +23,7 @@ from reactivex.observable import Observable
 from dimos import spec
 from dimos.agents2 import skill
 from dimos.core import DimosCluster, In, Out, rpc
-from dimos.msgs.geometry_msgs import Transform, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Config as Module2DConfig
@@ -109,8 +109,9 @@ class Detection3DModule(Detection2DModule):
         # Camera optical frame: X right, Y down, Z forward
         return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
 
-    @skill  # type: ignore[arg-type]
-    def ask_vlm(self, question: str) -> str | ImageDetections3DPC:
+    # @skill  # type: ignore[arg-type]
+    @rpc
+    def nav_vlm(self, question: str) -> str:
         """
         query visual model about the view in front of the camera
         you can ask to mark objects like:
@@ -128,9 +129,28 @@ class Detection3DModule(Detection2DModule):
             return "No detections"
 
         detections: ImageDetections2D = result
+
+        print(detections)
+        if not len(detections):
+            print("No 2d detections")
+            return None
+
         pc = self.pointcloud.get_next()
         transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
-        return self.process_frame(detections, pc, transform)
+
+        detections3d = self.process_frame(detections, pc, transform)
+
+        if len(detections3d):
+            return detections3d[0].pose
+        print("No 3d detections, projecting 2d")
+
+        center = detections[0].get_bbox_center()
+        return PoseStamped(
+            ts=detections.image.ts,
+            frame_id="world",
+            position=self.pixel_to_3d(center, assumed_depth=1.5),
+            orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+        )
 
     @rpc
     def start(self):

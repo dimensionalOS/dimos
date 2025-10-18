@@ -14,9 +14,10 @@
 
 import queue
 
+from reactivex.disposable import Disposable
+
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, pLCMTransport, rpc
-from reactivex.disposable import Disposable
 
 
 class HumanInput(Module):

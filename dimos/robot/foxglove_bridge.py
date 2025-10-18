@@ -13,12 +13,17 @@
 # limitations under the License.
 
 import asyncio
+import logging
 import threading
+from typing import List, Optional
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
 from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
 
-from dimos.core import Module, rpc
+from dimos.core import DimosCluster, Module, rpc
+
+logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
+logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 
 
 class FoxgloveBridge(Module):
@@ -58,3 +63,19 @@ class FoxgloveBridge(Module):
             self._thread.join(timeout=2)
 
         super().stop()
+
+
+def deploy(
+    dimos: DimosCluster,
+    shm_channels: Optional[List[str]] = [
+        "/image#sensor_msgs.Image",
+        "/lidar#sensor_msgs.PointCloud2",
+        "/map#sensor_msgs.PointCloud2",
+    ],
+) -> FoxgloveBridge:
+    foxglove_bridge = dimos.deploy(
+        FoxgloveBridge,
+        shm_channels=shm_channels,
+    )
+    foxglove_bridge.start()
+    return foxglove_bridge

@@ -18,54 +18,50 @@ from typing import Any, Optional
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable, Disposable
 
+from dimos.core import Module
 from dimos.core.resource import Resource
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.navigation.bt_navigator.navigator import NavigatorState
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
-from dimos.navigation.bt_navigator.navigator import NavigatorState
 
 logger = setup_logger(__file__)
 
 
-class NavigationSkillContainer(SkillContainer, Resource):
-    _robot: UnitreeRobot
+class NavigationSkillContainer(Module):
     _disposables: CompositeDisposable
     _latest_image: Optional[Image]
     _video_stream: Observable[Image]
-    _started: bool
+    _started: bool = False
 
-    def __init__(self, robot: UnitreeRobot, video_stream: Observable[Image]):
+    def __init__(self, spatial_memory, nav, detection_module):
+        self.nav = nav
+        self.spatial_memory = spatial_memory
+        self.detection_module = detection_module
+
         super().__init__()
-        self._robot = robot
-        self._disposables = CompositeDisposable()
-        self._latest_image = None
-        self._video_stream = video_stream
         self._similarity_threshold = 0.23
-        self._started = False
         self._vl_model = QwenVlModel()
 
     def start(self) -> None:
-        unsub = self._video_stream.subscribe(self._on_video)
-        self._disposables.add(Disposable(unsub) if callable(unsub) else unsub)
+        # unsub = self._video_stream.subscribe(self._on_video)
+        # self._disposables.add(Disposable(unsub) if callable(unsub) else unsub)
         self._started = True
 
     def stop(self) -> None:
         self._disposables.dispose()
         super().stop()
 
-    def _on_video(self, image: Image) -> None:
-        self._latest_image = image
-
     @skill()
-    def tag_location_in_spatial_memory(self, location_name: str) -> str:
+    def tag_location(self, location_name: str) -> str:
         """Tag this location in the spatial memory with a name.
 
         This associates the current location with the given name in the spatial memory, allowing you to navigate back to it.
@@ -79,10 +75,12 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         if not self._started:
             raise ValueError(f"{self} has not been started.")
+        tf = self.tf.get("map", "base_link", time_tolerance=2.0)
+        if not tf:
+            return "Could not get the robot's current transform."
 
-        pose_data = self._robot.get_odom()
-        position = pose_data.position
-        rotation = quaternion_to_euler(pose_data.orientation)
+        position = tf.translation
+        rotation = tf.rotation.to_euler()
 
         location = RobotLocation(
             name=location_name,
@@ -90,11 +88,18 @@ class NavigationSkillContainer(SkillContainer, Resource):
             rotation=(rotation.x, rotation.y, rotation.z),
         )
 
-        if not self._robot.spatial_memory.tag_location(location):
+        if not self.spatial_memory.tag_location(location):
             return f"Failed to store '{location_name}' in the spatial memory"
 
         logger.info(f"Tagged {location}")
-        return f"The current location has been tagged as '{location_name}'."
+        return f"Tagged '{location_name}': ({position.x},{position.y})."
+
+    def _navigate_to_object(self, query: str) -> Optional[str]:
+        position = self.detection_module.nav_vlm(query)
+        if not position:
+            return None
+        self.nav.navigate_to(position)
+        return f"Arrived to object matching '{query}' in view."
 
     @skill()
     def navigate_with_text(self, query: str) -> str:
@@ -111,7 +116,6 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         if not self._started:
             raise ValueError(f"{self} has not been started.")
-
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
             return success_msg
@@ -131,72 +135,25 @@ class NavigationSkillContainer(SkillContainer, Resource):
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
     def _navigate_by_tagged_location(self, query: str) -> Optional[str]:
-        robot_location = self._robot.spatial_memory.query_tagged_location(query)
+        robot_location = self.spatial_memory.query_tagged_location(query)
 
         if not robot_location:
             return None
 
+        print("Found tagged location:", robot_location)
         goal_pose = PoseStamped(
             position=make_vector3(*robot_location.position),
             orientation=euler_to_quaternion(make_vector3(*robot_location.rotation)),
-            frame_id="world",
+            frame_id="map",
         )
 
-        result = self._robot.navigate_to(goal_pose, blocking=True)
+        print("Goal pose for tagged location nav:", goal_pose)
+
+        result = self.nav.navigate_to(goal_pose)
         if not result:
             return None
 
-        return (
-            f"Successfuly arrived at location tagged '{robot_location.name}' from query '{query}'."
-        )
-
-    def _navigate_to_object(self, query: str) -> Optional[str]:
-        try:
-            bbox = self._get_bbox_for_current_frame(query)
-        except Exception:
-            logger.error(f"Failed to get bbox for {query}", exc_info=True)
-            return None
-
-        if bbox is None:
-            return None
-
-        logger.info(f"Found {query} at {bbox}")
-
-        # Start tracking - BBoxNavigationModule automatically generates goals
-        self._robot.object_tracker.track(bbox)
-
-        start_time = time.time()
-        timeout = 30.0
-        goal_set = False
-
-        while time.time() - start_time < timeout:
-            # Check if navigator finished
-            if self._robot.navigator.get_state() == NavigatorState.IDLE and goal_set:
-                logger.info("Waiting for goal result")
-                time.sleep(1.0)
-                if not self._robot.navigator.is_goal_reached():
-                    logger.info(f"Goal cancelled, tracking '{query}' failed")
-                    self._robot.object_tracker.stop_track()
-                    return None
-                else:
-                    logger.info(f"Reached '{query}'")
-                    self._robot.object_tracker.stop_track()
-                    return f"Successfully arrived at '{query}'"
-
-            # If goal set and tracking lost, just continue (tracker will resume or timeout)
-            if goal_set and not self._robot.object_tracker.is_tracking():
-                continue
-
-            # BBoxNavigationModule automatically sends goals when tracker publishes
-            # Just check if we have any detections to mark goal_set
-            if self._robot.object_tracker.is_tracking():
-                goal_set = True
-
-            time.sleep(0.25)
-
-        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
-        self._robot.object_tracker.stop_track()
-        return None
+        return f"Arrived to '{robot_location.name}' from query '{query}'."
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:
@@ -205,7 +162,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
-        results = self._robot.spatial_memory.query_by_text(query)
+        results = self.spatial_memory.query_by_text(query)
 
         if not results:
             return f"No matching location found in semantic map for '{query}'"
@@ -214,33 +171,34 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         goal_pose = self._get_goal_pose_from_result(best_match)
 
+        print("Goal pose for semantic nav:", goal_pose)
         if not goal_pose:
             return f"Found a result for '{query}' but it didn't have a valid position."
 
-        result = self._robot.navigate_to(goal_pose, blocking=True)
+        result = self.nav.navigate_to(goal_pose)
 
         if not result:
             return f"Failed to navigate for '{query}'"
 
         return f"Successfuly arrived at '{query}'"
 
-    @skill()
+    # @skill()
     def follow_human(self, person: str) -> str:
         """Follow a specific person"""
         return "Not implemented yet."
 
-    @skill()
+    # @skill()
     def stop_movement(self) -> str:
         """Immediatly stop moving."""
 
         if not self._started:
             raise ValueError(f"{self} has not been started.")
 
-        self._robot.stop_exploration()
+        # self._robot.stop_exploration()
 
         return "Stopped"
 
-    @skill()
+    # @skill()
     def start_exploration(self, timeout: float = 240.0) -> str:
         """A skill that performs autonomous frontier exploration.
 
@@ -286,8 +244,9 @@ class NavigationSkillContainer(SkillContainer, Resource):
         metadata = result.get("metadata")
         if not metadata:
             return None
-
+        print(metadata)
         first = metadata[0]
+        print(first)
         pos_x = first.get("pos_x", 0)
         pos_y = first.get("pos_y", 0)
         theta = first.get("rot_z", 0)
@@ -295,5 +254,5 @@ class NavigationSkillContainer(SkillContainer, Resource):
         return PoseStamped(
             position=make_vector3(pos_x, pos_y, 0),
             orientation=euler_to_quaternion(make_vector3(0, 0, theta)),
-            frame_id="world",
+            frame_id="map",
         )

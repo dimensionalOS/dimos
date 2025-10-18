@@ -37,6 +37,7 @@ from std_msgs.msg import Bool as ROSBool
 from std_msgs.msg import Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
+from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -67,6 +68,8 @@ class ROSNav(Module):
 
     _local_pointcloud: Optional[ROSPointCloud2] = None
     _global_pointcloud: Optional[ROSPointCloud2] = None
+
+    _current_position_running: bool = False
 
     def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -247,6 +250,59 @@ class ROSNav(Module):
         self.joy_pub.publish(joy_msg)
         logger.info("Setting autonomy mode via Joy message")
 
+    @skill(stream=Stream.passive, reducer=Reducer.latest)
+    def current_position(self):
+        """passively stream the current position of the robot every second"""
+        if self._current_position_running:
+            return "already running"
+        while True:
+            self._current_position_running = True
+            time.sleep(1.0)
+            tf = self.tf.get("map", "base_link")
+            if not tf:
+                continue
+            yield f"current position {tf.translation.x}, {tf.translation.y}"
+
+    @skill(stream=Stream.call_agent, reducer=Reducer.string)
+    def goto(self, x: float, y: float):
+        """
+        move the robot in relative coordinates
+        x is forward, y is left
+
+        goto(1, 0) will move the robot forward by 1 meter
+        """
+        pose_to = PoseStamped(
+            position=Vector3(x, y, 0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+            frame_id="base_link",
+            ts=time.time(),
+        )
+
+        yield "moving, please wait..."
+        self.navigate_to(pose_to)
+        yield "arrived"
+
+    @skill(stream=Stream.call_agent, reducer=Reducer.string)
+    def goto_global(self, x: float, y: float) -> bool:
+        """
+        go to coordinates x,y in the map frame
+        0,0 is your starting position
+        """
+        target = PoseStamped(
+            ts=time.time(),
+            frame_id="map",
+            position=Vector3(x, y, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+        )
+
+        pos = self.tf.get("base_link", "map").translation
+
+        yield f"moving from {pos.x:.2f}, {pos.y:.2f} to {x:.2f}, {y:.2f}, please wait..."
+
+        self.navigate_to(target)
+
+        yield "arrived to {x:.2f}, {y:.2f}"
+
     @rpc
     def navigate_to(self, pose: PoseStamped, timeout: float = 60.0) -> bool:
         """
@@ -260,7 +316,7 @@ class ROSNav(Module):
             True if navigation was successful
         """
         logger.info(
-            f"Navigating to goal: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+            f"Navigating to goal: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f} @ {pose.frame_id})"
         )
 
         self.goal_reach = None
