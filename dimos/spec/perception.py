@@ -15,8 +15,15 @@
 from typing import Protocol
 
 from dimos.core import Out
-from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 
 
-class PointcloudPerception(Protocol):
+class Image(Protocol):
+    image: Out[Image]
+
+
+Camera = Image
+
+
+class Pointcloud(Protocol):
     pointcloud: Out[PointCloud2]
