@@ -30,7 +30,12 @@ from langchain_core.messages import (
 
 from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.core import DimosCluster, rpc
-from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
+from dimos.protocol.skill.coordinator import (
+    SkillContainer,
+    SkillCoordinator,
+    SkillState,
+    SkillStateDict,
+)
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
@@ -352,6 +357,7 @@ def deploy(
     system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot.",
     model: Model = Model.GPT_4O,
     provider: Provider = Provider.OPENAI,
+    skill_containers: Optional[List[SkillContainer]] = [],
 ) -> Agent:
     from dimos.agents2.cli.human import HumanInput
 
@@ -363,8 +369,16 @@ def deploy(
     )
 
     human_input = dimos.deploy(HumanInput)
+    human_input.start()
+
     agent.register_skills(human_input)
 
+    for skill_container in skill_containers:
+        print("Registering skill container:", skill_container)
+        agent.register_skills(skill_container)
+
+    agent.run_implicit_skill("human")
     agent.start()
+    agent.loop_thread()
 
     return agent

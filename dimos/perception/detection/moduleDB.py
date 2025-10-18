@@ -214,35 +214,36 @@ class ObjectDBModule(Detection3DModule, TableStr):
             return "No objects detected yet."
         return "\n".join(ret)
 
-    def vlm_query(self, description: str) -> Optional[Object3D]:  # type: ignore[override]
-        imageDetections2D = super().ask_vlm(description)
-        print("VLM query found", imageDetections2D, "detections")
-        time.sleep(3)
+    # @rpc
+    # def vlm_query(self, description: str) -> Optional[Object3D]:  # type: ignore[override]
+    #     imageDetections2D = super().ask_vlm(description)
+    #     print("VLM query found", imageDetections2D, "detections")
+    #     time.sleep(3)
 
-        if not imageDetections2D.detections:
-            return None
+    #     if not imageDetections2D.detections:
+    #         return None
 
-        ret = []
-        for obj in self.objects.values():
-            if obj.ts != imageDetections2D.ts:
-                print(
-                    "Skipping",
-                    obj.track_id,
-                    "ts",
-                    obj.ts,
-                    "!=",
-                    imageDetections2D.ts,
-                )
-                continue
-            if obj.class_id != -100:
-                continue
-            if obj.name != imageDetections2D.detections[0].name:
-                print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
-                continue
-            ret.append(obj)
-        ret.sort(key=lambda x: x.ts)
+    #     ret = []
+    #     for obj in self.objects.values():
+    #         if obj.ts != imageDetections2D.ts:
+    #             print(
+    #                 "Skipping",
+    #                 obj.track_id,
+    #                 "ts",
+    #                 obj.ts,
+    #                 "!=",
+    #                 imageDetections2D.ts,
+    #             )
+    #             continue
+    #         if obj.class_id != -100:
+    #             continue
+    #         if obj.name != imageDetections2D.detections[0].name:
+    #             print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
+    #             continue
+    #         ret.append(obj)
+    #     ret.sort(key=lambda x: x.ts)
 
-        return ret[0] if ret else None
+    #     return ret[0] if ret else None
 
     def lookup(self, label: str) -> List[Detection3DPC]:
         """Look up a detection by label."""
@@ -254,8 +255,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         def update_objects(imageDetections: ImageDetections3DPC):
             for detection in imageDetections.detections:
-                # print(detection)
-                return self.add_detection(detection)
+                if detection.name == "person":
+                    continue
+                self.add_detection(detection)
 
         def scene_thread():
             while True:
