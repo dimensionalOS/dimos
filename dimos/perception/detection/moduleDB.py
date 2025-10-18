@@ -158,9 +158,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     remembered_locations: Dict[str, PoseStamped]
 
-    def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
+    def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.goto = goto
+        self.goto = None
         self.objects = {}
         self.remembered_locations = {}
 
@@ -314,14 +314,15 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
 def deploy(
     dimos: DimosCluster,
+    camera_info: CameraInfo,
     lidar: spec.Pointcloud,
     camera: spec.Camera,
-    prefix: str = "/objectdb",
+    prefix: str = "/detectorDB",
     **kwargs,
-) -> ObjectDBModule:
+) -> Detection3DModule:
     from dimos.core import LCMTransport
 
-    detector = ObjectDBModule(camera_info=camera.camera_info, **kwargs)
+    detector = dimos.deploy(ObjectDBModule, camera_info=camera_info, **kwargs)
 
     detector.image.connect(camera.image)
     detector.pointcloud.connect(lidar.pointcloud)

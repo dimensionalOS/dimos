@@ -17,7 +17,7 @@ import time
 
 from dimos import agents2
 from dimos.core import DimosCluster, start, wait_exit
-from dimos.perception.detection import module3D as module3D
+from dimos.perception.detection import module3D, moduleDB
 from dimos.robot.unitree_webrtc.connection import go2
 from dimos.robot.unitree_webrtc.modular.misc import deploy_foxglove
 from dimos.utils.logging_config import setup_logger
@@ -29,7 +29,7 @@ def deploy(dimos: DimosCluster, ip: str):
     connection = go2.deploy(dimos, ip)
     deploy_foxglove(dimos)
 
-    detector = module3D.deploy(
+    detector = moduleDB.deploy(
         dimos,
         go2.camera_info,
         camera=connection,
