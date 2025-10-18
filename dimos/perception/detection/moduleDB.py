@@ -267,6 +267,10 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         self.detection_stream_3d.subscribe(update_objects)
 
+    @rpc
+    def stop(self):
+        return super().stop()
+
     def goto_object(self, object_id: str) -> Optional[Object3D]:
         """Go to object by id."""
         return self.objects.get(object_id, None)
@@ -310,7 +314,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
 def deploy(
     dimos: DimosCluster,
-    camera_info: CameraInfo,
     lidar: spec.Pointcloud,
     camera: spec.Camera,
     prefix: str = "/objectdb",
@@ -318,7 +321,7 @@ def deploy(
 ) -> ObjectDBModule:
     from dimos.core import LCMTransport
 
-    detector = ObjectDBModule(camera_info=camera.config.camera_info, **kwargs)
+    detector = ObjectDBModule(camera_info=camera.camera_info, **kwargs)
 
     detector.image.connect(camera.image)
     detector.pointcloud.connect(lidar.pointcloud)

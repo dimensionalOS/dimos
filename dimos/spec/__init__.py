@@ -1,1 +1,2 @@
-from dimos.spec.perception import Camera, Image, PointCloud
+from dimos.spec.control import LocalPlanner
+from dimos.spec.perception import Camera, Image, Pointcloud

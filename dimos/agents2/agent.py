@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import json
 import datetime
+import json
 import os
 import uuid
 from operator import itemgetter
@@ -28,9 +28,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.agents2.spec import AgentSpec
-from dimos.core import rpc
-from dimos.msgs.sensor_msgs import Image
+from dimos.agents2.spec import AgentSpec, Model, Provider
+from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
@@ -346,3 +345,26 @@ class Agent(AgentSpec):
 
         with open(file_path, "w") as f:
             json.dump(history, f, default=lambda x: repr(x), indent=2)
+
+
+def deploy(
+    dimos: DimosCluster,
+    system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot.",
+    model: Model = Model.GPT_4O,
+    provider: Provider = Provider.OPENAI,
+) -> Agent:
+    from dimos.agents2.cli.human import HumanInput
+
+    agent = dimos.deploy(
+        Agent,
+        system_prompt=system_prompt,
+        model=model,
+        provider=provider,
+    )
+
+    human_input = dimos.deploy(HumanInput)
+    agent.register_skills(human_input)
+
+    agent.start()
+
+    return agent

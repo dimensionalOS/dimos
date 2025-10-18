@@ -16,6 +16,7 @@ from typing import Protocol
 
 from reactivex.disposable import Disposable
 
+from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.msgs.geometry_msgs import (
     Twist,
@@ -58,11 +59,7 @@ class G1Connection(Module):
         return self.connection.publish_request(topic, data)
 
 
-class LocalPlanner(Protocol):
-    cmd_vel: Out[TwistStamped]
-
-
-def deploy(dimos: DimosCluster, ip: str, local_planner: LocalPlanner) -> G1Connection:
+def deploy(dimos: DimosCluster, ip: str, local_planner: spec.LocalPlanner) -> G1Connection:
     connection = dimos.deploy(G1Connection, ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
