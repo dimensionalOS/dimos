@@ -162,6 +162,8 @@ class Detection3DModule(Detection2DModule):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
 
+        self.scene_update.publish(detections.to_foxglove_scene_update())
+
 
 def deploy(
     dimos: DimosCluster,
