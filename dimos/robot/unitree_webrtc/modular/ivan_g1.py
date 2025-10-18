@@ -66,13 +66,13 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
     zedcam = deploy_monozed(dimos)
     spatialmem = spatial_perception.deploy(dimos, zedcam)
 
-    person_detector = module3D.deploy(
-        dimos,
-        zed.CameraInfo.SingleWebcam,
-        camera=zedcam,
-        lidar=nav,
-        detector=YoloPersonDetector,
-    )
+    # person_detector = module3D.deploy(
+    #     dimos,
+    #     zed.CameraInfo.SingleWebcam,
+    #     camera=zedcam,
+    #     lidar=nav,
+    #     detector=YoloPersonDetector,
+    # )
 
     detector = moduleDB.deploy(
         dimos,
@@ -96,7 +96,6 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
         "You are controling a humanoid robot",
         skill_containers=[connection, nav, zedcam, spatialmem, navskills],
     )
-    # asofkasfkaslfks
     agent.run_implicit_skill("current_position")
     # agent.run_implicit_skill("video_stream")
 

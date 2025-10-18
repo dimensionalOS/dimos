@@ -96,6 +96,7 @@ class NavigationSkillContainer(Module):
 
     def _navigate_to_object(self, query: str) -> Optional[str]:
         position = self.detection_module.nav_vlm(query)
+        print("Object position from VLM:", position)
         if not position:
             return None
         self.nav.navigate_to(position)
