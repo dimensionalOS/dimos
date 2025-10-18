@@ -123,10 +123,13 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        result = model.query(self.image.get_next(), question)
+        image = self.image.get_next()
+        result = model.query_detections(image, question)
+
+        print("VLM result:", result, "for", image, "and question", question)
 
         if isinstance(result, str) or not result or not len(result):
-            return "No detections"
+            return None
 
         detections: ImageDetections2D = result
 

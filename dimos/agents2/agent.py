@@ -285,8 +285,8 @@ class Agent(AgentSpec):
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
 
-                print(self)
-                print(self.coordinator)
+                # print(self)
+                # print(self.coordinator)
 
                 self._write_debug_history_file()
 
