@@ -30,6 +30,7 @@ from textual.binding import Binding
 from textual.widgets import Footer, RichLog
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
+from dimos.utils.cli import theme
 
 # Type alias for all message types we might receive
 AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
@@ -137,23 +138,25 @@ def format_message_content(msg: AnyMessage) -> str:
 class AgentSpyApp(App):
     """TUI application for monitoring agent messages."""
 
-    CSS = """
-    Screen {
-        layout: vertical;
-        background: black;
-    }
+    CSS_PATH = theme.CSS_PATH
 
-    RichLog {
+    CSS = f"""
+    Screen {{
+        layout: vertical;
+        background: {theme.BACKGROUND};
+    }}
+
+    RichLog {{
         height: 1fr;
         border: none;
-        background: black;
+        background: {theme.BACKGROUND};
         padding: 0 1;
-    }
+    }}
 
-    Footer {
+    Footer {{
         dock: bottom;
         height: 1;
-    }
+    }}
     """
 
     BINDINGS = [

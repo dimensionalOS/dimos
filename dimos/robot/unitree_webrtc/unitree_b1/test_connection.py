@@ -290,6 +290,9 @@ class TestB1Connection:
         conn.watchdog_thread = threading.Thread(target=conn._watchdog_loop, daemon=True)
         conn.watchdog_thread.start()
 
+        # Give threads time to initialize
+        time.sleep(0.05)
+
         # Send walk command
         twist = TwistStamped(
             ts=time.time(),
@@ -301,8 +304,8 @@ class TestB1Connection:
         assert conn.current_mode == 2
         assert conn._current_cmd.ly == 1.0
 
-        # Wait for timeout first
-        time.sleep(0.25)
+        # Wait for timeout first (0.2s timeout + 0.15s margin for reliability)
+        time.sleep(0.35)
         assert conn.timeout_active
         assert conn._current_cmd.ly == 0.0  # Watchdog zeroed it
 
