@@ -46,22 +46,3 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
     agent.run_implicit_skill("video_stream")
 
     return {"agent": agent, "spatialmem": spatialmem} + g1
-
-
-if __name__ == "__main__":
-    import argparse
-    import os
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(description="Unitree G1 Humanoid Robot Control")
-    parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
-
-    args = parser.parse_args()
-
-    dimos = start(8)
-    deploy(dimos, args.ip)
-    wait_exit()
-    dimos.close_all()
