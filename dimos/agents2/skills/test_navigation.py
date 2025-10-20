@@ -17,11 +17,15 @@ from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion
 
 
-def test_stop_movement(fake_robot, create_navigation_agent):
+def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker):
+    navigation_skill_container._cancel_goal = mocker.Mock()
+    navigation_skill_container._stop_exploration = mocker.Mock()
     agent = create_navigation_agent(fixture="test_stop_movement.json")
+
     agent.query("stop")
 
-    fake_robot.stop_exploration.assert_called_once_with()
+    navigation_skill_container._cancel_goal.assert_called_once_with()
+    navigation_skill_container._stop_exploration.assert_called_once_with()
 
 
 def test_take_a_look_around(fake_robot, create_navigation_agent, mocker):
