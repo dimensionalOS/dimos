@@ -10,10 +10,10 @@ You create a `ModuleBlueprintSet` from a single module (say `ConnectionModule`) 
 blueprint = create_module_blueprint(ConnectionModule, 'arg1', 'arg2', kwarg='value')
 ```
 
-For ease of use, it's best to make a partial function to create the blueprint:
+But the same thing can be acomplished more succinctly as:
 
 ```python
-connection = functools.partial(create_module_blueprint, ConnectionModule)
+connection = ConnectionModule.blueprint
 ```
 
 Now you can create the blueprint with:

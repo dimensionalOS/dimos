@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-from functools import partial
 import json
 import datetime
 import os
@@ -32,7 +31,6 @@ from langchain_core.messages import (
 from dimos.agents2.spec import AgentSpec
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
@@ -371,7 +369,7 @@ class LlmAgent(Agent):
         super().stop()
 
 
-llm_agent = partial(create_module_blueprint, LlmAgent)
+llm_agent = LlmAgent.blueprint
 
 
 __all__ = ["Agent", "llm_agent"]

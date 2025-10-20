@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 from typing import Optional
 
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RPCClient, RpcCall
@@ -87,6 +85,6 @@ class OsmSkill(SkillModule):
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
 
 
-osm_skill = partial(create_module_blueprint, OsmSkill)
+osm_skill = OsmSkill.blueprint
 
 __all__ = ["OsmSkill", "osm_skill"]

@@ -28,7 +28,6 @@ from reactivex.disposable import CompositeDisposable
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import In, Module, Out, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
@@ -329,7 +328,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-connection = functools.partial(create_module_blueprint, ConnectionModule)
+connection = ConnectionModule.blueprint
 
 
 class UnitreeGo2(UnitreeRobot, Resource):

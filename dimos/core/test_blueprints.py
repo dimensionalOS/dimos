@@ -12,12 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 from dimos.core.blueprints import (
     ModuleBlueprint,
     ModuleBlueprintSet,
     ModuleConnection,
-    create_module_blueprint,
     _make_module_blueprint,
 )
 from dimos.core.blueprints import autoconnect
@@ -88,9 +86,9 @@ class ModuleC(Module):
     data3: In[Data3] = None
 
 
-module_a = partial(create_module_blueprint, ModuleA)
-module_b = partial(create_module_blueprint, ModuleB)
-module_c = partial(create_module_blueprint, ModuleC)
+module_a = ModuleA.blueprint
+module_b = ModuleB.blueprint
+module_c = ModuleC.blueprint
 
 
 def test_get_connection_set():

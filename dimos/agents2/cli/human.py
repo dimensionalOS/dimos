@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import queue
 
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import pLCMTransport, rpc
 from reactivex.disposable import Disposable
 
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
 
@@ -55,6 +53,6 @@ class HumanInput(Module):
         callable(self, run_implicit_name="human")
 
 
-human_input = partial(create_module_blueprint, HumanInput)
+human_input = HumanInput.blueprint
 
 __all__ = ["HumanInput", "human_input"]

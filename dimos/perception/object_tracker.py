@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import cv2
 import numpy as np
 import time
@@ -20,7 +19,6 @@ import threading
 from typing import Dict, List, Optional
 
 from dimos.core import In, Out, Module, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
@@ -626,6 +624,6 @@ class ObjectTracking(Module):
         return None
 
 
-object_tracking = partial(create_module_blueprint, ObjectTracking)
+object_tracking = ObjectTracking.blueprint
 
 __all__ = ["ObjectTracking", "object_tracking"]

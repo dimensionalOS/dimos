@@ -17,7 +17,6 @@ import time
 from typing import Any, Optional
 
 
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.core import rpc
 from dimos.core.rpc_client import RpcCall
 from dimos.core.skill_module import SkillModule
@@ -439,6 +438,6 @@ class NavigationSkillContainer(SkillModule):
         )
 
 
-navigation_skill = partial(create_module_blueprint, NavigationSkillContainer)
+navigation_skill = NavigationSkillContainer.blueprint
 
 __all__ = ["NavigationSkillContainer", "navigation_skill"]

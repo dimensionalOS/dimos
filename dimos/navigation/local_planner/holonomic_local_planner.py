@@ -18,12 +18,10 @@
 Gradient-Augmented Look-Ahead Pursuit (GLAP) holonomic local planner.
 """
 
-from functools import partial
 from typing import Optional, Tuple
 
 import numpy as np
 
-from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.navigation.local_planner import BaseLocalPlanner
 from dimos.utils.transform_utils import quaternion_to_euler, normalize_angle, get_distance
@@ -264,6 +262,6 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         return np.clip(v, -self.v_max, self.v_max)
 
 
-holonomic_local_planner = partial(create_module_blueprint, HolonomicLocalPlanner)
+holonomic_local_planner = HolonomicLocalPlanner.blueprint
 
 __all__ = ["HolonomicLocalPlanner", "holonomic_local_planner"]

@@ -29,7 +29,6 @@ from distributed.client import Client
 
 from distributed import get_client
 from dimos.core import Module, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
 
@@ -186,7 +185,7 @@ class UtilizationModule(Module):
         super().stop()
 
 
-utilization = partial(create_module_blueprint, UtilizationModule)
+utilization = UtilizationModule.blueprint
 
 
 __all__ = ["UtilizationModule", "utilization"]

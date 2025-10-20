@@ -18,14 +18,12 @@
 Navigator module for coordinating global and local planning.
 """
 
-from functools import partial
 import threading
 import time
 from enum import Enum
 from typing import Callable, Optional
 
 from dimos.core import Module, In, Out, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.rpc_client import RpcCall
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
@@ -357,6 +355,6 @@ class BehaviorTreeNavigator(Module):
         logger.info("Navigator stopped")
 
 
-behavior_tree_navigator = partial(create_module_blueprint, BehaviorTreeNavigator)
+behavior_tree_navigator = BehaviorTreeNavigator.blueprint
 
 __all__ = ["BehaviorTreeNavigator", "behavior_tree_navigator"]
