@@ -14,7 +14,7 @@
 
 from dimos import agents2
 from dimos.agents2.skills.navigation import NavigationSkillContainer
-from dimos.core import DimosCluster, start, wait_exit
+from dimos.core import DimosCluster
 from dimos.perception import spatial_perception
 from dimos.robot.unitree_webrtc.modular import g1detector
 

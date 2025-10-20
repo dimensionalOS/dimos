@@ -48,6 +48,7 @@ def deploy_monozed(dimos) -> CameraModule:
             camera_info=zed.CameraInfo.SingleWebcam,
         ),
     )
+
     camera.image.transport = pSHMTransport("/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE)
     camera.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
     camera.start()
