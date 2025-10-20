@@ -207,8 +207,8 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            # if len(obj.detections) < 3:
-            #    continue
+            if len(obj.detections) < 4:
+                continue
             ret.append(str(obj.agent_encode()))
         if not ret:
             return "No objects detected yet."
@@ -255,8 +255,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         def update_objects(imageDetections: ImageDetections3DPC):
             for detection in imageDetections.detections:
-                if detection.class_id == 1:
-                    continue
                 self.add_detection(detection)
 
         def scene_thread():

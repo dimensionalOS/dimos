@@ -31,7 +31,7 @@ from dimos.perception.detection.person_tracker import PersonTracker
 from dimos.perception.detection.reid import ReidModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
+from dimos.robot.unitree_webrtc.connection import go2
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
@@ -40,7 +40,7 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.IN
 
 def detection_unitree():
     dimos = start(8)
-    connection = deploy_connection(dimos)
+    connection = go2.deploy(dimos)
 
     def goto(pose):
         print("NAVIGATION REQUESTED:", pose)

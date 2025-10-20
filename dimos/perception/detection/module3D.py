@@ -98,8 +98,8 @@ class Detection3DModule(Detection2DModule):
             Vector3 position in camera optical frame coordinates
         """
         # Extract camera intrinsics
-        fx, fy = self.camera_info.K[0], self.camera_info.K[4]
-        cx, cy = self.camera_info.K[2], self.camera_info.K[5]
+        fx, fy = self.config.camera_info.K[0], self.config.camera_info.K[4]
+        cx, cy = self.config.camera_info.K[2], self.config.camera_info.K[5]
 
         # Unproject pixel to normalized camera coordinates
         x_norm = (pixel[0] - cx) / fx
@@ -108,6 +108,17 @@ class Detection3DModule(Detection2DModule):
         # Create 3D point at assumed depth in camera optical frame
         # Camera optical frame: X right, Y down, Z forward
         return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
+
+    @skill()
+    def ask_vlm(self, question: str) -> str:
+        """asks a visual model about the view of the robot, for example
+        is the bannana in the trunk?
+        """
+        from dimos.models.vl.qwen import QwenVlModel
+
+        model = QwenVlModel()
+        image = self.image.get_next()
+        return model.query(image, question)
 
     # @skill  # type: ignore[arg-type]
     @rpc
@@ -152,7 +163,7 @@ class Detection3DModule(Detection2DModule):
             ts=detections.image.ts,
             frame_id="world",
             position=self.pixel_to_3d(center, assumed_depth=1.5),
-            orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
 
     @rpc
