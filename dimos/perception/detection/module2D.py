@@ -156,7 +156,6 @@ def deploy(
     from dimos.core import LCMTransport
 
     detector = Detection2DModule(**kwargs)
-
     detector.image.connect(camera.image)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)

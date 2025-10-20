@@ -40,4 +40,7 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
         lidar=nav,
     )
 
-    return {"person_detector": person_detector, "detector3d": detector3d} + g1
+    return {
+        "person_detector": person_detector,
+        "detector3d": detector3d,
+    } + g1
