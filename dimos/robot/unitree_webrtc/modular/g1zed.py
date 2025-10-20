@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos import agents2
-from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core import DimosCluster, LCMTransport, Module, pSHMTransport, start, wait_exit
+from dimos.core import DimosCluster, LCMTransport, pSHMTransport, start, wait_exit
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
@@ -26,10 +24,6 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.navigation import rosnav
-from dimos.perception import spatial_perception
-from dimos.perception.detection import module3D, moduleDB
-from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
-from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot import foxglove_bridge
 from dimos.robot.unitree_webrtc.connection import g1
 from dimos.utils.logging_config import setup_logger
@@ -64,45 +58,14 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
     nav = rosnav.deploy(dimos)
     connection = g1.deploy(dimos, ip, nav)
     zedcam = deploy_monozed(dimos)
-    spatialmem = spatial_perception.deploy(dimos, zedcam)
-
-    # person_detector = module3D.deploy(
-    #     dimos,
-    #     zed.CameraInfo.SingleWebcam,
-    #     camera=zedcam,
-    #     lidar=nav,
-    #     detector=YoloPersonDetector,
-    # )
-
-    detector = moduleDB.deploy(
-        dimos,
-        zed.CameraInfo.SingleWebcam,
-        camera=zedcam,
-        lidar=nav,
-    )
 
     foxglove_bridge.deploy(dimos)
-
-    navskills = dimos.deploy(
-        NavigationSkillContainer,
-        spatialmem,
-        nav,
-        detector,
-    )
-    navskills.start()
-
-    agent = agents2.deploy(
-        dimos,
-        "You are controling a humanoid robot",
-        skill_containers=[connection, nav, zedcam, spatialmem, navskills],
-    )
-    agent.run_implicit_skill("current_position")
-    # agent.run_implicit_skill("video_stream")
 
     return {
         "nav": nav,
         "connection": connection,
-        "zed": zedcam,
+        "camera": zedcam,
+        "camerainfo": zed.CameraInfo.SingleWebcam,
     }
 
 
