@@ -109,6 +109,18 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
         return topic.lcm_type.lcm_decode(msg)
 
 
+class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
+    def encode(self, msg: LCMMsg, _: Topic) -> bytes:
+        return msg.lcm_jpeg_encode()
+
+    def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
+        if topic.lcm_type is None:
+            raise ValueError(
+                f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
+            )
+        return topic.lcm_type.lcm_jpeg_decode(msg)
+
+
 class LCM(
     LCMEncoderMixin,
     LCMPubSubBase,
@@ -117,5 +129,11 @@ class LCM(
 
 class PickleLCM(
     PickleEncoderMixin,
+    LCMPubSubBase,
+): ...
+
+
+class JpegLCM(
+    JpegEncoderMixin,
     LCMPubSubBase,
 ): ...
