@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core import DimosCluster, start, wait_exit
+from dimos.core import DimosCluster
 from dimos.perception.detection import module3D, moduleDB
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.robot.unitree_webrtc.modular import g1zed

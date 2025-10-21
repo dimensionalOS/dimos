@@ -67,9 +67,14 @@ def main():
             f".{args.module}", package="dimos.robot.unitree_webrtc.modular"
         )
     except ImportError as e:
-        print(f"ERROR: Could not import module '{args.module}'")
+        import traceback
+
+        traceback.print_exc()
+
+        print(f"\nERROR: Could not import module '{args.module}'")
         print(f"Make sure the module exists in dimos/robot/unitree_webrtc/modular/")
         print(f"Import error: {e}")
+
         sys.exit(1)
 
     # Verify deploy function exists
