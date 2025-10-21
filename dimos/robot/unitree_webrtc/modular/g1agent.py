@@ -45,4 +45,4 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
     agent.run_implicit_skill("current_position")
     agent.run_implicit_skill("video_stream")
 
-    return {"agent": agent, "spatialmem": spatialmem} + g1
+    return {"agent": agent, "spatialmem": spatialmem, **g1}

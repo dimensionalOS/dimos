@@ -31,9 +31,7 @@ from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.detectors import Detector
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-from dimos.perception.detection.type import (
-    ImageDetections2D,
-)
+from dimos.perception.detection.type import Detection2D, Filter2D, ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -44,6 +42,13 @@ class Config(ModuleConfig):
     detector: Optional[Callable[[Any], Detector]] = Yolo2DDetector
     publish_detection_images: bool = True
     camera_info: CameraInfo = None  # type: ignore
+    filter: list[Filter2D] | Filter2D | None = None
+
+    def __post_init__(self):
+        if self.filter is None:
+            self.filter = []
+        elif not isinstance(self.filter, list):
+            self.filter = [self.filter]
 
 
 class Detection2DModule(Module):
@@ -69,7 +74,10 @@ class Detection2DModule(Module):
         self.previous_detection_count = 0
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
-        return self.detector.process_image(image)
+        imageDetections = self.detector.process_image(image)
+        if not self.config.filter:
+            return imageDetections
+        return imageDetections.filter(*self.config.filter)
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
