@@ -158,6 +158,25 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     remembered_locations: Dict[str, PoseStamped]
 
+    @rpc
+    def start(self):
+        Detection3DModule.start(self)
+
+        def update_objects(imageDetections: ImageDetections3DPC):
+            for detection in imageDetections.detections:
+                self.add_detection(detection)
+
+        def scene_thread():
+            while True:
+                print(self)
+                scene_update = self.to_foxglove_scene_update()
+                self.scene_update.publish(scene_update)
+                time.sleep(1.0)
+
+        threading.Thread(target=scene_thread, daemon=True).start()
+
+        self.detection_stream_3d.subscribe(update_objects)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.goto = None
@@ -259,6 +278,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         def scene_thread():
             while True:
+                print(self)
                 scene_update = self.to_foxglove_scene_update()
                 self.scene_update.publish(scene_update)
                 time.sleep(1.0)
@@ -288,22 +308,13 @@ class ObjectDBModule(Detection3DModule, TableStr):
         scene_update.deletions = []
         scene_update.entities = []
 
-        for obj in copy(self.objects).values():
-            # we need at least 3 detectieons to consider it a valid object
-            # for this to be serious we need a ratio of detections within the window of observations
-            if obj.class_id != -100 and obj.detections < 4:
-                continue
-
-            # print(
-            #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"
-            # )
-            # print(obj.to_pose())
-
-            scene_update.entities.append(
-                obj.to_foxglove_scene_entity(
-                    entity_id=f"object_{obj.name}_{obj.track_id}_{obj.detections}"
+        for obj in self.objects:
+            try:
+                scene_update.entities.append(
+                    obj.to_foxglove_scene_entity(entity_id=f"{obj.name}_{obj.track_id}")
                 )
-            )
+            except Exception as e:
+                pass
 
         scene_update.entities_length = len(scene_update.entities)
         return scene_update

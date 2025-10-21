@@ -37,7 +37,7 @@ def deploy_g1_monozed(dimos) -> CameraModule:
         frequency=4.0,
         transform=Transform(
             translation=Vector3(0.05, 0.0, 0.0),
-            rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
+            rotation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
             frame_id="sensor",
             child_frame_id="camera_link",
         ),

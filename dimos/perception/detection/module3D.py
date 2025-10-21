@@ -26,7 +26,6 @@ from dimos.core import DimosCluster, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.module2D import Config as Module2DConfig
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type import (
     ImageDetections2D,
@@ -35,9 +34,6 @@ from dimos.perception.detection.type import (
 from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
-
-
-class Config(Module2DConfig): ...
 
 
 class Detection3DModule(Detection2DModule):

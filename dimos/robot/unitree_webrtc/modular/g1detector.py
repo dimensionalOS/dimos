@@ -38,9 +38,9 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
         camerainfo,
         camera=camera,
         lidar=nav,
+        filter=lambda det: det.class_id != 0,
     )
 
-    return {
-        "person_detector": person_detector,
-        "detector3d": detector3d,
-    } + g1
+    # return {"detector3d": detector3d, **g1}
+
+    return {"person_detector": person_detector, "detector3d": detector3d, **g1}
