@@ -26,7 +26,7 @@ def test_vector_default_init():
     assert v.z == 0.0
     assert len(v.data) == 3
     assert v.to_list() == [0.0, 0.0, 0.0]
-    assert v.is_zero() == True  # Zero vector should be considered zero
+    assert v.is_zero()  # Zero vector should be considered zero
 
 
 def test_vector_specific_init():
@@ -142,7 +142,7 @@ def test_vector_length():
 def test_vector_normalize():
     """Test vector normalization."""
     v = Vector3(2.0, 3.0, 6.0)
-    assert v.is_zero() == False
+    assert not v.is_zero()
 
     v_norm = v.normalize()
     length = v.length()
@@ -154,16 +154,16 @@ def test_vector_normalize():
     assert np.isclose(v_norm.y, expected_y)
     assert np.isclose(v_norm.z, expected_z)
     assert np.isclose(v_norm.length(), 1.0)
-    assert v_norm.is_zero() == False
+    assert not v_norm.is_zero()
 
     # Test normalizing a zero vector
     v_zero = Vector3(0.0, 0.0, 0.0)
-    assert v_zero.is_zero() == True
+    assert v_zero.is_zero()
     v_zero_norm = v_zero.normalize()
     assert v_zero_norm.x == 0.0
     assert v_zero_norm.y == 0.0
     assert v_zero_norm.z == 0.0
-    assert v_zero_norm.is_zero() == True
+    assert v_zero_norm.is_zero()
 
 
 def test_vector_to_2d():
@@ -237,7 +237,7 @@ def test_vector_zeros():
     assert v_zeros.x == 0.0
     assert v_zeros.y == 0.0
     assert v_zeros.z == 0.0
-    assert v_zeros.is_zero() == True
+    assert v_zeros.is_zero()
 
 
 def test_vector_ones():
@@ -282,68 +282,68 @@ def test_vector_is_zero():
     """Test is_zero method for vectors."""
     # Default zero vector
     v0 = Vector3()
-    assert v0.is_zero() == True
+    assert v0.is_zero()
 
     # Explicit zero vector
     v1 = Vector3(0.0, 0.0, 0.0)
-    assert v1.is_zero() == True
+    assert v1.is_zero()
 
     # Zero vector with different initialization (now always 3D)
     v2 = Vector3(0.0, 0.0)  # Becomes (0, 0, 0)
-    assert v2.is_zero() == True
+    assert v2.is_zero()
 
     # Non-zero vectors
     v3 = Vector3(1.0, 0.0, 0.0)
-    assert v3.is_zero() == False
+    assert not v3.is_zero()
 
     v4 = Vector3(0.0, 2.0, 0.0)
-    assert v4.is_zero() == False
+    assert not v4.is_zero()
 
     v5 = Vector3(0.0, 0.0, 3.0)
-    assert v5.is_zero() == False
+    assert not v5.is_zero()
 
     # Almost zero (within tolerance)
     v6 = Vector3(1e-10, 1e-10, 1e-10)
-    assert v6.is_zero() == True
+    assert v6.is_zero()
 
     # Almost zero (outside tolerance)
     v7 = Vector3(1e-6, 1e-6, 1e-6)
-    assert v7.is_zero() == False
+    assert not v7.is_zero()
 
 
 def test_vector_bool_conversion():
     """Test boolean conversion of vectors."""
     # Zero vectors should be False
     v0 = Vector3()
-    assert bool(v0) == False
+    assert not bool(v0)
 
     v1 = Vector3(0.0, 0.0, 0.0)
-    assert bool(v1) == False
+    assert not bool(v1)
 
     # Almost zero vectors should be False
     v2 = Vector3(1e-10, 1e-10, 1e-10)
-    assert bool(v2) == False
+    assert not bool(v2)
 
     # Non-zero vectors should be True
     v3 = Vector3(1.0, 0.0, 0.0)
-    assert bool(v3) == True
+    assert bool(v3)
 
     v4 = Vector3(0.0, 2.0, 0.0)
-    assert bool(v4) == True
+    assert bool(v4)
 
     v5 = Vector3(0.0, 0.0, 3.0)
-    assert bool(v5) == True
+    assert bool(v5)
 
     # Direct use in if statements
     if v0:
-        assert False, "Zero vector should be False in boolean context"
+        raise AssertionError("Zero vector should be False in boolean context")
     else:
         pass  # Expected path
 
     if v3:
         pass  # Expected path
     else:
-        assert False, "Non-zero vector should be True in boolean context"
+        raise AssertionError("Non-zero vector should be True in boolean context")
 
 
 def test_vector_add():

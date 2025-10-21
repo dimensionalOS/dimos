@@ -10,7 +10,6 @@ import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.utils.actor_registry import ActorRegistry
 from dimos.core.transport import (
     LCMTransport,
     SHMTransport,
@@ -21,12 +20,14 @@ from dimos.core.transport import (
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
+from dimos.utils.actor_registry import ActorRegistry
 
 __all__ = [
-    "DimosCluster",
-    "In",
     "LCMRPC",
     "LCMTF",
+    "TF",
+    "DimosCluster",
+    "In",
     "LCMTransport",
     "Module",
     "ModuleBase",
@@ -37,7 +38,6 @@ __all__ = [
     "RemoteIn",
     "RemoteOut",
     "SHMTransport",
-    "TF",
     "TFConfig",
     "TFSpec",
     "Transport",
@@ -173,7 +173,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             ).result()
 
             worker = actor.set_ref(actor).result()
-            print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+            print(f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}")
 
             # Register actor deployment in shared memory
             ActorRegistry.update(str(actor), str(worker))
@@ -202,7 +202,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             memory_used_gb = memory_used / 1e9
             memory_limit_gb = memory_limit / 1e9
             managed_gb = managed_bytes / 1e9
-            spilled_gb = spilled / 1e9
+            spilled / 1e9
 
             total_memory_used += memory_used
             total_memory_limit += memory_limit
@@ -244,11 +244,12 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:
-            from dimos.protocol.pubsub import shmpubsub
             import gc
 
+            from dimos.protocol.pubsub import shmpubsub
+
             for obj in gc.get_objects():
-                if isinstance(obj, (shmpubsub.SharedMemory, shmpubsub.PickleSharedMemory)):
+                if isinstance(obj, shmpubsub.SharedMemory | shmpubsub.PickleSharedMemory):
                     try:
                         obj.stop()
                     except Exception:
@@ -302,15 +303,15 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     return dask_client
 
 
-def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
+def start(n: int | None = None, memory_limit: str = "auto") -> Client:
     """Start a Dask LocalCluster with specified workers and memory limits.
 
     Args:
         n: Number of workers (defaults to CPU count)
         memory_limit: Memory limit per worker (e.g., '4GB', '2GiB', or 'auto' for Dask's default)
     """
-    import signal
     import atexit
+    import signal
 
     console = Console()
     if not n:

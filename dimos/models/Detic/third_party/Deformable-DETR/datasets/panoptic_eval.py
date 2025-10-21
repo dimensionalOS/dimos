@@ -18,7 +18,7 @@ except ImportError:
     pass
 
 
-class PanopticEvaluator(object):
+class PanopticEvaluator:
     def __init__(self, ann_file, ann_folder, output_dir="panoptic_eval"):
         self.gt_json = ann_file
         self.gt_folder = ann_folder

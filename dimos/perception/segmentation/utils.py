@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 import cv2
+import numpy as np
 import torch
 
 
@@ -43,12 +43,12 @@ class SimpleTracker:
 
         # Compute occurrences efficiently using numpy
         unique_ids, counts = np.unique(all_tracks, return_counts=True)
-        id_counts = dict(zip(unique_ids, counts))
+        id_counts = dict(zip(unique_ids, counts, strict=False))
 
         # Update total counts but ensure it only contains IDs within the history size
         total_tracked_ids = np.concatenate(self.history) if self.history else np.array([])
         unique_total_ids, total_counts = np.unique(total_tracked_ids, return_counts=True)
-        self.total_counts = dict(zip(unique_total_ids, total_counts))
+        self.total_counts = dict(zip(unique_total_ids, total_counts, strict=False))
 
         # Return IDs that appear often enough
         return [track_id for track_id, count in id_counts.items() if count >= self.min_count]
@@ -81,7 +81,7 @@ def extract_masks_bboxes_probs_names(result, max_size=0.7):
 
     total_area = result.masks.orig_shape[0] * result.masks.orig_shape[1]
 
-    for box, mask_data in zip(result.boxes, result.masks.data):
+    for box, mask_data in zip(result.boxes, result.masks.data, strict=False):
         mask_numpy = mask_data
 
         # Extract bounding box
@@ -236,7 +236,9 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
     h, w = image.shape[:2]
     overlay = image.copy()
 
-    for mask, bbox, track_id, prob, name in zip(masks, bboxes, track_ids, probs, names):
+    for mask, bbox, track_id, prob, name in zip(
+        masks, bboxes, track_ids, probs, names, strict=False
+    ):
         # Convert mask tensor to numpy if needed
         if isinstance(mask, torch.Tensor):
             mask = mask.cpu().numpy()

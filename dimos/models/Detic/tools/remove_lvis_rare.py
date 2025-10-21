@@ -8,7 +8,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading", args.ann)
-    data = json.load(open(args.ann, "r"))
+    data = json.load(open(args.ann))
     catid2freq = {x["id"]: x["frequency"] for x in data["categories"]}
     print("ori #anns", len(data["annotations"]))
     exclude = ["r"]

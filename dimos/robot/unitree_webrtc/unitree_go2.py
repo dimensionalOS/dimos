@@ -19,9 +19,11 @@ import functools
 import logging
 import os
 import time
-import warnings
 from typing import Optional
+import warnings
 
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import Bool, String
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
 
@@ -31,44 +33,40 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.dimos import Dimos
 from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos_lcm.std_msgs import String
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.perception.spatial_perception import SpatialMemory
+from dimos.navigation.bbox_navigation import BBoxNavigationModule
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 from dimos.perception.common.utils import (
     load_camera_info,
     load_camera_info_opencv,
     rectify_image,
 )
+from dimos.perception.object_tracker_2d import ObjectTracker2D
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.utils.monitoring import UtilizationModule
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
+from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
-from dimos.perception.object_tracker_2d import ObjectTracker2D
-from dimos.navigation.bbox_navigation import BBoxNavigationModule
-from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import UnitreeRobot
-from dimos.types.robot_capabilities import RobotCapability
-
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger(__file__, level=logging.INFO)
 
@@ -150,7 +148,7 @@ class ConnectionModule(Module):
 
     def __init__(
         self,
-        ip: str = None,
+        ip: str | None = None,
         connection_type: str = "webrtc",
         rectify_image: bool = True,
         *args,
@@ -290,7 +288,7 @@ class ConnectionModule(Module):
             logger.error(f"Error publishing camera pose: {e}")
 
     @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
+    def get_odom(self) -> PoseStamped | None:
         """Get the robot's odometry.
 
         Returns:
@@ -333,11 +331,11 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
     def __init__(
         self,
-        ip: Optional[str],
-        output_dir: str = None,
+        ip: str | None,
+        output_dir: str | None = None,
         websocket_port: int = 7779,
-        skill_library: Optional[SkillLibrary] = None,
-        connection_type: Optional[str] = "webrtc",
+        skill_library: SkillLibrary | None = None,
+        connection_type: str | None = "webrtc",
     ):
         """Initialize the robot system.
 
@@ -659,7 +657,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         return self.navigator.cancel_goal()
 
     @property
-    def spatial_memory(self) -> Optional[SpatialMemory]:
+    def spatial_memory(self) -> SpatialMemory | None:
         """Get the robot's spatial memory module.
 
         Returns:

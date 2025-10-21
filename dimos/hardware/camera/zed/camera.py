@@ -15,10 +15,10 @@
 from typing import Any, Dict, Optional, Tuple
 
 import cv2
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 import open3d as o3d
 import pyzed.sl as sl
-from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import interval
 
 from dimos.core import Module, Out, rpc
@@ -126,7 +126,7 @@ class ZEDCamera:
         enable_pose_smoothing: bool = True,
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = False,
-        initial_world_transform: Optional[sl.Transform] = None,
+        initial_world_transform: sl.Transform | None = None,
     ) -> bool:
         """
         Enable positional tracking on the ZED camera.
@@ -178,7 +178,7 @@ class ZEDCamera:
 
     def get_pose(
         self, reference_frame: sl.REFERENCE_FRAME = sl.REFERENCE_FRAME.WORLD
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """
         Get the current camera pose.
 
@@ -229,7 +229,7 @@ class ZEDCamera:
             logger.error(f"Error getting pose: {e}")
             return None
 
-    def get_imu_data(self) -> Optional[Dict[str, Any]]:
+    def get_imu_data(self) -> dict[str, Any] | None:
         """
         Get IMU sensor data if available.
 
@@ -277,7 +277,7 @@ class ZEDCamera:
 
     def capture_frame(
         self,
-    ) -> Tuple[Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray]]:
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
         """
         Capture a frame from ZED camera.
 
@@ -312,7 +312,7 @@ class ZEDCamera:
             logger.error(f"Error capturing frame: {e}")
             return None, None, None
 
-    def capture_pointcloud(self) -> Optional[o3d.geometry.PointCloud]:
+    def capture_pointcloud(self) -> o3d.geometry.PointCloud | None:
         """
         Capture point cloud from ZED camera.
 
@@ -372,9 +372,7 @@ class ZEDCamera:
 
     def capture_frame_with_pose(
         self,
-    ) -> Tuple[
-        Optional[np.ndarray], Optional[np.ndarray], Optional[np.ndarray], Optional[Dict[str, Any]]
-    ]:
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:
         """
         Capture a frame with synchronized pose data.
 
@@ -416,7 +414,7 @@ class ZEDCamera:
             self.is_opened = False
             logger.info("ZED camera closed")
 
-    def get_camera_info(self) -> Dict[str, Any]:
+    def get_camera_info(self) -> dict[str, Any]:
         """Get ZED camera information and calibration parameters."""
         if not self.is_opened:
             return {}
@@ -434,8 +432,6 @@ class ZEDCamera:
                 else:
                     # Method 2: Calculate from left and right camera positions
                     # The baseline is the distance between left and right cameras
-                    left_cam = calibration.left_cam
-                    right_cam = calibration.right_cam
 
                     # Try different ways to get baseline in SDK 4.0+
                     if hasattr(info.camera_configuration, "calibration_parameters_raw"):
@@ -546,7 +542,7 @@ class ZEDModule(Module):
         set_floor_as_origin: bool = True,
         publish_rate: float = 30.0,
         frame_id: str = "zed_camera",
-        recording_path: str = None,
+        recording_path: str | None = None,
         **kwargs,
     ):
         """
@@ -834,7 +830,7 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
 
-    def _publish_pose(self, pose_data: Dict[str, Any], header: Header):
+    def _publish_pose(self, pose_data: dict[str, Any], header: Header):
         """Publish camera pose as PoseStamped message and TF transform."""
         try:
             position = pose_data.get("position", [0, 0, 0])
@@ -858,14 +854,14 @@ class ZEDModule(Module):
             logger.error(f"Error publishing pose: {e}")
 
     @rpc
-    def get_camera_info(self) -> Dict[str, Any]:
+    def get_camera_info(self) -> dict[str, Any]:
         """Get camera information and calibration parameters."""
         if self.zed_camera:
             return self.zed_camera.get_camera_info()
         return {}
 
     @rpc
-    def get_pose(self) -> Optional[Dict[str, Any]]:
+    def get_pose(self) -> dict[str, Any] | None:
         """Get current camera pose if tracking is enabled."""
         if self.zed_camera and self.enable_tracking:
             return self.zed_camera.get_pose()

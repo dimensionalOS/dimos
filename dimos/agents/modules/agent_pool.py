@@ -19,9 +19,9 @@ from typing import Any, Dict, List, Union
 from reactivex import operators as ops
 from reactivex.subject import Subject
 
-from dimos.core import Module, In, Out, rpc
 from dimos.agents.modules.base_agent import BaseAgentModule
 from dimos.agents.modules.unified_agent import UnifiedAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.modules.agent_pool")
@@ -38,10 +38,10 @@ class AgentPoolModule(Module):
     """
 
     # Module I/O
-    query_in: In[Dict[str, Any]] = None  # {agent_id: str, query: str, ...}
-    response_out: Out[Dict[str, Any]] = None  # {agent_id: str, response: str, ...}
+    query_in: In[dict[str, Any]] = None  # {agent_id: str, query: str, ...}
+    response_out: Out[dict[str, Any]] = None  # {agent_id: str, response: str, ...}
 
-    def __init__(self, agents_config: Dict[str, Dict[str, Any]], default_agent: str = None):
+    def __init__(self, agents_config: dict[str, dict[str, Any]], default_agent: str | None = None):
         """Initialize agent pool.
 
         Args:
@@ -119,7 +119,7 @@ class AgentPoolModule(Module):
         super().stop()
 
     @rpc
-    def add_agent(self, agent_id: str, config: Dict[str, Any]):
+    def add_agent(self, agent_id: str, config: dict[str, Any]):
         """Add a new agent to the pool."""
         if agent_id in self._agents:
             logger.warning(f"Agent {agent_id} already exists")
@@ -156,7 +156,7 @@ class AgentPoolModule(Module):
         logger.info(f"Removed agent: {agent_id}")
 
     @rpc
-    def list_agents(self) -> List[Dict[str, Any]]:
+    def list_agents(self) -> list[dict[str, Any]]:
         """List all agents and their configurations."""
         return [
             {"id": agent_id, "type": info["type"], "model": info["config"].get("model", "unknown")}
@@ -164,7 +164,7 @@ class AgentPoolModule(Module):
         ]
 
     @rpc
-    def broadcast_query(self, query: str, exclude: List[str] = None):
+    def broadcast_query(self, query: str, exclude: list[str] | None = None):
         """Send query to all agents (except excluded ones)."""
         exclude = exclude or []
 
@@ -180,7 +180,7 @@ class AgentPoolModule(Module):
         """Setup response routing for an agent."""
 
         # Subscribe to agent responses and tag with agent_id
-        def tag_response(response: str) -> Dict[str, Any]:
+        def tag_response(response: str) -> dict[str, Any]:
             return {
                 "agent_id": agent_id,
                 "response": response,
@@ -193,7 +193,7 @@ class AgentPoolModule(Module):
             .subscribe(self._response_subject.on_next)
         )
 
-    def _route_query(self, msg: Dict[str, Any]):
+    def _route_query(self, msg: dict[str, Any]):
         """Route incoming query to appropriate agent(s)."""
         # Extract routing info
         agent_id = msg.get("agent_id", self._default_agent)

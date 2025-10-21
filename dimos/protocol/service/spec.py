@@ -20,7 +20,7 @@ ConfigT = TypeVar("ConfigT")
 
 
 class Configurable(Generic[ConfigT]):
-    default_config: Type[ConfigT]
+    default_config: type[ConfigT]
 
     def __init__(self, **kwargs) -> None:
         self.config: ConfigT = self.default_config(**kwargs)

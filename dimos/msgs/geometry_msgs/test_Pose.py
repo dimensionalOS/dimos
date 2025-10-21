@@ -14,14 +14,12 @@
 
 import pickle
 
+from dimos_lcm.geometry_msgs import Pose as LCMPose
 import numpy as np
 import pytest
-from dimos_lcm.geometry_msgs import Pose as LCMPose
 
 try:
-    from geometry_msgs.msg import Pose as ROSPose
-    from geometry_msgs.msg import Point as ROSPoint
-    from geometry_msgs.msg import Quaternion as ROSQuaternion
+    from geometry_msgs.msg import Point as ROSPoint, Pose as ROSPose, Quaternion as ROSQuaternion
 except ImportError:
     ROSPose = None
     ROSPoint = None
@@ -338,7 +336,7 @@ def test_pose_equality():
     # Different types
     assert pose1 != "not a pose"
     assert pose1 != [1.0, 2.0, 3.0]
-    assert pose1 != None
+    assert pose1 is not None
 
 
 def test_pose_with_numpy_arrays():

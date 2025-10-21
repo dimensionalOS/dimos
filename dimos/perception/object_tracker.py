@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import numpy as np
-import time
 import threading
+import time
 from typing import Dict, List, Optional
 
-from dimos.core import In, Out, Module, rpc
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from reactivex.disposable import Disposable
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose
-from dimos.protocol.tf import TF
-from dimos.utils.logging_config import setup_logger
+import cv2
+from dimos_lcm.sensor_msgs import CameraInfo
 
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
@@ -33,14 +25,23 @@ from dimos_lcm.vision_msgs import (
     Detection3D,
     ObjectHypothesisWithPose,
 )
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.utils.transform_utils import (
-    yaw_towards_point,
-    optical_to_robot_frame,
-    euler_to_quaternion,
-)
+import numpy as np
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
 from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.protocol.tf import TF
 from dimos.types.timestamped import align_timestamped
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import (
+    euler_to_quaternion,
+    optical_to_robot_frame,
+    yaw_towards_point,
+)
 
 logger = setup_logger("dimos.perception.object_tracker")
 
@@ -99,12 +100,12 @@ class ObjectTracking(Module):
         self.reid_warmup_frames = 3  # Number of frames before REID starts
 
         self._frame_lock = threading.Lock()
-        self._latest_rgb_frame: Optional[np.ndarray] = None
-        self._latest_depth_frame: Optional[np.ndarray] = None
-        self._latest_camera_info: Optional[CameraInfo] = None
+        self._latest_rgb_frame: np.ndarray | None = None
+        self._latest_depth_frame: np.ndarray | None = None
+        self._latest_camera_info: CameraInfo | None = None
 
         # Tracking thread control
-        self.tracking_thread: Optional[threading.Thread] = None
+        self.tracking_thread: threading.Thread | None = None
         self.stop_tracking = threading.Event()
         self.tracking_rate = 30.0  # Hz
         self.tracking_period = 1.0 / self.tracking_rate
@@ -113,8 +114,8 @@ class ObjectTracking(Module):
         self.tf = TF()
 
         # Store latest detections for RPC access
-        self._latest_detection2d: Optional[Detection2DArray] = None
-        self._latest_detection3d: Optional[Detection3DArray] = None
+        self._latest_detection2d: Detection2DArray | None = None
+        self._latest_detection3d: Detection3DArray | None = None
         self._detection_event = threading.Event()
 
     @rpc
@@ -172,8 +173,8 @@ class ObjectTracking(Module):
     @rpc
     def track(
         self,
-        bbox: List[float],
-    ) -> Dict:
+        bbox: list[float],
+    ) -> dict:
         """
         Initialize tracking with a bounding box and process current frame.
 
@@ -495,7 +496,7 @@ class ObjectTracking(Module):
                         translation=robot_pose.position,
                         rotation=robot_pose.orientation,
                         frame_id=self.frame_id,  # Use configured camera frame
-                        child_frame_id=f"tracked_object",
+                        child_frame_id="tracked_object",
                         ts=header.ts,
                     )
                     self.tf.publish(tracked_object_tf)
@@ -590,7 +591,7 @@ class ObjectTracking(Module):
 
         return viz_image
 
-    def _get_depth_from_bbox(self, bbox: List[int], depth_frame: np.ndarray) -> Optional[float]:
+    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:
         """Calculate depth from bbox using the 25th percentile of closest points.
 
         Args:

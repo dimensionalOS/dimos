@@ -21,18 +21,18 @@ Provides navigation and interaction capabilities with natural language interface
 import os
 import sys
 import time
+
 from dotenv import load_dotenv
-
-from reactivex.subject import Subject
 import reactivex.operators as ops
+from reactivex.subject import Subject
 
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.agents.claude_agent import ClaudeAgent
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal, Explore
-from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.skills.navigation import Explore, GetPose, NavigateToGoal, NavigateWithText
 from dimos.stream.audio.pipelines import tts
 from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger("dimos.robot.unitree_webrtc.run")
 
@@ -67,7 +67,7 @@ def main():
 
     # Load system prompt
     try:
-        with open(SYSTEM_PROMPT_PATH, "r") as f:
+        with open(SYSTEM_PROMPT_PATH) as f:
             system_prompt = f.read()
     except FileNotFoundError:
         logger.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")

@@ -17,40 +17,39 @@ Manipulation module for robotic grasping with visual servoing.
 Handles grasping logic, state machine, and hardware coordination as a Dimos module.
 """
 
-import cv2
-import time
-import threading
-from typing import Optional, Tuple, Any, Dict
-from enum import Enum
 from collections import deque
+from enum import Enum
+import threading
+import time
+from typing import Any, Dict, Optional, Tuple
 
-import numpy as np
-
-from reactivex.disposable import Disposable
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
+import numpy as np
+from reactivex.disposable import Disposable
 
+from dimos.core import In, Module, Out, rpc
 from dimos.hardware.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS
-from dimos.perception.common.utils import find_clicked_detection
 from dimos.manipulation.visual_servoing.utils import (
     create_manipulation_visualization,
+    is_target_reached,
     select_points_from_depth,
     transform_points_3d,
     update_target_grasp_pose,
-    is_target_reached,
 )
-from dimos.utils.transform_utils import (
-    pose_to_matrix,
-    matrix_to_pose,
-    create_transform_from_6dof,
-    compose_transforms,
-)
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.perception.common.utils import find_clicked_detection
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import (
+    compose_transforms,
+    create_transform_from_6dof,
+    matrix_to_pose,
+    pose_to_matrix,
+)
 
 logger = setup_logger("dimos.manipulation.visual_servoing.manipulation_module")
 
@@ -73,12 +72,12 @@ class Feedback:
         self,
         grasp_stage: GraspStage,
         target_tracked: bool,
-        current_executed_pose: Optional[Pose] = None,
-        current_ee_pose: Optional[Pose] = None,
-        current_camera_pose: Optional[Pose] = None,
-        target_pose: Optional[Pose] = None,
+        current_executed_pose: Pose | None = None,
+        current_ee_pose: Pose | None = None,
+        current_camera_pose: Pose | None = None,
+        target_pose: Pose | None = None,
         waiting_for_reach: bool = False,
-        success: Optional[bool] = None,
+        success: bool | None = None,
     ):
         self.grasp_stage = grasp_stage
         self.target_tracked = target_tracked
@@ -117,7 +116,7 @@ class ManipulationModule(Module):
 
     def __init__(
         self,
-        ee_to_camera_6dof: Optional[list] = None,
+        ee_to_camera_6dof: list | None = None,
         **kwargs,
     ):
         """
@@ -279,7 +278,7 @@ class ManipulationModule(Module):
             logger.error(f"Error processing camera info: {e}")
 
     @rpc
-    def get_single_rgb_frame(self) -> Optional[np.ndarray]:
+    def get_single_rgb_frame(self) -> np.ndarray | None:
         """
         get the latest rgb frame from the camera
         """
@@ -323,8 +322,12 @@ class ManipulationModule(Module):
 
     @rpc
     def pick_and_place(
-        self, target_x: int = None, target_y: int = None, place_x: int = None, place_y: int = None
-    ) -> Dict[str, Any]:
+        self,
+        target_x: int | None = None,
+        target_y: int | None = None,
+        place_x: int | None = None,
+        place_y: int | None = None,
+    ) -> dict[str, Any]:
         """
         Start a pick and place task.
 
@@ -479,7 +482,7 @@ class ManipulationModule(Module):
 
         return True
 
-    def _check_reach_timeout(self) -> Tuple[bool, float]:
+    def _check_reach_timeout(self) -> tuple[bool, float]:
         """Check if robot has exceeded timeout while reaching pose.
 
         Returns:
@@ -582,7 +585,7 @@ class ManipulationModule(Module):
             return True
         return False
 
-    def _update_tracking(self, detection_3d_array: Optional[Detection3DArray]) -> bool:
+    def _update_tracking(self, detection_3d_array: Detection3DArray | None) -> bool:
         """Update tracking with new detections."""
         if not detection_3d_array or not self.pbvs:
             return False
@@ -794,9 +797,7 @@ class ManipulationModule(Module):
 
     def capture_and_process(
         self,
-    ) -> Tuple[
-        Optional[np.ndarray], Optional[Detection3DArray], Optional[Detection2DArray], Optional[Pose]
-    ]:
+    ) -> tuple[np.ndarray | None, Detection3DArray | None, Detection2DArray | None, Pose | None]:
         """Capture frame from camera data and process detections."""
         if self.latest_rgb is None or self.latest_depth is None or self.detector is None:
             return None, None, None, None
@@ -845,7 +846,7 @@ class ManipulationModule(Module):
             return True
         return False
 
-    def update(self) -> Optional[Dict[str, Any]]:
+    def update(self) -> dict[str, Any] | None:
         """Main update function that handles capture, processing, control, and visualization."""
         rgb, detection_3d_array, detection_2d_array, camera_pose = self.capture_and_process()
         if rgb is None:
@@ -918,7 +919,7 @@ class ManipulationModule(Module):
         std_devs = np.std(positions, axis=0)
         return np.all(std_devs < self.pose_stabilization_threshold)
 
-    def get_place_target_pose(self) -> Optional[Pose]:
+    def get_place_target_pose(self) -> Pose | None:
         """Get the place target pose with z-offset applied based on object height."""
         if self.place_target_position is None:
             return None

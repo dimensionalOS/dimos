@@ -334,7 +334,7 @@ class TestB1Connection:
         conn.watchdog_thread.start()
 
         # Simulate sending movement commands for a while
-        for i in range(5):
+        for _i in range(5):
             twist = TwistStamped(
                 ts=time.time(),
                 frame_id="base_link",
@@ -396,7 +396,7 @@ class TestB1Connection:
 
         # Send commands from multiple threads rapidly
         def send_commands(thread_id):
-            for i in range(10):
+            for _i in range(10):
                 twist = TwistStamped(
                     ts=time.time(),
                     frame_id="base_link",

@@ -19,13 +19,13 @@ This module creates a reactive stream of position updates from ROS odometry or p
 """
 
 import logging
-from typing import Tuple, Optional
 import time
-from reactivex import Subject, Observable
-from reactivex import operators as ops
-from rclpy.node import Node
+from typing import Optional, Tuple
+
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry
+from rclpy.node import Node
+from reactivex import Observable, Subject, operators as ops
 
 from dimos.utils.logging_config import setup_logger
 
@@ -44,7 +44,7 @@ class PositionStreamProvider:
         self,
         ros_node: Node,
         odometry_topic: str = "/odom",
-        pose_topic: Optional[str] = None,
+        pose_topic: str | None = None,
         use_odometry: bool = True,
     ):
         """
@@ -146,7 +146,7 @@ class PositionStreamProvider:
             ops.share()  # Share the stream among multiple subscribers
         )
 
-    def get_current_position(self) -> Optional[Tuple[float, float]]:
+    def get_current_position(self) -> tuple[float, float] | None:
         """
         Get the most recent position.
 

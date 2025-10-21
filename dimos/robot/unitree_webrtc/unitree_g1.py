@@ -24,12 +24,10 @@ import time
 from typing import Optional
 
 from dimos_lcm.foxglove_msgs import SceneUpdate
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from geometry_msgs.msg import PoseStamped as ROSPoseStamped, TwistStamped as ROSTwistStamped
 from nav_msgs.msg import Odometry as ROSOdometry
 from reactivex.disposable import Disposable
-from sensor_msgs.msg import Joy as ROSJoy
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
+from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import core
@@ -93,7 +91,7 @@ class G1ConnectionModule(Module):
     ip: str
     connection_type: str = "webrtc"
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
+    def __init__(self, ip: str | None = None, connection_type: str = "webrtc", *args, **kwargs):
         self.ip = ip
         self.connection_type = connection_type
         self.connection = None
@@ -146,11 +144,11 @@ class UnitreeG1(Robot, Resource):
     def __init__(
         self,
         ip: str,
-        output_dir: str = None,
+        output_dir: str | None = None,
         websocket_port: int = 7779,
-        skill_library: Optional[SkillLibrary] = None,
-        recording_path: str = None,
-        replay_path: str = None,
+        skill_library: SkillLibrary | None = None,
+        recording_path: str | None = None,
+        replay_path: str | None = None,
         enable_joystick: bool = False,
         enable_connection: bool = True,
         enable_ros_bridge: bool = True,
@@ -474,7 +472,7 @@ class UnitreeG1(Robot, Resource):
         return None
 
     @property
-    def spatial_memory(self) -> Optional[SpatialMemory]:
+    def spatial_memory(self) -> SpatialMemory | None:
         return self.spatial_memory_module
 
 

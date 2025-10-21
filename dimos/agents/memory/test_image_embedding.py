@@ -143,7 +143,7 @@ class TestImageEmbedding:
                     "embedding1": results[0]["embedding"],
                     "embedding2": results[1]["embedding"] if len(results) > 1 else None,
                 }
-                print(f"Saved embeddings for similarity testing")
+                print("Saved embeddings for similarity testing")
 
             print("CLIP embedding test passed successfully!")
 

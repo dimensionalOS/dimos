@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import queue
+import sys
+import threading
+
 import cv2
 import numpy as np
-import os
-import sys
-import queue
-import threading
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dimos.stream.video_provider import VideoProvider
 from dimos.perception.semantic_seg import SemanticSegmentationStream
+from dimos.stream.video_provider import VideoProvider
 
 
 def main():

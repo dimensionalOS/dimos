@@ -19,16 +19,17 @@ This module provides skills for visual navigation, including following humans
 and navigating to specific objects using computer vision.
 """
 
-import time
 import logging
 import threading
+import time
 from typing import Optional, Tuple
 
-from dimos.skills.skills import AbstractRobotSkill
-from dimos.utils.logging_config import setup_logger
-from dimos.perception.visual_servoing import VisualServoing
 from pydantic import Field
+
+from dimos.perception.visual_servoing import VisualServoing
+from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.vector import Vector
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.skills.visual_navigation", level=logging.DEBUG)
 
@@ -47,7 +48,7 @@ class FollowHuman(AbstractRobotSkill):
         1.5, description="Desired distance to maintain from the person in meters"
     )
     timeout: float = Field(20.0, description="Maximum time to follow the person in seconds")
-    point: Optional[Tuple[int, int]] = Field(
+    point: tuple[int, int] | None = Field(
         None, description="Optional point to start tracking (x,y pixel coordinates)"
     )
 

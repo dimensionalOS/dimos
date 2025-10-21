@@ -14,9 +14,11 @@
 
 # UNDER DEVELOPMENT 🚧🚧🚧
 
+from pathlib import Path
+
 import cv2
 import pycolmap
-from pathlib import Path
+
 from dimos.environment.environment import Environment
 
 

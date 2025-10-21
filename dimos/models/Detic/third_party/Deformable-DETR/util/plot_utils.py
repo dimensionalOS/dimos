@@ -11,12 +11,12 @@
 Plotting utilities to visualize training logs.
 """
 
-import torch
+from pathlib import Path, PurePath
+
+import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
-import matplotlib.pyplot as plt
-
-from pathlib import Path, PurePath
+import torch
 
 
 def plot_logs(
@@ -50,7 +50,7 @@ def plot_logs(
             )
 
     # verify valid dir(s) and that every item in list is Path object
-    for i, dir in enumerate(logs):
+    for _i, dir in enumerate(logs):
         if not isinstance(dir, PurePath):
             raise ValueError(
                 f"{func_name} - non-Path object in logs argument of {type(dir)}: \n{dir}"
@@ -64,7 +64,7 @@ def plot_logs(
 
     fig, axs = plt.subplots(ncols=len(fields), figsize=(16, 5))
 
-    for df, color in zip(dfs, sns.color_palette(n_colors=len(logs))):
+    for df, color in zip(dfs, sns.color_palette(n_colors=len(logs)), strict=False):
         for j, field in enumerate(fields):
             if field == "mAP":
                 coco_eval = (
@@ -80,7 +80,7 @@ def plot_logs(
                     color=[color] * 2,
                     style=["-", "--"],
                 )
-    for ax, field in zip(axs, fields):
+    for ax, field in zip(axs, fields, strict=False):
         ax.legend([Path(p).name for p in logs])
         ax.set_title(field)
 
@@ -94,7 +94,7 @@ def plot_precision_recall(files, naming_scheme="iter"):
     else:
         raise ValueError(f"not supported {naming_scheme}")
     fig, axs = plt.subplots(ncols=2, figsize=(16, 5))
-    for f, color, name in zip(files, sns.color_palette("Blues", n_colors=len(files)), names):
+    for f, color, name in zip(files, sns.color_palette("Blues", n_colors=len(files)), names, strict=False):
         data = torch.load(f)
         # precision is n_iou, n_points, n_cat, n_area, max_det
         precision = data["precision"]

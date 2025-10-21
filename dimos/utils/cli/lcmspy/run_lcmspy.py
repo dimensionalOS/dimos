@@ -29,8 +29,7 @@ from textual.renderables.sparkline import Sparkline as SparklineRenderable
 from textual.widgets import DataTable, Header, Label, Sparkline
 
 from dimos.utils.cli import theme
-from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy
-from dimos.utils.cli.lcmspy.lcmspy import GraphTopic as SpyTopic
+from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic as SpyTopic
 
 
 def gradient(max_value: float, value: float) -> str:
@@ -109,7 +108,7 @@ class LCMSpyApp(App):
         self.spy.stop()
 
     def refresh_table(self):
-        topics: List[SpyTopic] = list(self.spy.topic.values())
+        topics: list[SpyTopic] = list(self.spy.topic.values())
         topics.sort(key=lambda t: t.total_traffic(), reverse=True)
         self.table.clear(columns=False)
 

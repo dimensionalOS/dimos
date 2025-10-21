@@ -23,7 +23,7 @@ from dimos.protocol.service import Configurable
 
 
 class CameraConfig(Protocol):
-    frame_id_prefix: Optional[str]
+    frame_id_prefix: str | None
 
 
 CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)

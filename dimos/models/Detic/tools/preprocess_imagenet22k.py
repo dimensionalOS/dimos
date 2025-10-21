@@ -2,18 +2,20 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import os
-import numpy as np
 import sys
+
+import numpy as np
 
 sys.path.insert(0, "third_party/CenterNet2/")
 sys.path.insert(0, "third_party/Deformable-DETR")
-from detic.data.tar_dataset import _TarDataset
-import io
 import gzip
+import io
 import time
 
+from detic.data.tar_dataset import _TarDataset
 
-class _RawTarDataset(object):
+
+class _RawTarDataset:
     def __init__(self, filename, indexname, preload=False):
         self.filename = filename
         self.names = []
@@ -79,7 +81,6 @@ def preprocess():
     log_files = os.listdir(i22ktarlogs)
     log_files = [x for x in log_files if x.endswith(".tarlog")]
     log_files.sort()
-    chunk_datasets = []
     dataset_lens = []
     min_count = 0
     create_npy_tarlogs = True

@@ -48,7 +48,7 @@ class SkillContainerTest(Module):
         return x + y
 
     @skill(stream=Stream.call_agent, reducer=Reducer.all)
-    def counter(self, count_to: int, delay: Optional[float] = 0.05) -> Generator[int, None, None]:
+    def counter(self, count_to: int, delay: float | None = 0.05) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
             if delay > 0:
@@ -57,7 +57,7 @@ class SkillContainerTest(Module):
 
     @skill(stream=Stream.passive, reducer=Reducer.sum)
     def counter_passive_sum(
-        self, count_to: int, delay: Optional[float] = 0.05
+        self, count_to: int, delay: float | None = 0.05
     ) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
@@ -66,14 +66,14 @@ class SkillContainerTest(Module):
             yield i
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
+    def current_time(self, frequency: float | None = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1 / frequency)
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def uptime_seconds(self, frequency: Optional[float] = 10) -> Generator[float, None, None]:
+    def uptime_seconds(self, frequency: float | None = 10) -> Generator[float, None, None]:
         """Provides current uptime."""
         start_time = datetime.datetime.now()
         while True:
@@ -81,7 +81,7 @@ class SkillContainerTest(Module):
             time.sleep(1 / frequency)
 
     @skill()
-    def current_date(self, frequency: Optional[float] = 10) -> str:
+    def current_date(self, frequency: float | None = 10) -> str:
         """Provides current date."""
         return datetime.datetime.now()
 

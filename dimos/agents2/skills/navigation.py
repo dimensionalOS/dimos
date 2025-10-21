@@ -24,13 +24,13 @@ from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.navigation.bt_navigator.navigator import NavigatorState
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
-from dimos.navigation.bt_navigator.navigator import NavigatorState
 
 logger = setup_logger(__file__)
 
@@ -38,7 +38,7 @@ logger = setup_logger(__file__)
 class NavigationSkillContainer(SkillContainer, Resource):
     _robot: UnitreeRobot
     _disposables: CompositeDisposable
-    _latest_image: Optional[Image]
+    _latest_image: Image | None
     _video_stream: Observable[Image]
     _started: bool
 
@@ -130,7 +130,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
-    def _navigate_by_tagged_location(self, query: str) -> Optional[str]:
+    def _navigate_by_tagged_location(self, query: str) -> str | None:
         robot_location = self._robot.spatial_memory.query_tagged_location(query)
 
         if not robot_location:
@@ -150,7 +150,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
             f"Successfuly arrived at location tagged '{robot_location.name}' from query '{query}'."
         )
 
-    def _navigate_to_object(self, query: str) -> Optional[str]:
+    def _navigate_to_object(self, query: str) -> str | None:
         try:
             bbox = self._get_bbox_for_current_frame(query)
         except Exception:
@@ -198,7 +198,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
         self._robot.object_tracker.stop_track()
         return None
 
-    def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
+    def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
         if self._latest_image is None:
             return None
 
@@ -275,7 +275,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         return "Exploration completed successfuly"
 
-    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> Optional[PoseStamped]:
+    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
         if similarity < self._similarity_threshold:
             logger.warning(

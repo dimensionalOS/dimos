@@ -6,8 +6,9 @@
 # Modified from codes in torch.utils.data.distributed
 # ------------------------------------------------------------------------
 
-import os
 import math
+import os
+
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
@@ -43,7 +44,7 @@ class DistributedSampler(Sampler):
         self.num_replicas = num_replicas
         self.rank = rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = math.ceil(len(self.dataset) * 1.0 / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
         self.shuffle = shuffle
 
@@ -111,7 +112,7 @@ class NodeDistributedSampler(Sampler):
         self.rank = rank
         self.local_rank = local_rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = math.ceil(len(self.dataset) * 1.0 / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
 
         self.total_size_parts = self.num_samples * self.num_replicas // self.num_parts

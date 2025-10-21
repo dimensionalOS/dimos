@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.testing import MockModel

@@ -180,7 +180,7 @@ def test_duration_with_loop():
     duration = 0.3  # 300ms window
 
     # First pass: collect timestamps in the duration window
-    for ts, msg in odom_store.iterate_ts(duration=duration):
+    for ts, _msg in odom_store.iterate_ts(duration=duration):
         collected_ts.append(ts)
         if len(collected_ts) >= 100:  # Safety limit
             break
@@ -193,7 +193,7 @@ def test_duration_with_loop():
     loop_count = 0
     prev_ts = None
 
-    for ts, msg in odom_store.iterate_ts(duration=duration, loop=True):
+    for ts, _msg in odom_store.iterate_ts(duration=duration, loop=True):
         if prev_ts is not None and ts < prev_ts:
             # We've looped back to the beginning
             loop_count += 1
@@ -249,7 +249,7 @@ def test_find_closest():
 
     # Get some reference timestamps
     timestamps = []
-    for ts, msg in odom_store.iterate_ts():
+    for ts, _msg in odom_store.iterate_ts():
         timestamps.append(ts)
         if len(timestamps) >= 10:
             break

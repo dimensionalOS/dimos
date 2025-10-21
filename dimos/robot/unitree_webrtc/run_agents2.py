@@ -16,16 +16,17 @@
 import os
 import time
 from typing import Optional
+
 from dotenv import load_dotenv
 
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
+from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.core.resource import Resource
 from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.robot.utils.robot_debugger import RobotDebugger
 from dimos.utils.logging_config import setup_logger
 
@@ -33,15 +34,15 @@ logger = setup_logger(__file__)
 
 load_dotenv()
 
-with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
+with open(AGENT_SYSTEM_PROMPT_PATH) as f:
     SYSTEM_PROMPT = f.read()
 
 
 class UnitreeAgents2Runner(Resource):
-    _robot: Optional[UnitreeRobot]
-    _agent: Optional[Agent]
-    _robot_debugger: Optional[RobotDebugger]
-    _navigation_skill: Optional[NavigationSkillContainer]
+    _robot: UnitreeRobot | None
+    _agent: Agent | None
+    _robot_debugger: RobotDebugger | None
+    _navigation_skill: NavigationSkillContainer | None
 
     def __init__(self):
         self._robot: UnitreeRobot = None

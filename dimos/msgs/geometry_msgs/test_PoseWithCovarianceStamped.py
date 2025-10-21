@@ -18,13 +18,15 @@ import numpy as np
 import pytest
 
 try:
-    from geometry_msgs.msg import PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped
-    from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance
-    from geometry_msgs.msg import Pose as ROSPose
-    from geometry_msgs.msg import Point as ROSPoint
-    from geometry_msgs.msg import Quaternion as ROSQuaternion
-    from std_msgs.msg import Header as ROSHeader
     from builtin_interfaces.msg import Time as ROSTime
+    from geometry_msgs.msg import (
+        Point as ROSPoint,
+        Pose as ROSPose,
+        PoseWithCovariance as ROSPoseWithCovariance,
+        PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped,
+        Quaternion as ROSQuaternion,
+    )
+    from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSHeader = None
     ROSPoseWithCovarianceStamped = None
@@ -35,8 +37,7 @@ except ImportError:
     ROSPoseWithCovariance = None
 
 from dimos_lcm.geometry_msgs import PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance

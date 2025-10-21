@@ -33,13 +33,18 @@ import glob
 import os
 import pickle
 import time
-from typing import Any, Generic, Iterator, List, Tuple, TypeVar, Union, Optional
-from reactivex.scheduler import ThreadPoolScheduler
+from typing import TYPE_CHECKING, Any, Generic, Iterator, List, Optional, Tuple, TypeVar, Union
 
 from reactivex import from_iterable, interval, operators as ops
-from reactivex.observable import Observable
-from dimos.utils.threadpool import get_scheduler
+
 from dimos.robot.unitree_webrtc.type.timeseries import TEvent, Timeseries
+from dimos.utils.threadpool import get_scheduler
+
+if TYPE_CHECKING:
+    import builtins
+
+    from reactivex.observable import Observable
+    from reactivex.scheduler import ThreadPoolScheduler
 
 T = TypeVar("T")
 
@@ -80,7 +85,7 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
 
         return self.cnt
 
-    def load(self, *names: Union[int, str]) -> List[Tuple[float, T]]:
+    def load(self, *names: Union[int, str]) -> builtins.list[tuple[float, T]]:
         """Load multiple items by name or index."""
         return list(map(self.load_one, names))
 
@@ -106,7 +111,7 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
                 timestamp, data = pickle.load(f)
                 yield TEvent(timestamp, data)
 
-    def list(self) -> List[TEvent[T]]:
+    def list(self) -> builtins.list[TEvent[T]]:
         return list(self.iterate())
 
     def interval_stream(self, rate_hz: float = 10.0) -> Observable[T]:
@@ -120,7 +125,7 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
     def stream(
         self,
         replay_speed: float = 1.0,
-        scheduler: Optional[ThreadPoolScheduler] = None,
+        scheduler: ThreadPoolScheduler | None = None,
     ) -> Observable[T]:
         def _generator():
             prev_ts: float | None = None

@@ -13,8 +13,9 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from reactivex import Observable
+
 import numpy as np
+from reactivex import Observable
 
 
 class AbstractAudioEmitter(ABC):

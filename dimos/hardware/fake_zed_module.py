@@ -19,16 +19,17 @@ FakeZEDModule - Replays recorded ZED data for testing without hardware.
 
 import functools
 import logging
+
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.std_msgs import Header
-from dimos.utils.testing import TimedSensorReplay
-from dimos.utils.logging_config import setup_logger
 from dimos.protocol.tf import TF
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(__name__, level=logging.INFO)
 
@@ -267,8 +268,9 @@ class FakeZEDModule(Module):
             self.pose.publish(msg)
 
             # Publish TF transform from world to camera
-            from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
             import time
+
+            from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
             transform = Transform(
                 translation=Vector3(*msg.position),

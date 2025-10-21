@@ -25,7 +25,9 @@ logger = setup_logger("dimos.perception.detection.yolo_2d_det")
 
 
 class Yolo2DDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11n.pt", device: str = None):
+    def __init__(
+        self, model_path="models_yolo", model_name="yolo11n.pt", device: str | None = None
+    ):
         self.model = YOLO(
             get_data(model_path) / model_name,
             task="detect",

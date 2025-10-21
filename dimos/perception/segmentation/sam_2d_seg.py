@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+import os
+import time
 
 import cv2
 import onnxruntime
@@ -225,7 +225,7 @@ class Sam2DSegmenter:
                 if results is not None:
                     # Map results to track IDs
                     object_list = eval(results)
-                    for track_id, result in zip(self.current_queue_ids, object_list):
+                    for track_id, result in zip(self.current_queue_ids, object_list, strict=False):
                         self.object_names[track_id] = result
             except Exception as e:
                 print(f"Queue analysis failed: {e}")
@@ -285,7 +285,7 @@ class Sam2DSegmenter:
 
         return [
             self.object_names.get(track_id, tracked_name)
-            for track_id, tracked_name in zip(track_ids, tracked_names)
+            for track_id, tracked_name in zip(track_ids, tracked_names, strict=False)
         ]
 
     def visualize_results(self, image, masks, bboxes, track_ids, probs, names):
@@ -328,7 +328,7 @@ def main():
             if not ret:
                 break
 
-            start_time = time.time()
+            time.time()
 
             # Process image and get results
             masks, bboxes, target_ids, probs, names = segmenter.process_image(frame)

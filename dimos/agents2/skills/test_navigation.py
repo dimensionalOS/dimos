@@ -68,7 +68,7 @@ def test_go_to_object(fake_robot, create_navigation_agent, mocker):
     actual_bbox = fake_robot.object_tracker.track.call_args[0][0]
     expected_bbox = (82, 51, 163, 159)
 
-    for actual_val, expected_val in zip(actual_bbox, expected_bbox):
+    for actual_val, expected_val in zip(actual_bbox, expected_bbox, strict=False):
         assert abs(actual_val - expected_val) <= 5, (
             f"BBox {actual_bbox} not within ±5 of {expected_bbox}"
         )

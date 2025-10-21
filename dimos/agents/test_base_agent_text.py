@@ -14,17 +14,18 @@
 
 """Test BaseAgent text functionality."""
 
-import pytest
 import asyncio
 import os
-from dotenv import load_dotenv
 
-from dimos.agents.modules.base import BaseAgent
-from dimos.agents.modules.base_agent import BaseAgentModule
+from dotenv import load_dotenv
+import pytest
+
+from dimos import core
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
-from dimos import core
-from dimos.core import Module, Out, In, rpc
+from dimos.agents.modules.base import BaseAgent
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
 
 
@@ -100,7 +101,7 @@ def test_base_agent_direct_text():
     print(f"[Test] Query: 'What is 3+3?' -> Response: '{response.content}'")
     assert response.content is not None
     assert "6" in response.content or "six" in response.content.lower(), (
-        f"Expected '6' or 'six' in response"
+        "Expected '6' or 'six' in response"
     )
 
     # Test conversation history
@@ -137,14 +138,14 @@ async def test_base_agent_async_text():
     # Test async query with string
     response = await agent.aquery("What is the capital of France?")
     assert response.content is not None
-    assert "Paris" in response.content, f"Expected 'Paris' in response"
+    assert "Paris" in response.content, "Expected 'Paris' in response"
 
     # Test async query with AgentMessage
     msg = AgentMessage()
     msg.add_text("What is the capital of Germany?")
     response = await agent.aquery(msg)
     assert response.content is not None
-    assert "Berlin" in response.content, f"Expected 'Berlin' in response"
+    assert "Berlin" in response.content, "Expected 'Berlin' in response"
 
     # Clean up
     agent.dispose()
@@ -208,7 +209,7 @@ async def test_base_agent_module_text():
         assert len(responses) >= 2, "Should have at least two responses"
         resp = responses[1]
         assert isinstance(resp, AgentResponse), "Expected AgentResponse object"
-        assert "blue" in resp.content.lower(), f"Expected 'blue' in response"
+        assert "blue" in resp.content.lower(), "Expected 'blue' in response"
 
         # Test conversation history
         sender.send_query("What was my first question?")
@@ -218,7 +219,7 @@ async def test_base_agent_module_text():
         assert len(responses) >= 3, "Should have at least three responses"
         resp = responses[2]
         assert isinstance(resp, AgentResponse), "Expected AgentResponse object"
-        assert "2+2" in resp.content or "2" in resp.content, f"Expected reference to first question"
+        assert "2+2" in resp.content or "2" in resp.content, "Expected reference to first question"
 
         # Stop modules
         agent.stop()
@@ -299,7 +300,7 @@ def test_base_agent_memory():
     response = agent.query(msg)
     assert response.content is not None
     assert "framework" in response.content.lower() or "robotic" in response.content.lower(), (
-        f"Expected context about DimOS in response"
+        "Expected context about DimOS in response"
     )
 
     # Clean up
@@ -428,7 +429,7 @@ def test_base_agent_conversation_history():
 
     # Test 2: Reference previous context
     response2 = agent.query("What is my name?")
-    assert "Alice" in response2.content, f"Agent should remember the name"
+    assert "Alice" in response2.content, "Agent should remember the name"
 
     # Conversation history should now have 4 messages
     assert agent.conversation.size() == 4
@@ -450,7 +451,7 @@ def test_base_agent_conversation_history():
 
     # Test 4: History trimming (set low limit)
     agent.max_history = 4
-    response4 = agent.query("What was my first message?")
+    agent.query("What was my first message?")
 
     # Conversation history should be trimmed to 4 messages
     assert agent.conversation.size() == 4
@@ -470,8 +471,9 @@ def test_base_agent_history_with_tools():
     if not os.getenv("OPENAI_API_KEY"):
         pytest.skip("No OPENAI_API_KEY found")
 
-    from dimos.skills.skills import AbstractSkill, SkillLibrary
     from pydantic import Field
+
+    from dimos.skills.skills import AbstractSkill, SkillLibrary
 
     class CalculatorSkill(AbstractSkill):
         """Perform calculations."""

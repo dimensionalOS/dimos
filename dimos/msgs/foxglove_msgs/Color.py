@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import hashlib
+
 from dimos_lcm.foxglove_msgs import Color as LCMColor
 
 

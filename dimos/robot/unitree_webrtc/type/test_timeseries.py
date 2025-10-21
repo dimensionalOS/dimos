@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from datetime import timedelta, datetime
-from dimos.robot.unitree_webrtc.type.timeseries import TEvent, TList
+from datetime import datetime, timedelta
 
+from dimos.robot.unitree_webrtc.type.timeseries import TEvent, TList
 
 fixed_date = datetime(2025, 5, 13, 15, 2, 5).astimezone()
 start_event = TEvent(fixed_date, 1)

@@ -14,8 +14,9 @@
 # limitations under the License.
 
 import time
-import reactivex as rx
+
 from dotenv import load_dotenv
+import reactivex as rx
 from reactivex import Observable
 
 from dimos.agents2 import Agent
@@ -32,7 +33,7 @@ logger = setup_logger(__file__)
 
 load_dotenv()
 
-with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
+with open(AGENT_SYSTEM_PROMPT_PATH) as f:
     SYSTEM_PROMPT = f.read()
 
 

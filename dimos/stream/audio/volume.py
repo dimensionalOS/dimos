@@ -69,6 +69,7 @@ def calculate_peak_volume(audio_data: np.ndarray) -> float:
 if __name__ == "__main__":
     # Example usage
     import time
+
     from .node_simulated import SimulatedAudioSource
 
     # Create a simulated audio source

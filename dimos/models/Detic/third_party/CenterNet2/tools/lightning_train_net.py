@@ -5,14 +5,13 @@
 # Depending on how you launch the trainer, there are issues with processes terminating correctly
 # This module is still dependent on D2 logging, but could be transferred to use Lightning logging
 
+from collections import OrderedDict
 import logging
 import os
 import time
-import weakref
-from collections import OrderedDict
 from typing import Any, Dict, List
+import weakref
 
-import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
@@ -28,9 +27,9 @@ from detectron2.evaluation import print_csv_format
 from detectron2.evaluation.testing import flatten_results_dict
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
+import detectron2.utils.comm as comm
 from detectron2.utils.events import EventStorage
 from detectron2.utils.logger import setup_logger
-
 import pytorch_lightning as pl  # type: ignore
 from pytorch_lightning import LightningDataModule, LightningModule
 from train_net import build_evaluator
@@ -51,10 +50,10 @@ class TrainingModule(LightningModule):
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
 
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         checkpoint["iteration"] = self.storage.iter
 
-    def on_load_checkpoint(self, checkpointed_state: Dict[str, Any]) -> None:
+    def on_load_checkpoint(self, checkpointed_state: dict[str, Any]) -> None:
         self.start_iter = checkpointed_state["iteration"]
         self.storage.iter = self.start_iter
 
@@ -127,7 +126,7 @@ class TrainingModule(LightningModule):
                 print_csv_format(results[dataset_name])
 
         if len(results) == 1:
-            results = list(results.values())[0]
+            results = next(iter(results.values()))
         return results
 
     def _reset_dataset_evaluators(self):
@@ -149,14 +148,12 @@ class TrainingModule(LightningModule):
                 v = float(v)
             except Exception as e:
                 raise ValueError(
-                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(
-                        k, v
-                    )
+                    f"[EvalHook] eval_function should return a nested dict of float. Got '{k}: {v}' instead."
                 ) from e
         self.storage.put_scalars(**flattened_results, smoothing_hint=False)
 
     def validation_step(self, batch, batch_idx: int, dataloader_idx: int = 0) -> None:
-        if not isinstance(batch, List):
+        if not isinstance(batch, list):
             batch = [batch]
         outputs = self.model(batch)
         self._evaluators[dataloader_idx].process(batch, outputs)

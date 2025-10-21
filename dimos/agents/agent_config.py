@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from typing import List
+
 from dimos.agents.agent import Agent
 
 
 class AgentConfig:
-    def __init__(self, agents: List[Agent] = None):
+    def __init__(self, agents: list[Agent] | None = None):
         """
         Initialize an AgentConfig with a list of agents.
 
@@ -45,7 +46,7 @@ class AgentConfig:
         if agent in self.agents:
             self.agents.remove(agent)
 
-    def get_agents(self) -> List[Agent]:
+    def get_agents(self) -> list[Agent]:
         """
         Get the list of configured agents.
 

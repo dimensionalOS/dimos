@@ -16,9 +16,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading", args.imagenet_path)
-    in_data = json.load(open(args.imagenet_path, "r"))
+    in_data = json.load(open(args.imagenet_path))
     print("Loading", args.lvis_path)
-    lvis_data = json.load(open(args.lvis_path, "r"))
+    lvis_data = json.load(open(args.lvis_path))
 
     categories = copy.deepcopy(lvis_data["categories"])
     cat_count = max(x["id"] for x in categories)
@@ -53,14 +53,14 @@ if __name__ == "__main__":
     lvis_data["categories"] = categories
 
     if not args.not_save_imagenet:
-        in_out_path = args.imagenet_path[:-5] + "_{}.json".format(args.mark)
+        in_out_path = args.imagenet_path[:-5] + f"_{args.mark}.json"
         for k, v in in_data.items():
             print("imagenet", k, len(v))
         print("Saving Imagenet to", in_out_path)
         json.dump(in_data, open(in_out_path, "w"))
 
     if not args.not_save_lvis:
-        lvis_out_path = args.lvis_path[:-5] + "_{}.json".format(args.mark)
+        lvis_out_path = args.lvis_path[:-5] + f"_{args.mark}.json"
         for k, v in lvis_data.items():
             print("lvis", k, len(v))
         print("Saving LVIS to", lvis_out_path)
@@ -72,4 +72,4 @@ if __name__ == "__main__":
                 if k in x:
                     del x[k]
         CATEGORIES = repr(categories) + "  # noqa"
-        open(args.save_categories, "wt").write(f"CATEGORIES = {CATEGORIES}")
+        open(args.save_categories, "w").write(f"CATEGORIES = {CATEGORIES}")

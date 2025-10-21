@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 import time
+
+import pytest
 
 try:
     from sensor_msgs.msg import Joy as ROSJoy
@@ -220,7 +221,7 @@ def test_edge_cases():
     decoded = Joy.lcm_decode(encoded)
     # Check axes with floating point tolerance
     assert len(decoded.axes) == len(many_axes)
-    for i, (a, b) in enumerate(zip(decoded.axes, many_axes)):
+    for i, (a, b) in enumerate(zip(decoded.axes, many_axes, strict=False)):
         assert abs(a - b) < 1e-6, f"Axis {i}: {a} != {b}"
     assert decoded.buttons == many_buttons
 

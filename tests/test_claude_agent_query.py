@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
 from dotenv import load_dotenv
+
 from dimos.agents.claude_agent import ClaudeAgent
+import tests.test_header
 
 # Load API key from environment
 load_dotenv()

@@ -68,7 +68,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
     Inherits all Go2 skills and adds G1-specific arm controls and movement modes.
     """
 
-    def __init__(self, robot: Optional[Union[UnitreeG1, UnitreeGo2]] = None):
+    def __init__(self, robot: Union[UnitreeG1, UnitreeGo2] | None = None):
         """Initialize the skill container with robot reference.
 
         Args:
@@ -200,7 +200,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            result = self._robot.connection.publish_request(
+            self._robot.connection.publish_request(
                 "rt/api/arm/request", {"api_id": 7106, "parameter": {"data": data_value}}
             )
             message = f"G1 arm action {name} executed successfully (data={data_value})"
@@ -222,7 +222,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            result = self._robot.connection.publish_request(
+            self._robot.connection.publish_request(
                 "rt/api/sport/request", {"api_id": 7101, "parameter": {"data": data_value}}
             )
             message = f"G1 mode {name} activated successfully (data={data_value})"

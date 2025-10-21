@@ -2,12 +2,12 @@
 # Modified by Xingyi Zhou
 # The original code is under MIT license
 # Copyright (c) Facebook, Inc. and its affiliates.
-from typing import Union, List
 from collections import OrderedDict
-import torch
-from torch import nn
+from typing import List, Union
 
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+import torch
+from torch import nn
 
 __all__ = ["tokenize"]
 
@@ -140,14 +140,14 @@ class CLIPTEXT(nn.Module):
     def dtype(self):
         return self.text_projection.dtype
 
-    def tokenize(self, texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    def tokenize(self, texts: Union[str, list[str]], context_length: int = 77) -> torch.LongTensor:
         """ """
         if isinstance(texts, str):
             texts = [texts]
 
         sot_token = self._tokenizer.encoder["<|startoftext|>"]
         eot_token = self._tokenizer.encoder["<|endoftext|>"]
-        all_tokens = [[sot_token] + self._tokenizer.encode(text) + [eot_token] for text in texts]
+        all_tokens = [[sot_token, *self._tokenizer.encode(text), eot_token] for text in texts]
         result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
 
         for i, tokens in enumerate(all_tokens):

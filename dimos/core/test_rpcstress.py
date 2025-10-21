@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
     # Get stats before stopping
     stats = validator.get_stats()
-    print(f"\n[MAIN] Final statistics:")
+    print("\n[MAIN] Final statistics:")
     print(f"  - Total calls made: {stats['call_count']}")
     print(f"  - Last number seen: {stats['last_seen']}")
     print(f"  - Missing numbers: {stats['missing_count']}")

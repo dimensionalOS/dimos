@@ -19,21 +19,21 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
-import threading
 from collections import deque
 from dataclasses import dataclass
 from enum import IntFlag
+import threading
 from typing import List, Optional, Tuple
 
-import numpy as np
-
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
-from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
-from dimos.utils.transform_utils import get_distance
+import numpy as np
 from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
 
@@ -138,15 +138,15 @@ class WavefrontFrontierExplorer(Module):
         self.goal_timeout = goal_timeout
 
         # Latest data
-        self.latest_costmap: Optional[OccupancyGrid] = None
-        self.latest_odometry: Optional[PoseStamped] = None
+        self.latest_costmap: OccupancyGrid | None = None
+        self.latest_odometry: PoseStamped | None = None
 
         # Goal reached event
         self.goal_reached_event = threading.Event()
 
         # Exploration state
         self.exploration_active = False
-        self.exploration_thread: Optional[threading.Thread] = None
+        self.exploration_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
 
         logger.info("WavefrontFrontierExplorer module initialized")
@@ -217,7 +217,7 @@ class WavefrontFrontierExplorer(Module):
         obstacle_count = np.sum(costmap.grid >= self.occupancy_threshold)
         return int(free_count + obstacle_count)
 
-    def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> List[GridPoint]:
+    def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> list[GridPoint]:
         """Get valid neighboring points for a given grid point."""
         neighbors = []
 
@@ -263,7 +263,7 @@ class WavefrontFrontierExplorer(Module):
 
     def _find_free_space(
         self, start_x: int, start_y: int, costmap: OccupancyGrid
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         """
         Find the nearest free space point using BFS from the starting position.
         """
@@ -289,7 +289,7 @@ class WavefrontFrontierExplorer(Module):
         # If no free space found, return original position
         return (start_x, start_y)
 
-    def _compute_centroid(self, frontier_points: List[Vector3]) -> Vector3:
+    def _compute_centroid(self, frontier_points: list[Vector3]) -> Vector3:
         """Compute the centroid of a list of frontier points."""
         if not frontier_points:
             return Vector3(0.0, 0.0, 0.0)
@@ -300,7 +300,7 @@ class WavefrontFrontierExplorer(Module):
 
         return Vector3(centroid[0], centroid[1], 0.0)
 
-    def detect_frontiers(self, robot_pose: Vector3, costmap: OccupancyGrid) -> List[Vector3]:
+    def detect_frontiers(self, robot_pose: Vector3, costmap: OccupancyGrid) -> list[Vector3]:
         """
         Main frontier detection algorithm using wavefront exploration.
 
@@ -417,9 +417,7 @@ class WavefrontFrontierExplorer(Module):
 
         return ranked_frontiers
 
-    def _update_exploration_direction(
-        self, robot_pose: Vector3, goal_pose: Optional[Vector3] = None
-    ):
+    def _update_exploration_direction(self, robot_pose: Vector3, goal_pose: Vector3 | None = None):
         """Update the current exploration direction based on robot movement or selected goal."""
         if goal_pose is not None:
             # Calculate direction from robot to goal
@@ -567,11 +565,11 @@ class WavefrontFrontierExplorer(Module):
 
     def _rank_frontiers(
         self,
-        frontier_centroids: List[Vector3],
-        frontier_sizes: List[int],
+        frontier_centroids: list[Vector3],
+        frontier_sizes: list[int],
         robot_pose: Vector3,
         costmap: OccupancyGrid,
-    ) -> List[Vector3]:
+    ) -> list[Vector3]:
         """
         Find the single best frontier using comprehensive scoring and filtering.
 
@@ -609,9 +607,7 @@ class WavefrontFrontierExplorer(Module):
         # Extract just the frontiers (remove scores) and return as list
         return [frontier for frontier, _ in valid_frontiers]
 
-    def get_exploration_goal(
-        self, robot_pose: Vector3, costmap: OccupancyGrid
-    ) -> Optional[Vector3]:
+    def get_exploration_goal(self, robot_pose: Vector3, costmap: OccupancyGrid) -> Vector3 | None:
         """
         Get the single best exploration goal using comprehensive frontier scoring.
 

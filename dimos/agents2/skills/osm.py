@@ -13,18 +13,18 @@
 # limitations under the License.
 
 from typing import Optional
-from reactivex import Observable
 
+from reactivex import Observable
+from reactivex.disposable import CompositeDisposable
+
+from dimos.core.resource import Resource
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
-from dimos.mapping.utils.distance import distance_in_meters
 from dimos.mapping.types import LatLon
+from dimos.mapping.utils.distance import distance_in_meters
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import Robot
 from dimos.utils.logging_config import setup_logger
-from dimos.core.resource import Resource
-
-from reactivex.disposable import CompositeDisposable
 
 logger = setup_logger(__file__)
 
@@ -32,7 +32,7 @@ logger = setup_logger(__file__)
 class OsmSkillContainer(SkillContainer, Resource):
     _robot: Robot
     _disposables: CompositeDisposable
-    _latest_location: Optional[LatLon]
+    _latest_location: LatLon | None
     _position_stream: Observable[LatLon]
     _current_location_map: CurrentLocationMap
     _started: bool

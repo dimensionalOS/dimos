@@ -19,34 +19,34 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 """
 
 import logging
-import time
 import threading
-
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import SingleThreadedExecutor
-
-from dimos import core
-from dimos.protocol import pubsub
-from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, Transform, Vector3, Quaternion
-from dimos.msgs.nav_msgs import Odometry, Path
-from dimos.msgs.sensor_msgs import PointCloud2, Joy
-from dimos.msgs.std_msgs import Bool
-from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.utils.transform_utils import euler_to_quaternion
-from dimos.utils.logging_config import setup_logger
-from dimos.navigation.rosnav import ROSNav
+import time
 
 # ROS2 message imports
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-from geometry_msgs.msg import PointStamped as ROSPointStamped
-from nav_msgs.msg import Odometry as ROSOdometry
-from nav_msgs.msg import Path as ROSPath
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, Joy as ROSJoy
+from geometry_msgs.msg import (
+    PointStamped as ROSPointStamped,
+    PoseStamped as ROSPoseStamped,
+    TwistStamped as ROSTwistStamped,
+)
+from nav_msgs.msg import Odometry as ROSOdometry, Path as ROSPath
+import rclpy
+from rclpy.executors import SingleThreadedExecutor
+from rclpy.node import Node
+from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2
 from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
+
+from dimos import core
+from dimos.core import In, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
+from dimos.msgs.nav_msgs import Odometry, Path
+from dimos.msgs.sensor_msgs import Joy, PointCloud2
+from dimos.msgs.std_msgs import Bool
+from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.rosnav import ROSNav
+from dimos.protocol import pubsub
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
@@ -401,7 +401,7 @@ def main():
         orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
     )
 
-    logger.info(f"Sending navigation goal to: (1.0, 1.0, 0.0)")
+    logger.info("Sending navigation goal to: (1.0, 1.0, 0.0)")
 
     if nav_bot.navigation_module:
         success = nav_bot.navigation_module.navigate_to(test_pose, timeout=30.0)

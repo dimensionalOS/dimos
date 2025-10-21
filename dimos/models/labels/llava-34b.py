@@ -18,7 +18,6 @@ import os
 # llava v1.6
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler
-
 from vqasynth.datasets.utils import image_to_base64_data_uri
 
 

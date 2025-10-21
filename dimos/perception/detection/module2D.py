@@ -41,7 +41,7 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
+    detector: Callable[[Any], Detector] | None = YoloPersonDetector
     camera_info: CameraInfo = CameraInfo()
 
 
@@ -85,7 +85,7 @@ class Detection2DModule(Module):
 
     def pixel_to_3d(
         self,
-        pixel: Tuple[int, int],
+        pixel: tuple[int, int],
         camera_info: CameraInfo,
         assumed_depth: float = 1.0,
     ) -> Vector3:

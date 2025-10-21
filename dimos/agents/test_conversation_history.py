@@ -15,19 +15,20 @@
 
 """Comprehensive conversation history tests for agents."""
 
-import os
 import asyncio
-import pytest
-import numpy as np
-from dotenv import load_dotenv
+import logging
+import os
 
-from dimos.agents.modules.base import BaseAgent
+from dotenv import load_dotenv
+import numpy as np
+from pydantic import Field
+import pytest
+
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse, ConversationHistory
+from dimos.agents.modules.base import BaseAgent
 from dimos.msgs.sensor_msgs import Image
 from dimos.skills.skills import AbstractSkill, SkillLibrary
-from pydantic import Field
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,7 @@ def test_conversation_history_with_images():
 
     try:
         # Send text message
-        response1 = agent.query("I'm going to show you some colors")
+        agent.query("I'm going to show you some colors")
         assert agent.conversation.size() == 2
 
         # Send image with text
@@ -115,7 +116,7 @@ def test_conversation_history_with_images():
         red_img = Image(data=np.full((100, 100, 3), [255, 0, 0], dtype=np.uint8))
         msg.add_image(red_img)
 
-        response2 = agent.query(msg)
+        agent.query(msg)
         assert agent.conversation.size() == 4
 
         # Ask about the image
@@ -132,7 +133,7 @@ def test_conversation_history_with_images():
         blue_img = Image(data=np.full((100, 100, 3), [0, 0, 255], dtype=np.uint8))
         msg2.add_image(blue_img)
 
-        response4 = agent.query(msg2)
+        agent.query(msg2)
         assert agent.conversation.size() == 8
 
         # Ask about all images
@@ -194,7 +195,7 @@ def test_conversation_history_trimming():
         assert size == 3, f"After Message 5, size should still be 3, got {size}"
 
         # Early messages should be trimmed
-        response = agent.query("What was the first fruit I mentioned?")
+        agent.query("What was the first fruit I mentioned?")
         size = agent.conversation.size()
         assert size == 3, f"After question, size should still be 3, got {size}"
 
@@ -244,7 +245,7 @@ def test_conversation_history_with_tools():
 
     try:
         # Initial query
-        response1 = agent.query("Hello, I need help with math")
+        agent.query("Hello, I need help with math")
         assert agent.conversation.size() == 2
 
         # Force tool use explicitly

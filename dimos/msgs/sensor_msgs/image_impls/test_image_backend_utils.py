@@ -27,13 +27,13 @@ except:
     print("Running image backend utils tests in CPU-only mode")
 
 from dimos.perception.common.utils import (
-    rectify_image,
-    project_3d_points_to_2d,
-    project_2d_points_to_3d,
     colorize_depth,
     draw_bounding_box,
-    draw_segmentation_mask,
     draw_object_detection_visualization,
+    draw_segmentation_mask,
+    project_2d_points_to_3d,
+    project_3d_points_to_2d,
+    rectify_image,
 )
 
 

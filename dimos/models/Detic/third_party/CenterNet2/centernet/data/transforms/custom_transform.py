@@ -1,18 +1,17 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # Modified by Xingyi Zhou
 # File: transform.py
 
-import numpy as np
-import torch
-import torch.nn.functional as F
 from fvcore.transforms.transform import (
     Transform,
 )
+import numpy as np
 from PIL import Image
+import torch
+import torch.nn.functional as F
 
 try:
-    import cv2  # noqa
+    import cv2
 except ImportError:
     # OpenCV is an optional dependency at the moment
     pass

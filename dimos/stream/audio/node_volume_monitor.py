@@ -14,9 +14,10 @@
 # limitations under the License.
 
 from typing import Callable
+
 from reactivex import Observable, create, disposable
 
-from dimos.stream.audio.base import AudioEvent, AbstractAudioConsumer
+from dimos.stream.audio.base import AbstractAudioConsumer, AudioEvent
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.stream.audio.text.node_stdout import TextPrinterNode
 from dimos.stream.audio.volume import calculate_peak_volume
@@ -167,8 +168,8 @@ def monitor(
 
 
 if __name__ == "__main__":
-    from utils import keepalive
     from audio.node_simulated import SimulatedAudioSource
+    from utils import keepalive
 
     # Use the monitor function to create and connect the nodes
     volume_monitor = monitor(SimulatedAudioSource().emit_audio())

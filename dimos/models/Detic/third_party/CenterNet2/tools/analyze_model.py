@@ -1,11 +1,7 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates.
 
-import logging
-import numpy as np
 from collections import Counter
-import tqdm
-from fvcore.nn import flop_count_table  # can also try flop_count_str
+import logging
 
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import CfgNode, LazyConfig, get_cfg, instantiate
@@ -18,6 +14,9 @@ from detectron2.utils.analysis import (
     parameter_count_table,
 )
 from detectron2.utils.logger import setup_logger
+from fvcore.nn import flop_count_table  # can also try flop_count_str
+import numpy as np
+import tqdm
 
 logger = logging.getLogger("detectron2")
 
@@ -64,7 +63,7 @@ def do_flop(cfg):
         + str([(k, v / (idx + 1) / 1e9) for k, v in counts.items()])
     )
     logger.info(
-        "Total GFlops: {:.1f}±{:.1f}".format(np.mean(total_flops) / 1e9, np.std(total_flops) / 1e9)
+        f"Total GFlops: {np.mean(total_flops) / 1e9:.1f}±{np.std(total_flops) / 1e9:.1f}"
     )
 
 
@@ -91,9 +90,7 @@ def do_activation(cfg):
         + str([(k, v / idx) for k, v in counts.items()])
     )
     logger.info(
-        "Total (Million) Activations: {}±{}".format(
-            np.mean(total_activations), np.std(total_activations)
-        )
+        f"Total (Million) Activations: {np.mean(total_activations)}±{np.std(total_activations)}"
     )
 
 

@@ -17,16 +17,18 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Callable, Dict, Optional
+from typing import TYPE_CHECKING, Callable, Dict, Optional
 
 from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.widgets import DataTable, Footer
 
-from dimos.protocol.skill.comms import SkillMsg
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateEnum
 from dimos.utils.cli import theme
+
+if TYPE_CHECKING:
+    from dimos.protocol.skill.comms import SkillMsg
 
 
 class AgentSpy:
@@ -34,9 +36,9 @@ class AgentSpy:
 
     def __init__(self):
         self.agent_interface = SkillCoordinator()
-        self.message_callbacks: list[Callable[[Dict[str, SkillState]], None]] = []
+        self.message_callbacks: list[Callable[[dict[str, SkillState]], None]] = []
         self._lock = threading.Lock()
-        self._latest_state: Dict[str, SkillState] = {}
+        self._latest_state: dict[str, SkillState] = {}
         self._running = False
 
     def start(self):
@@ -73,11 +75,11 @@ class AgentSpy:
         # Run in separate thread to not block LCM
         threading.Thread(target=delayed_update, daemon=True).start()
 
-    def subscribe(self, callback: Callable[[Dict[str, SkillState]], None]):
+    def subscribe(self, callback: Callable[[dict[str, SkillState]], None]):
         """Subscribe to state updates."""
         self.message_callbacks.append(callback)
 
-    def get_state(self) -> Dict[str, SkillState]:
+    def get_state(self) -> dict[str, SkillState]:
         """Get current state snapshot."""
         with self._lock:
             return self._latest_state.copy()
@@ -140,7 +142,7 @@ class AgentSpyApp(App):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.spy = AgentSpy()
-        self.table: Optional[DataTable] = None
+        self.table: DataTable | None = None
         self.skill_history: list[tuple[str, SkillState, float]] = []  # (call_id, state, start_time)
 
     def compose(self) -> ComposeResult:
@@ -167,7 +169,7 @@ class AgentSpyApp(App):
         """Stop the spy when app unmounts."""
         self.spy.stop()
 
-    def update_state(self, state: Dict[str, SkillState]):
+    def update_state(self, state: dict[str, SkillState]):
         """Update state from spy callback. State dict is keyed by call_id."""
         # Update history with current state
         current_time = time.time()
@@ -176,7 +178,7 @@ class AgentSpyApp(App):
         for call_id, skill_state in state.items():
             # Find if this call_id already in history
             found = False
-            for i, (existing_call_id, old_state, start_time) in enumerate(self.skill_history):
+            for i, (existing_call_id, _old_state, start_time) in enumerate(self.skill_history):
                 if existing_call_id == call_id:
                     # Update existing entry
                     self.skill_history[i] = (call_id, skill_state, start_time)

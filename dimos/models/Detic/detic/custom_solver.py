@@ -1,11 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import itertools
 from typing import Any, Dict, List, Set
-import torch
 
 from detectron2.config import CfgNode
-
 from detectron2.solver.build import maybe_add_gradient_clipping
+import torch
 
 
 def match_name_keywords(n, name_keywords):
@@ -21,8 +20,8 @@ def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.
     """
     Build an optimizer from config.
     """
-    params: List[Dict[str, Any]] = []
-    memo: Set[torch.nn.parameter.Parameter] = set()
+    params: list[dict[str, Any]] = []
+    memo: set[torch.nn.parameter.Parameter] = set()
     custom_multiplier_name = cfg.SOLVER.CUSTOM_MULTIPLIER_NAME
     optimizer_type = cfg.SOLVER.OPTIMIZER
     for key, value in model.named_parameters(recurse=True):

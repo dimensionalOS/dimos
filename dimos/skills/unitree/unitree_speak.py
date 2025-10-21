@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.skills.skills import AbstractRobotSkill
-from pydantic import Field
-import time
-import tempfile
-import os
-import json
 import base64
 import hashlib
-import soundfile as sf
+import json
+import os
+import tempfile
+import time
+
+from go2_webrtc_driver.constants import RTC_TOPIC
 import numpy as np
 from openai import OpenAI
+from pydantic import Field
+import soundfile as sf
+
+from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
-from go2_webrtc_driver.constants import RTC_TOPIC
 
 logger = setup_logger("dimos.skills.unitree.unitree_speak")
 
@@ -76,7 +78,7 @@ class UnitreeSpeak(AbstractRobotSkill):
             logger.error(f"Error generating audio: {e}")
             raise
 
-    def _webrtc_request(self, api_id: int, parameter: dict = None):
+    def _webrtc_request(self, api_id: int, parameter: dict | None = None):
         if parameter is None:
             parameter = {}
 
@@ -109,7 +111,7 @@ class UnitreeSpeak(AbstractRobotSkill):
                 }
 
                 logger.debug(f"Sending chunk {i}/{total_chunks}")
-                response = self._webrtc_request(AUDIO_API["UPLOAD_AUDIO_FILE"], parameter)
+                self._webrtc_request(AUDIO_API["UPLOAD_AUDIO_FILE"], parameter)
 
             logger.info(f"Audio upload completed for '{filename}'")
 
@@ -275,4 +277,4 @@ class UnitreeSpeak(AbstractRobotSkill):
 
         except Exception as e:
             logger.error(f"Error in speak skill: {e}")
-            return f"Error speaking text: {str(e)}"
+            return f"Error speaking text: {e!s}"

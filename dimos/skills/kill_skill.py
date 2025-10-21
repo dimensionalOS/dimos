@@ -20,6 +20,7 @@ particularly those running in separate threads like the monitor skill.
 """
 
 from typing import Optional
+
 from pydantic import Field
 
 from dimos.skills.skills import AbstractSkill, SkillLibrary
@@ -39,7 +40,7 @@ class KillSkill(AbstractSkill):
 
     skill_name: str = Field(..., description="Name of the skill to terminate")
 
-    def __init__(self, skill_library: Optional[SkillLibrary] = None, **data):
+    def __init__(self, skill_library: SkillLibrary | None = None, **data):
         """
         Initialize the kill skill.
 

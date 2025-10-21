@@ -15,13 +15,14 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/13b35ff/references
 
 from pathlib import Path
 
+from pycocotools import mask as coco_mask
 import torch
 import torch.utils.data
-from pycocotools import mask as coco_mask
+from util.misc import get_local_rank, get_local_size
+
+import datasets.transforms as T
 
 from .torchvision_datasets import CocoDetection as TvCocoDetection
-from util.misc import get_local_rank, get_local_size
-import datasets.transforms as T
 
 
 class CocoDetection(TvCocoDetection):
@@ -35,7 +36,7 @@ class CocoDetection(TvCocoDetection):
         local_rank=0,
         local_size=1,
     ):
-        super(CocoDetection, self).__init__(
+        super().__init__(
             img_folder,
             ann_file,
             cache_mode=cache_mode,
@@ -46,7 +47,7 @@ class CocoDetection(TvCocoDetection):
         self.prepare = ConvertCocoPolysToMask(return_masks)
 
     def __getitem__(self, idx):
-        img, target = super(CocoDetection, self).__getitem__(idx)
+        img, target = super().__getitem__(idx)
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
         img, target = self.prepare(img, target)
@@ -72,7 +73,7 @@ def convert_coco_poly_to_mask(segmentations, height, width):
     return masks
 
 
-class ConvertCocoPolysToMask(object):
+class ConvertCocoPolysToMask:
     def __init__(self, return_masks=False):
         self.return_masks = return_masks
 

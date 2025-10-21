@@ -16,10 +16,9 @@ import time
 
 import pytest
 
-
 try:
-    from nav_msgs.msg import Path as ROSPath
     from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+    from nav_msgs.msg import Path as ROSPath
 except ImportError:
     ROSPoseStamped = None
     ROSPath = None
@@ -198,7 +197,7 @@ def test_extend_mutable():
     path1.extend_mut(path2)
     assert len(path1) == 4
     # Check poses are the same as concatenation
-    for i, (p1, p2) in enumerate(zip(path1.poses, poses1 + poses2)):
+    for _i, (p1, p2) in enumerate(zip(path1.poses, poses1 + poses2, strict=False)):
         assert p1.x == p2.x
         assert p1.y == p2.y
         assert p1.z == p2.z
@@ -258,7 +257,7 @@ def test_lcm_encode_decode():
     # Check poses
     assert len(path_dest.poses) == len(path_source.poses)
 
-    for orig, decoded in zip(path_source.poses, path_dest.poses):
+    for orig, decoded in zip(path_source.poses, path_dest.poses, strict=False):
         # Check pose timestamps
         assert abs(decoded.ts - orig.ts) < 1e-6
         # All poses should have the path's frame_id
@@ -383,7 +382,7 @@ def test_path_ros_roundtrip():
     assert restored.ts == original.ts
     assert len(restored.poses) == len(original.poses)
 
-    for orig_pose, rest_pose in zip(original.poses, restored.poses):
+    for orig_pose, rest_pose in zip(original.poses, restored.poses, strict=False):
         assert rest_pose.position.x == orig_pose.position.x
         assert rest_pose.position.y == orig_pose.position.y
         assert rest_pose.position.z == orig_pose.position.z

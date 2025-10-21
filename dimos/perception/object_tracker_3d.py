@@ -12,28 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 from typing import List, Optional
 
+# Import LCM messages
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.vision_msgs import Detection3D, ObjectHypothesisWithPose
+import numpy as np
+
 from dimos.core import In, Out, rpc
-from dimos.msgs.std_msgs import Header
+from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose
 from dimos.perception.object_tracker_2d import ObjectTracker2D
 from dimos.protocol.tf import TF
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import (
-    yaw_towards_point,
-    optical_to_robot_frame,
     euler_to_quaternion,
+    optical_to_robot_frame,
+    yaw_towards_point,
 )
-from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
-
-# Import LCM messages
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection3D, ObjectHypothesisWithPose
 
 logger = setup_logger("dimos.perception.object_tracker_3d")
 
@@ -59,14 +59,14 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Additional state for 3D tracking
         self.camera_intrinsics = None
-        self._latest_depth_frame: Optional[np.ndarray] = None
-        self._latest_camera_info: Optional[CameraInfo] = None
+        self._latest_depth_frame: np.ndarray | None = None
+        self._latest_camera_info: CameraInfo | None = None
 
         # TF publisher for tracked object
         self.tf = TF()
 
         # Store latest 3D detection
-        self._latest_detection3d: Optional[Detection3DArray] = None
+        self._latest_detection3d: Detection3DArray | None = None
 
     @rpc
     def start(self):
@@ -155,9 +155,7 @@ class ObjectTracker3D(ObjectTracker2D):
                 viz_msg = Image.from_numpy(viz_image)
                 self.tracked_overlay.publish(viz_msg)
 
-    def _create_detection3d_from_2d(
-        self, detection2d: Detection2DArray
-    ) -> Optional[Detection3DArray]:
+    def _create_detection3d_from_2d(self, detection2d: Detection2DArray) -> Detection3DArray | None:
         """Create 3D detection from 2D detection using depth."""
         if detection2d.detections_length == 0:
             return None
@@ -243,7 +241,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
         return detection3darray
 
-    def _get_depth_from_bbox(self, bbox: List[int], depth_frame: np.ndarray) -> Optional[float]:
+    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:
         """
         Calculate depth from bbox using the 25th percentile of closest points.
 

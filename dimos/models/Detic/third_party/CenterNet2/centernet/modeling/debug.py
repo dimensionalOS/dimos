@@ -105,7 +105,7 @@ def debug_train(
         for l in range(len(gt_hms)):
             color_map = _get_color_image(gt_hms[l][i].detach().cpu().numpy())
             color_maps.append(color_map)
-            cv2.imshow("gthm_{}".format(l), color_map)
+            cv2.imshow(f"gthm_{l}", color_map)
         blend = _blend_image_heatmaps(image.copy(), color_maps)
         if gt_instances is not None:
             bboxes = gt_instances[i].gt_boxes.tensor
@@ -155,8 +155,8 @@ def debug_test(
     images,
     logits_pred,
     reg_pred,
-    agn_hm_pred=[],
-    preds=[],
+    agn_hm_pred=None,
+    preds=None,
     vis_thresh=0.3,
     debug_show_name=False,
     mult_agn=False,
@@ -167,10 +167,14 @@ def debug_test(
     cat_agn_heatmap: LNHiWi
     shapes_per_level: L x 2 [(H_i, W_i)]
     """
-    N = len(images)
+    if preds is None:
+        preds = []
+    if agn_hm_pred is None:
+        agn_hm_pred = []
+    len(images)
     for i in range(len(images)):
         image = images[i].detach().cpu().numpy().transpose(1, 2, 0)
-        result = image.copy().astype(np.uint8)
+        image.copy().astype(np.uint8)
         pred_image = image.copy().astype(np.uint8)
         color_maps = []
         L = len(logits_pred)
@@ -189,7 +193,7 @@ def debug_test(
                     logits_pred[l][i] = logits_pred[l][i] * agn_hm_pred[l][i]
                 color_map = _get_color_image(logits_pred[l][i].detach().cpu().numpy())
                 color_maps.append(color_map)
-                cv2.imshow("predhm_{}".format(l), color_map)
+                cv2.imshow(f"predhm_{l}", color_map)
 
             if debug_show_name:
                 from detectron2.data.datasets.lvis_v1_categories import LVIS_CATEGORIES
@@ -240,7 +244,7 @@ def debug_test(
             if agn_hm_pred[l] is not None:
                 agn_hm_ = agn_hm_pred[l][i, 0, :, :, None].detach().cpu().numpy()
                 agn_hm_ = (agn_hm_ * np.array([255, 255, 255]).reshape(1, 1, 3)).astype(np.uint8)
-                cv2.imshow("agn_hm_{}".format(l), agn_hm_)
+                cv2.imshow(f"agn_hm_{l}", agn_hm_)
         blend = _blend_image_heatmaps(image.copy(), color_maps)
         cv2.imshow("blend", blend)
         cv2.imshow("preds", pred_image)
@@ -332,5 +336,5 @@ def debug_second_stage(
             if save_debug:
                 global cnt
                 cnt += 1
-                cv2.imwrite("output/save_debug/{}.jpg".format(cnt), proposal_image)
+                cv2.imwrite(f"output/save_debug/{cnt}.jpg", proposal_image)
         cv2.waitKey()

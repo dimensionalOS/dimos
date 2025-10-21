@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import threading
+import time
+
+import numpy as np
+from reactivex import Observable, create, disposable
+
 from dimos.stream.audio.abstract import (
     AbstractAudioEmitter,
     AudioEvent,
 )
-import numpy as np
-from reactivex import Observable, create, disposable
-import threading
-import time
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.node_simulated")
@@ -209,9 +210,9 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 
 
 if __name__ == "__main__":
-    from dimos.stream.audio.utils import keepalive
-    from dimos.stream.audio.node_volume_monitor import monitor
     from dimos.stream.audio.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.node_volume_monitor import monitor
+    from dimos.stream.audio.utils import keepalive
 
     source = SimulatedAudioSource()
     speaker = SounddeviceAudioOutput()

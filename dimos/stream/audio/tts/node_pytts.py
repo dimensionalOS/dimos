@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from reactivex import Observable, Subject
 import pyttsx3
+from reactivex import Observable, Subject
 
 from dimos.stream.audio.text.abstract import AbstractTextTransform
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)

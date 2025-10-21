@@ -14,13 +14,15 @@
 
 """Test manipulation processor with direct visualization and grasp data output."""
 
-import os
-import cv2
-import numpy as np
 import argparse
+import os
+
+import cv2
 import matplotlib
-import tests.test_header
+import numpy as np
+
 from dimos.utils.data import get_data
+import tests.test_header
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -33,16 +35,16 @@ except:
 import matplotlib.pyplot as plt
 import open3d as o3d
 
-from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
 from dimos.manipulation.manip_aio_processer import ManipulationProcessor
+from dimos.perception.grasp_generation.utils import create_grasp_overlay, visualize_grasps_3d
 from dimos.perception.pointcloud.utils import (
-    load_camera_matrix_from_yaml,
-    visualize_pcd,
     combine_object_pointclouds,
+    load_camera_matrix_from_yaml,
+    visualize_clustered_point_clouds,
+    visualize_pcd,
+    visualize_voxel_grid,
 )
 from dimos.utils.logging_config import setup_logger
-
-from dimos.perception.grasp_generation.utils import visualize_grasps_3d, create_grasp_overlay
 
 logger = setup_logger("test_pipeline_viz")
 

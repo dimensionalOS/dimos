@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from flask import Flask, Response, render_template
+from queue import Queue
+
 import cv2
+from flask import Flask, Response, render_template
 from reactivex import operators as ops
 from reactivex.disposable import SingleAssignmentDisposable
-from queue import Queue
 
 from dimos.web.edge_io import EdgeIO
 

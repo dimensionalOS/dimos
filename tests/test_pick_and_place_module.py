@@ -18,13 +18,14 @@ Run script for Piper Arm robot with pick and place functionality.
 Subscribes to visualization images and handles mouse/keyboard input.
 """
 
-import cv2
-import sys
 import asyncio
+import sys
 import threading
 import time
-import numpy as np
 from typing import Optional
+
+import cv2
+import numpy as np
 
 try:
     import pyzed.sl as sl
@@ -32,12 +33,12 @@ except ImportError:
     print("Error: ZED SDK not installed.")
     sys.exit(1)
 
-from dimos.robot.agilex.piper_arm import PiperArmRobot
-from dimos.utils.logging_config import setup_logger
-
 # Import LCM message types
 from dimos_lcm.sensor_msgs import Image
+
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.robot.agilex.piper_arm import PiperArmRobot
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.tests.test_pick_and_place_module")
 
