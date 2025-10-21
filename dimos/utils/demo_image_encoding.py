@@ -53,7 +53,7 @@ class EmitterModule(Module):
     def stop(self):
         if self._thread:
             self._stop_event.set()
-            self._thread.wait()
+            self._thread.join(timeout=2)
         super().stop()
 
     def _publish_image(self):
