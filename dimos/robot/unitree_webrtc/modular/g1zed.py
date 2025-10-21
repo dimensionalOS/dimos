@@ -31,7 +31,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(__name__)
 
 
-def deploy_monozed(dimos) -> CameraModule:
+def deploy_g1_monozed(dimos) -> CameraModule:
     camera = dimos.deploy(
         CameraModule,
         frequency=4.0,
@@ -58,7 +58,7 @@ def deploy_monozed(dimos) -> CameraModule:
 def deploy(dimos: DimosCluster, ip: str) -> None:
     nav = rosnav.deploy(dimos)
     connection = g1.deploy(dimos, ip, nav)
-    zedcam = deploy_monozed(dimos)
+    zedcam = deploy_g1_monozed(dimos)
 
     foxglove_bridge.deploy(dimos)
 
