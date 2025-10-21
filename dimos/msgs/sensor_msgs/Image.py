@@ -26,6 +26,7 @@ from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
 from reactivex import operators as ops
 from reactivex.observable import Observable
+from turbojpeg import TurboJPEG
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     HAS_CUDA,
@@ -414,6 +415,85 @@ class Image(Timestamped):
             NumpyImage(
                 arr,
                 fmt,
+                msg.header.frame_id if hasattr(msg, "header") else "",
+                (
+                    msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
+                    if hasattr(msg, "header")
+                    and hasattr(msg.header, "stamp")
+                    and msg.header.stamp.sec > 0
+                    else time.time()
+                ),
+            )
+        )
+
+    def lcm_jpeg_encode(self, quality: int = 75, frame_id: Optional[str] = None) -> bytes:
+        """Convert to LCM Image message with JPEG-compressed data.
+
+        Args:
+            quality: JPEG compression quality (0-100, default 75)
+            frame_id: Optional frame ID override
+
+        Returns:
+            LCM-encoded bytes with JPEG-compressed image data
+        """
+        jpeg = TurboJPEG()
+        msg = LCMImage()
+
+        # Header
+        msg.header = Header()
+        msg.header.seq = 0
+        msg.header.frame_id = frame_id or self.frame_id
+
+        # Set timestamp
+        if self.ts is not None:
+            msg.header.stamp.sec = int(self.ts)
+            msg.header.stamp.nsec = int((self.ts - int(self.ts)) * 1e9)
+        else:
+            now = time.time()
+            msg.header.stamp.sec = int(now)
+            msg.header.stamp.nsec = int((now - int(now)) * 1e9)
+
+        # Get image in BGR format for JPEG encoding
+        bgr_image = self.to_bgr().to_opencv()
+
+        # Encode as JPEG
+        jpeg_data = jpeg.encode(bgr_image, quality=quality)
+
+        # Store JPEG data and metadata
+        msg.height = self.height
+        msg.width = self.width
+        msg.encoding = "jpeg"
+        msg.is_bigendian = False
+        msg.step = 0  # Not applicable for compressed format
+
+        msg.data_length = len(jpeg_data)
+        msg.data = jpeg_data
+
+        return msg.lcm_encode()
+
+    @classmethod
+    def lcm_jpeg_decode(cls, data: bytes, **kwargs) -> "Image":
+        """Decode an LCM Image message with JPEG-compressed data.
+
+        Args:
+            data: LCM-encoded bytes containing JPEG-compressed image
+
+        Returns:
+            Image instance
+        """
+        jpeg = TurboJPEG()
+        msg = LCMImage.lcm_decode(data)
+
+        if msg.encoding != "jpeg":
+            raise ValueError(f"Expected JPEG encoding, got {msg.encoding}")
+
+        # Decode JPEG data
+        bgr_array = jpeg.decode(msg.data)
+
+        return cls(
+            NumpyImage(
+                bgr_array,
+                ImageFormat.BGR,
                 msg.header.frame_id if hasattr(msg, "header") else "",
                 (
                     msg.header.stamp.sec + msg.header.stamp.nsec / 1e9

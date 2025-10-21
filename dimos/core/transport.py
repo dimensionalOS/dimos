@@ -38,7 +38,7 @@ from typing import (
 
 import dimos.core.colors as colors
 from dimos.core.stream import In, RemoteIn, Transport
-from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM
+from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM
 from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
 
@@ -88,7 +88,8 @@ class LCMTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, type: type, **kwargs):
         super().__init__(LCMTopic(topic, type))
-        self.lcm = LCM(**kwargs)
+        if not hasattr(self, "lcm"):
+            self.lcm = LCM(**kwargs)
 
     def __reduce__(self):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
@@ -105,6 +106,15 @@ class LCMTransport(PubSubTransport[T]):
             self.lcm.start()
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class JpegLcmTransport(LCMTransport):
+    def __init__(self, topic: str, type: type, **kwargs):
+        self.lcm = JpegLCM(**kwargs)
+        super().__init__(topic, type)
+
+    def __reduce__(self):
+        return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
 
 
 class pSHMTransport(PubSubTransport[T]):
