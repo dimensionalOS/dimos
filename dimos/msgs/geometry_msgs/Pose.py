@@ -75,8 +75,8 @@ class Pose(LCMPose):
     @dispatch
     def __init__(
         self,
-        position: VectorConvertable | Vector3 = None,
-        orientation: QuaternionConvertable | Quaternion = None,
+        position: VectorConvertable | Vector3 | None = None,
+        orientation: QuaternionConvertable | Quaternion | None = None,
     ) -> None:
         """Initialize a pose with position and orientation."""
         if orientation is None:

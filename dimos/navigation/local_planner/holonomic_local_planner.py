@@ -22,8 +22,9 @@ from typing import Optional, Tuple
 
 import numpy as np
 
+from dimos.core import rpc
 from dimos.msgs.geometry_msgs import Twist, Vector3
-from dimos.navigation.local_planner import BaseLocalPlanner
+from dimos.navigation.local_planner.local_planner import BaseLocalPlanner
 from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
 
@@ -72,6 +73,14 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
 
         # Previous velocity for filtering (vx, vy, vtheta)
         self.v_prev = np.array([0.0, 0.0, 0.0])
+
+    @rpc
+    def start(self):
+        super().start()
+
+    @rpc
+    def stop(self):
+        super().stop()
 
     def compute_velocity(self) -> Twist | None:
         """

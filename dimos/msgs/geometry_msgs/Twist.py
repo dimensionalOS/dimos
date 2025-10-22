@@ -29,6 +29,9 @@ except ImportError:
 
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 
+# Import Quaternion at runtime for beartype compatibility
+# (beartype needs to resolve forward references at runtime)
+
 if TYPE_CHECKING:
     from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
