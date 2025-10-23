@@ -38,7 +38,7 @@ from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.agents2.spec import Model, Provider
 from dimos.core import In, Module, Out, rpc
-from dimos.core.dimos import Dimos
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
@@ -195,7 +195,7 @@ class UnitreeG1(Robot, Resource):
         self.capabilities = [RobotCapability.LOCOMOTION]
 
         # Module references
-        self._dimos = Dimos(n=4)
+        self._dimos = ModuleCoordinator(n=4)
         self.connection = None
         self.websocket_vis = None
         self.foxglove_bridge = None

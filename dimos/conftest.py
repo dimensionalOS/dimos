@@ -70,7 +70,6 @@ def monitor_threads(request):
 
     yield
 
-    # Only check for threads created BY THIS TEST, not existing ones
     with _seen_threads_lock:
         before = _before_test_threads.get(test_name, set())
         current = {t.ident for t in threading.enumerate() if t.ident is not None}
@@ -84,6 +83,15 @@ def monitor_threads(request):
         # Get the actual thread objects for new threads
         new_threads = [
             t for t in threading.enumerate() if t.ident in new_thread_ids and t.name != "MainThread"
+        ]
+
+        # Filter out expected persistent threads from Dask that are shared globally
+        # These threads are intentionally left running and cleaned up on process exit
+        expected_persistent_thread_prefixes = ["Dask-Offload"]
+        new_threads = [
+            t
+            for t in new_threads
+            if not any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes)
         ]
 
         # Filter out threads we've already seen (from previous tests)

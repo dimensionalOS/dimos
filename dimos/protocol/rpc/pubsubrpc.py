@@ -14,30 +14,24 @@
 
 from __future__ import annotations
 
-import pickle
-import subprocess
-import sys
-import threading
 import time
-import traceback
 from abc import abstractmethod
-from dataclasses import dataclass
 from types import FunctionType
 from typing import (
     Any,
     Callable,
     Generic,
     Optional,
-    Protocol,
-    Sequence,
     TypedDict,
     TypeVar,
-    runtime_checkable,
 )
 
-from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub
-from dimos.protocol.rpc.spec import Args, RPCClient, RPCInspectable, RPCServer, RPCSpec
-from dimos.protocol.service.spec import Service
+from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.rpc.spec import Args, RPCSpec
+from dimos.utils.logging_config import setup_logger
+
+
+logger = setup_logger(__file__)
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
@@ -121,11 +115,23 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             args = req.get("args")
             if args is None:
                 return
-            response = f(*args[0], **args[1])
 
-            req_id = req.get("id")
-            if req_id is not None:
-                self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))
+            # Execute RPC handler in a separate thread to avoid deadlock when
+            # the handler makes nested RPC calls.
+            def execute_and_respond():
+                try:
+                    response = f(*args[0], **args[1])
+                    req_id = req.get("id")
+                    if req_id is not None:
+                        self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))
+                except Exception as e:
+                    logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
+
+            get_thread_pool = getattr(self, "_get_call_thread_pool", None)
+            if get_thread_pool:
+                get_thread_pool().submit(execute_and_respond)
+            else:
+                execute_and_respond()
 
         return self.subscribe(topic_req, receive_call)
 

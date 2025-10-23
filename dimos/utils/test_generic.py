@@ -12,16 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.rpc.pubsubrpc import PassThroughPubSubRPC
+from uuid import UUID
 from dimos.utils.generic import short_id
 
 
-class LCMRPC(PassThroughPubSubRPC, PickleLCM):
-    def topicgen(self, name: str, req_or_res: bool) -> Topic:
-        suffix = "res" if req_or_res else "req"
-        topic = f"/rpc/{name}/{suffix}"
-        if len(topic) > LCM_MAX_CHANNEL_NAME_LENGTH:
-            topic = f"/rpc/{short_id(name)}/{suffix}"
-        return Topic(topic=topic)
+def test_short_id_hello_world() -> None:
+    assert short_id("HelloWorld") == "6GgJmzi1KYf4iaHVxk"
+
+
+def test_short_id_uuid_one(mocker) -> None:
+    mocker.patch("uuid.uuid4", return_value=UUID("11111111-1111-1111-1111-111111111111"))
+    assert short_id() == "wcFtOGNXQnQFZ8QRh1"
+
+
+def test_short_id_uuid_zero(mocker) -> None:
+    mocker.patch("uuid.uuid4", return_value=UUID("00000000-0000-0000-0000-000000000000"))
+    assert short_id() == "000000000000000000"

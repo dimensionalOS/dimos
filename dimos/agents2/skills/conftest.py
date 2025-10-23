@@ -20,11 +20,14 @@ from reactivex.scheduler import ThreadPoolScheduler
 from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.agents2.system_prompt import get_system_prompt
 from dimos.mapping.types import LatLon
 from dimos.robot.robot import GpsRobot
-from dimos.robot.unitree_webrtc.run_agents2 import SYSTEM_PROMPT
 from dimos.utils.data import get_data
 from dimos.msgs.sensor_msgs import Image
+
+
+system_prompt = get_system_prompt()
 
 
 @pytest.fixture(autouse=True)
@@ -42,11 +45,13 @@ def cleanup_threadpool_scheduler(monkeypatch):
     threadpool.scheduler = ThreadPoolScheduler(max_workers=threadpool.get_max_workers())
 
 
+# TODO: Delete
 @pytest.fixture
 def fake_robot(mocker):
     return mocker.MagicMock()
 
 
+# TODO: Delete
 @pytest.fixture
 def fake_gps_robot(mocker):
     return mocker.Mock(spec=GpsRobot)
@@ -59,14 +64,17 @@ def fake_video_stream():
     return rx.of(image)
 
 
+# TODO: Delete
 @pytest.fixture
 def fake_gps_position_stream():
     return rx.of(LatLon(lat=37.783, lon=-122.413))
 
 
 @pytest.fixture
-def navigation_skill_container(fake_robot, fake_video_stream):
-    container = NavigationSkillContainer(fake_robot, fake_video_stream)
+def navigation_skill_container(mocker):
+    container = NavigationSkillContainer()
+    container.color_image.connection = mocker.MagicMock()
+    container.odom.connection = mocker.MagicMock()
     container.start()
     yield container
     container.stop()
@@ -93,7 +101,7 @@ def google_maps_skill_container(fake_gps_robot, fake_gps_position_stream, mocker
 def create_navigation_agent(navigation_skill_container, create_fake_agent):
     return partial(
         create_fake_agent,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         skill_containers=[navigation_skill_container],
     )
 
@@ -101,7 +109,7 @@ def create_navigation_agent(navigation_skill_container, create_fake_agent):
 @pytest.fixture
 def create_gps_nav_agent(gps_nav_skill_container, create_fake_agent):
     return partial(
-        create_fake_agent, system_prompt=SYSTEM_PROMPT, skill_containers=[gps_nav_skill_container]
+        create_fake_agent, system_prompt=system_prompt, skill_containers=[gps_nav_skill_container]
     )
 
 
@@ -111,6 +119,6 @@ def create_google_maps_agent(
 ):
     return partial(
         create_fake_agent,
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         skill_containers=[gps_nav_skill_container, google_maps_skill_container],
     )

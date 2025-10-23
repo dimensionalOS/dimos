@@ -12,23 +12,31 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
 from typing import Optional, Type, TypeVar
 
 from dimos import core
 from dimos.core import DimosCluster, Module
+from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 
 T = TypeVar("T", bound="Module")
 
 
-class Dimos(Resource):
+class ModuleCoordinator(Resource):
     _client: Optional[DimosCluster] = None
     _n: Optional[int] = None
     _memory_limit: str = "auto"
     _deployed_modules: dict[Type[Module], Module] = {}
 
-    def __init__(self, n: Optional[int] = None, memory_limit: str = "auto"):
-        self._n = n
+    def __init__(
+        self,
+        n: Optional[int] = None,
+        memory_limit: str = "auto",
+        global_config: GlobalConfig | None = None,
+    ):
+        cfg = global_config or GlobalConfig()
+        self._n = n if n is not None else cfg.n_dask_workers
         self._memory_limit = memory_limit
 
     def start(self) -> None:
@@ -54,3 +62,12 @@ class Dimos(Resource):
 
     def get_instance(self, module: Type[T]) -> T | None:
         return self._deployed_modules.get(module)
+
+    def wait_until_shutdown(self) -> None:
+        try:
+            while True:
+                time.sleep(0.1)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            self.stop()

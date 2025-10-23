@@ -28,6 +28,7 @@ from reactivex import operators as ops
 from datetime import datetime
 from reactivex.disposable import Disposable
 
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import In, Module, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Pose, PoseStamped
@@ -37,6 +38,13 @@ from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.types.vector import Vector
 from dimos.types.robot_location import RobotLocation
+
+_OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
+_MEMORY_DIR = _OUTPUT_DIR / "memory"
+_SPATIAL_MEMORY_DIR = _MEMORY_DIR / "spatial_memory"
+_DB_PATH = _SPATIAL_MEMORY_DIR / "chromadb_data"
+_VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
+
 
 logger = setup_logger(__file__)
 
@@ -62,10 +70,14 @@ class SpatialMemory(Module):
         embedding_dimensions: int = 512,
         min_distance_threshold: float = 0.01,  # Min distance in meters to store a new frame
         min_time_threshold: float = 1.0,  # Min time in seconds to record a new frame
-        db_path: Optional[str] = None,  # Path for ChromaDB persistence
-        visual_memory_path: Optional[str] = None,  # Path for saving/loading visual memory
+        db_path: Optional[str] = str(_DB_PATH),  # Path for ChromaDB persistence
+        visual_memory_path: Optional[str] = str(
+            _VISUAL_MEMORY_PATH
+        ),  # Path for saving/loading visual memory
         new_memory: bool = True,  # Whether to create a new memory from scratch
-        output_dir: Optional[str] = None,  # Directory for storing visual memory data
+        output_dir: Optional[str] = str(
+            _SPATIAL_MEMORY_DIR
+        ),  # Directory for storing visual memory data
         chroma_client: Any = None,  # Optional ChromaDB client for persistence
         visual_memory: Optional[
             "VisualMemory"
@@ -649,3 +661,8 @@ class SpatialMemory(Module):
         if semantic_distance < 0.3:
             return location
         return None
+
+
+spatial_memory = SpatialMemory.blueprint
+
+__all__ = ["SpatialMemory", "spatial_memory"]

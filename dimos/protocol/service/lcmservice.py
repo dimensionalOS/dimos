@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import os
 import subprocess
 import sys
@@ -225,6 +226,8 @@ class LCMService(Service[LCMConfig]):
     _stop_event: threading.Event
     _l_lock: threading.Lock
     _thread: Optional[threading.Thread]
+    _call_thread_pool: ThreadPoolExecutor | None = None
+    _call_thread_pool_lock: threading.RLock = threading.RLock()
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
@@ -241,7 +244,37 @@ class LCMService(Service[LCMConfig]):
         self._stop_event = threading.Event()
         self._thread = None
 
+    def __getstate__(self):
+        """Exclude unpicklable runtime attributes when serializing."""
+        state = self.__dict__.copy()
+        # Remove unpicklable attributes
+        state.pop("l", None)
+        state.pop("_stop_event", None)
+        state.pop("_thread", None)
+        state.pop("_l_lock", None)
+        state.pop("_call_thread_pool", None)
+        state.pop("_call_thread_pool_lock", None)
+        return state
+
+    def __setstate__(self, state):
+        """Restore object from pickled state."""
+        self.__dict__.update(state)
+        # Reinitialize runtime attributes
+        self.l = None
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._l_lock = threading.Lock()
+        self._call_thread_pool = None
+        self._call_thread_pool_lock = threading.RLock()
+
     def start(self):
+        # Reinitialize LCM if it's None (e.g., after unpickling)
+        if self.l is None:
+            if self.config.lcm:
+                self.l = self.config.lcm
+            else:
+                self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
         if self.config.autoconf:
             autoconf()
         else:
@@ -283,3 +316,28 @@ class LCMService(Service[LCMConfig]):
                 if self.l is not None:
                     del self.l
                     self.l = None
+
+        with self._call_thread_pool_lock:
+            if self._call_thread_pool:
+                # Check if we're being called from within the thread pool
+                # If so, we can't wait for shutdown (would cause "cannot join current thread")
+                current_thread = threading.current_thread()
+                is_pool_thread = False
+
+                # Check if current thread is one of the pool's threads
+                # ThreadPoolExecutor threads have names like "ThreadPoolExecutor-N_M"
+                if hasattr(self._call_thread_pool, "_threads"):
+                    is_pool_thread = current_thread in self._call_thread_pool._threads
+                elif "ThreadPoolExecutor" in current_thread.name:
+                    # Fallback: check thread name pattern
+                    is_pool_thread = True
+
+                # Don't wait if we're in a pool thread to avoid deadlock
+                self._call_thread_pool.shutdown(wait=not is_pool_thread)
+                self._call_thread_pool = None
+
+    def _get_call_thread_pool(self) -> ThreadPoolExecutor:
+        with self._call_thread_pool_lock:
+            if self._call_thread_pool is None:
+                self._call_thread_pool = ThreadPoolExecutor(max_workers=4)
+            return self._call_thread_pool
