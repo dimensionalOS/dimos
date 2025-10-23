@@ -9,6 +9,7 @@ from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import BoxMode
 from fvcore.common.file_io import PathManager
 from fvcore.common.timer import Timer
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +20,7 @@ This file contains functions to register a COCO-format dataset to the DatasetCat
 __all__ = ["register_coco_instances", "register_coco_panoptic_separated"]
 
 
-def register_oid_instances(name, metadata, json_file, image_root) -> None:
+def register_oid_instances(name: str, metadata, json_file, image_root) -> None:
     """ """
     # 1. register a function which returns dicts
     DatasetCatalog.register(name, lambda: load_coco_json_mem_efficient(json_file, image_root, name))
@@ -32,7 +33,7 @@ def register_oid_instances(name, metadata, json_file, image_root) -> None:
 
 
 def load_coco_json_mem_efficient(
-    json_file, image_root, dataset_name=None, extra_annotation_keys=None
+    json_file, image_root, dataset_name: Optional[str]=None, extra_annotation_keys=None
 ):
     """
     Actually not mem efficient

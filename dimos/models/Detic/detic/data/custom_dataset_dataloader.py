@@ -4,7 +4,7 @@ from collections import defaultdict
 import itertools
 import math
 import operator
-from typing import Optional
+from typing import Iterator, Sequence, Optional
 
 from detectron2.config import configurable
 from detectron2.data.build import (
@@ -91,12 +91,12 @@ def build_custom_train_loader(
     *,
     mapper,
     sampler,
-    total_batch_size=16,
-    aspect_ratio_grouping=True,
-    num_workers=0,
-    num_datasets=1,
-    multi_dataset_grouping=False,
-    use_diff_bs_size=False,
+    total_batch_size: int=16,
+    aspect_ratio_grouping: bool=True,
+    num_workers: int=0,
+    num_datasets: int=1,
+    multi_dataset_grouping: bool=False,
+    use_diff_bs_size: bool=False,
     dataset_bs=None,
 ):
     """
@@ -133,7 +133,7 @@ def build_custom_train_loader(
 
 
 def build_multi_dataset_batch_data_loader(
-    use_diff_bs_size, dataset_bs, dataset, sampler, total_batch_size, num_datasets, num_workers=0
+    use_diff_bs_size: int, dataset_bs, dataset, sampler, total_batch_size: int, num_datasets: int, num_workers: int=0
 ):
     """ """
     world_size = get_world_size()
@@ -157,7 +157,7 @@ def build_multi_dataset_batch_data_loader(
 
 
 def get_detection_dataset_dicts_with_source(
-    dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None
+    dataset_names: Sequence[str], filter_empty: bool=True, min_keypoints: int=0, proposal_files=None
 ):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
@@ -197,7 +197,7 @@ class MultiDatasetSampler(Sampler):
         dataset_ratio,
         use_rfs,
         dataset_ann,
-        repeat_threshold=0.001,
+        repeat_threshold: float=0.001,
         seed: int | None = None,
     ) -> None:
         """ """
@@ -244,7 +244,7 @@ class MultiDatasetSampler(Sampler):
         self.weights = dataset_weight * rfs_factors
         self.sample_epoch_size = len(self.weights)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         start = self._rank
         yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 
@@ -260,13 +260,13 @@ class MultiDatasetSampler(Sampler):
 
 
 class MDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset, batch_size, num_datasets) -> None:
+    def __init__(self, dataset, batch_size: int, num_datasets: int) -> None:
         """ """
         self.dataset = dataset
         self.batch_size = batch_size
         self._buckets = [[] for _ in range(2 * num_datasets)]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         for d in self.dataset:
             w, h = d["width"], d["height"]
             aspect_ratio_bucket_id = 0 if w > h else 1
@@ -279,13 +279,13 @@ class MDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
 
 
 class DIFFMDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset, batch_sizes, num_datasets) -> None:
+    def __init__(self, dataset, batch_sizes: Sequence[int], num_datasets: int) -> None:
         """ """
         self.dataset = dataset
         self.batch_sizes = batch_sizes
         self._buckets = [[] for _ in range(2 * num_datasets)]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         for d in self.dataset:
             w, h = d["width"], d["height"]
             aspect_ratio_bucket_id = 0 if w > h else 1

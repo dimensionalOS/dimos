@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
@@ -110,7 +110,7 @@ class TFMessage:
         """Get transform by index."""
         return self.transforms[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         """Iterate over transforms."""
         return iter(self.transforms)
 

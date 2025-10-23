@@ -7,10 +7,11 @@ import numpy as np
 from tabulate import tabulate
 
 from ..data.datasets.coco_zeroshot import categories_seen, categories_unseen
+from typing import Optional, Sequence
 
 
 class CustomCOCOEvaluator(COCOEvaluator):
-    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+    def _derive_coco_results(self, coco_eval, iou_type, class_names: Optional[Sequence[str]]=None):
         """
         Additionally plot mAP for 'seen classes' and 'unseen classes'
         """

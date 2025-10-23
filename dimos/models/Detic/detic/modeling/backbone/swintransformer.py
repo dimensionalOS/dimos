@@ -21,6 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
+from typing import Optional, Sequence
 
 # from .checkpoint import load_checkpoint
 
@@ -29,7 +30,7 @@ class Mlp(nn.Module):
     """Multilayer perceptron."""
 
     def __init__(
-        self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0
+        self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop: float=0.0
     ) -> None:
         super().__init__()
         out_features = out_features or in_features
@@ -48,7 +49,7 @@ class Mlp(nn.Module):
         return x
 
 
-def window_partition(x, window_size):
+def window_partition(x, window_size: int):
     """
     Args:
         x: (B, H, W, C)
@@ -62,7 +63,7 @@ def window_partition(x, window_size):
     return windows
 
 
-def window_reverse(windows, window_size, H, W):
+def window_reverse(windows, window_size: int, H, W):
     """
     Args:
         windows: (num_windows*B, window_size, window_size, C)
@@ -93,13 +94,13 @@ class WindowAttention(nn.Module):
 
     def __init__(
         self,
-        dim,
-        window_size,
-        num_heads,
-        qkv_bias=True,
+        dim: int,
+        window_size: int,
+        num_heads: int,
+        qkv_bias: bool=True,
         qk_scale=None,
-        attn_drop=0.0,
-        proj_drop=0.0,
+        attn_drop: float=0.0,
+        proj_drop: float=0.0,
     ) -> None:
         super().__init__()
         self.dim = dim
@@ -196,16 +197,16 @@ class SwinTransformerBlock(nn.Module):
 
     def __init__(
         self,
-        dim,
-        num_heads,
-        window_size=7,
-        shift_size=0,
-        mlp_ratio=4.0,
-        qkv_bias=True,
+        dim: int,
+        num_heads: int,
+        window_size: int=7,
+        shift_size: int=0,
+        mlp_ratio: float=4.0,
+        qkv_bias: bool=True,
         qk_scale=None,
-        drop=0.0,
-        attn_drop=0.0,
-        drop_path=0.0,
+        drop: float=0.0,
+        attn_drop: float=0.0,
+        drop_path: float=0.0,
         act_layer=nn.GELU,
         norm_layer=nn.LayerNorm,
     ) -> None:
@@ -308,7 +309,7 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, norm_layer=nn.LayerNorm) -> None:
+    def __init__(self, dim: int, norm_layer=nn.LayerNorm) -> None:
         super().__init__()
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
@@ -363,19 +364,19 @@ class BasicLayer(nn.Module):
 
     def __init__(
         self,
-        dim,
-        depth,
-        num_heads,
-        window_size=7,
-        mlp_ratio=4.0,
-        qkv_bias=True,
+        dim: int,
+        depth: int,
+        num_heads: int,
+        window_size: int=7,
+        mlp_ratio: float=4.0,
+        qkv_bias: bool=True,
         qk_scale=None,
-        drop=0.0,
-        attn_drop=0.0,
-        drop_path=0.0,
+        drop: float=0.0,
+        attn_drop: float=0.0,
+        drop_path: float=0.0,
         norm_layer=nn.LayerNorm,
         downsample=None,
-        use_checkpoint=False,
+        use_checkpoint: bool=False,
     ) -> None:
         super().__init__()
         self.window_size = window_size
@@ -468,7 +469,7 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None) -> None:
+    def __init__(self, patch_size: int=4, in_chans: int=3, embed_dim: int=96, norm_layer=None) -> None:
         super().__init__()
         patch_size = to_2tuple(patch_size)
         self.patch_size = patch_size
@@ -531,25 +532,25 @@ class SwinTransformer(Backbone):
 
     def __init__(
         self,
-        pretrain_img_size=224,
-        patch_size=4,
-        in_chans=3,
-        embed_dim=96,
-        depths=None,
-        num_heads=None,
-        window_size=7,
-        mlp_ratio=4.0,
-        qkv_bias=True,
+        pretrain_img_size: int=224,
+        patch_size: int=4,
+        in_chans: int=3,
+        embed_dim: int=96,
+        depths: Optional[Sequence[int]]=None,
+        num_heads: Optional[int]=None,
+        window_size: int=7,
+        mlp_ratio: float=4.0,
+        qkv_bias: bool=True,
         qk_scale=None,
-        drop_rate=0.0,
-        attn_drop_rate=0.0,
-        drop_path_rate=0.2,
+        drop_rate: float=0.0,
+        attn_drop_rate: float=0.0,
+        drop_path_rate: float=0.2,
         norm_layer=nn.LayerNorm,
-        ape=False,
-        patch_norm=True,
+        ape: bool=False,
+        patch_norm: bool=True,
         out_indices=(0, 1, 2, 3),
         frozen_stages=-1,
-        use_checkpoint=False,
+        use_checkpoint: bool=False,
     ) -> None:
         if num_heads is None:
             num_heads = [3, 6, 12, 24]
@@ -648,7 +649,7 @@ class SwinTransformer(Backbone):
                 for param in m.parameters():
                     param.requires_grad = False
 
-    def init_weights(self, pretrained=None):
+    def init_weights(self, pretrained: Optional[bool]=None):
         """Initialize the weights in backbone.
         Args:
             pretrained (str, optional): Path to pre-trained weights.
@@ -703,7 +704,7 @@ class SwinTransformer(Backbone):
 
         return outs
 
-    def train(self, mode=True) -> None:
+    def train(self, mode: bool=True) -> None:
         """Convert the model into training mode while keep layers freezed."""
         super().train(mode)
         self._freeze_stages()

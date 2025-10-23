@@ -17,7 +17,7 @@ import torch.nn.functional as F
 
 
 @register_model
-def convnext_tiny_21k(pretrained=False, **kwargs):
+def convnext_tiny_21k(pretrained: bool=False, **kwargs):
     model_args = dict(depths=(3, 3, 9, 3), dims=(96, 192, 384, 768), **kwargs)
     cfg = default_cfgs["convnext_tiny"]
     cfg["url"] = "https://dl.fbaipublicfiles.com/convnext/convnext_tiny_22k_224.pth"
@@ -67,7 +67,7 @@ model_params = {
 }
 
 
-def create_timm_resnet(variant, out_indices, pretrained=False, **kwargs):
+def create_timm_resnet(variant, out_indices, pretrained: bool=False, **kwargs):
     params = model_params[variant]
     default_cfgs_resnet["resnet50_in21k"] = copy.deepcopy(default_cfgs_resnet["resnet50"])
     default_cfgs_resnet["resnet50_in21k"]["url"] = (
@@ -114,7 +114,7 @@ def freeze_module(x):
 
 
 class TIMM(Backbone):
-    def __init__(self, base_name, out_levels, freeze_at=0, norm="FrozenBN", pretrained=False) -> None:
+    def __init__(self, base_name: str, out_levels, freeze_at: int=0, norm: str="FrozenBN", pretrained: bool=False) -> None:
         super().__init__()
         out_indices = [x - 1 for x in out_levels]
         if base_name in model_params:
@@ -151,7 +151,7 @@ class TIMM(Backbone):
         if norm == "FrozenBN":
             self = FrozenBatchNorm2d.convert_frozen_batchnorm(self)
 
-    def freeze(self, freeze_at=0) -> None:
+    def freeze(self, freeze_at: int=0) -> None:
         """ """
         if freeze_at >= 1:
             print("Frezing", self.base.conv1)

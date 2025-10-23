@@ -16,6 +16,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 import os
 import time
+from typing import Sequence
 
 import cv2
 import onnxruntime
@@ -39,13 +40,13 @@ logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
 class Sam2DSegmenter:
     def __init__(
         self,
-        model_path="models_fastsam",
-        model_name="FastSAM-s.onnx",
-        min_analysis_interval=5.0,
-        use_tracker=True,
-        use_analyzer=True,
-        use_rich_labeling=False,
-        use_filtering=True,
+        model_path: str = "models_fastsam",
+        model_name: str = "FastSAM-s.onnx",
+        min_analysis_interval: float = 5.0,
+        use_tracker: bool = True,
+        use_analyzer: bool = True,
+        use_rich_labeling: bool = False,
+        use_filtering: bool = True,
     ) -> None:
         if is_cuda_available():
             logger.info("Using CUDA for SAM 2d segmenter")
@@ -277,7 +278,7 @@ class Sam2DSegmenter:
                     self.image_analyzer.analyze_images, cropped_images, prompt_type=prompt_type
                 )
 
-    def get_object_names(self, track_ids, tracked_names):
+    def get_object_names(self, track_ids, tracked_names: Sequence[str]):
         """Get object names for the given track IDs, falling back to tracked names."""
         if not self.use_analyzer:
             return tracked_names
@@ -287,7 +288,9 @@ class Sam2DSegmenter:
             for track_id, tracked_name in zip(track_ids, tracked_names, strict=False)
         ]
 
-    def visualize_results(self, image, masks, bboxes, track_ids, probs, names):
+    def visualize_results(
+        self, image, masks, bboxes, track_ids, probs: Sequence[float], names: Sequence[str]
+    ):
         """Generate an overlay visualization with segmentation results and object names."""
         return plot_results(image, masks, bboxes, track_ids, probs, names)
 

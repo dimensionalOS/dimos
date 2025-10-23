@@ -33,7 +33,7 @@ if float(torchvision.__version__[:3]) < 0.5:
 
     from torchvision.ops.misc import _NewEmptyTensorOp
 
-    def _check_size_scale_factor(dim, size, scale_factor):
+    def _check_size_scale_factor(dim: int, size: int, scale_factor):
         # type: (int, Optional[List[int]], Optional[float]) -> None
         if size is None and scale_factor is None:
             raise ValueError("either size or scale_factor should be defined")
@@ -44,7 +44,7 @@ if float(torchvision.__version__[:3]) < 0.5:
                 f"scale_factor shape must match input shape. Input is {dim}D, scale_factor size is {len(scale_factor)}"
             )
 
-    def _output_size(dim, input, size, scale_factor):
+    def _output_size(dim: int, input, size: int, scale_factor):
         # type: (int, Tensor, Optional[List[int]], Optional[float]) -> List[int]
         assert dim == 2
         _check_size_scale_factor(dim, size, scale_factor)
@@ -65,7 +65,7 @@ class SmoothedValue:
     window or the global series average.
     """
 
-    def __init__(self, window_size=20, fmt=None) -> None:
+    def __init__(self, window_size: int=20, fmt=None) -> None:
         if fmt is None:
             fmt = "{median:.4f} ({global_avg:.4f})"
         self.deque = deque(maxlen=window_size)
@@ -73,7 +73,7 @@ class SmoothedValue:
         self.count = 0
         self.fmt = fmt
 
-    def update(self, value, n=1) -> None:
+    def update(self, value, n: int=1) -> None:
         self.deque.append(value)
         self.count += n
         self.total += value * n
@@ -166,7 +166,7 @@ def all_gather(data):
     return data_list
 
 
-def reduce_dict(input_dict, average=True):
+def reduce_dict(input_dict, average: bool=True):
     """
     Args:
         input_dict (dict): all the values will be reduced
@@ -194,7 +194,7 @@ def reduce_dict(input_dict, average=True):
 
 
 class MetricLogger:
-    def __init__(self, delimiter="\t") -> None:
+    def __init__(self, delimiter: str="\t") -> None:
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
 
@@ -222,7 +222,7 @@ class MetricLogger:
         for meter in self.meters.values():
             meter.synchronize_between_processes()
 
-    def add_meter(self, name, meter) -> None:
+    def add_meter(self, name: str, meter) -> None:
         self.meters[name] = meter
 
     def log_every(self, iterable, print_freq, header=None):
@@ -358,7 +358,7 @@ class NestedTensor:
         self.tensors = tensors
         self.mask = mask
 
-    def to(self, device, non_blocking=False):
+    def to(self, device, non_blocking: bool=False):
         # type: (Device) -> NestedTensor
         cast_tensor = self.tensors.to(device, non_blocking=non_blocking)
         mask = self.mask
@@ -381,7 +381,7 @@ class NestedTensor:
         return str(self.tensors)
 
 
-def setup_for_distributed(is_master) -> None:
+def setup_for_distributed(is_master: bool) -> None:
     """
     This function disables printing when not in master process
     """
@@ -500,7 +500,7 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None):
+def interpolate(input, size: Optional[int]=None, scale_factor=None, mode: str="nearest", align_corners=None):
     # type: (Tensor, Optional[List[int]], Optional[float], str, Optional[bool]) -> Tensor
     """
     Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
@@ -520,7 +520,7 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
         return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
 
 
-def get_total_grad_norm(parameters, norm_type=2):
+def get_total_grad_norm(parameters, norm_type: int=2):
     parameters = list(filter(lambda p: p.grad is not None, parameters))
     norm_type = float(norm_type)
     device = parameters[0].grad.device
@@ -531,7 +531,7 @@ def get_total_grad_norm(parameters, norm_type=2):
     return total_norm
 
 
-def inverse_sigmoid(x, eps=1e-5):
+def inverse_sigmoid(x, eps: float=1e-5):
     x = x.clamp(min=0, max=1)
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)

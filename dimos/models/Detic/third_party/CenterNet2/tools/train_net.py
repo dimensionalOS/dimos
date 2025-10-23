@@ -40,7 +40,7 @@ import detectron2.utils.comm as comm
 import torch
 
 
-def build_evaluator(cfg, dataset_name, output_folder=None):
+def build_evaluator(cfg, dataset_name: str, output_folder=None):
     """
     Create evaluator(s) for a given dataset.
     This uses the special metadata "evaluator_type" associated with each builtin dataset.
@@ -95,7 +95,7 @@ class Trainer(DefaultTrainer):
     """
 
     @classmethod
-    def build_evaluator(cls, cfg, dataset_name, output_folder=None):
+    def build_evaluator(cls, cfg, dataset_name: str, output_folder=None):
         return build_evaluator(cfg, dataset_name, output_folder)
 
     @classmethod

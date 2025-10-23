@@ -76,13 +76,13 @@ class Transformer(nn.Module):
 class CLIPTEXT(nn.Module):
     def __init__(
         self,
-        embed_dim=512,
+        embed_dim: int=512,
         # text
-        context_length=77,
-        vocab_size=49408,
-        transformer_width=512,
-        transformer_heads=8,
-        transformer_layers=12,
+        context_length: int=77,
+        vocab_size: int=49408,
+        transformer_width: int=512,
+        transformer_heads: int=8,
+        transformer_layers: int=12,
     ) -> None:
         super().__init__()
 
@@ -159,7 +159,7 @@ class CLIPTEXT(nn.Module):
 
         return result
 
-    def encode_text(self, text):
+    def encode_text(self, text: str):
         x = self.token_embedding(text).type(self.dtype)  # [batch_size, n_ctx, d_model]
         x = x + self.positional_embedding.type(self.dtype)
         x = x.permute(1, 0, 2)  # NLD -> LND
@@ -179,7 +179,7 @@ class CLIPTEXT(nn.Module):
         return features
 
 
-def build_text_encoder(pretrain=True):
+def build_text_encoder(pretrain: bool=True):
     text_encoder = CLIPTEXT()
     if pretrain:
         import clip

@@ -28,6 +28,7 @@ import numpy as np
 import pycocotools.mask as mask_utils
 from tabulate import tabulate
 import torch
+from typing import Optional, Sequence
 
 
 def compute_average_precision(precision, recall):
@@ -78,9 +79,9 @@ class OIDEval:
         self,
         lvis_gt,
         lvis_dt,
-        iou_type="bbox",
-        expand_pred_label=False,
-        oid_hierarchy_path="./datasets/oid/annotations/challenge-2019-label500-hierarchy.json",
+        iou_type: str="bbox",
+        expand_pred_label: bool=False,
+        oid_hierarchy_path: str="./datasets/oid/annotations/challenge-2019-label500-hierarchy.json",
     ) -> None:
         """Constructor for OIDEval.
         Args:
@@ -547,7 +548,7 @@ class Params:
 
 
 class OIDEvaluator(DatasetEvaluator):
-    def __init__(self, dataset_name, cfg, distributed, output_dir=None) -> None:
+    def __init__(self, dataset_name: str, cfg, distributed, output_dir=None) -> None:
         self._distributed = distributed
         self._output_dir = output_dir
 
@@ -619,7 +620,7 @@ class OIDEvaluator(DatasetEvaluator):
         return copy.deepcopy(self._results)
 
 
-def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class_names=None):
+def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg: bool=False, class_names: Optional[Sequence[str]]=None):
     logger = logging.getLogger(__name__)
 
     results = {}

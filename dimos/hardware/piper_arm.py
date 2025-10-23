@@ -105,7 +105,7 @@ class PiperArm:
         self.arm.MotionCtrl_1(0x01, 0, 0)
         time.sleep(3)
 
-    def cmd_ee_pose_values(self, x, y, z, r, p, y_, line_mode=False) -> None:
+    def cmd_ee_pose_values(self, x, y, z, r, p, y_, line_mode: bool = False) -> None:
         """Command end-effector to target pose in space (position + Euler angles)"""
         factor = 1000
         pose = [
@@ -121,7 +121,7 @@ class PiperArm:
             int(pose[0]), int(pose[1]), int(pose[2]), int(pose[3]), int(pose[4]), int(pose[5])
         )
 
-    def cmd_ee_pose(self, pose: Pose, line_mode=False) -> None:
+    def cmd_ee_pose(self, pose: Pose, line_mode: bool = False) -> None:
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
         euler = quaternion_to_euler(pose.orientation, degrees=True)
@@ -158,7 +158,7 @@ class PiperArm:
 
         return Pose(position, orientation)
 
-    def cmd_gripper_ctrl(self, position, effort=0.25) -> None:
+    def cmd_gripper_ctrl(self, position, effort: float = 0.25) -> None:
         """Command end-effector gripper"""
         factor = 1000
         position = position * factor * factor  # meters
@@ -351,7 +351,7 @@ class PiperArm:
 class VelocityController(Module):
     cmd_vel: In[Twist] = None
 
-    def __init__(self, arm, period=0.01, *args, **kwargs) -> None:
+    def __init__(self, arm, period: float = 0.01, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.arm = arm
         self.period = period
@@ -468,7 +468,7 @@ def run_velocity_controller() -> None:
 if __name__ == "__main__":
     arm = PiperArm()
 
-    def get_key(timeout=0.1):
+    def get_key(timeout: float = 0.1):
         """Non-blocking key reader for arrow keys."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)

@@ -12,6 +12,7 @@ from ..layers.iou_loss import IOULoss
 from ..layers.ml_nms import ml_nms
 from .centernet_head import CenterNetHead
 from .utils import _transpose, reduce_sum
+from typing import Sequence
 
 __all__ = ["CenterNet"]
 
@@ -24,46 +25,46 @@ class CenterNet(nn.Module):
     def __init__(
         self,
         # input_shape: Dict[str, ShapeSpec],
-        in_channels=256,
+        in_channels: int=256,
         *,
-        num_classes=80,
+        num_classes: int=80,
         in_features=("p3", "p4", "p5", "p6", "p7"),
-        strides=(8, 16, 32, 64, 128),
-        score_thresh=0.05,
-        hm_min_overlap=0.8,
-        loc_loss_type="giou",
-        min_radius=4,
-        hm_focal_alpha=0.25,
-        hm_focal_beta=4,
-        loss_gamma=2.0,
-        reg_weight=2.0,
-        not_norm_reg=True,
-        with_agn_hm=False,
-        only_proposal=False,
-        as_proposal=False,
-        not_nms=False,
-        pos_weight=1.0,
-        neg_weight=1.0,
-        sigmoid_clamp=1e-4,
+        strides: Sequence[int]=(8, 16, 32, 64, 128),
+        score_thresh: float=0.05,
+        hm_min_overlap: float=0.8,
+        loc_loss_type: str="giou",
+        min_radius: int=4,
+        hm_focal_alpha: float=0.25,
+        hm_focal_beta: int=4,
+        loss_gamma: float=2.0,
+        reg_weight: float=2.0,
+        not_norm_reg: bool=True,
+        with_agn_hm: bool=False,
+        only_proposal: bool=False,
+        as_proposal: bool=False,
+        not_nms: bool=False,
+        pos_weight: float=1.0,
+        neg_weight: float=1.0,
+        sigmoid_clamp: float=1e-4,
         ignore_high_fp=-1.0,
-        center_nms=False,
+        center_nms: bool=False,
         sizes_of_interest=None,
-        more_pos=False,
-        more_pos_thresh=0.2,
-        more_pos_topk=9,
-        pre_nms_topk_train=1000,
-        pre_nms_topk_test=1000,
-        post_nms_topk_train=100,
-        post_nms_topk_test=100,
-        nms_thresh_train=0.6,
-        nms_thresh_test=0.6,
-        no_reduce=False,
-        not_clamp_box=False,
-        debug=False,
-        vis_thresh=0.5,
+        more_pos: bool=False,
+        more_pos_thresh: float=0.2,
+        more_pos_topk: int=9,
+        pre_nms_topk_train: int=1000,
+        pre_nms_topk_test: int=1000,
+        post_nms_topk_train: int=100,
+        post_nms_topk_test: int=100,
+        nms_thresh_train: float=0.6,
+        nms_thresh_test: float=0.6,
+        no_reduce: bool=False,
+        not_clamp_box: bool=False,
+        debug: bool=False,
+        vis_thresh: float=0.5,
         pixel_mean=None,
         pixel_std=None,
-        device="cuda",
+        device: str="cuda",
         centernet_head=None,
     ) -> None:
         if pixel_std is None:
@@ -249,7 +250,7 @@ class CenterNet(nn.Module):
             return proposals, losses
 
     def losses(
-        self, pos_inds, labels, reg_targets, flattened_hms, logits_pred, reg_pred, agn_hm_pred
+        self, pos_inds, labels: Sequence[str], reg_targets, flattened_hms, logits_pred, reg_pred, agn_hm_pred
     ):
         """
         Inputs:
@@ -560,7 +561,7 @@ class CenterNet(nn.Module):
         reg_targets_per_im[min_dist == INF] = -INF
         return reg_targets_per_im
 
-    def _create_heatmaps_from_dist(self, dist, labels, channels):
+    def _create_heatmaps_from_dist(self, dist, labels: Sequence[str], channels):
         """
         dist: M x N
         labels: N
@@ -605,7 +606,7 @@ class CenterNet(nn.Module):
         )
         return clss, reg_pred, agn_hm_pred
 
-    def get_center3x3(self, locations, centers, strides):
+    def get_center3x3(self, locations, centers, strides: Sequence[int]):
         """
         Inputs:
             locations: M x 2
@@ -662,7 +663,7 @@ class CenterNet(nn.Module):
 
     @torch.no_grad()
     def predict_instances(
-        self, grids, logits_pred, reg_pred, image_sizes, agn_hm_pred, is_proposal=False
+        self, grids, logits_pred, reg_pred, image_sizes: Sequence[int], agn_hm_pred, is_proposal: bool=False
     ):
         sampled_boxes = []
         for l in range(len(grids)):
@@ -684,7 +685,7 @@ class CenterNet(nn.Module):
 
     @torch.no_grad()
     def predict_single_level(
-        self, grids, heatmap, reg_pred, image_sizes, agn_hm, level, is_proposal=False
+        self, grids, heatmap, reg_pred, image_sizes: Sequence[int], agn_hm, level, is_proposal: bool=False
     ):
         N, C, H, W = heatmap.shape
         # put in the same format as grids
@@ -750,7 +751,7 @@ class CenterNet(nn.Module):
         return results
 
     @torch.no_grad()
-    def nms_and_topK(self, boxlists, nms=True):
+    def nms_and_topK(self, boxlists, nms: bool=True):
         num_images = len(boxlists)
         results = []
         for i in range(num_images):

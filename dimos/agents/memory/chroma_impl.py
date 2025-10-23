@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+from typing import Sequence
 
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
@@ -24,7 +25,7 @@ from dimos.agents.memory.base import AbstractAgentSemanticMemory
 class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
     """Base class for Chroma-based semantic memory implementations."""
 
-    def __init__(self, collection_name="my_collection") -> None:
+    def __init__(self, collection_name: str = "my_collection") -> None:
         """Initialize the connection to the local Chroma DB."""
         self.collection_name = collection_name
         self.db_connection = None
@@ -55,7 +56,7 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
         result = self.db_connection.get(include=["embeddings"], ids=[vector_id])
         return result
 
-    def query(self, query_texts, n_results=4, similarity_threshold=None):
+    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):
         """Query the collection with a specific text and return up to n results."""
         if not self.db_connection:
             raise Exception("Collection not initialized. Call connect() first.")
@@ -85,7 +86,10 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using OpenAI's embedding API."""
 
     def __init__(
-        self, collection_name="my_collection", model="text-embedding-3-large", dimensions=1024
+        self,
+        collection_name: str = "my_collection",
+        model: str = "text-embedding-3-large",
+        dimensions: int = 1024,
     ) -> None:
         """Initialize OpenAI-based semantic memory.
 
@@ -124,7 +128,9 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using local models."""
 
     def __init__(
-        self, collection_name="my_collection", model_name="sentence-transformers/all-MiniLM-L6-v2"
+        self,
+        collection_name: str = "my_collection",
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     ) -> None:
         """Initialize the local semantic memory using SentenceTransformer.
 
@@ -149,11 +155,11 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
             def __init__(self, model) -> None:
                 self.model = model
 
-            def embed_query(self, text):
+            def embed_query(self, text: str):
                 """Embed a single query text."""
                 return self.model.encode(text, normalize_embeddings=True).tolist()
 
-            def embed_documents(self, texts):
+            def embed_documents(self, texts: Sequence[str]):
                 """Embed multiple documents/texts."""
                 return self.model.encode(texts, normalize_embeddings=True).tolist()
 

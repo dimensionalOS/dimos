@@ -20,7 +20,7 @@ import torch
 
 
 def plot_logs(
-    logs, fields=("class_error", "loss_bbox_unscaled", "mAP"), ewm_col=0, log_name="log.txt"
+    logs, fields=("class_error", "loss_bbox_unscaled", "mAP"), ewm_col: int=0, log_name: str="log.txt"
 ):
     """
     Function to plot specific fields from training log(s). Plots both training and test results.
@@ -85,7 +85,7 @@ def plot_logs(
         ax.set_title(field)
 
 
-def plot_precision_recall(files, naming_scheme="iter"):
+def plot_precision_recall(files, naming_scheme: str="iter"):
     if naming_scheme == "exp_id":
         # name becomes exp_id
         names = [f.parts[-3] for f in files]

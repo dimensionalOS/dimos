@@ -66,7 +66,7 @@ def do_test(cfg, model):
     return results
 
 
-def do_train(cfg, model, resume=False) -> None:
+def do_train(cfg, model, resume: bool=False) -> None:
     model.train()
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)

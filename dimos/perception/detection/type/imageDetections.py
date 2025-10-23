@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Generic, TypeVar
+from typing import TYPE_CHECKING, Generic, Iterator, TypeVar
 
 from dimos_lcm.vision_msgs import Detection2DArray
 
@@ -51,7 +51,7 @@ class ImageDetections(Generic[T], TableStr):
     def __len__(self) -> int:
         return len(self.detections)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self.detections)
 
     def __getitem__(self, index):

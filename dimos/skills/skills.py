@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Iterator
 
 from openai import pydantic_function_tool
 from pydantic import BaseModel
@@ -96,7 +96,7 @@ class SkillLibrary:
     def clear(self) -> None:
         self.registered_skills.clear()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self.registered_skills)
 
     def __len__(self) -> int:
@@ -112,7 +112,7 @@ class SkillLibrary:
 
     _instances: dict[str, dict] = {}
 
-    def create_instance(self, name, **kwargs) -> None:
+    def create_instance(self, name: str, **kwargs) -> None:
         # Key based only on the name
         key = name
 
@@ -120,7 +120,7 @@ class SkillLibrary:
             # Instead of creating an instance, store the args for later use
             self._instances[key] = kwargs
 
-    def call(self, name, **args):
+    def call(self, name: str, **args):
         try:
             # Get the stored args if available; otherwise, use an empty dict
             stored_args = self._instances.get(name, {})

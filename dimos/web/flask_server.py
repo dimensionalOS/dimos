@@ -24,7 +24,11 @@ from dimos.web.edge_io import EdgeIO
 
 class FlaskServer(EdgeIO):
     def __init__(
-        self, dev_name="Flask Server", edge_type="Bidirectional", port=5555, **streams
+        self,
+        dev_name: str = "Flask Server",
+        edge_type: str = "Bidirectional",
+        port: int = 5555,
+        **streams,
     ) -> None:
         super().__init__(dev_name, edge_type)
         self.app = Flask(__name__)
@@ -93,6 +97,6 @@ class FlaskServer(EdgeIO):
                 f"/video_feed/{key}", endpoint, view_func=make_response_generator(key)
             )
 
-    def run(self, host="0.0.0.0", port=5555, threaded=True) -> None:
+    def run(self, host: str = "0.0.0.0", port: int = 5555, threaded: bool = True) -> None:
         self.port = port
         self.app.run(host=host, port=self.port, debug=False, threaded=threaded)

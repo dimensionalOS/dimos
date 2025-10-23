@@ -22,7 +22,7 @@ from reactivex import Observable, operators as ops
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class
 class FrameProcessor:
     def __init__(
-        self, output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=False
+        self, output_dir: str = f"{os.getcwd()}/assets/output/frames", delete_on_init: bool = False
     ) -> None:
         """Initializes the FrameProcessor.
 
@@ -66,10 +66,10 @@ class FrameProcessor:
     def edge_detection(self, frame):
         return cv2.Canny(frame, 100, 200)
 
-    def resize(self, frame, scale=0.5):
+    def resize(self, frame, scale: float = 0.5):
         return cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
-    def export_to_jpeg(self, frame, save_limit=100, loop=False, suffix=""):
+    def export_to_jpeg(self, frame, save_limit: int = 100, loop: bool = False, suffix: str = ""):
         if frame is None:
             print("Error: Attempted to save a None image.")
             return None

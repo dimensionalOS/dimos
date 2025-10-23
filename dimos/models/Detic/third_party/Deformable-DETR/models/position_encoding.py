@@ -24,7 +24,7 @@ class PositionEmbeddingSine(nn.Module):
     used by the Attention is all you need paper, generalized to work on images.
     """
 
-    def __init__(self, num_pos_feats=64, temperature=10000, normalize=False, scale=None) -> None:
+    def __init__(self, num_pos_feats: int=64, temperature: int=10000, normalize: bool=False, scale=None) -> None:
         super().__init__()
         self.num_pos_feats = num_pos_feats
         self.temperature = temperature
@@ -67,7 +67,7 @@ class PositionEmbeddingLearned(nn.Module):
     Absolute pos embedding, learned.
     """
 
-    def __init__(self, num_pos_feats=256) -> None:
+    def __init__(self, num_pos_feats: int=256) -> None:
         super().__init__()
         self.row_embed = nn.Embedding(50, num_pos_feats)
         self.col_embed = nn.Embedding(50, num_pos_feats)

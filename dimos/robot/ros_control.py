@@ -17,7 +17,7 @@ from enum import Enum, auto
 import math
 import threading
 import time
-from typing import Any
+from typing import Any, Optional
 
 from builtin_interfaces.msg import Duration
 from cv_bridge import CvBridge
@@ -425,7 +425,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         return self.video_provider.get_stream(fps=fps)
 
     def _send_action_client_goal(
-        self, client, goal_msg, description=None, time_allowance=20.0
+        self, client, goal_msg, description: str | None = None, time_allowance: float = 20.0
     ) -> bool:
         """
         Generic function to send any action client goal and wait for completion.

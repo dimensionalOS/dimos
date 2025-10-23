@@ -20,6 +20,7 @@ import torch.nn.functional as F
 
 from .bifpn import BiFPN
 from .fpn_p5 import LastLevelP6P7_P5
+from typing import Optional
 
 __all__ = [
     "BasicBlock",
@@ -45,7 +46,7 @@ class BasicBlock(CNNBlockBase):
     and a projection shortcut if needed.
     """
 
-    def __init__(self, in_channels, out_channels, *, stride=1, norm="BN") -> None:
+    def __init__(self, in_channels, out_channels, *, stride: int=1, norm: str="BN") -> None:
         """
         Args:
             in_channels (int): Number of input channels.
@@ -118,13 +119,13 @@ class BottleneckBlock(CNNBlockBase):
         out_channels,
         *,
         bottleneck_channels,
-        stride=1,
-        num_groups=1,
-        norm="BN",
-        stride_in_1x1=False,
-        dilation=1,
-        basewidth=26,
-        scale=4,
+        stride: int=1,
+        num_groups: int=1,
+        norm: str="BN",
+        stride_in_1x1: bool=False,
+        dilation: int=1,
+        basewidth: int=26,
+        scale: int=4,
     ) -> None:
         """
         Args:
@@ -277,15 +278,15 @@ class DeformBottleneckBlock(ResNetBlockBase):
         out_channels,
         *,
         bottleneck_channels,
-        stride=1,
-        num_groups=1,
-        norm="BN",
-        stride_in_1x1=False,
-        dilation=1,
-        deform_modulated=False,
-        deform_num_groups=1,
-        basewidth=26,
-        scale=4,
+        stride: int=1,
+        num_groups: int=1,
+        norm: str="BN",
+        stride_in_1x1: bool=False,
+        dilation: int=1,
+        deform_modulated: bool=False,
+        deform_num_groups: int=1,
+        basewidth: int=26,
+        scale: int=4,
     ) -> None:
         super().__init__(in_channels, out_channels, stride)
         self.deform_modulated = deform_modulated
@@ -487,7 +488,7 @@ class DeformBottleneckBlock(ResNetBlockBase):
         return out
 
 
-def make_stage(block_class, num_blocks, first_stride, *, in_channels, out_channels, **kwargs):
+def make_stage(block_class, num_blocks: int, first_stride, *, in_channels, out_channels, **kwargs):
     """
     Create a list of blocks just like those in a ResNet stage.
     Args:
@@ -520,7 +521,7 @@ class BasicStem(CNNBlockBase):
     The standard ResNet stem (layers before the first residual block).
     """
 
-    def __init__(self, in_channels=3, out_channels=64, norm="BN") -> None:
+    def __init__(self, in_channels: int=3, out_channels: int=64, norm: str="BN") -> None:
         """
         Args:
             norm (str or callable): norm after the first conv layer.
@@ -573,7 +574,7 @@ class BasicStem(CNNBlockBase):
 
 
 class ResNet(Backbone):
-    def __init__(self, stem, stages, num_classes=None, out_features=None) -> None:
+    def __init__(self, stem, stages, num_classes: Optional[int]=None, out_features=None) -> None:
         """
         Args:
             stem (nn.Module): a stem module
@@ -653,7 +654,7 @@ class ResNet(Backbone):
             for name in self._out_features
         }
 
-    def freeze(self, freeze_at=0):
+    def freeze(self, freeze_at: int=0):
         """
         Freeze the first several stages of the ResNet. Commonly used in
         fine-tuning.

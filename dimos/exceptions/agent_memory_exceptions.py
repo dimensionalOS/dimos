@@ -24,7 +24,7 @@ class AgentMemoryError(Exception):
         message (str): Human-readable message describing the error.
     """
 
-    def __init__(self, message="Error in AgentMemory operation") -> None:
+    def __init__(self, message: str = "Error in AgentMemory operation") -> None:
         super().__init__(message)
 
 
@@ -38,7 +38,7 @@ class AgentMemoryConnectionError(AgentMemoryError):
         cause (Exception, optional): Original exception, if any, that led to this error.
     """
 
-    def __init__(self, message="Failed to connect to the database", cause=None) -> None:
+    def __init__(self, message: str = "Failed to connect to the database", cause=None) -> None:
         super().__init__(message)
         if cause:
             self.cause = cause
@@ -56,7 +56,9 @@ class UnknownConnectionTypeError(AgentMemoryConnectionError):
         message (str): Human-readable message explaining that an unknown connection type was used.
     """
 
-    def __init__(self, message="Unknown connection type used in AgentMemory connection") -> None:
+    def __init__(
+        self, message: str = "Unknown connection type used in AgentMemory connection"
+    ) -> None:
         super().__init__(message)
 
 
@@ -69,7 +71,9 @@ class DataRetrievalError(AgentMemoryError):
         message (str): Human-readable message describing the data retrieval error.
     """
 
-    def __init__(self, message="Error in retrieving data during AgentMemory operation") -> None:
+    def __init__(
+        self, message: str = "Error in retrieving data during AgentMemory operation"
+    ) -> None:
         super().__init__(message)
 
 

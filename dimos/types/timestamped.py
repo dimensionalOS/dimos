@@ -14,7 +14,7 @@
 from collections import defaultdict
 from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Generic, TypeVar, Union
+from typing import Generic, Iterator, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
@@ -210,7 +210,7 @@ class TimestampedCollection(Generic[T]):
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self._items)
 
     def __getitem__(self, idx: int) -> T:

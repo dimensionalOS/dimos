@@ -457,7 +457,7 @@ def create_point_cloud_overlay_visualization(
     return result
 
 
-def create_3d_bounding_box_corners(position, rotation, size):
+def create_3d_bounding_box_corners(position, rotation, size: int):
     """
     Create 8 corners of a 3D bounding box from position, rotation, and size.
 
@@ -528,7 +528,7 @@ def create_3d_bounding_box_corners(position, rotation, size):
     return rotated_corners
 
 
-def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2) -> None:
+def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness: int = 2) -> None:
     """
     Draw a 3D bounding box on an image using projected 2D corners.
 

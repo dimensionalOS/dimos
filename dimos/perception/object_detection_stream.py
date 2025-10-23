@@ -61,9 +61,9 @@ class ObjectDetectionStream:
     def __init__(
         self,
         camera_intrinsics=None,  # [fx, fy, cx, cy]
-        device="cuda",
-        gt_depth_scale=1000.0,
-        min_confidence=0.7,
+        device: str = "cuda",
+        gt_depth_scale: float = 1000.0,
+        min_confidence: float = 0.7,
         class_filter=None,  # Optional list of class names to filter (e.g., ["person", "car"])
         get_pose: Callable | None = None,  # Optional function to transform coordinates to map frame
         detector: Detic2DDetector | Yolo2DDetector | None = None,

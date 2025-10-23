@@ -20,10 +20,10 @@ except ImportError:
 class DiskTarDataset(Dataset):
     def __init__(
         self,
-        tarfile_path="dataset/imagenet/ImageNet-21k/metadata/tar_files.npy",
-        tar_index_dir="dataset/imagenet/ImageNet-21k/metadata/tarindex_npy",
-        preload=False,
-        num_synsets="all",
+        tarfile_path: str="dataset/imagenet/ImageNet-21k/metadata/tar_files.npy",
+        tar_index_dir: str="dataset/imagenet/ImageNet-21k/metadata/tarindex_npy",
+        preload: bool=False,
+        num_synsets: str="all",
     ) -> None:
         """
         - preload (bool): Recommend to set preload to False when using
@@ -94,7 +94,7 @@ class DiskTarDataset(Dataset):
 
 
 class _TarDataset:
-    def __init__(self, filename, npy_index_dir, preload=False) -> None:
+    def __init__(self, filename, npy_index_dir, preload: bool=False) -> None:
         # translated from
         # fbcode/experimental/deeplearning/matthijs/comp_descs/tardataset.lua
         self.filename = filename
@@ -120,7 +120,7 @@ class _TarDataset:
         offsets = np.load(os.path.join(self.npy_index_dir, f"{basename}_offsets.npy"))
         return names, offsets
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         if self.data is None:
             self.data = np.memmap(self.filename, mode="r", dtype="uint8")
             _, self.offsets = self.load_index()

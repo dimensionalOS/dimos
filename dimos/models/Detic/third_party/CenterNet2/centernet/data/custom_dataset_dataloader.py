@@ -2,7 +2,7 @@
 from collections import defaultdict
 import itertools
 import logging
-from typing import Optional
+from typing import Iterator, Sequence, Optional
 
 from detectron2.data.build import (
     build_batch_data_loader,
@@ -105,7 +105,7 @@ class ClassAwareSampler(Sampler):
         self._world_size = comm.get_world_size()
         self.weights = self._get_class_balance_factor(dataset_dicts)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         start = self._rank
         yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 
@@ -116,7 +116,7 @@ class ClassAwareSampler(Sampler):
             ids = torch.multinomial(self.weights, self._size, generator=g, replacement=True)
             yield from ids
 
-    def _get_class_balance_factor(self, dataset_dicts, l=1.0):
+    def _get_class_balance_factor(self, dataset_dicts, l: float=1.0):
         # 1. For each category c, compute the fraction of images that contain it: f(c)
         ret = []
         category_freq = defaultdict(int)
@@ -131,7 +131,7 @@ class ClassAwareSampler(Sampler):
 
 
 def get_detection_dataset_dicts_with_source(
-    dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None
+    dataset_names: Sequence[str], filter_empty: bool=True, min_keypoints: int=0, proposal_files=None
 ):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
@@ -165,7 +165,7 @@ def get_detection_dataset_dicts_with_source(
 
 
 class MultiDatasetSampler(Sampler):
-    def __init__(self, cfg, sizes, dataset_dicts, seed: int | None = None) -> None:
+    def __init__(self, cfg, sizes: Sequence[int], dataset_dicts, seed: int | None = None) -> None:
         """
         Args:
             size (int): the total number of data of the underlying dataset to sample from
@@ -198,7 +198,7 @@ class MultiDatasetSampler(Sampler):
         self.weights = dataset_weight
         self.sample_epoch_size = len(self.weights)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         start = self._rank
         yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 

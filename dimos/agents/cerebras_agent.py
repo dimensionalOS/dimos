@@ -58,7 +58,7 @@ logger = setup_logger("dimos.agents.cerebras")
 class CerebrasResponseMessage(dict):
     def __init__(
         self,
-        content="",
+        content: str = "",
         tool_calls=None,
     ) -> None:
         self.content = content

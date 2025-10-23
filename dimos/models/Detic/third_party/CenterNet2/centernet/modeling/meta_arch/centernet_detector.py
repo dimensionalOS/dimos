@@ -33,7 +33,7 @@ class CenterNetDetector(nn.Module):
         return self.pixel_mean.device
 
     @torch.no_grad()
-    def inference(self, batched_inputs, do_postprocess=True):
+    def inference(self, batched_inputs, do_postprocess: bool=True):
         images = self.preprocess_image(batched_inputs)
         inp = images.tensor
         features = self.backbone(inp)

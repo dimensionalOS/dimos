@@ -57,10 +57,10 @@ from dimos.web.edge_io import EdgeIO
 class FastAPIServer(EdgeIO):
     def __init__(
         self,
-        dev_name="FastAPI Server",
-        edge_type="Bidirectional",
-        host="0.0.0.0",
-        port=5555,
+        dev_name: str = "FastAPI Server",
+        edge_type: str = "Bidirectional",
+        host: str = "0.0.0.0",
+        port: int = 5555,
         text_streams=None,
         audio_subject=None,
         **streams,

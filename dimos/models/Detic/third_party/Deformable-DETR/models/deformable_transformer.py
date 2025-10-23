@@ -22,19 +22,19 @@ from models.ops.modules import MSDeformAttn
 class DeformableTransformer(nn.Module):
     def __init__(
         self,
-        d_model=256,
-        nhead=8,
-        num_encoder_layers=6,
-        num_decoder_layers=6,
-        dim_feedforward=1024,
-        dropout=0.1,
-        activation="relu",
-        return_intermediate_dec=False,
-        num_feature_levels=4,
-        dec_n_points=4,
-        enc_n_points=4,
-        two_stage=False,
-        two_stage_num_proposals=300,
+        d_model: int=256,
+        nhead: int=8,
+        num_encoder_layers: int=6,
+        num_decoder_layers: int=6,
+        dim_feedforward: int=1024,
+        dropout: float=0.1,
+        activation: str="relu",
+        return_intermediate_dec: bool=False,
+        num_feature_levels: int=4,
+        dec_n_points: int=4,
+        enc_n_points: int=4,
+        two_stage: bool=False,
+        two_stage_num_proposals: int=300,
     ) -> None:
         super().__init__()
 
@@ -239,13 +239,13 @@ class DeformableTransformer(nn.Module):
 class DeformableTransformerEncoderLayer(nn.Module):
     def __init__(
         self,
-        d_model=256,
-        d_ffn=1024,
-        dropout=0.1,
-        activation="relu",
-        n_levels=4,
-        n_heads=8,
-        n_points=4,
+        d_model: int=256,
+        d_ffn: int=1024,
+        dropout: float=0.1,
+        activation: str="relu",
+        n_levels: int=4,
+        n_heads: int=8,
+        n_points: int=4,
     ) -> None:
         super().__init__()
 
@@ -294,7 +294,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
 
 class DeformableTransformerEncoder(nn.Module):
-    def __init__(self, encoder_layer, num_layers) -> None:
+    def __init__(self, encoder_layer, num_layers: int) -> None:
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
@@ -333,13 +333,13 @@ class DeformableTransformerEncoder(nn.Module):
 class DeformableTransformerDecoderLayer(nn.Module):
     def __init__(
         self,
-        d_model=256,
-        d_ffn=1024,
-        dropout=0.1,
-        activation="relu",
-        n_levels=4,
-        n_heads=8,
-        n_points=4,
+        d_model: int=256,
+        d_ffn: int=1024,
+        dropout: float=0.1,
+        activation: str="relu",
+        n_levels: int=4,
+        n_heads: int=8,
+        n_points: int=4,
     ) -> None:
         super().__init__()
 
@@ -408,7 +408,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
 
 class DeformableTransformerDecoder(nn.Module):
-    def __init__(self, decoder_layer, num_layers, return_intermediate=False) -> None:
+    def __init__(self, decoder_layer, num_layers: int, return_intermediate: bool=False) -> None:
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers

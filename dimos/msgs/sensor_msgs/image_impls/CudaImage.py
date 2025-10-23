@@ -267,7 +267,7 @@ if cp is not None:
     _pnp_kernel = _mod.get_function("pnp_gn_batch")
 
 
-def _solve_pnp_cuda_kernel(obj, img, K, iterations=15, damping=1e-6):
+def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1e-6):
     if cp is None:
         raise RuntimeError("CuPy/CUDA not available")
 

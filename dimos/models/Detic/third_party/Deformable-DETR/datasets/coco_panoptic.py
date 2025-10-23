@@ -20,7 +20,7 @@ from .coco import make_coco_transforms
 
 
 class CocoPanoptic:
-    def __init__(self, img_folder, ann_folder, ann_file, transforms=None, return_masks=True) -> None:
+    def __init__(self, img_folder, ann_folder, ann_file, transforms=None, return_masks: bool=True) -> None:
         with open(ann_file) as f:
             self.coco = json.load(f)
 
@@ -38,7 +38,7 @@ class CocoPanoptic:
         self.transforms = transforms
         self.return_masks = return_masks
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         ann_info = (
             self.coco["annotations"][idx]
             if "annotations" in self.coco
@@ -85,7 +85,7 @@ class CocoPanoptic:
     def __len__(self) -> int:
         return len(self.coco["images"])
 
-    def get_height_and_width(self, idx):
+    def get_height_and_width(self, idx: int):
         img_info = self.coco["images"][idx]
         height = img_info["height"]
         width = img_info["width"]

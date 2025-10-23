@@ -24,7 +24,7 @@ import torch
 
 
 class Metric3D:
-    def __init__(self, camera_intrinsics=None, gt_depth_scale=256.0) -> None:
+    def __init__(self, camera_intrinsics=None, gt_depth_scale: float=256.0) -> None:
         # self.conf = get_config("zoedepth", "infer")
         # self.depth_model = build_model(self.conf)
         self.depth_model = torch.hub.load(
@@ -56,7 +56,7 @@ class Metric3D:
         self.intrinsic = intrinsic
         print(f"Intrinsics updated to: {self.intrinsic}")
 
-    def infer_depth(self, img, debug=False):
+    def infer_depth(self, img, debug: bool=False):
         if debug:
             print(f"Input image: {img}")
         try:

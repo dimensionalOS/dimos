@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections import deque
+from typing import Sequence
 
 import numpy as np
 
@@ -81,11 +82,11 @@ class target2d:
         initial_mask,
         initial_bbox,
         track_id,
-        prob,
-        name,
+        prob: float,
+        name: str,
         texture_value,
         target_id,
-        history_size=10,
+        history_size: int = 10,
     ) -> None:
         """
         Args:
@@ -112,7 +113,7 @@ class target2d:
         self.missed_frames = 0  # Consecutive frames when no detection was assigned.
         self.history_size = history_size
 
-    def update(self, mask, bbox, track_id, prob, name, texture_value) -> None:
+    def update(self, mask, bbox, track_id, prob: float, name: str, texture_value) -> None:
         """
         Update the target with a new detection.
         """
@@ -140,7 +141,7 @@ class target2d:
         min_area_ratio,
         max_area_ratio,
         texture_range=(0.0, 1.0),
-        border_safe_distance=50,
+        border_safe_distance: int = 50,
         weights=None,
     ):
         """
@@ -250,15 +251,15 @@ class target2dTracker:
 
     def __init__(
         self,
-        history_size=10,
-        score_threshold_start=0.5,
-        score_threshold_stop=0.3,
-        min_frame_count=10,
-        max_missed_frames=3,
-        min_area_ratio=0.001,
-        max_area_ratio=0.1,
+        history_size: int = 10,
+        score_threshold_start: float = 0.5,
+        score_threshold_stop: float = 0.3,
+        min_frame_count: int = 10,
+        max_missed_frames: int = 3,
+        min_area_ratio: float = 0.001,
+        max_area_ratio: float = 0.1,
         texture_range=(0.0, 1.0),
-        border_safe_distance=50,
+        border_safe_distance: int = 50,
         weights=None,
     ) -> None:
         """
@@ -292,7 +293,16 @@ class target2dTracker:
         self.targets = {}  # Dictionary mapping target_id -> target2d instance.
         self.next_target_id = 0
 
-    def update(self, frame, masks, bboxes, track_ids, probs, names, texture_values):
+    def update(
+        self,
+        frame,
+        masks,
+        bboxes,
+        track_ids,
+        probs: Sequence[float],
+        names: Sequence[str],
+        texture_values,
+    ):
         """
         Update the tracker with new detections from the current frame.
 

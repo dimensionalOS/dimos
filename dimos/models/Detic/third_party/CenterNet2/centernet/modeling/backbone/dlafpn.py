@@ -15,21 +15,22 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
+from typing import Optional
 
 WEB_ROOT = "http://dl.yf.io/dla/models"
 
 
-def get_model_url(data, name, hash):
+def get_model_url(data, name: str, hash):
     return join("http://dl.yf.io/dla/models", data, f"{name}-{hash}.pth")
 
 
-def conv3x3(in_planes, out_planes, stride=1):
+def conv3x3(in_planes, out_planes, stride: int=1):
     "3x3 convolution with padding"
     return nn.Conv2d(in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False)
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, cfg, inplanes, planes, stride=1, dilation=1) -> None:
+    def __init__(self, cfg, inplanes, planes, stride: int=1, dilation: int=1) -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(
             inplanes,
@@ -68,7 +69,7 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 2
 
-    def __init__(self, cfg, inplanes, planes, stride=1, dilation=1) -> None:
+    def __init__(self, cfg, inplanes, planes, stride: int=1, dilation: int=1) -> None:
         super().__init__()
         expansion = Bottleneck.expansion
         bottle_planes = planes // expansion
@@ -111,7 +112,7 @@ class Bottleneck(nn.Module):
 
 
 class Root(nn.Module):
-    def __init__(self, cfg, in_channels, out_channels, kernel_size, residual) -> None:
+    def __init__(self, cfg, in_channels, out_channels, kernel_size: int, residual) -> None:
         super().__init__()
         self.conv = nn.Conv2d(
             in_channels,
@@ -144,12 +145,12 @@ class Tree(nn.Module):
         block,
         in_channels,
         out_channels,
-        stride=1,
-        level_root=False,
-        root_dim=0,
-        root_kernel_size=1,
-        dilation=1,
-        root_residual=False,
+        stride: int=1,
+        level_root: bool=False,
+        root_dim: int=0,
+        root_kernel_size: int=1,
+        dilation: int=1,
+        root_residual: bool=False,
     ) -> None:
         super().__init__()
         if root_dim == 0:
@@ -217,7 +218,7 @@ class Tree(nn.Module):
 
 
 class DLA(Backbone):
-    def __init__(self, cfg, levels, channels, block=BasicBlock, residual_root=False) -> None:
+    def __init__(self, cfg, levels, channels, block=BasicBlock, residual_root: bool=False) -> None:
         super().__init__()
         self.cfg = cfg
         self.channels = channels
@@ -281,7 +282,7 @@ class DLA(Backbone):
 
         self.load_pretrained_model(data="imagenet", name="dla34", hash="ba72cf86")
 
-    def load_pretrained_model(self, data, name, hash) -> None:
+    def load_pretrained_model(self, data, name: str, hash) -> None:
         model_url = get_model_url(data, name, hash)
         model_weights = model_zoo.load_url(model_url)
         del model_weights["fc.weight"]
@@ -289,7 +290,7 @@ class DLA(Backbone):
         print("Loading pretrained DLA!")
         self.load_state_dict(model_weights, strict=True)
 
-    def _make_conv_level(self, inplanes, planes, convs, stride=1, dilation=1):
+    def _make_conv_level(self, inplanes, planes, convs, stride: int=1, dilation: int=1):
         modules = []
         for i in range(convs):
             modules.extend(
@@ -366,7 +367,7 @@ class DeformConv(nn.Module):
 
 
 class IDAUp(nn.Module):
-    def __init__(self, o, channels, up_f, norm="FrozenBN", node_type=Conv) -> None:
+    def __init__(self, o, channels, up_f, norm: str="FrozenBN", node_type=Conv) -> None:
         super().__init__()
         for i in range(1, len(channels)):
             c = channels[i]
@@ -399,7 +400,7 @@ DLAUP_NODE_MAP = {
 
 
 class DLAUP(Backbone):
-    def __init__(self, bottom_up, in_features, norm, dlaup_node="conv") -> None:
+    def __init__(self, bottom_up, in_features, norm, dlaup_node: str="conv") -> None:
         super().__init__()
         assert isinstance(bottom_up, Backbone)
         self.bottom_up = bottom_up
@@ -461,7 +462,7 @@ class DLAUP(Backbone):
         return ret
 
 
-def dla34(cfg, pretrained=None):  # DLA-34
+def dla34(cfg, pretrained: Optional[bool]=None):  # DLA-34
     model = DLA(cfg, [1, 1, 1, 2, 2, 1], [16, 32, 64, 128, 256, 512], block=BasicBlock)
     return model
 

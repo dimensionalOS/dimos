@@ -51,7 +51,7 @@ logger = setup_logger("dimos.agents.claude")
 
 # Response object compatible with LLMAgent
 class ResponseMessage:
-    def __init__(self, content="", tool_calls=None, thinking_blocks=None) -> None:
+    def __init__(self, content: str = "", tool_calls=None, thinking_blocks=None) -> None:
         self.content = content
         self.tool_calls = tool_calls or []
         self.thinking_blocks = thinking_blocks or []

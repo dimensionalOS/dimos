@@ -129,7 +129,7 @@ class ROSCommandQueue:
         self._queue_thread.start()
         logger.info("Queue processing thread started")
 
-    def stop(self, timeout=2.0) -> None:
+    def stop(self, timeout: float = 2.0) -> None:
         """
         Stop the queue processing thread
 

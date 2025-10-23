@@ -12,6 +12,7 @@ import os
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
+from typing import Iterator, Optional
 
 
 class DistributedSampler(Sampler):
@@ -30,7 +31,7 @@ class DistributedSampler(Sampler):
     """
 
     def __init__(
-        self, dataset, num_replicas=None, rank=None, local_rank=None, local_size=None, shuffle=True
+        self, dataset, num_replicas: Optional[int]=None, rank=None, local_rank=None, local_size: Optional[int]=None, shuffle: bool=True
     ) -> None:
         if num_replicas is None:
             if not dist.is_available():
@@ -48,7 +49,7 @@ class DistributedSampler(Sampler):
         self.total_size = self.num_samples * self.num_replicas
         self.shuffle = shuffle
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         if self.shuffle:
             # deterministically shuffle based on epoch
             g = torch.Generator()
@@ -71,7 +72,7 @@ class DistributedSampler(Sampler):
     def __len__(self) -> int:
         return self.num_samples
 
-    def set_epoch(self, epoch) -> None:
+    def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch
 
 
@@ -91,7 +92,7 @@ class NodeDistributedSampler(Sampler):
     """
 
     def __init__(
-        self, dataset, num_replicas=None, rank=None, local_rank=None, local_size=None, shuffle=True
+        self, dataset, num_replicas: Optional[int]=None, rank=None, local_rank=None, local_size: Optional[int]=None, shuffle: bool=True
     ) -> None:
         if num_replicas is None:
             if not dist.is_available():
@@ -117,7 +118,7 @@ class NodeDistributedSampler(Sampler):
 
         self.total_size_parts = self.num_samples * self.num_replicas // self.num_parts
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         if self.shuffle:
             # deterministically shuffle based on epoch
             g = torch.Generator()
@@ -143,5 +144,5 @@ class NodeDistributedSampler(Sampler):
     def __len__(self) -> int:
         return self.num_samples
 
-    def set_epoch(self, epoch) -> None:
+    def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch

@@ -100,7 +100,7 @@ class Sample(BaseModel):
         """Return a string representation of the Sample instance."""
         return f"{self.__class__.__name__}({', '.join([f'{k}={v}' for k, v in self.dict().items() if v is not None])})"
 
-    def dict(self, exclude_none=True, exclude: set[str] | None = None) -> dict[str, Any]:
+    def dict(self, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
         """Return the Sample object as a dictionary with None values excluded.
 
         Args:
@@ -142,7 +142,7 @@ class Sample(BaseModel):
         else:
             flat_data = list(one_d_array_or_dict)
 
-        def unflatten_recursive(schema_part, index=0):
+        def unflatten_recursive(schema_part, index: int = 0):
             if schema_part["type"] == "object":
                 result = {}
                 for prop, prop_schema in schema_part["properties"].items():
@@ -168,7 +168,7 @@ class Sample(BaseModel):
     ) -> builtins.dict[str, Any] | np.ndarray | "torch.Tensor" | list:
         accumulator = {} if output_type == "dict" else []
 
-        def flatten_recursive(obj, path="") -> None:
+        def flatten_recursive(obj, path: str = "") -> None:
             if isinstance(obj, Sample):
                 for k, v in obj.dict().items():
                     flatten_recursive(v, path + k + "/")
@@ -236,7 +236,9 @@ class Sample(BaseModel):
             return {"type": "boolean"}
         return {}
 
-    def schema(self, resolve_refs: bool = True, include_descriptions=False) -> builtins.dict:
+    def schema(
+        self, resolve_refs: bool = True, include_descriptions: bool = False
+    ) -> builtins.dict:
         """Returns a simplified json schema.
 
         Removing additionalProperties,
@@ -406,7 +408,7 @@ class Sample(BaseModel):
         raise ValueError(f"Unsupported object {value} of type: {type(value)} for space generation")
 
     @classmethod
-    def init_from(cls, d: Any, pack=False) -> "Sample":
+    def init_from(cls, d: Any, pack: bool = False) -> "Sample":
         if isinstance(d, spaces.Space):
             return cls.from_space(d)
         if isinstance(d, Union[Sequence, np.ndarray]):
@@ -498,7 +500,7 @@ class Sample(BaseModel):
                     aggregated[attr].append(getattr(sample, attr, None))
         return cls(**aggregated)
 
-    def unpack(self, to_dicts=False) -> list[Union["Sample", builtins.dict]]:
+    def unpack(self, to_dicts: bool = False) -> list[Union["Sample", builtins.dict]]:
         """Unpack the packed Sample object into a list of Sample objects or dictionaries."""
         attributes = list(self.model_extra.keys()) + list(self.model_fields.keys())
         attributes = [attr for attr in attributes if getattr(self, attr) is not None]
@@ -527,7 +529,9 @@ class Sample(BaseModel):
         return cls().space()
 
     @classmethod
-    def default_sample(cls, output_type="Sample") -> Union["Sample", builtins.dict[str, Any]]:
+    def default_sample(
+        cls, output_type: str = "Sample"
+    ) -> Union["Sample", builtins.dict[str, Any]]:
         """Generate a default Sample instance from its class attributes. Useful for padding.
 
         This is the "no-op" instance and should be overriden as needed.

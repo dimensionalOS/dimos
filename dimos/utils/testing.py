@@ -287,7 +287,7 @@ class TimedSensorReplay(SensorReplay[T]):
 
     def stream(
         self,
-        speed=1.0,
+        speed: float = 1.0,
         seek: float | None = None,
         duration: float | None = None,
         from_timestamp: float | None = None,

@@ -81,7 +81,7 @@ class Vector:
         """Get the underlying numpy array."""
         return self._data
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         return self._data[idx]
 
     def __repr__(self) -> str:

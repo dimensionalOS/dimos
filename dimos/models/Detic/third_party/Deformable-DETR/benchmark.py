@@ -31,7 +31,7 @@ def get_benckmark_arg_parser():
 
 
 @torch.no_grad()
-def measure_average_inference_time(model, inputs, num_iters=100, warm_iters=5):
+def measure_average_inference_time(model, inputs, num_iters: int=100, warm_iters: int=5):
     ts = []
     for iter_ in range(num_iters):
         torch.cuda.synchronize()

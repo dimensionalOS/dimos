@@ -32,9 +32,9 @@ class CocoDetection(TvCocoDetection):
         ann_file,
         transforms,
         return_masks,
-        cache_mode=False,
-        local_rank=0,
-        local_size=1,
+        cache_mode: bool=False,
+        local_rank: int=0,
+        local_size: int=1,
     ) -> None:
         super().__init__(
             img_folder,
@@ -46,7 +46,7 @@ class CocoDetection(TvCocoDetection):
         self._transforms = transforms
         self.prepare = ConvertCocoPolysToMask(return_masks)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         img, target = super().__getitem__(idx)
         image_id = self.ids[idx]
         target = {"image_id": image_id, "annotations": target}
@@ -56,7 +56,7 @@ class CocoDetection(TvCocoDetection):
         return img, target
 
 
-def convert_coco_poly_to_mask(segmentations, height, width):
+def convert_coco_poly_to_mask(segmentations, height, width: int):
     masks = []
     for polygons in segmentations:
         rles = coco_mask.frPyObjects(polygons, height, width)
@@ -74,7 +74,7 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 
 class ConvertCocoPolysToMask:
-    def __init__(self, return_masks=False) -> None:
+    def __init__(self, return_masks: bool=False) -> None:
         self.return_masks = return_masks
 
     def __call__(self, image, target):

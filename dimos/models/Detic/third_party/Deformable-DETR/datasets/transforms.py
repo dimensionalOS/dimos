@@ -19,6 +19,7 @@ import torchvision.transforms as T
 import torchvision.transforms.functional as F
 from util.box_ops import box_xyxy_to_cxcywh
 from util.misc import interpolate
+from typing import Optional, Sequence
 
 
 def crop(image, target, region):
@@ -83,10 +84,10 @@ def hflip(image, target):
     return flipped_image, target
 
 
-def resize(image, target, size, max_size=None):
+def resize(image, target, size: int, max_size: Optional[int]=None):
     # size can be min_size (scalar) or (w, h) tuple
 
-    def get_size_with_aspect_ratio(image_size, size, max_size=None):
+    def get_size_with_aspect_ratio(image_size: int, size: int, max_size: Optional[int]=None):
         w, h = image_size
         if max_size is not None:
             min_original_size = float(min((w, h)))
@@ -106,7 +107,7 @@ def resize(image, target, size, max_size=None):
 
         return (oh, ow)
 
-    def get_size(image_size, size, max_size=None):
+    def get_size(image_size: int, size: int, max_size: Optional[int]=None):
         if isinstance(size, list | tuple):
             return size[::-1]
         else:
@@ -159,7 +160,7 @@ def pad(image, target, padding):
 
 
 class RandomCrop:
-    def __init__(self, size) -> None:
+    def __init__(self, size: int) -> None:
         self.size = size
 
     def __call__(self, img, target):
@@ -180,7 +181,7 @@ class RandomSizeCrop:
 
 
 class CenterCrop:
-    def __init__(self, size) -> None:
+    def __init__(self, size: int) -> None:
         self.size = size
 
     def __call__(self, img, target):
@@ -192,7 +193,7 @@ class CenterCrop:
 
 
 class RandomHorizontalFlip:
-    def __init__(self, p=0.5) -> None:
+    def __init__(self, p: float=0.5) -> None:
         self.p = p
 
     def __call__(self, img, target):
@@ -202,7 +203,7 @@ class RandomHorizontalFlip:
 
 
 class RandomResize:
-    def __init__(self, sizes, max_size=None) -> None:
+    def __init__(self, sizes: Sequence[int], max_size: Optional[int]=None) -> None:
         assert isinstance(sizes, list | tuple)
         self.sizes = sizes
         self.max_size = max_size
@@ -228,7 +229,7 @@ class RandomSelect:
     with probability p for transforms1 and (1 - p) for transforms2
     """
 
-    def __init__(self, transforms1, transforms2, p=0.5) -> None:
+    def __init__(self, transforms1, transforms2, p: float=0.5) -> None:
         self.transforms1 = transforms1
         self.transforms2 = transforms2
         self.p = p

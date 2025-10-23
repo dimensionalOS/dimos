@@ -52,7 +52,7 @@ class CustomRes5ROIHeads(Res5ROIHeads):
         features,
         proposals,
         targets=None,
-        ann_type="box",
+        ann_type: str="box",
         classifier_info=(None, None, None),
     ):
         """
@@ -146,7 +146,7 @@ class CustomRes5ROIHeads(Res5ROIHeads):
                 proposals[i] = self._add_image_box(p)
         return proposals
 
-    def _add_image_box(self, p, use_score=False):
+    def _add_image_box(self, p, use_score: bool=False):
         image_box = Instances(p.image_size)
         n = 1
         h, w = p.image_size

@@ -634,8 +634,8 @@ def create_pbvs_visualization(
     image: np.ndarray,
     current_target=None,
     position_error=None,
-    target_reached=False,
-    grasp_stage="idle",
+    target_reached: bool = False,
+    grasp_stage: str = "idle",
 ) -> np.ndarray:
     """
     Create simple PBVS visualization overlay.

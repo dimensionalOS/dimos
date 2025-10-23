@@ -94,7 +94,7 @@ class Predictor(cog.Predictor):
         return out_path
 
 
-def get_clip_embeddings(vocabulary, prompt="a "):
+def get_clip_embeddings(vocabulary, prompt: str="a "):
     text_encoder = build_text_encoder(pretrain=True)
     text_encoder.eval()
     texts = [prompt + x for x in vocabulary]

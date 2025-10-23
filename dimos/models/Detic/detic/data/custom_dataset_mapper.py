@@ -19,14 +19,14 @@ class CustomDatasetMapper(DatasetMapper):
     def __init__(
         self,
         is_train: bool,
-        with_ann_type=False,
+        with_ann_type: bool=False,
         dataset_ann=None,
-        use_diff_bs_size=False,
+        use_diff_bs_size: bool=False,
         dataset_augs=None,
-        is_debug=False,
-        use_tar_dataset=False,
-        tarfile_path="",
-        tar_index_dir="",
+        is_debug: bool=False,
+        use_tar_dataset: bool=False,
+        tarfile_path: str="",
+        tar_index_dir: str="",
         **kwargs,
     ) -> None:
         """
@@ -181,7 +181,7 @@ class CustomDatasetMapper(DatasetMapper):
 
 
 # DETR augmentation
-def build_transform_gen(cfg, is_train):
+def build_transform_gen(cfg, is_train: bool):
     """ """
     if is_train:
         min_size = cfg.INPUT.MIN_SIZE_TRAIN
@@ -215,7 +215,7 @@ class DetrDatasetMapper:
     4. Prepare image and annotation to Tensors
     """
 
-    def __init__(self, cfg, is_train=True) -> None:
+    def __init__(self, cfg, is_train: bool=True) -> None:
         if cfg.INPUT.CROP.ENABLED and is_train:
             self.crop_gen = [
                 T.ResizeShortestEdge([400, 500, 600], sample_style="choice"),

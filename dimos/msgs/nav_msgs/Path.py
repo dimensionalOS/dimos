@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import BinaryIO
+from typing import BinaryIO, Iterator
 
 from dimos_lcm.geometry_msgs import (
     Point as LCMPoint,
@@ -164,7 +164,7 @@ class Path(Timestamped):
         """Allow indexing and slicing of poses."""
         return self.poses[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         """Allow iteration over poses."""
         return iter(self.poses)
 

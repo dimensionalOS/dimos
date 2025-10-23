@@ -9,6 +9,7 @@ from detectron2.utils.events import get_event_storage
 import torch
 
 from .detic_fast_rcnn import DeticFastRCNNOutputLayers
+from typing import Sequence
 
 
 @ROI_HEADS_REGISTRY.register()
@@ -72,7 +73,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         return ret
 
     def _forward_box(
-        self, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)
+        self, features, proposals, targets=None, ann_type: str="box", classifier_info=(None, None, None)
     ):
         """
         Add mult proposal scores at testing
@@ -158,7 +159,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         features,
         proposals,
         targets=None,
-        ann_type="box",
+        ann_type: str="box",
         classifier_info=(None, None, None),
     ):
         """
@@ -224,7 +225,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         else:
             return {}
 
-    def _create_proposals_from_boxes(self, boxes, image_sizes, logits):
+    def _create_proposals_from_boxes(self, boxes, image_sizes: Sequence[int], logits):
         """
         Add objectness_logits
         """

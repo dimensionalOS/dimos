@@ -14,7 +14,7 @@ def to_cuda(samples, targets, device):
 
 
 class data_prefetcher:
-    def __init__(self, loader, device, prefetch=True) -> None:
+    def __init__(self, loader, device, prefetch: bool=True) -> None:
         self.loader = iter(loader)
         self.prefetch = prefetch
         self.device = device
