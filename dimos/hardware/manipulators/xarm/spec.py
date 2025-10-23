@@ -12,26 +12,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol
+from typing import Protocol, List, Tuple
+from dataclasses import dataclass
 
 from dimos.core import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, WrenchStamped
 from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import JointState  #Missing in our msgs
+from dimos.msgs.sensor_msgs import JointState
 
-# Import a IK solver here
+
+@dataclass
+class RobotState:
+    """Custom message containing full robot state."""
+
+    state: int = 0  # Robot state (0: ready, 3: paused, 4: stopped, etc.)
+    mode: int = 0  # Control mode (0: position, 1: servo, 4: joint velocity, 5: cartesian velocity)
+    error_code: int = 0  # Error code
+    warn_code: int = 0  # Warning code
+    cmdnum: int = 0  # Command queue length
+    mt_brake: int = 0  # Motor brake state
+    mt_able: int = 0  # Motor enable state
 
 
 class ArmDriverSpec(Protocol):
-    joint_cmd: In[]                           # Desired joint positions we need a vector/list of floats here
-    velocity_cmd: In[]                        # Desired joint velocities we need a vector/list of floats here 
-    joint_state: Out[JointState]              # Contains current joint positions and velocities both
-    robot_state: Out[CustomRobotStateMsg]     # Custom message containing full robot state (errors, modes, etc.)
+    """Protocol specification for xArm manipulator driver.
 
-    def set_joint_angle(self, tpos_cmd: VectorOfJointAngles) -> None: ...
+    Compatible with xArm5, xArm6, and xArm7 models.
+    """
 
-    def set_joint_velocity(self, vel_cmd: VectorOfJointVelocities ) -> None: ...
+    # Input topics
+    joint_cmd: In[List[float]]  # Desired joint positions (radians)
+    velocity_cmd: In[List[float]]  # Desired joint velocities (rad/s)
+
+    # Output topics
+    joint_state: Out[JointState]  # Current joint positions, velocities, and efforts
+    robot_state: Out[RobotState]  # Full robot state (errors, modes, etc.)
+    ft_ext: Out[WrenchStamped]  # External force/torque (compensated)
+    ft_raw: Out[WrenchStamped]  # Raw force/torque sensor data
+
+    # RPC Methods
+    def set_joint_angles(self, angles: List[float]) -> Tuple[int, str]: ...
+
+    def set_joint_velocities(self, velocities: List[float]) -> Tuple[int, str]: ...
 
     def get_joint_state(self) -> JointState: ...
 
-    def get_robot_state(self) -> CustomRobotStateMsg: ...
+    def get_robot_state(self) -> RobotState: ...
+
+    def enable_servo_mode(self) -> Tuple[int, str]: ...
+
+    def disable_servo_mode(self) -> Tuple[int, str]: ...
