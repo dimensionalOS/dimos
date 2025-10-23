@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
 
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -113,3 +113,6 @@ class PickleLCM(
     PickleEncoderMixin,
     LCMPubSubBase,
 ): ...
+
+
+__all__ = ["LCM", "LCMEncoderMixin", "LCMMsg", "LCMMsg", "LCMPubSubBase", "PickleLCM", "autoconf"]
