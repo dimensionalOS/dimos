@@ -12,6 +12,7 @@ __pycache__/
 *venv*/
 .venv*/
 .ssh/
+.direnv/
 
 # Ignore python tooling dirs
 *.egg-info/
