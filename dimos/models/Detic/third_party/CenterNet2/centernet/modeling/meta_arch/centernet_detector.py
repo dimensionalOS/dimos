@@ -1,10 +1,8 @@
+from detectron2.modeling import build_backbone, build_proposal_generator, detector_postprocess
+from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
+from detectron2.structures import ImageList
 import torch
 from torch import nn
-
-from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
-from detectron2.modeling import build_backbone, build_proposal_generator
-from detectron2.modeling import detector_postprocess
-from detectron2.structures import ImageList
 
 
 @META_ARCH_REGISTRY.register()
@@ -43,7 +41,7 @@ class CenterNetDetector(nn.Module):
 
         processed_results = []
         for results_per_image, input_per_image, image_size in zip(
-            proposals, batched_inputs, images.image_sizes
+            proposals, batched_inputs, images.image_sizes, strict=False
         ):
             if do_postprocess:
                 height = input_per_image.get("height", image_size[0])

@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Any
+from typing import Any, List
+
 import numpy as np
 
 
 class SegmentationType:
-    def __init__(self, masks: List[np.ndarray], metadata: Any = None):
+    def __init__(self, masks: list[np.ndarray], metadata: Any = None):
         """
         Initializes a standardized segmentation type.
 

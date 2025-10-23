@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Quaternion
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.utils.logging_config import setup_logger
 import logging
+
+from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__, level=logging.DEBUG)
 

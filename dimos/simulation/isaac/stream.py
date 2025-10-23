@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
+from pathlib import Path
 import time
 from typing import Optional, Union
-from pathlib import Path
-from ..base.stream_base import StreamBase, AnnotatorType, TransportType
+
+import cv2
+
+from ..base.stream_base import AnnotatorType, StreamBase, TransportType
 
 
 class IsaacStream(StreamBase):
@@ -32,7 +34,7 @@ class IsaacStream(StreamBase):
         annotator_type: AnnotatorType = "rgb",
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
-        usd_path: Optional[Union[str, Path]] = None,
+        usd_path: Union[str, Path] | None = None,
     ):
         """Initialize the Isaac Sim stream."""
         super().__init__(

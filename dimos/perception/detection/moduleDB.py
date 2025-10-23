@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from copy import copy
 import threading
 import time
-from copy import copy
 from typing import Any, Callable, Dict, List, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
@@ -35,12 +35,12 @@ from dimos.types.timestamped import to_datetime
 
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3DPC):
-    best_detection: Optional[Detection3DPC] = None  # type: ignore
-    center: Optional[Vector3] = None  # type: ignore
-    track_id: Optional[str] = None  # type: ignore
+    best_detection: Detection3DPC | None = None  # type: ignore
+    center: Vector3 | None = None  # type: ignore
+    track_id: str | None = None  # type: ignore
     detections: int = 0
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         if self.center is None:
             center_str = "None"
         else:
@@ -53,7 +53,7 @@ class Object3D(Detection3DPC):
             "center": center_str,
         }
 
-    def __init__(self, track_id: str, detection: Optional[Detection3DPC] = None, *args, **kwargs):
+    def __init__(self, track_id: str, detection: Detection3DPC | None = None, *args, **kwargs):
         if detection is None:
             return
         self.ts = detection.ts
@@ -92,7 +92,7 @@ class Object3D(Detection3DPC):
 
         return new_object
 
-    def get_image(self) -> Optional[Image]:
+    def get_image(self) -> Image | None:
         return self.best_detection.image if self.best_detection else None
 
     def scene_entity_label(self) -> str:
@@ -103,7 +103,7 @@ class Object3D(Detection3DPC):
             "id": self.track_id,
             "name": self.name,
             "detections": self.detections,
-            "last_seen": f"{round((time.time() - self.ts))}s ago",
+            "last_seen": f"{round(time.time() - self.ts)}s ago",
             # "position": self.to_pose().position.agent_encode(),
         }
 
@@ -137,9 +137,9 @@ class Object3D(Detection3DPC):
 class ObjectDBModule(Detection3DModule, TableStr):
     cnt: int = 0
     objects: dict[str, Object3D]
-    object_stream: Optional[Observable[Object3D]] = None
+    object_stream: Observable[Object3D] | None = None
 
-    goto: Optional[Callable[[PoseStamped], Any]] = None
+    goto: Callable[[PoseStamped], Any] | None = None
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
@@ -159,7 +159,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     target: Out[PoseStamped] = None  # type: ignore
 
-    remembered_locations: Dict[str, PoseStamped]
+    remembered_locations: dict[str, PoseStamped]
 
     def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -167,7 +167,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         self.objects = {}
         self.remembered_locations = {}
 
-    def closest_object(self, detection: Detection3DPC) -> Optional[Object3D]:
+    def closest_object(self, detection: Detection3DPC) -> Object3D | None:
         # Filter objects to only those with matching names
         matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
 
@@ -179,7 +179,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         return distances[0]
 
-    def add_detections(self, detections: List[Detection3DPC]) -> List[Object3D]:
+    def add_detections(self, detections: list[Detection3DPC]) -> list[Object3D]:
         return [
             detection for detection in map(self.add_detection, detections) if detection is not None
         ]
@@ -217,7 +217,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
             return "No objects detected yet."
         return "\n".join(ret)
 
-    def vlm_query(self, description: str) -> Optional[Object3D]:  # type: ignore[override]
+    def vlm_query(self, description: str) -> Object3D | None:  # type: ignore[override]
         imageDetections2D = super().ask_vlm(description)
         print("VLM query found", imageDetections2D, "detections")
         time.sleep(3)
@@ -247,7 +247,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         return ret[0] if ret else None
 
-    def lookup(self, label: str) -> List[Detection3DPC]:
+    def lookup(self, label: str) -> list[Detection3DPC]:
         """Look up a detection by label."""
         return []
 
@@ -270,7 +270,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         self.detection_stream_3d.subscribe(update_objects)
 
-    def goto_object(self, object_id: str) -> Optional[Object3D]:
+    def goto_object(self, object_id: str) -> Object3D | None:
         """Go to object by id."""
         return self.objects.get(object_id, None)
 

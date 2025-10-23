@@ -16,22 +16,21 @@ from typing import Optional
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
-from dimos.core.rpc_client import RPCClient, RpcCall
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
-from dimos.mapping.utils.distance import distance_in_meters
 from dimos.mapping.types import LatLon
+from dimos.mapping.utils.distance import distance_in_meters
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 
 
 class OsmSkill(SkillModule):
-    _latest_location: Optional[LatLon]
+    _latest_location: LatLon | None
     _current_location_map: CurrentLocationMap
     _skill_started: bool
 

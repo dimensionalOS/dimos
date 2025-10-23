@@ -156,5 +156,5 @@ def test_person_annotations(person):
     assert img_anns.texts_length == len(text_anns)
     assert img_anns.points_length == len(points_anns)
 
-    print(f"\n✓ Person annotations working correctly!")
+    print("\n✓ Person annotations working correctly!")
     print(f"  - {len(person.get_visible_keypoints(0.5))}/17 visible keypoints")

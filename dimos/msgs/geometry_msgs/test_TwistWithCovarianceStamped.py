@@ -18,12 +18,14 @@ import numpy as np
 import pytest
 
 try:
-    from geometry_msgs.msg import TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped
-    from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Vector3 as ROSVector3
-    from std_msgs.msg import Header as ROSHeader
     from builtin_interfaces.msg import Time as ROSTime
+    from geometry_msgs.msg import (
+        Twist as ROSTwist,
+        TwistWithCovariance as ROSTwistWithCovariance,
+        TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,
+        Vector3 as ROSVector3,
+    )
+    from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSTwistWithCovarianceStamped = None
     ROSTwist = None
@@ -33,8 +35,7 @@ except ImportError:
     ROSVector3 = None
 
 from dimos_lcm.geometry_msgs import TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance

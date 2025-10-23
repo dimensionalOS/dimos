@@ -15,22 +15,21 @@ The difference is that there is less copy-pasting from pycocotools
 in the end of the file, as python3 can suppress prints with contextlib
 """
 
-import os
 import contextlib
 import copy
+import os
+
 import numpy as np
-import torch
-
-from pycocotools.cocoeval import COCOeval
 from pycocotools.coco import COCO
+from pycocotools.cocoeval import COCOeval
 import pycocotools.mask as mask_util
-
+import torch
 from util.misc import all_gather
 
 
-class CocoEvaluator(object):
+class CocoEvaluator:
     def __init__(self, coco_gt, iou_types):
-        assert isinstance(iou_types, (list, tuple))
+        assert isinstance(iou_types, list | tuple)
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
 
@@ -74,7 +73,7 @@ class CocoEvaluator(object):
 
     def summarize(self):
         for iou_type, coco_eval in self.coco_eval.items():
-            print("IoU metric: {}".format(iou_type))
+            print(f"IoU metric: {iou_type}")
             coco_eval.summarize()
 
     def prepare(self, predictions, iou_type):
@@ -85,7 +84,7 @@ class CocoEvaluator(object):
         elif iou_type == "keypoints":
             return self.prepare_for_coco_keypoint(predictions)
         else:
-            raise ValueError("Unknown iou type {}".format(iou_type))
+            raise ValueError(f"Unknown iou type {iou_type}")
 
     def prepare_for_coco_detection(self, predictions):
         coco_results = []
@@ -227,7 +226,7 @@ def evaluate(self):
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
         p.iouType = "segm" if p.useSegm == 1 else "bbox"
-        print("useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType))
+        print(f"useSegm (deprecated) is not None. Running {p.iouType} evaluation")
     # print('Evaluate annotation type *{}*'.format(p.iouType))
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:

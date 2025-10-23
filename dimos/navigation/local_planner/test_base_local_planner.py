@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion
-from dimos.msgs.nav_msgs import Path, OccupancyGrid
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 
 

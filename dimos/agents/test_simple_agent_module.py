@@ -16,14 +16,15 @@
 
 import asyncio
 import os
-import pytest
+
 from dotenv import load_dotenv
+import pytest
 
 from dimos import core
-from dimos.core import Module, Out, In, rpc
-from dimos.agents.modules.base_agent import BaseAgentModule
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
 
 
@@ -87,13 +88,13 @@ async def test_simple_agent_module(model, provider):
 
     # Skip if no API key
     if provider == "OpenAI" and not os.getenv("OPENAI_API_KEY"):
-        pytest.skip(f"No OpenAI API key found")
+        pytest.skip("No OpenAI API key found")
     elif provider == "Claude" and not os.getenv("ANTHROPIC_API_KEY"):
-        pytest.skip(f"No Anthropic API key found")
+        pytest.skip("No Anthropic API key found")
     elif provider == "Cerebras" and not os.getenv("CEREBRAS_API_KEY"):
-        pytest.skip(f"No Cerebras API key found")
+        pytest.skip("No Cerebras API key found")
     elif provider == "Qwen" and not os.getenv("ALIBABA_API_KEY"):
-        pytest.skip(f"No Qwen API key found")
+        pytest.skip("No Qwen API key found")
 
     pubsub.lcm.autoconf()
 

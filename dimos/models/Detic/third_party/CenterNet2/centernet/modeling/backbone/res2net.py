@@ -1,12 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # This file is modified from https://github.com/Res2Net/Res2Net-detectron2/blob/master/detectron2/modeling/backbone/resnet.py
 # The original file is under Apache-2.0 License
-import numpy as np
-import fvcore.nn.weight_init as weight_init
-import torch
-import torch.nn.functional as F
-from torch import nn
-
 from detectron2.layers import (
     CNNBlockBase,
     Conv2d,
@@ -15,22 +9,27 @@ from detectron2.layers import (
     ShapeSpec,
     get_norm,
 )
-
 from detectron2.modeling.backbone import Backbone
-from detectron2.modeling.backbone.fpn import FPN
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from .fpn_p5 import LastLevelP6P7_P5
+from detectron2.modeling.backbone.fpn import FPN
+import fvcore.nn.weight_init as weight_init
+import numpy as np
+import torch
+from torch import nn
+import torch.nn.functional as F
+
 from .bifpn import BiFPN
+from .fpn_p5 import LastLevelP6P7_P5
 
 __all__ = [
-    "ResNetBlockBase",
     "BasicBlock",
+    "BasicStem",
     "BottleneckBlock",
     "DeformBottleneckBlock",
-    "BasicStem",
     "ResNet",
-    "make_stage",
+    "ResNetBlockBase",
     "build_res2net_backbone",
+    "make_stage",
 ]
 
 
@@ -180,7 +179,7 @@ class BottleneckBlock(CNNBlockBase):
 
         convs = []
         bns = []
-        for i in range(self.nums):
+        for _i in range(self.nums):
             convs.append(
                 nn.Conv2d(
                     width,
@@ -367,7 +366,7 @@ class DeformBottleneckBlock(ResNetBlockBase):
         conv2_offsets = []
         convs = []
         bns = []
-        for i in range(self.nums):
+        for _i in range(self.nums):
             conv2_offsets.append(
                 Conv2d(
                     width,
@@ -586,7 +585,7 @@ class ResNet(Backbone):
                 be returned in forward. Can be anything in "stem", "linear", or "res2" ...
                 If None, will return the output of the last layer.
         """
-        super(ResNet, self).__init__()
+        super().__init__()
         self.stem = stem
         self.num_classes = num_classes
 
@@ -705,7 +704,7 @@ def build_res2net_backbone(cfg, input_shape):
     deform_modulated    = cfg.MODEL.RESNETS.DEFORM_MODULATED
     deform_num_groups   = cfg.MODEL.RESNETS.DEFORM_NUM_GROUPS
     # fmt: on
-    assert res5_dilation in {1, 2}, "res5_dilation cannot be {}.".format(res5_dilation)
+    assert res5_dilation in {1, 2}, f"res5_dilation cannot be {res5_dilation}."
 
     num_blocks_per_stage = {
         18: [2, 2, 2, 2],

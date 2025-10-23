@@ -15,8 +15,8 @@
 import time
 
 import numpy as np
-import pytest
 from PIL import Image, ImageDraw
+import pytest
 
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
@@ -427,7 +427,7 @@ def test_performance_timing():
 
             # Time goal selection
             start = time.time()
-            goal = explorer.get_exploration_goal(robot_pose, costmap)
+            explorer.get_exploration_goal(robot_pose, costmap)
             goal_time = time.time() - start
 
             results.append(

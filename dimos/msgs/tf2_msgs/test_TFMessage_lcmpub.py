@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from dataclasses import dataclass
+import time
 
 import numpy as np
 import pytest
@@ -27,8 +27,8 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 # to actual LCM messages, foxglove running in parallel should render this
 @pytest.mark.skip
 def test_publish_transforms():
-    import tf_lcm_py
     from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+    import tf_lcm_py
 
     lcm = LCM(autoconf=True)
     lcm.start()

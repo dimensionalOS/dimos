@@ -16,12 +16,13 @@
 
 import asyncio
 import os
-import pytest
+
 from dotenv import load_dotenv
+import pytest
 
 from dimos import core
-from dimos.core import Module, Out, In, rpc
 from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
 
 
@@ -211,7 +212,7 @@ async def test_agent_pool():
         await asyncio.sleep(3)
 
         # Test direct routing
-        for i, model_id in enumerate(models[:2]):  # Test first 2 agents
+        for _i, model_id in enumerate(models[:2]):  # Test first 2 agents
             controller.send_to_agent(model_id, f"Say hello from {model_id}")
             await asyncio.sleep(0.5)
 

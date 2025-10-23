@@ -13,12 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import threading
 import time
+
 import pytest
-from dimos.utils.logging_config import setup_logger
+
 from dimos.types.vector import Vector
-import asyncio
+from dimos.utils.logging_config import setup_logger
 
 
 class MockROSNode:
@@ -239,7 +241,7 @@ def test_topic_latest_sync_benchmark(robot):
     odom = robot.topic_latest("/odom", msg.Odometry)
 
     start_time = time.time()
-    for i in range(100):
+    for _i in range(100):
         odom()
     end_time = time.time()
     elapsed = end_time - start_time

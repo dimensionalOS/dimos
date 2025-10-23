@@ -18,17 +18,17 @@ import pytest
 
 from dimos import core
 from dimos.core import Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3, Quaternion
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.protocol import pubsub
+from dimos.msgs.sensor_msgs import Image
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
-from dimos.robot.unitree_webrtc.unitree_go2 import ConnectionModule
+from dimos.protocol import pubsub
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.robot.unitree_webrtc.unitree_go2 import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_unitree_go2_integration")
@@ -94,8 +94,9 @@ class TestUnitreeGo2CoreModules:
             navigator = dimos.deploy(BehaviorTreeNavigator, local_planner=local_planner)
 
             # Set up transports first
-            from dimos.msgs.nav_msgs import Path
             from dimos_lcm.std_msgs import Bool
+
+            from dimos.msgs.nav_msgs import Path
 
             navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
             navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)

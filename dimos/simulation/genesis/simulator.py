@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Union, List, Dict
+from typing import Dict, List, Optional, Union
+
 import genesis as gs  # type: ignore
+
 from ..base.simulator_base import SimulatorBase
 
 
@@ -23,8 +25,8 @@ class GenesisSimulator(SimulatorBase):
     def __init__(
         self,
         headless: bool = True,
-        open_usd: Optional[str] = None,  # Keep for compatibility
-        entities: Optional[List[Dict[str, Union[str, dict]]]] = None,
+        open_usd: str | None = None,  # Keep for compatibility
+        entities: list[dict[str, Union[str, dict]]] | None = None,
     ):
         """Initialize the Genesis simulation.
 
@@ -73,7 +75,7 @@ class GenesisSimulator(SimulatorBase):
         # Don't build scene yet - let stream add camera first
         self.is_built = False
 
-    def _load_entities(self, entities: List[Dict[str, Union[str, dict]]]):
+    def _load_entities(self, entities: list[dict[str, Union[str, dict]]]):
         """Load multiple entities into the scene."""
         for entity in entities:
             entity_type = entity.get("type", "").lower()
@@ -130,7 +132,7 @@ class GenesisSimulator(SimulatorBase):
                     raise ValueError(f"Unsupported entity type: {entity_type}")
 
             except Exception as e:
-                print(f"[Warning] Failed to load entity {entity}: {str(e)}")
+                print(f"[Warning] Failed to load entity {entity}: {e!s}")
 
     def add_entity(self, entity_type: str, path: str = "", **params):
         """Add a single entity to the scene.

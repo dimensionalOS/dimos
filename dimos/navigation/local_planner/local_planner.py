@@ -19,17 +19,18 @@ Base Local Planner Module for robot navigation.
 Subscribes to local costmap, odometry, and path, publishes movement commands.
 """
 
+from abc import abstractmethod
 import threading
 import time
-from abc import abstractmethod
 from typing import Optional
 
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import Twist, PoseStamped
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import get_distance, quaternion_to_euler, normalize_angle
-from reactivex.disposable import Disposable
+from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
 logger = setup_logger(__file__)
 
@@ -78,12 +79,12 @@ class BaseLocalPlanner(Module):
         self.control_period = 1.0 / control_frequency
 
         # Latest data
-        self.latest_costmap: Optional[OccupancyGrid] = None
-        self.latest_odom: Optional[PoseStamped] = None
-        self.latest_path: Optional[Path] = None
+        self.latest_costmap: OccupancyGrid | None = None
+        self.latest_odom: PoseStamped | None = None
+        self.latest_path: Path | None = None
 
         # Control thread
-        self.planning_thread: Optional[threading.Thread] = None
+        self.planning_thread: threading.Thread | None = None
         self.stop_planning = threading.Event()
 
         logger.info("Local planner module initialized")
@@ -148,7 +149,7 @@ class BaseLocalPlanner(Module):
             self.cmd_vel.publish(cmd_vel)
 
     @abstractmethod
-    def compute_velocity(self) -> Optional[Twist]:
+    def compute_velocity(self) -> Twist | None:
         """
         Compute velocity commands based on current costmap, odometry, and path.
         Must be implemented by derived classes.

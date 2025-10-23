@@ -1,5 +1,5 @@
-import json
 from abc import ABC, abstractmethod
+import json
 from typing import Generic, Protocol, TypeVar
 
 MsgT = TypeVar("MsgT")

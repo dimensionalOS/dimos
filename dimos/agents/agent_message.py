@@ -15,11 +15,11 @@
 """AgentMessage type for multimodal agent communication."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Union
 import time
+from typing import List, Optional, Union
 
-from dimos.msgs.sensor_msgs.Image import Image
 from dimos.agents.agent_types import AgentImage
+from dimos.msgs.sensor_msgs.Image import Image
 
 
 @dataclass
@@ -33,9 +33,9 @@ class AgentMessage:
     into a single message when sent to the LLM.
     """
 
-    messages: List[str] = field(default_factory=list)
-    images: List[AgentImage] = field(default_factory=list)
-    sender_id: Optional[str] = None
+    messages: list[str] = field(default_factory=list)
+    images: list[AgentImage] = field(default_factory=list)
+    sender_id: str | None = None
     timestamp: float = field(default_factory=time.time)
 
     def add_text(self, text: str) -> None:
@@ -72,11 +72,11 @@ class AgentMessage:
         """Check if message contains both text and images."""
         return self.has_text() and self.has_images()
 
-    def get_primary_text(self) -> Optional[str]:
+    def get_primary_text(self) -> str | None:
         """Get the first text message, if any."""
         return self.messages[0] if self.messages else None
 
-    def get_primary_image(self) -> Optional[AgentImage]:
+    def get_primary_image(self) -> AgentImage | None:
         """Get the first image, if any."""
         return self.images[0] if self.images else None
 

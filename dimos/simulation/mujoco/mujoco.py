@@ -21,10 +21,9 @@ import threading
 import time
 
 import mujoco
+from mujoco import viewer
 import numpy as np
 import open3d as o3d
-from mujoco import viewer
-
 
 from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage

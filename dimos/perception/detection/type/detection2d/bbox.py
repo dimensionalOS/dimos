@@ -14,11 +14,14 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
+import hashlib
 from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple, Union
 
 if TYPE_CHECKING:
+    from ultralytics.engine.results import Results
+
+    from dimos.msgs.sensor_msgs import Image
     from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
@@ -28,28 +31,24 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from dimos_lcm.foxglove_msgs.Point2 import Point2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,
+    Detection2D as ROSDetection2D,
     ObjectHypothesis,
     ObjectHypothesisWithPose,
     Point2D,
     Pose2D,
 )
-from dimos_lcm.vision_msgs import (
-    Detection2D as ROSDetection2D,
-)
 from rich.console import Console
 from rich.text import Text
-from ultralytics.engine.results import Results
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
-from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.types.timestamped import to_ros_stamp, to_timestamp
 from dimos.utils.decorators.decorators import simple_mcache
 
-Bbox = Tuple[float, float, float, float]
-CenteredBbox = Tuple[float, float, float, float]
+Bbox = tuple[float, float, float, float]
+CenteredBbox = tuple[float, float, float, float]
 
 
 def _hash_to_color(name: str) -> str:
@@ -88,7 +87,7 @@ class Detection2DBBox(Detection2D):
     ts: float
     image: Image
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         """Return a dictionary representation of the detection for display purposes."""
         x1, y1, x2, y2 = self.bbox
         return {
@@ -101,7 +100,7 @@ class Detection2DBBox(Detection2D):
 
     def center_to_3d(
         self,
-        pixel: Tuple[int, int],
+        pixel: tuple[int, int],
         camera_info: CameraInfo,
         assumed_depth: float = 1.0,
     ) -> PoseStamped:
@@ -166,7 +165,7 @@ class Detection2DBBox(Detection2D):
         return capture.get().strip()
 
     @property
-    def center_bbox(self) -> Tuple[float, float]:
+    def center_bbox(self) -> tuple[float, float]:
         """Get center point of bounding box."""
         x1, y1, x2, y2 = self.bbox
         return ((x1 + x2) / 2, (y1 + y2) / 2)
@@ -203,7 +202,7 @@ class Detection2DBBox(Detection2D):
         return True
 
     @classmethod
-    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> "Detection2DBBox":
+    def from_ultralytics_result(cls, result: Results, idx: int, image: Image) -> Detection2DBBox:
         """Create Detection2DBBox from ultralytics Results object.
 
         Args:
@@ -274,7 +273,7 @@ class Detection2DBBox(Detection2D):
     def lcm_encode(self):
         return self.to_image_annotations().lcm_encode()
 
-    def to_text_annotation(self) -> List[TextAnnotation]:
+    def to_text_annotation(self) -> list[TextAnnotation]:
         x1, y1, x2, y2 = self.bbox
 
         font_size = self.image.width / 80
@@ -311,7 +310,7 @@ class Detection2DBBox(Detection2D):
 
         return annotations
 
-    def to_points_annotation(self) -> List[PointsAnnotation]:
+    def to_points_annotation(self) -> list[PointsAnnotation]:
         x1, y1, x2, y2 = self.bbox
 
         thickness = 1
@@ -351,7 +350,7 @@ class Detection2DBBox(Detection2D):
         )
 
     @classmethod
-    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> "Detection2D":
+    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> Detection2D:
         """Convert from ROS Detection2D message to Detection2D object."""
         # Extract bbox from ROS format
         center_x = ros_det.bbox.center.position.x

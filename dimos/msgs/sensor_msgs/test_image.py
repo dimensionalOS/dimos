@@ -118,8 +118,6 @@ def test_sharpness_barrier():
     # Emit images at 100Hz to get ~5 per window
     from reactivex import from_iterable, interval
 
-    window_duration = 0.05  # 20Hz = 0.05s windows
-
     source = from_iterable(mock_images).pipe(
         ops.zip(interval(0.01)),  # 100Hz emission rate
         ops.map(lambda x: x[0]),  # Extract just the image

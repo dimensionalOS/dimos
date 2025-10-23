@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import random
+
 import numpy as np
 import open3d as o3d
-import random
 
 
 def save_pointcloud(pcd, file_path):

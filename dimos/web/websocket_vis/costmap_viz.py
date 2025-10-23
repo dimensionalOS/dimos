@@ -17,20 +17,22 @@ Simple costmap wrapper for visualization purposes.
 This is a minimal implementation to support websocket visualization.
 """
 
-import numpy as np
 from typing import Optional
+
+import numpy as np
+
 from dimos.msgs.nav_msgs import OccupancyGrid
 
 
 class CostmapViz:
     """A wrapper around OccupancyGrid for visualization compatibility."""
 
-    def __init__(self, occupancy_grid: Optional[OccupancyGrid] = None):
+    def __init__(self, occupancy_grid: OccupancyGrid | None = None):
         """Initialize from an OccupancyGrid."""
         self.occupancy_grid = occupancy_grid
 
     @property
-    def data(self) -> Optional[np.ndarray]:
+    def data(self) -> np.ndarray | None:
         """Get the costmap data as a numpy array."""
         if self.occupancy_grid:
             return self.occupancy_grid.grid

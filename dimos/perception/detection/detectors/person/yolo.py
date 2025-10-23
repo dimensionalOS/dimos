@@ -25,7 +25,9 @@ logger = setup_logger("dimos.perception.detection.yolo.person")
 
 
 class YoloPersonDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11n-pose.pt", device: str = None):
+    def __init__(
+        self, model_path="models_yolo", model_name="yolo11n-pose.pt", device: str | None = None
+    ):
         self.model = YOLO(get_data(model_path) / model_name, task="track")
 
         self.tracker = get_data(model_path) / "botsort.yaml"

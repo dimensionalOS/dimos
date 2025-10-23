@@ -16,9 +16,11 @@ import numpy as np
 import pytest
 
 try:
-    from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Vector3 as ROSVector3
+    from geometry_msgs.msg import (
+        Twist as ROSTwist,
+        TwistWithCovariance as ROSTwistWithCovariance,
+        Vector3 as ROSVector3,
+    )
 except ImportError:
     ROSTwist = None
     ROSTwistWithCovariance = None
@@ -281,7 +283,7 @@ def test_twist_with_covariance_equality():
 
     # Different type
     assert twist_cov1 != "not a twist"
-    assert twist_cov1 != None
+    assert twist_cov1 is not None
 
 
 def test_twist_with_covariance_is_zero():

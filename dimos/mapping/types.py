@@ -21,7 +21,7 @@ from typing import Optional, TypeAlias
 class LatLon:
     lat: float
     lon: float
-    alt: Optional[float] = None
+    alt: float | None = None
 
 
 ImageCoord: TypeAlias = tuple[int, int]

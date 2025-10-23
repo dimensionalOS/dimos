@@ -21,7 +21,7 @@ from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin
 
 class Memory(PubSub[str, Any]):
     def __init__(self) -> None:
-        self._map: DefaultDict[str, List[Callable[[Any, str], None]]] = defaultdict(list)
+        self._map: defaultdict[str, list[Callable[[Any, str], None]]] = defaultdict(list)
 
     def publish(self, topic: str, message: Any) -> None:
         for cb in self._map[topic]:

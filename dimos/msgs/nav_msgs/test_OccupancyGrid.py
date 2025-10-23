@@ -412,13 +412,13 @@ def test_lcm_broadcast():
         print("\nNo occupied cells found for sampling")
 
     # Check statistics
-    print(f"\nOriginal grid stats:")
+    print("\nOriginal grid stats:")
     print(f"  Occupied (100): {np.sum(occupancygrid.grid == 100)} cells")
     print(f"  Inflated (99): {np.sum(occupancygrid.grid == 99)} cells")
     print(f"  Free (0): {np.sum(occupancygrid.grid == 0)} cells")
     print(f"  Unknown (-1): {np.sum(occupancygrid.grid == -1)} cells")
 
-    print(f"\nGradient grid stats:")
+    print("\nGradient grid stats:")
     print(f"  Max gradient (100): {np.sum(gradient_grid.grid == 100)} cells")
     print(
         f"  High gradient (80-99): {np.sum((gradient_grid.grid >= 80) & (gradient_grid.grid < 100))} cells"
@@ -461,11 +461,11 @@ def test_lcm_broadcast():
     lcm.publish(Topic("/global_costmap", OccupancyGrid), occupancygrid)
     lcm.publish(Topic("/global_gradient", OccupancyGrid), gradient_grid)
 
-    print(f"\nPublished to LCM:")
+    print("\nPublished to LCM:")
     print(f"  /global_map: PointCloud2 with {len(pointcloud)} points")
     print(f"  /global_costmap: {occupancygrid}")
     print(f"  /global_gradient: {gradient_grid}")
-    print(f"\nGradient info:")
-    print(f"  Values: 0 (free far from obstacles) -> 100 (at obstacles)")
+    print("\nGradient info:")
+    print("  Values: 0 (free far from obstacles) -> 100 (at obstacles)")
     print(f"  Unknown cells: {gradient_grid.unknown_cells} (preserved as -1)")
-    print(f"  Max distance for gradient: 5.0 meters")
+    print("  Max distance for gradient: 5.0 meters")

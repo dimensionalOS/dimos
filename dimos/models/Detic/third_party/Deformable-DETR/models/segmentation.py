@@ -11,14 +11,13 @@
 This file provides the definition of the convolutional heads used to predict masks, as well as the losses
 """
 
-import io
 from collections import defaultdict
+import io
 
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
-
 import util.box_ops as box_ops
 from util.misc import NestedTensor, interpolate, nested_tensor_from_tensor_list
 
@@ -58,7 +57,7 @@ class DETRsegm(nn.Module):
         if self.detr.aux_loss:
             out["aux_outputs"] = [
                 {"pred_logits": a, "pred_boxes": b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1], strict=False)
             ]
 
         # FIXME h_boxes takes the last one computed, keep this in mind
@@ -252,7 +251,7 @@ class PostProcessSegm(nn.Module):
         outputs_masks = (outputs_masks.sigmoid() > self.threshold).cpu()
 
         for i, (cur_mask, t, tt) in enumerate(
-            zip(outputs_masks, max_target_sizes, orig_target_sizes)
+            zip(outputs_masks, max_target_sizes, orig_target_sizes, strict=False)
         ):
             img_h, img_w = t[0], t[1]
             results[i]["masks"] = cur_mask[:, :img_h, :img_w].unsqueeze(1)
@@ -304,7 +303,7 @@ class PostProcessPanoptic(nn.Module):
             return tuple(tup.cpu().tolist())
 
         for cur_logits, cur_masks, cur_boxes, size, target_size in zip(
-            out_logits, raw_masks, raw_boxes, processed_sizes, target_sizes
+            out_logits, raw_masks, raw_boxes, processed_sizes, target_sizes, strict=False
         ):
             # we filter empty queries and detection below threshold
             scores, labels = cur_logits.softmax(-1).max(-1)

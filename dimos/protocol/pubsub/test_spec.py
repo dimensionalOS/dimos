@@ -15,9 +15,9 @@
 # limitations under the License.
 
 import asyncio
+from contextlib import contextmanager
 import time
 import traceback
-from contextlib import contextmanager
 from typing import Any, Callable, List, Tuple
 
 import pytest
@@ -38,7 +38,7 @@ def memory_context():
 
 
 # Use Any for context manager type to accommodate both Memory and Redis
-testdata: List[Tuple[Callable[[], Any], Any, List[Any]]] = [
+testdata: list[tuple[Callable[[], Any], Any, list[Any]]] = [
     (memory_context, "topic", ["value1", "value2", "value3"]),
 ]
 
@@ -84,7 +84,7 @@ except (ConnectionError, ImportError):
     print("LCM not available")
 
 
-from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
 
 
 @contextmanager

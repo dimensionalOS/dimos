@@ -17,8 +17,7 @@ import numpy as np
 import pytest
 
 try:
-    from sensor_msgs.msg import CameraInfo as ROSCameraInfo
-    from sensor_msgs.msg import RegionOfInterest as ROSRegionOfInterest
+    from sensor_msgs.msg import CameraInfo as ROSCameraInfo, RegionOfInterest as ROSRegionOfInterest
     from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSCameraInfo = None
@@ -336,7 +335,7 @@ def test_ros_conversion():
     assert dimos_info.frame_id == "test_camera", (
         f"Frame ID not preserved: expected 'test_camera', got '{dimos_info.frame_id}'"
     )
-    assert dimos_info.distortion_model == "plumb_bob", f"Distortion model not preserved"
+    assert dimos_info.distortion_model == "plumb_bob", "Distortion model not preserved"
     assert len(dimos_info.D) == 5, (
         f"Wrong number of distortion coefficients: expected 5, got {len(dimos_info.D)}"
     )

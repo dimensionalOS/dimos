@@ -16,7 +16,8 @@ from collections import deque
 from typing import Optional, Tuple
 
 import numpy as np
-from dimos.msgs.geometry_msgs import VectorLike, Vector3
+
+from dimos.msgs.geometry_msgs import Vector3, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 
 
@@ -28,7 +29,7 @@ def find_safe_goal(
     min_clearance: float = 0.3,
     max_search_distance: float = 5.0,
     connectivity_check_radius: int = 3,
-) -> Optional[Vector3]:
+) -> Vector3 | None:
     """
     Find a safe goal position when the original goal is in collision or too close to obstacles.
 
@@ -87,7 +88,7 @@ def _find_safe_goal_bfs(
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Optional[Vector3]:
+) -> Vector3 | None:
     """
     BFS-based search for nearest safe goal position.
     This guarantees finding the closest valid position.
@@ -151,7 +152,7 @@ def _find_safe_goal_spiral(
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Optional[Vector3]:
+) -> Vector3 | None:
     """
     Spiral search pattern from goal outward.
 
@@ -212,7 +213,7 @@ def _find_safe_goal_voronoi(
     cost_threshold: int,
     min_clearance: float,
     max_search_distance: float,
-) -> Optional[Vector3]:
+) -> Vector3 | None:
     """
     Find safe position using Voronoi diagram (ridge points equidistant from obstacles).
 
@@ -235,7 +236,6 @@ def _find_safe_goal_voronoi(
     gx, gy = int(goal_grid.x), int(goal_grid.y)
 
     # Create binary obstacle map
-    obstacle_map = costmap.grid >= cost_threshold
     free_map = (costmap.grid < cost_threshold) & (costmap.grid != CostValues.UNKNOWN)
 
     # Compute distance transform
@@ -285,7 +285,7 @@ def _find_safe_goal_gradient(
     min_clearance: float,
     max_search_distance: float,
     connectivity_check_radius: int,
-) -> Optional[Vector3]:
+) -> Vector3 | None:
     """
     Use gradient descent on the costmap to find a safe position.
 

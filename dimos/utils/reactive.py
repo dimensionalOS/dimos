@@ -32,7 +32,7 @@ T = TypeVar("T")
 #                           └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 def backpressure(
     observable: Observable[T],
-    scheduler: Optional[ThreadPoolScheduler] = None,
+    scheduler: ThreadPoolScheduler | None = None,
     drop_unprocessed: bool = True,
 ) -> Observable[T]:
     if scheduler is None:
@@ -81,7 +81,7 @@ class LatestReader(Generic[T]):
             self._connection.dispose()
 
 
-def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
+def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> T:
     def getter():
         result = []
         error = []
@@ -128,7 +128,7 @@ T = TypeVar("T")
 
 def getter_streaming(
     source: Observable[T],
-    timeout: Optional[float] = 30.0,
+    timeout: float | None = 30.0,
     *,
     nonblocking: bool = False,
 ) -> LatestReader[T]:

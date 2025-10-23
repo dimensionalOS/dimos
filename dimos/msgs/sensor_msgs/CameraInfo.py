@@ -17,16 +17,14 @@ from __future__ import annotations
 import time
 from typing import List, Optional
 
-import numpy as np
-
 # Import LCM types
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
 from dimos_lcm.std_msgs.Header import Header
+import numpy as np
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import CameraInfo as ROSCameraInfo
-    from sensor_msgs.msg import RegionOfInterest as ROSRegionOfInterest
+    from sensor_msgs.msg import CameraInfo as ROSCameraInfo, RegionOfInterest as ROSRegionOfInterest
     from std_msgs.msg import Header as ROSHeader
 
     ROS_AVAILABLE = True
@@ -46,14 +44,14 @@ class CameraInfo(Timestamped):
         height: int = 0,
         width: int = 0,
         distortion_model: str = "",
-        D: Optional[List[float]] = None,
-        K: Optional[List[float]] = None,
-        R: Optional[List[float]] = None,
-        P: Optional[List[float]] = None,
+        D: list[float] | None = None,
+        K: list[float] | None = None,
+        R: list[float] | None = None,
+        P: list[float] | None = None,
         binning_x: int = 0,
         binning_y: int = 0,
         frame_id: str = "",
-        ts: Optional[float] = None,
+        ts: float | None = None,
     ):
         """Initialize CameraInfo.
 
@@ -110,7 +108,7 @@ class CameraInfo(Timestamped):
         """
         import yaml
 
-        with open(yaml_file, "r") as f:
+        with open(yaml_file) as f:
             data = yaml.safe_load(f)
 
         # Extract basic parameters
@@ -222,7 +220,7 @@ class CameraInfo(Timestamped):
         return msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "CameraInfo":
+    def lcm_decode(cls, data: bytes) -> CameraInfo:
         """Decode from LCM CameraInfo bytes."""
         msg = LCMCameraInfo.lcm_decode(data)
 
@@ -254,7 +252,7 @@ class CameraInfo(Timestamped):
         return camera_info
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: "ROSCameraInfo") -> "CameraInfo":
+    def from_ros_msg(cls, ros_msg: ROSCameraInfo) -> CameraInfo:
         """Create CameraInfo from ROS sensor_msgs/CameraInfo message.
 
         Args:
@@ -292,7 +290,7 @@ class CameraInfo(Timestamped):
 
         return camera_info
 
-    def to_ros_msg(self) -> "ROSCameraInfo":
+    def to_ros_msg(self) -> ROSCameraInfo:
         """Convert to ROS sensor_msgs/CameraInfo message.
 
         Returns:

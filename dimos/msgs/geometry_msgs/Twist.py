@@ -14,22 +14,23 @@
 
 from __future__ import annotations
 
-import struct
 from io import BytesIO
-from typing import BinaryIO
+import struct
+from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Vector3 as ROSVector3
+    from geometry_msgs.msg import Twist as ROSTwist, Vector3 as ROSVector3
 except ImportError:
     ROSTwist = None
     ROSVector3 = None
 
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 
 class Twist(LCMTwist):
@@ -57,7 +58,7 @@ class Twist(LCMTwist):
         self.angular = angular.to_euler()
 
     @dispatch
-    def __init__(self, twist: "Twist") -> None:
+    def __init__(self, twist: Twist) -> None:
         """Initialize from another Twist (copy constructor)."""
         self.linear = Vector3(twist.linear)
         self.angular = Vector3(twist.angular)
@@ -109,7 +110,7 @@ class Twist(LCMTwist):
         return not self.is_zero()
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwist) -> "Twist":
+    def from_ros_msg(cls, ros_msg: ROSTwist) -> Twist:
         """Create a Twist from a ROS geometry_msgs/Twist message.
 
         Args:

@@ -14,8 +14,9 @@
 
 import logging
 from typing import Any, Optional
-from pydantic import BaseModel
+
 from openai import pydantic_function_tool
+from pydantic import BaseModel
 
 from dimos.types.constants import Colors
 
@@ -31,8 +32,8 @@ class SkillLibrary:
     # ==== Flat Skill Library ====
 
     def __init__(self):
-        self.registered_skills: list["AbstractSkill"] = []
-        self.class_skills: list["AbstractSkill"] = []
+        self.registered_skills: list[AbstractSkill] = []
+        self.class_skills: list[AbstractSkill] = []
         self._running_skills = {}  # {skill_name: (instance, subscription)}
 
         self.init()
@@ -144,7 +145,7 @@ class SkillLibrary:
             # Call the instance directly
             return instance()
         except Exception as e:
-            error_msg = f"Error executing skill '{name}': {str(e)}"
+            error_msg = f"Error executing skill '{name}': {e!s}"
             logger.error(error_msg)
             return error_msg
 
@@ -214,7 +215,7 @@ class SkillLibrary:
             try:
                 # Call the stop method if it exists
                 if hasattr(instance, "stop") and callable(instance.stop):
-                    result = instance.stop()
+                    instance.stop()
                     logger.info(f"Stopped skill: {name}")
                 else:
                     logger.warning(f"Skill {name} does not have a stop method")
@@ -306,7 +307,7 @@ else:
 class AbstractRobotSkill(AbstractSkill):
     _robot: Robot = None
 
-    def __init__(self, *args, robot: Optional[Robot] = None, **kwargs):
+    def __init__(self, *args, robot: Robot | None = None, **kwargs):
         super().__init__(*args, **kwargs)
         self._robot = robot
         print(

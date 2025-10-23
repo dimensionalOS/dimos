@@ -14,9 +14,9 @@
 
 from __future__ import annotations
 
-import time
 from collections import deque
 from dataclasses import dataclass
+import time
 from typing import Any, Deque, List, Optional, Union
 
 from langchain_core.messages import (
@@ -55,10 +55,10 @@ class AgentMessageMonitor:
     def __init__(self, topic: str = "/agent", max_messages: int = 1000):
         self.topic = topic
         self.max_messages = max_messages
-        self.messages: Deque[MessageEntry] = deque(maxlen=max_messages)
+        self.messages: deque[MessageEntry] = deque(maxlen=max_messages)
         self.transport = PickleLCM()
         self.transport.start()
-        self.callbacks: List[callable] = []
+        self.callbacks: list[callable] = []
         pass
 
     def start(self):
@@ -73,7 +73,7 @@ class AgentMessageMonitor:
     def _handle_message(self, msg: Any, topic: str):
         """Handle incoming messages."""
         # Check if it's one of the message types we care about
-        if isinstance(msg, (SystemMessage, ToolMessage, AIMessage, HumanMessage)):
+        if isinstance(msg, SystemMessage | ToolMessage | AIMessage | HumanMessage):
             entry = MessageEntry(timestamp=time.time(), message=msg)
             self.messages.append(entry)
 
@@ -87,7 +87,7 @@ class AgentMessageMonitor:
         """Subscribe to new messages."""
         self.callbacks.append(callback)
 
-    def get_messages(self) -> List[MessageEntry]:
+    def get_messages(self) -> list[MessageEntry]:
         """Get all stored messages."""
         return list(self.messages)
 
@@ -168,7 +168,7 @@ class AgentSpyApp(App):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.monitor = AgentMessageMonitor()
-        self.message_log: Optional[RichLog] = None
+        self.message_log: RichLog | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""

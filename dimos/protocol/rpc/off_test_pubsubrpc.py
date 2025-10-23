@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import asyncio
-import time
 from contextlib import contextmanager
+import time
 from typing import Any, Callable, List, Tuple
 
 import pytest
@@ -24,7 +24,7 @@ from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCClient, RPCServer
 from dimos.protocol.service.lcmservice import autoconf
 
-testgrid: List[Callable] = []
+testgrid: list[Callable] = []
 
 
 # test module we'll use for binding RPC methods

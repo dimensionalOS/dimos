@@ -18,22 +18,22 @@
 Navigator module for coordinating global and local planning.
 """
 
+from enum import Enum
 import threading
 import time
-from enum import Enum
 from typing import Callable, Optional
 
-from dimos.core import Module, In, Out, rpc
+from dimos_lcm.std_msgs import Bool, String
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos_lcm.std_msgs import String
 from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
 from dimos.navigation.bt_navigator.recovery_server import RecoveryServer
-from reactivex.disposable import Disposable
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
-from dimos_lcm.std_msgs import Bool
 from dimos.utils.transform_utils import apply_transform
 
 logger = setup_logger("dimos.navigation.bt_navigator")
@@ -74,8 +74,8 @@ class BehaviorTreeNavigator(Module):
     def __init__(
         self,
         publishing_frequency: float = 1.0,
-        reset_local_planner: Callable[[], None] = None,
-        check_goal_reached: Callable[[], bool] = None,
+        reset_local_planner: Callable[[], None] | None = None,
+        check_goal_reached: Callable[[], bool] | None = None,
         **kwargs,
     ):
         """Initialize the Navigator.
@@ -95,19 +95,19 @@ class BehaviorTreeNavigator(Module):
         self.state_lock = threading.Lock()
 
         # Current goal
-        self.current_goal: Optional[PoseStamped] = None
-        self.original_goal: Optional[PoseStamped] = None
+        self.current_goal: PoseStamped | None = None
+        self.original_goal: PoseStamped | None = None
         self.goal_lock = threading.Lock()
 
         # Goal reached state
         self._goal_reached = False
 
         # Latest data
-        self.latest_odom: Optional[PoseStamped] = None
-        self.latest_costmap: Optional[OccupancyGrid] = None
+        self.latest_odom: PoseStamped | None = None
+        self.latest_costmap: OccupancyGrid | None = None
 
         # Control thread
-        self.control_thread: Optional[threading.Thread] = None
+        self.control_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
 
         # TF listener
@@ -224,7 +224,7 @@ class BehaviorTreeNavigator(Module):
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
-    def _transform_goal_to_odom_frame(self, goal: PoseStamped) -> Optional[PoseStamped]:
+    def _transform_goal_to_odom_frame(self, goal: PoseStamped) -> PoseStamped | None:
         """Transform goal pose to the odometry frame."""
         if not goal.frame_id:
             return goal

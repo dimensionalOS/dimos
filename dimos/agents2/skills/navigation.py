@@ -16,7 +16,6 @@ from functools import partial
 import time
 from typing import Any, Optional
 
-
 from dimos.core.core import rpc
 from dimos.core.rpc_client import RpcCall
 from dimos.core.skill_module import SkillModule
@@ -26,19 +25,19 @@ from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.navigation.bt_navigator.navigator import NavigatorState
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
-from dimos.navigation.bt_navigator.navigator import NavigatorState
 
 logger = setup_logger(__file__)
 
 
 class NavigationSkillContainer(SkillModule):
-    _latest_image: Optional[Image] = None
-    _latest_odom: Optional[PoseStamped] = None
+    _latest_image: Image | None = None
+    _latest_odom: PoseStamped | None = None
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
 
@@ -217,7 +216,7 @@ class NavigationSkillContainer(SkillModule):
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
-    def _navigate_by_tagged_location(self, query: str) -> Optional[str]:
+    def _navigate_by_tagged_location(self, query: str) -> str | None:
         if not self._query_tagged_location:
             logger.warning("SpatialMemory module not connected, cannot query tagged locations")
             return None
@@ -263,7 +262,7 @@ class NavigationSkillContainer(SkillModule):
             logger.info("Navigation goal reached")
             return True
 
-    def _navigate_to_object(self, query: str) -> Optional[str]:
+    def _navigate_to_object(self, query: str) -> str | None:
         try:
             bbox = self._get_bbox_for_current_frame(query)
         except Exception:
@@ -319,7 +318,7 @@ class NavigationSkillContainer(SkillModule):
         self._stop_track()
         return None
 
-    def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
+    def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
         if self._latest_image is None:
             return None
 
@@ -414,7 +413,7 @@ class NavigationSkillContainer(SkillModule):
 
         return "Exploration completed successfuly"
 
-    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> Optional[PoseStamped]:
+    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
         if similarity < self._similarity_threshold:
             logger.warning(

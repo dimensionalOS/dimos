@@ -17,9 +17,10 @@
 
 import os
 from pathlib import Path
+
+from dotenv import load_dotenv
 from openai import OpenAI
 from tensorzero import patch_openai_client
-from dotenv import load_dotenv
 
 load_dotenv()
 

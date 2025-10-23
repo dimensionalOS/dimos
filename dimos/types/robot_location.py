@@ -17,8 +17,8 @@ RobotLocation type definition for storing and managing robot location data.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, Any, Optional, Tuple
 import time
+from typing import Any, Dict, Optional, Tuple
 import uuid
 
 
@@ -41,12 +41,12 @@ class RobotLocation:
     """
 
     name: str
-    position: Tuple[float, float, float]
-    rotation: Tuple[float, float, float]
-    frame_id: Optional[str] = None
+    position: tuple[float, float, float]
+    rotation: tuple[float, float, float]
+    frame_id: str | None = None
     timestamp: float = field(default_factory=time.time)
     location_id: str = field(default_factory=lambda: f"loc_{uuid.uuid4().hex[:8]}")
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self):
         """Validate and normalize the position and rotation tuples."""
@@ -62,7 +62,7 @@ class RobotLocation:
         else:
             self.rotation = tuple(float(x) for x in self.rotation)
 
-    def to_vector_metadata(self) -> Dict[str, Any]:
+    def to_vector_metadata(self) -> dict[str, Any]:
         """
         Convert the location to metadata format for storing in a vector database.
 
@@ -89,7 +89,7 @@ class RobotLocation:
         return metadata
 
     @classmethod
-    def from_vector_metadata(cls, metadata: Dict[str, Any]) -> "RobotLocation":
+    def from_vector_metadata(cls, metadata: dict[str, Any]) -> "RobotLocation":
         """
         Create a RobotLocation object from vector database metadata.
 

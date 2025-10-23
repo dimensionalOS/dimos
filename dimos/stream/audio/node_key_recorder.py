@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
-import numpy as np
-import time
-import threading
-import sys
 import select
+import sys
+import threading
+import time
+from typing import List
+
+import numpy as np
 from reactivex import Observable
-from reactivex.subject import Subject, ReplaySubject
+from reactivex.subject import ReplaySubject, Subject
 
 from dimos.stream.audio.base import AbstractAudioTransform, AudioEvent
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.audio.key_recorder")
@@ -212,7 +212,7 @@ class KeyRecorder(AbstractAudioTransform):
             logger.warning(f"Max recording time ({self.max_recording_time}s) reached")
             self._stop_recording()
 
-    def _combine_audio_events(self, audio_events: List[AudioEvent]) -> AudioEvent:
+    def _combine_audio_events(self, audio_events: list[AudioEvent]) -> AudioEvent:
         """Combine multiple audio events into a single event."""
         if not audio_events:
             logger.warning("Attempted to combine empty audio events list")
@@ -301,9 +301,9 @@ if __name__ == "__main__":
     from dimos.stream.audio.node_microphone import (
         SounddeviceAudioSource,
     )
+    from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.utils import keepalive
 
     # Create microphone source, recorder, and audio output

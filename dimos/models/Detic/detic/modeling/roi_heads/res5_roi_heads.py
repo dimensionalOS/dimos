@@ -1,14 +1,12 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import torch
-
 from detectron2.config import configurable
 from detectron2.layers import ShapeSpec
-from detectron2.structures import Boxes, Instances
-
 from detectron2.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY, Res5ROIHeads
+from detectron2.structures import Boxes, Instances
+import torch
 
-from .detic_fast_rcnn import DeticFastRCNNOutputLayers
 from ..debug import debug_second_stage
+from .detic_fast_rcnn import DeticFastRCNNOutputLayers
 
 
 @ROI_HEADS_REGISTRY.register()
@@ -82,7 +80,7 @@ class CustomRes5ROIHeads(Res5ROIHeads):
             feats_per_image = box_features.mean(dim=[2, 3]).split(
                 [len(p) for p in proposals], dim=0
             )
-            for feat, p in zip(feats_per_image, proposals):
+            for feat, p in zip(feats_per_image, proposals, strict=False):
                 p.feat = feat
 
         if self.training:
@@ -102,7 +100,8 @@ class CustomRes5ROIHeads(Res5ROIHeads):
                     assert "image_loss" not in losses
                     losses["image_loss"] = predictions[0].new_zeros([1])[0]
             if self.save_debug:
-                denormalizer = lambda x: x * self.pixel_std + self.pixel_mean
+                def denormalizer(x):
+                    return x * self.pixel_std + self.pixel_mean
                 if ann_type != "box":
                     image_labels = [x._pos_category_ids for x in targets]
                 else:
@@ -123,7 +122,8 @@ class CustomRes5ROIHeads(Res5ROIHeads):
             pred_instances, _ = self.box_predictor.inference(predictions, proposals)
             pred_instances = self.forward_with_given_boxes(features, pred_instances)
             if self.save_debug:
-                denormalizer = lambda x: x * self.pixel_std + self.pixel_mean
+                def denormalizer(x):
+                    return x * self.pixel_std + self.pixel_mean
                 debug_second_stage(
                     [denormalizer(x.clone()) for x in images],
                     pred_instances,

@@ -18,6 +18,7 @@
 """Int32 message type."""
 
 from typing import ClassVar
+
 from dimos_lcm.std_msgs import Int8 as LCMInt8
 
 try:

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 import numpy as np
 import pytest
-from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 

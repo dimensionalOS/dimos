@@ -16,8 +16,7 @@ import numpy as np
 import pytest
 
 try:
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Vector3 as ROSVector3
+    from geometry_msgs.msg import Twist as ROSTwist, Vector3 as ROSVector3
 except ImportError:
     ROSTwist = None
     ROSVector3 = None

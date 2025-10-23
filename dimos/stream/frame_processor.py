@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+from typing import Optional, Tuple
+
 import cv2
 import numpy as np
-import os
-from reactivex import Observable
-from reactivex import operators as ops
-from typing import Tuple, Optional
+from reactivex import Observable, operators as ops
 
 
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class
@@ -92,10 +92,10 @@ class FrameProcessor:
 
     def compute_optical_flow(
         self,
-        acc: Tuple[np.ndarray, np.ndarray, Optional[float]],
+        acc: tuple[np.ndarray, np.ndarray, float | None],
         current_frame: np.ndarray,
         compute_relevancy: bool = True,
-    ) -> Tuple[np.ndarray, np.ndarray, Optional[float]]:
+    ) -> tuple[np.ndarray, np.ndarray, float | None]:
         """Computes optical flow between consecutive frames.
 
         Uses the Farneback algorithm to compute dense optical flow between the

@@ -13,15 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, List, Dict, Any
-import numpy as np
-import sounddevice as sd
-from reactivex import Observable
+from typing import Any, Dict, List, Optional
 
-from dimos.utils.logging_config import setup_logger
+import numpy as np
+from reactivex import Observable
+import sounddevice as sd
+
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
 )
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.node_output")
 
@@ -37,7 +38,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
     def __init__(
         self,
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
@@ -163,7 +164,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.close()
             self._stream = None
 
-    def get_available_devices(self) -> List[Dict[str, Any]]:
+    def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio output devices."""
         return sd.query_devices()
 

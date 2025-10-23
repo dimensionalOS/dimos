@@ -63,7 +63,7 @@ def do_train(args, cfg):
     """
     model = instantiate(cfg.model)
     logger = logging.getLogger("detectron2")
-    logger.info("Model:\n{}".format(model))
+    logger.info(f"Model:\n{model}")
     model.to(cfg.train.device)
 
     cfg.optimizer.params.model = model

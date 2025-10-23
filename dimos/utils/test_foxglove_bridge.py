@@ -19,8 +19,8 @@ Test for foxglove bridge import and basic functionality
 
 import threading
 import time
-import warnings
 from unittest.mock import MagicMock, patch
+import warnings
 
 import pytest
 
@@ -78,7 +78,7 @@ def test_bridge_runner_has_run_method():
 
         # Check that the run method exists
         assert hasattr(runner, "run")
-        assert callable(getattr(runner, "run"))
+        assert callable(runner.run)
 
     except Exception as e:
         pytest.fail(f"Failed to verify run method: {e}")

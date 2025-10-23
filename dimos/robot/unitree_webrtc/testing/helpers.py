@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import time
+from typing import Any, Callable, Iterable, Protocol, Union
+
 import open3d as o3d
-from typing import Callable, Union, Any, Protocol, Iterable
 from reactivex.observable import Observable
 
 color1 = [1, 0.706, 0]
@@ -89,8 +90,8 @@ def show3d_stream(
     Subsequent geometries update the visualizer. If no new geometry, just poll events.
     geometry_observable: Observable of objects with .o3d_geometry or Open3D geometry
     """
-    import threading
     import queue
+    import threading
     import time
     from typing import Any
 

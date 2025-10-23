@@ -8,29 +8,26 @@
 # The code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/evaluation/oideval.py
 # The original code is under Apache-2.0 License
 # Copyright (c) Facebook, Inc. and its affiliates.
-import os
-import datetime
-import logging
-import itertools
-from collections import OrderedDict
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 import copy
+import datetime
+import itertools
 import json
-import numpy as np
-import torch
-from tabulate import tabulate
+import logging
+import os
 
+from detectron2.data import MetadataCatalog
+from detectron2.evaluation import DatasetEvaluator
+from detectron2.evaluation.coco_evaluation import instances_to_coco_json
+import detectron2.utils.comm as comm
+from detectron2.utils.logger import create_small_table
+from fvcore.common.file_io import PathManager
 from lvis.lvis import LVIS
 from lvis.results import LVISResults
-
+import numpy as np
 import pycocotools.mask as mask_utils
-
-from fvcore.common.file_io import PathManager
-import detectron2.utils.comm as comm
-from detectron2.data import MetadataCatalog
-from detectron2.evaluation.coco_evaluation import instances_to_coco_json
-from detectron2.utils.logger import create_small_table
-from detectron2.evaluation import DatasetEvaluator
+from tabulate import tabulate
+import torch
 
 
 def compute_average_precision(precision, recall):
@@ -95,35 +92,34 @@ class OIDEval:
         self.logger = logging.getLogger(__name__)
 
         if iou_type not in ["bbox", "segm"]:
-            raise ValueError("iou_type: {} is not supported.".format(iou_type))
+            raise ValueError(f"iou_type: {iou_type} is not supported.")
 
         if isinstance(lvis_gt, LVIS):
             self.lvis_gt = lvis_gt
         elif isinstance(lvis_gt, str):
             self.lvis_gt = LVIS(lvis_gt)
         else:
-            raise TypeError("Unsupported type {} of lvis_gt.".format(lvis_gt))
+            raise TypeError(f"Unsupported type {lvis_gt} of lvis_gt.")
 
         if isinstance(lvis_dt, LVISResults):
             self.lvis_dt = lvis_dt
-        elif isinstance(lvis_dt, (str, list)):
+        elif isinstance(lvis_dt, str | list):
             # self.lvis_dt = LVISResults(self.lvis_gt, lvis_dt, max_dets=-1)
             self.lvis_dt = LVISResults(self.lvis_gt, lvis_dt)
         else:
-            raise TypeError("Unsupported type {} of lvis_dt.".format(lvis_dt))
+            raise TypeError(f"Unsupported type {lvis_dt} of lvis_dt.")
 
         if expand_pred_label:
-            oid_hierarchy = json.load(open(oid_hierarchy_path, "r"))
+            oid_hierarchy = json.load(open(oid_hierarchy_path))
             cat_info = self.lvis_gt.dataset["categories"]
             freebase2id = {x["freebase_id"]: x["id"] for x in cat_info}
-            id2freebase = {x["id"]: x["freebase_id"] for x in cat_info}
-            id2name = {x["id"]: x["name"] for x in cat_info}
+            {x["id"]: x["freebase_id"] for x in cat_info}
+            {x["id"]: x["name"] for x in cat_info}
 
             fas = defaultdict(set)
 
             def dfs(hierarchy, cur_id):
                 all_childs = set()
-                all_keyed_child = {}
                 if "Subcategory" in hierarchy:
                     for x in hierarchy["Subcategory"]:
                         childs = dfs(x, freebase2id[x["LabelName"]])
@@ -220,7 +216,7 @@ class OIDEval:
         (a list of dict) in self.eval_imgs.
         """
         self.logger.info("Running per image evaluation.")
-        self.logger.info("Evaluate annotation type *{}*".format(self.params.iou_type))
+        self.logger.info(f"Evaluate annotation type *{self.params.iou_type}*")
 
         self.params.img_ids = list(np.unique(self.params.img_ids))
 
@@ -444,7 +440,7 @@ class OIDEval:
                     "fps": fps,
                 }
 
-                for iou_thr_idx, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
+                for iou_thr_idx, (tp, fp) in enumerate(zip(tp_sum, fp_sum, strict=False)):
                     tp = np.array(tp)
                     fp = np.array(fp)
                     num_tp = len(tp)
@@ -491,7 +487,6 @@ class OIDEval:
         if not self.eval:
             raise RuntimeError("Please run accumulate() first.")
 
-        max_dets = self.params.max_dets
         self.results["AP50"] = self._summarize("ap")
 
     def run(self):
@@ -514,9 +509,9 @@ class OIDEval:
 
             if len(key) > 2 and key[2].isdigit():
                 iou_thr = float(key[2:]) / 100
-                iou = "{:0.2f}".format(iou_thr)
+                iou = f"{iou_thr:0.2f}"
             else:
-                iou = "{:0.2f}:{:0.2f}".format(self.params.iou_thrs[0], self.params.iou_thrs[-1])
+                iou = f"{self.params.iou_thrs[0]:0.2f}:{self.params.iou_thrs[-1]:0.2f}"
 
             cat_group_name = "all"
             area_rng = "all"
@@ -572,7 +567,7 @@ class OIDEvaluator(DatasetEvaluator):
         self._oid_results = []
 
     def process(self, inputs, outputs):
-        for input, output in zip(inputs, outputs):
+        for input, output in zip(inputs, outputs, strict=False):
             prediction = {"image_id": input["image_id"]}
             instances = output["instances"].to(self._cpu_device)
             prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
@@ -600,7 +595,7 @@ class OIDEvaluator(DatasetEvaluator):
 
         PathManager.mkdirs(self._output_dir)
         file_path = os.path.join(self._output_dir, "oid_instances_results.json")
-        self._logger.info("Saving results to {}".format(file_path))
+        self._logger.info(f"Saving results to {file_path}")
         with PathManager.open(file_path, "w") as f:
             f.write(json.dumps(self._oid_results))
             f.flush()
@@ -626,7 +621,6 @@ class OIDEvaluator(DatasetEvaluator):
 
 def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class_names=None):
     logger = logging.getLogger(__name__)
-    metrics = ["AP50", "AP50_expand"]
 
     results = {}
     oid_eval = OIDEval(oid_gt, oid_results_path, "bbox", expand_pred_label=False)
@@ -661,7 +655,7 @@ def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class
                 (
                     "{} {}".format(
                         name.replace(" ", "_"),
-                        inst_num if inst_num < 1000 else "{:.1f}k".format(inst_num / 1000),
+                        inst_num if inst_num < 1000 else f"{inst_num / 1000:.1f}k",
                     ),
                     float(ap * 100),
                 )

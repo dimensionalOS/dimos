@@ -18,9 +18,9 @@
 import logging
 import os
 
+from dotenv import load_dotenv
 import numpy as np
 import pytest
-from dotenv import load_dotenv
 
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.modules.base import BaseAgent

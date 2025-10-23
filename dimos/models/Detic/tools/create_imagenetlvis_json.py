@@ -2,8 +2,9 @@
 import argparse
 import json
 import os
-from nltk.corpus import wordnet
+
 from detectron2.data.detection_utils import read_image
+from nltk.corpus import wordnet
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -15,7 +16,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading LVIS meta")
-    data = json.load(open(args.lvis_meta_path, "r"))
+    data = json.load(open(args.lvis_meta_path))
     print("Done")
     synset2cat = {x["synset"]: x for x in data["categories"]}
     count = 0
@@ -32,9 +33,9 @@ if __name__ == "__main__":
         cat_images = []
         for file in files:
             count = count + 1
-            file_name = "{}/{}".format(folder, file)
+            file_name = f"{folder}/{file}"
             # img = cv2.imread('{}/{}'.format(args.imagenet_path, file_name))
-            img = read_image("{}/{}".format(args.imagenet_path, file_name))
+            img = read_image(f"{args.imagenet_path}/{file_name}")
             h, w = img.shape[:2]
             image = {
                 "id": count,

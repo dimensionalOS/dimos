@@ -18,16 +18,18 @@ import numpy as np
 import pytest
 
 try:
-    from nav_msgs.msg import Odometry as ROSOdometry
-    from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance
-    from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
-    from geometry_msgs.msg import Pose as ROSPose
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Point as ROSPoint
-    from geometry_msgs.msg import Quaternion as ROSQuaternion
-    from geometry_msgs.msg import Vector3 as ROSVector3
-    from std_msgs.msg import Header as ROSHeader
     from builtin_interfaces.msg import Time as ROSTime
+    from geometry_msgs.msg import (
+        Point as ROSPoint,
+        Pose as ROSPose,
+        PoseWithCovariance as ROSPoseWithCovariance,
+        Quaternion as ROSQuaternion,
+        Twist as ROSTwist,
+        TwistWithCovariance as ROSTwistWithCovariance,
+        Vector3 as ROSVector3,
+    )
+    from nav_msgs.msg import Odometry as ROSOdometry
+    from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSTwist = None
     ROSHeader = None
@@ -42,13 +44,13 @@ except ImportError:
 
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 
-from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.nav_msgs.Odometry import Odometry
 
 
 def test_odometry_default_init():

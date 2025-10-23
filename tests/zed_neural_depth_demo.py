@@ -21,17 +21,18 @@ Press SPACE to save RGB and depth images to rgbd_data2 folder.
 Press ESC or 'q' to quit.
 """
 
+import argparse
+from datetime import datetime
+import logging
 import os
+from pathlib import Path
 import sys
 import time
-import argparse
-import logging
-from pathlib import Path
-import numpy as np
+
 import cv2
-import yaml
-from datetime import datetime
+import numpy as np
 import open3d as o3d
+import yaml
 
 # Add the project root to Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -44,7 +45,7 @@ except ImportError:
     sys.exit(1)
 
 from dimos.hardware.zed_camera import ZEDCamera
-from dimos.perception.pointcloud.utils import visualize_pcd, visualize_clustered_point_clouds
+from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_pcd
 
 # Configure logging
 logging.basicConfig(

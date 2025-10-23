@@ -15,13 +15,13 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from functools import cache
 import os
 import subprocess
 import sys
 import threading
 import traceback
-from dataclasses import dataclass
-from functools import cache
 from typing import Optional, Protocol, runtime_checkable
 
 import lcm
@@ -69,7 +69,7 @@ def check_multicast() -> list[str]:
     return commands_needed
 
 
-def check_buffers() -> tuple[list[str], Optional[int]]:
+def check_buffers() -> tuple[list[str], int | None]:
     """Check if buffer configuration is needed and return required commands and current size.
 
     Returns:
@@ -192,7 +192,7 @@ class LCMConfig:
     ttl: int = 0
     url: str | None = None
     autoconf: bool = True
-    lcm: Optional[lcm.LCM] = None
+    lcm: lcm.LCM | None = None
 
 
 @runtime_checkable
@@ -200,7 +200,7 @@ class LCMMsg(Protocol):
     msg_name: str
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "LCMMsg":
+    def lcm_decode(cls, data: bytes) -> LCMMsg:
         """Decode bytes into an LCM message instance."""
         ...
 
@@ -212,7 +212,7 @@ class LCMMsg(Protocol):
 @dataclass
 class Topic:
     topic: str = ""
-    lcm_type: Optional[type[LCMMsg]] = None
+    lcm_type: type[LCMMsg] | None = None
 
     def __str__(self) -> str:
         if self.lcm_type is None:
@@ -222,10 +222,10 @@ class Topic:
 
 class LCMService(Service[LCMConfig]):
     default_config = LCMConfig
-    l: Optional[lcm.LCM]
+    l: lcm.LCM | None
     _stop_event: threading.Event
     _l_lock: threading.Lock
-    _thread: Optional[threading.Thread]
+    _thread: threading.Thread | None
     _call_thread_pool: ThreadPoolExecutor | None = None
     _call_thread_pool_lock: threading.RLock = threading.RLock()
 

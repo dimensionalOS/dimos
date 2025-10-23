@@ -12,19 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import numpy as np
-import time
-import threading
-from typing import Dict, List, Optional
 import logging
+import threading
+import time
+from typing import Dict, List, Optional
 
-from dimos.core import In, Out, Module, rpc
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.utils.logging_config import setup_logger
-from reactivex.disposable import Disposable
+import cv2
 
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
@@ -35,6 +28,14 @@ from dimos_lcm.vision_msgs import (
     Point2D,
     Pose2D,
 )
+import numpy as np
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
 
@@ -73,17 +74,17 @@ class ObjectTracker2D(Module):
 
         # Frame management
         self._frame_lock = threading.Lock()
-        self._latest_rgb_frame: Optional[np.ndarray] = None
-        self._frame_arrival_time: Optional[float] = None
+        self._latest_rgb_frame: np.ndarray | None = None
+        self._frame_arrival_time: float | None = None
 
         # Tracking thread control
-        self.tracking_thread: Optional[threading.Thread] = None
+        self.tracking_thread: threading.Thread | None = None
         self.stop_tracking_event = threading.Event()
         self.tracking_rate = 5.0  # Hz
         self.tracking_period = 1.0 / self.tracking_rate
 
         # Store latest detection for RPC access
-        self._latest_detection2d: Optional[Detection2DArray] = None
+        self._latest_detection2d: Detection2DArray | None = None
 
     @rpc
     def start(self):
@@ -109,7 +110,7 @@ class ObjectTracker2D(Module):
         super().stop()
 
     @rpc
-    def track(self, bbox: List[float]) -> Dict:
+    def track(self, bbox: list[float]) -> dict:
         """
         Initialize tracking with a bounding box.
 
@@ -290,7 +291,7 @@ class ObjectTracker2D(Module):
         viz_msg = Image.from_numpy(viz_copy, format=ImageFormat.RGB)
         self.tracked_overlay.publish(viz_msg)
 
-    def _draw_visualization(self, image: np.ndarray, bbox: List[int]) -> np.ndarray:
+    def _draw_visualization(self, image: np.ndarray, bbox: list[int]) -> np.ndarray:
         """Draw tracking visualization."""
         viz_image = image.copy()
         x1, y1, x2, y2 = bbox

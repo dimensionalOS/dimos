@@ -150,7 +150,7 @@ def test_text_image_similarity(embedding_model, test_image):
 
     # Compute similarities using @ operator
     similarities = {}
-    for query, text_emb in zip(queries, text_embeddings):
+    for query, text_emb in zip(queries, text_embeddings, strict=False):
         similarity = img_embedding @ text_emb
         similarities[query] = similarity
         print(f"\n'{query}': {similarity:.4f}")
@@ -317,7 +317,7 @@ def test_embedding_performance(embedding_model):
 
     # Collect 10 real frames from the video
     test_images = []
-    for ts, frame in video_replay.iterate_ts(duration=1.0):
+    for _ts, frame in video_replay.iterate_ts(duration=1.0):
         test_images.append(frame.to_rgb())
         if len(test_images) >= 10:
             break
@@ -391,7 +391,7 @@ def test_embedding_performance(embedding_model):
 
         text_embeddings = embedding_model.embed_text(*test_queries)
         similarities = []
-        for query, text_emb in zip(test_queries, text_embeddings):
+        for query, text_emb in zip(test_queries, text_embeddings, strict=False):
             sim = first_frame_emb @ text_emb
             similarities.append((query, sim))
 

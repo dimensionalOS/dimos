@@ -12,18 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from datetime import datetime, timedelta
+from enum import Enum
+from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
+
 import cv2
 import numpy as np
-from reactivex import Observable, Observer, create
-from reactivex import operators as ops
-from typing import Any, Callable, Tuple, Optional
-
+from reactivex import Observable, Observer, create, operators as ops
 import zmq
-import base64
-from enum import Enum
 
-from dimos.stream.frame_processor import FrameProcessor
+if TYPE_CHECKING:
+    from dimos.stream.frame_processor import FrameProcessor
 
 
 class VideoOperators:
@@ -31,7 +31,7 @@ class VideoOperators:
 
     @staticmethod
     def with_fps_sampling(
-        fps: int = 25, *, sample_interval: Optional[timedelta] = None, use_latest: bool = True
+        fps: int = 25, *, sample_interval: timedelta | None = None, use_latest: bool = True
     ) -> Callable[[Observable], Observable]:
         """Creates an operator that samples frames at a specified rate.
 
@@ -214,7 +214,7 @@ class VideoOperators:
 
     @staticmethod
     def with_zmq_socket(
-        socket: zmq.Socket, scheduler: Optional[Any] = None
+        socket: zmq.Socket, scheduler: Any | None = None
     ) -> Callable[[Observable], Observable]:
         def send_frame(frame, socket):
             _, img_encoded = cv2.imencode(".jpg", frame)
@@ -243,7 +243,7 @@ class VideoOperators:
         """
 
         def _operator(source: Observable) -> Observable:
-            def _encode_image(image: np.ndarray) -> Tuple[str, Tuple[int, int]]:
+            def _encode_image(image: np.ndarray) -> tuple[str, tuple[int, int]]:
                 try:
                     width, height = image.shape[:2]
                     _, buffer = cv2.imencode(".jpg", image)
@@ -259,9 +259,10 @@ class VideoOperators:
         return _operator
 
 
-from reactivex.disposable import Disposable
-from reactivex import Observable
 from threading import Lock
+
+from reactivex import Observable
+from reactivex.disposable import Disposable
 
 
 class Operators:
@@ -565,7 +566,7 @@ class Operators:
     def print_emission(
         id: str,
         dev_name: str = "NA",
-        counts: dict = None,
+        counts: dict | None = None,
         color: "Operators.PrintColor" = None,
         enabled: bool = True,
     ):

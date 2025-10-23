@@ -17,14 +17,18 @@ from __future__ import annotations
 import time
 from typing import BinaryIO
 
-from dimos_lcm.geometry_msgs import Transform as LCMTransform
-from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
+from dimos_lcm.geometry_msgs import (
+    Transform as LCMTransform,
+    TransformStamped as LCMTransformStamped,
+)
 
 try:
-    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
-    from geometry_msgs.msg import Transform as ROSTransform
-    from geometry_msgs.msg import Vector3 as ROSVector3
-    from geometry_msgs.msg import Quaternion as ROSQuaternion
+    from geometry_msgs.msg import (
+        Quaternion as ROSQuaternion,
+        Transform as ROSTransform,
+        TransformStamped as ROSTransformStamped,
+        Vector3 as ROSVector3,
+    )
 except ImportError:
     ROSTransformStamped = None
     ROSTransform = None
@@ -87,10 +91,10 @@ class Transform(Timestamped):
             ),
         )
 
-    def apply(self, other: "Transform") -> "Transform":
+    def apply(self, other: Transform) -> Transform:
         return self.__add__(other)
 
-    def __add__(self, other: "Transform") -> "Transform":
+    def __add__(self, other: Transform) -> Transform:
         """Compose two transforms (transform composition).
 
         The operation self + other represents applying transformation 'other'
@@ -127,7 +131,7 @@ class Transform(Timestamped):
             ts=self.ts,
         )
 
-    def inverse(self) -> "Transform":
+    def inverse(self) -> Transform:
         """Compute the inverse transform.
 
         The inverse transform reverses the direction of the transformation.
@@ -152,7 +156,7 @@ class Transform(Timestamped):
         )
 
     @classmethod
-    def from_ros_transform_stamped(cls, ros_msg: ROSTransformStamped) -> "Transform":
+    def from_ros_transform_stamped(cls, ros_msg: ROSTransformStamped) -> Transform:
         """Create a Transform from a ROS geometry_msgs/TransformStamped message.
 
         Args:
@@ -215,12 +219,12 @@ class Transform(Timestamped):
 
         return ros_msg
 
-    def __neg__(self) -> "Transform":
+    def __neg__(self) -> Transform:
         """Unary minus operator returns the inverse transform."""
         return self.inverse()
 
     @classmethod
-    def from_pose(cls, frame_id: str, pose: "Pose | PoseStamped") -> "Transform":
+    def from_pose(cls, frame_id: str, pose: Pose | PoseStamped) -> Transform:
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -251,7 +255,7 @@ class Transform(Timestamped):
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
-    def to_pose(self, **kwargs) -> "PoseStamped":
+    def to_pose(self, **kwargs) -> PoseStamped:
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -273,7 +277,7 @@ class Transform(Timestamped):
             **kwargs,
         )
 
-    def to_matrix(self) -> "np.ndarray":
+    def to_matrix(self) -> np.ndarray:
         """Convert Transform to a 4x4 transformation matrix.
 
         Returns a homogeneous transformation matrix that represents both

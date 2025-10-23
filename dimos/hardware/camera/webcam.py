@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-import time
 from dataclasses import dataclass, field
 from functools import cache
+import threading
+import time
 from typing import Literal, Optional
 
 import cv2
@@ -23,9 +23,9 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
 
+from dimos.hardware.camera.spec import CameraConfig, CameraHardware
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.hardware.camera.spec import CameraConfig, CameraHardware
 from dimos.utils.reactive import backpressure
 
 
@@ -36,8 +36,8 @@ class WebcamConfig(CameraConfig):
     frame_height: int = 480
     frequency: int = 15
     camera_info: CameraInfo = field(default_factory=CameraInfo)
-    frame_id_prefix: Optional[str] = None
-    stereo_slice: Optional[Literal["left", "right"]] = None  # For stereo cameras
+    frame_id_prefix: str | None = None
+    stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
 
 class Webcam(CameraHardware[WebcamConfig]):
