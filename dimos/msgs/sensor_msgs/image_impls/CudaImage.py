@@ -863,7 +863,7 @@ class _CudaTemplateTracker:
         search_radius: int = 16,
         x0: int = 0,
         y0: int = 0,
-    ):
+    ) -> None:
         self.tmpl = tmpl.astype(cp.float32)
         self.h, self.w = int(tmpl.shape[0]), int(tmpl.shape[1])
         self.scale_step = float(scale_step)

@@ -50,7 +50,9 @@ class Object3D(Detection3DPC):
             "center": center_str,
         }
 
-    def __init__(self, track_id: str, detection: Detection3DPC | None = None, *args, **kwargs):
+    def __init__(
+        self, track_id: str, detection: Detection3DPC | None = None, *args, **kwargs
+    ) -> None:
         if detection is None:
             return
         self.ts = detection.ts
@@ -158,7 +160,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     remembered_locations: dict[str, PoseStamped]
 
-    def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs):
+    def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.goto = goto
         self.objects = {}
@@ -249,7 +251,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         Detection3DModule.start(self)
 
         def update_objects(imageDetections: ImageDetections3DPC):
@@ -257,7 +259,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
                 # print(detection)
                 return self.add_detection(detection)
 
-        def scene_thread():
+        def scene_thread() -> None:
             while True:
                 scene_update = self.to_foxglove_scene_update()
                 self.scene_update.publish(scene_update)
@@ -304,5 +306,5 @@ class ObjectDBModule(Detection3DModule, TableStr):
         scene_update.entities_length = len(scene_update.entities)
         return scene_update
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.objects.values())

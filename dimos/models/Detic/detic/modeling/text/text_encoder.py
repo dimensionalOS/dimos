@@ -29,7 +29,7 @@ class QuickGELU(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None) -> None:
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
@@ -61,7 +61,7 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None) -> None:
         super().__init__()
         self.width = width
         self.layers = layers
@@ -83,7 +83,7 @@ class CLIPTEXT(nn.Module):
         transformer_width=512,
         transformer_heads=8,
         transformer_layers=12,
-    ):
+    ) -> None:
         super().__init__()
 
         self._tokenizer = _Tokenizer()
@@ -108,7 +108,7 @@ class CLIPTEXT(nn.Module):
 
         self.initialize_parameters()
 
-    def initialize_parameters(self):
+    def initialize_parameters(self) -> None:
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
 

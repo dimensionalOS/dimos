@@ -77,7 +77,7 @@ class HumanCLIApp(App):
         Binding("ctrl+l", "clear", "Clear chat"),
     ]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.human_transport = pLCMTransport("/human_input")
         self.agent_transport = pLCMTransport("/agent")
@@ -133,7 +133,7 @@ class HumanCLIApp(App):
     def _subscribe_to_agent(self) -> None:
         """Subscribe to agent messages in a separate thread."""
 
-        def receive_msg(msg):
+        def receive_msg(msg) -> None:
             if not self._running:
                 return
 
@@ -294,7 +294,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
         self.exit()
 
 
-def main():
+def main() -> None:
     """Main entry point for the human CLI."""
     import sys
 

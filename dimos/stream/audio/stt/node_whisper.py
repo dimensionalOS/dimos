@@ -37,7 +37,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
         self,
         model: str = "base",
         modelopts: dict[str, Any] | None = None,
-    ):
+    ) -> None:
         if modelopts is None:
             modelopts = {"language": "en", "fp16": False}
         self.audio_observable = None
@@ -71,7 +71,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
             logger.info("Starting Whisper transcription service")
 
             # Subscribe to the audio source
-            def on_audio_event(event: AudioEvent):
+            def on_audio_event(event: AudioEvent) -> None:
                 try:
                     result = self.model.transcribe(event.data.flatten(), **self.modelopts)
                     observer.on_next(result["text"].strip())
@@ -87,7 +87,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 subscription.dispose()
 
             return disposable.Disposable(dispose)

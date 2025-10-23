@@ -19,7 +19,7 @@ class ZeroShotClassifier(nn.Module):
         use_bias: float = 0.0,
         norm_weight: bool = True,
         norm_temperature: float = 50.0,
-    ):
+    ) -> None:
         super().__init__()
         if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)

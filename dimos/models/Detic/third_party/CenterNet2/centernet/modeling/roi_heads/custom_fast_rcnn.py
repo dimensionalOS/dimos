@@ -18,7 +18,7 @@ __all__ = ["CustomFastRCNNOutputLayers"]
 
 
 class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
-    def __init__(self, cfg, input_shape: ShapeSpec, **kwargs):
+    def __init__(self, cfg, input_shape: ShapeSpec, **kwargs) -> None:
         super().__init__(cfg, input_shape, **kwargs)
         self.use_sigmoid_ce = cfg.MODEL.ROI_BOX_HEAD.USE_SIGMOID_CE
         if self.use_sigmoid_ce:

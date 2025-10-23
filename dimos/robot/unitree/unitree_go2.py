@@ -60,7 +60,7 @@ class UnitreeGo2(Robot):
         disable_video_stream: bool = False,
         mock_connection: bool = False,
         enable_perception: bool = True,
-    ):
+    ) -> None:
         """Initialize UnitreeGo2 robot with ROS control interface.
 
         Args:

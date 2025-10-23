@@ -59,7 +59,7 @@ class ManipulationProcessor:
         enable_grasp_generation: bool = False,
         grasp_server_url: str | None = None,  # Required when enable_grasp_generation=True
         enable_segmentation: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the manipulation processor.
 
@@ -397,7 +397,7 @@ class ManipulationProcessor:
             logger.error(f"Grasp generation failed: {e}")
             return None
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()

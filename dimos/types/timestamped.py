@@ -101,7 +101,7 @@ def to_datetime(ts: TimeLike, tz=None) -> datetime:
 class Timestamped:
     ts: float
 
-    def __init__(self, ts: float):
+    def __init__(self, ts: float) -> None:
         self.ts = ts
 
     def dt(self) -> datetime:
@@ -120,7 +120,7 @@ T = TypeVar("T", bound=Timestamped)
 class TimestampedCollection(Generic[T]):
     """A collection of timestamped objects with efficient time-based operations."""
 
-    def __init__(self, items: Iterable[T] | None = None):
+    def __init__(self, items: Iterable[T] | None = None) -> None:
         self._items = SortedKeyList(items or [], key=lambda x: x.ts)
 
     def add(self, item: T) -> None:
@@ -224,7 +224,7 @@ SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 class TimestampedBufferCollection(TimestampedCollection[T]):
     """A timestamped collection that maintains a sliding time window, dropping old messages."""
 
-    def __init__(self, window_duration: float, items: Iterable[T] | None = None):
+    def __init__(self, window_duration: float, items: Iterable[T] | None = None) -> None:
         """
         Initialize with a time window duration in seconds.
 
@@ -271,12 +271,12 @@ class MatchContainer(Timestamped, Generic[PRIMARY, SECONDARY]):
     tracking which secondaries are still missing to avoid redundant searches.
     """
 
-    def __init__(self, primary: PRIMARY, matches: list[SECONDARY | None]):
+    def __init__(self, primary: PRIMARY, matches: list[SECONDARY | None]) -> None:
         super().__init__(primary.ts)
         self.primary = primary
         self.matches = matches  # Direct list with None for missing matches
 
-    def message_received(self, secondary_idx: int, secondary_item: SECONDARY):
+    def message_received(self, secondary_idx: int, secondary_item: SECONDARY) -> None:
         """Process a secondary message and check if it matches this primary."""
         if self.matches[secondary_idx] is None:
             self.matches[secondary_idx] = secondary_item
@@ -332,13 +332,13 @@ def align_timestamped(
             """Check if secondary stream has progressed past the primary + tolerance."""
             return secondary_ts > primary_ts + match_tolerance
 
-        def remove_stakeholder(stakeholder: MatchContainer):
+        def remove_stakeholder(stakeholder: MatchContainer) -> None:
             """Remove a stakeholder from all tracking structures."""
             primary_buffer.remove(stakeholder)
             for weak_list in secondary_stakeholders.values():
                 weak_list.discard(stakeholder)
 
-        def on_secondary(i: int, secondary_item: SECONDARY):
+        def on_secondary(i: int, secondary_item: SECONDARY) -> None:
             # Add the secondary item to its collection
             secondary_collections[i].add(secondary_item)
 
@@ -369,7 +369,7 @@ def align_timestamped(
                 )
             )
 
-        def on_primary(primary_item: PRIMARY):
+        def on_primary(primary_item: PRIMARY) -> None:
             # Try to find matches in existing secondary collections
             matches = [None] * len(secondary_observables)
 

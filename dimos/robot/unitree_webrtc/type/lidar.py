@@ -53,7 +53,7 @@ class LidarMessage(PointCloud2):
     raw_msg: RawLidarMsg | None
     # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__(
             pointcloud=kwargs.get("pointcloud"),
             ts=kwargs.get("ts"),
@@ -86,7 +86,7 @@ class LidarMessage(PointCloud2):
         }
         return cls(**cls_data)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"
 
     def __iadd__(self, other: "LidarMessage") -> "LidarMessage":

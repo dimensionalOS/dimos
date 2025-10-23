@@ -49,7 +49,7 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         fed_loss_freq_weight=0.5,
         softmax_weak_loss=False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(
             input_shape=input_shape,
             **kwargs,
@@ -547,7 +547,7 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         return loss, ind
 
 
-def put_label_distribution(storage, hist_name, hist_counts, num_classes):
+def put_label_distribution(storage, hist_name, hist_counts, num_classes) -> None:
     """ """
     ht_min, ht_max = 0, num_classes
     hist_edges = torch.linspace(

@@ -32,7 +32,7 @@ class Robot(ABC):
     can share, with no required methods - just common properties and helpers.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the robot with basic properties."""
         self.capabilities: list[RobotCapability] = []
         self.skill_library = None
@@ -56,7 +56,7 @@ class Robot(ABC):
         """
         return self.skill_library
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up robot resources.
 
         Override this method to provide cleanup logic.

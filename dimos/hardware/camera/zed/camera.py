@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any
+from types import TracebackType
+from typing import Any, Optional, Type
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -43,7 +44,7 @@ class ZEDCamera:
         depth_mode: sl.DEPTH_MODE = sl.DEPTH_MODE.NEURAL,
         fps: int = 30,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize ZED Camera.
 
@@ -169,7 +170,7 @@ class ZEDCamera:
             logger.error(f"Error enabling positional tracking: {e}")
             return False
 
-    def disable_positional_tracking(self):
+    def disable_positional_tracking(self) -> None:
         """Disable positional tracking."""
         if self.tracking_enabled:
             self.zed.disable_positional_tracking()
@@ -403,7 +404,7 @@ class ZEDCamera:
             logger.error(f"Error capturing frame with pose: {e}")
             return None, None, None, None
 
-    def close(self):
+    def close(self) -> None:
         """Close the ZED camera."""
         if self.is_opened:
             # Disable tracking if enabled
@@ -509,7 +510,12 @@ class ZEDCamera:
             raise RuntimeError("Failed to open ZED camera")
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         self.close()
 
@@ -544,7 +550,7 @@ class ZEDModule(Module):
         frame_id: str = "zed_camera",
         recording_path: str | None = None,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize ZED Module.
 
@@ -600,7 +606,7 @@ class ZEDModule(Module):
         logger.info(f"ZEDModule initialized for camera {camera_id}")
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the ZED module and begin publishing data."""
         if self._running:
             logger.warning("ZED module already running")
@@ -652,7 +658,7 @@ class ZEDModule(Module):
             self._running = False
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the ZED module."""
         if not self._running:
             return
@@ -671,7 +677,7 @@ class ZEDModule(Module):
 
         super().stop()
 
-    def _capture_and_publish(self):
+    def _capture_and_publish(self) -> None:
         """Capture frame and publish all data."""
         if not self._running or not self.zed_camera:
             return
@@ -715,7 +721,7 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error in capture and publish: {e}")
 
-    def _publish_color_image(self, image: np.ndarray, header: Header):
+    def _publish_color_image(self, image: np.ndarray, header: Header) -> None:
         """Publish color image as LCM message."""
         try:
             # Convert BGR to RGB if needed
@@ -737,7 +743,7 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error publishing color image: {e}")
 
-    def _publish_depth_image(self, depth: np.ndarray, header: Header):
+    def _publish_depth_image(self, depth: np.ndarray, header: Header) -> None:
         """Publish depth image as LCM message."""
         try:
             # Depth is float32 in meters
@@ -752,7 +758,7 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error publishing depth image: {e}")
 
-    def _publish_camera_info(self):
+    def _publish_camera_info(self) -> None:
         """Publish camera calibration information."""
         try:
             info = self.zed_camera.get_camera_info()
@@ -830,7 +836,7 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
 
-    def _publish_pose(self, pose_data: dict[str, Any], header: Header):
+    def _publish_pose(self, pose_data: dict[str, Any], header: Header) -> None:
         """Publish camera pose as PoseStamped message and TF transform."""
         try:
             position = pose_data.get("position", [0, 0, 0])

@@ -38,7 +38,7 @@ class KeyRecorder(AbstractAudioTransform):
         self,
         max_recording_time: float = 120.0,
         always_subscribe: bool = False,
-    ):
+    ) -> None:
         """
         Initialize KeyRecorder.
 
@@ -112,7 +112,7 @@ class KeyRecorder(AbstractAudioTransform):
         """
         return self._recording_subject
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop recording and clean up resources."""
         logger.info("Stopping audio recorder")
 
@@ -130,7 +130,7 @@ class KeyRecorder(AbstractAudioTransform):
         if self._input_thread.is_alive():
             self._input_thread.join(1.0)
 
-    def _input_monitor(self):
+    def _input_monitor(self) -> None:
         """Monitor for key presses to toggle recording."""
         logger.info("Press Enter to start/stop recording...")
 
@@ -147,7 +147,7 @@ class KeyRecorder(AbstractAudioTransform):
             # Sleep a bit to reduce CPU usage
             time.sleep(0.1)
 
-    def _start_recording(self):
+    def _start_recording(self) -> None:
         """Start recording audio and subscribe to the audio source if not always subscribed."""
         if not self._audio_observable:
             logger.error("Cannot start recording: No audio source has been set")
@@ -167,7 +167,7 @@ class KeyRecorder(AbstractAudioTransform):
         self._audio_buffer = []
         logger.info("Recording... (press Enter to stop)")
 
-    def _stop_recording(self):
+    def _stop_recording(self) -> None:
         """Stop recording, unsubscribe from audio source if not always subscribed, and emit the combined audio event."""
         self._is_recording = False
         recording_duration = time.time() - self._recording_start_time
@@ -187,7 +187,7 @@ class KeyRecorder(AbstractAudioTransform):
         else:
             logger.warning("No audio was recorded")
 
-    def _process_audio_event(self, audio_event):
+    def _process_audio_event(self, audio_event) -> None:
         """Process incoming audio events."""
 
         # Only buffer if recording
@@ -286,11 +286,11 @@ class KeyRecorder(AbstractAudioTransform):
             logger.warning("Failed to create valid combined audio event")
             return None
 
-    def _handle_error(self, error):
+    def _handle_error(self, error) -> None:
         """Handle errors from the observable."""
         logger.error(f"Error in audio observable: {error}")
 
-    def _handle_completion(self):
+    def _handle_completion(self) -> None:
         """Handle completion of the observable."""
         logger.info("Audio observable completed")
         self.stop()

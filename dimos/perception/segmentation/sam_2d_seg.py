@@ -46,7 +46,7 @@ class Sam2DSegmenter:
         use_analyzer=True,
         use_rich_labeling=False,
         use_filtering=True,
-    ):
+    ) -> None:
         if is_cuda_available():
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
@@ -254,7 +254,7 @@ class Sam2DSegmenter:
                 return queue_indices, queue_ids
         return None, None
 
-    def run_analysis(self, frame, tracked_bboxes, tracked_target_ids):
+    def run_analysis(self, frame, tracked_bboxes, tracked_target_ids) -> None:
         """Run queue image analysis in background."""
         if not self.use_analyzer:
             return
@@ -291,13 +291,13 @@ class Sam2DSegmenter:
         """Generate an overlay visualization with segmentation results and object names."""
         return plot_results(image, masks, bboxes, track_ids, probs, names)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources."""
         if self.use_analyzer:
             self.analysis_executor.shutdown()
 
 
-def main():
+def main() -> None:
     # Example usage with different configurations
     cap = cv2.VideoCapture(0)
 

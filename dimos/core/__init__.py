@@ -54,11 +54,11 @@ __all__ = [
 class CudaCleanupPlugin:
     """Dask worker plugin to cleanup CUDA resources on shutdown."""
 
-    def setup(self, worker):
+    def setup(self, worker) -> None:
         """Called when worker starts."""
         pass
 
-    def teardown(self, worker):
+    def teardown(self, worker) -> None:
         """Clean up CUDA resources when worker shuts down."""
         try:
             import sys
@@ -78,7 +78,7 @@ class CudaCleanupPlugin:
             pass
 
 
-def patch_actor(actor, cls): ...
+def patch_actor(actor, cls) -> None: ...
 
 
 DimosCluster = Client
@@ -107,7 +107,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
 
             return RPCClient(actor, actor_class)
 
-    def check_worker_memory():
+    def check_worker_memory() -> None:
         """Check memory usage of all workers."""
         info = dask_client.scheduler_info()
         console = Console()
@@ -160,7 +160,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
                 f"[bold]Total: {total_used_gb:.2f}/{total_limit_gb:.2f}GB ({total_percentage:.1f}%) across {total_workers} workers[/bold]"
             )
 
-    def close_all():
+    def close_all() -> None:
         # Prevents multiple calls to close_all
         if hasattr(dask_client, "_closed") and dask_client._closed:
             return
@@ -256,7 +256,7 @@ def start(n: int | None = None, memory_limit: str = "auto") -> Client:
     patched_client._shutting_down = False
 
     # Signal handler with proper exit handling
-    def signal_handler(sig, frame):
+    def signal_handler(sig, frame) -> None:
         # If already shutting down, force exit
         if patched_client._shutting_down:
             import os

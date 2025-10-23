@@ -97,7 +97,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
             return cov
         return super().__getattribute__(name)
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name, value) -> None:
         """Override to ensure covariance is stored as numpy array."""
         if name == "covariance":
             if not isinstance(value, np.ndarray):

@@ -7,7 +7,7 @@ from torch import nn
 
 @META_ARCH_REGISTRY.register()
 class CenterNetDetector(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.mean, self.std = cfg.MODEL.PIXEL_MEAN, cfg.MODEL.PIXEL_STD
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))

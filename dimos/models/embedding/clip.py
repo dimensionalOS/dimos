@@ -34,7 +34,7 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
         model_name: str = "openai/clip-vit-base-patch32",
         device: str | None = None,
         normalize: bool = False,
-    ):
+    ) -> None:
         """
         Initialize CLIP model.
 

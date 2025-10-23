@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["custom_load_lvis_json", "custom_register_lvis_instances"]
 
 
-def custom_register_lvis_instances(name, metadata, json_file, image_root):
+def custom_register_lvis_instances(name, metadata, json_file, image_root) -> None:
     """ """
     DatasetCatalog.register(name, lambda: custom_load_lvis_json(json_file, image_root, name))
     MetadataCatalog.get(name).set(

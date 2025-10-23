@@ -16,7 +16,7 @@ import pytest
 from dimos.perception.detection.type import ImageDetections2D
 
 
-def test_from_ros_detection2d_array(get_moment_2d):
+def test_from_ros_detection2d_array(get_moment_2d) -> None:
     moment = get_moment_2d()
 
     detections2d = moment["detections2d"]

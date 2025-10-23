@@ -41,7 +41,9 @@ class AgentPoolModule(Module):
     query_in: In[dict[str, Any]] = None  # {agent_id: str, query: str, ...}
     response_out: Out[dict[str, Any]] = None  # {agent_id: str, response: str, ...}
 
-    def __init__(self, agents_config: dict[str, dict[str, Any]], default_agent: str | None = None):
+    def __init__(
+        self, agents_config: dict[str, dict[str, Any]], default_agent: str | None = None
+    ) -> None:
         """Initialize agent pool.
 
         Args:
@@ -66,7 +68,7 @@ class AgentPoolModule(Module):
         self._response_subject = Subject()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Deploy and start all agents."""
         super().start()
         logger.info(f"Starting agent pool with {len(self._config)} agents")
@@ -103,7 +105,7 @@ class AgentPoolModule(Module):
         logger.info("Agent pool started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop all agents."""
         logger.info("Stopping agent pool")
 
@@ -119,7 +121,7 @@ class AgentPoolModule(Module):
         super().stop()
 
     @rpc
-    def add_agent(self, agent_id: str, config: dict[str, Any]):
+    def add_agent(self, agent_id: str, config: dict[str, Any]) -> None:
         """Add a new agent to the pool."""
         if agent_id in self._agents:
             logger.warning(f"Agent {agent_id} already exists")
@@ -142,7 +144,7 @@ class AgentPoolModule(Module):
         logger.info(f"Added agent: {agent_id}")
 
     @rpc
-    def remove_agent(self, agent_id: str):
+    def remove_agent(self, agent_id: str) -> None:
         """Remove an agent from the pool."""
         if agent_id not in self._agents:
             logger.warning(f"Agent {agent_id} not found")
@@ -164,7 +166,7 @@ class AgentPoolModule(Module):
         ]
 
     @rpc
-    def broadcast_query(self, query: str, exclude: list[str] | None = None):
+    def broadcast_query(self, query: str, exclude: list[str] | None = None) -> None:
         """Send query to all agents (except excluded ones)."""
         exclude = exclude or []
 
@@ -174,7 +176,9 @@ class AgentPoolModule(Module):
 
         logger.info(f"Broadcasted query to {len(self._agents) - len(exclude)} agents")
 
-    def _setup_agent_routing(self, agent_id: str, agent: BaseAgentModule | UnifiedAgentModule):
+    def _setup_agent_routing(
+        self, agent_id: str, agent: BaseAgentModule | UnifiedAgentModule
+    ) -> None:
         """Setup response routing for an agent."""
 
         # Subscribe to agent responses and tag with agent_id
@@ -191,7 +195,7 @@ class AgentPoolModule(Module):
             .subscribe(self._response_subject.on_next)
         )
 
-    def _route_query(self, msg: dict[str, Any]):
+    def _route_query(self, msg: dict[str, Any]) -> None:
         """Route incoming query to appropriate agent(s)."""
         # Extract routing info
         agent_id = msg.get("agent_id", self._default_agent)

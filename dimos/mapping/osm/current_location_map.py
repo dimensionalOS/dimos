@@ -27,7 +27,7 @@ class CurrentLocationMap:
     _position: LatLon | None
     _map_image: MapImage | None
 
-    def __init__(self, vl_model: VlModel):
+    def __init__(self, vl_model: VlModel) -> None:
         self._vl_model = vl_model
         self._position = None
         self._map_image = None

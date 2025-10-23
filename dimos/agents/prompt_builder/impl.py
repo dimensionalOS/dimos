@@ -40,7 +40,7 @@ class PromptBuilder:
 
     def __init__(
         self, model_name="gpt-4o", max_tokens=128000, tokenizer: AbstractTokenizer | None = None
-    ):
+    ) -> None:
         """
         Initialize the prompt builder.
         Args:

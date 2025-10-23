@@ -16,7 +16,7 @@ import pytest
 
 
 @pytest.mark.skip
-def test_to_foxglove_scene_update(detections3dpc):
+def test_to_foxglove_scene_update(detections3dpc) -> None:
     # Convert to scene update
     scene_update = detections3dpc.to_foxglove_scene_update()
 

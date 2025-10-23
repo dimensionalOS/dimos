@@ -33,7 +33,7 @@ class HostedGraspGenerator:
     Dimensional-hosted grasp generator using WebSocket communication.
     """
 
-    def __init__(self, server_url: str):
+    def __init__(self, server_url: str) -> None:
         """
         Initialize Dimensional-hosted grasp generator.
 
@@ -224,6 +224,6 @@ class HostedGraspGenerator:
 
         return {"roll": x, "pitch": y, "yaw": z}
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         logger.info("Grasp generator cleaned up")

@@ -35,7 +35,7 @@ class CocoDetection(TvCocoDetection):
         cache_mode=False,
         local_rank=0,
         local_size=1,
-    ):
+    ) -> None:
         super().__init__(
             img_folder,
             ann_file,
@@ -74,7 +74,7 @@ def convert_coco_poly_to_mask(segmentations, height, width):
 
 
 class ConvertCocoPolysToMask:
-    def __init__(self, return_masks=False):
+    def __init__(self, return_masks=False) -> None:
         self.return_masks = return_masks
 
     def __call__(self, image, target):

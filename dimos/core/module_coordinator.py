@@ -34,7 +34,7 @@ class ModuleCoordinator(Resource):
         n: int | None = None,
         memory_limit: str = "auto",
         global_config: GlobalConfig | None = None,
-    ):
+    ) -> None:
         cfg = global_config or GlobalConfig()
         self._n = n if n is not None else cfg.n_dask_workers
         self._memory_limit = memory_limit

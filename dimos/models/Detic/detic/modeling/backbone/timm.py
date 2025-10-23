@@ -34,7 +34,7 @@ def convnext_tiny_21k(pretrained=False, **kwargs):
 
 
 class CustomResNet(ResNet):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self.out_indices = kwargs.pop("out_indices")
         super().__init__(**kwargs)
 
@@ -54,7 +54,7 @@ class CustomResNet(ResNet):
         ret.append(x)
         return [ret[i] for i in self.out_indices]
 
-    def load_pretrained(self, cached_file):
+    def load_pretrained(self, cached_file) -> None:
         data = torch.load(cached_file, map_location="cpu")
         if "state_dict" in data:
             self.load_state_dict(data["state_dict"])
@@ -90,7 +90,7 @@ def create_timm_resnet(variant, out_indices, pretrained=False, **kwargs):
 class LastLevelP6P7_P5(nn.Module):
     """ """
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels) -> None:
         super().__init__()
         self.num_levels = 2
         self.in_feature = "p5"
@@ -114,7 +114,7 @@ def freeze_module(x):
 
 
 class TIMM(Backbone):
-    def __init__(self, base_name, out_levels, freeze_at=0, norm="FrozenBN", pretrained=False):
+    def __init__(self, base_name, out_levels, freeze_at=0, norm="FrozenBN", pretrained=False) -> None:
         super().__init__()
         out_indices = [x - 1 for x in out_levels]
         if base_name in model_params:
@@ -151,7 +151,7 @@ class TIMM(Backbone):
         if norm == "FrozenBN":
             self = FrozenBatchNorm2d.convert_frozen_batchnorm(self)
 
-    def freeze(self, freeze_at=0):
+    def freeze(self, freeze_at=0) -> None:
         """ """
         if freeze_at >= 1:
             print("Frezing", self.base.conv1)

@@ -86,7 +86,7 @@ class target2d:
         texture_value,
         target_id,
         history_size=10,
-    ):
+    ) -> None:
         """
         Args:
             initial_mask (torch.Tensor): Latest segmentation mask.
@@ -112,7 +112,7 @@ class target2d:
         self.missed_frames = 0  # Consecutive frames when no detection was assigned.
         self.history_size = history_size
 
-    def update(self, mask, bbox, track_id, prob, name, texture_value):
+    def update(self, mask, bbox, track_id, prob, name, texture_value) -> None:
         """
         Update the target with a new detection.
         """
@@ -127,7 +127,7 @@ class target2d:
         self.frame_count.append(1)
         self.missed_frames = 0
 
-    def mark_missed(self):
+    def mark_missed(self) -> None:
         """
         Increment the count of consecutive frames where this target was not updated.
         """
@@ -260,7 +260,7 @@ class target2dTracker:
         texture_range=(0.0, 1.0),
         border_safe_distance=50,
         weights=None,
-    ):
+    ) -> None:
         """
         Args:
             history_size (int): Maximum history length (number of frames) per target.

@@ -74,7 +74,7 @@ class Image(Timestamped):
         format: ImageFormat | None = None,
         frame_id: str | None = None,
         ts: float | None = None,
-    ):
+    ) -> None:
         """Construct an Image facade.
 
         Usage:
@@ -550,7 +550,7 @@ class Image(Timestamped):
     def __getstate__(self):
         return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         self.__init__(
             data=state.get("data"),
             format=state.get("format"),

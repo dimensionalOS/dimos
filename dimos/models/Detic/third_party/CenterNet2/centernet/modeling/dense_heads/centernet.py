@@ -65,7 +65,7 @@ class CenterNet(nn.Module):
         pixel_std=None,
         device="cuda",
         centernet_head=None,
-    ):
+    ) -> None:
         if pixel_std is None:
             pixel_std = [1.0, 1.0, 1.0]
         if pixel_mean is None:

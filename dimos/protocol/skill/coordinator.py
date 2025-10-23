@@ -247,7 +247,7 @@ class SkillStateDict(dict[str, SkillState]):
             states_table.add_row("", "[dim]No active skills[/dim]", "", "", "")
         return states_table
 
-    def __str__(self):
+    def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
 
         # Render to string with title above
@@ -568,7 +568,7 @@ class SkillCoordinator(Module):
 
         return ret
 
-    def __str__(self):
+    def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
 
         # Create main table without any header
@@ -612,7 +612,7 @@ class SkillCoordinator(Module):
     #
     # Dynamic containers will be queried at runtime via
     # .skills() method
-    def register_skills(self, container: SkillContainer):
+    def register_skills(self, container: SkillContainer) -> None:
         self.empty = False
         if not container.dynamic_skills():
             logger.info(f"Registering static skill container, {container}")

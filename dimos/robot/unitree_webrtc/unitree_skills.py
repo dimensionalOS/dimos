@@ -212,7 +212,7 @@ G1_MODE_CONTROLS: list[tuple[str, int, str]] = [
 class MyUnitreeSkills(SkillLibrary):
     """My Unitree Skills for WebRTC interface."""
 
-    def __init__(self, robot: Robot | None = None, robot_type: str = "go2"):
+    def __init__(self, robot: Robot | None = None, robot_type: str = "go2") -> None:
         """Initialize Unitree skills library.
 
         Args:
@@ -231,7 +231,7 @@ class MyUnitreeSkills(SkillLibrary):
         self.register_skills(dynamic_skills)
 
     @classmethod
-    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]):
+    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]) -> None:
         """Add multiple skill classes as class attributes.
 
         Args:
@@ -244,7 +244,7 @@ class MyUnitreeSkills(SkillLibrary):
             # Add to the class as a skill
             setattr(cls, skill_class.__name__, skill_class)
 
-    def initialize_skills(self):
+    def initialize_skills(self) -> None:
         for skill_class in self.get_class_skills():
             self.create_instance(skill_class.__name__, robot=self._robot)
 
@@ -258,7 +258,7 @@ class MyUnitreeSkills(SkillLibrary):
         class BaseUnitreeSkill(AbstractRobotSkill):
             """Base skill for dynamic skill creation."""
 
-            def __call__(self):
+            def __call__(self) -> str:
                 super().__call__()
 
                 # For Go2: Simple api_id based call
@@ -335,7 +335,7 @@ class MyUnitreeSkills(SkillLibrary):
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
-        def __call__(self):
+        def __call__(self) -> str:
             self._robot.move(
                 Twist(linear=Vector3(self.x, self.y, 0.0), angular=Vector3(0.0, 0.0, self.yaw)),
                 duration=self.duration,
@@ -347,7 +347,7 @@ class MyUnitreeSkills(SkillLibrary):
 
         seconds: float = Field(..., description="Seconds to wait")
 
-        def __call__(self):
+        def __call__(self) -> str:
             time.sleep(self.seconds)
             return f"Wait completed with length={self.seconds}s"
 

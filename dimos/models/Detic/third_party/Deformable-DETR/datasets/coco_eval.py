@@ -28,7 +28,7 @@ from util.misc import all_gather
 
 
 class CocoEvaluator:
-    def __init__(self, coco_gt, iou_types):
+    def __init__(self, coco_gt, iou_types) -> None:
         assert isinstance(iou_types, list | tuple)
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
@@ -41,7 +41,7 @@ class CocoEvaluator:
         self.img_ids = []
         self.eval_imgs = {k: [] for k in iou_types}
 
-    def update(self, predictions):
+    def update(self, predictions) -> None:
         img_ids = list(np.unique(list(predictions.keys())))
         self.img_ids.extend(img_ids)
 
@@ -60,18 +60,18 @@ class CocoEvaluator:
 
             self.eval_imgs[iou_type].append(eval_imgs)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
             create_common_coco_eval(
                 self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type]
             )
 
-    def accumulate(self):
+    def accumulate(self) -> None:
         for coco_eval in self.coco_eval.values():
             coco_eval.accumulate()
 
-    def summarize(self):
+    def summarize(self) -> None:
         for iou_type, coco_eval in self.coco_eval.items():
             print(f"IoU metric: {iou_type}")
             coco_eval.summarize()
@@ -199,7 +199,7 @@ def merge(img_ids, eval_imgs):
     return merged_img_ids, merged_eval_imgs
 
 
-def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
+def create_common_coco_eval(coco_eval, img_ids, eval_imgs) -> None:
     img_ids, eval_imgs = merge(img_ids, eval_imgs)
     img_ids = list(img_ids)
     eval_imgs = list(eval_imgs.flatten())

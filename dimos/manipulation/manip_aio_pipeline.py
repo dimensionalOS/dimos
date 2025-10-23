@@ -55,7 +55,7 @@ class ManipulationPipeline:
         vocabulary: str | None = None,
         grasp_server_url: str | None = None,
         enable_grasp_generation: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the manipulation pipeline.
 
@@ -138,7 +138,7 @@ class ManipulationPipeline:
         frame_lock = threading.Lock()
 
         # Subscribe to combined ZED frames (from old main)
-        def on_zed_frame(zed_data):
+        def on_zed_frame(zed_data) -> None:
             nonlocal latest_rgb, latest_depth
             if zed_data is not None:
                 with frame_lock:
@@ -165,7 +165,7 @@ class ManipulationPipeline:
         )
 
         # Process object detection results with point cloud filtering (from old main)
-        def on_detection_next(result):
+        def on_detection_next(result) -> None:
             nonlocal latest_point_cloud_overlay
             if result.get("objects"):
                 # Get latest RGB and depth frames
@@ -208,7 +208,7 @@ class ManipulationPipeline:
                                 task = self.request_scene_grasps(filtered_objects)
                                 if task:
                                     # Check for results after a delay
-                                    def check_grasps_later():
+                                    def check_grasps_later() -> None:
                                         time.sleep(2.0)  # Wait for grasp processing
                                         # Wait for task to complete
                                         if hasattr(self, "grasp_task") and self.grasp_task:
@@ -256,13 +256,13 @@ class ManipulationPipeline:
                         with frame_lock:
                             latest_point_cloud_overlay = None
 
-        def on_error(error):
+        def on_error(error) -> None:
             logger.error(f"Error in stream: {error}")
 
-        def on_completed():
+        def on_completed() -> None:
             logger.info("Stream completed")
 
-        def start_subscriptions():
+        def start_subscriptions() -> None:
             """Start subscriptions in background thread (from old main)"""
             # Subscribe to combined ZED frames
             zed_frame_stream.subscribe(on_next=on_zed_frame)
@@ -301,10 +301,10 @@ class ManipulationPipeline:
             "grasp_overlay": grasp_overlay_stream,
         }
 
-    def _start_grasp_loop(self):
+    def _start_grasp_loop(self) -> None:
         """Start asyncio event loop in a background thread for WebSocket communication."""
 
-        def run_loop():
+        def run_loop() -> None:
             self.grasp_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.grasp_loop)
             self.grasp_loop.run_forever()
@@ -574,7 +574,7 @@ class ManipulationPipeline:
 
         return {"roll": x, "pitch": y, "yaw": z}
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()

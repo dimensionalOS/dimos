@@ -22,7 +22,7 @@ torch.manual_seed(3)
 
 
 @torch.no_grad()
-def check_forward_equal_with_pytorch_double():
+def check_forward_equal_with_pytorch_double() -> None:
     value = torch.rand(N, S, M, D).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5
@@ -57,7 +57,7 @@ def check_forward_equal_with_pytorch_double():
 
 
 @torch.no_grad()
-def check_forward_equal_with_pytorch_float():
+def check_forward_equal_with_pytorch_float() -> None:
     value = torch.rand(N, S, M, D).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5
@@ -86,7 +86,7 @@ def check_forward_equal_with_pytorch_float():
 
 def check_gradient_numerical(
     channels=4, grad_value=True, grad_sampling_loc=True, grad_attn_weight=True
-):
+) -> None:
     value = torch.rand(N, S, M, channels).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5

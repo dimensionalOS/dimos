@@ -64,7 +64,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         super().__init__(**kwargs)
         self._callbacks = {}
 
-    def publish(self, topic: Topic, message: bytes):
+    def publish(self, topic: Topic, message: bytes) -> None:
         """Publish a message to the specified channel."""
         if self.l is None:
             logger.error("Tried to publish after LCM was closed")
@@ -77,14 +77,14 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         if self.l is None:
             logger.error("Tried to subscribe after LCM was closed")
 
-            def noop():
+            def noop() -> None:
                 pass
 
             return noop
 
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
-        def unsubscribe():
+        def unsubscribe() -> None:
             if self.l is None:
                 return
             self.l.unsubscribe(lcm_subscription)

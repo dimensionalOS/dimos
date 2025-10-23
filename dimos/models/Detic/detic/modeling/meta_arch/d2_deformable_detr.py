@@ -21,7 +21,7 @@ __all__ = ["DeformableDetr"]
 class CustomSetCriterion(SetCriterion):
     def __init__(
         self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25, use_fed_loss=False
-    ):
+    ) -> None:
         super().__init__(num_classes, matcher, weight_dict, losses, focal_alpha)
         self.use_fed_loss = use_fed_loss
         if self.use_fed_loss:
@@ -85,7 +85,7 @@ class CustomSetCriterion(SetCriterion):
 class MaskedBackbone(nn.Module):
     """This is a thin wrapper around D2's backbone to provide padding masking"""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.backbone = build_backbone(cfg)
         backbone_shape = self.backbone.output_shape()
@@ -110,7 +110,7 @@ class DeformableDetr(nn.Module):
     Implement Deformable Detr
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.with_image_labels = cfg.WITH_IMAGE_LABELS
         self.weak_weight = cfg.MODEL.DETR.WEAK_WEIGHT

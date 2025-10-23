@@ -36,7 +36,7 @@ class Embedding(Timestamped):
 
     vector: torch.Tensor | np.ndarray
 
-    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float | None = None):
+    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float | None = None) -> None:
         self.vector = vector
         if timestamp:
             self.timestamp = timestamp

@@ -32,7 +32,7 @@ class RosNavigation(SkillContainer, Resource):
     _robot: "UnitreeG1"
     _started: bool
 
-    def __init__(self, robot: "UnitreeG1"):
+    def __init__(self, robot: "UnitreeG1") -> None:
         self._robot = robot
         self._similarity_threshold = 0.23
         self._started = False

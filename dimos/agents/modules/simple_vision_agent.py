@@ -48,7 +48,7 @@ class SimpleVisionAgentModule(Module):
         system_prompt: str | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
-    ):
+    ) -> None:
         """Initialize the vision agent.
 
         Args:
@@ -71,7 +71,7 @@ class SimpleVisionAgentModule(Module):
         self._lock = threading.Lock()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Initialize and start the agent."""
         super().start()
 
@@ -92,21 +92,21 @@ class SimpleVisionAgentModule(Module):
         logger.info("Simple vision agent started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         logger.info("Stopping simple vision agent")
         if self.gateway:
             self.gateway.close()
 
         super().stop()
 
-    def _handle_image(self, image: Image):
+    def _handle_image(self, image: Image) -> None:
         """Handle incoming image."""
         logger.info(
             f"Received new image: {image.data.shape if hasattr(image, 'data') else 'unknown shape'}"
         )
         self._latest_image = image
 
-    def _handle_query(self, query: str):
+    def _handle_query(self, query: str) -> None:
         """Handle text query."""
         with self._lock:
             if self._processing:
@@ -119,11 +119,11 @@ class SimpleVisionAgentModule(Module):
         thread.daemon = True
         thread.start()
 
-    def _run_async_query(self, query: str):
+    def _run_async_query(self, query: str) -> None:
         """Run async query in new event loop."""
         asyncio.run(self._process_query(query))
 
-    async def _process_query(self, query: str):
+    async def _process_query(self, query: str) -> None:
         """Process the query."""
         try:
             logger.info(f"Processing query: {query}")

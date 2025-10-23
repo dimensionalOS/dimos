@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     ids=["moondream", "qwen"],
 )
 @pytest.mark.gpu
-def test_vlm(model_class, model_name):
+def test_vlm(model_class, model_name) -> None:
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name}")

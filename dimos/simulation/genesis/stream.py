@@ -35,7 +35,7 @@ class GenesisStream(StreamBase):
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
         usd_path: str | Path | None = None,
-    ):
+    ) -> None:
         """Initialize the Genesis stream."""
         super().__init__(
             simulator=simulator,
@@ -61,12 +61,12 @@ class GenesisStream(StreamBase):
         # Build scene after camera is set up
         simulator.build()
 
-    def _load_stage(self, usd_path: str | Path):
+    def _load_stage(self, usd_path: str | Path) -> None:
         """Load stage from file."""
         # Genesis handles stage loading through simulator
         pass
 
-    def _setup_camera(self):
+    def _setup_camera(self) -> None:
         """Setup and validate camera."""
         self.camera = self.scene.add_camera(
             res=(self.width, self.height),
@@ -76,12 +76,12 @@ class GenesisStream(StreamBase):
             GUI=False,
         )
 
-    def _setup_annotator(self):
+    def _setup_annotator(self) -> None:
         """Setup the specified annotator."""
         # Genesis handles different render types through camera.render()
         pass
 
-    def stream(self):
+    def stream(self) -> None:
         """Start the streaming loop."""
         try:
             print("[Stream] Starting Genesis camera stream...")
@@ -130,7 +130,7 @@ class GenesisStream(StreamBase):
         finally:
             self.cleanup()
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources."""
         print("[Cleanup] Stopping FFmpeg process...")
         if hasattr(self, "proc"):

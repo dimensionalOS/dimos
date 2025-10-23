@@ -39,7 +39,7 @@ logger = logging.getLogger("detectron2")
 
 
 class TrainingModule(LightningModule):
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         if not logger.isEnabledFor(logging.INFO):  # setup_logger is not called for d2
             setup_logger()
@@ -57,7 +57,7 @@ class TrainingModule(LightningModule):
         self.start_iter = checkpointed_state["iteration"]
         self.storage.iter = self.start_iter
 
-    def setup(self, stage: str):
+    def setup(self, stage: str) -> None:
         if self.cfg.MODEL.WEIGHTS:
             self.checkpointer = DetectionCheckpointer(
                 # Assume you want to save checkpoints together with logs/statistics
@@ -109,7 +109,7 @@ class TrainingModule(LightningModule):
         self.data_start = time.perf_counter()
         return training_step_outpus
 
-    def training_epoch_end(self, training_step_outputs):
+    def training_epoch_end(self, training_step_outputs) -> None:
         self.iteration_timer.after_train()
         if comm.is_main_process():
             self.checkpointer.save("model_final")
@@ -129,14 +129,14 @@ class TrainingModule(LightningModule):
             results = next(iter(results.values()))
         return results
 
-    def _reset_dataset_evaluators(self):
+    def _reset_dataset_evaluators(self) -> None:
         self._evaluators = []
         for dataset_name in self.cfg.DATASETS.TEST:
             evaluator = build_evaluator(self.cfg, dataset_name)
             evaluator.reset()
             self._evaluators.append(evaluator)
 
-    def on_validation_epoch_start(self, _outputs):
+    def on_validation_epoch_start(self, _outputs) -> None:
         self._reset_dataset_evaluators()
 
     def validation_epoch_end(self, _outputs):
@@ -166,7 +166,7 @@ class TrainingModule(LightningModule):
 
 
 class DataModule(LightningDataModule):
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.cfg = DefaultTrainer.auto_scale_workers(cfg, comm.get_world_size())
 
@@ -180,12 +180,12 @@ class DataModule(LightningDataModule):
         return dataloaders
 
 
-def main(args):
+def main(args) -> None:
     cfg = setup(args)
     train(cfg, args)
 
 
-def train(cfg, args):
+def train(cfg, args) -> None:
     trainer_params = {
         # training loop is bounded by max steps, use a large max_epochs to make
         # sure max_steps is met first

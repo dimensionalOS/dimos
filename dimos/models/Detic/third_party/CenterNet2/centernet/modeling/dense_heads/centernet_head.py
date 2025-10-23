@@ -12,7 +12,7 @@ __all__ = ["CenterNetHead"]
 
 
 class Scale(nn.Module):
-    def __init__(self, init_value=1.0):
+    def __init__(self, init_value=1.0) -> None:
         super().__init__()
         self.scale = nn.Parameter(torch.FloatTensor([init_value]))
 
@@ -37,7 +37,7 @@ class CenterNetHead(nn.Module):
         num_share_convs=0,
         use_deformable=False,
         prior_prob=0.01,
-    ):
+    ) -> None:
         super().__init__()
         self.num_classes = num_classes
         self.with_agn_hm = with_agn_hm

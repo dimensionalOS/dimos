@@ -83,7 +83,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         global_costmap_topic: str = "map",
         costmap_topic: str = "/local_costmap/costmap",
         debug: bool = False,
-    ):
+    ) -> None:
         """
         Initialize base ROS control interface
         Args:
@@ -283,25 +283,25 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         else:
             return None
 
-    def _global_costmap_callback(self, msg):
+    def _global_costmap_callback(self, msg) -> None:
         """Callback for costmap data"""
         self._global_costmap_data = msg
 
-    def _imu_callback(self, msg):
+    def _imu_callback(self, msg) -> None:
         """Callback for IMU data"""
         self._imu_state = msg
         # Log IMU state (very verbose)
         # logger.debug(f"IMU state updated: {self._imu_state}")
 
-    def _odom_callback(self, msg):
+    def _odom_callback(self, msg) -> None:
         """Callback for odometry data"""
         self._odom_data = msg
 
-    def _costmap_callback(self, msg):
+    def _costmap_callback(self, msg) -> None:
         """Callback for costmap data"""
         self._costmap_data = msg
 
-    def _state_callback(self, msg):
+    def _state_callback(self, msg) -> None:
         """Callback for state messages to track mode and progress"""
 
         # Call the abstract method to update RobotMode enum based on the received state
@@ -315,7 +315,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         """Get the full robot state message"""
         return self._robot_state
 
-    def _ros_spin(self):
+    def _ros_spin(self) -> None:
         """Background thread for spinning the multi-threaded executor."""
         self._executor.add_node(self._node)
         try:
@@ -389,7 +389,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return None
         return self._costmap_data
 
-    def _image_callback(self, msg):
+    def _image_callback(self, msg) -> None:
         """Convert ROS image to numpy array and push to data stream"""
         if self._video_provider and self._bridge:
             try:
@@ -424,7 +424,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         return self.video_provider.get_stream(fps=fps)
 
-    def _send_action_client_goal(self, client, goal_msg, description=None, time_allowance=20.0):
+    def _send_action_client_goal(
+        self, client, goal_msg, description=None, time_allowance=20.0
+    ) -> bool:
         """
         Generic function to send any action client goal and wait for completion.
 
@@ -652,7 +654,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             logger.error(f"Failed to stop movement: {e}")
             return False
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup the executor, ROS node, and stop robot."""
         self.stop()
 
@@ -721,7 +723,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         """
         return self._mode
 
-    def print_robot_mode(self):
+    def print_robot_mode(self) -> None:
         """Print the current robot mode to the console"""
         mode = self.get_robot_mode()
         print(f"Current RobotMode: {mode.name}")
@@ -836,7 +838,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         return position_provider.get_position_stream()
 
-    def _goal_response_callback(self, future):
+    def _goal_response_callback(self, future) -> None:
         """Handle the goal response."""
         goal_handle = future.result()
         if not goal_handle.accepted:
@@ -850,7 +852,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._goal_result_callback)
 
-    def _goal_result_callback(self, future):
+    def _goal_result_callback(self, future) -> None:
         """Handle the goal result."""
         try:
             result = future.result().result

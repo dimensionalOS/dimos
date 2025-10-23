@@ -59,7 +59,7 @@ class GridPoint:
 class FrontierCache:
     """Cache for grid points to avoid duplicate point creation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.points = {}
 
     def get_point(self, x: int, y: int) -> GridPoint:
@@ -69,7 +69,7 @@ class FrontierCache:
             self.points[key] = GridPoint(x, y)
         return self.points[key]
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear the point cache."""
         self.points.clear()
 
@@ -110,7 +110,7 @@ class WavefrontFrontierExplorer(Module):
         num_no_gain_attempts: int = 2,
         goal_timeout: float = 15.0,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize the frontier explorer.
 
@@ -151,7 +151,7 @@ class WavefrontFrontierExplorer(Module):
         logger.info("WavefrontFrontierExplorer module initialized")
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         unsub = self.global_costmap.subscribe(self._on_costmap)
@@ -177,26 +177,26 @@ class WavefrontFrontierExplorer(Module):
         self.stop_exploration()
         super().stop()
 
-    def _on_costmap(self, msg: OccupancyGrid):
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
-    def _on_odometry(self, msg: PoseStamped):
+    def _on_odometry(self, msg: PoseStamped) -> None:
         """Handle incoming odometry messages."""
         self.latest_odometry = msg
 
-    def _on_goal_reached(self, msg: Bool):
+    def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached messages."""
         if msg.data:
             self.goal_reached_event.set()
 
-    def _on_explore_cmd(self, msg: Bool):
+    def _on_explore_cmd(self, msg: Bool) -> None:
         """Handle exploration command messages."""
         if msg.data:
             logger.info("Received exploration start command via LCM")
             self.explore()
 
-    def _on_stop_explore_cmd(self, msg: Bool):
+    def _on_stop_explore_cmd(self, msg: Bool) -> None:
         """Handle stop exploration command messages."""
         if msg.data:
             logger.info("Received exploration stop command via LCM")
@@ -416,7 +416,9 @@ class WavefrontFrontierExplorer(Module):
 
         return ranked_frontiers
 
-    def _update_exploration_direction(self, robot_pose: Vector3, goal_pose: Vector3 | None = None):
+    def _update_exploration_direction(
+        self, robot_pose: Vector3, goal_pose: Vector3 | None = None
+    ) -> None:
         """Update the current exploration direction based on robot movement or selected goal."""
         if goal_pose is not None:
             # Calculate direction from robot to goal
@@ -670,11 +672,11 @@ class WavefrontFrontierExplorer(Module):
         self.last_costmap = costmap
         return None
 
-    def mark_explored_goal(self, goal: Vector3):
+    def mark_explored_goal(self, goal: Vector3) -> None:
         """Mark a goal as explored."""
         self.explored_goals.append(goal)
 
-    def reset_exploration_session(self):
+    def reset_exploration_session(self) -> None:
         """
         Reset all exploration state variables for a new exploration session.
 
@@ -741,7 +743,7 @@ class WavefrontFrontierExplorer(Module):
     def is_exploration_active(self) -> bool:
         return self.exploration_active
 
-    def _exploration_loop(self):
+    def _exploration_loop(self) -> None:
         """Main exploration loop running in separate thread."""
         # Track number of goals published
         goals_published = 0

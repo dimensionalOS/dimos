@@ -75,7 +75,7 @@ class SkillConfig:
 
         return self.f(*args, **kwargs, call_id=call_id)
 
-    def __str__(self):
+    def __str__(self) -> str:
         parts = [f"name={self.name}"]
 
         # Only show reducer if stream is not none (streaming is happening)
@@ -136,7 +136,7 @@ class SkillMsg(Timestamped, Generic[M]):
     def start(self) -> bool:
         return self.type == MsgType.start
 
-    def __str__(self):
+    def __str__(self) -> str:
         time_ago = time.time() - self.ts
 
         if self.type == MsgType.start:

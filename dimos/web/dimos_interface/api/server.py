@@ -64,7 +64,7 @@ class FastAPIServer(EdgeIO):
         text_streams=None,
         audio_subject=None,
         **streams,
-    ):
+    ) -> None:
         print("Starting FastAPIServer initialization...")  # Debug print
         super().__init__(dev_name, edge_type)
         self.app = FastAPI()
@@ -236,7 +236,7 @@ class FastAPIServer(EdgeIO):
             print(f"ffmpeg decoding failed: {exc}")
             return None, None
 
-    def setup_routes(self):
+    def setup_routes(self) -> None:
         """Set up FastAPI routes."""
 
         @self.app.get("/streams")
@@ -351,7 +351,7 @@ class FastAPIServer(EdgeIO):
         for key in self.streams:
             self.app.get(f"/video_feed/{key}")(self.create_video_feed_route(key))
 
-    def run(self):
+    def run(self) -> None:
         """Run the FastAPI server."""
         uvicorn.run(
             self.app, host=self.host, port=self.port

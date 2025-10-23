@@ -26,7 +26,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         mask_weight: float = 1.0,
         one_class_per_proposal: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(**kwargs)
         self.mult_proposal_score = mult_proposal_score
         self.with_image_labels = with_image_labels

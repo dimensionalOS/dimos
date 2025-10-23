@@ -51,7 +51,7 @@ class FollowHuman(AbstractRobotSkill):
         None, description="Optional point to start tracking (x,y pixel coordinates)"
     )
 
-    def __init__(self, robot=None, **data):
+    def __init__(self, robot=None, **data) -> None:
         super().__init__(robot=robot, **data)
         self._stop_event = threading.Event()
         self._visual_servoing = None
@@ -129,7 +129,7 @@ class FollowHuman(AbstractRobotSkill):
                 self._visual_servoing.stop_tracking()
                 self._visual_servoing = None
 
-    def stop(self):
+    def stop(self) -> bool:
         """
         Stop the human following process.
 

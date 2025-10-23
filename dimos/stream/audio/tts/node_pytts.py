@@ -30,7 +30,7 @@ class PyTTSNode(AbstractTextTransform):
     text observables, allowing it to be inserted into a text processing pipeline.
     """
 
-    def __init__(self, rate: int = 200, volume: float = 1.0):
+    def __init__(self, rate: int = 200, volume: float = 1.0) -> None:
         """
         Initialize PyTTSNode.
 

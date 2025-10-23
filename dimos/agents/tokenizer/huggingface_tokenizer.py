@@ -19,7 +19,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 class HuggingFaceTokenizer(AbstractTokenizer):
-    def __init__(self, model_name: str = "Qwen/Qwen2.5-0.5B", **kwargs):
+    def __init__(self, model_name: str = "Qwen/Qwen2.5-0.5B", **kwargs) -> None:
         super().__init__(**kwargs)
 
         # Initilize the tokenizer for the huggingface models

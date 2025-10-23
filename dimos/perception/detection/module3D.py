@@ -103,7 +103,7 @@ class Detection3DModule(Detection2DModule):
         return self.process_frame(detections, pc, transform)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         def detection2d_to_3d(args):
@@ -124,7 +124,7 @@ class Detection3DModule(Detection2DModule):
     def stop(self) -> None:
         super().stop()
 
-    def _publish_detections(self, detections: ImageDetections3DPC):
+    def _publish_detections(self, detections: ImageDetections3DPC) -> None:
         if not detections:
             return
 

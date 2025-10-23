@@ -86,7 +86,7 @@ warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 class ReplayRTC(Resource):
     """Replay WebRTC connection for testing with recorded data."""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         get_data("unitree_office_walk")  # Preload data for testing
 
     def start(self) -> None:
@@ -95,10 +95,10 @@ class ReplayRTC(Resource):
     def stop(self) -> None:
         pass
 
-    def standup(self):
+    def standup(self) -> None:
         print("standup suppressed")
 
-    def liedown(self):
+    def liedown(self) -> None:
         print("liedown suppressed")
 
     @functools.cache
@@ -121,7 +121,7 @@ class ReplayRTC(Resource):
         )
         return video_store.stream()
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -154,7 +154,7 @@ class ConnectionModule(Module):
         global_config: GlobalConfig | None = None,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         cfg = global_config or GlobalConfig()
         self.ip = ip if ip is not None else cfg.robot_ip
         self.connection_type = connection_type or cfg.unitree_connection_type
@@ -227,7 +227,7 @@ class ConnectionModule(Module):
             self.connection.stop()
         super().stop()
 
-    def _on_video(self, msg: Image):
+    def _on_video(self, msg: Image) -> None:
         """Handle incoming video frames and publish synchronized camera data."""
         # Apply rectification if enabled
         if self.rectify_image:
@@ -243,10 +243,10 @@ class ConnectionModule(Module):
         self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
 
-    def _publish_gps_location(self, msg: LatLon):
+    def _publish_gps_location(self, msg: LatLon) -> None:
         self.gps_location.publish(msg)
 
-    def _publish_tf(self, msg):
+    def _publish_tf(self, msg) -> None:
         self._odom = msg
         self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
@@ -259,12 +259,12 @@ class ConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
-    def _publish_camera_info(self, timestamp: float):
+    def _publish_camera_info(self, timestamp: float) -> None:
         header = Header(timestamp, "camera_link")
         self.lcm_camera_info.header = header
         self.camera_info.publish(self.lcm_camera_info)
 
-    def _publish_camera_pose(self, timestamp: float):
+    def _publish_camera_pose(self, timestamp: float) -> None:
         """Publish camera pose from TF lookup."""
         try:
             # Look up transform from world to camera_link
@@ -299,7 +299,7 @@ class ConnectionModule(Module):
         return self._odom
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         """Send movement command to robot."""
         self.connection.move(twist, duration)
 
@@ -341,7 +341,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         websocket_port: int = 7779,
         skill_library: SkillLibrary | None = None,
         connection_type: str | None = "webrtc",
-    ):
+    ) -> None:
         """Initialize the robot system.
 
         Args:
@@ -383,7 +383,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
         self._setup_directories()
 
-    def _setup_directories(self):
+    def _setup_directories(self) -> None:
         """Setup directories for spatial memory storage."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
@@ -402,7 +402,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
 
-    def start(self):
+    def start(self) -> None:
         self.lcm.start()
         self._dimos.start()
 
@@ -424,7 +424,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self._dimos.stop()
         self.lcm.stop()
 
-    def _deploy_connection(self):
+    def _deploy_connection(self) -> None:
         """Deploy and configure the connection module."""
         self.connection = self._dimos.deploy(
             ConnectionModule, self.ip, connection_type=self.connection_type
@@ -440,7 +440,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
 
-    def _deploy_mapping(self):
+    def _deploy_mapping(self) -> None:
         """Deploy and configure the mapping module."""
         min_height = 0.3 if self.connection_type == "mujoco" else 0.15
         self.mapper = self._dimos.deploy(
@@ -453,7 +453,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
         self.mapper.lidar.connect(self.connection.lidar)
 
-    def _deploy_navigation(self):
+    def _deploy_navigation(self) -> None:
         """Deploy and configure navigation modules."""
         self.global_planner = self._dimos.deploy(AstarPlanner)
         self.local_planner = self._dimos.deploy(HolonomicLocalPlanner)
@@ -498,7 +498,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.frontier_explorer.global_costmap.connect(self.mapper.global_costmap)
         self.frontier_explorer.odom.connect(self.connection.odom)
 
-    def _deploy_visualization(self):
+    def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
         self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
         self.websocket_vis.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
@@ -512,7 +512,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
-    def _deploy_foxglove_bridge(self):
+    def _deploy_foxglove_bridge(self) -> None:
         self.foxglove_bridge = FoxgloveBridge(
             shm_channels=[
                 "/go2/color_image#sensor_msgs.Image",
@@ -521,7 +521,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         )
         self.foxglove_bridge.start()
 
-    def _deploy_perception(self):
+    def _deploy_perception(self) -> None:
         """Deploy and configure perception modules."""
         # Deploy spatial memory
         self.spatial_memory_module = self._dimos.deploy(
@@ -565,7 +565,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
         logger.info("Object tracker and bbox navigator modules deployed")
 
-    def _deploy_camera(self):
+    def _deploy_camera(self) -> None:
         """Deploy and configure the camera module."""
         # Connect object tracker inputs
         if self.object_tracker:
@@ -579,7 +579,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
             self.bbox_navigator.goal_request.connect(self.navigator.goal_request)
             logger.info("BBox navigator connected")
 
-    def _start_modules(self):
+    def _start_modules(self) -> None:
         """Start all deployed modules in the correct order."""
         self._dimos.start_all_modules()
 
@@ -593,7 +593,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
                 self.skill_library.init()
                 self.skill_library.initialize_skills()
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         """Send movement command to robot."""
         self.connection.move(twist, duration)
 
@@ -605,7 +605,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         """
         return self.frontier_explorer.explore()
 
-    def navigate_to(self, pose: PoseStamped, blocking: bool = True):
+    def navigate_to(self, pose: PoseStamped, blocking: bool = True) -> bool:
         """Navigate to a target pose.
 
         Args:
@@ -679,7 +679,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         return self.connection.get_odom()
 
 
-def main():
+def main() -> None:
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
     connection_type = os.getenv("CONNECTION_TYPE", "webrtc")

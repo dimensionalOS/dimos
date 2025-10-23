@@ -25,7 +25,7 @@ class ActorRegistry:
     SHM_SIZE = 65536  # 64KB should be enough for most deployments
 
     @staticmethod
-    def update(actor_name: str, worker_id: str):
+    def update(actor_name: str, worker_id: str) -> None:
         """Update registry with new actor deployment."""
         try:
             shm = shared_memory.SharedMemory(name=ActorRegistry.SHM_NAME)
@@ -56,7 +56,7 @@ class ActorRegistry:
             return {}
 
     @staticmethod
-    def clear():
+    def clear() -> None:
         """Clear the registry and free shared memory."""
         try:
             shm = shared_memory.SharedMemory(name=ActorRegistry.SHM_NAME)

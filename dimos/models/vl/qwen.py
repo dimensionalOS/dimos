@@ -13,7 +13,7 @@ class QwenVlModel(VlModel):
     _model_name: str
     _api_key: str | None
 
-    def __init__(self, api_key: str | None = None, model_name: str = "qwen2.5-vl-72b-instruct"):
+    def __init__(self, api_key: str | None = None, model_name: str = "qwen2.5-vl-72b-instruct") -> None:
         self._model_name = model_name
         self._api_key = api_key
 

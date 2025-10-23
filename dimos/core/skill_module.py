@@ -25,8 +25,8 @@ class SkillModule(Module):
         callable.set_rpc(self.rpc)
         callable(RPCClient(self, self.__class__))
 
-    def __getstate__(self):
+    def __getstate__(self) -> None:
         pass
 
-    def __setstate__(self, _state):
+    def __setstate__(self, _state) -> None:
         pass

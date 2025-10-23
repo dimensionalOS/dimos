@@ -65,7 +65,7 @@ class FakeRTC(UnitreeWebRTCConnection):
     def __init__(
         self,
         **kwargs,
-    ):
+    ) -> None:
         get_data(self.dir_name)
         self.replay_config = {
             "loop": kwargs.get("loop"),
@@ -73,16 +73,16 @@ class FakeRTC(UnitreeWebRTCConnection):
             "duration": kwargs.get("duration"),
         }
 
-    def connect(self):
+    def connect(self) -> None:
         pass
 
-    def start(self):
+    def start(self) -> None:
         pass
 
-    def standup(self):
+    def standup(self) -> None:
         print("standup suppressed")
 
-    def liedown(self):
+    def liedown(self) -> None:
         print("liedown suppressed")
 
     @functools.cache
@@ -105,7 +105,7 @@ class FakeRTC(UnitreeWebRTCConnection):
 
         return video_store.stream(**self.replay_config)
 
-    def move(self, vector: Twist, duration: float = 0.0):
+    def move(self, vector: Twist, duration: float = 0.0) -> None:
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -136,7 +136,7 @@ class ConnectionModule(Module):
     # parallel calls
     video_running: bool = False
 
-    def __init__(self, connection_type: str = "webrtc", *args, **kwargs):
+    def __init__(self, connection_type: str = "webrtc", *args, **kwargs) -> None:
         self.connection_config = kwargs
         self.connection_type = connection_type
         Module.__init__(self, *args, **kwargs)
@@ -153,7 +153,7 @@ class ConnectionModule(Module):
         yield from iter(_queue.get, None)
 
     @rpc
-    def record(self, recording_name: str):
+    def record(self, recording_name: str) -> None:
         lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")
         lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)
 
@@ -247,7 +247,7 @@ class ConnectionModule(Module):
             sensor,
         ]
 
-    def _publish_tf(self, msg):
+    def _publish_tf(self, msg) -> None:
         self.odom.publish(msg)
         self.tf.publish(*self._odom_to_tf(msg))
 

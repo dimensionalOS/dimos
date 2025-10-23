@@ -33,11 +33,11 @@ class QuerySender(Module):
 
     message_out: Out[AgentMessage] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @rpc
-    def send_query(self, query: str):
+    def send_query(self, query: str) -> None:
         """Send a query."""
         print(f"Sending query: {query}")
         msg = AgentMessage()
@@ -51,16 +51,16 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start collecting."""
         self.response_in.subscribe(self._on_response)
 
-    def _on_response(self, msg: AgentResponse):
+    def _on_response(self, msg: AgentResponse) -> None:
         print(f"Received response: {msg.content if msg.content else msg}")
         self.responses.append(msg)
 
@@ -73,7 +73,7 @@ class ResponseCollector(Module):
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_module_connections():
+async def test_agent_module_connections() -> None:
     """Test agent module with proper connections."""
     load_dotenv()
     pubsub.lcm.autoconf()

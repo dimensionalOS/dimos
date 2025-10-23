@@ -59,12 +59,12 @@ def create_data_benchmark(cfg, args):
         return instantiate(kwargs)
 
 
-def RAM_msg():
+def RAM_msg() -> str:
     vram = psutil.virtual_memory()
     return f"RAM Usage: {(vram.total - vram.available) / 1024**3:.2f}/{vram.total / 1024**3:.2f} GB"
 
 
-def benchmark_data(args):
+def benchmark_data(args) -> None:
     cfg = setup(args)
     logger.info("After spawning " + RAM_msg())
 
@@ -76,7 +76,7 @@ def benchmark_data(args):
         benchmark.benchmark_distributed(250, 1)
 
 
-def benchmark_data_advanced(args):
+def benchmark_data_advanced(args) -> None:
     # benchmark dataloader with more details to help analyze performance bottleneck
     cfg = setup(args)
     benchmark = create_data_benchmark(cfg, args)
@@ -92,7 +92,7 @@ def benchmark_data_advanced(args):
         benchmark.benchmark_distributed(100)
 
 
-def benchmark_train(args):
+def benchmark_train(args) -> None:
     cfg = setup(args)
     model = build_model(cfg)
     logger.info(f"Model:\n{model}")
@@ -129,7 +129,7 @@ def benchmark_train(args):
 
 
 @torch.no_grad()
-def benchmark_eval(args):
+def benchmark_eval(args) -> None:
     cfg = setup(args)
     if args.config_file.endswith(".yaml"):
         model = build_model(cfg)

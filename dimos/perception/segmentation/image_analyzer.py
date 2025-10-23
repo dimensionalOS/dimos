@@ -34,7 +34,7 @@ RICH_PROMPT = (
 
 
 class ImageAnalyzer:
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initializes the ImageAnalyzer with OpenAI API credentials.
         """
@@ -99,7 +99,7 @@ class ImageAnalyzer:
         return next(choice.message.content for choice in response.choices)
 
 
-def main():
+def main() -> None:
     # Define the directory containing cropped images
     cropped_images_dir = "cropped_images"
     if not os.path.exists(cropped_images_dir):

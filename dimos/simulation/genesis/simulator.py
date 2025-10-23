@@ -26,7 +26,7 @@ class GenesisSimulator(SimulatorBase):
         headless: bool = True,
         open_usd: str | None = None,  # Keep for compatibility
         entities: list[dict[str, str | dict]] | None = None,
-    ):
+    ) -> None:
         """Initialize the Genesis simulation.
 
         Args:
@@ -133,7 +133,7 @@ class GenesisSimulator(SimulatorBase):
             except Exception as e:
                 print(f"[Warning] Failed to load entity {entity}: {e!s}")
 
-    def add_entity(self, entity_type: str, path: str = "", **params):
+    def add_entity(self, entity_type: str, path: str = "", **params) -> None:
         """Add a single entity to the scene.
 
         Args:
@@ -147,13 +147,13 @@ class GenesisSimulator(SimulatorBase):
         """Get the current stage/scene."""
         return self.scene
 
-    def build(self):
+    def build(self) -> None:
         """Build the scene if not already built."""
         if not self.is_built:
             self.scene.build()
             self.is_built = True
 
-    def close(self):
+    def close(self) -> None:
         """Close the simulation."""
         # Genesis handles cleanup automatically
         pass

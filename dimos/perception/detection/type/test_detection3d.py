@@ -15,7 +15,7 @@
 import time
 
 
-def test_guess_projection(get_moment_2d, publish_moment):
+def test_guess_projection(get_moment_2d, publish_moment) -> None:
     moment = get_moment_2d()
     for key, value in moment.items():
         print(key, "====================================")

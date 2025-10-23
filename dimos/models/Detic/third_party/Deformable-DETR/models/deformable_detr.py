@@ -57,7 +57,7 @@ class DeformableDETR(nn.Module):
         aux_loss=True,
         with_box_refine=False,
         two_stage=False,
-    ):
+    ) -> None:
         """Initializes the model.
         Parameters:
             backbone: torch module of the backbone to be used. See backbone.py
@@ -237,7 +237,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25):
+    def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25) -> None:
         """Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -484,7 +484,7 @@ class PostProcess(nn.Module):
 class MLP(nn.Module):
     """Very simple multi-layer perceptron (also called FFN)"""
 
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers):
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers) -> None:
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)

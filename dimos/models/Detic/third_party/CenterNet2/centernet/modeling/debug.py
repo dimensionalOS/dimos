@@ -83,7 +83,7 @@ def debug_train(
     shapes_per_level,
     locations,
     strides,
-):
+) -> None:
     """
     images: N x 3 x H x W
     flattened_hms: LNHiWi x C
@@ -160,7 +160,7 @@ def debug_test(
     vis_thresh=0.3,
     debug_show_name=False,
     mult_agn=False,
-):
+) -> None:
     """
     images: N x 3 x H x W
     class_target: LNHiWi x C
@@ -257,7 +257,7 @@ cnt = 0
 
 def debug_second_stage(
     images, instances, proposals=None, vis_thresh=0.3, save_debug=False, debug_show_name=False
-):
+) -> None:
     images = _imagelist_to_tensor(images)
     if debug_show_name:
         from detectron2.data.datasets.lvis_v1_categories import LVIS_CATEGORIES

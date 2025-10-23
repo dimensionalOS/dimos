@@ -149,7 +149,7 @@ async def agent_context(request):
 # @pytest.mark.timeout(40)
 @pytest.mark.tool
 @pytest.mark.asyncio
-async def test_agent_init(agent_context):
+async def test_agent_init(agent_context) -> None:
     """Test agent initialization and basic functionality across different configurations"""
     agent, testcontainer = agent_context
 

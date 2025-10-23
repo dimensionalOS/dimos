@@ -22,7 +22,7 @@ from dimos.utils import data
 
 
 @pytest.mark.heavy
-def test_pull_file():
+def test_pull_file() -> None:
     repo_root = data._get_repo_root()
     test_file_name = "cafe.jpg"
     test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
@@ -78,7 +78,7 @@ def test_pull_file():
 
 
 @pytest.mark.heavy
-def test_pull_dir():
+def test_pull_dir() -> None:
     repo_root = data._get_repo_root()
     test_dir_name = "ab_lidar_frames"
     test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")

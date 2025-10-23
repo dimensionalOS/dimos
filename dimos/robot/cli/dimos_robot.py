@@ -82,7 +82,7 @@ def create_dynamic_callback():
             )
         params.append(param)
 
-    def callback(**kwargs):
+    def callback(**kwargs) -> None:
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         ctx.obj = GlobalConfig().model_copy(update=overrides)
@@ -102,7 +102,7 @@ def run(
     extra_modules: list[str] = typer.Option(
         [], "--extra-module", help="Extra modules to add to the blueprint"
     ),
-):
+) -> None:
     """Run the robot with the specified configuration."""
     config: GlobalConfig = ctx.obj
     pubsub.lcm.autoconf()
@@ -117,7 +117,7 @@ def run(
 
 
 @main.command()
-def show_config(ctx: typer.Context):
+def show_config(ctx: typer.Context) -> None:
     """Show current configuration status."""
     config: GlobalConfig = ctx.obj
 

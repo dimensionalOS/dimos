@@ -40,7 +40,7 @@ class EmbeddingIDSystem(IDSystem):
         top_k: int = 30,
         max_embeddings_per_track: int = 500,
         min_embeddings_for_matching: int = 10,
-    ):
+    ) -> None:
         """Initialize track associator.
 
         Args:

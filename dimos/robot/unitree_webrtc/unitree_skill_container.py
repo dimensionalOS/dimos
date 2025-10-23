@@ -42,7 +42,7 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
 class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    def __init__(self, robot: UnitreeGo2 | None = None):
+    def __init__(self, robot: UnitreeGo2 | None = None) -> None:
         """Initialize the skill container with robot reference.
 
         Args:
@@ -63,7 +63,7 @@ class UnitreeSkillContainer(Module):
         # TODO: Do I need to clean up dynamic skills?
         super().stop()
 
-    def _generate_unitree_skills(self):
+    def _generate_unitree_skills(self) -> None:
         """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""
         logger.info(f"Generating {len(UNITREE_WEBRTC_CONTROLS)} dynamic Unitree skills")
 
@@ -90,7 +90,7 @@ class UnitreeSkillContainer(Module):
 
     def _create_dynamic_skill(
         self, skill_name: str, api_id: int, description: str, original_name: str
-    ):
+    ) -> None:
         """Create a dynamic skill method with the @skill decorator.
 
         Args:
@@ -162,7 +162,7 @@ class UnitreeSkillContainer(Module):
             time.sleep(1)
 
     @skill()
-    def speak(self, text: str):
+    def speak(self, text: str) -> str:
         """Speak text out loud through the robot's speakers."""
         return f"This is being said aloud: {text}"
 

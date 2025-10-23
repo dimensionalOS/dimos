@@ -111,7 +111,7 @@ class ManipulationTaskConstraint:
 
     constraints: list[AbstractConstraint] = field(default_factory=list)
 
-    def add_constraint(self, constraint: AbstractConstraint):
+    def add_constraint(self, constraint: AbstractConstraint) -> None:
         """Add a constraint to this set."""
         if constraint not in self.constraints:
             self.constraints.append(constraint)
@@ -138,7 +138,7 @@ class ManipulationTask:
         default_factory=list
     )
 
-    def add_constraint(self, constraint: AbstractConstraint):
+    def add_constraint(self, constraint: AbstractConstraint) -> None:
         """Add a constraint to this manipulation task."""
         # If constraints is a ManipulationTaskConstraint object
         if isinstance(self.constraints, ManipulationTaskConstraint):

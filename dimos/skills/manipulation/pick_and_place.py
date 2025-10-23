@@ -205,7 +205,7 @@ class PickAndPlace(AbstractRobotSkill):
         "qwen2.5-vl-72b-instruct", description="Qwen model to use for visual queries"
     )
 
-    def __init__(self, robot=None, **data):
+    def __init__(self, robot=None, **data) -> None:
         """
         Initialize the PickAndPlace skill.
 

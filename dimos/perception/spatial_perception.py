@@ -81,7 +81,7 @@ class SpatialMemory(Module):
         visual_memory: Optional[
             "VisualMemory"
         ] = None,  # Optional VisualMemory instance for storing images
-    ):
+    ) -> None:
         """
         Initialize the spatial perception system.
 
@@ -186,11 +186,11 @@ class SpatialMemory(Module):
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         # Subscribe to LCM streams
-        def set_video(image_msg: Image):
+        def set_video(image_msg: Image) -> None:
             # Convert Image message to numpy array
             if hasattr(image_msg, "data"):
                 frame = image_msg.data
@@ -199,7 +199,7 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        def set_odom(odom_msg: PoseStamped):
+        def set_odom(odom_msg: PoseStamped) -> None:
             self._latest_odom = odom_msg
 
         unsub = self.color_image.subscribe(set_video)
@@ -213,7 +213,7 @@ class SpatialMemory(Module):
         self._disposables.add(Disposable(unsub))
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         self.stop_continuous_processing()
 
         # Save data before shutdown
@@ -224,7 +224,7 @@ class SpatialMemory(Module):
 
         super().stop()
 
-    def _process_frame(self):
+    def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
         if self._latest_video_frame is None or self._latest_odom is None:
             return

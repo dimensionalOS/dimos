@@ -74,7 +74,7 @@ class UnitreeB1(Robot, Resource):
         enable_joystick: bool = False,
         enable_ros_bridge: bool = True,
         test_mode: bool = False,
-    ):
+    ) -> None:
         """Initialize the B1 robot.
 
         Args:
@@ -102,7 +102,7 @@ class UnitreeB1(Robot, Resource):
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
-    def start(self):
+    def start(self) -> None:
         """Start the B1 robot - initialize DimOS, deploy modules, and start them."""
 
         logger.info("Initializing DimOS...")
@@ -149,7 +149,7 @@ class UnitreeB1(Robot, Resource):
         if self.ros_bridge:
             self.ros_bridge.stop()
 
-    def _deploy_ros_bridge(self):
+    def _deploy_ros_bridge(self) -> None:
         """Deploy and configure ROS bridge (matching G1 implementation)."""
         self.ros_bridge = ROSBridge("b1_ros_bridge")
 
@@ -173,7 +173,7 @@ class UnitreeB1(Robot, Resource):
         logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf (ROS → DIMOS)")
 
     # Robot control methods (standard interface)
-    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> None:
         """Send movement command to robot using timestamped Twist.
 
         Args:
@@ -183,26 +183,26 @@ class UnitreeB1(Robot, Resource):
         if self.connection:
             self.connection.move(twist_stamped, duration)
 
-    def stand(self):
+    def stand(self) -> None:
         """Put robot in stand mode."""
         if self.connection:
             self.connection.stand()
             logger.info("B1 switched to STAND mode")
 
-    def walk(self):
+    def walk(self) -> None:
         """Put robot in walk mode."""
         if self.connection:
             self.connection.walk()
             logger.info("B1 switched to WALK mode")
 
-    def idle(self):
+    def idle(self) -> None:
         """Put robot in idle mode."""
         if self.connection:
             self.connection.idle()
             logger.info("B1 switched to IDLE mode")
 
 
-def main():
+def main() -> None:
     """Main entry point for testing B1 robot."""
     import argparse
 

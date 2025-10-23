@@ -36,7 +36,7 @@ except ImportError:
     ROS_AVAILABLE = False
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test LCM encode/decode preserves pointcloud data."""
     replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     lidar_msg: LidarMessage = replay.load_one("lidar_data_021")
@@ -98,7 +98,7 @@ def test_lcm_encode_decode():
 
 
 @pytest.mark.ros
-def test_ros_conversion():
+def test_ros_conversion() -> None:
     """Test ROS message conversion preserves pointcloud data."""
     if not ROS_AVAILABLE:
         print("ROS packages not available - skipping ROS conversion test")
@@ -232,7 +232,7 @@ def test_ros_conversion():
     print("\n✓ All ROS conversion tests passed!")
 
 
-def test_bounding_box_intersects():
+def test_bounding_box_intersects() -> None:
     """Test bounding_box_intersects method with various scenarios."""
     # Test 1: Overlapping boxes
     pc1 = PointCloud2.from_numpy(np.array([[0, 0, 0], [2, 2, 2]]))

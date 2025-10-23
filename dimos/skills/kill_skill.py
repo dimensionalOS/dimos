@@ -38,7 +38,7 @@ class KillSkill(AbstractSkill):
 
     skill_name: str = Field(..., description="Name of the skill to terminate")
 
-    def __init__(self, skill_library: SkillLibrary | None = None, **data):
+    def __init__(self, skill_library: SkillLibrary | None = None, **data) -> None:
         """
         Initialize the kill skill.
 

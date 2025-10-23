@@ -22,7 +22,7 @@ class MoondreamVlModel(VlModel):
         model_name: str = "vikhyatk/moondream2",
         device: str | None = None,
         dtype: torch.dtype = torch.bfloat16,
-    ):
+    ) -> None:
         self._model_name = model_name
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._dtype = dtype

@@ -18,7 +18,7 @@ import numpy as np
 
 
 class Environment(ABC):
-    def __init__(self):
+    def __init__(self) -> None:
         self.environment_type = None
         self.graph = None
 

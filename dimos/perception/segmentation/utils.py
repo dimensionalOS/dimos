@@ -18,7 +18,7 @@ import torch
 
 
 class SimpleTracker:
-    def __init__(self, history_size=100, min_count=10, count_window=20):
+    def __init__(self, history_size=100, min_count=10, count_window=20) -> None:
         """
         Simple temporal tracker that counts appearances in a fixed window.
         :param history_size: Number of past frames to remember

@@ -14,7 +14,7 @@ class LastLevelP6P7_P5(nn.Module):
     C5 feature.
     """
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels) -> None:
         super().__init__()
         self.num_levels = 2
         self.in_feature = "p5"

@@ -32,7 +32,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
     produce nans.
     """
 
-    def __init__(self, n, eps=1e-5):
+    def __init__(self, n, eps=1e-5) -> None:
         super().__init__()
         self.register_buffer("weight", torch.ones(n))
         self.register_buffer("bias", torch.zeros(n))
@@ -42,7 +42,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
     def _load_from_state_dict(
         self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-    ):
+    ) -> None:
         num_batches_tracked_key = prefix + "num_batches_tracked"
         if num_batches_tracked_key in state_dict:
             del state_dict[num_batches_tracked_key]
@@ -65,7 +65,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
 
 class BackboneBase(nn.Module):
-    def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool):
+    def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool) -> None:
         super().__init__()
         for name, parameter in backbone.named_parameters():
             if (
@@ -100,7 +100,7 @@ class BackboneBase(nn.Module):
 class Backbone(BackboneBase):
     """ResNet backbone with frozen BatchNorm."""
 
-    def __init__(self, name: str, train_backbone: bool, return_interm_layers: bool, dilation: bool):
+    def __init__(self, name: str, train_backbone: bool, return_interm_layers: bool, dilation: bool) -> None:
         norm_layer = FrozenBatchNorm2d
         backbone = getattr(torchvision.models, name)(
             replace_stride_with_dilation=[False, False, dilation],
@@ -114,7 +114,7 @@ class Backbone(BackboneBase):
 
 
 class Joiner(nn.Sequential):
-    def __init__(self, backbone, position_embedding):
+    def __init__(self, backbone, position_embedding) -> None:
         super().__init__(backbone, position_embedding)
         self.strides = backbone.strides
         self.num_channels = backbone.num_channels

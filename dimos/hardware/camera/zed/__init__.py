@@ -32,13 +32,13 @@ if HAS_ZED_SDK:
 else:
     # Provide stub classes when SDK is not available
     class ZEDCamera:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             raise ImportError(
                 "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
             )
 
     class ZEDModule:
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             raise ImportError(
                 "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
             )

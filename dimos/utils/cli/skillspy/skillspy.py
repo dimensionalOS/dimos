@@ -35,14 +35,14 @@ if TYPE_CHECKING:
 class AgentSpy:
     """Spy on agent skill executions via LCM messages."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.agent_interface = SkillCoordinator()
         self.message_callbacks: list[Callable[[dict[str, SkillState]], None]] = []
         self._lock = threading.Lock()
         self._latest_state: dict[str, SkillState] = {}
         self._running = False
 
-    def start(self):
+    def start(self) -> None:
         """Start spying on agent messages."""
         self._running = True
         # Start the agent interface
@@ -51,20 +51,20 @@ class AgentSpy:
         # Subscribe to the agent interface's comms
         self.agent_interface.skill_transport.subscribe(self._handle_message)
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop spying."""
         self._running = False
         # Give threads a moment to finish processing
         time.sleep(0.2)
         self.agent_interface.stop()
 
-    def _handle_message(self, msg: SkillMsg):
+    def _handle_message(self, msg: SkillMsg) -> None:
         """Handle incoming skill messages."""
         if not self._running:
             return
 
         # Small delay to ensure agent_interface has processed the message
-        def delayed_update():
+        def delayed_update() -> None:
             time.sleep(0.1)
             if not self._running:
                 return
@@ -76,7 +76,7 @@ class AgentSpy:
         # Run in separate thread to not block LCM
         threading.Thread(target=delayed_update, daemon=True).start()
 
-    def subscribe(self, callback: Callable[[dict[str, SkillState]], None]):
+    def subscribe(self, callback: Callable[[dict[str, SkillState]], None]) -> None:
         """Subscribe to state updates."""
         self.message_callbacks.append(callback)
 
@@ -140,7 +140,7 @@ class AgentSpyApp(App):
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.spy = AgentSpy()
         self.table: DataTable | None = None
@@ -158,7 +158,7 @@ class AgentSpyApp(App):
         yield self.table
         yield Footer()
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         """Start the spy when app mounts."""
         self.spy.subscribe(self.update_state)
         self.spy.start()
@@ -166,11 +166,11 @@ class AgentSpyApp(App):
         # Set up periodic refresh to update durations
         self.set_interval(1.0, self.refresh_table)
 
-    def on_unmount(self):
+    def on_unmount(self) -> None:
         """Stop the spy when app unmounts."""
         self.spy.stop()
 
-    def update_state(self, state: dict[str, SkillState]):
+    def update_state(self, state: dict[str, SkillState]) -> None:
         """Update state from spy callback. State dict is keyed by call_id."""
         # Update history with current state
         current_time = time.time()
@@ -197,7 +197,7 @@ class AgentSpyApp(App):
         # Schedule UI update
         self.call_from_thread(self.refresh_table)
 
-    def refresh_table(self):
+    def refresh_table(self) -> None:
         """Refresh the table display."""
         if not self.table:
             return
@@ -254,13 +254,13 @@ class AgentSpyApp(App):
                 Text(details, style=theme.FOREGROUND),
             )
 
-    def action_clear(self):
+    def action_clear(self) -> None:
         """Clear the skill history."""
         self.skill_history.clear()
         self.refresh_table()
 
 
-def main():
+def main() -> None:
     """Main entry point for agentspy CLI."""
     import sys
 

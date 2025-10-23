@@ -26,13 +26,13 @@ from dimos.core.module import Module
 class ModuleVisitor(ast.NodeVisitor):
     """AST visitor to find classes and their base classes."""
 
-    def __init__(self, filepath: str):
+    def __init__(self, filepath: str) -> None:
         self.filepath = filepath
         self.classes: list[
             tuple[str, list[str], set[str]]
         ] = []  # (class_name, base_classes, methods)
 
-    def visit_ClassDef(self, node: ast.ClassDef):
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
         """Visit a class definition."""
         # Get base class names
         base_classes = []
@@ -308,7 +308,9 @@ def get_all_module_subclasses():
     get_all_module_subclasses(),
     ids=lambda val: val[0] if isinstance(val, str) else str(val),
 )
-def test_module_has_start_and_stop(class_name, filepath, has_start, has_stop, forbidden_methods):
+def test_module_has_start_and_stop(
+    class_name, filepath, has_start, has_stop, forbidden_methods
+) -> None:
     """Test that Module subclasses implement start and stop methods and don't use forbidden methods."""
     # Get relative path for better error messages
     try:

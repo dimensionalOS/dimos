@@ -53,7 +53,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         orientation_tolerance: float = 0.2,
         control_frequency: float = 10.0,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the GLAP planner with specified parameters."""
         super().__init__(
             goal_tolerance=goal_tolerance,
@@ -73,11 +73,11 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         self.v_prev = np.array([0.0, 0.0, 0.0])
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
     def compute_velocity(self) -> Twist | None:

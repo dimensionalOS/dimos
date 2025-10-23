@@ -53,7 +53,7 @@ def build_custom_optimizer(cfg: CfgNode, model: torch.nn.Module) -> torch.optim.
         )
 
         class FullModelGradientClippingOptimizer(optim):
-            def step(self, closure=None):
+            def step(self, closure=None) -> None:
                 all_params = itertools.chain(*[x["params"] for x in self.param_groups])
                 torch.nn.utils.clip_grad_norm_(all_params, clip_norm_val)
                 super().step(closure=closure)

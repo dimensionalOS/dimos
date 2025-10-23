@@ -54,7 +54,7 @@ class PlanningAgent(OpenAIAgent):
         input_query_stream: Observable | None = None,
         use_terminal: bool = False,
         skills: AbstractSkill | None = None,
-    ):
+    ) -> None:
         """Initialize the planning agent.
 
         Args:
@@ -245,7 +245,7 @@ class PlanningAgent(OpenAIAgent):
         response = self._send_query(messages)
         self._handle_response(response)
 
-    def start_terminal_interface(self):
+    def start_terminal_interface(self) -> None:
         """Start the terminal interface for input/output."""
 
         time.sleep(5)  # buffer time for clean terminal interface printing

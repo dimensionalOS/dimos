@@ -34,7 +34,7 @@ logger = setup_logger("dimos.robot.agilex.piper_arm")
 class PiperArmRobot(Robot):
     """Piper Arm robot with ZED camera and manipulation capabilities."""
 
-    def __init__(self, robot_capabilities: list[RobotCapability] | None = None):
+    def __init__(self, robot_capabilities: list[RobotCapability] | None = None) -> None:
         super().__init__()
         self.dimos = None
         self.stereo_camera = None
@@ -47,7 +47,7 @@ class PiperArmRobot(Robot):
             RobotCapability.MANIPULATION,
         ]
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the robot modules."""
         # Start Dimos
         self.dimos = core.start(2)  # Need 2 workers for ZED and manipulation modules
@@ -141,7 +141,7 @@ class PiperArmRobot(Robot):
             logger.error("Manipulation module not initialized")
             return None
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop all modules and clean up."""
         logger.info("Stopping PiperArmRobot...")
 
@@ -161,7 +161,7 @@ class PiperArmRobot(Robot):
         logger.info("PiperArmRobot stopped")
 
 
-async def run_piper_arm():
+async def run_piper_arm() -> None:
     """Run the Piper Arm robot."""
     robot = PiperArmRobot()
 

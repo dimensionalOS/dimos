@@ -19,12 +19,12 @@ import json
 from dimos.protocol.pubsub.memory import Memory, MemoryWithJSONEncoder
 
 
-def test_json_encoded_pubsub():
+def test_json_encoded_pubsub() -> None:
     """Test memory pubsub with JSON encoding."""
     pubsub = MemoryWithJSONEncoder()
     received_messages = []
 
-    def callback(message, topic):
+    def callback(message, topic) -> None:
         received_messages.append(message)
 
     # Subscribe to a topic
@@ -51,12 +51,12 @@ def test_json_encoded_pubsub():
         assert original == received
 
 
-def test_json_encoding_edge_cases():
+def test_json_encoding_edge_cases() -> None:
     """Test edge cases for JSON encoding."""
     pubsub = MemoryWithJSONEncoder()
     received_messages = []
 
-    def callback(message, topic):
+    def callback(message, topic) -> None:
         received_messages.append(message)
 
     pubsub.subscribe("edge_cases", callback)
@@ -78,16 +78,16 @@ def test_json_encoding_edge_cases():
     assert received_messages == edge_cases
 
 
-def test_multiple_subscribers_with_encoding():
+def test_multiple_subscribers_with_encoding() -> None:
     """Test that multiple subscribers work with encoding."""
     pubsub = MemoryWithJSONEncoder()
     received_messages_1 = []
     received_messages_2 = []
 
-    def callback_1(message, topic):
+    def callback_1(message, topic) -> None:
         received_messages_1.append(message)
 
-    def callback_2(message, topic):
+    def callback_2(message, topic) -> None:
         received_messages_2.append(f"callback_2: {message}")
 
     pubsub.subscribe("json_topic", callback_1)
@@ -123,16 +123,16 @@ def test_multiple_subscribers_with_encoding():
 #     assert received_messages_2 == ["only callback_2 should get this"]
 
 
-def test_data_actually_encoded_in_transit():
+def test_data_actually_encoded_in_transit() -> None:
     """Validate that data is actually encoded in transit by intercepting raw bytes."""
 
     # Create a spy memory that captures what actually gets published
     class SpyMemory(Memory):
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
             self.raw_messages_received = []
 
-        def publish(self, topic: str, message):
+        def publish(self, topic: str, message) -> None:
             # Capture what actually gets published
             self.raw_messages_received.append((topic, message, type(message)))
             super().publish(topic, message)
@@ -144,7 +144,7 @@ def test_data_actually_encoded_in_transit():
     pubsub = SpyMemoryWithJSON()
     received_decoded = []
 
-    def callback(message, topic):
+    def callback(message, topic) -> None:
         received_decoded.append(message)
 
     pubsub.subscribe("test_topic", callback)

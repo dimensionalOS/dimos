@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 class GenericSubscriber:
     """Subscribes to an RxPy Observable stream and stores the latest message."""
 
-    def __init__(self, stream: Observable):
+    def __init__(self, stream: Observable) -> None:
         """Initialize the subscriber and subscribe to the stream.
 
         Args:
@@ -53,20 +53,20 @@ class GenericSubscriber:
         else:
             logger.warning("Initialized GenericSubscriber with a None stream.")
 
-    def _on_next(self, message: Any):
+    def _on_next(self, message: Any) -> None:
         """Callback for receiving a new message."""
         with self._lock:
             self.latest_message = message
             # logger.debug("Received new message") # Can be noisy
 
-    def _on_error(self, error: Exception):
+    def _on_error(self, error: Exception) -> None:
         """Callback for stream error."""
         logger.error(f"Stream error: {error}")
         with self._lock:
             self._stream_error = error
         self._stream_completed.set()  # Signal completion/error
 
-    def _on_completed(self):
+    def _on_completed(self) -> None:
         """Callback for stream completion."""
         logger.info("Stream completed.")
         self._stream_completed.set()
@@ -92,7 +92,7 @@ class GenericSubscriber:
         """Check if the stream has completed or encountered an error."""
         return self._stream_completed.is_set()
 
-    def dispose(self):
+    def dispose(self) -> None:
         """Dispose of the subscription to stop receiving messages."""
         if self._subscription is not None:
             try:
@@ -103,6 +103,6 @@ class GenericSubscriber:
                 logger.error(f"Error disposing subscription: {e}")
         self._stream_completed.set()  # Ensure completed flag is set on manual dispose
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Ensure cleanup on object deletion."""
         self.dispose()

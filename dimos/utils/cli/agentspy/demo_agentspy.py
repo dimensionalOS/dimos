@@ -28,7 +28,7 @@ from dimos.protocol.pubsub import lcm
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
 
 
-def test_publish_messages():
+def test_publish_messages() -> None:
     """Publish test messages to verify agentspy is working."""
     print("Starting agent message publisher demo...")
 

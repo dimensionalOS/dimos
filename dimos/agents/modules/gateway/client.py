@@ -18,7 +18,8 @@ import asyncio
 from collections.abc import AsyncIterator, Iterator
 import logging
 import os
-from typing import Any
+from types import TracebackType
+from typing import Any, Optional, Type
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -37,7 +38,7 @@ class UnifiedGatewayClient:
 
     def __init__(
         self, gateway_url: str | None = None, timeout: float = 60.0, use_simple: bool = False
-    ):
+    ) -> None:
         """Initialize the gateway client.
 
         Args:
@@ -150,7 +151,7 @@ class UnifiedGatewayClient:
             **kwargs,
         )
 
-    def close(self):
+    def close(self) -> None:
         """Close the HTTP clients."""
         if self._client:
             self._client.close()
@@ -161,14 +162,14 @@ class UnifiedGatewayClient:
             pass
         self._tensorzero_client.close()
 
-    async def aclose(self):
+    async def aclose(self) -> None:
         """Async close method."""
         if self._async_client:
             await self._async_client.aclose()
             self._async_client = None
         await self._tensorzero_client.aclose()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup on deletion."""
         self.close()
         if self._async_client:
@@ -187,7 +188,12 @@ class UnifiedGatewayClient:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         self.close()
 
@@ -195,6 +201,11 @@ class UnifiedGatewayClient:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.aclose()

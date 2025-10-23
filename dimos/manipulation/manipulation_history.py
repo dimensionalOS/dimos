@@ -74,7 +74,7 @@ class ManipulationHistory:
     focusing on quick lookups and flexible search capabilities.
     """
 
-    def __init__(self, output_dir: str | None = None, new_memory: bool = False):
+    def __init__(self, output_dir: str | None = None, new_memory: bool = False) -> None:
         """Initialize a new manipulation history.
 
         Args:

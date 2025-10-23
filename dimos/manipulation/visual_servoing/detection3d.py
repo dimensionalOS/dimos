@@ -61,7 +61,7 @@ class Detection3DProcessor:
         min_points: int = 30,
         max_depth: float = 1.0,
         max_object_size: float = 0.15,
-    ):
+    ) -> None:
         """
         Initialize the real-time 3D detection processor.
 
@@ -292,7 +292,7 @@ class Detection3DProcessor:
 
         return min(valid_detections, key=get_z_coord)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()

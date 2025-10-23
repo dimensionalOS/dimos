@@ -528,7 +528,7 @@ def create_3d_bounding_box_corners(position, rotation, size):
     return rotated_corners
 
 
-def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2):
+def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2) -> None:
     """
     Draw a 3D bounding box on an image using projected 2D corners.
 

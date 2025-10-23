@@ -30,7 +30,7 @@ class Mlp(nn.Module):
 
     def __init__(
         self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0
-    ):
+    ) -> None:
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
@@ -100,7 +100,7 @@ class WindowAttention(nn.Module):
         qk_scale=None,
         attn_drop=0.0,
         proj_drop=0.0,
-    ):
+    ) -> None:
         super().__init__()
         self.dim = dim
         self.window_size = window_size  # Wh, Ww
@@ -208,7 +208,7 @@ class SwinTransformerBlock(nn.Module):
         drop_path=0.0,
         act_layer=nn.GELU,
         norm_layer=nn.LayerNorm,
-    ):
+    ) -> None:
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -308,7 +308,7 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, norm_layer=nn.LayerNorm):
+    def __init__(self, dim, norm_layer=nn.LayerNorm) -> None:
         super().__init__()
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
@@ -376,7 +376,7 @@ class BasicLayer(nn.Module):
         norm_layer=nn.LayerNorm,
         downsample=None,
         use_checkpoint=False,
-    ):
+    ) -> None:
         super().__init__()
         self.window_size = window_size
         self.shift_size = window_size // 2
@@ -468,7 +468,7 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
+    def __init__(self, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None) -> None:
         super().__init__()
         patch_size = to_2tuple(patch_size)
         self.patch_size = patch_size
@@ -550,7 +550,7 @@ class SwinTransformer(Backbone):
         out_indices=(0, 1, 2, 3),
         frozen_stages=-1,
         use_checkpoint=False,
-    ):
+    ) -> None:
         if num_heads is None:
             num_heads = [3, 6, 12, 24]
         if depths is None:
@@ -631,7 +631,7 @@ class SwinTransformer(Backbone):
         self._out_feature_strides = {f"swin{i}": 2 ** (i + 2) for i in self.out_indices}
         self._size_devisibility = 32
 
-    def _freeze_stages(self):
+    def _freeze_stages(self) -> None:
         if self.frozen_stages >= 0:
             self.patch_embed.eval()
             for param in self.patch_embed.parameters():
@@ -655,7 +655,7 @@ class SwinTransformer(Backbone):
                 Defaults to None.
         """
 
-        def _init_weights(m):
+        def _init_weights(m) -> None:
             if isinstance(m, nn.Linear):
                 trunc_normal_(m.weight, std=0.02)
                 if isinstance(m, nn.Linear) and m.bias is not None:
@@ -703,7 +703,7 @@ class SwinTransformer(Backbone):
 
         return outs
 
-    def train(self, mode=True):
+    def train(self, mode=True) -> None:
         """Convert the model into training mode while keep layers freezed."""
         super().train(mode)
         self._freeze_stages()

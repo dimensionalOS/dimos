@@ -78,7 +78,7 @@ class Feedback:
         target_pose: Pose | None = None,
         waiting_for_reach: bool = False,
         success: bool | None = None,
-    ):
+    ) -> None:
         self.grasp_stage = grasp_stage
         self.target_tracked = target_tracked
         self.current_executed_pose = current_executed_pose
@@ -118,7 +118,7 @@ class ManipulationModule(Module):
         self,
         ee_to_camera_6dof: list | None = None,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize manipulation module.
 
@@ -219,7 +219,7 @@ class ManipulationModule(Module):
         self.arm.gotoObserve()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the manipulation module."""
 
         unsub = self.rgb_image.subscribe(self._on_rgb_image)
@@ -234,7 +234,7 @@ class ManipulationModule(Module):
         logger.info("Manipulation module started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the manipulation module."""
         # Stop any running task
         self.stop_event.set()
@@ -249,21 +249,21 @@ class ManipulationModule(Module):
 
         logger.info("Manipulation module stopped")
 
-    def _on_rgb_image(self, msg: Image):
+    def _on_rgb_image(self, msg: Image) -> None:
         """Handle RGB image messages."""
         try:
             self.latest_rgb = msg.data
         except Exception as e:
             logger.error(f"Error processing RGB image: {e}")
 
-    def _on_depth_image(self, msg: Image):
+    def _on_depth_image(self, msg: Image) -> None:
         """Handle depth image messages."""
         try:
             self.latest_depth = msg.data
         except Exception as e:
             logger.error(f"Error processing depth image: {e}")
 
-    def _on_camera_info(self, msg: CameraInfo):
+    def _on_camera_info(self, msg: CameraInfo) -> None:
         """Handle camera info messages."""
         try:
             self.camera_intrinsics = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]
@@ -389,7 +389,7 @@ class ManipulationModule(Module):
 
         return {"status": "started", "message": "Pick and place task started"}
 
-    def _run_pick_and_place(self):
+    def _run_pick_and_place(self) -> None:
         """Run the pick and place task loop."""
         self.task_running = True
         logger.info("Starting pick and place task")
@@ -424,7 +424,7 @@ class ManipulationModule(Module):
             self.task_running = False
             logger.info("Pick and place task ended")
 
-    def set_grasp_stage(self, stage: GraspStage):
+    def set_grasp_stage(self, stage: GraspStage) -> None:
         """Set the grasp stage."""
         self.grasp_stage = stage
         logger.info(f"Grasp stage: {stage.value}")
@@ -596,7 +596,7 @@ class ManipulationModule(Module):
             self.last_valid_target = self.pbvs.get_current_target()
         return target_tracked
 
-    def reset_to_idle(self):
+    def reset_to_idle(self) -> None:
         """Reset the manipulation system to IDLE state."""
         if self.pbvs:
             self.pbvs.clear_target()
@@ -619,11 +619,11 @@ class ManipulationModule(Module):
 
         self.arm.gotoObserve()
 
-    def execute_idle(self):
+    def execute_idle(self) -> None:
         """Execute idle stage."""
         pass
 
-    def execute_pre_grasp(self):
+    def execute_pre_grasp(self) -> None:
         """Execute pre-grasp stage: visual servoing to pre-grasp position."""
         if self.waiting_for_reach:
             if self.check_reach_and_adjust():
@@ -670,7 +670,7 @@ class ManipulationModule(Module):
                 self.adjustment_count += 1
                 time.sleep(0.2)
 
-    def execute_grasp(self):
+    def execute_grasp(self) -> None:
         """Execute grasp stage: move to final grasp position."""
         if self.waiting_for_reach:
             if self.check_reach_and_adjust() and not self.grasp_reached_time:
@@ -715,7 +715,7 @@ class ManipulationModule(Module):
                 self.waiting_for_reach = True
                 self.waiting_start_time = time.time()
 
-    def execute_close_and_retract(self):
+    def execute_close_and_retract(self) -> None:
         """Execute the retraction sequence after gripper has been closed."""
         if self.waiting_for_reach and self.final_pregrasp_pose:
             if self.check_reach_and_adjust():
@@ -741,7 +741,7 @@ class ManipulationModule(Module):
             self.waiting_for_reach = True
             self.waiting_start_time = time.time()
 
-    def execute_place(self):
+    def execute_place(self) -> None:
         """Execute place stage: move to place position and release object."""
         if self.waiting_for_reach:
             # Use the already executed pose instead of recalculating
@@ -767,7 +767,7 @@ class ManipulationModule(Module):
                 self.task_failed = True
                 self.overall_success = False
 
-    def execute_retract(self):
+    def execute_retract(self) -> None:
         """Execute retract stage: retract from place position."""
         if self.waiting_for_reach and self.retract_pose:
             if self.check_reach_and_adjust():
@@ -899,7 +899,7 @@ class ManipulationModule(Module):
 
         return feedback
 
-    def _publish_visualization(self, viz_image: np.ndarray):
+    def _publish_visualization(self, viz_image: np.ndarray) -> None:
         """Publish visualization image to LCM."""
         try:
             viz_rgb = cv2.cvtColor(viz_image, cv2.COLOR_BGR2RGB)

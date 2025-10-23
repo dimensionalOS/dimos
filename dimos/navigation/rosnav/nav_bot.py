@@ -68,7 +68,7 @@ class ROSNavigationModule(ROSNav):
     cmd_vel: Out[Twist] = None
     odom_pose: Out[PoseStamped] = None
 
-    def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs):
+    def __init__(self, sensor_to_base_link_transform=None, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         if not rclpy.ok():
             rclpy.init()
@@ -116,7 +116,7 @@ class ROSNavigationModule(ROSNav):
         logger.info("NavigationModule initialized with ROS2 node")
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self._running = True
         self.spin_thread = threading.Thread(target=self._spin_node, daemon=True)
         self.spin_thread.start()
@@ -126,7 +126,7 @@ class ROSNavigationModule(ROSNav):
 
         logger.info("NavigationModule started with ROS2 spinning")
 
-    def _spin_node(self):
+    def _spin_node(self) -> None:
         while self._running and rclpy.ok():
             try:
                 rclpy.spin_once(self._node, timeout_sec=0.1)
@@ -134,12 +134,12 @@ class ROSNavigationModule(ROSNav):
                 if self._running:
                     logger.error(f"ROS2 spin error: {e}")
 
-    def _on_ros_goal_reached(self, msg: ROSBool):
+    def _on_ros_goal_reached(self, msg: ROSBool) -> None:
         self.goal_reach = msg.data
         dimos_bool = Bool(data=msg.data)
         self.goal_reached.publish(dimos_bool)
 
-    def _on_ros_goal_waypoint(self, msg: ROSPointStamped):
+    def _on_ros_goal_waypoint(self, msg: ROSPointStamped) -> None:
         dimos_pose = PoseStamped(
             ts=time.time(),
             frame_id=msg.header.frame_id,
@@ -148,7 +148,7 @@ class ROSNavigationModule(ROSNav):
         )
         self.goal_active.publish(dimos_pose)
 
-    def _on_ros_cmd_vel(self, msg: ROSTwistStamped):
+    def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
         # Extract the twist from the stamped message
         dimos_twist = Twist(
             linear=Vector3(msg.twist.linear.x, msg.twist.linear.y, msg.twist.linear.z),
@@ -156,7 +156,7 @@ class ROSNavigationModule(ROSNav):
         )
         self.cmd_vel.publish(dimos_twist)
 
-    def _on_ros_odom(self, msg: ROSOdometry):
+    def _on_ros_odom(self, msg: ROSOdometry) -> None:
         dimos_odom = Odometry.from_ros_msg(msg)
         self.odom.publish(dimos_odom)
 
@@ -168,19 +168,19 @@ class ROSNavigationModule(ROSNav):
         )
         self.odom_pose.publish(dimos_pose)
 
-    def _on_ros_registered_scan(self, msg: ROSPointCloud2):
+    def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         dimos_pointcloud = PointCloud2.from_ros_msg(msg)
         self.pointcloud.publish(dimos_pointcloud)
 
-    def _on_ros_global_pointcloud(self, msg: ROSPointCloud2):
+    def _on_ros_global_pointcloud(self, msg: ROSPointCloud2) -> None:
         dimos_pointcloud = PointCloud2.from_ros_msg(msg)
         self.global_pointcloud.publish(dimos_pointcloud)
 
-    def _on_ros_path(self, msg: ROSPath):
+    def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = Path.from_ros_msg(msg)
         self.path_active.publish(dimos_path)
 
-    def _on_ros_tf(self, msg: ROSTFMessage):
+    def _on_ros_tf(self, msg: ROSTFMessage) -> None:
         ros_tf = TFMessage.from_ros_msg(msg)
 
         translation = Vector3(
@@ -213,14 +213,14 @@ class ROSNavigationModule(ROSNav):
 
         self.tf.publish(sensor_to_base_link_tf, map_to_world_tf, *ros_tf.transforms)
 
-    def _on_goal_pose(self, msg: PoseStamped):
+    def _on_goal_pose(self, msg: PoseStamped) -> None:
         self.navigate_to(msg)
 
-    def _on_cancel_goal(self, msg: Bool):
+    def _on_cancel_goal(self, msg: Bool) -> None:
         if msg.data:
             self.stop()
 
-    def _set_autonomy_mode(self):
+    def _set_autonomy_mode(self) -> None:
         joy_msg = ROSJoy()
         joy_msg.axes = [
             0.0,  # axis 0
@@ -309,7 +309,7 @@ class ROSNavigationModule(ROSNav):
         return True
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         try:
             self._running = False
             if self.spin_thread:
@@ -324,7 +324,7 @@ class NavBot:
     NavBot wrapper that deploys NavigationModule with proper DIMOS/ROS2 integration.
     """
 
-    def __init__(self, dimos=None, sensor_to_base_link_transform=None):
+    def __init__(self, dimos=None, sensor_to_base_link_transform=None) -> None:
         """
         Initialize NavBot.
 
@@ -347,7 +347,7 @@ class NavBot:
         ]
         self.navigation_module = None
 
-    def start(self):
+    def start(self) -> None:
         logger.info("Deploying navigation module...")
         self.navigation_module = self.dimos.deploy(
             ROSNavigationModule, sensor_to_base_link_transform=self.sensor_to_base_link_transform
@@ -373,7 +373,7 @@ class NavBot:
 
         self.navigation_module.start()
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         logger.info("Shutting down NavBot...")
 
         if self.navigation_module:
@@ -385,7 +385,7 @@ class NavBot:
         logger.info("NavBot shutdown complete")
 
 
-def main():
+def main() -> None:
     pubsub.lcm.autoconf()
     nav_bot = NavBot()
     nav_bot.start()

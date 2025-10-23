@@ -27,7 +27,7 @@ class Llava:
         mmproj=f"{os.getcwd()}/models/mmproj-model-f16.gguf",
         model_path=f"{os.getcwd()}/models/llava-v1.6-34b.Q4_K_M.gguf",
         gpu=True,
-    ):
+    ) -> None:
         chat_handler = Llava15ChatHandler(clip_model_path=mmproj, verbose=True)
         n_gpu_layers = 0
         if gpu:

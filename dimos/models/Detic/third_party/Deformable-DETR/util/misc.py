@@ -65,7 +65,7 @@ class SmoothedValue:
     window or the global series average.
     """
 
-    def __init__(self, window_size=20, fmt=None):
+    def __init__(self, window_size=20, fmt=None) -> None:
         if fmt is None:
             fmt = "{median:.4f} ({global_avg:.4f})"
         self.deque = deque(maxlen=window_size)
@@ -73,12 +73,12 @@ class SmoothedValue:
         self.count = 0
         self.fmt = fmt
 
-    def update(self, value, n=1):
+    def update(self, value, n=1) -> None:
         self.deque.append(value)
         self.count += n
         self.total += value * n
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         """
         Warning: does not synchronize the deque!
         """
@@ -113,7 +113,7 @@ class SmoothedValue:
     def value(self):
         return self.deque[-1]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.fmt.format(
             median=self.median,
             avg=self.avg,
@@ -194,11 +194,11 @@ def reduce_dict(input_dict, average=True):
 
 
 class MetricLogger:
-    def __init__(self, delimiter="\t"):
+    def __init__(self, delimiter="\t") -> None:
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
 
-    def update(self, **kwargs):
+    def update(self, **kwargs) -> None:
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor):
                 v = v.item()
@@ -212,17 +212,17 @@ class MetricLogger:
             return self.__dict__[attr]
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{attr}'")
 
-    def __str__(self):
+    def __str__(self) -> str:
         loss_str = []
         for name, meter in self.meters.items():
             loss_str.append(f"{name}: {meter!s}")
         return self.delimiter.join(loss_str)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         for meter in self.meters.values():
             meter.synchronize_between_processes()
 
-    def add_meter(self, name, meter):
+    def add_meter(self, name, meter) -> None:
         self.meters[name] = meter
 
     def log_every(self, iterable, print_freq, header=None):
@@ -354,7 +354,7 @@ def nested_tensor_from_tensor_list(tensor_list: list[Tensor]):
 
 
 class NestedTensor:
-    def __init__(self, tensors, mask: Tensor | None):
+    def __init__(self, tensors, mask: Tensor | None) -> None:
         self.tensors = tensors
         self.mask = mask
 
@@ -369,7 +369,7 @@ class NestedTensor:
             cast_mask = None
         return NestedTensor(cast_tensor, cast_mask)
 
-    def record_stream(self, *args, **kwargs):
+    def record_stream(self, *args, **kwargs) -> None:
         self.tensors.record_stream(*args, **kwargs)
         if self.mask is not None:
             self.mask.record_stream(*args, **kwargs)
@@ -377,11 +377,11 @@ class NestedTensor:
     def decompose(self):
         return self.tensors, self.mask
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self.tensors)
 
 
-def setup_for_distributed(is_master):
+def setup_for_distributed(is_master) -> None:
     """
     This function disables printing when not in master process
     """
@@ -389,7 +389,7 @@ def setup_for_distributed(is_master):
 
     builtin_print = __builtin__.print
 
-    def print(*args, **kwargs):
+    def print(*args, **kwargs) -> None:
         force = kwargs.pop("force", False)
         if is_master or force:
             builtin_print(*args, **kwargs)
@@ -397,7 +397,7 @@ def setup_for_distributed(is_master):
     __builtin__.print = print
 
 
-def is_dist_avail_and_initialized():
+def is_dist_avail_and_initialized() -> bool:
     if not dist.is_available():
         return False
     if not dist.is_initialized():
@@ -433,12 +433,12 @@ def is_main_process():
     return get_rank() == 0
 
 
-def save_on_master(*args, **kwargs):
+def save_on_master(*args, **kwargs) -> None:
     if is_main_process():
         torch.save(*args, **kwargs)
 
 
-def init_distributed_mode(args):
+def init_distributed_mode(args) -> None:
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ["WORLD_SIZE"])

@@ -60,7 +60,7 @@ class PBVS:
         max_tracking_distance_threshold: float = 0.12,  # Max distance for target tracking (m)
         min_size_similarity: float = 0.6,  # Min size similarity threshold (0.0-1.0)
         direct_ee_control: bool = True,  # If True, output target poses instead of velocities
-    ):
+    ) -> None:
         """
         Initialize PBVS system.
 
@@ -128,7 +128,7 @@ class PBVS:
             return True
         return False
 
-    def clear_target(self):
+    def clear_target(self) -> None:
         """Clear the current target."""
         self.current_target = None
         self.target_grasp_pose = None
@@ -315,7 +315,7 @@ class PBVSController:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
-    ):
+    ) -> None:
         """
         Initialize PBVS controller.
 
@@ -344,7 +344,7 @@ class PBVSController:
             f"target_tolerance={target_tolerance}m"
         )
 
-    def clear_state(self):
+    def clear_state(self) -> None:
         """Clear controller state."""
         self.last_position_error = None
         self.last_rotation_error = None

@@ -52,7 +52,7 @@ class PointcloudFiltering:
         min_points_for_cuboid: int = 10,
         cuboid_method: str = "oriented",
         max_bbox_size_percent: float = 30.0,
-    ):
+    ) -> None:
         """
         Initialize the point cloud filtering pipeline.
 
@@ -352,7 +352,7 @@ class PointcloudFiltering:
 
         return updated_objects
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

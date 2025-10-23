@@ -72,7 +72,7 @@ def export_scripting(torch_model):
     class ScriptableAdapterBase(nn.Module):
         # Use this adapter to workaround https://github.com/pytorch/pytorch/issues/46944
         # by not retuning instances but dicts. Otherwise the exported model is not deployable
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
             self.model = torch_model
             self.eval()

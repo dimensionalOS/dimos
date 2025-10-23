@@ -90,7 +90,7 @@ class OccupancyGridApp(App):
         ("ctrl+c", "quit", "Quit"),
     ]
 
-    def __init__(self, connection: Connection, *args, **kwargs):
+    def __init__(self, connection: Connection, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.connection = connection
         self.subscription: Disposable | None = None
@@ -272,7 +272,7 @@ class OccupancyGridApp(App):
         return text
 
 
-def main():
+def main() -> None:
     """Run the OccupancyGrid visualizer with a connection."""
     # app = OccupancyGridApp(core.LCMTransport("/global_costmap", OccupancyGrid).observable)
 

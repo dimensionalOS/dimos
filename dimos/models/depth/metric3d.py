@@ -24,7 +24,7 @@ import torch
 
 
 class Metric3D:
-    def __init__(self, camera_intrinsics=None, gt_depth_scale=256.0):
+    def __init__(self, camera_intrinsics=None, gt_depth_scale=256.0) -> None:
         # self.conf = get_config("zoedepth", "infer")
         # self.depth_model = build_model(self.conf)
         self.depth_model = torch.hub.load(
@@ -79,7 +79,7 @@ class Metric3D:
 
         return depth_image.cpu().numpy()
 
-    def save_depth(self, pred_depth):
+    def save_depth(self, pred_depth) -> None:
         # Save the depth map to a file
         pred_depth_np = pred_depth.cpu().numpy()
         output_depth_file = "output_depth_map.png"
@@ -154,10 +154,10 @@ class Metric3D:
 
     """Set new intrinsic value."""
 
-    def update_intrinsic(self, intrinsic):
+    def update_intrinsic(self, intrinsic) -> None:
         self.intrinsic = intrinsic
 
-    def eval_predicted_depth(self, depth_file, pred_depth):
+    def eval_predicted_depth(self, depth_file, pred_depth) -> None:
         if depth_file is not None:
             gt_depth = cv2.imread(depth_file, -1)
             gt_depth = gt_depth / self.gt_depth_scale

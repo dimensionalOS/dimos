@@ -26,7 +26,7 @@ def get_fed_loss_inds(gt_classes, num_sample_cats, C, weight=None):
     return appeared
 
 
-def reset_cls_test(model, cls_path, num_classes):
+def reset_cls_test(model, cls_path, num_classes) -> None:
     model.roi_heads.num_classes = num_classes
     if type(cls_path) == str:
         print("Resetting zs_weight", cls_path)

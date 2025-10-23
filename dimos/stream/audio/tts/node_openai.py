@@ -59,7 +59,7 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
         model: str = "tts-1",
         buffer_size: int = 1024,
         speed: float = 1.0,
-    ):
+    ) -> None:
         """
         Initialize OpenAITTSNode.
 

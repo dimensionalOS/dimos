@@ -149,7 +149,7 @@ class AstarPlanner(Module):
     # LCM outputs
     path: Out[Path] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         # Latest data
@@ -157,7 +157,7 @@ class AstarPlanner(Module):
         self.latest_odom: PoseStamped | None = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         unsub = self.target.subscribe(self._on_target)
@@ -175,15 +175,15 @@ class AstarPlanner(Module):
     def stop(self) -> None:
         super().stop()
 
-    def _on_costmap(self, msg: OccupancyGrid):
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
-    def _on_odom(self, msg: PoseStamped):
+    def _on_odom(self, msg: PoseStamped) -> None:
         """Handle incoming odometry messages."""
         self.latest_odom = msg
 
-    def _on_target(self, msg: PoseStamped):
+    def _on_target(self, msg: PoseStamped) -> None:
         """Handle incoming target messages and trigger planning."""
         if self.latest_costmap is None or self.latest_odom is None:
             logger.warning("Cannot plan: missing costmap or odometry data")

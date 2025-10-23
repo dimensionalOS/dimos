@@ -162,7 +162,7 @@ class VideoProvider(AbstractVideoProvider):
             VideoFrameError: If frames cannot be read properly.
         """
 
-        def emit_frames(observer, scheduler):
+        def emit_frames(observer, scheduler) -> None:
             try:
                 self._initialize_capture()
 

@@ -81,7 +81,7 @@ class OIDEval:
         iou_type="bbox",
         expand_pred_label=False,
         oid_hierarchy_path="./datasets/oid/annotations/challenge-2019-label500-hierarchy.json",
-    ):
+    ) -> None:
         """Constructor for OIDEval.
         Args:
             lvis_gt (LVIS class instance, or str containing path of annotation file)
@@ -164,12 +164,12 @@ class OIDEval:
         self.params.img_ids = sorted(self.lvis_gt.get_img_ids())
         self.params.cat_ids = sorted(self.lvis_gt.get_cat_ids())
 
-    def _to_mask(self, anns, lvis):
+    def _to_mask(self, anns, lvis) -> None:
         for ann in anns:
             rle = lvis.ann_to_rle(ann)
             ann["segmentation"] = rle
 
-    def _prepare(self):
+    def _prepare(self) -> None:
         """Prepare self._gts and self._dts for evaluation based on params."""
 
         cat_ids = self.params.cat_ids if self.params.cat_ids else None
@@ -210,7 +210,7 @@ class OIDEval:
                 continue
             self._dts[img_id, cat_id].append(dt)
 
-    def evaluate(self):
+    def evaluate(self) -> None:
         """
         Run per image evaluation on given images and store results
         (a list of dict) in self.eval_imgs.
@@ -318,7 +318,7 @@ class OIDEval:
         tp_fp_labels = np.zeros(num_detected_boxes, dtype=bool)
         is_matched_to_group_of = np.zeros(num_detected_boxes, dtype=bool)
 
-        def compute_match_iou(iou):
+        def compute_match_iou(iou) -> None:
             max_overlap_gt_ids = np.argmax(iou, axis=1)
             is_gt_detected = np.zeros(iou.shape[1], dtype=bool)
             for i in range(num_detected_boxes):
@@ -377,7 +377,7 @@ class OIDEval:
             "num_gt": len(gt),
         }
 
-    def accumulate(self):
+    def accumulate(self) -> None:
         """Accumulate per image evaluation results and store the result in
         self.eval.
         """
@@ -489,13 +489,13 @@ class OIDEval:
 
         self.results["AP50"] = self._summarize("ap")
 
-    def run(self):
+    def run(self) -> None:
         """Wrapper function which calculates the results."""
         self.evaluate()
         self.accumulate()
         self.summarize()
 
-    def print_results(self):
+    def print_results(self) -> None:
         template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} catIds={:>3s}] = {:0.3f}"
 
         for key, value in self.results.items():
@@ -525,7 +525,7 @@ class OIDEval:
 
 
 class Params:
-    def __init__(self, iou_type):
+    def __init__(self, iou_type) -> None:
         self.img_ids = []
         self.cat_ids = []
         # np.arange causes trouble.  the data point on arange is slightly
@@ -547,7 +547,7 @@ class Params:
 
 
 class OIDEvaluator(DatasetEvaluator):
-    def __init__(self, dataset_name, cfg, distributed, output_dir=None):
+    def __init__(self, dataset_name, cfg, distributed, output_dir=None) -> None:
         self._distributed = distributed
         self._output_dir = output_dir
 
@@ -562,11 +562,11 @@ class OIDEvaluator(DatasetEvaluator):
         self._do_evaluation = len(self._oid_api.get_ann_ids()) > 0
         self._mask_on = cfg.MODEL.MASK_ON
 
-    def reset(self):
+    def reset(self) -> None:
         self._predictions = []
         self._oid_results = []
 
-    def process(self, inputs, outputs):
+    def process(self, inputs, outputs) -> None:
         for input, output in zip(inputs, outputs, strict=False):
             prediction = {"image_id": input["image_id"]}
             instances = output["instances"].to(self._cpu_device)

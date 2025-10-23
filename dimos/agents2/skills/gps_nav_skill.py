@@ -38,7 +38,7 @@ class GpsNavSkillContainer(SkillContainer, Resource):
     _started: bool
     _max_valid_distance: int
 
-    def __init__(self, robot: Robot, position_stream: Observable[LatLon]):
+    def __init__(self, robot: Robot, position_stream: Observable[LatLon]) -> None:
         super().__init__()
         self._robot = robot
         self._disposables = CompositeDisposable()

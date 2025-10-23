@@ -3,7 +3,7 @@ from torch import nn
 
 
 class IOULoss(nn.Module):
-    def __init__(self, loc_loss_type="iou"):
+    def __init__(self, loc_loss_type="iou") -> None:
         super().__init__()
         self.loc_loss_type = loc_loss_type
 

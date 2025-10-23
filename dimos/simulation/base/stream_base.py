@@ -36,7 +36,7 @@ class StreamBase(ABC):
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
         usd_path: str | Path | None = None,
-    ):
+    ) -> None:
         """Initialize the stream.
 
         Args:
@@ -70,7 +70,7 @@ class StreamBase(ABC):
         """Setup and validate camera."""
         pass
 
-    def _setup_ffmpeg(self):
+    def _setup_ffmpeg(self) -> None:
         """Setup FFmpeg process for streaming."""
         command = [
             "ffmpeg",

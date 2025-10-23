@@ -19,7 +19,7 @@ This file contains functions to register a COCO-format dataset to the DatasetCat
 __all__ = ["register_coco_instances", "register_coco_panoptic_separated"]
 
 
-def register_oid_instances(name, metadata, json_file, image_root):
+def register_oid_instances(name, metadata, json_file, image_root) -> None:
     """ """
     # 1. register a function which returns dicts
     DatasetCatalog.register(name, lambda: load_coco_json_mem_efficient(json_file, image_root, name))

@@ -19,7 +19,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 class OpenAITokenizer(AbstractTokenizer):
-    def __init__(self, model_name: str = "gpt-4o", **kwargs):
+    def __init__(self, model_name: str = "gpt-4o", **kwargs) -> None:
         super().__init__(**kwargs)
 
         # Initilize the tokenizer for the openai set of models
