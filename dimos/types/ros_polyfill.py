@@ -15,11 +15,24 @@
 try:
     from geometry_msgs.msg import Vector3
 except ImportError:
-    pass  # type: ignore[import]
+    from dimos.msgs.geometry_msgs import Vector3  # type: ignore[import]
 
 try:
     from geometry_msgs.msg import Point, Pose, Quaternion, Twist
     from nav_msgs.msg import OccupancyGrid, Odometry
     from std_msgs.msg import Header
 except ImportError:
-    pass
+    from dimos_lcm.geometry_msgs import Point, Pose, Quaternion, Twist
+    from dimos_lcm.nav_msgs import OccupancyGrid, Odometry
+    from dimos_lcm.std_msgs import Header
+
+__all__ = [
+    "Vector3",
+    "Point",
+    "Pose",
+    "Quaternion",
+    "Twist",
+    "OccupancyGrid",
+    "Odometry",
+    "Header",
+]
