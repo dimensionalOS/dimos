@@ -186,6 +186,30 @@ dev = [
     "pytest-timeout==2.4.0",
     "textual==3.7.1",
     "requests-mock==1.12.1",
+
+    # Types
+    "lxml-stubs>=0.5.1,<1",
+    "numpy>=2.3.4,<3",
+    "numpy-typing-compat>=20250818.2.3,<20250819",
+    "optype>=0.14.0,<1",
+    "pandas-stubs>=2.3.2.250926,<3",
+    "scipy-stubs>=1.16.2.4,<2",
+    "types-PySocks>=1.7.1.20251001,<2",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-colorama>=0.4.15.20250801,<1",
+    "types-defusedxml>=0.7.0.20250822,<1",
+    "types-gevent>=25.4.0.20250915,<26",
+    "types-greenlet>=3.2.0.20250915,<4",
+    "types-jmespath>=1.0.2.20250809,<2",
+    "types-jsonschema>=4.25.1.20251009,<5",
+    "types-networkx>=3.5.0.20251001,<4",
+    "types-protobuf>=6.32.1.20250918,<7",
+    "types-psutil>=7.0.0.20251001,<8",
+    "types-pytz>=2025.2.0.20250809,<2026",
+    "types-simplejson>=3.20.0.20250822,<4",
+    "types-tabulate>=0.9.0.20241207,<1",
+    "types-tensorflow>=2.18.0.20251008,<3",
+    "types-tqdm>=4.67.0.20250809,<5",
 ]
 
 sim = [
