@@ -15,7 +15,7 @@
 from dataclasses import dataclass
 
 # Import for type checking only to avoid circular imports
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation, TextAnnotation
 from dimos_lcm.foxglove_msgs.Point2 import Point2

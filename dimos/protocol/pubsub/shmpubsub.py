@@ -26,12 +26,12 @@ import os
 import struct
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any, Callable
 import uuid
 
 import numpy as np
 
-from dimos.protocol.pubsub.shm.ipc_factory import CPU_IPC_Factory, CpuShmChannel
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.utils.logging_config import setup_logger
 

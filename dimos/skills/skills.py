@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from openai import pydantic_function_tool
 from pydantic import BaseModel

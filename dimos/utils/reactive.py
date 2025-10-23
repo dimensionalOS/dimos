@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import threading
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Callable, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops

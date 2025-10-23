@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-import sys
 import time
 
 from reactivex import operators as RxOps
@@ -24,7 +23,6 @@ from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import logger
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 
 def main():

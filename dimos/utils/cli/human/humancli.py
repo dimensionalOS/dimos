@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 import textwrap
 import threading
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
 from rich.highlighter import JSONHighlighter

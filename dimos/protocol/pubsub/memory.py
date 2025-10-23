@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections import defaultdict
-from typing import Any, Callable, DefaultDict, List
+from typing import Any, Callable
 
 from dimos.protocol import encode
 from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin

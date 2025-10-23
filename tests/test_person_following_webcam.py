@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import queue
-import sys
 import threading
 
 import cv2
@@ -23,7 +21,6 @@ import numpy as np
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.visual_servoing import VisualServoing
 from dimos.stream.video_provider import VideoProvider
-import tests.test_header
 
 
 def main():

@@ -15,11 +15,7 @@
 # -----
 import ast
 import inspect
-import os
 import sys
-import types
-
-import tests.test_header
 
 
 def extract_function_info(filename):

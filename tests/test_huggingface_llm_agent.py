@@ -17,7 +17,6 @@ import time
 
 from dimos.agents.agent_huggingface_local import HuggingFaceLocalAgent
 from dimos.stream.data_provider import QueryDataProvider
-import tests.test_header
 
 
 class HuggingFaceLLMAgentDemo:

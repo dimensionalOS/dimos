@@ -14,12 +14,10 @@
 
 import os
 import subprocess
-import time
 from unittest.mock import patch
 
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.protocol.service.lcmservice import (
     autoconf,
     check_buffers,

@@ -16,8 +16,6 @@
 
 from dataclasses import dataclass
 
-from typing_extensions import TypedDict
-
 from dimos.protocol.service.spec import Service
 
 

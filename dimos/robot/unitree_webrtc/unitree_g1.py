@@ -21,7 +21,6 @@ Minimal implementation using WebRTC connection for robot control.
 import logging
 import os
 import time
-from typing import Optional
 
 from dimos_lcm.foxglove_msgs import SceneUpdate
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped, TwistStamped as ROSTwistStamped

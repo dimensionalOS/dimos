@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
-import os
-import pickle
-import time
-from typing import Dict, List, Optional, Union
+from typing import Union
 
 import cv2
 import numpy as np

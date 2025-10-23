@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dimos.agents.agent_ctransformers_gguf import CTransformersGGUFAgent
-import tests.test_header
 
 system_query = "You are a robot with the following functions. Move(), Reverse(), Left(), Right(), Stop(). Given the following user comands return the correct function."
 

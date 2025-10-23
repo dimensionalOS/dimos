@@ -13,11 +13,9 @@
 # limitations under the License.
 
 from datetime import datetime
-from typing import Optional, Union
+from typing import Union
 
-from dimos_lcm import tf
-
-from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import Transform
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.protocol.tf.tf import TFConfig, TFSpec
 

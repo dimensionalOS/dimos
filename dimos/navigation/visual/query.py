@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.base import VlModel

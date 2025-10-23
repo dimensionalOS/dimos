@@ -12,11 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
 from dimos.mapping.osm.current_location_map import CurrentLocationMap

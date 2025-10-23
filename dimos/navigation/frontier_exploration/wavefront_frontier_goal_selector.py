@@ -23,7 +23,6 @@ from collections import deque
 from dataclasses import dataclass
 from enum import IntFlag
 import threading
-from typing import List, Optional, Tuple
 
 from dimos_lcm.std_msgs import Bool
 import numpy as np

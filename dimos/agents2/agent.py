@@ -16,7 +16,7 @@ import datetime
 import json
 from operator import itemgetter
 import os
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import Any, TypedDict, Union
 import uuid
 
 from langchain.chat_models import init_chat_model
@@ -31,7 +31,6 @@ from langchain_core.messages import (
 from dimos.agents2.spec import AgentSpec
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import rpc
-from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger

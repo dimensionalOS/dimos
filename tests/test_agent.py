@@ -13,12 +13,9 @@
 # limitations under the License.
 
 import os
-import sys
 
 # -----
 from dotenv import load_dotenv
-
-import tests.test_header
 
 
 # Sanity check for dotenv

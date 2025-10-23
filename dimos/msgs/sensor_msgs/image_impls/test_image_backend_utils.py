@@ -18,8 +18,6 @@ import pytest
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 
 try:
-    import cupy as cp
-
     HAS_CUDA = True
     print("Running image backend utils tests with CUDA/CuPy support (GPU mode)")
 except:

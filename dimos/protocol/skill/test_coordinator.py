@@ -14,7 +14,7 @@
 import asyncio
 import datetime
 import time
-from typing import Generator, Optional
+from typing import Generator
 
 import pytest
 

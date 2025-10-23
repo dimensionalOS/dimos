@@ -13,15 +13,12 @@
 # limitations under the License.
 
 import multiprocessing
-import os
 from threading import Event
 
 # -----
 import reactivex
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
-
-import tests.test_header
 
 which_test = 2
 if which_test == 1:

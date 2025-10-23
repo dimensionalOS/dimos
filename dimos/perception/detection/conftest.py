@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import functools
-from typing import Callable, Generator, Optional, TypedDict, Union
+from typing import Callable, Generator, TypedDict
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
@@ -29,7 +29,6 @@ from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.detection.type import (
     Detection2D,
-    Detection3D,
     Detection3DPC,
     ImageDetections2D,
     ImageDetections3DPC,

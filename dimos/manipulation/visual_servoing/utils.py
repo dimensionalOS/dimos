@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Union
 
 import cv2
 from dimos_lcm.vision_msgs import Detection2D, Detection3D

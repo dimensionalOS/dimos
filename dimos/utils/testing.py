@@ -13,14 +13,12 @@
 # limitations under the License.
 import functools
 import glob
-import logging
 import os
 from pathlib import Path
 import pickle
 import re
-import shutil
 import time
-from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Generic, Iterator, TypeVar, Union
 
 from reactivex import (
     from_iterable,

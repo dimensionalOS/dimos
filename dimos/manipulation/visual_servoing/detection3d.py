@@ -16,8 +16,6 @@
 Real-time 3D object detection processor that extracts object poses from RGB-D data.
 """
 
-from typing import List, Optional, Tuple
-
 import cv2
 from dimos_lcm.vision_msgs import (
     BoundingBox2D,

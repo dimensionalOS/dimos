@@ -22,7 +22,6 @@ Subscribes to local costmap, odometry, and path, publishes movement commands.
 from abc import abstractmethod
 import threading
 import time
-from typing import Optional
 
 from reactivex.disposable import Disposable
 

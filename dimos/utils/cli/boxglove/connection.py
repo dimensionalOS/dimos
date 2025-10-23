@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import pickle
-import time
 from typing import Callable
 
 import reactivex as rx

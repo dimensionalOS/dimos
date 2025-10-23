@@ -15,15 +15,12 @@
 import os
 import time
 
-import cv2
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.segmentation.utils import extract_masks_bboxes_probs_names
-from dimos.stream import video_provider
 from dimos.stream.video_provider import VideoProvider
 
 

@@ -102,8 +102,6 @@ import os
 
 from huggingface_hub import InferenceClient
 
-import tests.test_header
-
 # Use environment variable for API key
 api_key = os.getenv("HUGGINGFACE_ACCESS_TOKEN")
 

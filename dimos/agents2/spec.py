@@ -17,16 +17,14 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, List, Optional, Tuple, Union
+from typing import Any, Union
 
 from langchain.chat_models.base import _SUPPORTED_PROVIDERS
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
     HumanMessage,
-    MessageLikeRepresentation,
     SystemMessage,
-    ToolCall,
     ToolMessage,
 )
 from rich.console import Console

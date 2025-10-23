@@ -17,9 +17,6 @@
 Test for foxglove bridge import and basic functionality
 """
 
-import threading
-import time
-from unittest.mock import MagicMock, patch
 import warnings
 
 import pytest

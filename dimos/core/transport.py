@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import traceback
-from typing import Any, Callable, Generic, List, Optional, Protocol, TypeVar
+from typing import Callable, TypeVar
 
 import dimos.core.colors as colors
 
@@ -23,17 +23,8 @@ T = TypeVar("T")
 
 import traceback
 from typing import (
-    Any,
     Callable,
-    Dict,
-    Generic,
-    List,
-    Optional,
-    Protocol,
     TypeVar,
-    get_args,
-    get_origin,
-    get_type_hints,
 )
 
 import dimos.core.colors as colors

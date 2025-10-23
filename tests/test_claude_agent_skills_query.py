@@ -14,7 +14,6 @@
 
 import os
 import threading
-import time
 
 from dotenv import load_dotenv
 import reactivex as rx
@@ -33,7 +32,6 @@ from dimos.stream.audio.pipelines import stt, tts
 from dimos.types.vector import Vector
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.web.websocket_vis.server import WebsocketVis
-import tests.test_header
 
 # Load API key from environment
 load_dotenv()

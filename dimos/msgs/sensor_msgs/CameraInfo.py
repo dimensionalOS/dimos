@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import time
-from typing import List, Optional
 
 # Import LCM types
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo

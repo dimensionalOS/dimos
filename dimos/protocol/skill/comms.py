@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, Generic, TypeVar, Union
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
 from dimos.protocol.service import Service

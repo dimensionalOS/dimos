@@ -16,7 +16,6 @@
 
 import json
 from multiprocessing import shared_memory
-from typing import Dict
 
 
 class ActorRegistry:

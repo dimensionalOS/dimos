@@ -21,7 +21,6 @@ from typing import (
     Any,
     Callable,
     Generic,
-    Optional,
     TypedDict,
     TypeVar,
 )

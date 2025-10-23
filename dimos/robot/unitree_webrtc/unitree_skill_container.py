@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import datetime
 import time
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from go2_webrtc_driver.constants import RTC_TOPIC
 

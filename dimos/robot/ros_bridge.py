@@ -15,7 +15,7 @@
 from enum import Enum
 import logging
 import threading
-from typing import Any, Dict, Optional, Type
+from typing import Any
 
 try:
     import rclpy

@@ -23,16 +23,13 @@ Usage:
 import argparse
 from datetime import datetime
 import os
-import sys
 
 import chromadb
 import cv2
 import matplotlib.pyplot as plt
-import numpy as np
 
 from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.perception.spatial_perception import SpatialMemory
-import tests.test_header
 
 
 def setup_persistent_chroma_db(db_path):

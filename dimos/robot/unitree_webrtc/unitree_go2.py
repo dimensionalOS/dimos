@@ -19,7 +19,6 @@ import functools
 import logging
 import os
 import time
-from typing import Optional
 import warnings
 
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -52,7 +51,7 @@ from dimos.perception.common.utils import (
 from dimos.perception.object_tracker_2d import ObjectTracker2D
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.robot import UnitreeRobot

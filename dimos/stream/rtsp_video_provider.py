@@ -17,7 +17,6 @@
 import subprocess
 import threading
 import time
-from typing import Optional
 
 import ffmpeg  # ffmpeg-python wrapper
 import numpy as np

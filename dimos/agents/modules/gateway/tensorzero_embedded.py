@@ -14,11 +14,9 @@
 
 """TensorZero embedded gateway client with correct config format."""
 
-import json
 import logging
-import os
 from pathlib import Path
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
+from typing import Any, AsyncIterator, Iterator, Union
 
 logger = logging.getLogger(__name__)
 

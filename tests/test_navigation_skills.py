@@ -26,13 +26,11 @@ Usage:
 """
 
 import argparse
-import logging
 import os
-import sys
 import threading
 import time
 
-from reactivex import Subject, operators as RxOps
+from reactivex import operators as RxOps
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
@@ -40,7 +38,6 @@ from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.navigation import BuildSemanticMap, Navigate
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 # Setup logging
 logger = setup_logger("simple_navigation_test")

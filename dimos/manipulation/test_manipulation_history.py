@@ -29,17 +29,13 @@
 import os
 import tempfile
 import time
-from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
 from dimos.manipulation.manipulation_history import ManipulationHistory, ManipulationHistoryEntry
 from dimos.types.manipulation import (
-    AbstractConstraint,
     ForceConstraint,
-    ManipulationMetadata,
     ManipulationTask,
-    ManipulationTaskConstraint,
     RotationConstraint,
     TranslationConstraint,
 )

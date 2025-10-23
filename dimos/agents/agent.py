@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from typing import TYPE_CHECKING, Any, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, Union
 
 # Third-party imports
 from dotenv import load_dotenv

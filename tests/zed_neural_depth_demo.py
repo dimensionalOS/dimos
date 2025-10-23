@@ -24,7 +24,6 @@ Press ESC or 'q' to quit.
 import argparse
 from datetime import datetime
 import logging
-import os
 from pathlib import Path
 import sys
 import time
@@ -45,7 +44,7 @@ except ImportError:
     sys.exit(1)
 
 from dimos.hardware.zed_camera import ZEDCamera
-from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_pcd
+from dimos.perception.pointcloud.utils import visualize_pcd
 
 # Configure logging
 logging.basicConfig(

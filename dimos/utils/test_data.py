@@ -18,7 +18,6 @@ import subprocess
 
 import pytest
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils import data
 
 

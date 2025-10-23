@@ -14,13 +14,13 @@
 
 """Utilities for grasp generation and visualization."""
 
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Union
 
 import cv2
 import numpy as np
 import open3d as o3d
 
-from dimos.perception.common.utils import project_2d_points_to_3d, project_3d_points_to_2d
+from dimos.perception.common.utils import project_3d_points_to_2d
 
 
 def create_gripper_geometry(

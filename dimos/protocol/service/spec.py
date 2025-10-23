@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC
-from typing import Generic, Type, TypeVar
+from typing import Generic, TypeVar
 
 # Generic type for service configuration
 ConfigT = TypeVar("ConfigT")

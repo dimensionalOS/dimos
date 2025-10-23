@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Generic, Iterable, Tuple, TypedDict, TypeVar, Union
+from typing import Generic, Iterable, TypedDict, TypeVar, Union
 
 PAYLOAD = TypeVar("PAYLOAD")
 

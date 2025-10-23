@@ -16,11 +16,9 @@ import argparse
 import os
 import sys
 import threading
-import time
-from typing import Any, Dict, List
 
 from dotenv import load_dotenv
-from reactivex import Subject, operators as ops
+from reactivex import operators as ops
 
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
@@ -29,8 +27,6 @@ from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.stream.video_provider import VideoProvider
-from dimos.types.vector import Vector
-from dimos.utils.logging_config import logger
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
 

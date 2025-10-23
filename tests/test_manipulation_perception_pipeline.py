@@ -34,9 +34,7 @@ from reactivex import operators as ops
 
 from dimos.manipulation.manip_aio_pipeline import ManipulationPipeline
 from dimos.stream.stereo_camera_streams.zed import ZEDCameraStream
-from dimos.utils.logging_config import logger
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 
 def monitor_grasps(pipeline):

@@ -16,7 +16,6 @@ import os
 import time
 
 from dimos.web.fastapi_server import FastAPIServer
-import tests.test_header
 
 print(f"Current working directory: {os.getcwd()}")
 

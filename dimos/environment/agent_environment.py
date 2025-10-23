@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import List, Union
+from typing import Union
 
 import cv2
 import numpy as np

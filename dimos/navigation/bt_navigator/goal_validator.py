@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from collections import deque
-from typing import Optional, Tuple
 
 import numpy as np
 

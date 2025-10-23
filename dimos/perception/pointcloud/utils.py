@@ -20,7 +20,7 @@ from RGBD images using Open3D.
 """
 
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Union
 
 import cv2
 import numpy as np

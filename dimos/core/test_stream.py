@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time
-from typing import Callable, Optional
+from typing import Callable
 
 import pytest
 

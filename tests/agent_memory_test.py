@@ -12,12 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 # -----
 from dotenv import load_dotenv
-
-import tests.test_header
 
 load_dotenv()
 

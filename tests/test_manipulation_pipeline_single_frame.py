@@ -22,7 +22,6 @@ import matplotlib
 import numpy as np
 
 from dimos.utils.data import get_data
-import tests.test_header
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:

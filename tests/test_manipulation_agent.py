@@ -13,44 +13,26 @@
 # limitations under the License.
 
 import datetime
-import json
 import os
-import threading
-import time
 
 import cv2
 from dotenv import load_dotenv
-import numpy as np
 from openai import OpenAI
 import reactivex as rx
 import reactivex.operators as ops
-from reactivex.subject import BehaviorSubject, Subject
+from reactivex.subject import BehaviorSubject
 
-from dimos.agents.agent import OpenAIAgent
 from dimos.agents.claude_agent import ClaudeAgent
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.robot.robot import MockManipulationRobot
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.skills.kill_skill import KillSkill
 from dimos.skills.manipulation.manipulate_skill import Manipulate
 from dimos.skills.manipulation.rotation_constraint_skill import RotationConstraintSkill
 from dimos.skills.manipulation.translation_constraint_skill import TranslationConstraintSkill
-from dimos.skills.navigation import GetPose, NavigateToGoal, NavigateWithText
-from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.skills import SkillLibrary
-from dimos.skills.speak import Speak
-from dimos.skills.visual_navigation_skills import FollowHuman
-from dimos.stream.audio.pipelines import stt, tts
-from dimos.stream.video_provider import VideoProvider
-from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 # Initialize logger for the agent module
 logger = setup_logger("dimos.tests.test_manipulation_agent")

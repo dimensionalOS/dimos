@@ -18,13 +18,12 @@ Note, to enable ps-spy to run without sudo you need:
     echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 """
 
-from functools import cache, lru_cache, partial
+from functools import cache
 import os
 import re
 import shutil
 import subprocess
 import threading
-from typing import Optional
 
 from distributed import get_client
 from distributed.client import Client

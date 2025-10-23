@@ -22,7 +22,6 @@ import asyncio
 import sys
 import threading
 import time
-from typing import Optional
 
 import cv2
 import numpy as np
