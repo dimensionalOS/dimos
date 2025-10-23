@@ -43,7 +43,7 @@ class WebcamConfig(CameraConfig):
 class Webcam(CameraHardware[WebcamConfig]):
     default_config = WebcamConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._capture = None
         self._capture_thread = None
@@ -66,7 +66,7 @@ class Webcam(CameraHardware[WebcamConfig]):
                 return
 
             # Return a dispose function to stop camera when unsubscribed
-            def dispose():
+            def dispose() -> None:
                 self._observer = None
                 self.stop()
 
@@ -92,7 +92,7 @@ class Webcam(CameraHardware[WebcamConfig]):
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop capturing frames"""
         # Signal thread to stop
         self._stop_event.set()
@@ -140,7 +140,7 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         return image
 
-    def _capture_loop(self):
+    def _capture_loop(self) -> None:
         """Capture frames at the configured frequency"""
         frame_interval = 1.0 / self.config.frequency
         next_frame_time = time.time()
@@ -167,4 +167,4 @@ class Webcam(CameraHardware[WebcamConfig]):
     def camera_info(self) -> CameraInfo:
         return self.config.camera_info
 
-    def emit(self, image: Image): ...
+    def emit(self, image: Image) -> None: ...

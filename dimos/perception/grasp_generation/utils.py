@@ -428,7 +428,7 @@ def visualize_grasps_3d(
     point_cloud: o3d.geometry.PointCloud,
     grasp_list: list[dict],
     max_grasps: int = -1,
-):
+) -> None:
     """
     Visualize grasps in 3D with point cloud.
 

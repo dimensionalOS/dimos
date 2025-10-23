@@ -86,8 +86,8 @@ class TFLCM(TFSpec, LCMService):
     def get_frames(self) -> set[str]:
         return set(self.buffer.get_all_frame_names())
 
-    def start(self):
+    def start(self) -> None:
         super().start()
         ...
 
-    def stop(self): ...
+    def stop(self) -> None: ...

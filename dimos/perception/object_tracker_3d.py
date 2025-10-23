@@ -47,7 +47,7 @@ class ObjectTracker3D(ObjectTracker2D):
     # Additional outputs (2D tracker already has detection2darray and tracked_overlay)
     detection3darray: Out[Detection3DArray] = None
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         """
         Initialize 3D object tracking module.
 
@@ -68,11 +68,11 @@ class ObjectTracker3D(ObjectTracker2D):
         self._latest_detection3d: Detection3DArray | None = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         # Subscribe to aligned RGB and depth streams
-        def on_aligned_frames(frames_tuple):
+        def on_aligned_frames(frames_tuple) -> None:
             rgb_msg, depth_msg = frames_tuple
             with self._frame_lock:
                 self._latest_rgb_frame = rgb_msg.data
@@ -94,7 +94,7 @@ class ObjectTracker3D(ObjectTracker2D):
         self._disposables.add(unsub)
 
         # Subscribe to camera info
-        def on_camera_info(camera_info_msg: CameraInfo):
+        def on_camera_info(camera_info_msg: CameraInfo) -> None:
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics: K is [fx, 0, cx, 0, fy, cy, 0, 0, 1]
             self.camera_intrinsics = [
@@ -112,7 +112,7 @@ class ObjectTracker3D(ObjectTracker2D):
     def stop(self) -> None:
         super().stop()
 
-    def _process_tracking(self):
+    def _process_tracking(self) -> None:
         """Override to add 3D detection creation after 2D tracking."""
         # Call parent 2D tracking
         super()._process_tracking()

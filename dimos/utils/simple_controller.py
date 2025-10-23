@@ -34,7 +34,7 @@ class PIDController:
         deadband=0.0,
         output_deadband=0.0,
         inverse_output=False,
-    ):
+    ) -> None:
         """
         Initialize the PID controller.
 
@@ -124,7 +124,7 @@ class PIDController:
 # Visual Servoing Controller Class
 # ----------------------------
 class VisualServoingController:
-    def __init__(self, distance_pid_params, angle_pid_params):
+    def __init__(self, distance_pid_params, angle_pid_params) -> None:
         """
         Initialize the visual servoing controller using enhanced PID controllers.
 

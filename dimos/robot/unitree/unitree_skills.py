@@ -189,7 +189,7 @@ class MyUnitreeSkills(SkillLibrary):
     _robot: Robot | None = None
 
     @classmethod
-    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]):
+    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]) -> None:
         """Add multiple skill classes as class attributes.
 
         Args:
@@ -201,7 +201,7 @@ class MyUnitreeSkills(SkillLibrary):
         else:
             setattr(cls, skill_classes.__name__, skill_classes)
 
-    def __init__(self, robot: Robot | None = None):
+    def __init__(self, robot: Robot | None = None) -> None:
         super().__init__()
         self._robot: Robot = None
 
@@ -212,7 +212,7 @@ class MyUnitreeSkills(SkillLibrary):
             self._robot = robot
             self.initialize_skills()
 
-    def initialize_skills(self):
+    def initialize_skills(self) -> None:
         # Create the skills and add them to the list of skills
         self.register_skills(self.create_skills_live())
 
@@ -310,6 +310,6 @@ class MyUnitreeSkills(SkillLibrary):
 
         seconds: float = Field(..., description="Seconds to wait")
 
-        def __call__(self):
+        def __call__(self) -> str:
             time.sleep(self.seconds)
             return f"Wait completed with length={self.seconds}s"

@@ -81,7 +81,7 @@ async def test_async_query():
     return future
 
 
-def test_sync_query_with_thread():
+def test_sync_query_with_thread() -> None:
     """Test agent query using threading for the event loop."""
     print("\n=== Testing Sync Query with Thread ===\n")
 
@@ -112,7 +112,7 @@ def test_sync_query_with_thread():
         logger.warning("Agent's event loop is NOT running - this is the problem!")
 
         # Try to run the loop in a thread
-        def run_loop():
+        def run_loop() -> None:
             asyncio.set_event_loop(agent._loop)
             agent._loop.run_forever()
 
@@ -190,7 +190,7 @@ def test_sync_query_with_thread():
 #     dimos.stop()
 
 
-def main():
+def main() -> None:
     """Run tests based on available API key."""
 
     if not os.getenv("OPENAI_API_KEY"):

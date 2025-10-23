@@ -217,7 +217,7 @@ class VideoOperators:
     def with_zmq_socket(
         socket: zmq.Socket, scheduler: Any | None = None
     ) -> Callable[[Observable], Observable]:
-        def send_frame(frame, socket):
+        def send_frame(frame, socket) -> None:
             _, img_encoded = cv2.imencode(".jpg", frame)
             socket.send(img_encoded.tobytes())
             # print(f"Frame received: {frame.shape}")
@@ -284,13 +284,13 @@ class Operators:
                 upstream_disp = None
                 active_inner_disp = None
 
-                def dispose_all():
+                def dispose_all() -> None:
                     if upstream_disp:
                         upstream_disp.dispose()
                     if active_inner_disp:
                         active_inner_disp.dispose()
 
-                def on_next(value):
+                def on_next(value) -> None:
                     nonlocal in_flight, active_inner_disp
                     lock.acquire()
                     try:
@@ -310,16 +310,16 @@ class Operators:
                         observer.on_error(ex)
                         return
 
-                    def inner_on_next(ivalue):
+                    def inner_on_next(ivalue) -> None:
                         observer.on_next(ivalue)
 
-                    def inner_on_error(err):
+                    def inner_on_error(err) -> None:
                         nonlocal in_flight
                         with lock:
                             in_flight = False
                         observer.on_error(err)
 
-                    def inner_on_completed():
+                    def inner_on_completed() -> None:
                         nonlocal in_flight
                         with lock:
                             in_flight = False
@@ -335,11 +335,11 @@ class Operators:
                         scheduler=scheduler,
                     )
 
-                def on_error(err):
+                def on_error(err) -> None:
                     dispose_all()
                     observer.on_error(err)
 
-                def on_completed():
+                def on_completed() -> None:
                     nonlocal upstream_done
                     with lock:
                         upstream_done = True
@@ -372,13 +372,13 @@ class Operators:
                 upstream_disp = None
                 active_inner_disp = None
 
-                def dispose_all():
+                def dispose_all() -> None:
                     if upstream_disp:
                         upstream_disp.dispose()
                     if active_inner_disp:
                         active_inner_disp.dispose()
 
-                def on_next(value):
+                def on_next(value) -> None:
                     nonlocal in_flight, active_inner_disp
                     with lock:
                         # If not busy, claim the slot
@@ -397,17 +397,17 @@ class Operators:
                         observer.on_error(ex)
                         return
 
-                    def inner_on_next(ivalue):
+                    def inner_on_next(ivalue) -> None:
                         observer.on_next(ivalue)
 
-                    def inner_on_error(err):
+                    def inner_on_error(err) -> None:
                         nonlocal in_flight
                         with lock:
                             in_flight = False
                             print("\033[34mError in inner on error.\033[0m")
                         observer.on_error(err)
 
-                    def inner_on_completed():
+                    def inner_on_completed() -> None:
                         nonlocal in_flight
                         with lock:
                             in_flight = False
@@ -424,11 +424,11 @@ class Operators:
                         scheduler=scheduler,
                     )
 
-                def on_error(e):
+                def on_error(e) -> None:
                     dispose_all()
                     observer.on_error(e)
 
-                def on_completed():
+                def on_completed() -> None:
                     nonlocal upstream_done
                     with lock:
                         upstream_done = True
@@ -455,7 +455,7 @@ class Operators:
             def subscribe(observer, scheduler=None):
                 is_processing = False
 
-                def on_next(item):
+                def on_next(item) -> None:
                     nonlocal is_processing
                     if not is_processing:
                         is_processing = True
@@ -473,7 +473,7 @@ class Operators:
                     else:
                         print("\033[35mSkipping item, already processing.\033[0m")
 
-                def set_not_processing():
+                def set_not_processing() -> None:
                     nonlocal is_processing
                     is_processing = False
                     print("\033[35mItem processed.\033[0m")
@@ -493,7 +493,7 @@ class Operators:
     def with_lock(lock: Lock):
         def operator(source: Observable):
             def subscribe(observer, scheduler=None):
-                def on_next(item):
+                def on_next(item) -> None:
                     if not lock.locked():  # Check if the lock is free
                         if lock.acquire(blocking=False):  # Non-blocking acquire
                             try:
@@ -506,10 +506,10 @@ class Operators:
                     else:
                         print("\033[34mLock busy, skipping item.\033[0m")
 
-                def on_error(error):
+                def on_error(error) -> None:
                     observer.on_error(error)
 
-                def on_completed():
+                def on_completed() -> None:
                     observer.on_completed()
 
                 return source.subscribe(
@@ -527,7 +527,7 @@ class Operators:
     def with_lock_check(lock: Lock):  # Renamed for clarity
         def operator(source: Observable):
             def subscribe(observer, scheduler=None):
-                def on_next(item):
+                def on_next(item) -> None:
                     if not lock.locked():  # Check if the lock is held WITHOUT acquiring
                         print(f"\033[32mLock is free, processing item: {item}\033[0m")
                         observer.on_next(item)
@@ -535,10 +535,10 @@ class Operators:
                         print(f"\033[34mLock is busy, skipping item: {item}\033[0m")
                         # observer.on_completed()
 
-                def on_error(error):
+                def on_error(error) -> None:
                     observer.on_error(error)
 
-                def on_completed():
+                def on_completed() -> None:
                     observer.on_completed()
 
                 return source.subscribe(
@@ -593,7 +593,7 @@ class Operators:
 
         def _operator(source: Observable) -> Observable:
             def _subscribe(observer: Observer, scheduler=None):
-                def on_next(value):
+                def on_next(value) -> None:
                     if counts is not None:
                         # Initialize count if necessary
                         if id not in counts:

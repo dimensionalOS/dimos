@@ -41,7 +41,7 @@ class Accumulator(ABC, Generic[T]):
 class LatestAccumulator(Accumulator[T]):
     """Simple accumulator that remembers only the latest args and kwargs."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._latest: tuple[tuple, dict] | None = None
         self._lock = threading.Lock()
 
@@ -67,7 +67,7 @@ class RollingAverageAccumulator(Accumulator[T]):
     a rolling average without storing individual values.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._sum: float = 0.0
         self._count: int = 0
         self._latest_kwargs: dict = {}

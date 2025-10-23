@@ -25,7 +25,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 class CostmapViz:
     """A wrapper around OccupancyGrid for visualization compatibility."""
 
-    def __init__(self, occupancy_grid: OccupancyGrid | None = None):
+    def __init__(self, occupancy_grid: OccupancyGrid | None = None) -> None:
         """Initialize from an OccupancyGrid."""
         self.occupancy_grid = occupancy_grid
 

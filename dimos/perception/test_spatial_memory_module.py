@@ -40,13 +40,13 @@ class VideoReplayModule(Module):
 
     video_out: Out[Image] = None
 
-    def __init__(self, video_path: str):
+    def __init__(self, video_path: str) -> None:
         super().__init__()
         self.video_path = video_path
         self._subscription = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying video data."""
         # Use TimedSensorReplay to replay video frames
         video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
@@ -64,7 +64,7 @@ class VideoReplayModule(Module):
         logger.info("VideoReplayModule started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop replaying video data."""
         if self._subscription:
             self._subscription.dispose()
@@ -77,13 +77,13 @@ class OdometryReplayModule(Module):
 
     odom_out: Out[Odometry] = None
 
-    def __init__(self, odom_path: str):
+    def __init__(self, odom_path: str) -> None:
         super().__init__()
         self.odom_path = odom_path
         self._subscription = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying odometry data."""
         # Use TimedSensorReplay to replay odometry
         odom_replay = TimedSensorReplay(self.odom_path, autocast=Odometry.from_msg)
@@ -101,7 +101,7 @@ class OdometryReplayModule(Module):
         logger.info("OdometryReplayModule started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop replaying odometry data."""
         if self._subscription:
             self._subscription.dispose()

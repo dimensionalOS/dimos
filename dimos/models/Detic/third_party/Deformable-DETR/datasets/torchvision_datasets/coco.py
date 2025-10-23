@@ -42,7 +42,7 @@ class CocoDetection(VisionDataset):
         cache_mode=False,
         local_rank=0,
         local_size=1,
-    ):
+    ) -> None:
         super().__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO
 
@@ -55,7 +55,7 @@ class CocoDetection(VisionDataset):
             self.cache = {}
             self.cache_images()
 
-    def cache_images(self):
+    def cache_images(self) -> None:
         self.cache = {}
         for index, img_id in zip(tqdm.trange(len(self.ids)), self.ids, strict=False):
             if index % self.local_size != self.local_rank:
@@ -92,5 +92,5 @@ class CocoDetection(VisionDataset):
 
         return img, target
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.ids)

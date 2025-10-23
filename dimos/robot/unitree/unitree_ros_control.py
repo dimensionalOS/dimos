@@ -69,7 +69,7 @@ class UnitreeROSControl(ROSControl):
         debug: bool = False,
         disable_video_stream: bool = False,
         mock_connection: bool = False,
-    ):
+    ) -> None:
         """
         Initialize Unitree ROS control interface with default values for Unitree Go2
 
@@ -135,7 +135,7 @@ class UnitreeROSControl(ROSControl):
         )
 
     # Unitree-specific RobotMode State update conditons
-    def _update_mode(self, msg: Go2State):
+    def _update_mode(self, msg: Go2State) -> None:
         """
         Implementation of abstract method to update robot mode
 

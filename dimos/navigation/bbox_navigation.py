@@ -32,13 +32,13 @@ class BBoxNavigationModule(Module):
     camera_info: In[CameraInfo] = None
     goal_request: Out[PoseStamped] = None
 
-    def __init__(self, goal_distance: float = 1.0):
+    def __init__(self, goal_distance: float = 1.0) -> None:
         super().__init__()
         self.goal_distance = goal_distance
         self.camera_intrinsics = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         unsub = self.camera_info.subscribe(
             lambda msg: setattr(self, "camera_intrinsics", [msg.K[0], msg.K[4], msg.K[2], msg.K[5]])
         )
@@ -51,7 +51,7 @@ class BBoxNavigationModule(Module):
     def stop(self) -> None:
         super().stop()
 
-    def _on_detection(self, det: Detection2DArray):
+    def _on_detection(self, det: Detection2DArray) -> None:
         if det.detections_length == 0 or not self.camera_intrinsics:
             return
         fx, fy, cx, cy = self.camera_intrinsics

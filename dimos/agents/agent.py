@@ -80,7 +80,7 @@ class Agent:
         agent_type: str = "Base",
         agent_memory: AbstractAgentSemanticMemory | None = None,
         pool_scheduler: ThreadPoolScheduler | None = None,
-    ):
+    ) -> None:
         """
         Initializes a new instance of the Agent.
 
@@ -97,7 +97,7 @@ class Agent:
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
 
-    def dispose_all(self):
+    def dispose_all(self) -> None:
         """Disposes of all active subscriptions managed by this agent."""
         if self.disposables:
             self.disposables.dispose()
@@ -157,7 +157,7 @@ class LLMAgent(Agent):
         input_query_stream: Observable | None = None,
         input_data_stream: Observable | None = None,
         input_video_stream: Observable | None = None,
-    ):
+    ) -> None:
         """
         Initializes a new instance of the LLMAgent.
 
@@ -455,7 +455,7 @@ class LLMAgent(Agent):
         """
         raise NotImplementedError("Subclasses must implement _send_query method.")
 
-    def _log_response_to_file(self, response, output_dir: str | None = None):
+    def _log_response_to_file(self, response, output_dir: str | None = None) -> None:
         """Logs the LLM response to a file.
 
         Args:
@@ -676,7 +676,7 @@ class LLMAgent(Agent):
             )
         )
 
-    def dispose_all(self):
+    def dispose_all(self) -> None:
         """Disposes of all active subscriptions managed by this agent."""
         super().dispose_all()
         self.response_subject.on_completed()
@@ -721,7 +721,7 @@ class OpenAIAgent(LLMAgent):
         pool_scheduler: ThreadPoolScheduler | None = None,
         process_all_inputs: bool | None = None,
         openai_client: OpenAI | None = None,
-    ):
+    ) -> None:
         """
         Initializes a new instance of the OpenAIAgent.
 
@@ -809,7 +809,7 @@ class OpenAIAgent(LLMAgent):
 
         logger.info("OpenAI Agent Initialized.")
 
-    def _add_context_to_memory(self):
+    def _add_context_to_memory(self) -> None:
         """Adds initial context to the agent's memory."""
         context_data = [
             (

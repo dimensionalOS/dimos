@@ -29,7 +29,7 @@ VectorLike = Union[Sequence[int | float], Vector3, "Vector", np.ndarray]
 class Vector:
     """A wrapper around numpy arrays for vector operations with intuitive syntax."""
 
-    def __init__(self, *args: VectorLike):
+    def __init__(self, *args: VectorLike) -> None:
         """Initialize a vector from components or another iterable.
 
         Examples:

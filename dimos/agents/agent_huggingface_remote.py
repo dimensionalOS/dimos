@@ -66,7 +66,7 @@ class HuggingFaceRemoteAgent(LLMAgent):
         api_key: str | None = None,
         hf_provider: str | None = None,
         hf_base_url: str | None = None,
-    ):
+    ) -> None:
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams

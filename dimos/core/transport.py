@@ -39,7 +39,7 @@ T = TypeVar("T")
 class PubSubTransport(Transport[T]):
     topic: any
 
-    def __init__(self, topic: any):
+    def __init__(self, topic: any) -> None:
         self.topic = topic
 
     def __str__(self) -> str:
@@ -53,14 +53,14 @@ class PubSubTransport(Transport[T]):
 class pLCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs):
+    def __init__(self, topic: str, **kwargs) -> None:
         super().__init__(topic)
         self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):
         return (pLCMTransport, (self.topic,))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -77,14 +77,14 @@ class pLCMTransport(PubSubTransport[T]):
 class LCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, type: type, **kwargs):
+    def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(LCMTopic(topic, type))
         self.lcm = LCM(**kwargs)
 
     def __reduce__(self):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -101,14 +101,14 @@ class LCMTransport(PubSubTransport[T]):
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs):
+    def __init__(self, topic: str, **kwargs) -> None:
         super().__init__(topic)
         self.shm = PickleSharedMemory(**kwargs)
 
     def __reduce__(self):
         return (pSHMTransport, (self.topic,))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.shm.start()
             self._started = True
@@ -125,14 +125,14 @@ class pSHMTransport(PubSubTransport[T]):
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs):
+    def __init__(self, topic: str, **kwargs) -> None:
         super().__init__(topic)
         self.shm = SharedMemory(**kwargs)
 
     def __reduce__(self):
         return (SHMTransport, (self.topic,))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.shm.start()
             self._started = True
@@ -150,7 +150,7 @@ class DaskTransport(Transport[T]):
     subscribers: list[Callable[[T], None]]
     _started: bool = False
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.subscribers = []
 
     def __str__(self) -> str:

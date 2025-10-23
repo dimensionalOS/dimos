@@ -50,7 +50,7 @@ class ObjectTracker2D(Module):
     def __init__(
         self,
         frame_id: str = "camera_link",
-    ):
+    ) -> None:
         """
         Initialize 2D object tracking module using OpenCV's CSRT tracker.
 
@@ -86,10 +86,10 @@ class ObjectTracker2D(Module):
         self._latest_detection2d: Detection2DArray | None = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
-        def on_frame(frame_msg: Image):
+        def on_frame(frame_msg: Image) -> None:
             arrival_time = time.perf_counter()
             with self._frame_lock:
                 self._latest_rgb_frame = frame_msg.data
@@ -151,21 +151,21 @@ class ObjectTracker2D(Module):
 
         return {"status": "tracking_started", "bbox": self.tracking_bbox}
 
-    def _start_tracking_thread(self):
+    def _start_tracking_thread(self) -> None:
         """Start the tracking thread."""
         self.stop_tracking_event.clear()
         self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.tracking_thread.start()
         logger.info("Started tracking thread")
 
-    def _tracking_loop(self):
+    def _tracking_loop(self) -> None:
         """Main tracking loop that runs in a separate thread."""
         while not self.stop_tracking_event.is_set() and self.tracking_initialized:
             self._process_tracking()
             time.sleep(self.tracking_period)
         logger.info("Tracking loop ended")
 
-    def _reset_tracking_state(self):
+    def _reset_tracking_state(self) -> None:
         """Reset tracking state without stopping the thread."""
         self.tracker = None
         self.tracking_bbox = None
@@ -212,7 +212,7 @@ class ObjectTracker2D(Module):
         """
         return self.tracking_initialized
 
-    def _process_tracking(self):
+    def _process_tracking(self) -> None:
         """Process current frame for tracking and publish 2D detections."""
         if self.tracker is None or not self.tracking_initialized:
             return

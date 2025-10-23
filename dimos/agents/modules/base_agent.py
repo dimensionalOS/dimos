@@ -57,7 +57,7 @@ class BaseAgentModule(BaseAgent, Module):
         rag_threshold: float = 0.45,
         process_all_inputs: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the agent module.
 
         Args:
@@ -107,7 +107,7 @@ class BaseAgentModule(BaseAgent, Module):
         self._data_lock = threading.Lock()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the agent module and connect streams."""
         super().start()
         logger.info(f"Starting agent module with model: {self.model}")
@@ -132,7 +132,7 @@ class BaseAgentModule(BaseAgent, Module):
         logger.info("Agent module started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the agent module."""
         logger.info("Stopping agent module")
 
@@ -148,20 +148,20 @@ class BaseAgentModule(BaseAgent, Module):
         super().stop()
 
     @rpc
-    def clear_history(self):
+    def clear_history(self) -> None:
         """Clear conversation history."""
         with self._history_lock:
             self.history = []
         logger.info("Conversation history cleared")
 
     @rpc
-    def add_skill(self, skill: AbstractSkill):
+    def add_skill(self, skill: AbstractSkill) -> None:
         """Add a skill to the agent."""
         self.skills.add(skill)
         logger.info(f"Added skill: {skill.__class__.__name__}")
 
     @rpc
-    def set_system_prompt(self, prompt: str):
+    def set_system_prompt(self, prompt: str) -> None:
         """Update system prompt."""
         self.system_prompt = prompt
         logger.info("System prompt updated")
@@ -172,7 +172,7 @@ class BaseAgentModule(BaseAgent, Module):
         with self._history_lock:
             return self.history.copy()
 
-    def _handle_agent_message(self, message: AgentMessage):
+    def _handle_agent_message(self, message: AgentMessage) -> None:
         """Handle AgentMessage from module input."""
         # Process through BaseAgent query method
         try:
@@ -183,7 +183,7 @@ class BaseAgentModule(BaseAgent, Module):
             logger.error(f"Agent message processing error: {e}")
             self.response_subject.on_error(e)
 
-    def _handle_module_query(self, query: str):
+    def _handle_module_query(self, query: str) -> None:
         """Handle legacy query from module input."""
         # For simple text queries, just convert to AgentMessage
         agent_msg = AgentMessage()
@@ -192,12 +192,12 @@ class BaseAgentModule(BaseAgent, Module):
         # Process through unified handler
         self._handle_agent_message(agent_msg)
 
-    def _update_latest_data(self, data: dict[str, Any]):
+    def _update_latest_data(self, data: dict[str, Any]) -> None:
         """Update latest data context."""
         with self._data_lock:
             self._latest_data = data
 
-    def _update_latest_image(self, img: Any):
+    def _update_latest_image(self, img: Any) -> None:
         """Update latest image."""
         with self._image_lock:
             self._latest_image = img

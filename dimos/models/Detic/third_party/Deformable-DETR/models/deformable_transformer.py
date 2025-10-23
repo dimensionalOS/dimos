@@ -35,7 +35,7 @@ class DeformableTransformer(nn.Module):
         enc_n_points=4,
         two_stage=False,
         two_stage_num_proposals=300,
-    ):
+    ) -> None:
         super().__init__()
 
         self.d_model = d_model
@@ -67,7 +67,7 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
@@ -246,7 +246,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
         n_levels=4,
         n_heads=8,
         n_points=4,
-    ):
+    ) -> None:
         super().__init__()
 
         # self attention
@@ -294,7 +294,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
 
 class DeformableTransformerEncoder(nn.Module):
-    def __init__(self, encoder_layer, num_layers):
+    def __init__(self, encoder_layer, num_layers) -> None:
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
@@ -340,7 +340,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
         n_levels=4,
         n_heads=8,
         n_points=4,
-    ):
+    ) -> None:
         super().__init__()
 
         # cross attention
@@ -408,7 +408,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
 
 class DeformableTransformerDecoder(nn.Module):
-    def __init__(self, decoder_layer, num_layers, return_intermediate=False):
+    def __init__(self, decoder_layer, num_layers, return_intermediate=False) -> None:
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers

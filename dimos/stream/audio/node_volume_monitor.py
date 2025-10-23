@@ -36,7 +36,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
         threshold: float = 0.01,
         bar_length: int = 50,
         volume_func: Callable = calculate_peak_volume,
-    ):
+    ) -> None:
         """
         Initialize VolumeMonitorNode.
 
@@ -102,7 +102,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
             logger.info(f"Starting volume monitor (method: {self.func_name})")
 
             # Subscribe to the audio source
-            def on_audio_event(event: AudioEvent):
+            def on_audio_event(event: AudioEvent) -> None:
                 try:
                     # Calculate volume
                     volume = self.volume_func(event.data)
@@ -124,7 +124,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping volume monitor")
                 subscription.dispose()
 

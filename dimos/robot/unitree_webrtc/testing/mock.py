@@ -25,7 +25,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
 
 
 class Mock:
-    def __init__(self, root="office", autocast: bool = True):
+    def __init__(self, root="office", autocast: bool = True) -> None:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.root = os.path.join(current_dir, f"mockdata/{root}")
         self.autocast = autocast

@@ -159,7 +159,7 @@ def pad(image, target, padding):
 
 
 class RandomCrop:
-    def __init__(self, size):
+    def __init__(self, size) -> None:
         self.size = size
 
     def __call__(self, img, target):
@@ -168,7 +168,7 @@ class RandomCrop:
 
 
 class RandomSizeCrop:
-    def __init__(self, min_size: int, max_size: int):
+    def __init__(self, min_size: int, max_size: int) -> None:
         self.min_size = min_size
         self.max_size = max_size
 
@@ -180,7 +180,7 @@ class RandomSizeCrop:
 
 
 class CenterCrop:
-    def __init__(self, size):
+    def __init__(self, size) -> None:
         self.size = size
 
     def __call__(self, img, target):
@@ -192,7 +192,7 @@ class CenterCrop:
 
 
 class RandomHorizontalFlip:
-    def __init__(self, p=0.5):
+    def __init__(self, p=0.5) -> None:
         self.p = p
 
     def __call__(self, img, target):
@@ -202,7 +202,7 @@ class RandomHorizontalFlip:
 
 
 class RandomResize:
-    def __init__(self, sizes, max_size=None):
+    def __init__(self, sizes, max_size=None) -> None:
         assert isinstance(sizes, list | tuple)
         self.sizes = sizes
         self.max_size = max_size
@@ -213,7 +213,7 @@ class RandomResize:
 
 
 class RandomPad:
-    def __init__(self, max_pad):
+    def __init__(self, max_pad) -> None:
         self.max_pad = max_pad
 
     def __call__(self, img, target):
@@ -228,7 +228,7 @@ class RandomSelect:
     with probability p for transforms1 and (1 - p) for transforms2
     """
 
-    def __init__(self, transforms1, transforms2, p=0.5):
+    def __init__(self, transforms1, transforms2, p=0.5) -> None:
         self.transforms1 = transforms1
         self.transforms2 = transforms2
         self.p = p
@@ -245,7 +245,7 @@ class ToTensor:
 
 
 class RandomErasing:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.eraser = T.RandomErasing(*args, **kwargs)
 
     def __call__(self, img, target):
@@ -253,7 +253,7 @@ class RandomErasing:
 
 
 class Normalize:
-    def __init__(self, mean, std):
+    def __init__(self, mean, std) -> None:
         self.mean = mean
         self.std = std
 
@@ -272,7 +272,7 @@ class Normalize:
 
 
 class Compose:
-    def __init__(self, transforms):
+    def __init__(self, transforms) -> None:
         self.transforms = transforms
 
     def __call__(self, image, target):
@@ -280,7 +280,7 @@ class Compose:
             image, target = t(image, target)
         return image, target
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         format_string = self.__class__.__name__ + "("
         for t in self.transforms:
             format_string += "\n"

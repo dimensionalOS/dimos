@@ -18,7 +18,7 @@ import pytest
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
-def test_vector_default_init():
+def test_vector_default_init() -> None:
     """Test that default initialization of Vector() has x,y,z components all zero."""
     v = Vector3()
     assert v.x == 0.0
@@ -29,7 +29,7 @@ def test_vector_default_init():
     assert v.is_zero()  # Zero vector should be considered zero
 
 
-def test_vector_specific_init():
+def test_vector_specific_init() -> None:
     """Test initialization with specific values and different input types."""
 
     v1 = Vector3(1.0, 2.0)  # 2D vector (now becomes 3D with z=0)
@@ -67,7 +67,7 @@ def test_vector_specific_init():
     assert v6 == original
 
 
-def test_vector_addition():
+def test_vector_addition() -> None:
     """Test vector addition."""
     v1 = Vector3(1.0, 2.0, 3.0)
     v2 = Vector3(4.0, 5.0, 6.0)
@@ -78,7 +78,7 @@ def test_vector_addition():
     assert v_add.z == 9.0
 
 
-def test_vector_subtraction():
+def test_vector_subtraction() -> None:
     """Test vector subtraction."""
     v1 = Vector3(1.0, 2.0, 3.0)
     v2 = Vector3(4.0, 5.0, 6.0)
@@ -89,7 +89,7 @@ def test_vector_subtraction():
     assert v_sub.z == 3.0
 
 
-def test_vector_scalar_multiplication():
+def test_vector_scalar_multiplication() -> None:
     """Test vector multiplication by a scalar."""
     v1 = Vector3(1.0, 2.0, 3.0)
 
@@ -105,7 +105,7 @@ def test_vector_scalar_multiplication():
     assert v_rmul.z == 6.0
 
 
-def test_vector_scalar_division():
+def test_vector_scalar_division() -> None:
     """Test vector division by a scalar."""
     v2 = Vector3(4.0, 5.0, 6.0)
 
@@ -115,7 +115,7 @@ def test_vector_scalar_division():
     assert v_div.z == 3.0
 
 
-def test_vector_dot_product():
+def test_vector_dot_product() -> None:
     """Test vector dot product."""
     v1 = Vector3(1.0, 2.0, 3.0)
     v2 = Vector3(4.0, 5.0, 6.0)
@@ -124,7 +124,7 @@ def test_vector_dot_product():
     assert dot == 32.0
 
 
-def test_vector_length():
+def test_vector_length() -> None:
     """Test vector length calculation."""
     # 2D vector with length 5 (now 3D with z=0)
     v1 = Vector3(3.0, 4.0)
@@ -139,7 +139,7 @@ def test_vector_length():
     assert v2.length_squared() == 49.0
 
 
-def test_vector_normalize():
+def test_vector_normalize() -> None:
     """Test vector normalization."""
     v = Vector3(2.0, 3.0, 6.0)
     assert not v.is_zero()
@@ -166,7 +166,7 @@ def test_vector_normalize():
     assert v_zero_norm.is_zero()
 
 
-def test_vector_to_2d():
+def test_vector_to_2d() -> None:
     """Test conversion to 2D vector."""
     v = Vector3(2.0, 3.0, 6.0)
 
@@ -183,7 +183,7 @@ def test_vector_to_2d():
     assert v2_2d.z == 0.0
 
 
-def test_vector_distance():
+def test_vector_distance() -> None:
     """Test distance calculations between vectors."""
     v1 = Vector3(1.0, 2.0, 3.0)
     v2 = Vector3(4.0, 6.0, 8.0)
@@ -198,7 +198,7 @@ def test_vector_distance():
     assert dist_sq == 50.0  # 9 + 16 + 25
 
 
-def test_vector_cross_product():
+def test_vector_cross_product() -> None:
     """Test vector cross product."""
     v1 = Vector3(1.0, 0.0, 0.0)  # Unit x vector
     v2 = Vector3(0.0, 1.0, 0.0)  # Unit y vector
@@ -230,7 +230,7 @@ def test_vector_cross_product():
     assert cross_2d.z == -2.0
 
 
-def test_vector_zeros():
+def test_vector_zeros() -> None:
     """Test Vector3.zeros class method."""
     # 3D zero vector
     v_zeros = Vector3.zeros()
@@ -240,7 +240,7 @@ def test_vector_zeros():
     assert v_zeros.is_zero()
 
 
-def test_vector_ones():
+def test_vector_ones() -> None:
     """Test Vector3.ones class method."""
     # 3D ones vector
     v_ones = Vector3.ones()
@@ -249,7 +249,7 @@ def test_vector_ones():
     assert v_ones.z == 1.0
 
 
-def test_vector_conversion_methods():
+def test_vector_conversion_methods() -> None:
     """Test vector conversion methods (to_list, to_tuple, to_numpy)."""
     v = Vector3(1.0, 2.0, 3.0)
 
@@ -265,7 +265,7 @@ def test_vector_conversion_methods():
     assert np.array_equal(np_array, np.array([1.0, 2.0, 3.0]))
 
 
-def test_vector_equality():
+def test_vector_equality() -> None:
     """Test vector equality."""
     v1 = Vector3(1, 2, 3)
     v2 = Vector3(1, 2, 3)
@@ -278,7 +278,7 @@ def test_vector_equality():
     assert v1 != [1, 2, 3]
 
 
-def test_vector_is_zero():
+def test_vector_is_zero() -> None:
     """Test is_zero method for vectors."""
     # Default zero vector
     v0 = Vector3()
@@ -346,7 +346,7 @@ def test_vector_bool_conversion():
         raise AssertionError("Non-zero vector should be True in boolean context")
 
 
-def test_vector_add():
+def test_vector_add() -> None:
     """Test vector addition operator."""
     v1 = Vector3(1.0, 2.0, 3.0)
     v2 = Vector3(4.0, 5.0, 6.0)
@@ -368,7 +368,7 @@ def test_vector_add():
     assert (v1 + v_zero) == v1
 
 
-def test_vector_add_dim_mismatch():
+def test_vector_add_dim_mismatch() -> None:
     """Test vector addition with different input dimensions (now all vectors are 3D)."""
     v1 = Vector3(1.0, 2.0)  # Becomes (1, 2, 0)
     v2 = Vector3(4.0, 5.0, 6.0)  # (4, 5, 6)
@@ -380,7 +380,7 @@ def test_vector_add_dim_mismatch():
     assert v_add_op.z == 6.0  # 0 + 6
 
 
-def test_yaw_pitch_roll_accessors():
+def test_yaw_pitch_roll_accessors() -> None:
     """Test yaw, pitch, and roll accessor properties."""
     # Test with a 3D vector
     v = Vector3(1.0, 2.0, 3.0)
@@ -412,7 +412,7 @@ def test_yaw_pitch_roll_accessors():
     assert v_neg.yaw == -3.5
 
 
-def test_vector_to_quaternion():
+def test_vector_to_quaternion() -> None:
     """Test vector to quaternion conversion."""
     # Test with zero Euler angles (should produce identity quaternion)
     v_zero = Vector3(0.0, 0.0, 0.0)
@@ -450,7 +450,7 @@ def test_vector_to_quaternion():
     assert np.isclose(q_x_90.w, expected, atol=1e-10)
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     v_source = Vector3(1.0, 2.0, 3.0)
 
     binary_msg = v_source.lcm_encode()

@@ -17,7 +17,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion
 
 
-def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker):
+def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker) -> None:
     navigation_skill_container._cancel_goal = mocker.Mock()
     navigation_skill_container._stop_exploration = mocker.Mock()
     agent = create_navigation_agent(fixture="test_stop_movement.json")
@@ -28,7 +28,7 @@ def test_stop_movement(create_navigation_agent, navigation_skill_container, mock
     navigation_skill_container._stop_exploration.assert_called_once_with()
 
 
-def test_take_a_look_around(create_navigation_agent, navigation_skill_container, mocker):
+def test_take_a_look_around(create_navigation_agent, navigation_skill_container, mocker) -> None:
     navigation_skill_container._explore = mocker.Mock()
     navigation_skill_container._is_exploration_active = mocker.Mock()
     mocker.patch("dimos.agents2.skills.navigation.time.sleep")
@@ -39,7 +39,9 @@ def test_take_a_look_around(create_navigation_agent, navigation_skill_container,
     navigation_skill_container._explore.assert_called_once_with()
 
 
-def test_go_to_semantic_location(create_navigation_agent, navigation_skill_container, mocker):
+def test_go_to_semantic_location(
+    create_navigation_agent, navigation_skill_container, mocker
+) -> None:
     mocker.patch(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
         return_value=None,

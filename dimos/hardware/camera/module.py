@@ -62,11 +62,11 @@ class CameraModule(Module):
 
     default_config = CameraModuleConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
     @rpc
-    def start(self):
+    def start(self) -> str:
         if callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:
@@ -79,7 +79,7 @@ class CameraModule(Module):
 
         # camera_info_stream = self.camera_info_stream(frequency=5.0)
 
-        def publish_info(camera_info: CameraInfo):
+        def publish_info(camera_info: CameraInfo) -> None:
             self.camera_info.publish(camera_info)
 
             if self.config.transform is None:
@@ -115,7 +115,7 @@ class CameraModule(Module):
 
         return rx.interval(1.0 / frequency).pipe(ops.map(camera_info))
 
-    def stop(self):
+    def stop(self) -> None:
         if self._module_subscription:
             self._module_subscription.dispose()
             self._module_subscription = None

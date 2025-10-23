@@ -42,7 +42,7 @@ def do_test(cfg, model):
         return ret
 
 
-def do_train(args, cfg):
+def do_train(args, cfg) -> None:
     """
     Args:
         cfg: an object with the following attributes:
@@ -105,7 +105,7 @@ def do_train(args, cfg):
     trainer.train(start_iter, cfg.train.max_iter)
 
 
-def main(args):
+def main(args) -> None:
     cfg = LazyConfig.load(args.config_file)
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)

@@ -43,7 +43,7 @@ class Map(Module):
         max_height: float = 0.6,
         global_config: GlobalConfig | None = None,
         **kwargs,
-    ):
+    ) -> None:
         self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
         self.global_publish_interval = global_publish_interval
@@ -57,13 +57,13 @@ class Map(Module):
         super().__init__(**kwargs)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         unsub = self.lidar.subscribe(self.add_frame)
         self._disposables.add(Disposable(unsub))
 
-        def publish(_):
+        def publish(_) -> None:
             self.global_map.publish(self.to_lidar_message())
 
             # temporary, not sure if it belogs in mapper

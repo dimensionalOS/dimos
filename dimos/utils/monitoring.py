@@ -35,7 +35,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(__file__)
 
 
-def print_data_table(data):
+def print_data_table(data) -> None:
     headers = [
         "cpu_percent",
         "active_percent",
@@ -87,13 +87,13 @@ class UtilizationThread(threading.Thread):
     _stop_event: threading.Event
     _monitors: dict
 
-    def __init__(self, module):
+    def __init__(self, module) -> None:
         super().__init__(daemon=True)
         self._module = module
         self._stop_event = threading.Event()
         self._monitors = {}
 
-    def run(self):
+    def run(self) -> None:
         while not self._stop_event.is_set():
             workers = self._module.client.scheduler_info()["workers"]
             pids = {pid: None for pid in get_worker_pids()}
@@ -123,13 +123,13 @@ class UtilizationThread(threading.Thread):
             print_data_table(data)
             self._stop_event.wait(1)
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
         for monitor in self._monitors.values():
             monitor.stop()
             monitor.join(timeout=2)
 
-    def _fix_missing_ids(self, data):
+    def _fix_missing_ids(self, data) -> None:
         """
         Some worker IDs are None. But if we order the workers by PID and all
         non-None ids are in order, then we can deduce that the None ones are the
@@ -144,7 +144,7 @@ class UtilizationModule(Module):
     client: Client | None
     _utilization_thread: UtilizationThread | None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.client = None
         self._utilization_thread = None
@@ -170,14 +170,14 @@ class UtilizationModule(Module):
         self._utilization_thread = UtilizationThread(self)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         if self._utilization_thread:
             self._utilization_thread.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._utilization_thread:
             self._utilization_thread.stop()
             self._utilization_thread.join(timeout=2)
@@ -233,7 +233,7 @@ class GilMonitorThread(threading.Thread):
     _stop_event: threading.Event
     _lock: threading.Lock
 
-    def __init__(self, pid):
+    def __init__(self, pid) -> None:
         super().__init__(daemon=True)
         self.pid = pid
         self._latest_values = (-1.0, -1.0, -1.0, -1)
@@ -293,7 +293,7 @@ class GilMonitorThread(threading.Thread):
         with self._lock:
             return self._latest_values
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
 

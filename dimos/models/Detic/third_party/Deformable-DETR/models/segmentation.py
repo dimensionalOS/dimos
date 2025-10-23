@@ -28,7 +28,7 @@ except ImportError:
 
 
 class DETRsegm(nn.Module):
-    def __init__(self, detr, freeze_detr=False):
+    def __init__(self, detr, freeze_detr=False) -> None:
         super().__init__()
         self.detr = detr
 
@@ -80,7 +80,7 @@ class MaskHeadSmallConv(nn.Module):
     Upsampling is done using a FPN approach
     """
 
-    def __init__(self, dim, fpn_dims, context_dim):
+    def __init__(self, dim, fpn_dims, context_dim) -> None:
         super().__init__()
 
         inter_dims = [
@@ -158,7 +158,7 @@ class MaskHeadSmallConv(nn.Module):
 class MHAttentionMap(nn.Module):
     """This is a 2D attention module, which only returns the attention softmax (no multiplication by value)"""
 
-    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0, bias=True):
+    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0, bias=True) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
@@ -236,7 +236,7 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
 
 
 class PostProcessSegm(nn.Module):
-    def __init__(self, threshold=0.5):
+    def __init__(self, threshold=0.5) -> None:
         super().__init__()
         self.threshold = threshold
 
@@ -266,7 +266,7 @@ class PostProcessPanoptic(nn.Module):
     """This class converts the output of the model to the final panoptic result, in the format expected by the
     coco panoptic API"""
 
-    def __init__(self, is_thing_map, threshold=0.85):
+    def __init__(self, is_thing_map, threshold=0.85) -> None:
         """
         Parameters:
            is_thing_map: This is a whose keys are the class ids, and the values a boolean indicating whether

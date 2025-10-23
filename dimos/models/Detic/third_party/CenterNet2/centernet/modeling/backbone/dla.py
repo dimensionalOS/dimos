@@ -38,7 +38,7 @@ def get_model_url(data, name, hash):
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN"):
+    def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN") -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(
             inplanes,
@@ -77,7 +77,7 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 2
 
-    def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN"):
+    def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN") -> None:
         super().__init__()
         expansion = Bottleneck.expansion
         bottle_planes = planes // expansion
@@ -120,7 +120,7 @@ class Bottleneck(nn.Module):
 
 
 class Root(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, residual, norm="BN"):
+    def __init__(self, in_channels, out_channels, kernel_size, residual, norm="BN") -> None:
         super().__init__()
         self.conv = nn.Conv2d(
             in_channels, out_channels, 1, stride=1, bias=False, padding=(kernel_size - 1) // 2
@@ -154,7 +154,7 @@ class Tree(nn.Module):
         dilation=1,
         root_residual=False,
         norm="BN",
-    ):
+    ) -> None:
         super().__init__()
         if root_dim == 0:
             root_dim = 2 * out_channels
@@ -221,7 +221,7 @@ class Tree(nn.Module):
 class DLA(nn.Module):
     def __init__(
         self, num_layers, levels, channels, block=BasicBlock, residual_root=False, norm="BN"
-    ):
+    ) -> None:
         """
         Args:
         """
@@ -279,7 +279,7 @@ class DLA(nn.Module):
             data="imagenet", name=f"dla{num_layers}", hash=HASH[num_layers]
         )
 
-    def load_pretrained_model(self, data, name, hash):
+    def load_pretrained_model(self, data, name, hash) -> None:
         model_url = get_model_url(data, name, hash)
         model_weights = model_zoo.load_url(model_url)
         num_classes = len(model_weights[list(model_weights.keys())[-1]])
@@ -319,7 +319,7 @@ class DLA(nn.Module):
         return y
 
 
-def fill_up_weights(up):
+def fill_up_weights(up) -> None:
     w = up.weight.data
     f = math.ceil(w.size(2) / 2)
     c = (2 * f - 1 - f % 2) / (2.0 * f)
@@ -331,7 +331,7 @@ def fill_up_weights(up):
 
 
 class _DeformConv(nn.Module):
-    def __init__(self, chi, cho, norm="BN"):
+    def __init__(self, chi, cho, norm="BN") -> None:
         super().__init__()
         self.actf = nn.Sequential(get_norm(norm, cho), nn.ReLU(inplace=True))
         if DCNV1:
@@ -362,7 +362,7 @@ class _DeformConv(nn.Module):
 
 
 class IDAUp(nn.Module):
-    def __init__(self, o, channels, up_f, norm="BN"):
+    def __init__(self, o, channels, up_f, norm="BN") -> None:
         super().__init__()
         for i in range(1, len(channels)):
             c = channels[i]
@@ -379,7 +379,7 @@ class IDAUp(nn.Module):
             setattr(self, "up_" + str(i), up)
             setattr(self, "node_" + str(i), node)
 
-    def forward(self, layers, startp, endp):
+    def forward(self, layers, startp, endp) -> None:
         for i in range(startp + 1, endp):
             upsample = getattr(self, "up_" + str(i - startp))
             project = getattr(self, "proj_" + str(i - startp))
@@ -389,7 +389,7 @@ class IDAUp(nn.Module):
 
 
 class DLAUp(nn.Module):
-    def __init__(self, startp, channels, scales, in_channels=None, norm="BN"):
+    def __init__(self, startp, channels, scales, in_channels=None, norm="BN") -> None:
         super().__init__()
         self.startp = startp
         if in_channels is None:
@@ -423,7 +423,7 @@ DLA_CONFIGS = {
 
 
 class DLASeg(Backbone):
-    def __init__(self, num_layers, out_features, use_dla_up=True, ms_output=False, norm="BN"):
+    def __init__(self, num_layers, out_features, use_dla_up=True, ms_output=False, norm="BN") -> None:
         super().__init__()
         # depth = 34
         levels, channels, Block = DLA_CONFIGS[num_layers]
@@ -504,7 +504,7 @@ class LastLevelP6P7(nn.Module):
     C5 feature.
     """
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels) -> None:
         super().__init__()
         self.num_levels = 2
         self.in_feature = "dla5"

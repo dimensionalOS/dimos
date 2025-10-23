@@ -30,7 +30,7 @@ class DFConv2d(nn.Module):
         deformable_groups=1,
         bias=False,
         padding=None,
-    ):
+    ) -> None:
         super().__init__()
         if isinstance(kernel_size, list | tuple):
             assert isinstance(stride, list | tuple)

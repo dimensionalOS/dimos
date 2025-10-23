@@ -58,7 +58,7 @@ class UnitreeSpeak(AbstractRobotSkill):
         default=False, description="Use megaphone mode for lower latency (experimental)"
     )
 
-    def __init__(self, **data):
+    def __init__(self, **data) -> None:
         super().__init__(**data)
         self._openai_client = None
 
@@ -148,7 +148,7 @@ class UnitreeSpeak(AbstractRobotSkill):
             logger.error(f"Error playing audio on robot: {e}")
             raise
 
-    def _stop_audio_playback(self):
+    def _stop_audio_playback(self) -> None:
         try:
             logger.debug("Stopping audio playback")
             self._webrtc_request(AUDIO_API["PAUSE"], {})
@@ -203,7 +203,7 @@ class UnitreeSpeak(AbstractRobotSkill):
             except Exception as e:
                 logger.warning(f"Error exiting megaphone mode: {e}")
 
-    def __call__(self):
+    def __call__(self) -> str:
         super().__call__()
 
         if not self._robot:

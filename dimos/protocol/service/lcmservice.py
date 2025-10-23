@@ -256,7 +256,7 @@ class LCMService(Service[LCMConfig]):
         state.pop("_call_thread_pool_lock", None)
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes
@@ -267,7 +267,7 @@ class LCMService(Service[LCMConfig]):
         self._call_thread_pool = None
         self._call_thread_pool_lock = threading.RLock()
 
-    def start(self):
+    def start(self) -> None:
         # Reinitialize LCM if it's None (e.g., after unpickling)
         if self.l is None:
             if self.config.lcm:
@@ -300,7 +300,7 @@ class LCMService(Service[LCMConfig]):
                 stack_trace = traceback.format_exc()
                 print(f"Error in LCM handling: {e}\n{stack_trace}")
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the LCM loop."""
         self._stop_event.set()
         if self._thread is not None:

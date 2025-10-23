@@ -36,7 +36,7 @@ def setup(args):
     return cfg
 
 
-def do_flop(cfg):
+def do_flop(cfg) -> None:
     if isinstance(cfg, CfgNode):
         data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
         model = build_model(cfg)
@@ -67,7 +67,7 @@ def do_flop(cfg):
     )
 
 
-def do_activation(cfg):
+def do_activation(cfg) -> None:
     if isinstance(cfg, CfgNode):
         data_loader = build_detection_test_loader(cfg, cfg.DATASETS.TEST[0])
         model = build_model(cfg)
@@ -94,7 +94,7 @@ def do_activation(cfg):
     )
 
 
-def do_parameter(cfg):
+def do_parameter(cfg) -> None:
     if isinstance(cfg, CfgNode):
         model = build_model(cfg)
     else:
@@ -102,7 +102,7 @@ def do_parameter(cfg):
     logger.info("Parameter Count:\n" + parameter_count_table(model, max_depth=5))
 
 
-def do_structure(cfg):
+def do_structure(cfg) -> None:
     if isinstance(cfg, CfgNode):
         model = build_model(cfg)
     else:

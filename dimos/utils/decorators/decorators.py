@@ -48,7 +48,7 @@ def limit(max_freq: float, accumulator: Accumulator | None = None):
         lock = threading.Lock()
         timer: threading.Timer | None = None
 
-        def execute_accumulated():
+        def execute_accumulated() -> None:
             nonlocal last_call_time, timer
             with lock:
                 if len(accumulator):

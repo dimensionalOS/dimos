@@ -31,23 +31,23 @@ class NavigationModule(Module):
     cancel_goal: Out[Bool] = None
     joy: Out[Joy] = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         """Initialize NavigationModule."""
         Module.__init__(self, *args, **kwargs)
         self.goal_reach = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the navigation module."""
         if self.goal_reached:
             self.goal_reached.subscribe(self._on_goal_reached)
         logger.info("NavigationModule started")
 
-    def _on_goal_reached(self, msg: Bool):
+    def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached status messages."""
         self.goal_reach = msg.data
 
-    def _set_autonomy_mode(self):
+    def _set_autonomy_mode(self) -> None:
         """
         Set autonomy mode by publishing Joy message.
         """

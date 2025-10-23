@@ -63,7 +63,7 @@ class ObjectTracking(Module):
         reid_threshold: int = 10,
         reid_fail_tolerance: int = 5,
         frame_id: str = "camera_link",
-    ):
+    ) -> None:
         """
         Initialize an object tracking module using OpenCV's CSRT tracker with ORB re-ID.
 
@@ -118,11 +118,11 @@ class ObjectTracking(Module):
         self._detection_event = threading.Event()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         # Subscribe to aligned rgb and depth streams
-        def on_aligned_frames(frames_tuple):
+        def on_aligned_frames(frames_tuple) -> None:
             rgb_msg, depth_msg = frames_tuple
             with self._frame_lock:
                 self._latest_rgb_frame = rgb_msg.data
@@ -144,7 +144,7 @@ class ObjectTracking(Module):
         self._disposables.add(unsub)
 
         # Subscribe to camera info stream separately (doesn't need alignment)
-        def on_camera_info(camera_info_msg: CameraInfo):
+        def on_camera_info(camera_info_msg: CameraInfo) -> None:
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics from camera info K matrix
             # K is a 3x3 matrix in row-major order: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
@@ -269,14 +269,14 @@ class ObjectTracking(Module):
 
         return good_matches >= self.reid_threshold
 
-    def _start_tracking_thread(self):
+    def _start_tracking_thread(self) -> None:
         """Start the tracking thread."""
         self.stop_tracking.clear()
         self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.tracking_thread.start()
         logger.info("Started tracking thread")
 
-    def _tracking_loop(self):
+    def _tracking_loop(self) -> None:
         """Main tracking loop that runs in a separate thread."""
         while not self.stop_tracking.is_set() and self.tracking_initialized:
             # Process tracking for current frame
@@ -287,7 +287,7 @@ class ObjectTracking(Module):
 
         logger.info("Tracking loop ended")
 
-    def _reset_tracking_state(self):
+    def _reset_tracking_state(self) -> None:
         """Reset tracking state without stopping the thread."""
         self.tracker = None
         self.tracking_bbox = None
@@ -346,7 +346,7 @@ class ObjectTracking(Module):
         """
         return self.tracking_initialized and self.reid_confirmed
 
-    def _process_tracking(self):
+    def _process_tracking(self) -> None:
         """Process current frame for tracking and publish detections."""
         if self.tracker is None or not self.tracking_initialized:
             return

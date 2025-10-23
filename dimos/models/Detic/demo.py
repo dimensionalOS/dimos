@@ -24,7 +24,7 @@ from detic.predictor import VisualizationDemo
 
 # Fake a video capture object OpenCV style - half width, half height of first screen using MSS
 class ScreenGrab:
-    def __init__(self):
+    def __init__(self) -> None:
         self.sct = mss.mss()
         m0 = self.sct.monitors[0]
         self.monitor = {"top": 0, "left": 0, "width": m0["width"] / 2, "height": m0["height"] / 2}
@@ -34,10 +34,10 @@ class ScreenGrab:
         nf = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         return (True, nf)
 
-    def isOpened(self):
+    def isOpened(self) -> bool:
         return True
 
-    def release(self):
+    def release(self) -> bool:
         return True
 
 
@@ -111,7 +111,7 @@ def get_parser():
     return parser
 
 
-def test_opencv_video_format(codec, file_ext):
+def test_opencv_video_format(codec, file_ext) -> bool:
     with tempfile.TemporaryDirectory(prefix="video_format_test") as dir:
         filename = os.path.join(dir, "test_file" + file_ext)
         writer = cv2.VideoWriter(

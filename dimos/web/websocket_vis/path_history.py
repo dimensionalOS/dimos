@@ -23,7 +23,7 @@ from dimos.msgs.geometry_msgs import Vector3
 class PathHistory:
     """A simple container for storing a history of positions for visualization."""
 
-    def __init__(self, points: list[Vector3 | tuple | list] | None = None):
+    def __init__(self, points: list[Vector3 | tuple | list] | None = None) -> None:
         """Initialize with optional list of points."""
         self.points: list[Vector3] = []
         if points:

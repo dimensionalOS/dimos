@@ -18,7 +18,7 @@ import numpy as np
 import open3d as o3d
 
 
-def save_pointcloud(pcd, file_path):
+def save_pointcloud(pcd, file_path) -> None:
     """
     Save a point cloud to a file using Open3D.
     """
@@ -96,7 +96,7 @@ def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
 
 
 # Distance calculations
-def human_like_distance(distance_meters):
+def human_like_distance(distance_meters) -> str:
     # Define the choices with units included, focusing on the 0.1 to 10 meters range
     if distance_meters < 1:  # For distances less than 1 meter
         choices = [

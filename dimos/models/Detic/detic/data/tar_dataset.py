@@ -24,7 +24,7 @@ class DiskTarDataset(Dataset):
         tar_index_dir="dataset/imagenet/ImageNet-21k/metadata/tarindex_npy",
         preload=False,
         num_synsets="all",
-    ):
+    ) -> None:
         """
         - preload (bool): Recommend to set preload to False when using
         - num_synsets (integer or string "all"): set to small number for debugging
@@ -56,7 +56,7 @@ class DiskTarDataset(Dataset):
             sI += self.dataset_lens[k]
         self.labels = labels
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
     def __getitem__(self, index):
@@ -88,13 +88,13 @@ class DiskTarDataset(Dataset):
         # label is the dataset (synset) we indexed into
         return image, d_index, index
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         st = f"DiskTarDataset(subdatasets={len(self.dataset_lens)},samples={self.num_samples})"
         return st
 
 
 class _TarDataset:
-    def __init__(self, filename, npy_index_dir, preload=False):
+    def __init__(self, filename, npy_index_dir, preload=False) -> None:
         # translated from
         # fbcode/experimental/deeplearning/matthijs/comp_descs/tardataset.lua
         self.filename = filename
@@ -110,7 +110,7 @@ class _TarDataset:
         else:
             self.data = None
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
     def load_index(self):

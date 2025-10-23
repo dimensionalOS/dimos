@@ -75,9 +75,9 @@ class State(enum.Enum):
 
 class Transport(ObservableMixin[T]):
     # used by local Output
-    def broadcast(self, selfstream: Out[T], value: T): ...
+    def broadcast(self, selfstream: Out[T], value: T) -> None: ...
 
-    def publish(self, msg: T):
+    def publish(self, msg: T) -> None:
         self.broadcast(None, msg)
 
     # used by local Input
@@ -93,7 +93,7 @@ class Stream(Generic[T]):
         name: str,
         owner: Any | None = None,
         transport: Transport | None = None,
-    ):
+    ) -> None:
         self.name = name
         self.owner = owner
         self.type = type
@@ -133,7 +133,7 @@ class Stream(Generic[T]):
 class Out(Stream[T]):
     _transport: Transport
 
-    def __init__(self, *argv, **kwargs):
+    def __init__(self, *argv, **kwargs) -> None:
         super().__init__(*argv, **kwargs)
 
     @property
@@ -193,7 +193,7 @@ class In(Stream[T], ObservableMixin[T]):
     connection: RemoteOut[T] | None = None
     _transport: Transport
 
-    def __str__(self):
+    def __str__(self) -> str:
         mystr = super().__str__()
 
         if not self.connection:
@@ -232,7 +232,7 @@ class RemoteIn(RemoteStream[T]):
     def transport(self) -> Transport[T]:
         return self._transport
 
-    def publish(self, msg):
+    def publish(self, msg) -> None:
         self.transport.broadcast(self, msg)
 
     @transport.setter

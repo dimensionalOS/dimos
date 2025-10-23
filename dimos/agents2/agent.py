@@ -163,7 +163,7 @@ class Agent(AgentSpec):
         self,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         AgentSpec.__init__(self, *args, **kwargs)
 
         self.state_messages = []
@@ -196,20 +196,20 @@ class Agent(AgentSpec):
         return self._agent_id
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
         self.coordinator.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         self.coordinator.stop()
         self._agent_stopped = True
         super().stop()
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         self._history.clear()
 
-    def append_history(self, *msgs: list[AIMessage | HumanMessage]):
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
         for msg in msgs:
             self.publish(msg)
 
@@ -320,7 +320,7 @@ class Agent(AgentSpec):
             traceback.print_exc()
 
     @rpc
-    def loop_thread(self):
+    def loop_thread(self) -> bool:
         asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
         return True
 
@@ -346,7 +346,7 @@ class Agent(AgentSpec):
     def get_tools(self):
         return self.coordinator.get_tools()
 
-    def _write_debug_history_file(self):
+    def _write_debug_history_file(self) -> None:
         file_path = os.getenv("DEBUG_AGENT_HISTORY_FILE")
         if not file_path:
             return

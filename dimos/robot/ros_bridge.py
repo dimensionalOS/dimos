@@ -48,7 +48,7 @@ class BridgeDirection(Enum):
 class ROSBridge(Resource):
     """Unidirectional bridge between ROS and DIMOS for message passing."""
 
-    def __init__(self, node_name: str = "dimos_ros_bridge"):
+    def __init__(self, node_name: str = "dimos_ros_bridge") -> None:
         """Initialize the ROS-DIMOS bridge.
 
         Args:
@@ -91,7 +91,7 @@ class ROSBridge(Resource):
 
         logger.info("ROSBridge shutdown complete")
 
-    def _ros_spin(self):
+    def _ros_spin(self) -> None:
         """Background thread for spinning ROS executor."""
         try:
             self._executor.spin()
@@ -138,7 +138,7 @@ class ROSBridge(Resource):
 
         if direction == BridgeDirection.ROS_TO_DIMOS:
 
-            def ros_callback(msg):
+            def ros_callback(msg) -> None:
                 self._ros_to_dimos(msg, dimos_topic, dimos_type, topic_name)
 
             ros_subscription = self.node.create_subscription(
@@ -149,7 +149,7 @@ class ROSBridge(Resource):
         elif direction == BridgeDirection.DIMOS_TO_ROS:
             ros_publisher = self.node.create_publisher(ros_type, ros_topic_name, self._qos)
 
-            def dimos_callback(msg, _topic):
+            def dimos_callback(msg, _topic) -> None:
                 self._dimos_to_ros(msg, ros_publisher, topic_name)
 
             dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)

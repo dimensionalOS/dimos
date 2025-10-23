@@ -32,7 +32,7 @@ class CustomRCNN(GeneralizedRCNN):
         with_caption=False,
         dynamic_classifier=False,
         **kwargs,
-    ):
+    ) -> None:
         """ """
         if dataset_loss_weight is None:
             dataset_loss_weight = []

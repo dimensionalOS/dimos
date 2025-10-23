@@ -59,14 +59,14 @@ class Timestamped(ABC):
 
     ts: datetime
 
-    def __init__(self, ts: EpochLike):
+    def __init__(self, ts: EpochLike) -> None:
         self.ts = to_datetime(ts)
 
 
 class TEvent(Timestamped, Generic[PAYLOAD]):
     """Concrete class for an event with a timestamp and data."""
 
-    def __init__(self, timestamp: EpochLike, data: PAYLOAD):
+    def __init__(self, timestamp: EpochLike, data: PAYLOAD) -> None:
         super().__init__(timestamp)
         self.data = data
 

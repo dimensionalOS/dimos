@@ -81,7 +81,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 
     default_config = ModuleConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
@@ -105,7 +105,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         self._close_module()
         super().stop()
 
-    def _close_module(self):
+    def _close_module(self) -> None:
         self._close_rpc()
         if hasattr(self, "_loop") and self._loop_thread:
             if self._loop_thread.is_alive():
@@ -119,7 +119,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         if hasattr(self, "_disposables"):
             self._disposables.dispose()
 
-    def _close_rpc(self):
+    def _close_rpc(self) -> None:
         # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
         if hasattr(self, "rpc") and self.rpc:
             self.rpc.stop()
@@ -136,7 +136,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         state.pop("_tf", None)
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes
@@ -154,7 +154,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return self._tf
 
     @tf.setter
-    def tf(self, value):
+    def tf(self, value) -> None:
         import warnings
 
         warnings.warn(
@@ -250,7 +250,7 @@ class DaskModule(ModuleBase):
     ref: Actor
     worker: int
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.ref = None
 
         # Get type hints with proper namespace resolution for subclasses
@@ -287,11 +287,11 @@ class DaskModule(ModuleBase):
         self.worker = worker.name
         return worker.name
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
     # called from remote
-    def set_transport(self, stream_name: str, transport: Transport):
+    def set_transport(self, stream_name: str, transport: Transport) -> bool:
         stream = getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
@@ -311,10 +311,10 @@ class DaskModule(ModuleBase):
             raise TypeError(f"Input {input_name} is not a valid stream")
         input_stream.connection = remote_stream
 
-    def dask_receive_msg(self, input_name: str, msg: Any):
+    def dask_receive_msg(self, input_name: str, msg: Any) -> None:
         getattr(self, input_name).transport.dask_receive_msg(msg)
 
-    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]):
+    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]) -> None:
         getattr(self, output_name).transport.dask_register_subscriber(subscriber)
 
 

@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 
 
-def is_manipulation_installed():
+def is_manipulation_installed() -> bool:
     """Check if the manipulation extras are installed."""
     try:
         import contact_graspnet_pytorch
@@ -17,7 +17,7 @@ def is_manipulation_installed():
 
 @pytest.mark.skipif(not is_manipulation_installed(),
                    reason="This test requires 'pip install .[manipulation]' to be run")
-def test_contact_graspnet_inference():
+def test_contact_graspnet_inference() -> None:
     """Test contact graspnet inference with local regions and filter grasps."""
     # Skip test if manipulation dependencies not installed
     if not is_manipulation_installed():

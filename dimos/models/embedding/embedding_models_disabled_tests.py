@@ -49,7 +49,7 @@ def test_image():
 
 
 @pytest.mark.heavy
-def test_single_image_embedding(embedding_model, test_image):
+def test_single_image_embedding(embedding_model, test_image) -> None:
     """Test embedding a single image."""
     embedding = embedding_model.embed(test_image)
 
@@ -74,7 +74,7 @@ def test_single_image_embedding(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_batch_image_embedding(embedding_model, test_image):
+def test_batch_image_embedding(embedding_model, test_image) -> None:
     """Test embedding multiple images at once."""
     embeddings = embedding_model.embed(test_image, test_image, test_image)
 
@@ -92,7 +92,7 @@ def test_batch_image_embedding(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_single_text_embedding(embedding_model):
+def test_single_text_embedding(embedding_model) -> None:
     """Test embedding a single text string."""
     import torch
 
@@ -117,7 +117,7 @@ def test_single_text_embedding(embedding_model):
 
 
 @pytest.mark.heavy
-def test_batch_text_embedding(embedding_model):
+def test_batch_text_embedding(embedding_model) -> None:
     """Test embedding multiple text strings at once."""
     import torch
 
@@ -137,7 +137,7 @@ def test_batch_text_embedding(embedding_model):
 
 
 @pytest.mark.heavy
-def test_text_image_similarity(embedding_model, test_image):
+def test_text_image_similarity(embedding_model, test_image) -> None:
     """Test cross-modal text-image similarity using @ operator."""
     if not hasattr(embedding_model, "embed_text"):
         pytest.skip("Model does not support text embeddings")
@@ -161,7 +161,7 @@ def test_text_image_similarity(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_cosine_distance(embedding_model, test_image):
+def test_cosine_distance(embedding_model, test_image) -> None:
     """Test cosine distance computation (1 - similarity)."""
     emb1 = embedding_model.embed(test_image)
     emb2 = embedding_model.embed(test_image)
@@ -180,7 +180,7 @@ def test_cosine_distance(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_query_functionality(embedding_model, test_image):
+def test_query_functionality(embedding_model, test_image) -> None:
     """Test query method for top-k retrieval."""
     if not hasattr(embedding_model, "embed_text"):
         pytest.skip("Model does not support text embeddings")
@@ -206,7 +206,7 @@ def test_query_functionality(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_embedding_operator(embedding_model, test_image):
+def test_embedding_operator(embedding_model, test_image) -> None:
     """Test that @ operator works on embeddings."""
     emb1 = embedding_model.embed(test_image)
     emb2 = embedding_model.embed(test_image)
@@ -220,7 +220,7 @@ def test_embedding_operator(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_warmup(embedding_model):
+def test_warmup(embedding_model) -> None:
     """Test that warmup runs without error."""
     # Warmup is already called in fixture, but test it explicitly
     embedding_model.warmup()
@@ -229,7 +229,7 @@ def test_warmup(embedding_model):
 
 
 @pytest.mark.heavy
-def test_compare_one_to_many(embedding_model, test_image):
+def test_compare_one_to_many(embedding_model, test_image) -> None:
     """Test GPU-accelerated one-to-many comparison."""
     import torch
 
@@ -253,7 +253,7 @@ def test_compare_one_to_many(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_compare_many_to_many(embedding_model):
+def test_compare_many_to_many(embedding_model) -> None:
     """Test GPU-accelerated many-to-many comparison."""
     import torch
 
@@ -280,7 +280,7 @@ def test_compare_many_to_many(embedding_model):
 
 
 @pytest.mark.heavy
-def test_gpu_query_performance(embedding_model, test_image):
+def test_gpu_query_performance(embedding_model, test_image) -> None:
     """Test that query method uses GPU acceleration."""
     # Create a larger gallery
     gallery_size = 20
@@ -303,7 +303,7 @@ def test_gpu_query_performance(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_embedding_performance(embedding_model):
+def test_embedding_performance(embedding_model) -> None:
     """Measure embedding performance over multiple real video frames."""
     import time
 

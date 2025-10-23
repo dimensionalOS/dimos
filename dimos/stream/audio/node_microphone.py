@@ -39,7 +39,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
         channels: int = 1,
         block_size: int = 1024,
         dtype: np.dtype = np.float32,
-    ):
+    ) -> None:
         """
         Initialize SounddeviceAudioSource.
 
@@ -69,7 +69,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
         def on_subscribe(observer, scheduler):
             # Callback function to process audio data
-            def audio_callback(indata, frames, time_info, status):
+            def audio_callback(indata, frames, time_info, status) -> None:
                 if status:
                     logger.warning(f"Audio callback status: {status}")
 
@@ -106,7 +106,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
                 observer.on_error(e)
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping audio capture")
                 self._running = False
                 if self._stream:

@@ -52,7 +52,7 @@ class DepthModule(Module):
         gt_depth_scale: float = 0.5,
         global_config: GlobalConfig | None = None,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize Depth Module.
 
@@ -83,7 +83,7 @@ class DepthModule(Module):
                 self.gt_depth_scale = 1.0
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         if self._running:
@@ -103,7 +103,7 @@ class DepthModule(Module):
         logger.info("Depth module started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if not self._running:
             return
 
@@ -116,7 +116,7 @@ class DepthModule(Module):
 
         super().stop()
 
-    def _on_camera_info(self, msg: CameraInfo):
+    def _on_camera_info(self, msg: CameraInfo) -> None:
         """Process camera info to extract intrinsics."""
         if self.metric3d is not None:
             return  # Already initialized
@@ -144,7 +144,7 @@ class DepthModule(Module):
         except Exception as e:
             logger.error(f"Error processing camera info: {e}")
 
-    def _on_video(self, msg: Image):
+    def _on_video(self, msg: Image) -> None:
         """Store latest video frame for processing."""
         if not self._running:
             return
@@ -155,14 +155,14 @@ class DepthModule(Module):
             f"Received video frame: format={msg.format}, shape={msg.data.shape if hasattr(msg.data, 'shape') else 'unknown'}"
         )
 
-    def _start_processing_thread(self):
+    def _start_processing_thread(self) -> None:
         """Start the processing thread."""
         self._stop_processing.clear()
         self._processing_thread = threading.Thread(target=self._main_processing_loop, daemon=True)
         self._processing_thread.start()
         logger.info("Started depth processing thread")
 
-    def _main_processing_loop(self):
+    def _main_processing_loop(self) -> None:
         """Main processing loop that continuously processes latest frames."""
         logger.info("Starting main processing loop")
 
@@ -186,7 +186,7 @@ class DepthModule(Module):
 
         logger.info("Main processing loop stopped")
 
-    def _process_depth(self, img_array: np.ndarray):
+    def _process_depth(self, img_array: np.ndarray) -> None:
         """Process depth estimation using Metric3D."""
         if self._cannot_process_depth:
             self._last_depth = None
@@ -212,7 +212,7 @@ class DepthModule(Module):
             logger.error(f"Error processing depth: {e}")
             self._cannot_process_depth = True
 
-    def _publish_depth(self):
+    def _publish_depth(self) -> None:
         """Publish depth image."""
         if not self._running:
             return

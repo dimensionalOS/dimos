@@ -45,7 +45,7 @@ if TYPE_CHECKING:
 
 
 class CTransformersTokenizerAdapter:
-    def __init__(self, model):
+    def __init__(self, model) -> None:
         self.model = model
 
     def encode(self, text, **kwargs):
@@ -104,7 +104,7 @@ class CTransformersGGUFAgent(LLMAgent):
         prompt_builder: PromptBuilder | None = None,
         pool_scheduler: ThreadPoolScheduler | None = None,
         process_all_inputs: bool | None = None,
-    ):
+    ) -> None:
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams

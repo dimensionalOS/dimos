@@ -26,7 +26,7 @@ class TextPrinterNode(AbstractTextConsumer):
     A node that subscribes to a text observable and prints the text.
     """
 
-    def __init__(self, prefix: str = "", suffix: str = "", end: str = "\n"):
+    def __init__(self, prefix: str = "", suffix: str = "", end: str = "\n") -> None:
         """
         Initialize TextPrinterNode.
 

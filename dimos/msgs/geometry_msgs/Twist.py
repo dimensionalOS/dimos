@@ -66,7 +66,7 @@ class Twist(LCMTwist):
         self.angular = Vector3(lcm_twist.angular)
 
     @dispatch
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         """Handle keyword arguments for LCM compatibility."""
         linear = kwargs.get("linear", Vector3())
         angular = kwargs.get("angular", Vector3())

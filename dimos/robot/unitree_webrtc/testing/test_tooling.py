@@ -26,7 +26,7 @@ from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 
 @pytest.mark.tool
-def test_record_all():
+def test_record_all() -> None:
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
     load_dotenv()
@@ -58,7 +58,7 @@ def test_record_all():
 
 
 @pytest.mark.tool
-def test_replay_all():
+def test_replay_all() -> None:
     lidar_store = TimedSensorReplay("unitree/lidar", autocast=LidarMessage.from_msg)
     odom_store = TimedSensorReplay("unitree/odom", autocast=Odometry.from_msg)
     video_store = TimedSensorReplay("unitree/video")

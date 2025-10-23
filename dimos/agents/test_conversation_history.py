@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.tofix
-def test_conversation_history_basic():
+def test_conversation_history_basic() -> None:
     """Test basic conversation history functionality."""
     load_dotenv()
 
@@ -91,7 +91,7 @@ def test_conversation_history_basic():
 
 
 @pytest.mark.tofix
-def test_conversation_history_with_images():
+def test_conversation_history_with_images() -> None:
     """Test conversation history with multimodal content."""
     load_dotenv()
 
@@ -152,7 +152,7 @@ def test_conversation_history_with_images():
 
 
 @pytest.mark.tofix
-def test_conversation_history_trimming():
+def test_conversation_history_trimming() -> None:
     """Test that conversation history is trimmed to max size."""
     load_dotenv()
 
@@ -211,7 +211,7 @@ def test_conversation_history_trimming():
 
 
 @pytest.mark.tofix
-def test_conversation_history_with_tools():
+def test_conversation_history_with_tools() -> None:
     """Test conversation history with tool calls."""
     load_dotenv()
 
@@ -270,7 +270,7 @@ def test_conversation_history_with_tools():
 
 
 @pytest.mark.tofix
-def test_conversation_thread_safety():
+def test_conversation_thread_safety() -> None:
     """Test that conversation history is thread-safe."""
     load_dotenv()
 
@@ -304,7 +304,7 @@ def test_conversation_thread_safety():
 
 
 @pytest.mark.tofix
-def test_conversation_history_formats():
+def test_conversation_history_formats() -> None:
     """Test ConversationHistory formatting methods."""
     load_dotenv()
 
@@ -364,7 +364,7 @@ def test_conversation_history_formats():
 
 @pytest.mark.tofix
 @pytest.mark.timeout(30)  # Add timeout to prevent hanging
-def test_conversation_edge_cases():
+def test_conversation_edge_cases() -> None:
     """Test edge cases in conversation history."""
     load_dotenv()
 

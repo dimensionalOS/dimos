@@ -79,7 +79,7 @@ def full():
             testcontainer.stop()
 
 
-def check_agent(agent_context):
+def check_agent(agent_context) -> None:
     """Test agent initialization and basic functionality across different configurations"""
     with agent_context() as [agent, testcontainer]:
         agent.register_skills(testcontainer)

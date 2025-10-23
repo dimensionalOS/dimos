@@ -18,7 +18,7 @@ from pathlib import Path
 import cv2
 
 
-def extract_frames(video_path, output_dir, frame_rate):
+def extract_frames(video_path, output_dir, frame_rate) -> None:
     """
     Extract frames from a video file at a specified frame rate.
 

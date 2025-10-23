@@ -54,7 +54,7 @@ class ManipulationInterface:
         output_dir: str,
         new_memory: bool = False,
         perception_stream: ObjectDetectionStream = None,
-    ):
+    ) -> None:
         """
         Initialize a new ManipulationInterface instance.
 
@@ -179,7 +179,7 @@ class ManipulationInterface:
 
     # === Perception stream methods ===
 
-    def _setup_perception_subscription(self):
+    def _setup_perception_subscription(self) -> None:
         """
         Set up subscription to perception stream if available.
         """
@@ -191,7 +191,7 @@ class ManipulationInterface:
             )
             logger.info("Subscribed to perception stream")
 
-    def _update_latest_objects(self, data):
+    def _update_latest_objects(self, data) -> None:
         """
         Update the latest detected objects.
 
@@ -237,7 +237,7 @@ class ManipulationInterface:
         """
         return [obj for obj in self.latest_objects if obj["label"] == label]
 
-    def set_perception_stream(self, perception_stream):
+    def set_perception_stream(self, perception_stream) -> None:
         """
         Set or update the perception stream.
 
@@ -251,7 +251,7 @@ class ManipulationInterface:
         self.perception_stream = perception_stream
         self._setup_perception_subscription()
 
-    def cleanup_perception_subscription(self):
+    def cleanup_perception_subscription(self) -> None:
         """
         Clean up the stream subscription.
         """
@@ -279,7 +279,7 @@ class ManipulationInterface:
         has_stream = self.perception_stream is not None
         return f"ManipulationInterface(history={self.manipulation_history}, agent_constraints={len(self.agent_constraints)}, perception_stream={has_stream}, detected_objects={len(self.latest_objects)})"
 
-    def __del__(self):
+    def __del__(self) -> None:
         """
         Clean up resources on deletion.
         """

@@ -44,7 +44,7 @@ class ROSVideoProvider(AbstractVideoProvider):
 
     def __init__(
         self, dev_name: str = "ros_video", pool_scheduler: ThreadPoolScheduler | None = None
-    ):
+    ) -> None:
         """Initialize the ROS video provider.
 
         Args:

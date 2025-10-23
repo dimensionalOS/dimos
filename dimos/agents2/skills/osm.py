@@ -32,18 +32,18 @@ class OsmSkill(SkillModule):
 
     gps_location: In[LatLon] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._latest_location = None
         self._current_location_map = CurrentLocationMap(QwenVlModel())
         self._skill_started = False
 
-    def start(self):
+    def start(self) -> None:
         super().start()
         self._skill_started = True
         self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
 
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:

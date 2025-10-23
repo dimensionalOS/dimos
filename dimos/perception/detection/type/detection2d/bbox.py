@@ -139,7 +139,7 @@ class Detection2DBBox(Detection2D):
             x1 - padding, y1 - padding, x2 - x1 + 2 * padding, y2 - y1 + 2 * padding
         )
 
-    def __str__(self):
+    def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
         d = self.to_repr_dict()
 

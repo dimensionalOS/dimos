@@ -54,7 +54,7 @@ class MockLCMMessage:
 
     msg_name = "geometry_msgs.Mock"
 
-    def __init__(self, data):
+    def __init__(self, data) -> None:
         self.data = data
 
     def lcm_encode(self) -> bytes:
@@ -68,7 +68,7 @@ class MockLCMMessage:
         return isinstance(other, MockLCMMessage) and self.data == other.data
 
 
-def test_LCMPubSubBase_pubsub(lcm_pub_sub_base):
+def test_LCMPubSubBase_pubsub(lcm_pub_sub_base) -> None:
     lcm = lcm_pub_sub_base
 
     received_messages = []
@@ -76,7 +76,7 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base):
     topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
     test_message = MockLCMMessage("test_data")
 
-    def callback(msg, topic):
+    def callback(msg, topic) -> None:
         received_messages.append((msg, topic))
 
     lcm.subscribe(topic, callback)
@@ -97,13 +97,13 @@ def test_LCMPubSubBase_pubsub(lcm_pub_sub_base):
     assert received_topic == topic
 
 
-def test_lcm_autodecoder_pubsub(lcm):
+def test_lcm_autodecoder_pubsub(lcm) -> None:
     received_messages = []
 
     topic = Topic(topic="/test_topic", lcm_type=MockLCMMessage)
     test_message = MockLCMMessage("test_data")
 
-    def callback(msg, topic):
+    def callback(msg, topic) -> None:
         received_messages.append((msg, topic))
 
     lcm.subscribe(topic, callback)
@@ -133,12 +133,12 @@ test_msgs = [
 
 # passes some geometry types through LCM
 @pytest.mark.parametrize("test_message", test_msgs)
-def test_lcm_geometry_msgs_pubsub(test_message, lcm):
+def test_lcm_geometry_msgs_pubsub(test_message, lcm) -> None:
     received_messages = []
 
     topic = Topic(topic="/test_topic", lcm_type=test_message.__class__)
 
-    def callback(msg, topic):
+    def callback(msg, topic) -> None:
         received_messages.append((msg, topic))
 
     lcm.subscribe(topic, callback)
@@ -164,13 +164,13 @@ def test_lcm_geometry_msgs_pubsub(test_message, lcm):
 
 # passes some geometry types through pickle LCM
 @pytest.mark.parametrize("test_message", test_msgs)
-def test_lcm_geometry_msgs_autopickle_pubsub(test_message, pickle_lcm):
+def test_lcm_geometry_msgs_autopickle_pubsub(test_message, pickle_lcm) -> None:
     lcm = pickle_lcm
     received_messages = []
 
     topic = Topic(topic="/test_topic")
 
-    def callback(msg, topic):
+    def callback(msg, topic) -> None:
         received_messages.append((msg, topic))
 
     lcm.subscribe(topic, callback)

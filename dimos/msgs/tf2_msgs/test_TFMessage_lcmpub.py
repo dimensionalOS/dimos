@@ -24,7 +24,7 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 # Publishes a series of transforms representing a robot kinematic chain
 # to actual LCM messages, foxglove running in parallel should render this
 @pytest.mark.skip
-def test_publish_transforms():
+def test_publish_transforms() -> None:
     from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
     lcm = LCM(autoconf=True)

@@ -39,7 +39,7 @@ class TFConfig:
 
 # generic specification for transform service
 class TFSpec(Service[TFConfig]):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
     @abstractmethod
@@ -73,7 +73,7 @@ TopicT = TypeVar("TopicT")
 
 # stores a single transform
 class TBuffer(TimestampedCollection[Transform]):
-    def __init__(self, buffer_size: float = 10.0):
+    def __init__(self, buffer_size: float = 10.0) -> None:
         super().__init__()
         self.buffer_size = buffer_size
 
@@ -134,7 +134,7 @@ class TBuffer(TimestampedCollection[Transform]):
 # stores multiple transform buffers
 # creates a new buffer on demand when new transform is detected
 class MultiTBuffer:
-    def __init__(self, buffer_size: float = 10.0):
+    def __init__(self, buffer_size: float = 10.0) -> None:
         self.buffers: dict[tuple[str, str], TBuffer] = {}
         self.buffer_size = buffer_size
 
@@ -236,7 +236,7 @@ class MultiTBuffer:
     def graph(self) -> str:
         import subprocess
 
-        def connection_str(connection: tuple[str, str]):
+        def connection_str(connection: tuple[str, str]) -> str:
             (frame_from, frame_to) = connection
             return f"{frame_from} -> {frame_to}"
 
@@ -297,7 +297,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
             if topic:
                 self.pubsub.subscribe(topic, self.receive_msg)
 
-    def stop(self):
+    def stop(self) -> None:
         self.pubsub.stop()
 
     def publish(self, *args: Transform) -> None:

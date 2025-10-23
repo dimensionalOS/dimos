@@ -35,7 +35,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         model_path: Path | str | None = None,
         device: str | None = None,
         normalize: bool = True,
-    ):
+    ) -> None:
         """
         Initialize MobileCLIP model.
 

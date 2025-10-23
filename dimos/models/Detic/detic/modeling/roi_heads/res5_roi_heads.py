@@ -12,7 +12,7 @@ from .detic_fast_rcnn import DeticFastRCNNOutputLayers
 @ROI_HEADS_REGISTRY.register()
 class CustomRes5ROIHeads(Res5ROIHeads):
     @configurable
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         cfg = kwargs.pop("cfg")
         super().__init__(**kwargs)
         stage_channel_factor = 2**3

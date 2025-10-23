@@ -43,7 +43,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         channels: int = 1,
         block_size: int = 1024,
         dtype: np.dtype = np.float32,
-    ):
+    ) -> None:
         """
         Initialize SounddeviceAudioOutput.
 
@@ -119,7 +119,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
         return self.audio_observable
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop audio output and clean up resources."""
         logger.info("Stopping audio output")
         self._running = False
@@ -133,7 +133,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.close()
             self._stream = None
 
-    def _play_audio_event(self, audio_event):
+    def _play_audio_event(self, audio_event) -> None:
         """Play audio from an AudioEvent."""
         if not self._running or not self._stream:
             return
@@ -151,11 +151,11 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         except Exception as e:
             logger.error(f"Error playing audio: {e}")
 
-    def _handle_error(self, error):
+    def _handle_error(self, error) -> None:
         """Handle errors from the observable."""
         logger.error(f"Error in audio observable: {error}")
 
-    def _handle_completion(self):
+    def _handle_completion(self) -> None:
         """Handle completion of the observable."""
         logger.info("Audio observable completed")
         self._running = False

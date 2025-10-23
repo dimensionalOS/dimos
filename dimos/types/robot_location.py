@@ -48,7 +48,7 @@ class RobotLocation:
     location_id: str = field(default_factory=lambda: f"loc_{uuid.uuid4().hex[:8]}")
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate and normalize the position and rotation tuples."""
         # Ensure position is a tuple of 3 floats
         if len(self.position) == 2:
@@ -134,5 +134,5 @@ class RobotLocation:
             },
         )
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"[RobotPosition name:{self.name} pos:{self.position} rot:{self.rotation})]"

@@ -147,14 +147,14 @@ AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
 class AgentSpec(Service[AgentConfig], Module, ABC):
     default_config: type[AgentConfig] = AgentConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         Service.__init__(self, *args, **kwargs)
         Module.__init__(self, *args, **kwargs)
 
         if self.config.agent_transport:
             self.transport = self.config.agent_transport()
 
-    def publish(self, msg: AnyMessage):
+    def publish(self, msg: AnyMessage) -> None:
         if self.transport:
             self.transport.publish(self.config.agent_topic, msg)
 

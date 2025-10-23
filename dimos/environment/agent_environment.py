@@ -21,7 +21,7 @@ from .environment import Environment
 
 
 class AgentEnvironment(Environment):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.environment_type = "agent"
         self.frames = []

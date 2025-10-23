@@ -77,7 +77,7 @@ class ROSCommandQueue:
         is_ready_func: Callable[[], bool] | None = None,
         is_busy_func: Callable[[], bool] | None = None,
         debug: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the ROSCommandQueue.
 
@@ -118,7 +118,7 @@ class ROSCommandQueue:
 
         logger.info("ROSCommandQueue initialized")
 
-    def start(self):
+    def start(self) -> None:
         """Start the queue processing thread"""
         if self._queue_thread is not None and self._queue_thread.is_alive():
             logger.warning("Queue processing thread already running")
@@ -129,7 +129,7 @@ class ROSCommandQueue:
         self._queue_thread.start()
         logger.info("Queue processing thread started")
 
-    def stop(self, timeout=2.0):
+    def stop(self, timeout=2.0) -> None:
         """
         Stop the queue processing thread
 
@@ -178,7 +178,7 @@ class ROSCommandQueue:
         request_id = request_id or str(uuid.uuid4())
 
         # Create a function that will execute this WebRTC request
-        def execute_webrtc():
+        def execute_webrtc() -> bool:
             try:
                 logger.info(f"Executing WebRTC request: {api_id} (ID: {request_id})")
                 if self._debug:
@@ -299,7 +299,7 @@ class ROSCommandQueue:
 
         return request_id
 
-    def _process_queue(self):
+    def _process_queue(self) -> None:
         """Process commands in the queue"""
         logger.info("Starting queue processing")
         logger.info("[WebRTC Queue] Processing thread started")
@@ -428,7 +428,7 @@ class ROSCommandQueue:
 
         logger.info("Queue processing stopped")
 
-    def _print_queue_status(self):
+    def _print_queue_status(self) -> None:
         """Print the current queue status"""
         current_time = time.time()
 

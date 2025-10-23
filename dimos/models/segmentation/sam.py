@@ -17,7 +17,7 @@ from transformers import SamModel, SamProcessor
 
 
 class SAM:
-    def __init__(self, model_name="facebook/sam-vit-huge", device="cuda"):
+    def __init__(self, model_name="facebook/sam-vit-huge", device="cuda") -> None:
         self.device = device
         self.sam_model = SamModel.from_pretrained(model_name).to(self.device)
         self.sam_processor = SamProcessor.from_pretrained(model_name)

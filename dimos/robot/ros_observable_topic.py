@@ -219,7 +219,7 @@ class ROSObservableTopicAbility:
 
         core = self.topic(topic_name, msg_type, qos=qos)  # single ROS callback
 
-        def _on_next(v):
+        def _on_next(v) -> None:
             cache["val"] = v
             if not first.done():
                 loop.call_soon_threadsafe(first.set_result, v)

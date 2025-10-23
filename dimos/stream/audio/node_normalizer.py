@@ -47,7 +47,7 @@ class AudioNormalizer(AbstractAudioTransform):
         decay_factor: float = 0.999,
         adapt_speed: float = 0.05,
         volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,
-    ):
+    ) -> None:
         """
         Initialize AudioNormalizer.
 
@@ -155,7 +155,7 @@ class AudioNormalizer(AbstractAudioTransform):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping audio normalizer")
                 audio_subscription.dispose()
 

@@ -42,7 +42,7 @@ from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import PoseWithCovarianceStamped
 
 
-def test_pose_with_covariance_stamped_default_init():
+def test_pose_with_covariance_stamped_default_init() -> None:
     """Test default initialization."""
     if ROSPoseWithCovariance is None:
         pytest.skip("ROS not available")
@@ -74,7 +74,7 @@ def test_pose_with_covariance_stamped_default_init():
     assert np.all(pose_cov_stamped.covariance == 0.0)
 
 
-def test_pose_with_covariance_stamped_with_timestamp():
+def test_pose_with_covariance_stamped_with_timestamp() -> None:
     """Test initialization with specific timestamp."""
     ts = 1234567890.123456
     frame_id = "base_link"
@@ -84,7 +84,7 @@ def test_pose_with_covariance_stamped_with_timestamp():
     assert pose_cov_stamped.frame_id == frame_id
 
 
-def test_pose_with_covariance_stamped_with_pose():
+def test_pose_with_covariance_stamped_with_pose() -> None:
     """Test initialization with pose."""
     ts = 1234567890.123456
     frame_id = "map"
@@ -103,7 +103,7 @@ def test_pose_with_covariance_stamped_with_pose():
     assert np.array_equal(pose_cov_stamped.covariance, covariance)
 
 
-def test_pose_with_covariance_stamped_properties():
+def test_pose_with_covariance_stamped_properties() -> None:
     """Test convenience properties."""
     pose = Pose(1.0, 2.0, 3.0, 0.1, 0.2, 0.3, 0.9)
     covariance = np.eye(6).flatten()
@@ -133,7 +133,7 @@ def test_pose_with_covariance_stamped_properties():
     assert np.trace(cov_matrix) == 6.0
 
 
-def test_pose_with_covariance_stamped_str():
+def test_pose_with_covariance_stamped_str() -> None:
     """Test string representation."""
     pose = Pose(1.234, 2.567, 3.891)
     covariance = np.eye(6).flatten() * 2.0
@@ -150,7 +150,7 @@ def test_pose_with_covariance_stamped_str():
     assert "12.000" in str_repr  # Trace of 2*identity is 12
 
 
-def test_pose_with_covariance_stamped_lcm_encode_decode():
+def test_pose_with_covariance_stamped_lcm_encode_decode() -> None:
     """Test LCM encoding and decoding."""
     ts = 1234567890.123456
     frame_id = "camera_link"
@@ -181,7 +181,7 @@ def test_pose_with_covariance_stamped_lcm_encode_decode():
 
 
 @pytest.mark.ros
-def test_pose_with_covariance_stamped_from_ros_msg():
+def test_pose_with_covariance_stamped_from_ros_msg() -> None:
     """Test creating from ROS message."""
     ros_msg = ROSPoseWithCovarianceStamped()
 
@@ -214,7 +214,7 @@ def test_pose_with_covariance_stamped_from_ros_msg():
 
 
 @pytest.mark.ros
-def test_pose_with_covariance_stamped_to_ros_msg():
+def test_pose_with_covariance_stamped_to_ros_msg() -> None:
     """Test converting to ROS message."""
     ts = 1234567890.567890
     frame_id = "imu"
@@ -243,7 +243,7 @@ def test_pose_with_covariance_stamped_to_ros_msg():
 
 
 @pytest.mark.ros
-def test_pose_with_covariance_stamped_ros_roundtrip():
+def test_pose_with_covariance_stamped_ros_roundtrip() -> None:
     """Test round-trip conversion with ROS messages."""
     ts = 2147483647.987654  # Max int32 value for ROS Time.sec
     frame_id = "robot_base"
@@ -272,7 +272,7 @@ def test_pose_with_covariance_stamped_ros_roundtrip():
     assert np.allclose(restored.covariance, original.covariance)
 
 
-def test_pose_with_covariance_stamped_zero_timestamp():
+def test_pose_with_covariance_stamped_zero_timestamp() -> None:
     """Test that zero timestamp gets replaced with current time."""
     pose_cov_stamped = PoseWithCovarianceStamped(ts=0.0)
 
@@ -281,7 +281,7 @@ def test_pose_with_covariance_stamped_zero_timestamp():
     assert pose_cov_stamped.ts <= time.time()
 
 
-def test_pose_with_covariance_stamped_inheritance():
+def test_pose_with_covariance_stamped_inheritance() -> None:
     """Test that it properly inherits from PoseWithCovariance and Timestamped."""
     pose = Pose(1.0, 2.0, 3.0)
     covariance = np.eye(6).flatten()
@@ -301,7 +301,7 @@ def test_pose_with_covariance_stamped_inheritance():
     assert hasattr(pose_cov_stamped, "covariance")
 
 
-def test_pose_with_covariance_stamped_sec_nsec():
+def test_pose_with_covariance_stamped_sec_nsec() -> None:
     """Test the sec_nsec helper function."""
     from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import sec_nsec
 
@@ -335,7 +335,7 @@ def test_pose_with_covariance_stamped_sec_nsec():
     "frame_id",
     ["", "map", "odom", "base_link", "camera_optical_frame", "sensor/lidar/front"],
 )
-def test_pose_with_covariance_stamped_frame_ids(frame_id):
+def test_pose_with_covariance_stamped_frame_ids(frame_id) -> None:
     """Test various frame ID values."""
     pose_cov_stamped = PoseWithCovarianceStamped(frame_id=frame_id)
     assert pose_cov_stamped.frame_id == frame_id
@@ -348,7 +348,7 @@ def test_pose_with_covariance_stamped_frame_ids(frame_id):
     assert restored.frame_id == frame_id
 
 
-def test_pose_with_covariance_stamped_different_covariances():
+def test_pose_with_covariance_stamped_different_covariances() -> None:
     """Test with different covariance patterns."""
     pose = Pose(1.0, 2.0, 3.0)
 

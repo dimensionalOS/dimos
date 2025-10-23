@@ -42,7 +42,7 @@ class PersonTrackingStream(Module):
         camera_intrinsics=None,
         camera_pitch=0.0,
         camera_height=1.0,
-    ):
+    ) -> None:
         """
         Initialize a person tracking stream using Yolo2DDetector and PersonDistanceEstimator.
 
@@ -91,13 +91,13 @@ class PersonTrackingStream(Module):
         self._tracking_enabled = False
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the person tracking module and subscribe to LCM streams."""
 
         super().start()
 
         # Subscribe to video stream
-        def set_video(image_msg: Image):
+        def set_video(image_msg: Image) -> None:
             if hasattr(image_msg, "data"):
                 self._latest_frame = image_msg.data
             else:
@@ -116,7 +116,7 @@ class PersonTrackingStream(Module):
     def stop(self) -> None:
         super().stop()
 
-    def _process_frame(self):
+    def _process_frame(self) -> None:
         """Process the latest frame if available."""
         if self._latest_frame is None:
             return

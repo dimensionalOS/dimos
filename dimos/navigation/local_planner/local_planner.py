@@ -61,7 +61,7 @@ class BaseLocalPlanner(Module):
         orientation_tolerance: float = 0.2,
         control_frequency: float = 10.0,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the local planner module.
 
         Args:
@@ -89,7 +89,7 @@ class BaseLocalPlanner(Module):
         logger.info("Local planner module initialized")
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         unsub = self.local_costmap.subscribe(self._on_costmap)
@@ -106,27 +106,27 @@ class BaseLocalPlanner(Module):
         self.cancel_planning()
         super().stop()
 
-    def _on_costmap(self, msg: OccupancyGrid):
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         self.latest_costmap = msg
 
-    def _on_odom(self, msg: PoseStamped):
+    def _on_odom(self, msg: PoseStamped) -> None:
         self.latest_odom = msg
 
-    def _on_path(self, msg: Path):
+    def _on_path(self, msg: Path) -> None:
         self.latest_path = msg
 
         if msg and len(msg.poses) > 0:
             if self.planning_thread is None or not self.planning_thread.is_alive():
                 self._start_planning_thread()
 
-    def _start_planning_thread(self):
+    def _start_planning_thread(self) -> None:
         """Start the planning thread."""
         self.stop_planning.clear()
         self.planning_thread = threading.Thread(target=self._follow_path_loop, daemon=True)
         self.planning_thread.start()
         logger.debug("Started follow path thread")
 
-    def _follow_path_loop(self):
+    def _follow_path_loop(self) -> None:
         """Main planning loop that runs in a separate thread."""
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
@@ -140,7 +140,7 @@ class BaseLocalPlanner(Module):
 
             time.sleep(self.control_period)
 
-    def _plan(self):
+    def _plan(self) -> None:
         """Compute and publish velocity command."""
         cmd_vel = self.compute_velocity()
 
@@ -189,7 +189,7 @@ class BaseLocalPlanner(Module):
         return abs(yaw_error) < self.orientation_tolerance
 
     @rpc
-    def reset(self):
+    def reset(self) -> None:
         """Reset the local planner state, clearing the current path."""
         # Clear the latest path
         self.latest_path = None

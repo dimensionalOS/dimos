@@ -45,7 +45,7 @@ class PositionStreamProvider:
         odometry_topic: str = "/odom",
         pose_topic: str | None = None,
         use_odometry: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the position stream provider.
 
@@ -89,7 +89,7 @@ class PositionStreamProvider:
             )
             logger.info(f"Subscribed to pose topic: {self.pose_topic}")
 
-    def _odometry_callback(self, msg: Odometry):
+    def _odometry_callback(self, msg: Odometry) -> None:
         """
         Process odometry messages and extract position.
 
@@ -101,7 +101,7 @@ class PositionStreamProvider:
 
         self._update_position(x, y)
 
-    def _pose_callback(self, msg: PoseStamped):
+    def _pose_callback(self, msg: PoseStamped) -> None:
         """
         Process pose messages and extract position.
 
@@ -113,7 +113,7 @@ class PositionStreamProvider:
 
         self._update_position(x, y)
 
-    def _update_position(self, x: float, y: float):
+    def _update_position(self, x: float, y: float) -> None:
         """
         Update the current position and emit to subscribers.
 
@@ -154,7 +154,7 @@ class PositionStreamProvider:
         """
         return self.last_position
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self, "subscription") and self.subscription:
             self.ros_node.destroy_subscription(self.subscription)

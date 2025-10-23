@@ -70,7 +70,7 @@ class ObjectDetectionStream:
         video_stream: Observable = None,
         disable_depth: bool = False,  # Flag to disable monocular Metric3D depth estimation
         draw_masks: bool = False,  # Flag to enable drawing segmentation masks
-    ):
+    ) -> None:
         """
         Initialize the ObjectDetectionStream.
 
@@ -313,6 +313,6 @@ class ObjectDetectionStream:
         # Return a new stream with the formatter applied
         return self.stream.pipe(ops.map(format_detection_data))
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         pass

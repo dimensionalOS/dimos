@@ -32,7 +32,7 @@ class OnnxController:
         n_substeps: int,
         action_scale: float,
         input_controller: InputController,
-    ):
+    ) -> None:
         self._output_names = ["continuous_actions"]
         self._policy = rt.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
 

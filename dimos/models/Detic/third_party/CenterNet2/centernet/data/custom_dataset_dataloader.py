@@ -87,7 +87,7 @@ def build_custom_train_loader(cfg, mapper=None):
 
 
 class ClassAwareSampler(Sampler):
-    def __init__(self, dataset_dicts, seed: int | None = None):
+    def __init__(self, dataset_dicts, seed: int | None = None) -> None:
         """
         Args:
             size (int): the total number of data of the underlying dataset to sample from
@@ -165,7 +165,7 @@ def get_detection_dataset_dicts_with_source(
 
 
 class MultiDatasetSampler(Sampler):
-    def __init__(self, cfg, sizes, dataset_dicts, seed: int | None = None):
+    def __init__(self, cfg, sizes, dataset_dicts, seed: int | None = None) -> None:
         """
         Args:
             size (int): the total number of data of the underlying dataset to sample from

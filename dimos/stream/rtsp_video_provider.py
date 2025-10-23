@@ -173,7 +173,7 @@ class RtspVideoProvider(AbstractVideoProvider):
             # Event to signal the processing loop should stop (e.g., on dispose)
             should_stop = threading.Event()
 
-            def cleanup_process():
+            def cleanup_process() -> None:
                 """Safely terminate the ffmpeg process if it's running."""
                 nonlocal process
                 logger.debug(f"({self.dev_name}) Cleanup requested.")

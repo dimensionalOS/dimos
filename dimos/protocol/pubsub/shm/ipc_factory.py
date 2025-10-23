@@ -100,7 +100,7 @@ import os
 import weakref
 
 
-def _safe_unlink(name):
+def _safe_unlink(name) -> None:
     try:
         shm = SharedMemory(name=name)
         shm.unlink()
@@ -116,7 +116,7 @@ def _safe_unlink(name):
 
 
 class CpuShmChannel(FrameChannel):
-    def __init__(self, shape, dtype=np.uint8, *, data_name=None, ctrl_name=None):
+    def __init__(self, shape, dtype=np.uint8, *, data_name=None, ctrl_name=None) -> None:
         self._shape = tuple(shape)
         self._dtype = np.dtype(dtype)
         self._nbytes = int(self._dtype.itemsize * np.prod(self._shape))
@@ -167,7 +167,7 @@ class CpuShmChannel(FrameChannel):
         }
 
     @property
-    def device(self):
+    def device(self) -> str:
         return "cpu"
 
     @property
@@ -178,7 +178,7 @@ class CpuShmChannel(FrameChannel):
     def dtype(self):
         return self._dtype
 
-    def publish(self, frame):
+    def publish(self, frame) -> None:
         assert isinstance(frame, np.ndarray)
         assert frame.shape == self._shape and frame.dtype == self._dtype
         active = int(self._ctrl[2])
@@ -242,7 +242,7 @@ class CpuShmChannel(FrameChannel):
         obj._finalizer_data = obj._finalizer_ctrl = None
         return obj
 
-    def close(self):
+    def close(self) -> None:
         if getattr(self, "_is_owner", False):
             try:
                 self._shm_ctrl.close()

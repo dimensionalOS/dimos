@@ -27,7 +27,7 @@ from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModul
 
 
 @pytest.mark.module
-def test_moduleDB(dimos_cluster):
+def test_moduleDB(dimos_cluster) -> None:
     connection = deploy_connection(dimos_cluster)
 
     moduleDB = dimos_cluster.deploy(

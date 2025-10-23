@@ -81,7 +81,7 @@ class Sample(BaseModel):
         arbitrary_types_allowed=True,
     )
 
-    def __init__(self, datum=None, **data):
+    def __init__(self, datum=None, **data) -> None:
         """Accepts an arbitrary datum as well as keyword arguments."""
         if datum is not None:
             if isinstance(datum, Sample):
@@ -168,7 +168,7 @@ class Sample(BaseModel):
     ) -> builtins.dict[str, Any] | np.ndarray | "torch.Tensor" | list:
         accumulator = {} if output_type == "dict" else []
 
-        def flatten_recursive(obj, path=""):
+        def flatten_recursive(obj, path="") -> None:
             if isinstance(obj, Sample):
                 for k, v in obj.dict().items():
                     flatten_recursive(v, path + k + "/")

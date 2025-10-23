@@ -82,7 +82,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
 
-        def receive_response(msg: MsgT, _: TopicT):
+        def receive_response(msg: MsgT, _: TopicT) -> None:
             res = self._decodeRPCRes(msg)
             if res.get("id") != msg_id:
                 return
@@ -119,7 +119,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
             # Execute RPC handler in a separate thread to avoid deadlock when
             # the handler makes nested RPC calls.
-            def execute_and_respond():
+            def execute_and_respond() -> None:
                 try:
                     response = f(*args[0], **args[1])
                     req_id = req.get("id")

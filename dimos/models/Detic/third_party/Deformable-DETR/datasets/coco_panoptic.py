@@ -20,7 +20,7 @@ from .coco import make_coco_transforms
 
 
 class CocoPanoptic:
-    def __init__(self, img_folder, ann_folder, ann_file, transforms=None, return_masks=True):
+    def __init__(self, img_folder, ann_folder, ann_file, transforms=None, return_masks=True) -> None:
         with open(ann_file) as f:
             self.coco = json.load(f)
 
@@ -82,7 +82,7 @@ class CocoPanoptic:
 
         return img, target
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.coco["images"])
 
     def get_height_and_width(self, idx):

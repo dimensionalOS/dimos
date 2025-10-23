@@ -32,7 +32,7 @@ class PersonTracker(Module):
 
     camera_info: CameraInfo
 
-    def __init__(self, cameraInfo: CameraInfo, **kwargs):
+    def __init__(self, cameraInfo: CameraInfo, **kwargs) -> None:
         super().__init__(**kwargs)
         self.camera_info = cameraInfo
 
@@ -84,14 +84,14 @@ class PersonTracker(Module):
         )
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.detections_stream().subscribe(self.track)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
-    def track(self, detections2D: ImageDetections2D):
+    def track(self, detections2D: ImageDetections2D) -> None:
         if len(detections2D) == 0:
             return
 

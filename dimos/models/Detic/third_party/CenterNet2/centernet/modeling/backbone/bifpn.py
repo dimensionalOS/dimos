@@ -38,7 +38,7 @@ def swish(x, inplace: bool = False):
 
 
 class Swish(nn.Module):
-    def __init__(self, inplace: bool = False):
+    def __init__(self, inplace: bool = False) -> None:
         super().__init__()
         self.inplace = inplace
 
@@ -47,7 +47,7 @@ class Swish(nn.Module):
 
 
 class SequentialAppend(nn.Sequential):
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         super().__init__(*args)
 
     def forward(self, x):
@@ -57,7 +57,7 @@ class SequentialAppend(nn.Sequential):
 
 
 class SequentialAppendLast(nn.Sequential):
-    def __init__(self, *args):
+    def __init__(self, *args) -> None:
         super().__init__(*args)
 
     # def forward(self, x: List[torch.Tensor]):
@@ -79,7 +79,7 @@ class ConvBnAct2d(nn.Module):
         bias=False,
         norm="",
         act_layer=Swish,
-    ):
+    ) -> None:
         super().__init__()
         # self.conv = create_conv2d(
         #     in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, padding=padding, bias=bias)
@@ -119,7 +119,7 @@ class SeparableConv2d(nn.Module):
         pw_kernel_size=1,
         act_layer=Swish,
         norm="",
-    ):
+    ) -> None:
         super().__init__()
 
         # self.conv_dw = create_conv2d(
@@ -173,7 +173,7 @@ class ResampleFeatureMap(nn.Sequential):
         apply_bn=False,
         conv_after_downsample=False,
         redundant_bias=False,
-    ):
+    ) -> None:
         super().__init__()
         pooling_type = pooling_type or "max"
         self.in_channels = in_channels
@@ -229,7 +229,7 @@ class FpnCombine(nn.Module):
         conv_after_downsample=False,
         redundant_bias=False,
         weight_method="attn",
-    ):
+    ) -> None:
         super().__init__()
         self.inputs_offsets = inputs_offsets
         self.weight_method = weight_method
@@ -305,7 +305,7 @@ class BiFpnLayer(nn.Module):
         conv_bn_relu_pattern=False,
         separable_conv=True,
         redundant_bias=False,
-    ):
+    ) -> None:
         super().__init__()
         self.fpn_config = fpn_config
         self.num_levels = num_levels
@@ -379,7 +379,7 @@ class BiFPN(Backbone):
         num_levels=5,
         num_bifpn=4,
         separable_conv=False,
-    ):
+    ) -> None:
         super().__init__()
         assert isinstance(bottom_up, Backbone)
 

@@ -26,7 +26,7 @@ class AbstractManipulationSkill(AbstractRobotSkill):
     This abstract class provides access to the robot's manipulation memory system.
     """
 
-    def __init__(self, *args, robot: Robot | None = None, **kwargs):
+    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:
         """Initialize the manipulation skill.
 
         Args:

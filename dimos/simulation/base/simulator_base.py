@@ -24,7 +24,7 @@ class SimulatorBase(ABC):
         headless: bool = True,
         open_usd: str | None = None,  # Keep for Isaac compatibility
         entities: list[dict[str, str | dict]] | None = None,  # Add for Genesis
-    ):
+    ) -> None:
         """Initialize the simulator.
 
         Args:

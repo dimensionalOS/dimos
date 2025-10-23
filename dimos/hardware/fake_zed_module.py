@@ -45,7 +45,7 @@ class FakeZEDModule(Module):
     camera_info: Out[CameraInfo] = None
     pose: Out[PoseStamped] = None
 
-    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs):
+    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
@@ -198,7 +198,7 @@ class FakeZEDModule(Module):
         return info_replay.stream()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying recorded data."""
         super().start()
 
@@ -262,7 +262,7 @@ class FakeZEDModule(Module):
 
         super().stop()
 
-    def _publish_pose(self, msg):
+    def _publish_pose(self, msg) -> None:
         """Publish pose and TF transform."""
         if msg:
             self.pose.publish(msg)

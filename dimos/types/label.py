@@ -16,7 +16,7 @@ from typing import Any
 
 
 class LabelType:
-    def __init__(self, labels: dict[str, Any], metadata: Any = None):
+    def __init__(self, labels: dict[str, Any], metadata: Any = None) -> None:
         """
         Initializes a standardized label type.
 
@@ -31,7 +31,7 @@ class LabelType:
         """Return a list of label descriptions."""
         return [desc["description"] for desc in self.labels.values()]
 
-    def save_to_json(self, filepath: str):
+    def save_to_json(self, filepath: str) -> None:
         """Save the labels to a JSON file."""
         import json
 

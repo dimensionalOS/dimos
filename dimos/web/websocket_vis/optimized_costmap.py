@@ -28,7 +28,7 @@ import numpy as np
 class OptimizedCostmapEncoder:
     """Handles optimized encoding of costmaps with delta compression."""
 
-    def __init__(self, chunk_size: int = 64):
+    def __init__(self, chunk_size: int = 64) -> None:
         self.chunk_size = chunk_size
         self.last_full_grid: np.ndarray | None = None
         self.last_full_sent_time: float = 0  # Track when last full update was sent
@@ -146,7 +146,7 @@ class OptimizedCostmapEncoder:
             "chunks": changed_chunks,
         }
 
-    def _update_chunk_hashes(self, grid: np.ndarray):
+    def _update_chunk_hashes(self, grid: np.ndarray) -> None:
         """Update all chunk hashes for the grid."""
         self.chunk_hashes.clear()
         height, width = grid.shape

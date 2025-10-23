@@ -168,7 +168,7 @@ def get_args_parser():
     return parser
 
 
-def main(args):
+def main(args) -> None:
     utils.init_distributed_mode(args)
     print(f"git:\n  {utils.get_sha()}\n")
 

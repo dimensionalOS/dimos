@@ -58,7 +58,7 @@ if __name__ == "__main__":
     os.makedirs(dirname, exist_ok=True)
     metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
 
-    def output(vis, fname):
+    def output(vis, fname) -> None:
         if args.show:
             print(fname)
             cv2.imshow("window", vis.get_image()[:, :, ::-1])

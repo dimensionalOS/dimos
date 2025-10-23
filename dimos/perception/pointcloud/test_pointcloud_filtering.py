@@ -28,7 +28,7 @@ if TYPE_CHECKING:
 
 
 class TestPointcloudFiltering:
-    def test_pointcloud_filtering_initialization(self):
+    def test_pointcloud_filtering_initialization(self) -> None:
         """Test PointcloudFiltering initializes correctly with default parameters."""
         try:
             filtering = PointcloudFiltering()
@@ -40,7 +40,7 @@ class TestPointcloudFiltering:
         except Exception as e:
             pytest.skip(f"Skipping test due to initialization error: {e}")
 
-    def test_pointcloud_filtering_with_custom_params(self):
+    def test_pointcloud_filtering_with_custom_params(self) -> None:
         """Test PointcloudFiltering with custom parameters."""
         try:
             filtering = PointcloudFiltering(
@@ -58,7 +58,7 @@ class TestPointcloudFiltering:
         except Exception as e:
             pytest.skip(f"Skipping test due to initialization error: {e}")
 
-    def test_pointcloud_filtering_process_images(self):
+    def test_pointcloud_filtering_process_images(self) -> None:
         """Test PointcloudFiltering can process RGB-D images and return filtered point clouds."""
         try:
             # Import data inside method to avoid pytest fixture confusion
@@ -208,7 +208,7 @@ class TestPointcloudFiltering:
         except Exception as e:
             pytest.skip(f"Skipping test due to error: {e}")
 
-    def test_pointcloud_filtering_empty_objects(self):
+    def test_pointcloud_filtering_empty_objects(self) -> None:
         """Test PointcloudFiltering with empty object list."""
         try:
             from dimos.utils.data import get_data
@@ -238,7 +238,7 @@ class TestPointcloudFiltering:
         except Exception as e:
             pytest.skip(f"Skipping test due to error: {e}")
 
-    def test_color_generation_consistency(self):
+    def test_color_generation_consistency(self) -> None:
         """Test that color generation is consistent for the same object ID."""
         try:
             filtering = PointcloudFiltering()

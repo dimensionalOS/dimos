@@ -18,7 +18,7 @@ import numpy as np
 
 
 class SegmentationType:
-    def __init__(self, masks: list[np.ndarray], metadata: Any = None):
+    def __init__(self, masks: list[np.ndarray], metadata: Any = None) -> None:
         """
         Initializes a standardized segmentation type.
 
@@ -36,7 +36,7 @@ class SegmentationType:
             combined_mask = np.logical_or(combined_mask, mask)
         return combined_mask
 
-    def save_masks(self, directory: str):
+    def save_masks(self, directory: str) -> None:
         """Save each mask to a separate file."""
         import os
 

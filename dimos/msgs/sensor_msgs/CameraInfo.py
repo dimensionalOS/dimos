@@ -51,7 +51,7 @@ class CameraInfo(Timestamped):
         binning_y: int = 0,
         frame_id: str = "",
         ts: float | None = None,
-    ):
+    ) -> None:
         """Initialize CameraInfo.
 
         Args:
@@ -174,7 +174,7 @@ class CameraInfo(Timestamped):
             raise ValueError(f"R matrix must be 3x3, got {R.shape}")
         self.R = R.flatten().tolist()
 
-    def set_D_coeffs(self, D: np.ndarray):
+    def set_D_coeffs(self, D: np.ndarray) -> None:
         """Set distortion coefficients from numpy array."""
         self.D = D.flatten().tolist()
 
@@ -373,7 +373,7 @@ class CameraInfo(Timestamped):
 class CalibrationProvider:
     """Provides lazy-loaded access to camera calibration YAML files in a directory."""
 
-    def __init__(self, calibration_dir):
+    def __init__(self, calibration_dir) -> None:
         """Initialize with a directory containing calibration YAML files.
 
         Args:

@@ -18,7 +18,8 @@ from collections.abc import Callable
 from queue import Queue
 import threading
 import time
-from typing import Literal
+from types import TracebackType
+from typing import Literal, Optional, Type
 
 # from dimos.data.recording import Recorder
 
@@ -79,11 +80,16 @@ class RobotRecorder:
         self._worker_thread = threading.Thread(target=self._process_queue, daemon=True)
         self._worker_thread.start()
 
-    def __enter__(self):
+    def __enter__(self) -> None:
         """Enter the context manager, starting the recording."""
         self.start_recording(self.task)
 
-    def __exit__(self, exc_type, exc_value, traceback) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         """Exit the context manager, stopping the recording."""
         self.stop_recording()
 

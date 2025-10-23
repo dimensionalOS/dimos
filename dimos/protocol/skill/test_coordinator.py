@@ -28,11 +28,11 @@ from dimos.utils.data import get_data
 
 class SkillContainerTest(Module):
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
     @skill()
@@ -95,7 +95,7 @@ class SkillContainerTest(Module):
 
 
 @pytest.mark.asyncio
-async def test_coordinator_parallel_calls():
+async def test_coordinator_parallel_calls() -> None:
     skillCoordinator = SkillCoordinator()
     skillCoordinator.register_skills(SkillContainerTest())
 
@@ -133,7 +133,7 @@ async def test_coordinator_parallel_calls():
 
 
 @pytest.mark.asyncio
-async def test_coordinator_generator():
+async def test_coordinator_generator() -> None:
     container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()
     skillCoordinator.register_skills(container)

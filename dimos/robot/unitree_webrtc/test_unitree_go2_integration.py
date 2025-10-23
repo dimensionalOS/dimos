@@ -41,12 +41,12 @@ class MovementControlModule(Module):
 
     movecmd: Out[Twist] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.commands_sent = []
 
     @rpc
-    def send_move_command(self, x: float, y: float, yaw: float):
+    def send_move_command(self, x: float, y: float, yaw: float) -> None:
         """Send a movement command."""
         cmd = Twist(linear=Vector3(x, y, 0.0), angular=Vector3(0.0, 0.0, yaw))
         self.movecmd.publish(cmd)
@@ -62,7 +62,7 @@ class MovementControlModule(Module):
 @pytest.mark.module
 class TestUnitreeGo2CoreModules:
     @pytest.mark.asyncio
-    async def test_unitree_go2_navigation_stack(self):
+    async def test_unitree_go2_navigation_stack(self) -> None:
         """Test UnitreeGo2 core navigation modules without perception/visualization."""
 
         # Start Dask

@@ -54,7 +54,7 @@ class DemoSkills(SkillContainer):
         return f"Quick task '{name}' done!"
 
 
-def run_demo_skills():
+def run_demo_skills() -> None:
     """Run demo skills in background."""
     # Create and start agent interface
     agent_interface = SkillCoordinator()
@@ -65,7 +65,7 @@ def run_demo_skills():
     agent_interface.register_skills(demo_skills)
 
     # Run various skills periodically
-    def skill_runner():
+    def skill_runner() -> None:
         counter = 0
         while True:
             time.sleep(2)

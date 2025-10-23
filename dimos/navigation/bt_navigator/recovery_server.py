@@ -37,7 +37,7 @@ class RecoveryServer:
         self,
         position_threshold: float = 0.2,
         stuck_duration: float = 3.0,
-    ):
+    ) -> None:
         """Initialize the recovery server.
 
         Args:

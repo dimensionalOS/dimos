@@ -25,7 +25,7 @@ class HungarianMatcher(nn.Module):
     while the others are un-matched (and thus treated as non-objects).
     """
 
-    def __init__(self, cost_class: float = 1, cost_bbox: float = 1, cost_giou: float = 1):
+    def __init__(self, cost_class: float = 1, cost_bbox: float = 1, cost_giou: float = 1) -> None:
         """Creates the matcher
 
         Params:

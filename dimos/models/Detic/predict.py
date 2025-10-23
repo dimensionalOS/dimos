@@ -21,7 +21,7 @@ from detic.modeling.utils import reset_cls_test
 
 
 class Predictor(cog.Predictor):
-    def setup(self):
+    def setup(self) -> None:
         cfg = get_cfg()
         add_centernet_config(cfg)
         add_detic_config(cfg)

@@ -28,7 +28,7 @@ class CustomDatasetMapper(DatasetMapper):
         tarfile_path="",
         tar_index_dir="",
         **kwargs,
-    ):
+    ) -> None:
         """
         add image labels
         """
@@ -215,7 +215,7 @@ class DetrDatasetMapper:
     4. Prepare image and annotation to Tensors
     """
 
-    def __init__(self, cfg, is_train=True):
+    def __init__(self, cfg, is_train=True) -> None:
         if cfg.INPUT.CROP.ENABLED and is_train:
             self.crop_gen = [
                 T.ResizeShortestEdge([400, 500, 600], sample_style="choice"),

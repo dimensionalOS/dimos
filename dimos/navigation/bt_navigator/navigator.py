@@ -77,7 +77,7 @@ class BehaviorTreeNavigator(Module):
         reset_local_planner: Callable[[], None] | None = None,
         check_goal_reached: Callable[[], bool] | None = None,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the Navigator.
 
         Args:
@@ -133,7 +133,7 @@ class BehaviorTreeNavigator(Module):
         self.check_goal_reached.set_rpc(self.rpc)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         # Subscribe to inputs
@@ -209,18 +209,18 @@ class BehaviorTreeNavigator(Module):
         """Get the current state of the navigator."""
         return self.state
 
-    def _on_odom(self, msg: PoseStamped):
+    def _on_odom(self, msg: PoseStamped) -> None:
         """Handle incoming odometry messages."""
         self.latest_odom = msg
 
         if self.state == NavigatorState.FOLLOWING_PATH:
             self.recovery_server.update_odom(msg)
 
-    def _on_goal_request(self, msg: PoseStamped):
+    def _on_goal_request(self, msg: PoseStamped) -> None:
         """Handle incoming goal requests."""
         self.set_goal(msg)
 
-    def _on_costmap(self, msg: OccupancyGrid):
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
@@ -270,7 +270,7 @@ class BehaviorTreeNavigator(Module):
             logger.error(f"Failed to transform goal: {e}")
             return None
 
-    def _control_loop(self):
+    def _control_loop(self) -> None:
         """Main control loop running in separate thread."""
         while not self.stop_event.is_set():
             with self.state_lock:

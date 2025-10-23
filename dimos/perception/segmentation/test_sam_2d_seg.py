@@ -26,7 +26,7 @@ from dimos.stream.video_provider import VideoProvider
 
 @pytest.mark.heavy
 class TestSam2DSegmenter:
-    def test_sam_segmenter_initialization(self):
+    def test_sam_segmenter_initialization(self) -> None:
         """Test FastSAM segmenter initializes correctly with default model path."""
         try:
             # Try to initialize with the default model path and existing device setting
@@ -37,7 +37,7 @@ class TestSam2DSegmenter:
             # If the model file doesn't exist, the test should still pass with a warning
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
-    def test_sam_segmenter_process_image(self):
+    def test_sam_segmenter_process_image(self) -> None:
         """Test FastSAM segmenter can process video frames and return segmentation masks."""
         # Import get data inside method to avoid pytest fixture confusion
         from dimos.utils.data import get_data
@@ -110,7 +110,7 @@ class TestSam2DSegmenter:
             frames_processed = 0
             target_frames = 5
 
-            def on_next(result):
+            def on_next(result) -> None:
                 nonlocal frames_processed, results
                 if not result:
                     return
@@ -122,10 +122,10 @@ class TestSam2DSegmenter:
                 if frames_processed >= target_frames:
                     subscription.dispose()
 
-            def on_error(error):
+            def on_error(error) -> None:
                 pytest.fail(f"Error in segmentation stream: {error}")
 
-            def on_completed():
+            def on_completed() -> None:
                 pass
 
             # Subscribe and wait for results

@@ -32,7 +32,7 @@ class Int8(LCMInt8):
 
     msg_name: ClassVar[str] = "std_msgs.Int8"
 
-    def __init__(self, data: int = 0):
+    def __init__(self, data: int = 0) -> None:
         """Initialize Int8 with data value."""
         self.data = data
 

@@ -88,7 +88,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             "thread",
         )
 
-        def __init__(self, channel, capacity: int, cp_mod):
+        def __init__(self, channel, capacity: int, cp_mod) -> None:
             self.channel = channel
             self.capacity = int(capacity)
             self.shape = (self.capacity + 20,)  # +20 for header: length(4) + uuid(16)
@@ -196,7 +196,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             st.thread = threading.Thread(target=self._fanout_loop, args=(topic, st), daemon=True)
             st.thread.start()
 
-        def _unsub():
+        def _unsub() -> None:
             try:
                 st.subs.remove(callback)
             except ValueError:

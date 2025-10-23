@@ -199,7 +199,7 @@ class MultiDatasetSampler(Sampler):
         dataset_ann,
         repeat_threshold=0.001,
         seed: int | None = None,
-    ):
+    ) -> None:
         """ """
         sizes = [0 for _ in range(len(dataset_ratio))]
         for d in dataset_dicts:
@@ -260,7 +260,7 @@ class MultiDatasetSampler(Sampler):
 
 
 class MDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset, batch_size, num_datasets):
+    def __init__(self, dataset, batch_size, num_datasets) -> None:
         """ """
         self.dataset = dataset
         self.batch_size = batch_size
@@ -279,7 +279,7 @@ class MDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
 
 
 class DIFFMDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset, batch_sizes, num_datasets):
+    def __init__(self, dataset, batch_sizes, num_datasets) -> None:
         """ """
         self.dataset = dataset
         self.batch_sizes = batch_sizes

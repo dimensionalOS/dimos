@@ -26,7 +26,7 @@ MOCK_QWEN_RESPONSE = """
    """
 
 
-def test_query_detections_mocked():
+def test_query_detections_mocked() -> None:
     """Test query_detections with mocked API response (no API key required)."""
     # Load test image
     image = Image.from_file(get_data("cafe.jpg"))
@@ -76,7 +76,7 @@ def test_query_detections_mocked():
 
 @pytest.mark.tool
 @pytest.mark.skipif(not os.getenv("ALIBABA_API_KEY"), reason="ALIBABA_API_KEY not set")
-def test_query_detections_real():
+def test_query_detections_real() -> None:
     """Test query_detections with real API calls (requires API key)."""
     # Load test image
     image = Image.from_file(get_data("cafe.jpg"))

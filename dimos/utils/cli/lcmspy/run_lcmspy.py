@@ -78,7 +78,7 @@ class LCMSpyApp(App):
         ("ctrl+c", "quit"),
     ]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.spy = GraphLCMSpy(autoconf=True, graph_log_window=0.5)
         self.table: DataTable | None = None
@@ -91,14 +91,14 @@ class LCMSpyApp(App):
         self.table.add_column("Total Traffic")
         yield self.table
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         self.spy.start()
         self.set_interval(self.refresh_interval, self.refresh_table)
 
-    async def on_unmount(self):
+    async def on_unmount(self) -> None:
         self.spy.stop()
 
-    def refresh_table(self):
+    def refresh_table(self) -> None:
         topics: list[SpyTopic] = list(self.spy.topic.values())
         topics.sort(key=lambda t: t.total_traffic(), reverse=True)
         self.table.clear(columns=False)
@@ -117,7 +117,7 @@ class LCMSpyApp(App):
             )
 
 
-def main():
+def main() -> None:
     import sys
 
     if len(sys.argv) > 1 and sys.argv[1] == "web":

@@ -35,14 +35,14 @@ class QuerySender(Module):
     message_out: Out[AgentMessage] = None  # New AgentMessage output
 
     @rpc
-    def send_query(self, query: str):
+    def send_query(self, query: str) -> None:
         """Send a query as AgentMessage."""
         msg = AgentMessage()
         msg.add_text(query)
         self.message_out.publish(msg)
 
     @rpc
-    def send_message(self, message: AgentMessage):
+    def send_message(self, message: AgentMessage) -> None:
         """Send an AgentMessage."""
         self.message_out.publish(message)
 
@@ -52,16 +52,16 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start collecting."""
         self.response_in.subscribe(self._on_response)
 
-    def _on_response(self, msg):
+    def _on_response(self, msg) -> None:
         self.responses.append(msg)
 
     @rpc
@@ -71,7 +71,7 @@ class ResponseCollector(Module):
 
 
 @pytest.mark.tofix
-def test_base_agent_direct_text():
+def test_base_agent_direct_text() -> None:
     """Test BaseAgent direct text usage."""
     load_dotenv()
 
@@ -120,7 +120,7 @@ def test_base_agent_direct_text():
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_base_agent_async_text():
+async def test_base_agent_async_text() -> None:
     """Test BaseAgent async text usage."""
     load_dotenv()
 
@@ -154,7 +154,7 @@ async def test_base_agent_async_text():
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_base_agent_module_text():
+async def test_base_agent_module_text() -> None:
     """Test BaseAgentModule with text via DimOS."""
     load_dotenv()
 
@@ -238,7 +238,7 @@ async def test_base_agent_module_text():
     ],
 )
 @pytest.mark.tofix
-def test_base_agent_providers(model, provider):
+def test_base_agent_providers(model, provider) -> None:
     """Test BaseAgent with different providers."""
     load_dotenv()
 
@@ -272,7 +272,7 @@ def test_base_agent_providers(model, provider):
 
 
 @pytest.mark.tofix
-def test_base_agent_memory():
+def test_base_agent_memory() -> None:
     """Test BaseAgent with memory/RAG."""
     load_dotenv()
 
@@ -310,7 +310,7 @@ def test_base_agent_memory():
 class MockAgent(BaseAgent):
     """Mock agent for testing without API calls."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Don't call super().__init__ to avoid gateway initialization
         from dimos.agents.agent_types import ConversationHistory
 
@@ -320,7 +320,7 @@ class MockAgent(BaseAgent):
         self._supports_vision = False
         self.response_subject = None  # Simplified
 
-    async def _process_query_async(self, query: str, base64_image=None):
+    async def _process_query_async(self, query: str, base64_image=None) -> str:
         """Mock response."""
         if "2+2" in query:
             return "The answer is 4"
@@ -366,13 +366,13 @@ class MockAgent(BaseAgent):
         self.conversation.add_assistant_message(response)
         return AgentResponse(content=response)
 
-    def dispose(self):
+    def dispose(self) -> None:
         """Mock dispose."""
         pass
 
 
 @pytest.mark.tofix
-def test_mock_agent():
+def test_mock_agent() -> None:
     """Test mock agent for CI without API keys."""
     # Create mock agent
     agent = MockAgent(model="mock::test", system_prompt="Mock assistant")
@@ -401,7 +401,7 @@ def test_mock_agent():
 
 
 @pytest.mark.tofix
-def test_base_agent_conversation_history():
+def test_base_agent_conversation_history() -> None:
     """Test that conversation history is properly maintained."""
     load_dotenv()
 
@@ -464,7 +464,7 @@ def test_base_agent_conversation_history():
 
 
 @pytest.mark.tofix
-def test_base_agent_history_with_tools():
+def test_base_agent_history_with_tools() -> None:
     """Test conversation history with tool calls."""
     load_dotenv()
 

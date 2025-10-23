@@ -41,7 +41,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         modulation_rate: float = 0.5,  # Modulation rate in Hz
         volume_oscillation: bool = True,  # Enable sinusoidal volume changes
         volume_oscillation_rate: float = 0.2,  # Volume oscillation rate in Hz
-    ):
+    ) -> None:
         """
         Initialize SimulatedAudioSource.
 
@@ -133,7 +133,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 
         return wave
 
-    def _audio_thread(self, observer, interval: float):
+    def _audio_thread(self, observer, interval: float) -> None:
         """Thread function for simulated audio generation."""
         try:
             sample_index = 0
@@ -198,7 +198,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             )
 
             # Return a disposable to clean up
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping simulated audio")
                 self._running = False
                 if self._thread and self._thread.is_alive():

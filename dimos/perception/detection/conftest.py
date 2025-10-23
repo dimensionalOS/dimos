@@ -123,7 +123,7 @@ def get_moment(tf):
 
 @pytest.fixture(scope="session")
 def publish_moment():
-    def publisher(moment: Moment | Moment2D | Moment3D):
+    def publisher(moment: Moment | Moment2D | Moment3D) -> None:
         detections2d_val = moment.get("detections2d")
         if detections2d_val:
             # 2d annotations

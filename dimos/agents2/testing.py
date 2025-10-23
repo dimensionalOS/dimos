@@ -47,7 +47,7 @@ class MockModel(SimpleChatModel):
     real_model: Any | None = None
     recorded_messages: list[dict[str, Any]] = []
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Extract custom parameters before calling super().__init__
         responses = kwargs.pop("responses", [])
         json_path = kwargs.pop("json_path", None)
@@ -93,7 +93,7 @@ class MockModel(SimpleChatModel):
                 responses.append(msg)
         return responses
 
-    def _save_responses_to_json(self):
+    def _save_responses_to_json(self) -> None:
         if not self.json_path:
             return
 

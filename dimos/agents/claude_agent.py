@@ -51,13 +51,13 @@ logger = setup_logger("dimos.agents.claude")
 
 # Response object compatible with LLMAgent
 class ResponseMessage:
-    def __init__(self, content="", tool_calls=None, thinking_blocks=None):
+    def __init__(self, content="", tool_calls=None, thinking_blocks=None) -> None:
         self.content = content
         self.tool_calls = tool_calls or []
         self.thinking_blocks = thinking_blocks or []
         self.parsed = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         # Return a string representation for logging
         parts = []
 
@@ -104,7 +104,7 @@ class ClaudeAgent(LLMAgent):
         pool_scheduler: ThreadPoolScheduler | None = None,
         process_all_inputs: bool | None = None,
         thinking_budget_tokens: int | None = 2000,
-    ):
+    ) -> None:
         """
         Initializes a new instance of the ClaudeAgent.
 
@@ -195,7 +195,7 @@ class ClaudeAgent(LLMAgent):
 
         logger.info("Claude Agent Initialized.")
 
-    def _add_context_to_memory(self):
+    def _add_context_to_memory(self) -> None:
         """Adds initial context to the agent's memory."""
         context_data = [
             (
@@ -544,7 +544,7 @@ class ClaudeAgent(LLMAgent):
         incoming_query: str | None = None,
         reset_conversation: bool = False,
         thinking_budget_tokens: int | None = None,
-    ):
+    ) -> None:
         """Main query handler that manages conversation history and Claude interactions.
 
         This is the primary method for handling all queries, whether they come through
@@ -698,7 +698,7 @@ class ClaudeAgent(LLMAgent):
                     }
                 )
 
-    def _tooling_callback(self, response_message):
+    def _tooling_callback(self, response_message) -> None:
         """Runs the observable query for each tool call in the current response_message"""
         if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
             return

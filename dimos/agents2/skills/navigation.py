@@ -57,7 +57,7 @@ class NavigationSkillContainer(SkillModule):
     color_image: In[Image] = None
     odom: In[PoseStamped] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._skill_started = False
         self._vl_model = QwenVlModel()

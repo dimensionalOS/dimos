@@ -66,7 +66,7 @@ def backpressure(
 class LatestReader(Generic[T]):
     """A callable object that returns the latest value from an observable."""
 
-    def __init__(self, initial_value: T, subscription, connection=None):
+    def __init__(self, initial_value: T, subscription, connection=None) -> None:
         self._value = initial_value
         self._subscription = subscription
         self._connection = connection
@@ -88,15 +88,15 @@ def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> 
         error = []
         event = threading.Event()
 
-        def on_next(value):
+        def on_next(value) -> None:
             result.append(value)
             event.set()
 
-        def on_error(e):
+        def on_error(e) -> None:
             error.append(e)
             event.set()
 
-        def on_completed():
+        def on_completed() -> None:
             event.set()
 
         # Subscribe and wait for first value
@@ -183,7 +183,7 @@ def callback_to_observable(
     stop: Callable[[CB[T]], Any],
 ) -> Observable[T]:
     def _subscribe(observer, _scheduler=None):
-        def _on_msg(value: T):
+        def _on_msg(value: T) -> None:
             observer.on_next(value)
 
         start(_on_msg)

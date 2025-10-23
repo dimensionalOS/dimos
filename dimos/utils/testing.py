@@ -43,7 +43,7 @@ class SensorReplay(Generic[T]):
                   For example: lambda data: LidarMessage.from_msg(data)
     """
 
-    def __init__(self, name: str, autocast: Callable[[Any], T] | None = None):
+    def __init__(self, name: str, autocast: Callable[[Any], T] | None = None) -> None:
         self.root_dir = get_data(name)
         self.autocast = autocast
 
@@ -114,7 +114,7 @@ class SensorStorage(Generic[T]):
             autocast: Optional function that takes data and returns a processed result before storage.
     """
 
-    def __init__(self, name: str, autocast: Callable[[T], Any] | None = None):
+    def __init__(self, name: str, autocast: Callable[[T], Any] | None = None) -> None:
         self.name = name
         self.autocast = autocast
         self.cnt = 0
@@ -325,7 +325,7 @@ class TimedSensorReplay(SensorReplay[T]):
                 observer.on_completed()
                 return disp
 
-            def schedule_emission(message):
+            def schedule_emission(message) -> None:
                 nonlocal next_message, is_disposed
 
                 if is_disposed:
@@ -343,7 +343,7 @@ class TimedSensorReplay(SensorReplay[T]):
                 target_time = start_local_time + (ts - start_replay_time) / speed
                 delay = max(0.0, target_time - time.time())
 
-                def emit():
+                def emit() -> None:
                     if is_disposed:
                         return
                     observer.on_next(data)
@@ -360,7 +360,7 @@ class TimedSensorReplay(SensorReplay[T]):
             schedule_emission(next_message)
 
             # Create a custom disposable that properly cleans up
-            def dispose():
+            def dispose() -> None:
                 nonlocal is_disposed
                 is_disposed = True
                 disp.dispose()

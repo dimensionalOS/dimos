@@ -152,14 +152,14 @@ class SkillContainer:
     _skill_transport: SkillCommsSpec | None = None
 
     @rpc
-    def dynamic_skills(self):
+    def dynamic_skills(self) -> bool:
         return False
 
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._skill_transport:
             self._skill_transport.stop()
             self._skill_transport = None

@@ -76,7 +76,7 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     def start(self) -> None:
         self.pubsub.start()
 
-    def stop(self):
+    def stop(self) -> None:
         self.pubsub.stop()
 
     def publish(self, msg: SkillMsg) -> None:
