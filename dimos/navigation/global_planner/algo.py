@@ -97,7 +97,7 @@ def astar(
 
     while open_set:
         # Get the node with the lowest f_score
-        current_f, current = heapq.heappop(open_set)
+        _current_f, current = heapq.heappop(open_set)
         current_x, current_y = current
 
         # Remove from open set hash

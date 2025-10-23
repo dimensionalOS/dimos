@@ -13,8 +13,9 @@
 # limitations under the License.
 
 import asyncio
+from collections.abc import Callable
 import threading
-from typing import Any, Callable, Protocol, overload
+from typing import Any, Protocol, overload
 
 
 class Empty: ...

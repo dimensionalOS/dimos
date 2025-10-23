@@ -15,13 +15,15 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Generic, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, TypeVar
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
 from dimos.protocol.service import Service
 from dimos.protocol.skill.type import SkillMsg
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dimos.protocol.pubsub.spec import PubSub
 
 # defines a protocol for communication between skills and agents
@@ -49,7 +51,7 @@ TopicT = TypeVar("TopicT")
 @dataclass
 class PubSubCommsConfig(Generic[TopicT, MsgT]):
     topic: TopicT | None = None
-    pubsub: Union[type[PubSub[TopicT, MsgT]], PubSub[TopicT, MsgT], None] = None
+    pubsub: type[PubSub[TopicT, MsgT]] | PubSub[TopicT, MsgT] | None = None
     autostart: bool = True
 
 
@@ -87,7 +89,7 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
 @dataclass
 class LCMCommsConfig(PubSubCommsConfig[str, SkillMsg]):
     topic: str = "/skill"
-    pubsub: Union[type[PubSub], PubSub, None] = PickleLCM
+    pubsub: type[PubSub] | PubSub | None = PickleLCM
     # lcm needs to be started only if receiving
     # skill comms are broadcast only in modules so we don't autostart
     autostart: bool = False

@@ -15,7 +15,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 import subprocess
-from typing import Literal, Union
+from typing import Literal
 
 AnnotatorType = Literal["rgb", "normals", "bounding_box_3d", "motion_vectors"]
 TransportType = Literal["tcp", "udp"]
@@ -35,7 +35,7 @@ class StreamBase(ABC):
         annotator_type: AnnotatorType = "rgb",
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
-        usd_path: Union[str, Path] | None = None,
+        usd_path: str | Path | None = None,
     ):
         """Initialize the stream.
 
@@ -61,7 +61,7 @@ class StreamBase(ABC):
         self.proc = None
 
     @abstractmethod
-    def _load_stage(self, usd_path: Union[str, Path]):
+    def _load_stage(self, usd_path: str | Path):
         """Load stage from file."""
         pass
 

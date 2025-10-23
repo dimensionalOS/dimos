@@ -19,7 +19,7 @@ from enum import Enum
 import json
 import threading
 import time
-from typing import Any, Literal, Union
+from typing import Any, Literal
 
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool as langchain_tool
@@ -118,7 +118,7 @@ class SkillState:
             else:
                 return self.error_msg.content
 
-    def agent_encode(self) -> Union[ToolMessage, str]:
+    def agent_encode(self) -> ToolMessage | str:
         # tool call can emit a single ToolMessage
         # subsequent messages are considered SituationalAwarenessMessages,
         # those are collapsed into a HumanMessage, that's artificially prepended to history
@@ -355,7 +355,7 @@ class SkillCoordinator(Module):
 
     # internal skill call
     def call_skill(
-        self, call_id: Union[str | Literal[False]], skill_name: str, args: dict[str, Any]
+        self, call_id: str | Literal[False], skill_name: str, args: dict[str, Any]
     ) -> None:
         if not call_id:
             call_id = str(time.time())

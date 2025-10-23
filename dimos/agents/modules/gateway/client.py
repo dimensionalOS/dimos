@@ -15,9 +15,10 @@
 """Unified gateway client for LLM access."""
 
 import asyncio
+from collections.abc import AsyncIterator, Iterator
 import logging
 import os
-from typing import Any, AsyncIterator, Iterator, Union
+from typing import Any
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -89,7 +90,7 @@ class UnifiedGatewayClient:
         max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[dict[str, Any], Iterator[dict[str, Any]]]:
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Synchronous inference call.
 
         Args:
@@ -124,7 +125,7 @@ class UnifiedGatewayClient:
         max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[dict[str, Any], AsyncIterator[dict[str, Any]]]:
+    ) -> dict[str, Any] | AsyncIterator[dict[str, Any]]:
         """Asynchronous inference call.
 
         Args:

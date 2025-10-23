@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Union
 
 import cv2
 import numpy as np
@@ -20,7 +19,7 @@ import open3d as o3d
 
 
 def fit_cuboid(
-    points: Union[np.ndarray, o3d.geometry.PointCloud], method: str = "minimal"
+    points: np.ndarray | o3d.geometry.PointCloud, method: str = "minimal"
 ) -> dict | None:
     """
     Fit a cuboid to a point cloud using Open3D's built-in methods.
@@ -104,7 +103,7 @@ def fit_cuboid(
         return None
 
 
-def fit_cuboid_simple(points: Union[np.ndarray, o3d.geometry.PointCloud]) -> dict | None:
+def fit_cuboid_simple(points: np.ndarray | o3d.geometry.PointCloud) -> dict | None:
     """
     Simple wrapper for minimal oriented bounding box fitting.
 

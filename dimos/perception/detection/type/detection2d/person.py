@@ -326,7 +326,7 @@ class Detection2DPerson(Detection2DBBox):
 
         # Add pose-specific info
         visible_count = len(self.get_visible_keypoints(threshold=0.5))
-        x1, y1, x2, y2 = self.bbox
+        x1, _y1, _x2, y2 = self.bbox
 
         annotations.append(
             TextAnnotation(

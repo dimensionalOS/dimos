@@ -539,7 +539,7 @@ class ManipulationModule(Module):
         target_pose = self.current_executed_pose
 
         # Check for timeout - this will fail task and reset if timeout occurred
-        timed_out, time_elapsed = self._check_reach_timeout()
+        timed_out, _time_elapsed = self._check_reach_timeout()
         if timed_out:
             return False
 

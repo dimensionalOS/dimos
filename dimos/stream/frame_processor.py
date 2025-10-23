@@ -120,7 +120,7 @@ class FrameProcessor:
             ValueError: If input frames have invalid dimensions or types.
             TypeError: If acc is not a tuple of correct types.
         """
-        prev_frame, prev_flow, prev_relevancy = acc
+        prev_frame, _prev_flow, _prev_relevancy = acc
 
         if prev_frame is None:
             return (current_frame, None, None)

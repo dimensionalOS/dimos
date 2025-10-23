@@ -14,9 +14,10 @@
 
 """TensorZero embedded gateway client with correct config format."""
 
+from collections.abc import AsyncIterator, Iterator
 import logging
 from pathlib import Path
-from typing import Any, AsyncIterator, Iterator, Union
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +185,7 @@ weight = 0.4
         max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[dict[str, Any], Iterator[dict[str, Any]]]:
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Synchronous inference call through TensorZero."""
 
         # Map model to TensorZero function
@@ -237,7 +238,7 @@ weight = 0.4
         max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[dict[str, Any], AsyncIterator[dict[str, Any]]]:
+    ) -> dict[str, Any] | AsyncIterator[dict[str, Any]]:
         """Async inference with streaming support."""
         import asyncio
 

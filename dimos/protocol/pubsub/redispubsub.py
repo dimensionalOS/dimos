@@ -13,11 +13,12 @@
 # limitations under the License.
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
 import redis
 

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import enum
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
     TypeVar,
 )
@@ -30,6 +30,9 @@ from reactivex.disposable import Disposable
 import dimos.core.colors as colors
 import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 T = TypeVar("T")
 

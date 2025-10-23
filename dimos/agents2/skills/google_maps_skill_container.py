@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-from typing import Any, Union
+from typing import Any
 
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
@@ -110,7 +110,7 @@ class GoogleMapsSkillContainer(SkillContainer, Resource):
 
         location = self._get_latest_location()
 
-        results: list[Union[dict[str, Any], str]] = []
+        results: list[dict[str, Any] | str] = []
 
         for query in queries:
             try:

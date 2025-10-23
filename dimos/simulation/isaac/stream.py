@@ -14,7 +14,6 @@
 
 from pathlib import Path
 import time
-from typing import Union
 
 import cv2
 
@@ -34,7 +33,7 @@ class IsaacStream(StreamBase):
         annotator_type: AnnotatorType = "rgb",
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
-        usd_path: Union[str, Path] | None = None,
+        usd_path: str | Path | None = None,
     ):
         """Initialize the Isaac Sim stream."""
         super().__init__(
@@ -61,7 +60,7 @@ class IsaacStream(StreamBase):
         self._setup_ffmpeg()
         self._setup_annotator()
 
-    def _load_stage(self, usd_path: Union[str, Path]):
+    def _load_stage(self, usd_path: str | Path):
         """Load USD stage from file."""
         import omni.usd
 

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import queue
 import time
-from typing import Callable
 
 from dimos_lcm.sensor_msgs import CameraInfo
 import reactivex as rx

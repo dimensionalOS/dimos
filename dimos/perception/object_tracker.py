@@ -550,7 +550,7 @@ class ObjectTracking(Module):
         """Draw REID feature matches on the image."""
         viz_image = image.copy()
 
-        x1, y1, x2, y2 = self.last_roi_bbox
+        x1, y1, _x2, _y2 = self.last_roi_bbox
 
         # Draw keypoints from current ROI in green
         for kp in self.last_roi_kps:

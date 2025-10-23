@@ -25,7 +25,7 @@ import json
 import os
 import threading
 import time
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from cerebras.cloud.sdk import Cerebras
 from dotenv import load_dotenv
@@ -125,7 +125,7 @@ class CerebrasAgent(LLMAgent):
         max_input_tokens_per_request: int = 128000,
         max_output_tokens_per_request: int = 16384,
         model_name: str = "llama-4-scout-17b-16e-instruct",
-        skills: Union[AbstractSkill, list[AbstractSkill], SkillLibrary] | None = None,
+        skills: AbstractSkill | list[AbstractSkill] | SkillLibrary | None = None,
         response_model: BaseModel | None = None,
         frame_processor: FrameProcessor | None = None,
         image_detail: str = "low",
@@ -257,7 +257,7 @@ class CerebrasAgent(LLMAgent):
     def _build_prompt(
         self,
         messages: list,
-        base64_image: Union[str, list[str]] | None = None,
+        base64_image: str | list[str] | None = None,
         dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
         condensed_results: str = "",

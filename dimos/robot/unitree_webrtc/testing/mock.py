@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 import glob
 import os
 import pickle
-from typing import Iterator, Union, cast, overload
+from typing import cast, overload
 
 from reactivex import from_iterable, interval, operators as ops
 from reactivex.observable import Observable
@@ -31,16 +32,16 @@ class Mock:
         self.cnt = 0
 
     @overload
-    def load(self, name: Union[int, str], /) -> LidarMessage: ...
+    def load(self, name: int | str, /) -> LidarMessage: ...
     @overload
-    def load(self, *names: Union[int, str]) -> list[LidarMessage]: ...
+    def load(self, *names: int | str) -> list[LidarMessage]: ...
 
-    def load(self, *names: Union[int, str]) -> Union[LidarMessage, list[LidarMessage]]:
+    def load(self, *names: int | str) -> LidarMessage | list[LidarMessage]:
         if len(names) == 1:
             return self.load_one(names[0])
         return list(map(lambda name: self.load_one(name), names))
 
-    def load_one(self, name: Union[int, str]) -> LidarMessage:
+    def load_one(self, name: int | str) -> LidarMessage:
         if isinstance(name, int):
             file_name = f"/lidar_data_{name:03d}.pickle"
         else:

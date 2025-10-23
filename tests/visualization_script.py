@@ -194,7 +194,7 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
     else:
         rows = 2
         cols = (num_plots + 1) // 2
-        fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
+        _fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
 
     # Ensure axes is always a list for consistent indexing
     if num_plots == 1:

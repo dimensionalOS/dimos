@@ -26,7 +26,7 @@ import os
 import struct
 import threading
 import time
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any
 import uuid
 
 import numpy as np
@@ -34,6 +34,9 @@ import numpy as np
 from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = setup_logger("dimos.protocol.pubsub.sharedmemory")
 
@@ -242,7 +245,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
     def _fanout_loop(self, topic: str, st: _TopicState) -> None:
         while not st.stop.is_set():
-            seq, ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
+            seq, _ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
             if view is None:
                 time.sleep(0.001)
                 continue

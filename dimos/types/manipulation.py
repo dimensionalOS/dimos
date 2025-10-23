@@ -16,7 +16,7 @@ from abc import ABC
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-from typing import TYPE_CHECKING, Any, Literal, TypedDict, Union
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import uuid
 
 import numpy as np
@@ -88,8 +88,8 @@ class ObjectData(TypedDict, total=False):
     segmentation_mask: np.ndarray  # Binary mask of the object's pixels
 
     # 3D pose and dimensions
-    position: Union[dict[str, float], Vector]  # 3D position {x, y, z} or Vector
-    rotation: Union[dict[str, float], Vector]  # 3D rotation {roll, pitch, yaw} or Vector
+    position: dict[str, float] | Vector  # 3D position {x, y, z} or Vector
+    rotation: dict[str, float] | Vector  # 3D rotation {roll, pitch, yaw} or Vector
     size: dict[str, float]  # Object dimensions {width, height, depth}
 
     # Point cloud data
@@ -134,8 +134,8 @@ class ManipulationTask:
     timestamp: float = field(default_factory=time.time)
     task_id: str = ""
     result: dict[str, Any] | None = None  # Any result data from the task execution
-    constraints: Union[list[AbstractConstraint], ManipulationTaskConstraint, AbstractConstraint] = (
-        field(default_factory=list)
+    constraints: list[AbstractConstraint] | ManipulationTaskConstraint | AbstractConstraint = field(
+        default_factory=list
     )
 
     def add_constraint(self, constraint: AbstractConstraint):

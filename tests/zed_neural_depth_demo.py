@@ -227,7 +227,7 @@ class ZEDLiveVisualizer:
     def update_display(self):
         """Update the live display with new frames."""
         # Capture frame
-        left_img, right_img, depth_map = self.camera.capture_frame()
+        left_img, _right_img, depth_map = self.camera.capture_frame()
 
         if left_img is None or depth_map is None:
             return False, None, None

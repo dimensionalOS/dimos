@@ -19,7 +19,7 @@ Dynamically generates skills for G1 humanoid robot including arm controls and mo
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs import TwistStamped, Vector3
@@ -65,7 +65,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
     Inherits all Go2 skills and adds G1-specific arm controls and movement modes.
     """
 
-    def __init__(self, robot: Union[UnitreeG1, UnitreeGo2] | None = None):
+    def __init__(self, robot: UnitreeG1 | UnitreeGo2 | None = None):
         """Initialize the skill container with robot reference.
 
         Args:

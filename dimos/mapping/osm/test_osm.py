@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Generator
+from collections.abc import Generator
+from typing import Any
 
 import cv2
 import numpy as np

@@ -66,7 +66,7 @@ class TestSam2DSegmenter:
                 )
 
                 if len(results) > 0:
-                    masks, bboxes, track_ids, probs, names, areas = (
+                    masks, bboxes, track_ids, probs, names, _areas = (
                         extract_masks_bboxes_probs_names(results[0])
                     )
                     return masks, bboxes, track_ids, probs, names

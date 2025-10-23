@@ -15,7 +15,7 @@
 """Base agent module that wraps BaseAgent for DimOS module usage."""
 
 import threading
-from typing import Any, Union
+from typing import Any
 
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
@@ -47,7 +47,7 @@ class BaseAgentModule(BaseAgent, Module):
         self,
         model: str = "openai::gpt-4o-mini",
         system_prompt: str | None = None,
-        skills: Union[SkillLibrary, list[AbstractSkill], AbstractSkill] | None = None,
+        skills: SkillLibrary | list[AbstractSkill] | AbstractSkill | None = None,
         memory: AbstractAgentSemanticMemory | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,

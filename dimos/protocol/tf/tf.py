@@ -18,7 +18,7 @@ from abc import abstractmethod
 from collections import deque
 from dataclasses import dataclass, field
 from functools import reduce
-from typing import TypeVar, Union
+from typing import TypeVar
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.tf2_msgs import TFMessage
@@ -267,7 +267,7 @@ class MultiTBuffer:
 @dataclass
 class PubSubTFConfig(TFConfig):
     topic: Topic | None = None  # Required field but needs default for dataclass inheritance
-    pubsub: Union[type[PubSub], PubSub, None] = None
+    pubsub: type[PubSub] | PubSub | None = None
     autostart: bool = True
 
 
@@ -341,7 +341,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
 @dataclass
 class LCMPubsubConfig(PubSubTFConfig):
     topic: Topic = field(default_factory=lambda: Topic("/tf", TFMessage))
-    pubsub: Union[type[PubSub], PubSub, None] = LCM
+    pubsub: type[PubSub] | PubSub | None = LCM
     autostart: bool = True
 
 

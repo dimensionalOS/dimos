@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
-from typing import Any, Union
+from typing import Any
 
 import cv2
 from dimos_lcm.vision_msgs import Detection2D, Detection3D
@@ -183,7 +183,7 @@ def transform_points_3d(
 def select_points_from_depth(
     depth_image: np.ndarray,
     target_point: tuple[int, int],
-    camera_intrinsics: Union[list[float], np.ndarray],
+    camera_intrinsics: list[float] | np.ndarray,
     radius: int = 5,
 ) -> np.ndarray:
     """
@@ -769,7 +769,7 @@ def visualize_detections_3d(
                 pos_xyz = np.array([position.x, position.y, position.z])
 
                 # Get bounding box coordinates
-                x1, y1, x2, y2 = map(int, bbox)
+                _x1, y1, x2, _y2 = map(int, bbox)
 
                 # Add position text next to bounding box (top-right corner)
                 pos_text = f"({pos_xyz[0]:.2f}, {pos_xyz[1]:.2f}, {pos_xyz[2]:.2f})"

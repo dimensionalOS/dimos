@@ -14,10 +14,11 @@
 
 # UNDER DEVELOPMENT 🚧🚧🚧, NEEDS TESTING
 
+from collections.abc import Callable
 from queue import Queue
 import threading
 import time
-from typing import Callable, Literal
+from typing import Literal
 
 # from dimos.data.recording import Recorder
 

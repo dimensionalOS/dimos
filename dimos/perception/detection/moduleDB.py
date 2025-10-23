@@ -11,10 +11,11 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from copy import copy
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate

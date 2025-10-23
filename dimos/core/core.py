@@ -16,12 +16,15 @@
 from __future__ import annotations
 
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
     TypeVar,
 )
 
 from dimos.core.o3dpickle import register_picklers
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 # injects pickling system into o3d
 register_picklers()

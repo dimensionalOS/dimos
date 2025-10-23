@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import builtins
+from collections.abc import Iterable
 from typing import (
     Any,
-    Iterable,
     Protocol,
     TypeVar,
     Union,

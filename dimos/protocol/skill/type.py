@@ -13,10 +13,11 @@
 # limitations under the License.
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 import time
-from typing import Any, Callable, Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from dimos.types.timestamped import Timestamped
 from dimos.utils.generic import truncate_display_string

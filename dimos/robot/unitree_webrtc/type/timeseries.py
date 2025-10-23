@@ -16,7 +16,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Generic, Iterable, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, TypedDict, TypeVar, Union
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 PAYLOAD = TypeVar("PAYLOAD")
 

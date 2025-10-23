@@ -15,11 +15,11 @@
 from __future__ import annotations
 
 from abc import abstractmethod
+from collections.abc import Callable
 import time
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
     TypedDict,
     TypeVar,

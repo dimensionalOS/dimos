@@ -273,7 +273,7 @@ class Detection2DBBox(Detection2D):
         return self.to_image_annotations().lcm_encode()
 
     def to_text_annotation(self) -> list[TextAnnotation]:
-        x1, y1, x2, y2 = self.bbox
+        x1, y1, _x2, y2 = self.bbox
 
         font_size = self.image.width / 80
 

@@ -330,7 +330,7 @@ class ZEDCamera:
                 point_cloud_data = self.point_cloud.get_data()
 
                 # Convert to numpy array format
-                height, width = point_cloud_data.shape[:2]
+                _height, _width = point_cloud_data.shape[:2]
                 points = point_cloud_data.reshape(-1, 4)
 
                 # Extract XYZ coordinates

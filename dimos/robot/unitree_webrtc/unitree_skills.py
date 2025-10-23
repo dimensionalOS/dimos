@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
@@ -231,7 +231,7 @@ class MyUnitreeSkills(SkillLibrary):
         self.register_skills(dynamic_skills)
 
     @classmethod
-    def register_skills(cls, skill_classes: Union[AbstractSkill, list[AbstractSkill]]):
+    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]):
         """Add multiple skill classes as class attributes.
 
         Args:

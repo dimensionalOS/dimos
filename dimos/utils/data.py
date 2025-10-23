@@ -16,7 +16,6 @@ from functools import cache
 from pathlib import Path
 import subprocess
 import tarfile
-from typing import Union
 
 
 @cache
@@ -83,7 +82,7 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
     return None
 
 
-def _decompress_archive(filename: Union[str, Path]) -> Path:
+def _decompress_archive(filename: str | Path) -> Path:
     target_dir = _get_data_dir()
     filename_path = Path(filename)
     with tarfile.open(filename_path, "r:gz") as tar:
@@ -91,7 +90,7 @@ def _decompress_archive(filename: Union[str, Path]) -> Path:
     return target_dir / filename_path.name.replace(".tar.gz", "")
 
 
-def _pull_lfs_archive(filename: Union[str, Path]) -> Path:
+def _pull_lfs_archive(filename: str | Path) -> Path:
     # Check Git LFS availability first
     _check_git_lfs_available()
 
@@ -121,7 +120,7 @@ def _pull_lfs_archive(filename: Union[str, Path]) -> Path:
     return file_path
 
 
-def get_data(filename: Union[str, Path]) -> Path:
+def get_data(filename: str | Path) -> Path:
     """
     Get the path to a test data, downloading from LFS if needed.
 

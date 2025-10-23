@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 import inspect
 import threading
 from typing import (
     Any,
-    Callable,
     get_args,
     get_origin,
     get_type_hints,

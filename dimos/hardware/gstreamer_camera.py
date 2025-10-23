@@ -226,7 +226,7 @@ class GstreamerCameraModule(Module):
             logger.warning(f"GStreamer warning: {warn}, {debug}")
         elif t == Gst.MessageType.STATE_CHANGED:
             if message.src == self.pipeline:
-                old_state, new_state, pending_state = message.parse_state_changed()
+                _old_state, new_state, _pending_state = message.parse_state_changed()
                 if new_state == Gst.State.PLAYING:
                     logger.info("Pipeline is now playing - connected to TCP server")
 

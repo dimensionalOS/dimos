@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
+from collections.abc import Iterable
 from datetime import datetime, timezone
-from typing import Generic, Iterable, TypeVar, Union
+from typing import Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create

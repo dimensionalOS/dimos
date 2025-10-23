@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import builtins
-from typing import Sequence, TypeVar, Union
+from collections.abc import Sequence
+from typing import TypeVar, Union
 
 import numpy as np
 
@@ -22,7 +23,7 @@ from dimos.types.ros_polyfill import Vector3
 T = TypeVar("T", bound="Vector")
 
 # Vector-like types that can be converted to/from Vector
-VectorLike = Union[Sequence[Union[int, float]], Vector3, "Vector", np.ndarray]
+VectorLike = Union[Sequence[int | float], Vector3, "Vector", np.ndarray]
 
 
 class Vector:

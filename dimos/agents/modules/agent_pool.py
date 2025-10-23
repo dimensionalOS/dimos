@@ -14,7 +14,7 @@
 
 """Agent pool module for managing multiple agents."""
 
-from typing import Any, Union
+from typing import Any
 
 from reactivex import operators as ops
 from reactivex.subject import Subject
@@ -174,9 +174,7 @@ class AgentPoolModule(Module):
 
         logger.info(f"Broadcasted query to {len(self._agents) - len(exclude)} agents")
 
-    def _setup_agent_routing(
-        self, agent_id: str, agent: Union[BaseAgentModule, UnifiedAgentModule]
-    ):
+    def _setup_agent_routing(self, agent_id: str, agent: BaseAgentModule | UnifiedAgentModule):
         """Setup response routing for an agent."""
 
         # Subscribe to agent responses and tag with agent_id

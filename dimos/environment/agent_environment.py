@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from pathlib import Path
-from typing import Union
 
 import cv2
 import numpy as np
@@ -31,7 +30,7 @@ class AgentEnvironment(Environment):
         self._segmentations = []
         self._point_clouds = []
 
-    def initialize_from_images(self, images: Union[list[str], list[np.ndarray]]) -> bool:
+    def initialize_from_images(self, images: list[str] | list[np.ndarray]) -> bool:
         """Initialize environment from a list of image paths or numpy arrays.
 
         Args:

@@ -266,7 +266,7 @@ class PBVS:
                 return None, None, False, True, None
         else:
             # Velocity control mode - use controller
-            velocity_cmd, angular_velocity_cmd, controller_reached = (
+            velocity_cmd, angular_velocity_cmd, _controller_reached = (
                 self.controller.compute_control(ee_pose, self.target_grasp_pose)
             )
             # Return has_target=True since we have a target, regardless of tracking status

@@ -219,7 +219,7 @@ class PiperArm:
             True if object is detected in gripper, False otherwise
         """
         # Get gripper feedback
-        angle_degrees, actual_effort = self.get_gripper_feedback()
+        _angle_degrees, actual_effort = self.get_gripper_feedback()
 
         # Check if object is grasped (effort > 80% of commanded effort)
         effort_threshold = 0.8 * commanded_effort

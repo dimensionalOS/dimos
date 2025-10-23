@@ -16,7 +16,6 @@
 
 from dataclasses import dataclass, field
 import time
-from typing import Union
 
 from dimos.agents.agent_types import AgentImage
 from dimos.msgs.sensor_msgs.Image import Image
@@ -43,7 +42,7 @@ class AgentMessage:
         if text:  # Only add non-empty text
             self.messages.append(text)
 
-    def add_image(self, image: Union[Image, AgentImage]) -> None:
+    def add_image(self, image: Image | AgentImage) -> None:
         """Add an image. Converts Image to AgentImage if needed."""
         if isinstance(image, Image):
             # Convert to AgentImage

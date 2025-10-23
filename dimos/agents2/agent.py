@@ -16,7 +16,7 @@ import datetime
 import json
 from operator import itemgetter
 import os
-from typing import Any, TypedDict, Union
+from typing import Any, TypedDict
 import uuid
 
 from langchain.chat_models import init_chat_model
@@ -157,7 +157,7 @@ def snapshot_to_messages(
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
-    state_messages: list[Union[AIMessage, HumanMessage]]
+    state_messages: list[AIMessage | HumanMessage]
 
     def __init__(
         self,
@@ -209,7 +209,7 @@ class Agent(AgentSpec):
     def clear_history(self):
         self._history.clear()
 
-    def append_history(self, *msgs: list[Union[AIMessage, HumanMessage]]):
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]):
         for msg in msgs:
             self.publish(msg)
 

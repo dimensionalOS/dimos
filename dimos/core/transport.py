@@ -15,22 +15,23 @@
 from __future__ import annotations
 
 import traceback
-from typing import Callable, TypeVar
+from typing import TypeVar
 
 import dimos.core.colors as colors
 
 T = TypeVar("T")
 
-import traceback
 from typing import (
-    Callable,
+    TYPE_CHECKING,
     TypeVar,
 )
 
-import dimos.core.colors as colors
 from dimos.core.stream import In, RemoteIn, Transport
 from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 T = TypeVar("T")
 

@@ -15,9 +15,10 @@
 # limitations under the License.
 
 import asyncio
+from collections.abc import Callable
 from contextlib import contextmanager
 import time
-from typing import Any, Callable
+from typing import Any
 
 import pytest
 

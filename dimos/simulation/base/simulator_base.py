@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Union
 
 
 class SimulatorBase(ABC):
@@ -24,7 +23,7 @@ class SimulatorBase(ABC):
         self,
         headless: bool = True,
         open_usd: str | None = None,  # Keep for Isaac compatibility
-        entities: list[dict[str, Union[str, dict]]] | None = None,  # Add for Genesis
+        entities: list[dict[str, str | dict]] | None = None,  # Add for Genesis
     ):
         """Initialize the simulator.
 

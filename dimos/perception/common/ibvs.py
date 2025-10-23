@@ -170,7 +170,7 @@ class ObjectDistanceEstimator:
         Returns:
             estimated_size: Estimated physical height of the object (in meters)
         """
-        x_min, y_min, x_max, y_max = bbox
+        _x_min, y_min, _x_max, y_max = bbox
 
         # Calculate object height in pixels
         object_height_px = y_max - y_min

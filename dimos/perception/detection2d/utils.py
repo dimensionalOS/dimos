@@ -257,7 +257,7 @@ def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
         raise ValueError("Camera intrinsics required for distance calculation")
 
     # Extract camera parameters
-    fx, fy, cx, cy = camera_intrinsics
+    fx, _fy, cx, _cy = camera_intrinsics
 
     # Calculate center of bounding box in pixels
     x1, y1, x2, y2 = bbox
