@@ -13,15 +13,12 @@
 # limitations under the License.
 
 import os
-import pickle
-import sys
 import time
 
 import chromadb
 import cv2
 from matplotlib.patches import Circle
 import matplotlib.pyplot as plt
-import numpy as np
 import reactivex
 from reactivex import operators as ops
 
@@ -30,8 +27,6 @@ from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 # from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2  # Uncomment when properly configured
 from dimos.perception.spatial_perception import SpatialMemory
-from dimos.types.vector import Vector
-import tests.test_header
 
 
 def extract_pose_data(transform):

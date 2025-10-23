@@ -16,11 +16,6 @@
 Utility functions for frontier exploration visualization and testing.
 """
 
-import os
-import pickle
-from typing import List, Tuple
-
-import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 

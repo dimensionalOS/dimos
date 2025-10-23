@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import json
 import threading
 import time
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable
 
 import redis
 

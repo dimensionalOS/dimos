@@ -14,22 +14,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 import numpy as np
 import reactivex.operators as ops
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.color import Color
 from textual.containers import Container
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Label, Static
+from textual.widgets import Footer, Static
 
 from dimos import core
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Transform, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.robot.unitree_webrtc.multiprocess.unitree_go2_navonly import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 if TYPE_CHECKING:

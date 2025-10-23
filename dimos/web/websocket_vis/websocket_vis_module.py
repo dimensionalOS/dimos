@@ -19,13 +19,11 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
-import base64
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from dimos_lcm.std_msgs import Bool
-import numpy as np
 from reactivex.disposable import Disposable
 import socketio
 from starlette.applications import Starlette

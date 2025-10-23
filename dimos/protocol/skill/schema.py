@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import inspect
-from typing import Dict, List, Union, get_args, get_origin
+from typing import Union, get_args, get_origin
 
 
 def python_type_to_json_schema(python_type) -> dict:

@@ -18,7 +18,6 @@ Supports both eye-in-hand and eye-to-hand configurations.
 """
 
 from collections import deque
-from typing import List, Optional, Tuple
 
 from dimos_lcm.vision_msgs import Detection3D
 import numpy as np

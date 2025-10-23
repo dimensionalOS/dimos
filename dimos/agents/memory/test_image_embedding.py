@@ -21,7 +21,6 @@ import time
 
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider

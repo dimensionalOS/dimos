@@ -18,7 +18,6 @@
 """Internal B1 command structure for UDP communication."""
 
 import struct
-from typing import Optional
 
 from pydantic import BaseModel, Field
 

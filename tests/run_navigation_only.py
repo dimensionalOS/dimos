@@ -16,7 +16,6 @@ import atexit
 import logging
 import os
 import signal
-import sys
 import threading
 import time
 import warnings
@@ -24,7 +23,6 @@ import warnings
 from dotenv import load_dotenv
 import reactivex.operators as ops
 
-from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.types.vector import Vector
 from dimos.web.robot_web_interface import RobotWebInterface

@@ -24,7 +24,7 @@ from enum import Enum, auto
 from queue import Empty, PriorityQueue
 import threading
 import time
-from typing import Any, Callable, Dict, NamedTuple, Optional
+from typing import Any, Callable, NamedTuple
 import uuid
 
 from dimos.utils.logging_config import setup_logger

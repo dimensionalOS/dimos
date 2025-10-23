@@ -14,7 +14,6 @@
 
 import threading
 import time
-from typing import Dict, List, Optional
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo

@@ -14,7 +14,7 @@
 
 
 from dataclasses import dataclass
-from typing import Optional, TypeAlias
+from typing import TypeAlias
 
 
 @dataclass(frozen=True)

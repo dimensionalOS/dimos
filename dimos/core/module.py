@@ -19,7 +19,6 @@ import threading
 from typing import (
     Any,
     Callable,
-    Optional,
     get_args,
     get_origin,
     get_type_hints,
@@ -30,7 +29,6 @@ from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
-from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec

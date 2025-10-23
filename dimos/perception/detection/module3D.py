@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Optional
-
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex import operators as ops

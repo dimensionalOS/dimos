@@ -15,12 +15,10 @@
 import logging
 import os
 
-import tests.test_header
-
 logging.basicConfig(level=logging.DEBUG)
 
 import cv2
-from fastapi import FastAPI, Response
+from fastapi import FastAPI
 from starlette.responses import StreamingResponse
 import uvicorn
 

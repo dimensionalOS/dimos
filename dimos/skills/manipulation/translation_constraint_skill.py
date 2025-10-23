@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Literal, Optional, Tuple
+from typing import Literal
 
 from pydantic import Field
 
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
-from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.manipulation import TranslationConstraint, Vector
 from dimos.utils.logging_config import setup_logger
 

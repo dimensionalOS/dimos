@@ -21,7 +21,7 @@ from collections import deque
 from enum import Enum
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo

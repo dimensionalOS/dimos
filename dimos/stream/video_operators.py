@@ -15,7 +15,7 @@
 import base64
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable
 
 import cv2
 import numpy as np

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import time
-from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -29,7 +28,6 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     _is_cu,
     _to_cpu,
 )
-from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 
 try:
     import cupy as cp  # type: ignore

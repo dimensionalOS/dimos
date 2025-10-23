@@ -34,8 +34,6 @@ except ImportError:
     ROSTwistWithCovariance = None
     ROSVector3 = None
 
-from dimos_lcm.geometry_msgs import TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance

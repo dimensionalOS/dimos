@@ -15,8 +15,6 @@
 from datetime import datetime
 import time
 
-import pytest
-
 from dimos.msgs.std_msgs import Header
 
 

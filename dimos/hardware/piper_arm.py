@@ -20,7 +20,6 @@ import termios
 import threading
 import time
 import tty
-from typing import Tuple
 
 from dimos_lcm.geometry_msgs import Pose, Twist, Vector3
 import kinpy as kp

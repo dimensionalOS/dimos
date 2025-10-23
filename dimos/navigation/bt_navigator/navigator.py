@@ -21,7 +21,7 @@ Navigator module for coordinating global and local planning.
 from enum import Enum
 import threading
 import time
-from typing import Callable, Optional
+from typing import Callable
 
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable

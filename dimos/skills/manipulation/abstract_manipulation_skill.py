@@ -14,11 +14,9 @@
 
 """Abstract base class for manipulation skills."""
 
-from typing import Optional
-
 from dimos.manipulation.manipulation_interface import ManipulationInterface
 from dimos.robot.robot import Robot
-from dimos.skills.skills import AbstractRobotSkill, Colors
+from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.robot_capabilities import RobotCapability
 
 

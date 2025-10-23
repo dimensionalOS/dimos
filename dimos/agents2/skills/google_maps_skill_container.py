@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-from typing import Any, Optional, Union
+from typing import Any, Union
 
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable

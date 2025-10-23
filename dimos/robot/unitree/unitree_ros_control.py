@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Type
 
 from go2_interfaces.msg import IMU, Go2State
 from sensor_msgs.msg import CameraInfo, CompressedImage, Image

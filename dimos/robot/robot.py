@@ -15,7 +15,6 @@
 """Minimal robot interface for DIMOS robots."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
 from reactivex import Observable
 

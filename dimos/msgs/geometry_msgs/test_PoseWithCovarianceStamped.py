@@ -36,14 +36,10 @@ except ImportError:
     ROSTime = None
     ROSPoseWithCovariance = None
 
-from dimos_lcm.geometry_msgs import PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.PoseWithCovarianceStamped import PoseWithCovarianceStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 
 def test_pose_with_covariance_stamped_default_init():

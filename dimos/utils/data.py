@@ -16,7 +16,7 @@ from functools import cache
 from pathlib import Path
 import subprocess
 import tarfile
-from typing import Optional, Union
+from typing import Union
 
 
 @cache

@@ -15,8 +15,6 @@
 import cv2
 import numpy as np
 
-from dimos.types.vector import Vector
-
 
 def filter_detections(
     bboxes,

@@ -15,9 +15,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from io import BytesIO
-import struct
-from typing import BinaryIO, TypeAlias
+from typing import TypeAlias
 
 from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
 import numpy as np

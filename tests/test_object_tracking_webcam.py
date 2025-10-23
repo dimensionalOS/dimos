@@ -12,17 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 import queue
-import sys
 import threading
 
 import cv2
-import numpy as np
 
 from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.stream.video_provider import VideoProvider
-import tests.test_header
 
 # Global variables for bounding box selection
 selecting_bbox = False

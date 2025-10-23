@@ -12,10 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
 import time
 
-import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
@@ -28,7 +26,6 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 @pytest.mark.skip
 def test_publish_transforms():
     from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
-    import tf_lcm_py
 
     lcm = LCM(autoconf=True)
     lcm.start()

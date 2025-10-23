@@ -15,7 +15,6 @@
 
 """Visualize pickled manipulation pipeline results."""
 
-import json
 import os
 import pickle
 import sys
@@ -40,44 +39,24 @@ import atexit
 from contextlib import contextmanager
 from datetime import datetime
 import time
-from typing import List, Optional, Tuple
 
-import cv2
 import lcm_msgs
-from lcm_msgs.sensor_msgs import CameraInfo, JointState, PointCloud2, PointField
-from lcm_msgs.std_msgs import Header
-from manipulation.meshcat_utils import (  # TODO(russt): switch to pydrake version
-    _MeshcatPoseSliders,
-)
-from manipulation.scenarios import AddIiwa, AddMultibodyTriad, AddShape, AddWsg
 from pydrake.all import (
     AddMultibodyPlantSceneGraph,
-    CoulombFriction,
-    DepthImageToPointCloud,
-    Diagram,
     DiagramBuilder,
-    DifferentialInverseKinematicsParameters,
-    DifferentialInverseKinematicsStatus,
-    DoDifferentialInverseKinematics,
-    InverseKinematics,
     JointIndex,
     MeshcatVisualizer,
     MeshcatVisualizerParams,
-    MinimumDistanceLowerBoundConstraint,
-    MultibodyPlant,
     Parser,
     RigidTransform,
-    Role,
     RollPitchYaw,
     RotationMatrix,
-    Solve,
     StartMeshcat,
 )
 from pydrake.common import MemoryFile
 from pydrake.geometry import (
     Box,
     CollisionFilterDeclaration,
-    Cylinder,
     InMemoryMesh,
     Mesh,
     ProximityProperties,
@@ -86,7 +65,6 @@ from pydrake.math import RigidTransform as DrakeRigidTransform
 import tf_lcm_py
 import trimesh
 
-from dimos.perception.grasp_generation.utils import visualize_grasps_3d
 from dimos.perception.pointcloud.utils import (
     visualize_clustered_point_clouds,
     visualize_pcd,

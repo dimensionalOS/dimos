@@ -29,11 +29,6 @@ from __future__ import annotations
 
 from typing import BinaryIO
 
-from dimos_lcm.geometry_msgs import (
-    Transform as LCMTransform,
-    TransformStamped as LCMTransformStamped,
-)
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
 try:

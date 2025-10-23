@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import functools
 import struct
-import time
-from typing import Optional
 
 # Import LCM types
 from dimos_lcm.sensor_msgs.PointCloud2 import (

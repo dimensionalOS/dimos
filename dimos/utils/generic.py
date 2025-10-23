@@ -16,7 +16,7 @@ import hashlib
 import json
 import os
 import string
-from typing import Any, Optional
+from typing import Any
 import uuid
 
 

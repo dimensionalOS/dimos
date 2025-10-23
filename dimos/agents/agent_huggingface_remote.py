@@ -17,7 +17,7 @@ from __future__ import annotations
 # Standard library imports
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 # Third-party imports
 from dotenv import load_dotenv

@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import time
-from typing import Any, Optional
+from typing import Any
 
 from dimos.core.core import rpc
 from dimos.core.rpc_client import RpcCall

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 import time
-from typing import TYPE_CHECKING, BinaryIO, Optional
+from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.nav_msgs import MapMetaData, OccupancyGrid as LCMOccupancyGrid
 from dimos_lcm.std_msgs import Time as LCMTime

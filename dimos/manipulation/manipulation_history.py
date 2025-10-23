@@ -34,14 +34,10 @@ import json
 import os
 import pickle
 import time
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
-import uuid
+from typing import Any
 
 from dimos.types.manipulation import (
-    AbstractConstraint,
-    ManipulationMetadata,
     ManipulationTask,
-    ManipulationTaskConstraint,
 )
 from dimos.utils.logging_config import setup_logger
 

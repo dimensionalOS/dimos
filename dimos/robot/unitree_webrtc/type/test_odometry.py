@@ -17,7 +17,6 @@ from __future__ import annotations
 from operator import add, sub
 import os
 import threading
-from typing import Optional
 
 from dotenv import load_dotenv
 import pytest

@@ -15,7 +15,7 @@
 from functools import wraps
 import threading
 import time
-from typing import Callable, Optional, Type
+from typing import Callable
 
 from .accumulators import Accumulator, LatestAccumulator
 

@@ -14,9 +14,6 @@
 
 from __future__ import annotations
 
-from io import BytesIO
-import struct
-
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 

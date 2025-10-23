@@ -15,7 +15,7 @@
 from abc import ABC, abstractmethod
 from pathlib import Path
 import subprocess
-from typing import Literal, Optional, Union
+from typing import Literal, Union
 
 AnnotatorType = Literal["rgb", "normals", "bounding_box_3d", "motion_vectors"]
 TransportType = Literal["tcp", "udp"]

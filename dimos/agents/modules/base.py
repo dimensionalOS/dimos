@@ -17,7 +17,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Union
 
 from reactivex.subject import Subject
 

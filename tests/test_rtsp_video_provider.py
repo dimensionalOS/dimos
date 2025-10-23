@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 import time
 
 import numpy as np
@@ -25,7 +24,6 @@ from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import get_scheduler
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 logger = setup_logger("tests.test_rtsp_video_provider")
 

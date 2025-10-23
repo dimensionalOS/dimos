@@ -25,18 +25,15 @@ import os
 from dotenv import load_dotenv
 
 # Third-party imports
-from fastapi import FastAPI
 from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
-from reactivex.scheduler import CurrentThreadScheduler, ImmediateScheduler, ThreadPoolScheduler
+from reactivex.scheduler import ThreadPoolScheduler
 
 # Local application imports
-from dimos.agents.agent import OpenAIAgent
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider
 from dimos.web.fastapi_server import FastAPIServer
-import tests.test_header
 
 # Load environment variables
 load_dotenv()

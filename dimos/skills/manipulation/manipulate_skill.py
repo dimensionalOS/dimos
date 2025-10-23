@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 import uuid
 
 from pydantic import Field
@@ -21,12 +21,9 @@ from pydantic import Field
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
 from dimos.types.manipulation import (
     AbstractConstraint,
-    ForceConstraint,
     ManipulationMetadata,
     ManipulationTask,
     ManipulationTaskConstraint,
-    RotationConstraint,
-    TranslationConstraint,
 )
 from dimos.utils.logging_config import setup_logger
 

@@ -14,7 +14,7 @@
 
 """Agent pool module for managing multiple agents."""
 
-from typing import Any, Dict, List, Union
+from typing import Any, Union
 
 from reactivex import operators as ops
 from reactivex.subject import Subject

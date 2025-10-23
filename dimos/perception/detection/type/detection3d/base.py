@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from dimos.perception.detection.type.detection2d import Detection2DBBox
 

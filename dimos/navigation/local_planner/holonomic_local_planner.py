@@ -18,8 +18,6 @@
 Gradient-Augmented Look-Ahead Pursuit (GLAP) holonomic local planner.
 """
 
-from typing import Optional, Tuple
-
 import numpy as np
 
 from dimos.core import rpc

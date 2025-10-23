@@ -14,7 +14,6 @@
 
 
 from textwrap import dedent
-from typing import Optional
 
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer

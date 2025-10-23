@@ -20,7 +20,6 @@ and makes them available as an Observable stream.
 
 import logging
 import time
-from typing import Optional
 
 import numpy as np
 from reactivex import Observable, Subject, operators as ops

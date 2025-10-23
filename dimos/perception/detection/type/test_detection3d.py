@@ -14,8 +14,6 @@
 
 import time
 
-from dimos.perception.detection.type.detection3d import Detection3D
-
 
 def test_guess_projection(get_moment_2d, publish_moment):
     moment = get_moment_2d()

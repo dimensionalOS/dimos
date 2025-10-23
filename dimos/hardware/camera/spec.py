@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod, abstractproperty
-from typing import Generic, Optional, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable

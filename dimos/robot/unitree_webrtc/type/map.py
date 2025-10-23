@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import time
-from typing import Optional
 
 import numpy as np
 import open3d as o3d

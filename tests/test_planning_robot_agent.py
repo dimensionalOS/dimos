@@ -29,7 +29,6 @@ import sys
 
 # -----
 from textwrap import dedent
-import threading
 import time
 
 # Local application imports
@@ -40,7 +39,6 @@ from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import logger
 from dimos.utils.threadpool import make_single_thread_scheduler
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 
 def main():

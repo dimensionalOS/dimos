@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import heapq
-import math
-from typing import Optional
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path

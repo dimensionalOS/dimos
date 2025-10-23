@@ -21,7 +21,6 @@ from reactivex import operators as RxOps
 from dimos.robot.local_planner.local_planner import navigate_to_goal_local
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 
 def main():

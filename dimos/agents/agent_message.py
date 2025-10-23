@@ -16,7 +16,7 @@
 
 from dataclasses import dataclass, field
 import time
-from typing import List, Optional, Union
+from typing import Union
 
 from dimos.agents.agent_types import AgentImage
 from dimos.msgs.sensor_msgs.Image import Image

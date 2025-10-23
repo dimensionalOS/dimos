@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Union
+from typing import Union
 
 
 class SimulatorBase(ABC):

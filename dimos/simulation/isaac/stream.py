@@ -14,7 +14,7 @@
 
 from pathlib import Path
 import time
-from typing import Optional, Union
+from typing import Union
 
 import cv2
 

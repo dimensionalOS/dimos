@@ -16,7 +16,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import io
 import math
-from typing import Optional, Tuple
 
 import numpy as np
 from PIL import Image as PILImage

@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from copy import copy
 import time
-from typing import List, Optional, TypedDict
+from typing import TypedDict
 
 import numpy as np
 import open3d as o3d

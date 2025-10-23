@@ -16,9 +16,7 @@ import builtins
 from typing import (
     Any,
     Iterable,
-    List,
     Protocol,
-    Tuple,
     TypeVar,
     Union,
     runtime_checkable,

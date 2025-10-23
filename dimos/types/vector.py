@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import builtins
-from typing import List, Sequence, Tuple, TypeVar, Union
+from typing import Sequence, TypeVar, Union
 
 import numpy as np
 

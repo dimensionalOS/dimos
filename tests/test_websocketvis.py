@@ -19,7 +19,6 @@ import pickle
 import threading
 import time
 
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.robot.global_planner.planner import AstarPlanner

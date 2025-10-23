@@ -21,7 +21,7 @@ locations based on natural language queries, then executes the manipulation.
 
 import json
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 import cv2
 import numpy as np

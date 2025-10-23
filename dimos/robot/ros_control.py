@@ -17,7 +17,7 @@ from enum import Enum, auto
 import math
 import threading
 import time
-from typing import Any, Dict, Optional, Type
+from typing import Any
 
 from builtin_interfaces.msg import Duration
 from cv_bridge import CvBridge

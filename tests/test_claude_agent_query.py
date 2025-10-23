@@ -15,7 +15,6 @@
 from dotenv import load_dotenv
 
 from dimos.agents.claude_agent import ClaudeAgent
-import tests.test_header
 
 # Load API key from environment
 load_dotenv()

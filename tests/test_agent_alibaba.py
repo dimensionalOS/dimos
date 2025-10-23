@@ -21,7 +21,6 @@ from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.stream.video_provider import VideoProvider
 from dimos.utils.threadpool import get_scheduler
-import tests.test_header
 
 # Initialize video stream
 video_stream = VideoProvider(

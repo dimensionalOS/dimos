@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Callable
 
 from dimos_lcm.sensor_msgs import CameraInfo
 

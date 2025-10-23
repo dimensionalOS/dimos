@@ -15,7 +15,7 @@
 from textwrap import dedent
 import threading
 import time
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel
 from reactivex import Observable, operators as ops

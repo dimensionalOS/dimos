@@ -91,12 +91,9 @@
 # # Milestone 1
 # Milestone 2
 import json
-import os
 
 from dotenv import load_dotenv
 import requests
-
-import tests.test_header
 
 load_dotenv()
 
