@@ -26,12 +26,10 @@ except ImportError:
     ROSTwist = None
     ROSVector3 = None
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
-
 # Import Quaternion at runtime for beartype compatibility
 # (beartype needs to resolve forward references at runtime)
-
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 
 
 class Twist(LCMTwist):
@@ -136,5 +134,6 @@ class Twist(LCMTwist):
         ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)
         ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)
         return ros_msg
+
 
 __all__ = ["Quaternion", "Twist"]
