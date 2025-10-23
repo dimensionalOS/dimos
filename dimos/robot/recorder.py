@@ -19,7 +19,7 @@ from queue import Queue
 import threading
 import time
 from types import TracebackType
-from typing import Literal, Optional, Type
+from typing import Literal
 
 # from dimos.data.recording import Recorder
 

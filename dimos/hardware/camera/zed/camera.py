@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from types import TracebackType
-from typing import Any, Optional, Type
+from typing import Any
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo

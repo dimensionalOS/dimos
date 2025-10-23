@@ -13,10 +13,10 @@
 # limitations under the License.
 
 from collections import deque
+from collections.abc import Sequence
 from concurrent.futures import ThreadPoolExecutor
 import os
 import time
-from typing import Sequence
 
 import cv2
 import onnxruntime

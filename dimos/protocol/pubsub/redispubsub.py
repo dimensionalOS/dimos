@@ -19,7 +19,7 @@ import json
 import threading
 import time
 from types import TracebackType
-from typing import Any, Optional, Type
+from typing import Any
 
 import redis
 

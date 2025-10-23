@@ -27,7 +27,7 @@
 
 from __future__ import annotations
 
-from typing import BinaryIO, Iterator
+from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
@@ -41,6 +41,9 @@ except ImportError:
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 class TFMessage:

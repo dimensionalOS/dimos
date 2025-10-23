@@ -19,7 +19,7 @@ from collections.abc import AsyncIterator, Iterator
 import logging
 import os
 from types import TracebackType
-from typing import Any, Optional, Type
+from typing import Any
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential

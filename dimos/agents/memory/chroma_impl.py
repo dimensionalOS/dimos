@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import os
-from typing import Sequence
 
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
