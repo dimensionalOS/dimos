@@ -303,16 +303,52 @@ def interactive_control_loop(xarm, traj_gen, num_joints):
     time.sleep(1.0)
     print("✓ System ready for motion control")
 
+    # Track current control mode (starts in position mode)
+    current_mode = "position"
+
     # Main control loop
     while True:
         try:
             # Display current state
             print_current_state(traj_gen)
 
+            # Show current mode
+            mode_indicator = "POSITION" if current_mode == "position" else "VELOCITY"
+            print(f"\n[Current Mode: {mode_indicator}]")
+
             # Get control mode selection
             control_mode = get_control_mode()
             if control_mode is None:
                 break
+
+            # Switch modes if user selected a different mode
+            if control_mode != current_mode:
+                print(f"\n⚙ Switching from {current_mode} mode to {control_mode} mode...")
+
+                if control_mode == "velocity":
+                    # Switch to velocity control mode (mode 4)
+                    code, msg = xarm.enable_velocity_control_mode()
+                    print(f"  {msg} (code: {code})")
+                    if code == 0:
+                        current_mode = "velocity"
+                        # Notify trajectory generator about mode change
+                        traj_gen.set_velocity_mode(True)
+                        time.sleep(0.3)
+                    else:
+                        print(f"⚠ Failed to enable velocity mode, staying in {current_mode} mode")
+                        continue
+                else:
+                    # Switch to position control mode (mode 1)
+                    code, msg = xarm.disable_velocity_control_mode()
+                    print(f"  {msg} (code: {code})")
+                    if code == 0:
+                        current_mode = "position"
+                        # Notify trajectory generator about mode change
+                        traj_gen.set_velocity_mode(False)
+                        time.sleep(0.3)
+                    else:
+                        print(f"⚠ Failed to enable position mode, staying in {current_mode} mode")
+                        continue
 
             # Get joint selection
             joint_index = get_joint_selection(num_joints)
@@ -359,14 +395,7 @@ def interactive_control_loop(xarm, traj_gen, num_joints):
                     print("⚠ Motion cancelled")
                     continue
 
-                # IMPORTANT: Before velocity control, we need to:
-                # 1. Enable velocity control mode on the driver (mode 4)
-                #    This also switches the driver's internal flag to read velocity commands
-                print("\n⚙ Preparing for velocity control...")
-                code, msg = xarm.enable_velocity_control_mode()
-                print(f"  {msg} (code: {code})")
-
-                # Execute velocity motion
+                # Execute velocity motion (mode already set above if needed)
                 result = traj_gen.move_joint_velocity(
                     joint_index=joint_index, velocity_deg_s=velocity_deg_s, duration=duration
                 )
@@ -374,11 +403,6 @@ def interactive_control_loop(xarm, traj_gen, num_joints):
 
                 # Wait for completion
                 wait_for_trajectory_completion(traj_gen, duration)
-
-                # IMPORTANT: After velocity trajectory, switch back to position control
-                print("\n⚙ Returning to position control mode...")
-                code, msg = xarm.disable_velocity_control_mode()
-                print(f"  {msg} (code: {code})")
 
             # Ask to continue
             print("\n" + "=" * 80)
@@ -416,7 +440,7 @@ def main():
         XArmDriver,
         ip_address=ip_address,
         report_type="dev",
-        enable_on_start=False,
+        enable_on_start=True,
         num_joints=num_joints,
     )
 
