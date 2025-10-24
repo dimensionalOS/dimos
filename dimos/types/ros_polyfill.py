@@ -27,12 +27,12 @@ except ImportError:
     from dimos_lcm.std_msgs import Header
 
 __all__ = [
-    "Vector3",
+    "Header",
+    "OccupancyGrid",
+    "Odometry",
     "Point",
     "Pose",
     "Quaternion",
     "Twist",
-    "OccupancyGrid",
-    "Odometry",
-    "Header",
+    "Vector3",
 ]
