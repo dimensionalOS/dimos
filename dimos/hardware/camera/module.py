@@ -15,7 +15,7 @@
 import queue
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
+from typing import Callable, Optional
 
 import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -24,12 +24,9 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
 from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, Out, rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.hardware.camera.spec import (
-    CameraHardware,
-)
-from dimos.hardware.camera.webcam import Webcam, WebcamConfig
+from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.hardware.camera.spec import CameraHardware
+from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
@@ -54,7 +51,7 @@ class CameraModule(Module):
     image: Out[Image] = None
     camera_info: Out[CameraInfo] = None
 
-    hardware: CameraHardware = None
+    hardware: Callable[[], CameraHardware] | CameraHardware = None
     _module_subscription: Optional[Disposable] = None
     _camera_info_subscription: Optional[Disposable] = None
     _skill_stream: Optional[Observable[Image]] = None
@@ -117,6 +114,7 @@ class CameraModule(Module):
         if self._camera_info_subscription:
             self._camera_info_subscription.dispose()
             self._camera_info_subscription = None
+
         # Also stop the hardware if it has a stop method
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()
