@@ -33,6 +33,17 @@ _before_test_threads = {}  # Map test name to set of thread IDs before test
 _skip_for = ["lcm", "heavy", "ros"]
 
 
+@pytest.fixture(scope="module")
+def dimos_cluster():
+    from dimos.core import start
+
+    dimos = start(4)
+    try:
+        yield dimos
+    finally:
+        dimos.stop()
+
+
 @pytest.hookimpl()
 def pytest_sessionfinish(session):
     """Track threads that exist at session start - these are not leaks."""

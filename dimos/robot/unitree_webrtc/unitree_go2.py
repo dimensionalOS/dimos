@@ -22,8 +22,6 @@ import time
 import warnings
 from typing import Optional
 
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.std_msgs import Bool, String
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
 
@@ -33,40 +31,44 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.dimos import Dimos
 from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.navigation.bbox_navigation import BBoxNavigationModule
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
+from dimos_lcm.std_msgs import String
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.perception.common.utils import (
     load_camera_info,
     load_camera_info_opencv,
     rectify_image,
 )
-from dimos.perception.object_tracker_2d import ObjectTracker2D
-from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.robot import UnitreeRobot
+from dimos.utils.monitoring import UtilizationModule
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
-from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.perception.object_tracker_2d import ObjectTracker2D
+from dimos.navigation.bbox_navigation import BBoxNavigationModule
+from dimos_lcm.std_msgs import Bool
+from dimos.robot.robot import UnitreeRobot
+from dimos.types.robot_capabilities import RobotCapability
+
 
 logger = setup_logger(__file__, level=logging.INFO)
 
@@ -676,3 +678,26 @@ class UnitreeGo2(UnitreeRobot, Resource):
             The robot's odometry
         """
         return self.connection.get_odom()
+
+
+def main():
+    """Main entry point."""
+    ip = os.getenv("ROBOT_IP")
+    connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
+
+    pubsub.lcm.autoconf()
+
+    robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
+    robot.start()
+
+    try:
+        while True:
+            time.sleep(0.1)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        robot.stop()
+
+
+if __name__ == "__main__":
+    main()

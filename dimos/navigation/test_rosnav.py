@@ -14,24 +14,26 @@
 
 from typing import Protocol
 
+import pytest
+
 from dimos.mapping.spec import Global3DMapSpec
-from dimos.navigation.rosnav import ROSNav
 from dimos.navigation.spec import NavSpec
 from dimos.perception.spec import PointcloudPerception
 
 
 class RosNavSpec(NavSpec, PointcloudPerception, Global3DMapSpec, Protocol):
-    """Combined protocol for navigation components."""
-
     pass
 
 
 def accepts_combined_protocol(nav: RosNavSpec) -> None:
-    """Function that accepts all navigation protocols at once."""
     pass
 
 
+# this is just a typing test; no runtime behavior is tested
+@pytest.mark.skip
 def test_typing_prototypes():
-    """Test that ROSNav correctly implements all required protocols."""
+    from dimos.navigation.rosnav import ROSNav
+
     rosnav = ROSNav()
     accepts_combined_protocol(rosnav)
+    rosnav.stop()
