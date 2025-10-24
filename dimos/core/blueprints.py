@@ -48,7 +48,9 @@ class ModuleBlueprintSet:
     # TODO: Replace Any
     transports: Mapping[tuple[str, type], Any] = field(default_factory=lambda: MappingProxyType({}))
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    remappings: Mapping[tuple[type[Module], str], str] = field(default_factory=lambda: MappingProxyType({}))
+    remappings: Mapping[tuple[type[Module], str], str] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     def with_transports(self, transports: dict[tuple[str, type], Any]) -> "ModuleBlueprintSet":
         return ModuleBlueprintSet(
@@ -66,7 +68,9 @@ class ModuleBlueprintSet:
             remappings=self.remappings,
         )
 
-    def with_remappings(self, remappings: list[tuple[type[Module], str, str]]) -> "ModuleBlueprintSet":
+    def with_remappings(
+        self, remappings: list[tuple[type[Module], str, str]]
+    ) -> "ModuleBlueprintSet":
         remappings_dict = dict(self.remappings)
         for module, old, new in remappings:
             remappings_dict[(module, old)] = new
@@ -91,11 +95,14 @@ class ModuleBlueprintSet:
 
     @cached_property
     def _all_name_types(self) -> set[tuple[str, type]]:
-        return {
-            (conn.name, conn.type)
-            for blueprint in self.blueprints
-            for conn in blueprint.connections
-        }
+        # Apply remappings to get the actual names that will be used
+        result = set()
+        for blueprint in self.blueprints:
+            for conn in blueprint.connections:
+                # Check if this connection should be remapped
+                remapped_name = self.remappings.get((blueprint.module, conn.name), conn.name)
+                result.add((remapped_name, conn.type))
+        return result
 
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
@@ -117,18 +124,27 @@ class ModuleBlueprintSet:
                 kwargs["global_config"] = global_config
             module_coordinator.deploy(blueprint.module, *blueprint.args, **kwargs)
 
-        # Gather all the In/Out connections.
+        # Gather all the In/Out connections with remapping applied.
         connections = defaultdict(list)
+        # Track original name -> remapped name for each module
+        module_conn_mapping = defaultdict(dict)
+
         for blueprint in self.blueprints:
             for conn in blueprint.connections:
-                connections[conn.name, conn.type].append(blueprint.module)
+                # Check if this connection should be remapped
+                remapped_name = self.remappings.get((blueprint.module, conn.name), conn.name)
+                # Store the mapping for later use
+                module_conn_mapping[blueprint.module][conn.name] = remapped_name
+                # Group by remapped name and type
+                connections[remapped_name, conn.type].append((blueprint.module, conn.name))
 
-        # Connect all In/Out connections by name and type.
-        for name, type in connections.keys():
-            transport = self._get_transport_for(name, type)
-            for module in connections[(name, type)]:
+        # Connect all In/Out connections by remapped name and type.
+        for remapped_name, type in connections.keys():
+            transport = self._get_transport_for(remapped_name, type)
+            for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
-                getattr(instance, name).transport = transport
+                # Use the remote method to set transport on Dask actors
+                instance.set_transport(original_name, transport)
 
         # Gather all RPC methods.
         rpc_methods = {}

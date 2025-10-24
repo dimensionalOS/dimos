@@ -22,7 +22,7 @@ from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree_webrtc.unitree_go2 import ConnectionModule, connection
+from dimos.robot.unitree_webrtc.unitree_go2 import connection
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 from dimos.navigation.global_planner import astar_planner

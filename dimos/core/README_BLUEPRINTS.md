@@ -108,6 +108,47 @@ blueprint = blueprint.with_transports({
 
 Note: `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `blueprint`, not the second.
 
+## Remapping connections
+
+Sometimes you need to rename a connection to match what other modules expect. You can use `with_remappings` to rename module connections:
+
+```python
+class ConnectionModule(Module):
+    color_image: Out[Image] = None  # Outputs on 'color_image'
+
+class ProcessingModule(Module):
+    rgb_image: In[Image] = None     # Expects input on 'rgb_image'
+
+# Without remapping, these wouldn't connect automatically
+# With remapping, color_image is renamed to rgb_image
+blueprint = (
+    autoconnect(
+        ConnectionModule.blueprint(),
+        ProcessingModule.blueprint(),
+    )
+    .with_remappings([
+        (ConnectionModule, 'color_image', 'rgb_image'),
+    ])
+)
+```
+
+After remapping:
+- The `color_image` output from `ConnectionModule` is treated as `rgb_image`
+- It automatically connects to any module with an `rgb_image` input of type `Image`
+- The topic name becomes `/rgb_image` instead of `/color_image`
+
+If you want to override the topic, you still have to do it manually:
+
+```python
+blueprint
+.with_remappings([
+    (ConnectionModule, 'color_image', 'rgb_image'),
+])
+.with_transports({
+    ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
+})
+```
+
 ## Overriding global configuration.
 
 Each module can optionally take a `global_config` option in `__init__`. E.g.:
