@@ -12,16 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.rpc.pubsubrpc import PassThroughPubSubRPC
-from dimos.utils.generic import short_id
+from dimos.core.module import Module
+from dimos.core.rpc_client import RPCClient, RpcCall
+from dimos.protocol.skill.skill import rpc
 
 
-class LCMRPC(PassThroughPubSubRPC, PickleLCM):
-    def topicgen(self, name: str, req_or_res: bool) -> Topic:
-        suffix = "res" if req_or_res else "req"
-        topic = f"/rpc/{name}/{suffix}"
-        if len(topic) > LCM_MAX_CHANNEL_NAME_LENGTH:
-            topic = f"/rpc/{short_id(name)}/{suffix}"
-        return Topic(topic=topic)
+class SkillModule(Module):
+    """Use this module if you want to auto-register skills to an LlmAgent."""
+
+    @rpc
+    def set_LlmAgent_register_skills(self, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)
+        callable(RPCClient(self, self.__class__))
+
+    def __getstate__(self):
+        pass
+
+    def __setstate__(self, _state):
+        pass

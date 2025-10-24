@@ -731,7 +731,12 @@ class WavefrontFrontierExplorer(Module):
         self.no_gain_counter = 0  # Reset counter when exploration stops
         self.stop_event.set()
 
-        if self.exploration_thread and self.exploration_thread.is_alive():
+        # Only join if we're NOT being called from the exploration thread itself
+        if (
+            self.exploration_thread
+            and self.exploration_thread.is_alive()
+            and threading.current_thread() != self.exploration_thread
+        ):
             self.exploration_thread.join(timeout=2.0)
 
         logger.info("Stopped autonomous frontier exploration")
@@ -810,3 +815,8 @@ class WavefrontFrontierExplorer(Module):
                         f"No frontier found (attempt {consecutive_failures}/{max_consecutive_failures}). Retrying in 2 seconds..."
                     )
                     threading.Event().wait(2.0)
+
+
+wavefront_frontier_explorer = WavefrontFrontierExplorer.blueprint
+
+__all__ = ["WavefrontFrontierExplorer", "wavefront_frontier_explorer"]

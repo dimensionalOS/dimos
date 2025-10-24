@@ -29,6 +29,7 @@ from langchain_core.messages import (
 )
 
 from dimos.agents2.spec import AgentSpec, Model, Provider
+from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import (
     SkillContainer,
@@ -182,6 +183,8 @@ class Agent(AgentSpec):
             else:
                 self.config.system_prompt.content += SYSTEM_MSG_APPEND
                 self.system_message = self.config.system_prompt
+        else:
+            self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
 
         self.publish(self.system_message)
 
@@ -267,6 +270,7 @@ class Agent(AgentSpec):
                 # we are getting tools from the coordinator on each turn
                 # since this allows for skillcontainers to dynamically provide new skills
                 tools = self.get_tools()
+                print("Available tools:", [tool.name for tool in tools])
                 self._llm = self._llm.bind_tools(tools)
 
                 # publish to /agent topic for observability
@@ -335,8 +339,14 @@ class Agent(AgentSpec):
     async def query_async(self, query: str):
         return await self.agent_loop(query)
 
-    def register_skills(self, container):
-        return self.coordinator.register_skills(container)
+    @rpc
+    def register_skills(self, container, run_implicit_name: str | None = None):
+        ret = self.coordinator.register_skills(container)
+
+        if run_implicit_name:
+            self.run_implicit_skill(run_implicit_name)
+
+        return ret
 
     def get_tools(self):
         return self.coordinator.get_tools()
@@ -350,6 +360,20 @@ class Agent(AgentSpec):
 
         with open(file_path, "w") as f:
             json.dump(history, f, default=lambda x: repr(x), indent=2)
+
+
+class LlmAgent(Agent):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.loop_thread()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+llm_agent = LlmAgent.blueprint
 
 
 def deploy(
@@ -382,3 +406,6 @@ def deploy(
     agent.loop_thread()
 
     return agent
+
+
+__all__ = ["Agent", "llm_agent", "deploy"]

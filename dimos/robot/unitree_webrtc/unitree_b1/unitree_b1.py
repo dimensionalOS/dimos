@@ -25,7 +25,7 @@ import os
 from typing import Optional
 
 from dimos import core
-from dimos.core.dimos import Dimos
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import TwistStamped, PoseStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
@@ -99,7 +99,7 @@ class UnitreeB1(Robot, Resource):
         self.connection = None
         self.joystick = None
         self.ros_bridge = None
-        self._dimos = Dimos(n=2)
+        self._dimos = ModuleCoordinator(n=2)
 
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")

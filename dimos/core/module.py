@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from functools import partial
 import inspect
 import threading
 from dataclasses import dataclass
@@ -29,12 +30,14 @@ from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
+from dimos.utils.generic import classproperty
 
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
@@ -123,6 +126,27 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         if hasattr(self, "rpc") and self.rpc:
             self.rpc.stop()
             self.rpc = None
+
+    def __getstate__(self):
+        """Exclude unpicklable runtime attributes when serializing."""
+        state = self.__dict__.copy()
+        # Remove unpicklable attributes
+        state.pop("_disposables", None)
+        state.pop("_loop", None)
+        state.pop("_loop_thread", None)
+        state.pop("_rpc", None)
+        state.pop("_tf", None)
+        return state
+
+    def __setstate__(self, state):
+        """Restore object from pickled state."""
+        self.__dict__.update(state)
+        # Reinitialize runtime attributes
+        self._disposables = CompositeDisposable()
+        self._loop = None
+        self._loop_thread = None
+        self._rpc = None
+        self._tf = None
 
     @property
     def tf(self):
@@ -215,6 +239,13 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         ]
 
         return "\n".join(ret)
+
+    @classproperty
+    def blueprint(cls):
+        # Here to prevent circular imports.
+        from dimos.core.blueprints import create_module_blueprint
+
+        return partial(create_module_blueprint, cls)
 
 
 class DaskModule(ModuleBase):

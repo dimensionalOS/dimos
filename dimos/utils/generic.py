@@ -63,9 +63,16 @@ def short_id(from_string: str | None = None) -> str:
         hash_bytes = hashlib.sha1(from_string.encode()).digest()[:16]
         num = int.from_bytes(hash_bytes, "big")
 
-    chars = []
-    while num:
+    min_chars = 18
+
+    chars: list[str] = []
+    while num > 0 or len(chars) < min_chars:
         num, rem = divmod(num, base)
         chars.append(alphabet[rem])
 
-    return "".join(reversed(chars))[:18]
+    return "".join(reversed(chars))[:min_chars]
+
+
+class classproperty(property):
+    def __get__(self, obj, cls):
+        return self.fget(cls)

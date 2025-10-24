@@ -25,6 +25,7 @@ from dimos.perception.spatial_perception import SpatialMemory
 from dimos.types.robot_capabilities import RobotCapability
 
 
+# TODO: Delete
 class Robot(ABC):
     """Minimal abstract base class for all DIMOS robots.
 
@@ -64,6 +65,7 @@ class Robot(ABC):
         pass
 
 
+# TODO: Delete
 class UnitreeRobot(Robot):
     @abstractmethod
     def get_odom(self) -> PoseStamped: ...
@@ -82,6 +84,7 @@ class UnitreeRobot(Robot):
     def spatial_memory(self) -> Optional[SpatialMemory]: ...
 
 
+# TODO: Delete
 class GpsRobot(ABC):
     @property
     @abstractmethod

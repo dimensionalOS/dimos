@@ -23,7 +23,7 @@ import threading
 import re
 import os
 import shutil
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import Optional
 from distributed.client import Client
 
@@ -183,6 +183,12 @@ class UtilizationModule(Module):
             self._utilization_thread.stop()
             self._utilization_thread.join(timeout=2)
         super().stop()
+
+
+utilization = UtilizationModule.blueprint
+
+
+__all__ = ["UtilizationModule", "utilization"]
 
 
 def _can_use_py_spy():

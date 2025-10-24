@@ -12,16 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.rpc.pubsubrpc import PassThroughPubSubRPC
-from dimos.utils.generic import short_id
+from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
+
+_SYSTEM_PROMPT = None
 
 
-class LCMRPC(PassThroughPubSubRPC, PickleLCM):
-    def topicgen(self, name: str, req_or_res: bool) -> Topic:
-        suffix = "res" if req_or_res else "req"
-        topic = f"/rpc/{name}/{suffix}"
-        if len(topic) > LCM_MAX_CHANNEL_NAME_LENGTH:
-            topic = f"/rpc/{short_id(name)}/{suffix}"
-        return Topic(topic=topic)
+def get_system_prompt() -> str:
+    global _SYSTEM_PROMPT
+    if _SYSTEM_PROMPT is None:
+        with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
+            _SYSTEM_PROMPT = f.read()
+    return _SYSTEM_PROMPT

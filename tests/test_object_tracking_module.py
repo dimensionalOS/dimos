@@ -223,7 +223,7 @@ async def test_object_tracking_module():
 
         # Start Foxglove bridge for visualization
         foxglove_bridge = FoxgloveBridge()
-        foxglove_bridge.start()
+        foxglove_bridge.acquire()
 
         # Give modules time to initialize
         await asyncio.sleep(1)
@@ -280,7 +280,7 @@ async def test_object_tracking_module():
         if zed:
             zed.stop()
         if foxglove_bridge:
-            foxglove_bridge.stop()
+            foxglove_bridge.release()
 
         dimos.close()
         logger.info("Test completed")

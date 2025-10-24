@@ -1,1 +1,1 @@
-from .wavefront_frontier_goal_selector import WavefrontFrontierExplorer
+from .wavefront_frontier_goal_selector import WavefrontFrontierExplorer, wavefront_frontier_explorer

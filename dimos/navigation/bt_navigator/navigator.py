@@ -24,6 +24,7 @@ from enum import Enum
 from typing import Callable, Optional
 
 from dimos.core import Module, In, Out, rpc
+from dimos.core.rpc_client import RpcCall
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos_lcm.std_msgs import String
@@ -120,6 +121,16 @@ class BehaviorTreeNavigator(Module):
         self.recovery_server = RecoveryServer(stuck_duration=5.0)
 
         logger.info("Navigator initialized with stuck detection")
+
+    @rpc
+    def set_HolonomicLocalPlanner_reset(self, callable: RpcCall) -> None:
+        self.reset_local_planner = callable
+        self.reset_local_planner.set_rpc(self.rpc)
+
+    @rpc
+    def set_HolonomicLocalPlanner_is_goal_reached(self, callable: RpcCall) -> None:
+        self.check_goal_reached = callable
+        self.check_goal_reached.set_rpc(self.rpc)
 
     @rpc
     def start(self):
@@ -342,3 +353,8 @@ class BehaviorTreeNavigator(Module):
         self.recovery_server.reset()  # Reset recovery server when stopping
 
         logger.info("Navigator stopped")
+
+
+behavior_tree_navigator = BehaviorTreeNavigator.blueprint
+
+__all__ = ["BehaviorTreeNavigator", "behavior_tree_navigator"]

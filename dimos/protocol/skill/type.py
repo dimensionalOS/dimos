@@ -61,6 +61,7 @@ class SkillConfig:
     schema: dict[str, Any]
     f: Callable | None = None
     autostart: bool = False
+    hide_skill: bool = False
 
     def bind(self, f: Callable) -> "SkillConfig":
         self.f = f
