@@ -63,7 +63,7 @@ class ModuleCoordinator(Resource):
     def get_instance(self, module: Type[T]) -> T | None:
         return self._deployed_modules.get(module)
 
-    def wait_until_shutdown(self) -> None:
+    def loop(self) -> None:
         try:
             while True:
                 time.sleep(0.1)

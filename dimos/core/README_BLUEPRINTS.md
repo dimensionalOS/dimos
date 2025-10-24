@@ -213,7 +213,7 @@ This returns a `ModuleCoordinator` instance that manages all deployed modules.
 You can block the thread until it exits with:
 
 ```python
-module_coordinator.wait_until_shutdown()
+module_coordinator.loop()
 ```
 
 This will wait for Ctrl+C and then automatically stop all modules and clean up resources.
