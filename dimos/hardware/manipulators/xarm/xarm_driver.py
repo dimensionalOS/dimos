@@ -675,10 +675,10 @@ class XArmDriver(
                         joint_cmd = self._joint_cmd_
                     last_cmd_time = self._last_cmd_time
 
-                # Check for timeout (1 second without new commands)
+                # Check for timeout (0.1 second without new commands)
                 time_since_last_cmd = current_time - last_cmd_time if last_cmd_time > 0 else 0
 
-                if time_since_last_cmd > 1.0 and joint_cmd is not None:
+                if time_since_last_cmd > 0.1 and joint_cmd is not None:
                     if not timeout_logged:
                         logger.warning(
                             f"Command timeout: no commands received for {time_since_last_cmd:.2f}s. "
