@@ -48,12 +48,14 @@ class ModuleBlueprintSet:
     # TODO: Replace Any
     transports: Mapping[tuple[str, type], Any] = field(default_factory=lambda: MappingProxyType({}))
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    remappings: Mapping[tuple[type[Module], str], str] = field(default_factory=lambda: MappingProxyType({}))
 
     def with_transports(self, transports: dict[tuple[str, type], Any]) -> "ModuleBlueprintSet":
         return ModuleBlueprintSet(
             blueprints=self.blueprints,
             transports=MappingProxyType({**self.transports, **transports}),
             global_config_overrides=self.global_config_overrides,
+            remappings=self.remappings,
         )
 
     def with_global_config(self, **kwargs: Any) -> "ModuleBlueprintSet":
@@ -61,6 +63,19 @@ class ModuleBlueprintSet:
             blueprints=self.blueprints,
             transports=self.transports,
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
+            remappings=self.remappings,
+        )
+
+    def with_remappings(self, remappings: list[tuple[type[Module], str, str]]) -> "ModuleBlueprintSet":
+        remappings_dict = dict(self.remappings)
+        for module, old, new in remappings:
+            remappings_dict[(module, old)] = new
+
+        return ModuleBlueprintSet(
+            blueprints=self.blueprints,
+            transports=self.transports,
+            global_config_overrides=self.global_config_overrides,
+            remappings=MappingProxyType(remappings_dict),
         )
 
     def _get_transport_for(self, name: str, type: type) -> Any:
@@ -85,7 +100,9 @@ class ModuleBlueprintSet:
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
-    def build(self, global_config: GlobalConfig) -> ModuleCoordinator:
+    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+        if global_config is None:
+            global_config = GlobalConfig()
         global_config = global_config.model_copy(update=self.global_config_overrides)
 
         module_coordinator = ModuleCoordinator(global_config=global_config)
@@ -168,11 +185,13 @@ def autoconnect(*blueprints: ModuleBlueprintSet) -> ModuleBlueprintSet:
     all_config_overrides = dict(
         sum([list(x.global_config_overrides.items()) for x in blueprints], [])
     )
+    all_remappings = dict(sum([list(x.remappings.items()) for x in blueprints], []))
 
     return ModuleBlueprintSet(
         blueprints=all_blueprints,
         transports=MappingProxyType(all_transports),
         global_config_overrides=MappingProxyType(all_config_overrides),
+        remappings=MappingProxyType(all_remappings),
     )
 
 
