@@ -352,12 +352,12 @@ class NavigationSkillContainer(SkillModule):
 
         return f"Successfuly arrived at '{query}'"
 
-    # @skill()
+    @skill()
     def follow_human(self, person: str) -> str:
         """Follow a specific person"""
         return "Not implemented yet."
 
-    # @skill()
+    @skill()
     def stop_movement(self) -> str:
         """Immediatly stop moving."""
 
@@ -438,7 +438,7 @@ class NavigationSkillContainer(SkillModule):
 
         return PoseStamped(
             position=make_vector3(pos_x, pos_y, 0),
-            orientation=euler_to_quaternion(make_vector3(0, 0, theta)),
+            orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
             frame_id="map",
         )
 
