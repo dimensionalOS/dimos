@@ -33,10 +33,9 @@ Key Insight:
   robot state updates at 5Hz (normal mode).
 """
 
-from __future__ import annotations
-
 import time
 import threading
+import math
 from typing import List, Tuple, Optional
 from dataclasses import dataclass
 
@@ -44,9 +43,8 @@ from xarm.wrapper import XArmAPI
 
 from dimos.core import Module, In, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.sensor_msgs import JointState
+from dimos.msgs.sensor_msgs import JointState, JointCommand, RobotState
 from dimos.msgs.geometry_msgs import WrenchStamped
-from dimos.hardware.manipulators.xarm.spec import RobotState
 from dimos.utils.logging_config import setup_logger
 from reactivex.disposable import Disposable, CompositeDisposable
 
@@ -63,12 +61,15 @@ class XArmDriverConfig(ModuleConfig):
     joint_state_rate: float = (
         -1.0
     )  # Joint state publishing rate (-1 = auto: 100Hz for dev, 5Hz for normal)
+    robot_state_rate: float = 10.0  # Robot state publishing rate in Hz
     report_type: str = "normal"  # SDK report type: 'dev'=100Hz, 'rich'=5Hz+torque, 'normal'=5Hz
     enable_on_start: bool = True  # Enable servo mode on start
     num_joints: int = 7  # Number of joints (5, 6, or 7)
     check_joint_limit: bool = True  # Check joint limits
     check_cmdnum_limit: bool = True  # Check command queue limit
     max_cmdnum: int = 512  # Maximum command queue size
+    velocity_control: bool = False  # Use velocity control mode instead of position
+    velocity_duration: float = 0.1  # Duration for velocity commands (seconds)
 
 
 class XArmDriver(Module):
@@ -84,8 +85,8 @@ class XArmDriver(Module):
     default_config = XArmDriverConfig
 
     # Input topics (commands from controllers)
-    joint_cmd: In[List[float]] = None  # Target joint positions (radians)
-    velocity_cmd: In[List[float]] = None  # Target joint velocities (rad/s)
+    joint_position_command: In[JointCommand] = None  # Target joint positions (radians)
+    joint_velocity_command: In[JointCommand] = None  # Target joint velocities (rad/s)
 
     # Output topics (state publishing)
     joint_state: Out[JointState] = None  # Joint state (position, velocity, effort)
@@ -114,6 +115,7 @@ class XArmDriver(Module):
         self._vel_cmd_: Optional[List[float]] = None  # Latest velocity command
         self._joint_states_: Optional[JointState] = None  # Latest joint state
         self._robot_state_: Optional[RobotState] = None  # Latest robot state
+        self._last_cmd_time: float = 0.0  # Timestamp of last command received (for timeout)
 
         # Thread management
         self._running = False
@@ -190,9 +192,9 @@ class XArmDriver(Module):
 
         # Release and register callbacks (like C++ pattern)
         self.arm.release_connect_changed_callback(True)
-        self.arm.release_report_data_callback(True)
+        self.arm.release_report_callback(True)
         self.arm.register_connect_changed_callback(self._report_connect_changed_callback)
-        self.arm.register_report_data_callback(self._report_data_callback)
+        self.arm.register_report_callback(self._report_data_callback)
 
         # Connect to the robot
         logger.info(f"Connecting to xArm at {self.config.ip_address}...")
@@ -214,11 +216,25 @@ class XArmDriver(Module):
         # Start joint state publishing thread (read-only)
         self._start_joint_state_thread()
 
-        # Subscribe to input topics
-        unsub_joint = self.joint_cmd.subscribe(self._on_joint_cmd)
-        unsub_vel = self.velocity_cmd.subscribe(self._on_velocity_cmd)
-        self._disposables.add(Disposable(unsub_joint))
-        self._disposables.add(Disposable(unsub_vel))
+        # Start robot state publishing thread
+        self._start_robot_state_thread()
+
+        # Subscribe to input topics (only if they have connections/transports)
+        try:
+            unsub_joint = self.joint_position_command.subscribe(self._on_joint_position_command)
+            self._disposables.add(Disposable(unsub_joint))
+        except (AttributeError, ValueError) as e:
+            logger.debug(
+                f"joint_position_command transport not configured, skipping subscription: {e}"
+            )
+
+        try:
+            unsub_vel = self.joint_velocity_command.subscribe(self._on_joint_velocity_command)
+            self._disposables.add(Disposable(unsub_vel))
+        except (AttributeError, ValueError) as e:
+            logger.debug(
+                f"joint_velocity_command transport not configured, skipping subscription: {e}"
+            )
 
         # Start control thread (command sending)
         self._start_control_thread()
@@ -241,6 +257,14 @@ class XArmDriver(Module):
         # Wait for state thread to finish
         if self._state_thread and self._state_thread.is_alive():
             self._state_thread.join(timeout=2.0)
+
+        # Wait for robot state thread to finish
+        if (
+            hasattr(self, "_robot_state_thread")
+            and self._robot_state_thread
+            and self._robot_state_thread.is_alive()
+        ):
+            self._robot_state_thread.join(timeout=2.0)
 
         # Wait for control thread to finish
         if self._control_thread and self._control_thread.is_alive():
@@ -353,11 +377,20 @@ class XArmDriver(Module):
             try:
                 code, version_str = self.arm.get_version()
                 if code == 0 and version_str:
-                    # Parse version string like "v1.8.103" or "1.8.103"
-                    version_str = version_str.strip().lstrip("v")
-                    parts = version_str.split(".")
-                    if len(parts) >= 3:
-                        self._firmware_version = (int(parts[0]), int(parts[1]), int(parts[2]))
+                    # Parse version string
+                    # Can be "v1.8.103" or "1.8.103" or "6,6,XI1303,DC1305,v2.6.0"
+                    version_str = version_str.strip()
+
+                    # Try to find version pattern (v2.6.0 or similar)
+                    import re
+
+                    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)", version_str)
+                    if match:
+                        self._firmware_version = (
+                            int(match.group(1)),
+                            int(match.group(2)),
+                            int(match.group(3)),
+                        )
                     else:
                         logger.warning(f"Could not parse firmware version: {version_str}")
                         return False
@@ -414,6 +447,19 @@ class XArmDriver(Module):
         )
         self._control_thread.start()
 
+    def _start_robot_state_thread(self):
+        """
+        Start the robot state publishing thread.
+        This thread publishes robot state at a fixed rate (default 10Hz),
+        using data from _report_data_callback when available, or current state variables.
+        """
+        logger.info(f"Starting robot state thread at {self.config.robot_state_rate}Hz")
+
+        self._robot_state_thread = threading.Thread(
+            target=self._robot_state_loop, daemon=True, name="xarm_robot_state_thread"
+        )
+        self._robot_state_thread.start()
+
     def _initialize_arm(self):
         """Initialize the arm: clear errors, set mode, enable motion."""
         try:
@@ -424,16 +470,33 @@ class XArmDriver(Module):
             # Enable motion
             self.arm.motion_enable(enable=True)
 
-            # Set state to ready (0)
-            self.arm.set_state(state=0)
-
             # Enable servo mode if configured
             if self.config.enable_on_start:
+                logger.info("Enabling servo mode (mode=1)...")
                 code = self.arm.set_mode(1)  # Servo mode
                 if code != 0:
-                    logger.warning(f"Failed to enable servo mode: code={code}")
+                    logger.error(f"Failed to enable servo mode: code={code}")
                 else:
-                    logger.info("Servo mode enabled")
+                    logger.info("✓ Servo mode enabled")
+
+                # Verify mode was set
+                time.sleep(0.1)  # Give SDK time to update
+                logger.info(f"Verifying mode: curr_mode={self.curr_mode} (should be 1 for servo)")
+
+            # Set state to ready (0) - MUST be after setting mode
+            logger.info("Setting robot state to ready (state=0)...")
+            code = self.arm.set_state(state=0)
+            if code != 0:
+                logger.error(f"Failed to set state to ready: code={code}")
+            else:
+                logger.info("✓ Robot state set to ready")
+
+            # Verify state
+            time.sleep(0.1)  # Give SDK time to update
+            logger.info(
+                f"Robot initialized: state={self.curr_state} (0=ready), "
+                f"mode={self.curr_mode} (1=servo), error={self.curr_err}"
+            )
 
             logger.info("Arm initialized successfully")
 
@@ -445,21 +508,41 @@ class XArmDriver(Module):
     # Private Methods: Callbacks (Non-blocking)
     # =========================================================================
 
-    def _on_joint_cmd(self, joint_cmd: List[float]):
+    def _on_joint_position_command(self, cmd_msg: JointCommand):
         """
-        Callback when joint command is received.
+        Callback when joint position command is received.
         Non-blocking: just store the latest command.
-        """
-        with self._joint_cmd_lock:
-            self._joint_cmd_ = list(joint_cmd)
 
-    def _on_velocity_cmd(self, vel_cmd: List[float]):
-        """
-        Callback when velocity command is received.
-        Non-blocking: just store the latest command.
+        Args:
+            cmd_msg: JointCommand message containing positions and timestamp
         """
         with self._joint_cmd_lock:
-            self._vel_cmd_ = list(vel_cmd)
+            self._joint_cmd_ = list(cmd_msg.positions)
+            self._last_cmd_time = time.time()  # Update timestamp for timeout detection
+
+        # DEBUG: Log first few commands received
+        # if not hasattr(self, '_cmd_recv_count'):
+        #     self._cmd_recv_count = 0
+        # self._cmd_recv_count += 1
+        #
+        # if self._cmd_recv_count <= 3 or self._cmd_recv_count % 100 == 0:
+        #     logger.info(
+        #         f"✓ Received position command #{self._cmd_recv_count}: "
+        #         f"joint6={math.degrees(cmd_msg.positions[5]):.2f}°, "
+        #         f"timestamp={cmd_msg.timestamp:.3f}"
+        #     )
+
+    def _on_joint_velocity_command(self, cmd_msg: JointCommand):
+        """
+        Callback when joint velocity command is received.
+        Non-blocking: just store the latest command.
+
+        Args:
+            cmd_msg: JointCommand message containing velocities and timestamp
+        """
+        with self._joint_cmd_lock:
+            self._vel_cmd_ = list(cmd_msg.positions)
+            self._last_cmd_time = time.time()  # Update timestamp for timeout detection
 
     # =========================================================================
     # Private Methods: Thread Loops
@@ -492,25 +575,34 @@ class XArmDriver(Module):
         prev_position = [0.0] * self.config.num_joints
         initialized = False
 
-        # Determine num parameter for get_joint_states (firmware >= 2.6.107)
-        num = 3
-        # if self._firmware_version_is_ge(2, 6, 107):
-        #     # Could add joint_state_flags_ support here if needed
-        #     pass
-
         next_time = time.time()
 
-        while self._running and self.arm.is_connected():
+        while self._running and self.arm.connected:
             try:
                 curr_time = time.time()
 
                 # Read joint states
                 if use_new:
-                    # Newer firmware: get_joint_states returns position, velocity, effort
-                    position = [0.0] * self.config.num_joints
-                    velocity = [0.0] * self.config.num_joints
-                    effort = [0.0] * self.config.num_joints
-                    self.arm.get_joint_states(position, velocity, effort, num)
+                    # Newer firmware: get_joint_states returns (code, data)
+                    # where data might be [[pos], [vel], [eff]] nested arrays
+                    code, data = self.arm.get_joint_states()
+                    if code != 0:
+                        logger.warning(f"get_joint_states failed with code: {code}")
+                        continue
+
+                    # Check if data is nested (list of lists) or flat
+                    if isinstance(data[0], (list, tuple)):
+                        # Nested: [[positions], [velocities], [efforts]]
+                        position = (
+                            list(data[0]) if len(data) > 0 else [0.0] * self.config.num_joints
+                        )
+                        velocity = list(data[1]) if len(data) > 1 else [0.0] * len(position)
+                        effort = list(data[2]) if len(data) > 2 else [0.0] * len(position)
+                    else:
+                        # Flat: just positions
+                        position = list(data)
+                        velocity = [0.0] * len(position)
+                        effort = [0.0] * len(position)
                 else:
                     # Older firmware: only get_servo_angle available
                     code, position = self.arm.get_servo_angle(is_radian=self.config.is_radian)
@@ -539,8 +631,14 @@ class XArmDriver(Module):
                 with self._joint_state_lock:
                     self._joint_states_ = self._joint_state_msg
 
-                # Publish
-                self.joint_state.publish(self._joint_state_msg)
+                # Publish (only if transport is configured)
+                if self.joint_state._transport or (
+                    hasattr(self.joint_state, "connection") and self.joint_state.connection
+                ):
+                    try:
+                        self.joint_state.publish(self._joint_state_msg)
+                    except Exception:
+                        pass  # Transport error, skip publishing
 
                 # Save for next iteration (velocity calculation)
                 prev_position = list(position)
@@ -561,7 +659,7 @@ class XArmDriver(Module):
                 logger.error(f"Error in joint state loop: {e}")
                 time.sleep(period)
 
-        if not self.arm.is_connected():
+        if not self.arm.connected:
             logger.error("xArm Control Connection Failed! Please Shut Down and Retry...")
 
         logger.info("Joint state loop stopped")
@@ -578,20 +676,78 @@ class XArmDriver(Module):
 
         logger.info(f"Control loop started at {self.config.control_frequency}Hz")
 
+        command_count = 0
+        last_log_time = time.time()
+        timeout_logged = False
+
         while self._running:
             try:
+                current_time = time.time()
+
                 # Read latest command from shared state
                 with self._joint_cmd_lock:
-                    joint_cmd = self._joint_cmd_
+                    if self.config.velocity_control:
+                        joint_cmd = self._vel_cmd_
+                    else:
+                        joint_cmd = self._joint_cmd_
+                    last_cmd_time = self._last_cmd_time
+
+                # Check for timeout (1 second without new commands)
+                time_since_last_cmd = current_time - last_cmd_time if last_cmd_time > 0 else 0
+
+                if time_since_last_cmd > 1.0 and joint_cmd is not None:
+                    if not timeout_logged:
+                        logger.warning(
+                            f"Command timeout: no commands received for {time_since_last_cmd:.2f}s. "
+                            f"Stopping robot."
+                        )
+                        timeout_logged = True
+                    # Send zero velocity to stop
+                    if self.config.velocity_control:
+                        zero_vel = [0.0] * self.config.num_joints
+                        self.arm.vc_set_joint_velocity(
+                            zero_vel, True, self.config.velocity_duration
+                        )
+                    continue
+                else:
+                    timeout_logged = False
 
                 # Send command if available
                 if joint_cmd is not None and len(joint_cmd) == self.config.num_joints:
-                    code = self.arm.set_servo_angle_j(
-                        angles=joint_cmd, is_radian=self.config.is_radian
-                    )
+                    if self.config.velocity_control:
+                        # Velocity control mode (mode 4)
+                        # NOTE: velocities are in degrees/second, not radians!
+                        code = self.arm.vc_set_joint_velocity(
+                            joint_cmd, False, self.config.velocity_duration
+                        )
+                    else:
+                        # Position control mode (mode 1)
+                        code = self.arm.set_servo_angle_j(
+                            angles=joint_cmd, is_radian=self.config.is_radian
+                        )
+
+                    command_count += 1
+
+                    # Log every second with detailed info
+                    if current_time - last_log_time >= 1.0:
+                        mode_str = "velocity" if self.config.velocity_control else "position"
+                        logger.info(
+                            f"Control loop ({mode_str}): sent {command_count} cmds in last second, "
+                            f"state={self.curr_state}, mode={self.curr_mode}, "
+                            f"joint6={math.degrees(joint_cmd[5]):.2f}°"
+                        )
+                        command_count = 0
+                        last_log_time = current_time
 
                     if code != 0:
-                        logger.warning(f"set_servo_angle_j failed with code: {code}")
+                        if code == 9:
+                            logger.warning(
+                                f"Command failed: not ready to move "
+                                f"(code=9, state={self.curr_state}, mode={self.curr_mode}). "
+                                f"Check robot mode and state."
+                            )
+                        else:
+                            logger.warning(f"Command failed with code: {code}")
 
                 # Maintain loop frequency
                 next_time += period
@@ -609,6 +765,62 @@ class XArmDriver(Module):
                 time.sleep(period)
 
         logger.info("Control loop stopped")
+
+    def _robot_state_loop(self):
+        """
+        Robot state publishing loop.
+
+        Publishes robot state at robot_state_rate Hz (default 10Hz).
+        Uses latest data from _report_data_callback (when available) or
+        current state variables (curr_state, curr_mode, curr_err, etc.).
+        """
+        period = 1.0 / self.config.robot_state_rate
+        next_time = time.time()
+
+        logger.info(f"Robot state loop started at {self.config.robot_state_rate}Hz")
+
+        while self._running:
+            try:
+                # Create robot state message from current state variables
+                # These are updated by _report_data_callback when SDK pushes updates
+                robot_state = RobotState(
+                    state=self.curr_state,
+                    mode=self.curr_mode,
+                    error_code=self.curr_err,
+                    warn_code=self.curr_warn,
+                    cmdnum=self.curr_cmdnum,
+                    mt_brake=0,  # Not always available, updated by callback
+                    mt_able=0,  # Not always available, updated by callback
+                )
+
+                # Update shared state
+                with self._joint_state_lock:
+                    self._robot_state_ = robot_state
+
+                # Publish robot state (only if transport is configured)
+                if self.robot_state._transport or (
+                    hasattr(self.robot_state, "connection") and self.robot_state.connection
+                ):
+                    try:
+                        self.robot_state.publish(robot_state)
+                    except Exception:
+                        pass  # Transport error, skip publishing
+
+                # Maintain loop frequency
+                next_time += period
+                sleep_time = next_time - time.time()
+
+                if sleep_time > 0:
+                    if self._stop_event.wait(timeout=sleep_time):
+                        break
+                else:
+                    next_time = time.time()
+
+            except Exception as e:
+                logger.error(f"Error in robot state loop: {e}")
+                time.sleep(period)
+
+        logger.info("Robot state loop stopped")
 
     # =========================================================================
     # Private Methods: SDK Report Callback (Event-Driven)
@@ -633,6 +845,14 @@ class XArmDriver(Module):
         - mtbrake: Motor brake state
         - mtable: Motor enable state
         """
+        # Debug: track callback invocations
+        if not hasattr(self, "_report_callback_count"):
+            self._report_callback_count = 0
+        self._report_callback_count += 1
+
+        if self._report_callback_count <= 3:
+            logger.debug(f"_report_data_callback called #{self._report_callback_count}")
+
         try:
             # Update state tracking variables
             self.curr_state = data.get("state", self.curr_state)
@@ -656,8 +876,14 @@ class XArmDriver(Module):
             with self._joint_state_lock:
                 self._robot_state_ = robot_state
 
-            # Publish robot state
-            self.robot_state.publish(robot_state)
+            # Publish robot state (only if transport is configured)
+            if self.robot_state._transport or (
+                hasattr(self.robot_state, "connection") and self.robot_state.connection
+            ):
+                try:
+                    self.robot_state.publish(robot_state)
+                except Exception:
+                    pass  # Transport error, skip publishing
 
             # Publish force/torque sensor data if available
             self._publish_ft_sensor_data()
@@ -673,14 +899,26 @@ class XArmDriver(Module):
                 ft_ext_msg = WrenchStamped.from_force_torque_array(
                     ft_data=self.arm.ft_ext_force, frame_id="ft_sensor_ext", ts=time.time()
                 )
-                self.ft_ext.publish(ft_ext_msg)
+                if self.ft_ext._transport or (
+                    hasattr(self.ft_ext, "connection") and self.ft_ext.connection
+                ):
+                    try:
+                        self.ft_ext.publish(ft_ext_msg)
+                    except Exception:
+                        pass
 
             # Raw force sensor data
             if hasattr(self.arm, "ft_raw_force") and len(self.arm.ft_raw_force) == 6:
                 ft_raw_msg = WrenchStamped.from_force_torque_array(
                     ft_data=self.arm.ft_raw_force, frame_id="ft_sensor_raw", ts=time.time()
                 )
-                self.ft_raw.publish(ft_raw_msg)
+                if self.ft_raw._transport or (
+                    hasattr(self.ft_raw, "connection") and self.ft_raw.connection
+                ):
+                    try:
+                        self.ft_raw.publish(ft_raw_msg)
+                    except Exception:
+                        pass
 
         except Exception as e:
             logger.debug(f"FT sensor data not available: {e}")
@@ -795,6 +1033,65 @@ class XArmDriver(Module):
             logger.error(f"disable_servo_mode failed: {e}")
             return (-1, str(e))
 
+    @rpc
+    def enable_velocity_control_mode(self) -> Tuple[int, str]:
+        """
+        Enable velocity control mode (mode 4).
+        Required for vc_set_joint_velocity to work.
+
+        Returns:
+            Tuple of (code, message)
+        """
+        try:
+            # Step 1: Set mode to 4 (velocity control)
+            code = self.arm.set_mode(4)
+            if code != 0:
+                logger.warning(f"Failed to set mode to 4: code={code}")
+                return (code, f"Failed to set mode: code={code}")
+
+            # Step 2: Set state to 0 (ready/sport mode) - this activates the mode!
+            code = self.arm.set_state(0)
+            if code == 0:
+                # Switch driver to velocity control
+                self.config.velocity_control = True
+                logger.info("Velocity control mode enabled (mode=4, state=0)")
+                return (code, "Velocity control mode enabled")
+            else:
+                logger.warning(f"Failed to set state to 0: code={code}")
+                return (code, f"Failed to set state: code={code}")
+        except Exception as e:
+            logger.error(f"enable_velocity_control_mode failed: {e}")
+            return (-1, str(e))
+
+    @rpc
+    def disable_velocity_control_mode(self) -> Tuple[int, str]:
+        """
+        Disable velocity control mode and return to position control (mode 1).
+
+        Returns:
+            Tuple of (code, message)
+        """
+        try:
+            # Step 1: Set state to 0 (sport mode) to allow mode change
+            code = self.arm.set_state(0)
+            if code != 0:
+                logger.warning(f"Failed to set state to 0: code={code}")
+                # Continue anyway, try to set mode
+
+            # Step 2: Set mode to 1 (servo/position control)
+            code = self.arm.set_mode(1)
+            if code == 0:
+                # Switch driver to position control
+                self.config.velocity_control = False
+                logger.info("Position control mode enabled (state=0, mode=1)")
+                return (code, "Position control mode enabled")
+            else:
+                logger.warning(f"Failed to disable velocity control mode: code={code}")
+                return (code, f"Error code: {code}")
+        except Exception as e:
+            logger.error(f"disable_velocity_control_mode failed: {e}")
+            return (-1, str(e))
+
     # =========================================================================
     # RPC Methods: Additional xArm SDK API Functions
     # =========================================================================
@@ -820,6 +1117,30 @@ class XArmDriver(Module):
         try:
             code = self.arm.set_state(state=state)
             return (code, "Success" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_joint_command(self, positions: List[float]) -> Tuple[int, str]:
+        """
+        Manually set the joint command (for testing).
+        This updates the shared joint_cmd that the control loop reads.
+
+        Args:
+            positions: List of joint positions in radians
+
+        Returns:
+            Tuple of (code, message)
+        """
+        try:
+            if len(positions) != self.config.num_joints:
+                return (-1, f"Expected {self.config.num_joints} positions, got {len(positions)}")
+
+            with self._joint_cmd_lock:
+                self._joint_cmd_ = list(positions)
+
+            logger.info(f"✓ Joint command set: {[f'{math.degrees(p):.2f}°' for p in positions]}")
+            return (0, f"Joint command updated")
         except Exception as e:
             return (-1, str(e))
 
