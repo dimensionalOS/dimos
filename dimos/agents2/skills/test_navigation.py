@@ -20,7 +20,6 @@ from dimos.utils.transform_utils import euler_to_quaternion
 def test_stop_movement(fake_robot, create_navigation_agent):
     agent = create_navigation_agent(fixture="test_stop_movement.json")
     agent.query("stop")
-
     fake_robot.stop_exploration.assert_called_once_with()
 
 

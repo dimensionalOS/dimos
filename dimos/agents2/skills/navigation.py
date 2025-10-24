@@ -22,7 +22,7 @@ from dimos.core import Module
 from dimos.core.resource import Resource
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.bt_navigator.navigator import NavigatorState
@@ -31,7 +31,6 @@ from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 logger = setup_logger(__file__)
 
@@ -144,7 +143,7 @@ class NavigationSkillContainer(Module):
         print("Found tagged location:", robot_location)
         goal_pose = PoseStamped(
             position=make_vector3(*robot_location.position),
-            orientation=euler_to_quaternion(make_vector3(*robot_location.rotation)),
+            orientation=Quaternion.from_euler(Vector3(*robot_location.rotation)),
             frame_id="map",
         )
 

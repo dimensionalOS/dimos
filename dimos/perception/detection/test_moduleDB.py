@@ -22,8 +22,7 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.moduleDB import ObjectDBModule
-from dimos.robot.unitree_webrtc.connection import go2
-from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
+from dimos.robot.unitree.connection import go2
 
 
 @pytest.mark.module
@@ -32,7 +31,7 @@ def test_moduleDB(dimos_cluster):
 
     moduleDB = dimos_cluster.deploy(
         ObjectDBModule,
-        camera_info=ConnectionModule._camera_info(),
+        camera_info=go2.camera_info,
         goto=lambda obj_id: print(f"Going to {obj_id}"),
     )
     moduleDB.image.connect(connection.video)
