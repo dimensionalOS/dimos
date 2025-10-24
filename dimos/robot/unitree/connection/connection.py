@@ -17,9 +17,10 @@ import functools
 import threading
 import time
 from dataclasses import dataclass
-from typing import Literal, Optional, TypeAlias
+from typing import Literal, Optional, Type, TypeAlias
 
 import numpy as np
+from numpy.typing import NDArray
 from aiortc import MediaStreamTrack
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
 from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
@@ -40,7 +41,7 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
-VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
+VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 
 
 @dataclass
@@ -75,7 +76,7 @@ class UnitreeWebRTCConnection(Resource):
     def __init__(self, ip: str, mode: str = "ai"):
         self.ip = ip
         self.mode = mode
-        self.stop_timer = None
+        self.stop_timer: Optional[threading.Timer] = None
         self.cmd_vel_timeout = 0.2
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
@@ -126,6 +127,7 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_disconnect() -> None:
             try:
+                self.move(Twist())
                 await self.conn.disconnect()
             except Exception:
                 pass
@@ -225,28 +227,28 @@ class UnitreeWebRTCConnection(Resource):
         return future.result()
 
     @simple_mcache
-    def raw_lidar_stream(self) -> Subject[LidarMessage]:
+    def raw_lidar_stream(self) -> Observable[LidarMessage]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
 
     @simple_mcache
-    def raw_odom_stream(self) -> Subject[Pose]:
+    def raw_odom_stream(self) -> Observable[Pose]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
 
     @simple_mcache
-    def lidar_stream(self) -> Subject[LidarMessage]:
+    def lidar_stream(self) -> Observable[LidarMessage]:
         return backpressure(
             self.raw_lidar_stream().pipe(
-                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))  # type: ignore[arg-type]
             )
         )
 
     @simple_mcache
-    def tf_stream(self) -> Subject[Transform]:
+    def tf_stream(self) -> Observable[Transform]:
         base_link = functools.partial(Transform.from_pose, "base_link")
         return backpressure(self.odom_stream().pipe(ops.map(base_link)))
 
     @simple_mcache
-    def odom_stream(self) -> Subject[Pose]:
+    def odom_stream(self) -> Observable[Pose]:
         return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
 
     @simple_mcache
@@ -257,7 +259,7 @@ class UnitreeWebRTCConnection(Resource):
                 ops.map(
                     lambda frame: Image.from_numpy(
                         # np.ascontiguousarray(frame.to_ndarray("rgb24")),
-                        frame.to_ndarray(format="rgb24"),
+                        frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
                         frame_id="camera_optical",
                     )
                 ),
@@ -265,7 +267,7 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     @simple_mcache
-    def lowstate_stream(self) -> Subject[LowStateMsg]:
+    def lowstate_stream(self) -> Observable[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
     def standup_ai(self):
@@ -312,7 +314,7 @@ class UnitreeWebRTCConnection(Resource):
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
 
-        async def accept_track(track: MediaStreamTrack) -> VideoMessage:
+        async def accept_track(track: MediaStreamTrack) -> None:
             while True:
                 if stop_event.is_set():
                     return
@@ -352,16 +354,9 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        try:
-            print("Starting WebRTC video stream...")
-            stream = self.video_stream()
-            if stream is None:
-                print("Warning: Video stream is not available")
-            return stream
-
-        except Exception as e:
-            print(f"Error getting video stream: {e}")
-            return None
+        print("Starting WebRTC video stream...")
+        stream = self.video_stream()
+        return stream
 
     def stop(self) -> bool:
         """Stop the robot's movement.
@@ -373,8 +368,7 @@ class UnitreeWebRTCConnection(Resource):
         if self.stop_timer:
             self.stop_timer.cancel()
             self.stop_timer = None
-
-        return self.move(Twist())
+        return True
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""

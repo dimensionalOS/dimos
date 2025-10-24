@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any, Dict, TypedDict, cast
+
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core import DimosCluster, LCMTransport, pSHMTransport
+from dimos.core import DimosCluster, LCMTransport, RPCClient, pSHMTransport
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
@@ -24,28 +26,40 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.navigation import rosnav
+from dimos.navigation.rosnav import ROSNav
 from dimos.robot import foxglove_bridge
 from dimos.robot.unitree.connection import g1
+from dimos.robot.unitree.connection.g1 import G1Connection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
-def deploy_g1_monozed(dimos) -> CameraModule:
-    camera = dimos.deploy(
+class G1ZedDeployResult(TypedDict):
+    nav: ROSNav
+    connection: G1Connection
+    camera: CameraModule
+    camerainfo: CameraInfo
+
+
+def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
+    camera = cast(
         CameraModule,
-        frequency=4.0,
-        transform=Transform(
-            translation=Vector3(0.05, 0.0, 0.0),
-            rotation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
-            frame_id="sensor",
-            child_frame_id="camera_link",
-        ),
-        hardware=lambda: Webcam(
-            camera_index=0,
-            frequency=5,
-            stereo_slice="left",
-            camera_info=zed.CameraInfo.SingleWebcam,
+        dimos.deploy(
+            CameraModule,
+            frequency=4.0,
+            transform=Transform(
+                translation=Vector3(0.05, 0.0, 0.0),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+                frame_id="sensor",
+                child_frame_id="camera_link",
+            ),
+            hardware=lambda: Webcam(
+                camera_index=0,
+                frequency=5,
+                stereo_slice="left",
+                camera_info=zed.CameraInfo.SingleWebcam,
+            ),
         ),
     )
 

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import Optional, cast
 
 from dimos import spec
-from dimos.core import DimosCluster, In, Module, rpc
+from dimos.core import DimosCluster, In, Module, RPCClient, rpc
 from dimos.msgs.geometry_msgs import (
     Twist,
     TwistStamped,
@@ -25,19 +25,21 @@ from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 
 class G1Connection(Module):
     cmd_vel: In[TwistStamped] = None  # type: ignore
-    ip: str
+    ip: Optional[str]
+
+    connection: UnitreeWebRTCConnection
 
     def __init__(self, ip: Optional[str] = None, **kwargs):
         super().__init__(**kwargs)
-        self.ip = ip
-        self.connection: Optional[UnitreeWebRTCConnection] = None
+
+        if ip is None:
+            raise ValueError("IP address must be provided for G1")
+        self.connection = UnitreeWebRTCConnection(ip)
 
     @rpc
     def start(self):
         super().start()
-        self.connection = UnitreeWebRTCConnection(self.ip)
         self.connection.start()
-
         self._disposables.add(
             self.cmd_vel.subscribe(self.move),
         )
@@ -60,7 +62,7 @@ class G1Connection(Module):
 
 
 def deploy(dimos: DimosCluster, ip: str, local_planner: spec.LocalPlanner) -> G1Connection:
-    connection = dimos.deploy(G1Connection, ip)
+    connection = cast(G1Connection, dimos.deploy(G1Connection, ip))
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
     return connection
