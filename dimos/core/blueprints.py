@@ -85,7 +85,9 @@ class ModuleBlueprintSet:
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
-    def build(self, global_config: GlobalConfig) -> ModuleCoordinator:
+    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+        if not global_config:
+            global_config = GlobalConfig()
         global_config = global_config.model_copy(update=self.global_config_overrides)
 
         module_coordinator = ModuleCoordinator(global_config=global_config)
