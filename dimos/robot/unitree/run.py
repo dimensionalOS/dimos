@@ -14,18 +14,20 @@
 # limitations under the License.
 
 """
-Centralized runner for modular G1 deployment scripts.
+Centralized runner for modular Unitree robot deployment scripts.
 
 Usage:
     python run.py g1agent --ip 192.168.1.100
-    python run.py g1zed
-    python run.py g1detector --ip $ROBOT_IP
+    python run.py g1/g1zed --ip $ROBOT_IP
+    python run.py go2/go2.py --ip $ROBOT_IP
+    python run.py connection/g1.py --ip $ROBOT_IP
 """
 
 import argparse
 import importlib
 import os
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -35,10 +37,10 @@ from dimos.core import start, wait_exit
 def main():
     load_dotenv()
 
-    parser = argparse.ArgumentParser(description="Unitree G1 Modular Deployment Runner")
+    parser = argparse.ArgumentParser(description="Unitree Robot Modular Deployment Runner")
     parser.add_argument(
         "module",
-        help="Module name to run (e.g., g1agent, g1zed, g1detector)",
+        help="Module name/path to run (e.g., g1agent, g1/g1zed, go2/go2.py)",
     )
     parser.add_argument(
         "--ip",
@@ -60,20 +62,39 @@ def main():
         print("Please provide --ip or set ROBOT_IP in .env")
         sys.exit(1)
 
+    # Parse the module path
+    module_path = args.module
+
+    # Remove .py extension if present
+    if module_path.endswith(".py"):
+        module_path = module_path[:-3]
+
+    # Convert path separators to dots for import
+    module_path = module_path.replace("/", ".")
+
     # Import the module
     try:
-        # Try importing from current package first
-        module = importlib.import_module(f".{args.module}", package="dimos.robot.unitree.g1")
+        # Build the full import path
+        full_module_path = f"dimos.robot.unitree.{module_path}"
+        print(f"Importing module: {full_module_path}")
+        module = importlib.import_module(full_module_path)
     except ImportError as e:
-        import traceback
+        # Try as a relative import from the unitree package
+        try:
+            module = importlib.import_module(f".{module_path}", package="dimos.robot.unitree")
+        except ImportError as e2:
+            import traceback
 
-        traceback.print_exc()
+            traceback.print_exc()
 
-        print(f"\nERROR: Could not import module '{args.module}'")
-        print(f"Make sure the module exists in dimos/robot/unitree/g1/")
-        print(f"Import error: {e}")
+            print(f"\nERROR: Could not import module '{args.module}'")
+            print(f"Tried importing as:")
+            print(f"  1. {full_module_path}")
+            print(f"  2. Relative import from dimos.robot.unitree")
+            print(f"Make sure the module exists in dimos/robot/unitree/")
+            print(f"Import error: {e2}")
 
-        sys.exit(1)
+            sys.exit(1)
 
     # Verify deploy function exists
     if not hasattr(module, "deploy"):
