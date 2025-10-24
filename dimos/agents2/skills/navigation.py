@@ -13,13 +13,13 @@
 # limitations under the License.
 
 import time
+from functools import partial
 from typing import Any, Optional
 
-from reactivex import Observable
-from reactivex.disposable import CompositeDisposable, Disposable
-
-from dimos.core import Module
-from dimos.core.resource import Resource
+from dimos.core.core import rpc
+from dimos.core.rpc_client import RpcCall
+from dimos.core.skill_module import SkillModule
+from dimos.core.stream import In
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
@@ -27,37 +27,122 @@ from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.bt_navigator.navigator import NavigatorState
 from dimos.navigation.visual.query import get_object_bbox_from_image
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.robot.robot import UnitreeRobot
+from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
 
 
-class NavigationSkillContainer(Module):
-    _disposables: CompositeDisposable
-    _latest_image: Optional[Image]
-    _video_stream: Observable[Image]
-    _started: bool = False
+class NavigationSkillContainer(SkillModule):
+    _latest_image: Optional[Image] = None
+    _latest_odom: Optional[PoseStamped] = None
+    _skill_started: bool = False
+    _similarity_threshold: float = 0.23
 
-    def __init__(self, spatial_memory, nav, detection_module):
-        self.nav = nav
-        self.spatial_memory = spatial_memory
-        self.detection_module = detection_module
+    _tag_location: RpcCall | None = None
+    _query_tagged_location: RpcCall | None = None
+    _query_by_text: RpcCall | None = None
+    _set_goal: RpcCall | None = None
+    _get_state: RpcCall | None = None
+    _is_goal_reached: RpcCall | None = None
+    _cancel_goal: RpcCall | None = None
+    _track: RpcCall | None = None
+    _stop_track: RpcCall | None = None
+    _is_tracking: RpcCall | None = None
+    _stop_exploration: RpcCall | None = None
+    _explore: RpcCall | None = None
+    _is_exploration_active: RpcCall | None = None
 
+    color_image: In[Image] = None
+    odom: In[PoseStamped] = None
+
+    def __init__(self):
         super().__init__()
-        self._similarity_threshold = 0.23
+        self._skill_started = False
         self._vl_model = QwenVlModel()
 
+    @rpc
     def start(self) -> None:
-        # unsub = self._video_stream.subscribe(self._on_video)
-        # self._disposables.add(Disposable(unsub) if callable(unsub) else unsub)
-        self._started = True
+        self._disposables.add(self.color_image.subscribe(self._on_color_image))
+        self._disposables.add(self.odom.subscribe(self._on_odom))
+        self._skill_started = True
 
+    @rpc
     def stop(self) -> None:
-        self._disposables.dispose()
         super().stop()
+
+    def _on_color_image(self, image: Image) -> None:
+        self._latest_image = image
+
+    def _on_odom(self, odom: PoseStamped) -> None:
+        self._latest_odom = odom
+
+    # TODO: This is quite repetitive, maybe I should automate this somehow
+    @rpc
+    def set_SpatialMemory_tag_location(self, callable: RpcCall) -> None:
+        self._tag_location = callable
+        self._tag_location.set_rpc(self.rpc)
+
+    @rpc
+    def set_SpatialMemory_query_tagged_location(self, callable: RpcCall) -> None:
+        self._query_tagged_location = callable
+        self._query_tagged_location.set_rpc(self.rpc)
+
+    @rpc
+    def set_SpatialMemory_query_by_text(self, callable: RpcCall) -> None:
+        self._query_by_text = callable
+        self._query_by_text.set_rpc(self.rpc)
+
+    @rpc
+    def set_BehaviorTreeNavigator_set_goal(self, callable: RpcCall) -> None:
+        self._set_goal = callable
+        self._set_goal.set_rpc(self.rpc)
+
+    @rpc
+    def set_BehaviorTreeNavigator_get_state(self, callable: RpcCall) -> None:
+        self._get_state = callable
+        self._get_state.set_rpc(self.rpc)
+
+    @rpc
+    def set_BehaviorTreeNavigator_is_goal_reached(self, callable: RpcCall) -> None:
+        self._is_goal_reached = callable
+        self._is_goal_reached.set_rpc(self.rpc)
+
+    @rpc
+    def set_BehaviorTreeNavigator_cancel_goal(self, callable: RpcCall) -> None:
+        self._cancel_goal = callable
+        self._cancel_goal.set_rpc(self.rpc)
+
+    @rpc
+    def set_ObjectTracking_track(self, callable: RpcCall) -> None:
+        self._track = callable
+        self._track.set_rpc(self.rpc)
+
+    @rpc
+    def set_ObjectTracking_stop_track(self, callable: RpcCall) -> None:
+        self._stop_track = callable
+        self._stop_track.set_rpc(self.rpc)
+
+    @rpc
+    def set_ObjectTracking_is_tracking(self, callable: RpcCall) -> None:
+        self._is_tracking = callable
+        self._is_tracking.set_rpc(self.rpc)
+
+    @rpc
+    def set_WavefrontFrontierExplorer_stop_exploration(self, callable: RpcCall) -> None:
+        self._stop_exploration = callable
+        self._stop_exploration.set_rpc(self.rpc)
+
+    @rpc
+    def set_WavefrontFrontierExplorer_explore(self, callable: RpcCall) -> None:
+        self._explore = callable
+        self._explore.set_rpc(self.rpc)
+
+    @rpc
+    def set_WavefrontFrontierExplorer_is_exploration_active(self, callable: RpcCall) -> None:
+        self._is_exploration_active = callable
+        self._is_exploration_active.set_rpc(self.rpc)
 
     @skill()
     def tag_location(self, location_name: str) -> str:
@@ -72,7 +157,7 @@ class NavigationSkillContainer(Module):
             str: the outcome
         """
 
-        if not self._started:
+        if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
         tf = self.tf.get("map", "base_link", time_tolerance=2.0)
         if not tf:
@@ -87,8 +172,8 @@ class NavigationSkillContainer(Module):
             rotation=(rotation.x, rotation.y, rotation.z),
         )
 
-        if not self.spatial_memory.tag_location(location):
-            return f"Failed to store '{location_name}' in the spatial memory"
+        if not self._tag_location(location):
+            return f"Error: Failed to store '{location_name}' in the spatial memory"
 
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
@@ -114,7 +199,7 @@ class NavigationSkillContainer(Module):
             query: Text query to search for in the semantic map
         """
 
-        if not self._started:
+        if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
@@ -135,7 +220,11 @@ class NavigationSkillContainer(Module):
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
     def _navigate_by_tagged_location(self, query: str) -> Optional[str]:
-        robot_location = self.spatial_memory.query_tagged_location(query)
+        if not self._query_tagged_location:
+            logger.warning("SpatialMemory module not connected, cannot query tagged locations")
+            return None
+
+        robot_location = self._query_tagged_location(query)
 
         if not robot_location:
             return None
@@ -147,13 +236,91 @@ class NavigationSkillContainer(Module):
             frame_id="map",
         )
 
-        print("Goal pose for tagged location nav:", goal_pose)
-
-        result = self.nav.navigate_to(goal_pose)
+        result = self._navigate_to(goal_pose)
         if not result:
+            return "Error: Faild to reach the tagged location."
+
+        return (
+            f"Successfuly arrived at location tagged '{robot_location.name}' from query '{query}'."
+        )
+
+    def _navigate_to(self, pose: PoseStamped) -> bool:
+        if not self._set_goal or not self._get_state or not self._is_goal_reached:
+            logger.error("BehaviorTreeNavigator module not connected properly")
+            return False
+
+        logger.info(
+            f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
+        )
+        self._set_goal(pose)
+        time.sleep(1.0)
+
+        while self._get_state() == NavigatorState.FOLLOWING_PATH:
+            time.sleep(0.25)
+
+        time.sleep(1.0)
+        if not self._is_goal_reached():
+            logger.info("Navigation was cancelled or failed")
+            return False
+        else:
+            logger.info("Navigation goal reached")
+            return True
+
+    def _navigate_to_object(self, query: str) -> Optional[str]:
+        try:
+            bbox = self._get_bbox_for_current_frame(query)
+        except Exception:
+            logger.error(f"Failed to get bbox for {query}", exc_info=True)
             return None
 
-        return f"Arrived to '{robot_location.name}' from query '{query}'."
+        if bbox is None:
+            return None
+
+        if not self._track or not self._stop_track or not self._is_tracking:
+            logger.error("ObjectTracking module not connected properly")
+            return None
+
+        if not self._get_state or not self._is_goal_reached:
+            logger.error("BehaviorTreeNavigator module not connected properly")
+            return None
+
+        logger.info(f"Found {query} at {bbox}")
+
+        # Start tracking - BBoxNavigationModule automatically generates goals
+        self._track(bbox)
+
+        start_time = time.time()
+        timeout = 30.0
+        goal_set = False
+
+        while time.time() - start_time < timeout:
+            # Check if navigator finished
+            if self._get_state() == NavigatorState.IDLE and goal_set:
+                logger.info("Waiting for goal result")
+                time.sleep(1.0)
+                if not self._is_goal_reached():
+                    logger.info(f"Goal cancelled, tracking '{query}' failed")
+                    self._stop_track()
+                    return None
+                else:
+                    logger.info(f"Reached '{query}'")
+                    self._stop_track()
+                    return f"Successfully arrived at '{query}'"
+
+            # If goal set and tracking lost, just continue (tracker will resume or timeout)
+            if goal_set and not self._is_tracking():
+                continue
+
+            # BBoxNavigationModule automatically sends goals when tracker publishes
+            # Just check if we have any detections to mark goal_set
+            if self._is_tracking():
+                goal_set = True
+
+            time.sleep(0.25)
+
+        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
+        self._stop_track()
+        return None
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:
@@ -162,7 +329,10 @@ class NavigationSkillContainer(Module):
         return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
-        results = self.spatial_memory.query_by_text(query)
+        if not self._query_by_text:
+            return "Error: The SpatialMemory module is not connected."
+
+        results = self._query_by_text(query)
 
         if not results:
             return f"No matching location found in semantic map for '{query}'"
@@ -175,7 +345,7 @@ class NavigationSkillContainer(Module):
         if not goal_pose:
             return f"Found a result for '{query}' but it didn't have a valid position."
 
-        result = self.nav.navigate_to(goal_pose)
+        result = self._navigate_to(goal_pose)
 
         if not result:
             return f"Failed to navigate for '{query}'"
@@ -191,14 +361,26 @@ class NavigationSkillContainer(Module):
     def stop_movement(self) -> str:
         """Immediatly stop moving."""
 
-        if not self._started:
+        if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
 
-        # self._robot.stop_exploration()
+        self._cancel_goal_and_stop()
 
         return "Stopped"
 
-    # @skill()
+    def _cancel_goal_and_stop(self) -> None:
+        if not self._cancel_goal:
+            logger.warning("BehaviorTreeNavigator module not connected, cannot cancel goal")
+            return
+
+        if not self._stop_exploration:
+            logger.warning("FrontierExplorer module not connected, cannot stop exploration")
+            return
+
+        self._cancel_goal()
+        return self._stop_exploration()
+
+    @skill()
     def start_exploration(self, timeout: float = 240.0) -> str:
         """A skill that performs autonomous frontier exploration.
 
@@ -211,24 +393,27 @@ class NavigationSkillContainer(Module):
             timeout (float, optional): Maximum time (in seconds) allowed for exploration
         """
 
-        if not self._started:
+        if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
 
         try:
             return self._start_exploration(timeout)
         finally:
-            self._robot.stop_exploration()
+            self._cancel_goal_and_stop()
 
     def _start_exploration(self, timeout: float) -> str:
+        if not self._explore or not self._is_exploration_active:
+            return "Error: The WavefrontFrontierExplorer module is not connected."
+
         logger.info("Starting autonomous frontier exploration")
 
         start_time = time.time()
 
-        has_started = self._robot.explore()
+        has_started = self._explore()
         if not has_started:
-            return "Could not start exploration."
+            return "Error: Could not start exploration."
 
-        while time.time() - start_time < timeout and self._robot.is_exploration_active():
+        while time.time() - start_time < timeout and self._is_exploration_active():
             time.sleep(0.5)
 
         return "Exploration completed successfuly"
@@ -256,3 +441,8 @@ class NavigationSkillContainer(Module):
             orientation=euler_to_quaternion(make_vector3(0, 0, theta)),
             frame_id="map",
         )
+
+
+navigation_skill = NavigationSkillContainer.blueprint
+
+__all__ = ["NavigationSkillContainer", "navigation_skill"]

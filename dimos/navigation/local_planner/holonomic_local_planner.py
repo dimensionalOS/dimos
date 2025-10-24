@@ -260,3 +260,8 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
     def _clip(self, v: np.ndarray) -> np.ndarray:
         """Instance method to clip velocity with access to v_max."""
         return np.clip(v, -self.v_max, self.v_max)
+
+
+holonomic_local_planner = HolonomicLocalPlanner.blueprint
+
+__all__ = ["HolonomicLocalPlanner", "holonomic_local_planner"]

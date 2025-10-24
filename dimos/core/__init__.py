@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing as mp
+import signal
 import time
 from typing import Any, Optional, Protocol, Type, TypeVar
 
@@ -11,6 +12,7 @@ import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.dimos import Dimos
 from dimos.core.module import Module, ModuleBase, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
     LCMTransport,
@@ -81,120 +83,7 @@ class CudaCleanupPlugin:
 def patch_actor(actor, cls): ...
 
 
-class RPCClient:
-    def __init__(self, actor_instance, actor_class):
-        self.rpc = LCMRPC()
-        self.actor_class = actor_class
-        self.remote_name = actor_class.__name__
-        self.actor_instance = actor_instance
-        self.rpcs = actor_class.rpcs.keys()
-        self.rpc.start()
-        self._unsub_fns = []
-
-    def stop_client(self):
-        for unsub in self._unsub_fns:
-            try:
-                unsub()
-            except Exception:
-                pass
-
-        self._unsub_fns = []
-
-        if self.rpc:
-            self.rpc.stop()
-            self.rpc = None
-
-    def __reduce__(self):
-        # Return the class and the arguments needed to reconstruct the object
-        return (
-            self.__class__,
-            (self.actor_instance, self.actor_class),
-        )
-
-    # passthrough
-    def __getattr__(self, name: str):
-        # Check if accessing a known safe attribute to avoid recursion
-        if name in {
-            "__class__",
-            "__init__",
-            "__dict__",
-            "__getattr__",
-            "rpcs",
-            "remote_name",
-            "remote_instance",
-            "actor_instance",
-        }:
-            raise AttributeError(f"{name} is not found.")
-
-        if name in self.rpcs:
-            # Get the original method to preserve its docstring
-            original_method = getattr(self.actor_class, name, None)
-
-            def rpc_call(*args, **kwargs):
-                # For stop/close/shutdown, use call_nowait to avoid deadlock
-                # (the remote side stops its RPC service before responding)
-                if name in ("stop", "close", "shutdown"):
-                    if self.rpc:
-                        self.rpc.call_nowait(f"{self.remote_name}/{name}", (args, kwargs))
-                    self.stop_client()
-                    return None
-
-                result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
-                self._unsub_fns.append(unsub_fn)
-                return result
-
-            # Copy docstring and other attributes from original method
-            if original_method:
-                rpc_call.__doc__ = original_method.__doc__
-                rpc_call.__name__ = original_method.__name__
-                rpc_call.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
-
-            return rpc_call
-
-        # return super().__getattr__(name)
-        # Try to avoid recursion by directly accessing attributes that are known
-        return self.actor_instance.__getattr__(name)
-
-
-T = TypeVar("T", bound="Module")
-
-
-class DimosCluster(Protocol):
-    """Extended Dask Client with DimOS-specific methods.
-
-    This protocol defines the interface of a Dask Client that has been
-    patched with additional methods via patchdask().
-    """
-
-    def deploy(
-        self,
-        actor_class: Type[T],
-        *args: Any,
-        **kwargs: Any,
-    ) -> T:
-        """Deploy an actor to the cluster and return an RPC client.
-
-        Args:
-            actor_class: The actor class to deploy
-            *args: Positional arguments to pass to the actor constructor
-            **kwargs: Keyword arguments to pass to the actor constructor
-
-        Returns:
-            RPCClient: A client for making RPC calls to the deployed actor
-        """
-        ...
-
-    def check_worker_memory(self) -> None:
-        """Check and display memory usage of all workers."""
-        ...
-
-    def stop(self) -> None:
-        """Stop the client (alias for close)."""
-        ...
-
-    def close_all(self) -> None:
-        """Close all resources including cluster, client, and shared memory transports."""
-        ...
+DimosCluster = Client
 
 
 def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
@@ -213,7 +102,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             ).result()
 
             worker = actor.set_ref(actor).result()
-            print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+            print((f"deployed: {colors.blue(actor)} @ {colors.orange('worker ' + str(worker))}"))
 
             # Register actor deployment in shared memory
             ActorRegistry.update(str(actor), str(worker))
@@ -321,14 +210,10 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             except Exception:
                 pass
 
-        # Shutdown the Dask offload thread pool
-        try:
-            from distributed.utils import _offload_executor
-
-            if _offload_executor:
-                _offload_executor.shutdown(wait=False)
-        except Exception:
-            pass
+        # Note: We do NOT shutdown the _offload_executor here because it's a global
+        # module-level ThreadPoolExecutor shared across all Dask clients in the process.
+        # Shutting it down here would break subsequent Dask client usage (e.g., in tests).
+        # The executor will be cleaned up when the Python process exits.
 
         # Give threads time to clean up
         # Dask's IO loop and Profile threads are daemon threads
@@ -353,8 +238,6 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> DimosCluster:
     Returns:
         DimosCluster: A patched Dask client with deploy(), check_worker_memory(), stop(), and close_all() methods
     """
-    import atexit
-    import signal
 
     console = Console()
     if not n:

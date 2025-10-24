@@ -216,3 +216,8 @@ class AstarPlanner(Module):
 
         logger.warning("No path found to the goal.")
         return None
+
+
+astar_planner = AstarPlanner.blueprint
+
+__all__ = ["AstarPlanner", "astar_planner"]

@@ -21,6 +21,7 @@ from typing import Optional
 import numpy as np
 
 from dimos.core import Module, In, Out, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.utils.logging_config import setup_logger
@@ -49,7 +50,8 @@ class DepthModule(Module):
 
     def __init__(
         self,
-        gt_depth_scale: float = 1.0,
+        gt_depth_scale: float = 0.5,
+        global_config: GlobalConfig | None = None,
         **kwargs,
     ):
         """
@@ -77,7 +79,9 @@ class DepthModule(Module):
         self._processing_thread: Optional[threading.Thread] = None
         self._stop_processing = threading.Event()
 
-        logger.info(f"DepthModule initialized")
+        if global_config:
+            if global_config.use_simulation:
+                self.gt_depth_scale = 1.0
 
     @rpc
     def start(self):
@@ -232,3 +236,9 @@ class DepthModule(Module):
 
         except Exception as e:
             logger.error(f"Error publishing depth data: {e}", exc_info=True)
+
+
+depth_module = DepthModule.blueprint
+
+
+__all__ = ["DepthModule", "depth_module"]
