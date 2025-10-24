@@ -659,8 +659,8 @@ class XArmDriver(
 
         logger.info(f"Control loop started at {self.config.control_frequency}Hz")
 
-        command_count = 0
-        last_log_time = time.time()
+        # command_count = 0  # Disabled - used for logging
+        # last_log_time = time.time()  # Disabled - used for logging
         timeout_logged = False
 
         while self._running:
@@ -709,18 +709,18 @@ class XArmDriver(
                             angles=joint_cmd, is_radian=self.config.is_radian
                         )
 
-                    command_count += 1
+                    # command_count += 1  # Disabled - used for logging
 
-                    # Log every second with detailed info
-                    if current_time - last_log_time >= 1.0:
-                        mode_str = "velocity" if self.config.velocity_control else "position"
-                        logger.info(
-                            f"Control loop ({mode_str}): sent {command_count} cmds in last second, "
-                            f"state={self.curr_state}, mode={self.curr_mode}, "
-                            f"joint6={math.degrees(joint_cmd[5]):.2f}°"
-                        )
-                        command_count = 0
-                        last_log_time = current_time
+                    # Log every second with detailed info (disabled - uncomment for debugging)
+                    # if current_time - last_log_time >= 1.0:
+                    #     mode_str = "velocity" if self.config.velocity_control else "position"
+                    #     logger.info(
+                    #         f"Control loop ({mode_str}): sent {command_count} cmds in last second, "
+                    #         f"state={self.curr_state}, mode={self.curr_mode}, "
+                    #         f"joint6={math.degrees(joint_cmd[5]):.2f}°"
+                    #     )
+                    #     command_count = 0
+                    #     last_log_time = current_time
 
                     if code != 0:
                         if code == 9:
