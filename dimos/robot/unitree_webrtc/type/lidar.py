@@ -14,7 +14,7 @@
 
 import time
 from copy import copy
-from typing import List, Optional, TypedDict
+from typing import List, Optional, Type, TypedDict
 
 import numpy as np
 import open3d as o3d
@@ -65,7 +65,7 @@ class LidarMessage(PointCloud2):
         self.resolution = kwargs.get("resolution", 0.05)
 
     @classmethod
-    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
+    def from_msg(cls: Type["LidarMessage"], raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
         pointcloud = o3d.geometry.PointCloud()

@@ -14,9 +14,11 @@
 
 import logging
 import time
-from typing import List, Optional
+from threading import Thread
+from typing import List, Optional, Protocol
 
 from dimos_lcm.sensor_msgs import CameraInfo
+from reactivex.observable import Observable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.msgs.geometry_msgs import (
@@ -37,6 +39,20 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(__file__, level=logging.INFO)
+
+
+class Go2ConnectionProtocol(Protocol):
+    """Protocol defining the interface for Go2 robot connections."""
+
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
+    def lidar_stream(self) -> Observable: ...
+    def odom_stream(self) -> Observable: ...
+    def video_stream(self) -> Observable: ...
+    def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
+    def standup(self) -> None: ...
+    def liedown(self) -> None: ...
+    def publish_request(self, topic: str, data: dict) -> dict: ...
 
 
 def _camera_info() -> CameraInfo:
@@ -74,7 +90,7 @@ def _camera_info() -> CameraInfo:
 camera_info = _camera_info()
 
 
-class FakeRTC(UnitreeWebRTCConnection):
+class ReplayConnection(UnitreeWebRTCConnection):
     dir_name = "unitree_go2_office_walk2"
 
     # we don't want UnitreeWebRTCConnection to init
@@ -130,40 +146,38 @@ class FakeRTC(UnitreeWebRTCConnection):
 
 
 class GO2Connection(Module):
-    cmd_vel: In[Twist] = None
-    pointcloud: Out[LidarMessage] = None
-    image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
+    cmd_vel: In[Twist] = None  # type: ignore
+    pointcloud: Out[LidarMessage] = None  # type: ignore
+    image: Out[Image] = None  # type: ignore
+    camera_info: Out[CameraInfo] = None  # type: ignore
     connection_type: str = "webrtc"
 
-    ip: str
+    connection: Go2ConnectionProtocol
+
+    ip: Optional[str]
 
     def __init__(
         self,
         ip: Optional[str] = None,
-        connection_type: str = "webrtc",
-        rectify_image: bool = True,
         *args,
         **kwargs,
     ):
-        self.ip = ip
-        self.connection: Optional[UnitreeWebRTCConnection] = None
+        match ip:
+            case None | "fake" | "mock" | "replay":
+                self.connection = ReplayConnection()
+            case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+                self.connection = MujocoConnection()
+            case _:
+                self.connection = UnitreeWebRTCConnection(ip)
+
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self) -> None:
         """Start the connection and subscribe to sensor streams."""
         super().start()
-
-        match self.ip:
-            case None | "fake" | "":
-                self.connection = FakeRTC()
-            case "mujoco":
-                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
-
-                self.connection = MujocoConnection()
-            case _:
-                self.connection = UnitreeWebRTCConnection(self.ip)
 
         self.connection.start()
 
@@ -179,12 +193,7 @@ class GO2Connection(Module):
             self.connection.video_stream().subscribe(self.image.publish),
         )
 
-        self._disposables.add(
-            self.cmd_vel.subscribe(self.move),
-        )
-
-        # Start publishing camera info at 1 Hz
-        from threading import Thread
+        self.cmd_vel.subscribe(self.move)
 
         self._camera_info_thread = Thread(
             target=self.publish_camera_info,
@@ -285,4 +294,5 @@ def deploy(dimos: DimosCluster, ip: str, prefix="") -> GO2Connection:
     connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
     connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
-    return connection
+
+    return connection  # type: ignore
