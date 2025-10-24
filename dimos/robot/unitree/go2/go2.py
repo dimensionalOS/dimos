@@ -30,7 +30,6 @@ def deploy(dimos: DimosCluster, ip: str):
 
     detector = moduleDB.deploy(
         dimos,
-        go2.camera_info,
         camera=connection,
         lidar=connection,
     )

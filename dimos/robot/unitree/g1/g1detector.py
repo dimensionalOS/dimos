@@ -18,16 +18,14 @@ from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.robot.unitree.g1 import g1zed
 
 
-def deploy(dimos: DimosCluster, ip: str) -> None:
+def deploy(dimos: DimosCluster, ip: str):
     g1 = g1zed.deploy(dimos, ip)
 
     nav = g1.get("nav")
     camera = g1.get("camera")
-    camerainfo = g1.get("camerainfo")
 
     person_detector = module3D.deploy(
         dimos,
-        camerainfo,
         camera=camera,
         lidar=nav,
         detector=YoloPersonDetector,
@@ -35,12 +33,9 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
 
     detector3d = moduleDB.deploy(
         dimos,
-        camerainfo,
         camera=camera,
         lidar=nav,
         filter=lambda det: det.class_id != 0,
     )
-
-    # return {"detector3d": detector3d, **g1}
 
     return {"person_detector": person_detector, "detector3d": detector3d, **g1}

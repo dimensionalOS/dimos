@@ -20,6 +20,7 @@ from typing import List, Optional, Protocol
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable
 
+from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -29,7 +30,7 @@ from dimos.msgs.geometry_msgs import (
     TwistStamped,
     Vector3,
 )
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -145,16 +146,18 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return {"status": "ok", "message": "Fake publish"}
 
 
-class GO2Connection(Module):
+class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     cmd_vel: In[Twist] = None  # type: ignore
-    pointcloud: Out[LidarMessage] = None  # type: ignore
+    pointcloud: Out[PointCloud2] = None  # type: ignore
     image: Out[Image] = None  # type: ignore
-    camera_info: Out[CameraInfo] = None  # type: ignore
+    camera_info_stream: Out[CameraInfo] = None  # type: ignore
     connection_type: str = "webrtc"
 
     connection: Go2ConnectionProtocol
 
     ip: Optional[str]
+
+    camera_info: CameraInfo = camera_info
 
     def __init__(
         self,
@@ -291,8 +294,10 @@ def deploy(dimos: DimosCluster, ip: str, prefix="") -> GO2Connection:
     connection.image.transport = pSHMTransport(
         f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     )
-    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
+
+    # connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
+
     connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
-    return connection  # type: ignore
+    return connection

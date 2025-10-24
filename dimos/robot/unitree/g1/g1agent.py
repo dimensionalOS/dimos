@@ -19,7 +19,7 @@ from dimos.perception import spatial_perception
 from dimos.robot.unitree.g1 import g1detector
 
 
-def deploy(dimos: DimosCluster, ip: str) -> None:
+def deploy(dimos: DimosCluster, ip: str):
     g1 = g1detector.deploy(dimos, ip)
 
     nav = g1.get("nav")

@@ -325,7 +325,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
 def deploy(
     dimos: DimosCluster,
-    camera_info: CameraInfo,
     lidar: spec.Pointcloud,
     camera: spec.Camera,
     prefix: str = "/detectorDB",
@@ -333,7 +332,7 @@ def deploy(
 ) -> Detection3DModule:
     from dimos.core import LCMTransport
 
-    detector = dimos.deploy(ObjectDBModule, camera_info=camera_info, **kwargs)
+    detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info, **kwargs)
 
     detector.image.connect(camera.image)
     detector.pointcloud.connect(lidar.pointcloud)

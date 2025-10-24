@@ -138,6 +138,11 @@ class Out(Stream[T]):
     def transport(self) -> Transport[T]:
         return self._transport
 
+    @transport.setter
+    def transport(self, value: Transport[T]) -> None:
+        # just for type checking
+        ...
+
     @property
     def state(self) -> State:  # noqa: D401
         return State.UNBOUND if self.owner is None else State.READY
@@ -209,6 +214,15 @@ class In(Stream[T], ObservableMixin[T]):
         if not self._transport:
             self._transport = self.connection.transport
         return self._transport
+
+    @transport.setter
+    def transport(self, value: Transport[T]) -> None:
+        # just for type checking
+        ...
+
+    def connect(self, value: Out[T]) -> None:
+        # just for type checking
+        ...
 
     @property
     def state(self) -> State:  # noqa: D401
