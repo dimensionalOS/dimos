@@ -13,16 +13,15 @@
 # limitations under the License.
 
 import logging
-import time
 
 from dimos import agents2
 from dimos.core import DimosCluster
 from dimos.perception.detection import moduleDB
 from dimos.robot import foxglove_bridge
-from dimos.robot.unitree_webrtc.connection import go2
+from dimos.robot.unitree.connection import go2
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(__name__, level=logging.INFO)
 
 
 def deploy(dimos: DimosCluster, ip: str):

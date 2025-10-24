@@ -35,7 +35,7 @@ from dimos.perception.detection.type import (
     ImageDetections3DPC,
 )
 from dimos.protocol.tf import TF
-from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
+from dimos.robot.unitree_webrtc.connection import go2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
@@ -101,10 +101,10 @@ def get_moment(tf):
         if odom_frame is None:
             raise ValueError("No odom frame found")
 
-        transforms = ConnectionModule._odom_to_tf(odom_frame)
+        transforms = go2._odom_to_tf(odom_frame)
 
         tf.receive_transform(*transforms)
-        camera_info_out = ConnectionModule._camera_info()
+        camera_info_out = go2._camera_info()
         # ConnectionModule._camera_info() returns Out[CameraInfo], extract the value
         from typing import cast
 
