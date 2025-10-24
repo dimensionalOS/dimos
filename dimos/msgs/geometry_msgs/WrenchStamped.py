@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import time
+from dataclasses import dataclass
 
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.geometry_msgs.Wrench import Wrench
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
 
 
@@ -35,16 +35,14 @@ class WrenchStamped(Timestamped):
     frame_id: str = ""
     wrench: Wrench = None
 
-    def __post_init__(self) -> None:
+    def __post_init__(self):
         if self.ts == 0.0:
             self.ts = time.time()
         if self.wrench is None:
             self.wrench = Wrench()
 
     @classmethod
-    def from_force_torque_array(
-        cls, ft_data: list, frame_id: str = "ft_sensor", ts: float | None = None
-    ):
+    def from_force_torque_array(cls, ft_data: list, frame_id: str = "ft_sensor", ts: float = None):
         """
         Create WrenchStamped from a 6-element force/torque array.
 
