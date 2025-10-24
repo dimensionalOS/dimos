@@ -111,6 +111,9 @@ class SampleTrajectoryGenerator(Module):
         self._trajectory_start_positions = None
         self._trajectory_end_positions = None
         self._trajectory_is_velocity = False  # True for velocity trajectories
+        self._in_velocity_mode = (
+            False  # Persistent flag for velocity mode (doesn't reset with trajectory)
+        )
 
         logger.info(
             f"TrajectoryGenerator initialized: {self.config.num_joints} joints, "
@@ -168,6 +171,32 @@ class SampleTrajectoryGenerator(Module):
         logger.info("Command publishing disabled")
 
     @rpc
+    def set_velocity_mode(self, enabled: bool):
+        """
+        Set velocity mode flag.
+
+        This should be called when the driver switches between position and velocity modes,
+        so the trajectory generator knows which topic to publish to.
+
+        Args:
+            enabled: True for velocity mode, False for position mode
+        """
+        with self._state_lock:
+            self._in_velocity_mode = enabled
+
+            # IMPORTANT: Clear any active trajectory when switching modes
+            # This prevents stale commands from being published in the new mode
+            if self._trajectory_active:
+                logger.info("Clearing active trajectory due to mode change")
+                self._trajectory_active = False
+                self._trajectory_is_velocity = False
+                self._trajectory_start_positions = None
+                self._trajectory_end_positions = None
+
+            mode_name = "velocity" if enabled else "position"
+            logger.info(f"Trajectory generator mode set to: {mode_name}")
+
+    @rpc
     def get_current_state(self) -> dict:
         """Get current joint and robot state."""
         with self._state_lock:
@@ -191,6 +220,11 @@ class SampleTrajectoryGenerator(Module):
         Returns:
             Status message
         """
+        # Re-enable publishing if it was disabled (e.g., after testing timeout)
+        if not self._publishing_enabled:
+            logger.info("Re-enabling publishing for new trajectory")
+            self._publishing_enabled = True
+
         with self._state_lock:
             if self._current_joint_state is None:
                 return "Error: No joint state received yet"
@@ -211,6 +245,7 @@ class SampleTrajectoryGenerator(Module):
             self._trajectory_duration = duration
             self._trajectory_start_time = time.time()
             self._trajectory_active = True
+            self._in_velocity_mode = False  # Clear velocity mode flag for position moves
 
             logger.info(
                 f"Starting trajectory: joint{joint_index + 1} "
@@ -238,6 +273,11 @@ class SampleTrajectoryGenerator(Module):
         Returns:
             Status message
         """
+        # Re-enable publishing if it was disabled (e.g., after testing timeout)
+        if not self._publishing_enabled:
+            logger.info("Re-enabling publishing for new trajectory")
+            self._publishing_enabled = True
+
         with self._state_lock:
             if self._current_joint_state is None:
                 return "Error: No joint state received yet"
@@ -259,6 +299,7 @@ class SampleTrajectoryGenerator(Module):
             self._trajectory_start_time = time.time()
             self._trajectory_active = True
             self._trajectory_is_velocity = True  # Flag to use velocity generation
+            self._in_velocity_mode = True  # Set persistent velocity mode flag
 
             logger.info(
                 f"Starting velocity trajectory: joint{joint_index + 1} "
@@ -370,16 +411,14 @@ class SampleTrajectoryGenerator(Module):
                         #                 f"{[f'{math.degrees(v):.2f}' for v in js.velocity]}"
                         #             )
 
-                        # Publish to correct topic based on current trajectory type
-                        if self._trajectory_is_velocity:
-                            # Currently executing velocity trajectory - publish velocities
-                            self._publish_velocity_command(command)
-                        elif self.config.control_mode == "position":
-                            self._publish_position_command(command)
-                        elif self.config.control_mode == "velocity":
+                        # Publish to correct topic based on current mode
+                        # Use persistent _in_velocity_mode flag (doesn't reset when trajectory completes)
+                        if self._in_velocity_mode:
+                            # In velocity mode - publish velocity commands
                             self._publish_velocity_command(command)
                         else:
-                            logger.warning(f"Unknown control mode: {self.config.control_mode}")
+                            # In position mode - publish position commands
+                            self._publish_position_command(command)
 
                 # Maintain loop frequency
                 next_time += period
@@ -420,16 +459,25 @@ class SampleTrajectoryGenerator(Module):
                 # Check if trajectory is complete
                 if elapsed >= self._trajectory_duration:
                     # Trajectory complete
-                    self._trajectory_active = False
-                    self._trajectory_is_velocity = False
                     logger.info(f"✓ Trajectory completed in {elapsed:.3f}s")
 
-                    # For velocity mode, return zeros to stop
-                    if self.config.control_mode == "velocity":
+                    # Determine what to return based on trajectory type
+                    was_velocity_trajectory = self._trajectory_is_velocity
+
+                    # Mark trajectory as complete
+                    self._trajectory_active = False
+                    self._trajectory_is_velocity = False
+
+                    # Handle trajectory completion based on type
+                    if was_velocity_trajectory:
+                        # Velocity: send zeros once to stop immediately
+                        logger.info("  Sending zero velocities to stop robot")
                         return [0.0] * self.config.num_joints
                     else:
-                        # For position mode, return end position
-                        return list(self._trajectory_end_positions)
+                        # Position: stop publishing (robot holds last position)
+                        logger.info("  Trajectory complete - stopping command publishing")
+                        self._publishing_enabled = False
+                        return None
 
                 # Generate command based on trajectory type
                 if self._trajectory_is_velocity:
@@ -458,13 +506,13 @@ class SampleTrajectoryGenerator(Module):
 
                     return command
 
-            # No active trajectory
-            if self.config.control_mode == "position":
-                # Position mode: hold current position (safe)
-                return list(self._current_joint_state.position)
-            else:
-                # Velocity mode: zero velocities (no motion)
+            # No active trajectory - use persistent mode flag
+            if self._in_velocity_mode:
+                # Velocity mode with no trajectory: send zeros (no motion)
                 return [0.0] * self.config.num_joints
+            else:
+                # Position mode with no trajectory: hold current position (safe)
+                return list(self._current_joint_state.position)
 
     def _publish_position_command(self, command: List[float]):
         """Publish joint position command."""
