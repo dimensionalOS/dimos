@@ -64,12 +64,12 @@ def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     )
 
     camera.image.transport = pSHMTransport("/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE)
-    camera.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
+    camera.camera_info_stream.transport = LCMTransport("/camera_info", CameraInfo)
     camera.start()
     return camera
 
 
-def deploy(dimos: DimosCluster, ip: str) -> None:
+def deploy(dimos: DimosCluster, ip: str):
     nav = rosnav.deploy(dimos)
     connection = g1.deploy(dimos, ip, nav)
     zedcam = deploy_g1_monozed(dimos)
@@ -80,5 +80,4 @@ def deploy(dimos: DimosCluster, ip: str) -> None:
         "nav": nav,
         "connection": connection,
         "camera": zedcam,
-        "camerainfo": zed.CameraInfo.SingleWebcam,
     }

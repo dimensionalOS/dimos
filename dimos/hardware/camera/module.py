@@ -23,6 +23,7 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
+from dimos import spec
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.camera.spec import CameraHardware
@@ -47,9 +48,9 @@ class CameraModuleConfig(ModuleConfig):
     frequency: float = 5.0
 
 
-class CameraModule(Module):
+class CameraModule(Module, spec.Camera):
     image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
+    camera_info_stream: Out[CameraInfo] = None
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None
     _module_subscription: Optional[Disposable] = None
@@ -57,6 +58,10 @@ class CameraModule(Module):
     _skill_stream: Optional[Observable[Image]] = None
 
     default_config = CameraModuleConfig
+
+    @property
+    def camera_info(self) -> CameraInfo:
+        return self.hardware.camera_info
 
     @rpc
     def start(self):

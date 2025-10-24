@@ -20,20 +20,20 @@ from dataclasses import dataclass
 from typing import Literal, Optional, Type, TypeAlias
 
 import numpy as np
-from numpy.typing import NDArray
 from aiortc import MediaStreamTrack
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
 from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
     Go2WebRTCConnection,
     WebRTCConnectionMethod,
 )
+from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core import DimosCluster, In, Module, Out, rpc
+from dimos.core import rpc
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -397,16 +397,16 @@ class UnitreeWebRTCConnection(Resource):
             self.thread.join(timeout=2.0)
 
 
-def deploy(dimos: DimosCluster, ip: str) -> None:
-    from dimos.robot.foxglove_bridge import FoxgloveBridge
+# def deploy(dimos: DimosCluster, ip: str) -> None:
+#     from dimos.robot.foxglove_bridge import FoxgloveBridge
 
-    connection = dimos.deploy(UnitreeWebRTCConnection, ip=ip)
+#     connection = dimos.deploy(UnitreeWebRTCConnection, ip=ip)
 
-    bridge = FoxgloveBridge(
-        shm_channels=[
-            "/image#sensor_msgs.Image",
-            "/lidar#sensor_msgs.PointCloud2",
-        ]
-    )
-    bridge.start()
-    connection.start()
+#     bridge = FoxgloveBridge(
+#         shm_channels=[
+#             "/image#sensor_msgs.Image",
+#             "/lidar#sensor_msgs.PointCloud2",
+#         ]
+#     )
+#     bridge.start()
+#     connection.start()

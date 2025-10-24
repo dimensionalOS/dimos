@@ -15,7 +15,7 @@
 from typing import Optional, cast
 
 from dimos import spec
-from dimos.core import DimosCluster, In, Module, RPCClient, rpc
+from dimos.core import DimosCluster, In, Module, rpc
 from dimos.msgs.geometry_msgs import (
     Twist,
     TwistStamped,
@@ -62,7 +62,7 @@ class G1Connection(Module):
 
 
 def deploy(dimos: DimosCluster, ip: str, local_planner: spec.LocalPlanner) -> G1Connection:
-    connection = cast(G1Connection, dimos.deploy(G1Connection, ip))
+    connection = dimos.deploy(G1Connection, ip)
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
     return connection

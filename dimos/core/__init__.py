@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import time
-from typing import Any, Optional, Protocol
+from typing import Any, Optional, Protocol, Type, TypeVar
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
 
 import dimos.core.colors as colors
 from dimos.core.core import rpc
+from dimos.core.dimos import Dimos
 from dimos.core.module import Module, ModuleBase, ModuleConfig
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
@@ -155,6 +156,9 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
+T = TypeVar("T", bound="Module")
+
+
 class DimosCluster(Protocol):
     """Extended Dask Client with DimOS-specific methods.
 
@@ -164,10 +168,10 @@ class DimosCluster(Protocol):
 
     def deploy(
         self,
-        actor_class: type,
+        actor_class: Type[T],
         *args: Any,
         **kwargs: Any,
-    ) -> RPCClient:
+    ) -> T:
         """Deploy an actor to the cluster and return an RPC client.
 
         Args:
