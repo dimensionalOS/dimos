@@ -16,12 +16,10 @@ from typing import Protocol
 
 import pytest
 
-from dimos.mapping.spec import Global3DMapSpec
-from dimos.navigation.spec import NavSpec
-from dimos.perception.spec import PointcloudPerception
+from dimos.spec import Global3DMap, Nav, Pointcloud
 
 
-class RosNavSpec(NavSpec, PointcloudPerception, Global3DMapSpec, Protocol):
+class RosNavSpec(Nav, Pointcloud, Global3DMap, Protocol):
     pass
 
 

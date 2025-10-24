@@ -12,20 +12,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Cast, Optional, Type, TypeVar
+from typing import TYPE_CHECKING, cast, Optional, Type, TypeVar
 
 from dimos import core
-from dimos.core import DimosCluster, Module
 from dimos.core.resource import Resource
+
+if TYPE_CHECKING:
+    from dimos.core import DimosCluster, Module
 
 T = TypeVar("T", bound="Module")
 
 
 class Dimos(Resource):
-    _client: Optional[DimosCluster] = None
+    _client: Optional["DimosCluster"] = None
     _n: Optional[int] = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[Type[Module], Module] = {}
+    _deployed_modules: dict[Type["Module"], "Module"] = {}
 
     def __init__(self, n: Optional[int] = None, memory_limit: str = "auto"):
         self._n = n
