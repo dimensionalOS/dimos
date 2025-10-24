@@ -36,7 +36,7 @@ Key Insight:
 import time
 import threading
 import math
-from typing import List, Tuple, Optional
+from typing import List, Optional
 from dataclasses import dataclass
 
 from xarm.wrapper import XArmAPI
@@ -48,6 +48,13 @@ from dimos.msgs.geometry_msgs import WrenchStamped
 from dimos.utils.logging_config import setup_logger
 from reactivex.disposable import Disposable, CompositeDisposable
 
+from .components import (
+    MotionControlComponent,
+    StateQueryComponent,
+    SystemControlComponent,
+    KinematicsComponent,
+)
+
 logger = setup_logger(__file__)
 
 
@@ -55,7 +62,7 @@ logger = setup_logger(__file__)
 class XArmDriverConfig(ModuleConfig):
     """Configuration for xArm driver."""
 
-    ip_address: str = "192.168.1.185"  # xArm IP address
+    ip_address: str = "192.168.1.235"  # xArm IP address
     is_radian: bool = True  # Use radians (True) or degrees (False)
     control_frequency: float = 100.0  # Control loop frequency in Hz (for sending commands)
     joint_state_rate: float = (
@@ -64,7 +71,7 @@ class XArmDriverConfig(ModuleConfig):
     robot_state_rate: float = 10.0  # Robot state publishing rate in Hz
     report_type: str = "normal"  # SDK report type: 'dev'=100Hz, 'rich'=5Hz+torque, 'normal'=5Hz
     enable_on_start: bool = True  # Enable servo mode on start
-    num_joints: int = 7  # Number of joints (5, 6, or 7)
+    num_joints: int = 6  # Number of joints (5, 6, or 7)
     check_joint_limit: bool = True  # Check joint limits
     check_cmdnum_limit: bool = True  # Check command queue limit
     max_cmdnum: int = 512  # Maximum command queue size
@@ -72,14 +79,27 @@ class XArmDriverConfig(ModuleConfig):
     velocity_duration: float = 0.1  # Duration for velocity commands (seconds)
 
 
-class XArmDriver(Module):
+class XArmDriver(
+    MotionControlComponent,
+    StateQueryComponent,
+    SystemControlComponent,
+    KinematicsComponent,
+    Module,
+):
     """
     Real-time driver for xArm manipulators (xArm5/6/7).
 
-    This driver implements a real-time control architecture:
+    This driver implements a real-time control architecture with component-based design:
+    - Core driver: Handles threads, callbacks, and connection management
+    - MotionControlComponent: Motion control RPC methods
+    - StateQueryComponent: State query RPC methods
+    - SystemControlComponent: System control RPC methods
+    - KinematicsComponent: Kinematics RPC methods
+
+    Architecture:
     - Subscribes to joint commands and publishes joint states
     - Runs a 100Hz control loop for servo angle control
-    - Provides RPC methods for xArm SDK API access
+    - Provides RPC methods for xArm SDK API access via components
     """
 
     default_config = XArmDriverConfig
@@ -131,9 +151,6 @@ class XArmDriver(Module):
 
         # Joint state message (initialized in _init_publisher)
         self._joint_state_msg: Optional[JointState] = None
-
-        # Firmware version cache
-        self._firmware_version: Optional[Tuple[int, int, int]] = None
 
         logger.info(
             f"XArmDriver initialized for {self.config.num_joints}-joint arm at "
@@ -373,44 +390,13 @@ class XArmDriver(Module):
         Returns:
             True if firmware >= specified version
         """
-        if self._firmware_version is None:
-            try:
-                code, version_str = self.arm.get_version()
-                if code == 0 and version_str:
-                    # Parse version string
-                    # Can be "v1.8.103" or "1.8.103" or "6,6,XI1303,DC1305,v2.6.0"
-                    version_str = version_str.strip()
-
-                    # Try to find version pattern (v2.6.0 or similar)
-                    import re
-
-                    match = re.search(r"v?(\d+)\.(\d+)\.(\d+)", version_str)
-                    if match:
-                        self._firmware_version = (
-                            int(match.group(1)),
-                            int(match.group(2)),
-                            int(match.group(3)),
-                        )
-                    else:
-                        logger.warning(f"Could not parse firmware version: {version_str}")
-                        return False
-                else:
-                    logger.warning("Could not retrieve firmware version")
-                    return False
-            except Exception as e:
-                logger.warning(f"Error getting firmware version: {e}")
-                return False
-
-        if self._firmware_version:
-            fw_maj, fw_min, fw_pat = self._firmware_version
-            if fw_maj > major:
-                return True
-            elif fw_maj == major:
-                if fw_min > minor:
-                    return True
-                elif fw_min == minor:
-                    return fw_pat >= patch
-        return False
+        # Use SDK's version_number tuple (populated on connection)
+        fw_maj, fw_min, fw_pat = self.arm.version_number
+        return (
+            fw_maj > major
+            or (fw_maj == major and fw_min > minor)
+            or (fw_maj == major and fw_min == minor and fw_pat >= patch)
+        )
 
     def _start_joint_state_thread(self):
         """
@@ -419,10 +405,7 @@ class XArmDriver(Module):
         This thread ONLY reads and publishes joint states.
         """
         # Determine joint state rate based on report type
-        if self.config.control_frequency < 0:
-            joint_state_rate = 100 if self.config.report_type == "dev" else 5
-        else:
-            joint_state_rate = self.config.control_frequency
+        joint_state_rate = self.config.control_frequency
 
         logger.info(f"Starting joint state thread at {joint_state_rate}Hz")
 
@@ -924,340 +907,11 @@ class XArmDriver(Module):
             logger.debug(f"FT sensor data not available: {e}")
 
     # =========================================================================
-    # RPC Methods: Control Commands
+    # RPC Methods
     # =========================================================================
-
-    @rpc
-    def set_joint_angles(self, angles: List[float]) -> Tuple[int, str]:
-        """
-        Set joint angles (RPC method).
-
-        Args:
-            angles: List of joint angles (in radians if is_radian=True)
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            code = self.arm.set_servo_angle_j(angles=angles, is_radian=self.config.is_radian)
-            msg = "Success" if code == 0 else f"Error code: {code}"
-            return (code, msg)
-        except Exception as e:
-            logger.error(f"set_joint_angles failed: {e}")
-            return (-1, str(e))
-
-    @rpc
-    def set_joint_velocities(self, velocities: List[float]) -> Tuple[int, str]:
-        """
-        Set joint velocities (RPC method).
-        Note: Requires velocity control mode.
-
-        Args:
-            velocities: List of joint velocities (rad/s)
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            # For velocity control, you would use vc_set_joint_velocity
-            # This requires mode 4 (joint velocity control)
-            code = self.arm.vc_set_joint_velocity(
-                speeds=velocities, is_radian=self.config.is_radian
-            )
-            msg = "Success" if code == 0 else f"Error code: {code}"
-            return (code, msg)
-        except Exception as e:
-            logger.error(f"set_joint_velocities failed: {e}")
-            return (-1, str(e))
-
-    @rpc
-    def get_joint_state(self) -> Optional[JointState]:
-        """
-        Get the current joint state (RPC method).
-
-        Returns:
-            Current JointState or None
-        """
-        with self._joint_state_lock:
-            return self._joint_states_
-
-    @rpc
-    def get_robot_state(self) -> Optional[RobotState]:
-        """
-        Get the current robot state (RPC method).
-
-        Returns:
-            Current RobotState or None
-        """
-        with self._joint_state_lock:
-            return self._robot_state_
-
-    @rpc
-    def enable_servo_mode(self) -> Tuple[int, str]:
-        """
-        Enable servo mode (mode 1).
-        Required for set_servo_angle_j to work.
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            code = self.arm.set_mode(1)
-            if code == 0:
-                logger.info("Servo mode enabled")
-                return (code, "Servo mode enabled")
-            else:
-                logger.warning(f"Failed to enable servo mode: code={code}")
-                return (code, f"Error code: {code}")
-        except Exception as e:
-            logger.error(f"enable_servo_mode failed: {e}")
-            return (-1, str(e))
-
-    @rpc
-    def disable_servo_mode(self) -> Tuple[int, str]:
-        """
-        Disable servo mode (set to position mode).
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            code = self.arm.set_mode(0)
-            if code == 0:
-                logger.info("Servo mode disabled (position mode)")
-                return (code, "Position mode enabled")
-            else:
-                logger.warning(f"Failed to disable servo mode: code={code}")
-                return (code, f"Error code: {code}")
-        except Exception as e:
-            logger.error(f"disable_servo_mode failed: {e}")
-            return (-1, str(e))
-
-    @rpc
-    def enable_velocity_control_mode(self) -> Tuple[int, str]:
-        """
-        Enable velocity control mode (mode 4).
-        Required for vc_set_joint_velocity to work.
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            # Step 1: Set mode to 4 (velocity control)
-            code = self.arm.set_mode(4)
-            if code != 0:
-                logger.warning(f"Failed to set mode to 4: code={code}")
-                return (code, f"Failed to set mode: code={code}")
-
-            # Step 2: Set state to 0 (ready/sport mode) - this activates the mode!
-            code = self.arm.set_state(0)
-            if code == 0:
-                # Switch driver to velocity control
-                self.config.velocity_control = True
-                logger.info("Velocity control mode enabled (mode=4, state=0)")
-                return (code, "Velocity control mode enabled")
-            else:
-                logger.warning(f"Failed to set state to 0: code={code}")
-                return (code, f"Failed to set state: code={code}")
-        except Exception as e:
-            logger.error(f"enable_velocity_control_mode failed: {e}")
-            return (-1, str(e))
-
-    @rpc
-    def disable_velocity_control_mode(self) -> Tuple[int, str]:
-        """
-        Disable velocity control mode and return to position control (mode 1).
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            # Step 1: Set state to 0 (sport mode) to allow mode change
-            code = self.arm.set_state(0)
-            if code != 0:
-                logger.warning(f"Failed to set state to 0: code={code}")
-                # Continue anyway, try to set mode
-
-            # Step 2: Set mode to 1 (servo/position control)
-            code = self.arm.set_mode(1)
-            if code == 0:
-                # Switch driver to position control
-                self.config.velocity_control = False
-                logger.info("Position control mode enabled (state=0, mode=1)")
-                return (code, "Position control mode enabled")
-            else:
-                logger.warning(f"Failed to disable velocity control mode: code={code}")
-                return (code, f"Error code: {code}")
-        except Exception as e:
-            logger.error(f"disable_velocity_control_mode failed: {e}")
-            return (-1, str(e))
-
+    # All RPC methods have been extracted to component classes:
+    # - MotionControlComponent: Motion control methods (set_joint_angles, etc.)
+    # - StateQueryComponent: State query methods (get_joint_state, etc.)
+    # - SystemControlComponent: System control methods (enable_servo_mode, etc.)
+    # - KinematicsComponent: Kinematics methods (get_inverse_kinematics, etc.)
     # =========================================================================
-    # RPC Methods: Additional xArm SDK API Functions
-    # =========================================================================
-
-    @rpc
-    def motion_enable(self, enable: bool = True) -> Tuple[int, str]:
-        """Enable or disable arm motion."""
-        try:
-            code = self.arm.motion_enable(enable=enable)
-            msg = f"Motion {'enabled' if enable else 'disabled'}"
-            return (code, msg if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def set_state(self, state: int) -> Tuple[int, str]:
-        """
-        Set robot state.
-
-        Args:
-            state: 0=ready, 3=pause, 4=stop
-        """
-        try:
-            code = self.arm.set_state(state=state)
-            return (code, "Success" if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def set_joint_command(self, positions: List[float]) -> Tuple[int, str]:
-        """
-        Manually set the joint command (for testing).
-        This updates the shared joint_cmd that the control loop reads.
-
-        Args:
-            positions: List of joint positions in radians
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            if len(positions) != self.config.num_joints:
-                return (-1, f"Expected {self.config.num_joints} positions, got {len(positions)}")
-
-            with self._joint_cmd_lock:
-                self._joint_cmd_ = list(positions)
-
-            logger.info(f"✓ Joint command set: {[f'{math.degrees(p):.2f}°' for p in positions]}")
-            return (0, f"Joint command updated")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def clean_error(self) -> Tuple[int, str]:
-        """Clear error codes."""
-        try:
-            code = self.arm.clean_error()
-            return (code, "Errors cleared" if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def clean_warn(self) -> Tuple[int, str]:
-        """Clear warning codes."""
-        try:
-            code = self.arm.clean_warn()
-            return (code, "Warnings cleared" if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def get_position(self) -> Tuple[int, Optional[List[float]]]:
-        """
-        Get TCP position [x, y, z, roll, pitch, yaw].
-
-        Returns:
-            Tuple of (code, position)
-        """
-        try:
-            code, position = self.arm.get_position(is_radian=self.config.is_radian)
-            return (code, list(position) if code == 0 else None)
-        except Exception as e:
-            logger.error(f"get_position failed: {e}")
-            return (-1, None)
-
-    @rpc
-    def set_position(self, position: List[float], wait: bool = False) -> Tuple[int, str]:
-        """
-        Set TCP position [x, y, z, roll, pitch, yaw].
-
-        Args:
-            position: Target position
-            wait: Wait for motion to complete
-
-        Returns:
-            Tuple of (code, message)
-        """
-        try:
-            code = self.arm.set_position(*position, is_radian=self.config.is_radian, wait=wait)
-            return (code, "Success" if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def move_gohome(self, wait: bool = False) -> Tuple[int, str]:
-        """Move to home position."""
-        try:
-            code = self.arm.move_gohome(wait=wait, is_radian=self.config.is_radian)
-            return (code, "Moving home" if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def emergency_stop(self) -> Tuple[int, str]:
-        """Emergency stop the arm."""
-        try:
-            code = self.arm.emergency_stop()
-            return (code, "Emergency stop" if code == 0 else f"Error code: {code}")
-        except Exception as e:
-            return (-1, str(e))
-
-    @rpc
-    def get_version(self) -> Tuple[int, Optional[str]]:
-        """Get firmware version."""
-        try:
-            code, version = self.arm.get_version()
-            return (code, version if code == 0 else None)
-        except Exception as e:
-            return (-1, None)
-
-    @rpc
-    def get_inverse_kinematics(self, pose: List[float]) -> Tuple[int, Optional[List[float]]]:
-        """
-        Compute inverse kinematics.
-
-        Args:
-            pose: [x, y, z, roll, pitch, yaw]
-
-        Returns:
-            Tuple of (code, joint_angles)
-        """
-        try:
-            code, angles = self.arm.get_inverse_kinematics(
-                pose, input_is_radian=self.config.is_radian, return_is_radian=self.config.is_radian
-            )
-            return (code, list(angles) if code == 0 else None)
-        except Exception as e:
-            return (-1, None)
-
-    @rpc
-    def get_forward_kinematics(self, angles: List[float]) -> Tuple[int, Optional[List[float]]]:
-        """
-        Compute forward kinematics.
-
-        Args:
-            angles: Joint angles
-
-        Returns:
-            Tuple of (code, pose)
-        """
-        try:
-            code, pose = self.arm.get_forward_kinematics(
-                angles,
-                input_is_radian=self.config.is_radian,
-                return_is_radian=self.config.is_radian,
-            )
-            return (code, list(pose) if code == 0 else None)
-        except Exception as e:
-            return (-1, None)
