@@ -16,8 +16,8 @@ import logging
 import time
 
 from dimos import agents2
-from dimos.core import DimosCluster, start, wait_exit
-from dimos.perception.detection import module3D, moduleDB
+from dimos.core import DimosCluster
+from dimos.perception.detection import moduleDB
 from dimos.robot import foxglove_bridge
 from dimos.robot.unitree_webrtc.connection import go2
 from dimos.utils.logging_config import setup_logger
@@ -38,22 +38,3 @@ def deploy(dimos: DimosCluster, ip: str):
 
     agent = agents2.deploy(dimos)
     agent.register_skills(detector)
-
-
-if __name__ == "__main__":
-    import argparse
-    import os
-
-    from dotenv import load_dotenv
-
-    load_dotenv()
-
-    parser = argparse.ArgumentParser(description="Unitree G1 Humanoid Robot Control")
-    parser.add_argument("--ip", default=os.getenv("ROBOT_IP"), help="Robot IP address")
-
-    args = parser.parse_args()
-
-    dimos = start(8)
-    deploy(dimos, args.ip)
-    wait_exit()
-    dimos.close_all()
