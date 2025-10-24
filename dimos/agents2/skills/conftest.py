@@ -12,19 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+
 import pytest
 import reactivex as rx
-from functools import partial
 from reactivex.scheduler import ThreadPoolScheduler
 
+from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
-from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.mapping.types import LatLon
+from dimos.msgs.sensor_msgs import Image
 from dimos.robot.robot import GpsRobot
 from dimos.robot.unitree_webrtc.run_agents2 import SYSTEM_PROMPT
 from dimos.utils.data import get_data
-from dimos.msgs.sensor_msgs import Image
 
 
 @pytest.fixture(autouse=True)
@@ -65,8 +66,13 @@ def fake_gps_position_stream():
 
 
 @pytest.fixture
-def navigation_skill_container(fake_robot, fake_video_stream):
-    container = NavigationSkillContainer(fake_robot, fake_video_stream)
+def fake_detection_module(mocker):
+    return mocker.MagicMock()
+
+
+@pytest.fixture
+def navigation_skill_container(fake_robot, fake_video_stream, fake_detection_module):
+    container = NavigationSkillContainer(fake_robot, fake_video_stream, fake_detection_module)
     container.start()
     yield container
     container.stop()

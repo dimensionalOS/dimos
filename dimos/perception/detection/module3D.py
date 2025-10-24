@@ -24,7 +24,7 @@ from dimos import spec
 from dimos.agents2 import skill
 from dimos.core import DimosCluster, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type import (
