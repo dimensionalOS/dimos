@@ -183,3 +183,60 @@ def test_build_happy_path():
 
     finally:
         coordinator.stop()
+
+
+def test_remapping():
+    """Test that remapping connections works correctly."""
+    pubsub.lcm.autoconf()
+
+    # Define test modules with connections that will be remapped
+    class SourceModule(Module):
+        color_image: Out[Data1] = None  # Will be remapped to 'remapped_data'
+
+    class TargetModule(Module):
+        remapped_data: In[Data1] = None  # Receives the remapped connection
+
+    # Create blueprint with remapping
+    blueprint_set = autoconnect(
+        SourceModule.blueprint(),
+        TargetModule.blueprint(),
+    ).with_remappings(
+        [
+            (SourceModule, "color_image", "remapped_data"),
+        ]
+    )
+
+    # Verify remappings are stored correctly
+    assert (SourceModule, "color_image") in blueprint_set.remappings
+    assert blueprint_set.remappings[(SourceModule, "color_image")] == "remapped_data"
+
+    # Verify that remapped names are used in name resolution
+    assert ("remapped_data", Data1) in blueprint_set._all_name_types
+    # The original name shouldn't be in the name types since it's remapped
+    assert ("color_image", Data1) not in blueprint_set._all_name_types
+
+    # Build and verify connections work
+    coordinator = blueprint_set.build(GlobalConfig())
+
+    try:
+        source_instance = coordinator.get_instance(SourceModule)
+        target_instance = coordinator.get_instance(TargetModule)
+
+        assert source_instance is not None
+        assert target_instance is not None
+
+        # Both should have transports set
+        assert source_instance.color_image.transport is not None
+        assert target_instance.remapped_data.transport is not None
+
+        # They should be using the same transport (connected)
+        assert (
+            source_instance.color_image.transport.topic
+            == target_instance.remapped_data.transport.topic
+        )
+
+        # The topic should be /remapped_data since that's the remapped name
+        assert target_instance.remapped_data.transport.topic == "/remapped_data"
+
+    finally:
+        coordinator.stop()
