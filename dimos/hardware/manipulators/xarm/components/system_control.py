@@ -89,24 +89,29 @@ class SystemControlComponent:
             Tuple of (code, message)
         """
         try:
+            # IMPORTANT: Set config flag BEFORE changing robot mode
+            # This prevents control loop from sending wrong command type during transition
+            self.config.velocity_control = True
+
             # Step 1: Set mode to 4 (velocity control)
             code = self.arm.set_mode(4)
             if code != 0:
                 logger.warning(f"Failed to set mode to 4: code={code}")
+                self.config.velocity_control = False  # Revert on failure
                 return (code, f"Failed to set mode: code={code}")
 
             # Step 2: Set state to 0 (ready/sport mode) - this activates the mode!
             code = self.arm.set_state(0)
             if code == 0:
-                # Switch driver to velocity control
-                self.config.velocity_control = True
                 logger.info("Velocity control mode enabled (mode=4, state=0)")
                 return (code, "Velocity control mode enabled")
             else:
                 logger.warning(f"Failed to set state to 0: code={code}")
+                self.config.velocity_control = False  # Revert on failure
                 return (code, f"Failed to set state: code={code}")
         except Exception as e:
             logger.error(f"enable_velocity_control_mode failed: {e}")
+            self.config.velocity_control = False  # Revert on exception
             return (-1, str(e))
 
     @rpc
@@ -118,24 +123,33 @@ class SystemControlComponent:
             Tuple of (code, message)
         """
         try:
-            # Step 1: Set state to 0 (sport mode) to allow mode change
-            code = self.arm.set_state(0)
-            if code != 0:
-                logger.warning(f"Failed to set state to 0: code={code}")
-                # Continue anyway, try to set mode
+            # IMPORTANT: Set config flag BEFORE changing robot mode
+            # This prevents control loop from sending velocity commands after mode change
+            self.config.velocity_control = False
+
+            # Step 1: Clear any errors that may have occurred
+            self.arm.clean_error()
+            self.arm.clean_warn()
 
             # Step 2: Set mode to 1 (servo/position control)
             code = self.arm.set_mode(1)
+            if code != 0:
+                logger.warning(f"Failed to set mode to 1: code={code}")
+                self.config.velocity_control = True  # Revert on failure
+                return (code, f"Failed to set mode: code={code}")
+
+            # Step 3: Set state to 0 (ready) - CRITICAL for accepting new commands
+            code = self.arm.set_state(0)
             if code == 0:
-                # Switch driver to position control
-                self.config.velocity_control = False
                 logger.info("Position control mode enabled (state=0, mode=1)")
                 return (code, "Position control mode enabled")
             else:
-                logger.warning(f"Failed to disable velocity control mode: code={code}")
-                return (code, f"Error code: {code}")
+                logger.warning(f"Failed to set state to 0: code={code}")
+                self.config.velocity_control = True  # Revert on failure
+                return (code, f"Failed to set state: code={code}")
         except Exception as e:
             logger.error(f"disable_velocity_control_mode failed: {e}")
+            self.config.velocity_control = True  # Revert on exception
             return (-1, str(e))
 
     @rpc
