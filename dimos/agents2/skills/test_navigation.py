@@ -13,10 +13,13 @@
 # limitations under the License.
 
 
+import pytest
+
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.utils.transform_utils import euler_to_quaternion
 
 
+# @pytest.mark.skip
 def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker):
     navigation_skill_container._cancel_goal = mocker.Mock()
     navigation_skill_container._stop_exploration = mocker.Mock()
