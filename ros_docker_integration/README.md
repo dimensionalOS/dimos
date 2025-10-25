@@ -4,10 +4,9 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
 
 ## Prerequisites
 
-- Docker with `docker compose` support
-- NVIDIA GPU with drivers installed
-- NVIDIA Container Toolkit (nvidia-docker2)
-- X11 server for GUI applications (RVIZ, Unity simulator)
+1. **Install Docker with `docker compose` support**. Follow the [official Docker installation guide](https://docs.docker.com/engine/install/).
+2. **Install NVIDIA GPU drivers**. See [NVIDIA driver installation](https://www.nvidia.com/download/index.aspx).
+3. **Install NVIDIA Container Toolkit**. Follow the [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
 ## Quick Start
 
@@ -20,53 +19,12 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
    - Build a Docker image with both ROS and DimOS dependencies
    - Set up the environment for both systems
 
+   Note that the build will take over 10 minutes and build an image over 30GiB.
+
 2. **Run the container:**
    ```bash
-   # Interactive bash shell (default)
-   ./start.sh
-
-   # Start with ROS route planner
-   ./start.sh --ros-planner
-
-   # Start with DimOS navigation bot
-   ./start.sh --dimos
-
-   # Start both systems (basic)
    ./start.sh --all
-
-   # Start both systems with improved shutdown handling (recommended)
-   ./start_clean.sh --all
    ```
-
-## Directory Structure
-
-```
-ros_docker_integration/
-├── Dockerfile              # Combined Dockerfile for ROS + DimOS
-├── docker-compose.yml      # Docker Compose configuration
-├── build.sh               # Script to clone repos and build image
-├── start.sh               # Script to run the container (basic)
-├── start_clean.sh         # Script with improved shutdown handling
-├── run_both.sh            # Bash helper to run both ROS and DimOS
-├── ros_launch_wrapper.py  # Python wrapper for clean ROS shutdown
-├── run_command.sh         # Helper script for running custom commands
-├── shell.sh              # Quick access to interactive shell
-├── test_integration.sh    # Integration test script
-├── debug.sh              # Debug script to check paths and setup
-├── debug_paths.sh        # Internal debug script (runs in container)
-├── README.md              # This file
-├── autonomy_stack_mecanum_wheel_platform/  # (Created by build.sh)
-├── unity_models/          # (Optional) Unity environment models
-├── bagfiles/             # (Optional) ROS bag files
-└── config/               # (Optional) Configuration files
-```
-
-## Unity Models (Optional)
-
-For the Unity simulator to work properly, download the Unity environment models from:
-https://drive.google.com/drive/folders/1G1JYkccvoSlxyySuTlPfvmrWoJUO8oSs
-
-Extract them to: `ros_docker_integration/unity_models/`
 
 ## Manual Commands
 
