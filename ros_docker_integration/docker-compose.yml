@@ -1,0 +1,66 @@
+services:
+  dimos_autonomy_stack:
+    build:
+      context: ..
+      dockerfile: ros_docker_integration/Dockerfile
+    image: dimos_autonomy_stack:jazzy
+    container_name: dimos_autonomy_container
+
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Network configuration - required for ROS communication
+    network_mode: host
+
+    # Privileged mode for hardware access (required for real robot and some devices)
+    privileged: true
+
+    # GPU support (NVIDIA runtime)
+    runtime: nvidia
+
+    # Environment variables for display and ROS
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - ROS_DOMAIN_ID=0
+      - ROBOT_CONFIG_PATH=unitree/unitree_g1
+
+    # Volume mounts
+    volumes:
+      # X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+
+      # Mount Unity environment models (if available)
+      - ./unity_models:/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src/base_autonomy/vehicle_simulator/mesh/unity:rw
+
+      # Mount the autonomy stack source for development (optional - comment out if not needed)
+      - ./autonomy_stack_mecanum_wheel_platform/src:/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src:rw
+
+      # Mount dimos source code for live development
+      - ../dimos:/home/p/pro/dimensional/dimos/dimos:rw
+
+      # Mount bagfiles directory (optional)
+      - ./bagfiles:/ros2_ws/bagfiles:rw
+
+      # Mount config files for easy editing
+      - ./config:/ros2_ws/config:rw
+
+    # Device access (for joystick controllers, serial devices, and cameras)
+    devices:
+      - /dev/input:/dev/input
+      - /dev/dri:/dev/dri
+      # Uncomment if using real robot with motor controller
+      # - /dev/ttyACM0:/dev/ttyACM0
+      # - /dev/ttyUSB0:/dev/ttyUSB0
+      # Uncomment if using cameras
+      # - /dev/video0:/dev/video0
+
+    # Working directory
+    working_dir: /home/p/pro/dimensional/dimos
+
+    # Command to run (can be overridden)
+    command: bash
