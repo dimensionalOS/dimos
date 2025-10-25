@@ -21,10 +21,10 @@ This module demonstrates how to:
 - Implement a simple control loop
 
 Usage:
-    cluster = core.start(1)
+    dimos = core.start(1)
 
     # Deploy trajectory generator
-    traj_gen = cluster.deploy(
+    traj_gen = dimos.deploy(
         SampleTrajectoryGenerator,
         num_joints=6,
         control_mode="position",  # or "velocity"

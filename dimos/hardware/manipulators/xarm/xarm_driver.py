@@ -420,13 +420,6 @@ class XArmDriver(
         Returns:
             True if robot is ready for commands, False otherwise
         """
-        # Initialize tracking variables if needed
-        if not hasattr(self, "_last_not_ready"):
-            self._last_not_ready = False
-        if not hasattr(self, "_last_state"):
-            self._last_state = self.curr_state
-        if not hasattr(self, "_last_mode"):
-            self._last_mode = self.curr_mode
 
         # Check for errors first
         if not self._xarm_is_ready_read():
