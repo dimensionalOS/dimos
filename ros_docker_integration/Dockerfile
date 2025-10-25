@@ -93,8 +93,7 @@ RUN /bin/bash -c "source /opt/dimos-venv/bin/activate && \
 # Copy helper scripts
 COPY ros_docker_integration/run_both.sh /usr/local/bin/run_both.sh
 COPY ros_docker_integration/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
-COPY ros_docker_integration/debug_paths.sh /usr/local/bin/debug_paths.sh
-RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py /usr/local/bin/debug_paths.sh
+RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py
 
 # Set up entrypoint script
 RUN echo '#!/bin/bash\n\
