@@ -398,7 +398,7 @@ def main():
         ts=time.time(),
         frame_id="map",
         position=Vector3(1.0, 1.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 0.0, 0.0),
+        orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
 
     logger.info(f"Sending navigation goal to: (1.0, 1.0, 0.0)")
