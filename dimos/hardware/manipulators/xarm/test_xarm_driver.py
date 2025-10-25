@@ -16,7 +16,7 @@
 Test script for XArmDriver with full dimos deployment.
 
 This script properly deploys the XArmDriver module using dimos infrastructure:
-1. dimos.start() - Initialize dimos cluster
+1. dimos.start() - Initialize dimos dimos
 2. dimos.deploy() - Deploy XArmDriver module
 3. Set LCM transports for output topics
 4. Test RPC methods and state monitoring
@@ -55,13 +55,13 @@ def test_basic_connection():
     # Get IP from environment or use default
     ip_address = os.getenv("XARM_IP", "192.168.1.235")
 
-    # Start dimos cluster with 1 worker
-    logger.info("Starting dimos cluster...")
-    cluster = core.start(1)
+    # Start dimos with 1 worker
+    logger.info("Starting dimos...")
+    dimos = core.start(1)
 
     # Deploy XArmDriver using dimos.deploy()
     logger.info(f"Deploying XArmDriver for {ip_address}...")
-    driver = cluster.deploy(
+    driver = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
         control_frequency=100.0,
@@ -92,7 +92,7 @@ def test_basic_connection():
         logger.info(f"✓ Firmware version: {version}")
     else:
         logger.error(f"✗ Failed to get firmware version: code={code}")
-        cluster.stop()
+        dimos.stop()
         return False
 
     # Get robot state via RPC
@@ -106,10 +106,10 @@ def test_basic_connection():
     else:
         logger.warning("✗ No robot state available yet")
 
-    # Stop the driver and cluster
-    logger.info("Stopping driver and cluster...")
+    # Stop the driver and dimos
+    logger.info("Stopping driver and dimos...")
     driver.stop()
-    cluster.stop()
+    dimos.stop()
 
     logger.info("✓ TEST 1 PASSED\n")
     return True
@@ -124,13 +124,13 @@ def test_joint_state_reading():
 
     ip_address = os.getenv("XARM_IP", "192.168.1.235")
 
-    # Start dimos cluster
-    logger.info("Starting dimos cluster...")
-    cluster = core.start(1)
+    # Start dimos
+    logger.info("Starting dimos...")
+    dimos = core.start(1)
 
     # Deploy driver
     logger.info("Deploying XArmDriver...")
-    driver = cluster.deploy(
+    driver = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
         control_frequency=100.0,
@@ -215,7 +215,7 @@ def test_joint_state_reading():
     else:
         logger.error("✗ No joint states received via LCM")
         driver.stop()
-        cluster.stop()
+        dimos.stop()
         return False
 
     # Validate robot state messages
@@ -238,7 +238,7 @@ def test_joint_state_reading():
         )
 
     driver.stop()
-    cluster.stop()
+    dimos.stop()
     logger.info("✓ TEST 2 PASSED\n")
     return True
 
@@ -252,11 +252,11 @@ def test_command_sending():
 
     ip_address = os.getenv("XARM_IP", "192.168.1.235")
 
-    # Start dimos cluster
-    cluster = core.start(1)
+    # Start dimos
+    dimos = core.start(1)
 
     # Deploy driver
-    driver = cluster.deploy(
+    driver = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
         control_frequency=100.0,
@@ -311,7 +311,7 @@ def test_command_sending():
     logger.info("      and is environment-dependent. The driver API is working correctly.")
 
     driver.stop()
-    cluster.stop()
+    dimos.stop()
     logger.info("✓ TEST 3 PASSED\n")
     return True
 
@@ -325,11 +325,11 @@ def test_rpc_methods():
 
     ip_address = os.getenv("XARM_IP", "192.168.1.235")
 
-    # Start dimos cluster
-    cluster = core.start(1)
+    # Start dimos
+    dimos = core.start(1)
 
     # Deploy driver
-    driver = cluster.deploy(
+    driver = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
         control_frequency=100.0,
@@ -381,7 +381,7 @@ def test_rpc_methods():
         logger.warning(f"⚠ clean_error: code={code}, msg={msg}")
 
     driver.stop()
-    cluster.stop()
+    dimos.stop()
     logger.info("✓ TEST 4 PASSED\n")
     return True
 
@@ -465,13 +465,13 @@ def run_driver():
     logger.info(f"Using xArm at IP: {ip_address}")
     logger.info("")
 
-    # Start dimos cluster
-    logger.info("Starting dimos cluster...")
-    cluster = core.start(1)
+    # Start dimos
+    logger.info("Starting dimos...")
+    dimos = core.start(1)
 
     # Deploy XArmDriver
     logger.info(f"Deploying XArmDriver for {ip_address}...")
-    driver = cluster.deploy(
+    driver = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
         report_type="dev",
@@ -510,7 +510,7 @@ def run_driver():
     except KeyboardInterrupt:
         logger.info("\n\nShutting down...")
         driver.stop()
-        cluster.stop()
+        dimos.stop()
         logger.info("✓ Driver stopped")
 
 

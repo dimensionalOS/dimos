@@ -430,13 +430,13 @@ def main():
     ip_address = os.getenv("XARM_IP", "192.168.1.235")
     num_joints = 6
 
-    # Start dimos cluster
-    logger.info("Starting dimos cluster...")
-    cluster = core.start(1)
+    # Start dimos
+    logger.info("Starting dimos...")
+    dimos = core.start(1)
 
     # Deploy xArm driver
     logger.info("Deploying XArmDriver...")
-    xarm = cluster.deploy(
+    xarm = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
         report_type="dev",
@@ -460,7 +460,7 @@ def main():
 
     # Deploy trajectory generator
     logger.info("Deploying SampleTrajectoryGenerator...")
-    traj_gen = cluster.deploy(
+    traj_gen = dimos.deploy(
         SampleTrajectoryGenerator,
         num_joints=num_joints,
         control_mode="position",
@@ -495,8 +495,8 @@ def main():
         traj_gen.stop()
         print("Stopping xArm driver...")
         xarm.stop()
-        print("Stopping cluster...")
-        cluster.stop()
+        print("Stopping dimos...")
+        dimos.stop()
         print("✓ Shutdown complete\n")
 
 
