@@ -99,7 +99,7 @@ sleep 5
 
 # Start DimOS
 echo "Starting DimOS Unitree G1 controller..."
-python /home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py &
+python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py &
 DIMOS_PID=$!
 
 echo "Both systems are running. Press Ctrl+C to stop."

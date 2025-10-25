@@ -61,7 +61,7 @@ case $MODE in
         ;;
     "dimos")
         echo -e "${YELLOW}Starting with DimOS Unitree G1 controller...${NC}"
-        CMD="python /home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py"
+        CMD="python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py"
         ;;
     "all")
         echo -e "${YELLOW}Starting both ROS planner and DimOS with improved signal handling...${NC}"
@@ -73,7 +73,7 @@ case $MODE in
         echo ""
         echo "You can manually run:"
         echo "  ROS planner: cd /ros2_ws/src/autonomy_stack_mecanum_wheel_platform && ./system_simulation_with_route_planner.sh"
-        echo "  DimOS: python /home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py"
+        echo "  DimOS: python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py"
         echo "  Both (clean shutdown): python3 /usr/local/bin/ros_launch_wrapper.py"
         echo ""
         CMD="bash"

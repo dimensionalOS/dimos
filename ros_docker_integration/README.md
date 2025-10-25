@@ -82,7 +82,7 @@ cd /ros2_ws/src/autonomy_stack_mecanum_wheel_platform
 source /home/p/pro/dimensional/dimos/.venv/bin/activate
 
 # Run Unitree G1 controller
-python /home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py
+python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py
 
 # Or run other DimOS scripts
 python /home/p/pro/dimensional/dimos/dimos/your_script.py

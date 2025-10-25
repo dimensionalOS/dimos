@@ -29,7 +29,7 @@ echo -e "${YELLOW}Useful commands:${NC}"
 echo "  - ros2 topic list"
 echo "  - ros2 launch base_autonomy unity_simulation_bringup.launch.py"
 echo "  - source /home/p/pro/dimensional/dimos/.venv/bin/activate"
-echo "  - python /home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py"
+echo "  - python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py"
 echo ""
 
 # Go to dimos directory (parent of ros_docker_integration) for docker compose context

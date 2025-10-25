@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Wrapper script to properly handle ROS2 launch file shutdown.
 This script ensures clean shutdown of all ROS nodes when receiving SIGINT.
@@ -10,6 +24,7 @@ import signal
 import subprocess
 import time
 import threading
+
 
 class ROSLaunchWrapper:
     def __init__(self):
@@ -93,7 +108,7 @@ class ROSLaunchWrapper:
         print("Starting ROS route planner...")
         self.ros_process = subprocess.Popen(
             ["bash", "./system_simulation_with_route_planner.sh"],
-            preexec_fn=os.setsid  # Create new process group
+            preexec_fn=os.setsid,  # Create new process group
         )
 
         # Wait for ROS to initialize
@@ -103,7 +118,7 @@ class ROSLaunchWrapper:
         # Start DimOS
         print("Starting DimOS Unitree G1 controller...")
         self.dimos_process = subprocess.Popen(
-            [sys.executable, "/home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py"]
+            [sys.executable, "/home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py"]
         )
 
         print("Both systems are running. Press Ctrl+C to stop.")
@@ -126,6 +141,7 @@ class ROSLaunchWrapper:
                 time.sleep(1)
         except KeyboardInterrupt:
             pass  # Signal handler will take care of cleanup
+
 
 if __name__ == "__main__":
     wrapper = ROSLaunchWrapper()
