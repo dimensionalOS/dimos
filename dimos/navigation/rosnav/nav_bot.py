@@ -391,13 +391,13 @@ def main():
     nav_bot = NavBot()
     nav_bot.start()
 
-    logger.info("\nTesting navigation in 10 seconds...")
-    time.sleep(10)
+    logger.info("\nTesting navigation in 2 seconds...")
+    time.sleep(2)
 
     test_pose = PoseStamped(
         ts=time.time(),
         frame_id="map",
-        position=Vector3(1.0, 1.0, 0.0),
+        position=Vector3(2.0, 2.0, 0.0),
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
 

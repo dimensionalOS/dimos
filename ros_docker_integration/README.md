@@ -52,6 +52,8 @@ ros_docker_integration/
 ├── run_command.sh         # Helper script for running custom commands
 ├── shell.sh              # Quick access to interactive shell
 ├── test_integration.sh    # Integration test script
+├── debug.sh              # Debug script to check paths and setup
+├── debug_paths.sh        # Internal debug script (runs in container)
 ├── README.md              # This file
 ├── autonomy_stack_mecanum_wheel_platform/  # (Created by build.sh)
 ├── unity_models/          # (Optional) Unity environment models
@@ -79,7 +81,7 @@ cd /ros2_ws/src/autonomy_stack_mecanum_wheel_platform
 ### DimOS
 ```bash
 # Activate virtual environment
-source /workspace/dimos/.venv/bin/activate
+source /opt/dimos-venv/bin/activate
 
 # Run navigation bot
 python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py
@@ -119,6 +121,8 @@ The docker-compose.yml mounts the following directories for live development:
 
 Changes to these files will be reflected in the container without rebuilding.
 
+**Note**: The Python virtual environment is installed at `/opt/dimos-venv` inside the container (not in the mounted `/workspace/dimos` directory). This ensures the container uses its own dependencies regardless of whether the host has a `.venv` or not.
+
 ## Environment Variables
 
 The container sets:
@@ -126,6 +130,7 @@ The container sets:
 - `ROBOT_CONFIG_PATH=mechanum_drive`
 - `ROS_DOMAIN_ID=0`
 - `DIMOS_PATH=/workspace/dimos`
+- Python venv: `/opt/dimos-venv`
 - GPU and display variables for GUI support
 
 ## Shutdown Handling
@@ -145,6 +150,14 @@ Uses the Python wrapper `ros_launch_wrapper.py` which provides:
 **Recommended**: Use `./start_clean.sh --all` for the cleanest shutdown experience.
 
 ## Troubleshooting
+
+### DimOS Not Starting
+If DimOS doesn't start when running `./start.sh --all`:
+1. Run the debug script to check paths: `./debug.sh`
+2. Rebuild the image: `./build.sh`
+3. Check if nav_bot.py exists at `/workspace/dimos/dimos/navigation/rosnav/nav_bot.py`
+4. Verify the Python virtual environment exists at `/opt/dimos-venv` (not in `/workspace/dimos/.venv`)
+5. The container uses its own Python environment - host `.venv` is not needed
 
 ### ROS Nodes Not Shutting Down Cleanly
 If you experience issues with ROS nodes hanging during shutdown:

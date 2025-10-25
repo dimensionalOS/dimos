@@ -44,7 +44,7 @@ fi
 echo ""
 echo -e "${YELLOW}Test 2: Checking DimOS Python environment...${NC}"
 docker compose -f ros_docker_integration/docker-compose.yml run --rm dimos_autonomy_stack bash -c "
-    source /workspace/dimos/.venv/bin/activate &&
+    source /opt/dimos-venv/bin/activate &&
     python -c '
 import sys
 print(f\"Python: {sys.version}\")

@@ -99,11 +99,49 @@ sleep 5
 
 # Start DimOS
 echo "Starting DimOS navigation bot..."
-python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py &
-DIMOS_PID=$!
 
-echo "Both systems are running. Press Ctrl+C to stop."
+# Check if the script exists
+if [ ! -f "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py" ]; then
+    echo "ERROR: nav_bot.py not found at /workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
+    echo "Available files in /workspace/dimos/dimos/navigation/:"
+    ls -la /workspace/dimos/dimos/navigation/ 2>/dev/null || echo "Directory not found"
+else
+    echo "Found nav_bot.py, activating virtual environment..."
+    if [ -f "/opt/dimos-venv/bin/activate" ]; then
+        source /opt/dimos-venv/bin/activate
+        echo "Python path: $(which python)"
+        echo "Python version: $(python --version)"
+    else
+        echo "WARNING: Virtual environment not found at /opt/dimos-venv, using system Python"
+    fi
+
+    echo "Starting nav_bot.py..."
+    # Capture any startup errors
+    python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py 2>&1 &
+    DIMOS_PID=$!
+
+    # Give it a moment to start and check if it's still running
+    sleep 2
+    if kill -0 $DIMOS_PID 2>/dev/null; then
+        echo "DimOS started successfully with PID: $DIMOS_PID"
+    else
+        echo "ERROR: DimOS failed to start (process exited immediately)"
+        echo "Check the logs above for error messages"
+        DIMOS_PID=""
+    fi
+fi
+
+echo ""
+if [ -n "$DIMOS_PID" ]; then
+    echo "Both systems are running. Press Ctrl+C to stop."
+else
+    echo "ROS is running (DimOS failed to start). Press Ctrl+C to stop."
+fi
 echo ""
 
-# Wait for both processes
-wait $ROS_PID $DIMOS_PID 2>/dev/null || true
+# Wait for processes
+if [ -n "$DIMOS_PID" ]; then
+    wait $ROS_PID $DIMOS_PID 2>/dev/null || true
+else
+    wait $ROS_PID 2>/dev/null || true
+fi

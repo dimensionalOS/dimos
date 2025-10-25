@@ -117,11 +117,63 @@ class ROSLaunchWrapper:
 
         # Start DimOS
         print("Starting DimOS navigation bot...")
-        self.dimos_process = subprocess.Popen(
-            [sys.executable, "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py"]
-        )
 
-        print("Both systems are running. Press Ctrl+C to stop.")
+        # Check if the script exists
+        nav_bot_path = "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
+        venv_python = "/opt/dimos-venv/bin/python"
+
+        if not os.path.exists(nav_bot_path):
+            print(f"ERROR: nav_bot.py not found at {nav_bot_path}")
+            nav_dir = "/workspace/dimos/dimos/navigation/"
+            if os.path.exists(nav_dir):
+                print(f"Contents of {nav_dir}:")
+                for item in os.listdir(nav_dir):
+                    print(f"  - {item}")
+            else:
+                print(f"Directory not found: {nav_dir}")
+            return
+
+        if not os.path.exists(venv_python):
+            print(f"WARNING: venv Python not found at {venv_python}, using system Python")
+            venv_python = sys.executable
+
+        print(f"Using Python: {venv_python}")
+        print(f"Starting script: {nav_bot_path}")
+
+        # Use the venv Python explicitly
+        try:
+            self.dimos_process = subprocess.Popen(
+                [venv_python, nav_bot_path],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+
+            # Give it a moment to start and check if it's still running
+            time.sleep(2)
+            poll_result = self.dimos_process.poll()
+            if poll_result is not None:
+                # Process exited immediately
+                stdout, stderr = self.dimos_process.communicate(timeout=1)
+                print(f"ERROR: DimOS failed to start (exit code: {poll_result})")
+                if stdout:
+                    print(f"STDOUT: {stdout}")
+                if stderr:
+                    print(f"STDERR: {stderr}")
+                self.dimos_process = None
+            else:
+                print(f"DimOS started successfully (PID: {self.dimos_process.pid})")
+
+        except Exception as e:
+            print(f"ERROR: Failed to start DimOS: {e}")
+            self.dimos_process = None
+
+        if self.dimos_process:
+            print("Both systems are running. Press Ctrl+C to stop.")
+        else:
+            print("ROS is running (DimOS failed to start). Press Ctrl+C to stop.")
         print("")
 
         # Wait for processes
@@ -133,7 +185,7 @@ class ROSLaunchWrapper:
                     print("ROS process has stopped unexpectedly.")
                     self.signal_handler(signal.SIGTERM, None)
                     break
-                if self.dimos_process.poll() is not None:
+                if self.dimos_process and self.dimos_process.poll() is not None:
                     print("DimOS process has stopped.")
                     # DimOS stopping is less critical, but we should still clean up ROS
                     self.signal_handler(signal.SIGTERM, None)
