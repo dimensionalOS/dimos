@@ -386,26 +386,127 @@ class XArmDriver(
 
         Mirrors C++ UFRobotSystemHardware::_xarm_is_ready_read() from ROS driver.
         Logs error changes with human-readable interpretation.
+        Automatically attempts to clear and recover from errors.
 
         Returns:
             True if curr_err == 0, False otherwise
         """
-        # Track last error for change detection
+        # Track last error for change detection and recovery attempts
         if not hasattr(self, "_last_err"):
             self._last_err = 0
+        if not hasattr(self, "_error_recovery_attempts"):
+            self._error_recovery_attempts = 0
+        if not hasattr(self, "_last_recovery_time"):
+            self._last_recovery_time = 0
 
         curr_err = self.curr_err
 
-        # Log error changes
-        if curr_err != 0:
-            if self._last_err != curr_err:
+        # Detect error changes
+        if curr_err != self._last_err:
+            if curr_err != 0:
+                # New error detected
                 logger.error(
                     f"[{self.config.ip_address}] xArm Error detected! "
                     f"Code C{curr_err} -> [ {self.controller_error_interpreter(curr_err)} ]"
                 )
+                logger.info(
+                    f"[{self.config.ip_address}] Will attempt to clear and recover from this error..."
+                )
+                self._error_recovery_attempts = 0  # Reset counter for new error
+            else:
+                # Error cleared! Attempt recovery
+                logger.info(
+                    f"[{self.config.ip_address}] Error cleared! "
+                    f"Previous error was C{self._last_err}. Completing recovery..."
+                )
+                self._attempt_error_recovery()
+
+        # If there's an error, periodically attempt to clear it
+        elif curr_err != 0:
+            current_time = time.time()
+            # Attempt recovery every 2 seconds
+            if current_time - self._last_recovery_time > 2.0:
+                self._error_recovery_attempts += 1
+                logger.warning(
+                    f"[{self.config.ip_address}] Error C{curr_err} still present. "
+                    f"Attempting to clear... (attempt #{self._error_recovery_attempts})"
+                )
+                self._attempt_error_clearing()
+                self._last_recovery_time = current_time
 
         self._last_err = curr_err
         return curr_err == 0
+
+    def _attempt_error_clearing(self):
+        """
+        Attempt to clear the current error.
+
+        This is called periodically when an error is present.
+        It tries to clear the error so that recovery can proceed.
+        """
+        try:
+            # Try to clear the error
+            code = self.arm.clean_error()
+            if code == 0:
+                logger.info(f"[{self.config.ip_address}]   clean_error() returned success")
+            else:
+                logger.debug(f"[{self.config.ip_address}]   clean_error() returned code: {code}")
+
+            # Also clean warnings
+            self.arm.clean_warn()
+
+        except Exception as e:
+            logger.debug(f"[{self.config.ip_address}] Error clearing failed: {e}")
+
+    def _attempt_error_recovery(self):
+        """
+        Attempt to recover from error by re-initializing the arm.
+
+        This is called automatically when an error is cleared (curr_err goes from non-zero to zero).
+        """
+        try:
+            logger.info(f"[{self.config.ip_address}] Starting error recovery sequence...")
+
+            # Step 1: Clean any residual errors and warnings
+            logger.info("  Step 1: Cleaning errors and warnings...")
+            self.arm.clean_error()
+            self.arm.clean_warn()
+            time.sleep(0.2)
+
+            # Step 2: Enable motion
+            logger.info("  Step 2: Enabling motion...")
+            code = self.arm.motion_enable(enable=True)
+            if code != 0:
+                logger.warning(f"  Motion enable returned code: {code}")
+            time.sleep(0.2)
+
+            # Step 3: Set mode based on current configuration
+            if self.config.velocity_control:
+                logger.info("  Step 3: Setting velocity control mode (mode 4)...")
+                code = self.arm.set_mode(4)
+            else:
+                logger.info("  Step 3: Setting servo mode (mode 1)...")
+                code = self.arm.set_mode(1)
+
+            if code != 0:
+                logger.warning(f"  Set mode returned code: {code}")
+            time.sleep(0.2)
+
+            # Step 4: Set state to ready
+            logger.info("  Step 4: Setting state to ready (state 0)...")
+            code = self.arm.set_state(0)
+            if code != 0:
+                logger.warning(f"  Set state returned code: {code}")
+            time.sleep(0.2)
+
+            # Verify recovery
+            logger.info(
+                f"  Recovery complete: state={self.curr_state}, mode={self.curr_mode}, error={self.curr_err}"
+            )
+            logger.info(f"[{self.config.ip_address}] ✓ Error recovery successful!")
+
+        except Exception as e:
+            logger.error(f"[{self.config.ip_address}] Error recovery failed: {e}")
 
     def _xarm_is_ready_write(self) -> bool:
         """
@@ -701,6 +802,9 @@ class XArmDriver(
         while self._running and self.arm.connected:
             try:
                 curr_time = time.time()
+
+                # Check if robot is ready for reading (no errors) - this also triggers error recovery!
+                self._read_ready = self._xarm_is_ready_read()
 
                 # Read joint states
                 if use_new:
