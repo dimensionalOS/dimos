@@ -148,7 +148,7 @@ class ROSLaunchWrapper:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                universal_newlines=True
+                universal_newlines=True,
             )
 
             # Give it a moment to start and check if it's still running
