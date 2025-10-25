@@ -53,6 +53,7 @@ from .components import (
     StateQueryComponent,
     SystemControlComponent,
     KinematicsComponent,
+    GripperControlComponent,
 )
 
 logger = setup_logger(__file__)
@@ -84,6 +85,7 @@ class XArmDriver(
     StateQueryComponent,
     SystemControlComponent,
     KinematicsComponent,
+    GripperControlComponent,
     Module,
 ):
     """
