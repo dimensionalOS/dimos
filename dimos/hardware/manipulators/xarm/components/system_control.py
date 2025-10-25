@@ -22,7 +22,7 @@ Provides RPC methods for system-level control operations including:
 - Emergency stop
 """
 
-from typing import Tuple
+from typing import Tuple, List, Optional
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -200,5 +200,341 @@ class SystemControlComponent:
         try:
             code = self.arm.emergency_stop()
             return (code, "Emergency stop" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Configuration & Persistence
+    # =========================================================================
+
+    @rpc
+    def clean_conf(self) -> Tuple[int, str]:
+        """Clean configuration."""
+        try:
+            code = self.arm.clean_conf()
+            return (code, "Configuration cleaned" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def save_conf(self) -> Tuple[int, str]:
+        """Save current configuration to robot."""
+        try:
+            code = self.arm.save_conf()
+            return (code, "Configuration saved" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def reload_dynamics(self) -> Tuple[int, str]:
+        """Reload dynamics parameters."""
+        try:
+            code = self.arm.reload_dynamics()
+            return (code, "Dynamics reloaded" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Mode & State Control
+    # =========================================================================
+
+    @rpc
+    def set_mode(self, mode: int) -> Tuple[int, str]:
+        """
+        Set control mode.
+
+        Args:
+            mode: 0=position, 1=servo, 4=velocity, etc.
+        """
+        try:
+            code = self.arm.set_mode(mode)
+            return (code, f"Mode set to {mode}" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Collision & Safety
+    # =========================================================================
+
+    @rpc
+    def set_collision_sensitivity(self, sensitivity: int) -> Tuple[int, str]:
+        """Set collision sensitivity (0-5, 0=least sensitive)."""
+        try:
+            code = self.arm.set_collision_sensitivity(sensitivity)
+            return (
+                code,
+                f"Collision sensitivity set to {sensitivity}"
+                if code == 0
+                else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_teach_sensitivity(self, sensitivity: int) -> Tuple[int, str]:
+        """Set teach sensitivity (1-5)."""
+        try:
+            code = self.arm.set_teach_sensitivity(sensitivity)
+            return (
+                code,
+                f"Teach sensitivity set to {sensitivity}" if code == 0 else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_collision_rebound(self, enable: int) -> Tuple[int, str]:
+        """Enable/disable collision rebound (0=disable, 1=enable)."""
+        try:
+            code = self.arm.set_collision_rebound(enable)
+            return (
+                code,
+                f"Collision rebound {'enabled' if enable else 'disabled'}"
+                if code == 0
+                else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_self_collision_detection(self, enable: int) -> Tuple[int, str]:
+        """Enable/disable self collision detection."""
+        try:
+            code = self.arm.set_self_collision_detection(enable)
+            return (
+                code,
+                f"Self collision detection {'enabled' if enable else 'disabled'}"
+                if code == 0
+                else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Reduced Mode & Boundaries
+    # =========================================================================
+
+    @rpc
+    def set_reduced_mode(self, enable: int) -> Tuple[int, str]:
+        """Enable/disable reduced mode."""
+        try:
+            code = self.arm.set_reduced_mode(enable)
+            return (
+                code,
+                f"Reduced mode {'enabled' if enable else 'disabled'}"
+                if code == 0
+                else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_reduced_max_tcp_speed(self, speed: float) -> Tuple[int, str]:
+        """Set maximum TCP speed in reduced mode."""
+        try:
+            code = self.arm.set_reduced_max_tcp_speed(speed)
+            return (
+                code,
+                f"Reduced max TCP speed set to {speed}" if code == 0 else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_reduced_max_joint_speed(self, speed: float) -> Tuple[int, str]:
+        """Set maximum joint speed in reduced mode."""
+        try:
+            code = self.arm.set_reduced_max_joint_speed(speed)
+            return (
+                code,
+                f"Reduced max joint speed set to {speed}" if code == 0 else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_fence_mode(self, enable: int) -> Tuple[int, str]:
+        """Enable/disable fence mode."""
+        try:
+            code = self.arm.set_fence_mode(enable)
+            return (
+                code,
+                f"Fence mode {'enabled' if enable else 'disabled'}"
+                if code == 0
+                else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # TCP & Dynamics Configuration
+    # =========================================================================
+
+    @rpc
+    def set_tcp_offset(self, offset: List[float]) -> Tuple[int, str]:
+        """Set TCP offset [x, y, z, roll, pitch, yaw]."""
+        try:
+            code = self.arm.set_tcp_offset(offset)
+            return (code, "TCP offset set" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_tcp_load(self, weight: float, center_of_gravity: List[float]) -> Tuple[int, str]:
+        """Set TCP load (payload)."""
+        try:
+            code = self.arm.set_tcp_load(weight, center_of_gravity)
+            return (code, f"TCP load set: {weight}kg" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_gravity_direction(self, direction: List[float]) -> Tuple[int, str]:
+        """Set gravity direction vector."""
+        try:
+            code = self.arm.set_gravity_direction(direction)
+            return (code, "Gravity direction set" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_world_offset(self, offset: List[float]) -> Tuple[int, str]:
+        """Set world coordinate offset."""
+        try:
+            code = self.arm.set_world_offset(offset)
+            return (code, "World offset set" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Motion Parameters
+    # =========================================================================
+
+    @rpc
+    def set_tcp_jerk(self, jerk: float) -> Tuple[int, str]:
+        """Set TCP jerk (mm/s³)."""
+        try:
+            code = self.arm.set_tcp_jerk(jerk)
+            return (code, f"TCP jerk set to {jerk}" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_tcp_maxacc(self, acc: float) -> Tuple[int, str]:
+        """Set TCP maximum acceleration (mm/s²)."""
+        try:
+            code = self.arm.set_tcp_maxacc(acc)
+            return (
+                code,
+                f"TCP max acceleration set to {acc}" if code == 0 else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_joint_jerk(self, jerk: float) -> Tuple[int, str]:
+        """Set joint jerk (rad/s³ or °/s³)."""
+        try:
+            code = self.arm.set_joint_jerk(jerk, is_radian=self.config.is_radian)
+            return (code, f"Joint jerk set to {jerk}" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_joint_maxacc(self, acc: float) -> Tuple[int, str]:
+        """Set joint maximum acceleration (rad/s² or °/s²)."""
+        try:
+            code = self.arm.set_joint_maxacc(acc, is_radian=self.config.is_radian)
+            return (
+                code,
+                f"Joint max acceleration set to {acc}" if code == 0 else f"Error code: {code}",
+            )
+        except Exception as e:
+            return (-1, str(e))
+
+    @rpc
+    def set_pause_time(self, seconds: float) -> Tuple[int, str]:
+        """Set pause time for motion commands."""
+        try:
+            code = self.arm.set_pause_time(seconds)
+            return (code, f"Pause time set to {seconds}s" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Digital I/O (Tool GPIO)
+    # =========================================================================
+
+    @rpc
+    def get_tgpio_digital(self, io_num: int) -> Tuple[int, Optional[int]]:
+        """Get tool GPIO digital input value."""
+        try:
+            code, value = self.arm.get_tgpio_digital(io_num)
+            return (code, value if code == 0 else None)
+        except Exception as e:
+            return (-1, None)
+
+    @rpc
+    def set_tgpio_digital(self, io_num: int, value: int) -> Tuple[int, str]:
+        """Set tool GPIO digital output value (0 or 1)."""
+        try:
+            code = self.arm.set_tgpio_digital(io_num, value)
+            return (code, f"TGPIO {io_num} set to {value}" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Digital I/O (Controller GPIO)
+    # =========================================================================
+
+    @rpc
+    def get_cgpio_digital(self, io_num: int) -> Tuple[int, Optional[int]]:
+        """Get controller GPIO digital input value."""
+        try:
+            code, value = self.arm.get_cgpio_digital(io_num)
+            return (code, value if code == 0 else None)
+        except Exception as e:
+            return (-1, None)
+
+    @rpc
+    def set_cgpio_digital(self, io_num: int, value: int) -> Tuple[int, str]:
+        """Set controller GPIO digital output value (0 or 1)."""
+        try:
+            code = self.arm.set_cgpio_digital(io_num, value)
+            return (code, f"CGPIO {io_num} set to {value}" if code == 0 else f"Error code: {code}")
+        except Exception as e:
+            return (-1, str(e))
+
+    # =========================================================================
+    # Analog I/O
+    # =========================================================================
+
+    @rpc
+    def get_tgpio_analog(self, io_num: int) -> Tuple[int, Optional[float]]:
+        """Get tool GPIO analog input value."""
+        try:
+            code, value = self.arm.get_tgpio_analog(io_num)
+            return (code, value if code == 0 else None)
+        except Exception as e:
+            return (-1, None)
+
+    @rpc
+    def get_cgpio_analog(self, io_num: int) -> Tuple[int, Optional[float]]:
+        """Get controller GPIO analog input value."""
+        try:
+            code, value = self.arm.get_cgpio_analog(io_num)
+            return (code, value if code == 0 else None)
+        except Exception as e:
+            return (-1, None)
+
+    @rpc
+    def set_cgpio_analog(self, io_num: int, value: float) -> Tuple[int, str]:
+        """Set controller GPIO analog output value."""
+        try:
+            code = self.arm.set_cgpio_analog(io_num, value)
+            return (
+                code,
+                f"CGPIO analog {io_num} set to {value}" if code == 0 else f"Error code: {code}",
+            )
         except Exception as e:
             return (-1, str(e))
