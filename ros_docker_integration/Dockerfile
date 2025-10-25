@@ -5,7 +5,7 @@ FROM osrf/ros:jazzy-desktop-full
 ENV DEBIAN_FRONTEND=noninteractive
 ENV ROS_DISTRO=jazzy
 ENV WORKSPACE=/ros2_ws
-ENV DIMOS_PATH=/home/p/pro/dimensional/dimos
+ENV DIMOS_PATH=/workspace/dimos
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -103,7 +103,7 @@ source ${WORKSPACE}/install/setup.bash\n\
 source ${DIMOS_PATH}/.venv/bin/activate\n\
 \n\
 # Export ROBOT_CONFIG_PATH for autonomy stack\n\
-export ROBOT_CONFIG_PATH="unitree/unitree_g1"\n\
+export ROBOT_CONFIG_PATH="mechanum_drive"\n\
 \n\
 # Execute the command\n\
 exec "$@"' > /ros_entrypoint.sh && \

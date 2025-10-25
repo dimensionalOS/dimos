@@ -26,7 +26,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=all
       - ROS_DOMAIN_ID=0
-      - ROBOT_CONFIG_PATH=unitree/unitree_g1
+      - ROBOT_CONFIG_PATH=mechanum_drive
 
     # Volume mounts
     volumes:
@@ -40,8 +40,8 @@ services:
       # Mount the autonomy stack source for development (optional - comment out if not needed)
       - ./autonomy_stack_mecanum_wheel_platform/src:/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src:rw
 
-      # Mount dimos source code for live development
-      - ../dimos:/home/p/pro/dimensional/dimos/dimos:rw
+      # Mount entire dimos directory for live development
+      - ..:/workspace/dimos:rw
 
       # Mount bagfiles directory (optional)
       - ./bagfiles:/ros2_ws/bagfiles:rw
@@ -60,7 +60,7 @@ services:
       # - /dev/video0:/dev/video0
 
     # Working directory
-    working_dir: /home/p/pro/dimensional/dimos
+    working_dir: /workspace/dimos
 
     # Command to run (can be overridden)
     command: bash

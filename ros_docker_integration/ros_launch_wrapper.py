@@ -116,9 +116,9 @@ class ROSLaunchWrapper:
         time.sleep(5)
 
         # Start DimOS
-        print("Starting DimOS Unitree G1 controller...")
+        print("Starting DimOS navigation bot...")
         self.dimos_process = subprocess.Popen(
-            [sys.executable, "/home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py"]
+            [sys.executable, "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py"]
         )
 
         print("Both systems are running. Press Ctrl+C to stop.")

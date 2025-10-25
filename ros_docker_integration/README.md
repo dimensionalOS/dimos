@@ -28,7 +28,7 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
    # Start with ROS route planner
    ./start.sh --ros-planner
 
-   # Start with DimOS Unitree G1 controller
+   # Start with DimOS navigation bot
    ./start.sh --dimos
 
    # Start both systems (basic)
@@ -79,13 +79,13 @@ cd /ros2_ws/src/autonomy_stack_mecanum_wheel_platform
 ### DimOS
 ```bash
 # Activate virtual environment
-source /home/p/pro/dimensional/dimos/.venv/bin/activate
+source /workspace/dimos/.venv/bin/activate
 
-# Run Unitree G1 controller
-python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py
+# Run navigation bot
+python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py
 
 # Or run other DimOS scripts
-python /home/p/pro/dimensional/dimos/dimos/your_script.py
+python /workspace/dimos/dimos/your_script.py
 ```
 
 ### ROS Commands
@@ -108,13 +108,13 @@ ros2 topic echo /state_estimation
 Use the `run_command.sh` helper script to run custom commands:
 ```bash
 ./run_command.sh "ros2 topic list"
-./run_command.sh "python /path/to/your/script.py"
+./run_command.sh "python /workspace/dimos/dimos/your_script.py"
 ```
 
 ## Development
 
 The docker-compose.yml mounts the following directories for live development:
-- DimOS source: `../dimos` → `/home/p/pro/dimensional/dimos/dimos`
+- DimOS source: `..` → `/workspace/dimos`
 - Autonomy stack source: `./autonomy_stack_mecanum_wheel_platform/src` → `/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src`
 
 Changes to these files will be reflected in the container without rebuilding.
@@ -123,8 +123,9 @@ Changes to these files will be reflected in the container without rebuilding.
 
 The container sets:
 - `ROS_DISTRO=jazzy`
-- `ROBOT_CONFIG_PATH=unitree/unitree_g1`
+- `ROBOT_CONFIG_PATH=mechanum_drive`
 - `ROS_DOMAIN_ID=0`
+- `DIMOS_PATH=/workspace/dimos`
 - GPU and display variables for GUI support
 
 ## Shutdown Handling
