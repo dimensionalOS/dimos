@@ -391,8 +391,8 @@ def main():
     nav_bot = NavBot()
     nav_bot.start()
 
-    logger.info("\nTesting navigation in 2 seconds...")
-    time.sleep(2)
+    logger.info("\nTesting navigation in 10 seconds...")
+    time.sleep(10)
 
     test_pose = PoseStamped(
         ts=time.time(),

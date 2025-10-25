@@ -21,7 +21,7 @@ if [ $# -eq 0 ]; then
     echo "Examples:"
     echo "  $0 \"ros2 topic list\""
     echo "  $0 \"ros2 launch base_autonomy unity_simulation_bringup.launch.py\""
-    echo "  $0 \"python /home/p/pro/dimensional/dimos/dimos/robot/unitree_webrtc/unitree_g1.py\""
+    echo "  $0 \"python /home/p/pro/dimensional/dimos/dimos/navigation/rosnav/nav_bot.py\""
     echo "  $0 \"bash\" # For interactive shell"
     exit 1
 fi
