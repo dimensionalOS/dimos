@@ -110,13 +110,11 @@ standard_with_jpeglcm = standard.transports(
 standard_with_jpegshm = autoconnect(
     standard.transports(
         {
-            ("color_image", Image): JpegShmTransport(
-                "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-            ),
+            ("color_image", Image): JpegShmTransport("/go2/color_image", quality=75),
         }
     ),
     foxglove_bridge(
-        shm_channels=[
+        jpeg_shm_channels=[
             "/go2/color_image#sensor_msgs.Image",
         ]
     ),
