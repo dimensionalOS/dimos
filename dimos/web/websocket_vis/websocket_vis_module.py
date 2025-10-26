@@ -19,25 +19,26 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
+import base64
 import threading
 import time
 from typing import Any, Dict, Optional
-import base64
-import numpy as np
 
+import numpy as np
 import socketio
 import uvicorn
+from dimos_lcm.std_msgs import Bool
+from reactivex.disposable import Disposable
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse
 from starlette.routing import Route
 
-from dimos.core import Module, In, Out, rpc
-from dimos_lcm.std_msgs import Bool
+from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
-from reactivex.disposable import Disposable
+
 from .optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger("dimos.web.websocket_vis")
@@ -124,14 +125,23 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
-        unsub = self.odom.subscribe(self._on_robot_pose)
-        self._disposables.add(Disposable(unsub))
+        try:
+            unsub = self.odom.subscribe(self._on_robot_pose)
+            self._disposables.add(Disposable(unsub))
+        except Exception as e:
+            ...
 
-        unsub = self.gps_location.subscribe(self._on_gps_location)
-        self._disposables.add(Disposable(unsub))
+        try:
+            unsub = self.gps_location.subscribe(self._on_gps_location)
+            self._disposables.add(Disposable(unsub))
+        except Exception as e:
+            ...
 
-        unsub = self.path.subscribe(self._on_path)
-        self._disposables.add(Disposable(unsub))
+        try:
+            unsub = self.path.subscribe(self._on_path)
+            self._disposables.add(Disposable(unsub))
+        except Exception as e:
+            ...
 
         unsub = self.global_costmap.subscribe(self._on_global_costmap)
         self._disposables.add(Disposable(unsub))

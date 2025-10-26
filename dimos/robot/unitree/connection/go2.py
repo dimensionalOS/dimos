@@ -26,7 +26,6 @@ from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
     Transform,
-    Twist,
     TwistStamped,
     Vector3,
 )
@@ -49,7 +48,7 @@ class Go2ConnectionProtocol(Protocol):
     def lidar_stream(self) -> Observable: ...
     def odom_stream(self) -> Observable: ...
     def video_stream(self) -> Observable: ...
-    def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
+    def move(self, twist: TwistStamped, duration: float = 0.0) -> bool: ...
     def standup(self) -> None: ...
     def liedown(self) -> None: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...
@@ -137,7 +136,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
         return video_store.stream(**self.replay_config)
 
-    def move(self, vector: Twist, duration: float = 0.0):
+    def move(self, twist: TwistStamped, duration: float = 0.0):
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -146,7 +145,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
 
 class GO2Connection(Module, spec.Camera, spec.Pointcloud):
-    cmd_vel: In[Twist] = None  # type: ignore
+    cmd_vel: In[TwistStamped] = None  # type: ignore
     pointcloud: Out[PointCloud2] = None  # type: ignore
     image: Out[Image] = None  # type: ignore
     camera_info_stream: Out[CameraInfo] = None  # type: ignore
@@ -252,11 +251,11 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def publish_camera_info(self):
         while True:
-            self.camera_info.publish(camera_info)
+            self.camera_info_stream.publish(camera_info)
             time.sleep(1.0)
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: TwistStamped, duration: float = 0.0):
         """Send movement command to robot."""
         self.connection.move(twist, duration)
 
@@ -294,9 +293,9 @@ def deploy(dimos: DimosCluster, ip: str, prefix="") -> GO2Connection:
         f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     )
 
-    # connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
+    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
 
-    connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
+    connection.camera_info_stream.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
     return connection
