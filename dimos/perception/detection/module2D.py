@@ -29,9 +29,8 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.detectors import Detector
-from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-from dimos.perception.detection.type import Detection2D, Filter2D, ImageDetections2D
+from dimos.perception.detection.type import Filter2D, ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
