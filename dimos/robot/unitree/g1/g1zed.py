@@ -70,7 +70,12 @@ def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
 
 
 def deploy(dimos: DimosCluster, ip: str):
-    nav = rosnav.deploy(dimos)
+    nav = rosnav.deploy(
+        dimos,
+        sensor_to_base_link_transform=Transform(
+            frame_id="sensor", child_frame_id="base_link", translation=Vector3(0.0, 0.0, 1.5)
+        ),
+    )
     connection = g1.deploy(dimos, ip, nav)
     zedcam = deploy_g1_monozed(dimos)
 
