@@ -29,7 +29,7 @@ import threading
 import time
 
 from reactivex.disposable import Disposable
-from dimos.core.dimos import Dimos
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 from dimos.core.transport import JpegLcmTransport, LCMTransport
@@ -96,7 +96,7 @@ def main():
     )
     args = parser.parse_args()
 
-    dimos = Dimos(n=2)
+    dimos = ModuleCoordinator(n=2)
     dimos.start()
     emitter = dimos.deploy(EmitterModule)
     receiver = dimos.deploy(ReceiverModule)
