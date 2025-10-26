@@ -31,6 +31,7 @@ from reactivex.disposable import Disposable
 from sensor_msgs.msg import Joy as ROSJoy
 from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
 from tf2_msgs.msg import TFMessage as ROSTFMessage
+from dimos.core.global_config import GlobalConfig
 
 from dimos import core
 from dimos.agents2 import Agent
@@ -93,9 +94,17 @@ class G1ConnectionModule(Module):
     ip: str
     connection_type: str = "webrtc"
 
-    def __init__(self, ip: str = None, connection_type: str = "webrtc", *args, **kwargs):
-        self.ip = ip
-        self.connection_type = connection_type
+    def __init__(
+        self,
+        ip: str = None,
+        connection_type: str = "webrtc",
+        global_config: GlobalConfig | None = None,
+        *args,
+        **kwargs,
+    ):
+        cfg = global_config or GlobalConfig()
+        self.ip = ip if ip is not None else cfg.robot_ip
+        self.connection_type = connection_type or cfg.unitree_connection_type
         self.connection = None
         Module.__init__(self, *args, **kwargs)
 
@@ -138,6 +147,9 @@ class G1ConnectionModule(Module):
     def publish_request(self, topic: str, data: dict):
         """Forward WebRTC publish requests to connection."""
         return self.connection.publish_request(topic, data)
+
+
+connection = G1ConnectionModule.blueprint
 
 
 class UnitreeG1(Robot, Resource):

@@ -21,6 +21,12 @@ all_blueprints = {
     "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:basic",
     "unitree-go2-shm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_shm",
     "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
+    "unitree-g1": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard",
+    "unitree-g1-basic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:basic",
+    "unitree-g1-shm": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard_with_shm",
+    "unitree-g1-agentic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:agentic",
+    "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
+    "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
 }
 

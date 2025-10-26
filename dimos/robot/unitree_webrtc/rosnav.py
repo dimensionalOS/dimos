@@ -147,3 +147,7 @@ class NavigationModule(Module):
             return True
 
         return False
+
+
+# Create blueprint function for easy instantiation
+navigation_module = NavigationModule.blueprint
