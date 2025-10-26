@@ -17,7 +17,7 @@ import functools
 import threading
 import time
 from dataclasses import dataclass
-from typing import Literal, Optional, Type, TypeAlias
+from typing import Optional, TypeAlias
 
 import numpy as np
 from aiortc import MediaStreamTrack
@@ -33,7 +33,7 @@ from reactivex.subject import Subject
 
 from dimos.core import rpc
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist
+from dimos.msgs.geometry_msgs import Pose, Transform, TwistStamped
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -127,7 +127,7 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_disconnect() -> None:
             try:
-                self.move(Twist())
+                self.move(TwistStamped())
                 await self.conn.disconnect()
             except Exception:
                 pass
@@ -140,7 +140,7 @@ class UnitreeWebRTCConnection(Resource):
         if self.thread.is_alive():
             self.thread.join(timeout=2.0)
 
-    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+    def move(self, twist: TwistStamped, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
 
         Args:

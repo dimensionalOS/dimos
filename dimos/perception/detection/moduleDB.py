@@ -168,7 +168,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         def scene_thread():
             while True:
-                print(self)
                 scene_update = self.to_foxglove_scene_update()
                 self.scene_update.publish(scene_update)
                 time.sleep(1.0)
@@ -267,25 +266,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def lookup(self, label: str) -> List[Detection3DPC]:
         """Look up a detection by label."""
         return []
-
-    @rpc
-    def start(self):
-        Detection3DModule.start(self)
-
-        def update_objects(imageDetections: ImageDetections3DPC):
-            for detection in imageDetections.detections:
-                self.add_detection(detection)
-
-        def scene_thread():
-            while True:
-                print(self)
-                scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)
-                time.sleep(1.0)
-
-        threading.Thread(target=scene_thread, daemon=True).start()
-
-        self.detection_stream_3d.subscribe(update_objects)
 
     @rpc
     def stop(self):
