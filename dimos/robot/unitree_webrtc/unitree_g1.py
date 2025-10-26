@@ -374,11 +374,12 @@ class UnitreeG1(Robot, Resource):
 
     def _deploy_visualization(self):
         """Deploy and configure visualization modules."""
-        # Deploy WebSocket visualization module
-        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        # Deploy WebSocket visualization module - COMMENTED OUT DUE TO TRANSPORT ISSUES
+        # self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        # self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
-        # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
+        # Connect odometry to websocket visualization
+        # self.websocket_vis.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         # Deploy Foxglove bridge
         self.foxglove_bridge = FoxgloveBridge(
