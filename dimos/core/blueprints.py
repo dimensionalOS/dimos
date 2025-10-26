@@ -46,44 +46,44 @@ class ModuleBlueprint:
 class ModuleBlueprintSet:
     blueprints: tuple[ModuleBlueprint, ...]
     # TODO: Replace Any
-    transports: Mapping[tuple[str, type], Any] = field(default_factory=lambda: MappingProxyType({}))
+    transport_map: Mapping[tuple[str, type], Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
     global_config_overrides: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    remappings: Mapping[tuple[type[Module], str], str] = field(
+    remapping_map: Mapping[tuple[type[Module], str], str] = field(
         default_factory=lambda: MappingProxyType({})
     )
 
-    def with_transports(self, transports: dict[tuple[str, type], Any]) -> "ModuleBlueprintSet":
+    def transports(self, transports: dict[tuple[str, type], Any]) -> "ModuleBlueprintSet":
         return ModuleBlueprintSet(
             blueprints=self.blueprints,
-            transports=MappingProxyType({**self.transports, **transports}),
+            transport_map=MappingProxyType({**self.transport_map, **transports}),
             global_config_overrides=self.global_config_overrides,
-            remappings=self.remappings,
+            remapping_map=self.remapping_map,
         )
 
-    def with_global_config(self, **kwargs: Any) -> "ModuleBlueprintSet":
+    def global_config(self, **kwargs: Any) -> "ModuleBlueprintSet":
         return ModuleBlueprintSet(
             blueprints=self.blueprints,
-            transports=self.transports,
+            transport_map=self.transport_map,
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
-            remappings=self.remappings,
+            remapping_map=self.remapping_map,
         )
 
-    def with_remappings(
-        self, remappings: list[tuple[type[Module], str, str]]
-    ) -> "ModuleBlueprintSet":
-        remappings_dict = dict(self.remappings)
+    def remappings(self, remappings: list[tuple[type[Module], str, str]]) -> "ModuleBlueprintSet":
+        remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:
             remappings_dict[(module, old)] = new
 
         return ModuleBlueprintSet(
             blueprints=self.blueprints,
-            transports=self.transports,
+            transport_map=self.transport_map,
             global_config_overrides=self.global_config_overrides,
-            remappings=MappingProxyType(remappings_dict),
+            remapping_map=MappingProxyType(remappings_dict),
         )
 
     def _get_transport_for(self, name: str, type: type) -> Any:
-        transport = self.transports.get((name, type), None)
+        transport = self.transport_map.get((name, type), None)
         if transport:
             return transport
 
@@ -100,7 +100,7 @@ class ModuleBlueprintSet:
         for blueprint in self.blueprints:
             for conn in blueprint.connections:
                 # Check if this connection should be remapped
-                remapped_name = self.remappings.get((blueprint.module, conn.name), conn.name)
+                remapped_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
                 result.add((remapped_name, conn.type))
         return result
 
@@ -132,7 +132,7 @@ class ModuleBlueprintSet:
         for blueprint in self.blueprints:
             for conn in blueprint.connections:
                 # Check if this connection should be remapped
-                remapped_name = self.remappings.get((blueprint.module, conn.name), conn.name)
+                remapped_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
                 # Store the mapping for later use
                 module_conn_mapping[blueprint.module][conn.name] = remapped_name
                 # Group by remapped name and type
@@ -197,17 +197,17 @@ def create_module_blueprint(module: type[Module], *args: Any, **kwargs: Any) -> 
 
 def autoconnect(*blueprints: ModuleBlueprintSet) -> ModuleBlueprintSet:
     all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
-    all_transports = dict(sum([list(x.transports.items()) for x in blueprints], []))
+    all_transports = dict(sum([list(x.transport_map.items()) for x in blueprints], []))
     all_config_overrides = dict(
         sum([list(x.global_config_overrides.items()) for x in blueprints], [])
     )
-    all_remappings = dict(sum([list(x.remappings.items()) for x in blueprints], []))
+    all_remappings = dict(sum([list(x.remapping_map.items()) for x in blueprints], []))
 
     return ModuleBlueprintSet(
         blueprints=all_blueprints,
-        transports=MappingProxyType(all_transports),
+        transport_map=MappingProxyType(all_transports),
         global_config_overrides=MappingProxyType(all_config_overrides),
-        remappings=MappingProxyType(all_remappings),
+        remapping_map=MappingProxyType(all_remappings),
     )
 
 
