@@ -16,7 +16,7 @@
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import JpegLcmTransport, LCMTransport, pSHMTransport
+from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -101,10 +101,25 @@ standard_with_shm = autoconnect(
     ),
 )
 
-standard_with_jpeglcm = standard.with_transports(
+standard_with_jpeglcm = standard.transports(
     {
         ("color_image", Image): JpegLcmTransport("/go2/color_image", Image),
     }
+)
+
+standard_with_jpegshm = autoconnect(
+    standard.transports(
+        {
+            ("color_image", Image): JpegShmTransport(
+                "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+            ),
+        }
+    ),
+    foxglove_bridge(
+        shm_channels=[
+            "/go2/color_image#sensor_msgs.Image",
+        ]
+    ),
 )
 
 agentic = autoconnect(

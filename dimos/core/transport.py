@@ -41,6 +41,7 @@ from dimos.core.stream import In, RemoteIn, Transport
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM
 from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 
 T = TypeVar("T")
 
@@ -150,6 +151,31 @@ class SHMTransport(PubSubTransport[T]):
 
     def __reduce__(self):
         return (SHMTransport, (self.topic,))
+
+    def broadcast(self, _, msg):
+        if not self._started:
+            self.shm.start()
+            self._started = True
+
+        self.shm.publish(self.topic, msg)
+
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
+        if not self._started:
+            self.shm.start()
+            self._started = True
+        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class JpegShmTransport(PubSubTransport[T]):
+    _started: bool = False
+
+    def __init__(self, topic: str, quality: int = 75, **kwargs):
+        super().__init__(topic)
+        self.shm = JpegSharedMemory(quality=quality, **kwargs)
+        self.quality = quality
+
+    def __reduce__(self):
+        return (JpegShmTransport, (self.topic, self.quality))
 
     def broadcast(self, _, msg):
         if not self._started:
