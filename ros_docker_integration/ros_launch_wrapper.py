@@ -23,7 +23,6 @@ import sys
 import signal
 import subprocess
 import time
-import threading
 
 
 class ROSLaunchWrapper:
@@ -32,7 +31,7 @@ class ROSLaunchWrapper:
         self.dimos_process = None
         self.shutdown_in_progress = False
 
-    def signal_handler(self, signum, frame):
+    def signal_handler(self, _signum, _frame):
         """Handle shutdown signals gracefully"""
         if self.shutdown_in_progress:
             return
@@ -40,7 +39,7 @@ class ROSLaunchWrapper:
         self.shutdown_in_progress = True
         print("\n\nShutdown signal received. Stopping services gracefully...")
 
-        # Stop DimOS first (it typically shuts down cleanly)
+        # Stop DimOS first
         if self.dimos_process and self.dimos_process.poll() is None:
             print("Stopping DimOS...")
             self.dimos_process.terminate()
@@ -94,7 +93,6 @@ class ROSLaunchWrapper:
         sys.exit(0)
 
     def run(self):
-        """Main execution function"""
         # Register signal handlers
         signal.signal(signal.SIGINT, self.signal_handler)
         signal.signal(signal.SIGTERM, self.signal_handler)
@@ -111,14 +109,11 @@ class ROSLaunchWrapper:
             preexec_fn=os.setsid,  # Create new process group
         )
 
-        # Wait for ROS to initialize
         print("Waiting for ROS to initialize...")
         time.sleep(5)
 
-        # Start DimOS
         print("Starting DimOS navigation bot...")
 
-        # Check if the script exists
         nav_bot_path = "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
         venv_python = "/opt/dimos-venv/bin/python"
 
@@ -134,8 +129,8 @@ class ROSLaunchWrapper:
             return
 
         if not os.path.exists(venv_python):
-            print(f"WARNING: venv Python not found at {venv_python}, using system Python")
-            venv_python = sys.executable
+            print(f"ERROR: venv Python not found at {venv_python}, using system Python")
+            return
 
         print(f"Using Python: {venv_python}")
         print(f"Starting script: {nav_bot_path}")

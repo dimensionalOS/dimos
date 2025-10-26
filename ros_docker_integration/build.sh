@@ -6,9 +6,9 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}================================================${NC}"
 echo -e "${GREEN}Building DimOS + ROS Autonomy Stack Docker Image${NC}"
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}================================================${NC}"
 echo ""
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
@@ -40,9 +40,9 @@ cd ..
 docker compose -f ros_docker_integration/docker-compose.yml build
 
 echo ""
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}================================${NC}"
 echo -e "${GREEN}Docker image built successfully!${NC}"
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}================================${NC}"
 echo ""
 echo "You can now run the container using:"
 echo -e "${YELLOW}  ./start.sh --all${NC}"

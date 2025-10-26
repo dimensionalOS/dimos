@@ -2,25 +2,20 @@
 
 set -e
 
-# Colors for output
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
-# Get the directory where the script is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Allow X server connection from Docker
 xhost +local:docker 2>/dev/null || true
 
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN}Starting DimOS + ROS Autonomy Stack Container${NC}"
-echo -e "${GREEN}=========================================${NC}"
+echo -e "${GREEN}=============================================${NC}"
 echo ""
 
-# Check if Unity models exist (warn if not)
 if [ ! -d "unity_models" ] && [[ "$*" == *"--ros-planner"* || "$*" == *"--all"* ]]; then
     echo -e "${YELLOW}WARNING: Unity models directory not found!${NC}"
     echo "The Unity simulator may not work properly."
@@ -28,7 +23,6 @@ if [ ! -d "unity_models" ] && [[ "$*" == *"--ros-planner"* || "$*" == *"--all"* 
     echo ""
 fi
 
-# Parse command line arguments
 MODE="default"
 if [[ "$1" == "--ros-planner" ]]; then
     MODE="ros-planner"
@@ -49,10 +43,8 @@ elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
     exit 0
 fi
 
-# Go to dimos directory (parent of ros_docker_integration) for docker compose context
 cd ..
 
-# Set the command based on mode
 case $MODE in
     "ros-planner")
         echo -e "${YELLOW}Starting with ROS route planner...${NC}"
@@ -64,7 +56,6 @@ case $MODE in
         ;;
     "all")
         echo -e "${YELLOW}Starting both ROS planner and DimOS...${NC}"
-        # Use the helper script to run both
         CMD="/usr/local/bin/run_both.sh"
         ;;
     "default")
@@ -81,7 +72,6 @@ esac
 # Run the container
 docker compose -f ros_docker_integration/docker-compose.yml run --rm dimos_autonomy_stack $CMD
 
-# Revoke X server access when done
 xhost -local:docker 2>/dev/null || true
 
 echo ""
