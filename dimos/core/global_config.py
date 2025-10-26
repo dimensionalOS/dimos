@@ -23,7 +23,6 @@ class GlobalConfig(BaseSettings):
     n_dask_workers: int = 2
 
     model_config = SettingsConfigDict(
-        env_prefix="DIMOS_",
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",

@@ -54,8 +54,8 @@ basic = (
         websocket_vis(),
         foxglove_bridge(),
     )
-    .with_global_config(n_dask_workers=4)
-    .with_transports(
+    .global_config(n_dask_workers=4)
+    .transports(
         # These are kept the same so that we don't have to change foxglove configs.
         # Although we probably should.
         {
@@ -74,8 +74,8 @@ standard = (
         depth_module(),
         utilization(),
     )
-    .with_global_config(n_dask_workers=8)
-    .with_transports(
+    .global_config(n_dask_workers=8)
+    .transports(
         {
             ("depth_image", Image): LCMTransport("/go2/depth_image", Image),
         }
@@ -83,7 +83,7 @@ standard = (
 )
 
 standard_with_shm = autoconnect(
-    standard.with_transports(
+    standard.transports(
         {
             ("color_image", Image): pSHMTransport(
                 "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
