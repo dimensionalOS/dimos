@@ -21,7 +21,7 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Generator, Optional
 
 import rclpy
 from geometry_msgs.msg import PointStamped as ROSPointStamped
@@ -37,6 +37,7 @@ from std_msgs.msg import Bool as ROSBool
 from std_msgs.msg import Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
+from dimos import spec
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.msgs.geometry_msgs import (
@@ -56,15 +57,15 @@ from dimos.utils.transform_utils import euler_to_quaternion
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
 
-class ROSNav(Module):
-    goal_req: In[PoseStamped] = None
+class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlanner):
+    goal_req: In[PoseStamped] = None  # type: ignore
 
-    pointcloud: Out[PointCloud2] = None
-    global_pointcloud: Out[PointCloud2] = None
+    pointcloud: Out[PointCloud2] = None  # type: ignore
+    global_pointcloud: Out[PointCloud2] = None  # type: ignore
 
-    goal_active: Out[PoseStamped] = None
-    path_active: Out[Path] = None
-    cmd_vel: Out[TwistStamped] = None
+    goal_active: Out[PoseStamped] = None  # type: ignore
+    path_active: Out[Path] = None  # type: ignore
+    cmd_vel: Out[TwistStamped] = None  # type: ignore
 
     _local_pointcloud: Optional[ROSPointCloud2] = None
     _global_pointcloud: Optional[ROSPointCloud2] = None
@@ -283,7 +284,7 @@ class ROSNav(Module):
         yield "arrived"
 
     @skill(stream=Stream.call_agent, reducer=Reducer.string)
-    def goto_global(self, x: float, y: float) -> bool:
+    def goto_global(self, x: float, y: float) -> Generator[str, None, None]:
         """
         go to coordinates x,y in the map frame
         0,0 is your starting position

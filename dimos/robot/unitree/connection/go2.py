@@ -33,7 +33,6 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
