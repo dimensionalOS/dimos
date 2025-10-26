@@ -21,10 +21,10 @@ from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
 
 try:
-    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
-    from geometry_msgs.msg import Transform as ROSTransform
-    from geometry_msgs.msg import Vector3 as ROSVector3
     from geometry_msgs.msg import Quaternion as ROSQuaternion
+    from geometry_msgs.msg import Transform as ROSTransform
+    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+    from geometry_msgs.msg import Vector3 as ROSVector3
 except ImportError:
     ROSTransformStamped = None
     ROSTransform = None
@@ -59,6 +59,16 @@ class Transform(Timestamped):
         self.ts = ts if ts != 0.0 else time.time()
         self.translation = translation if translation is not None else Vector3()
         self.rotation = rotation if rotation is not None else Quaternion()
+
+    def now(self) -> "Transform":
+        """Return a copy of this Transform with the current timestamp."""
+        return Transform(
+            translation=self.translation,
+            rotation=self.rotation,
+            frame_id=self.frame_id,
+            child_frame_id=self.child_frame_id,
+            ts=time.time(),
+        )
 
     def __repr__(self) -> str:
         return f"Transform(translation={self.translation!r}, rotation={self.rotation!r})"
