@@ -54,7 +54,7 @@ Configuration values can be set from multiple places in order of precedence (lat
 - Value defined in `.env` (`DIMOS_USE_SIMULATION=true`)
 - Value in the environment variable (`DIMOS_USE_SIMULATION=true`)
 - Value coming from the CLI (`--use-simulation` or `--no-use-simulation`)
-- Value defined on the blueprint (`blueprint.with_global_config(use_simulation=True)`)
+- Value defined on the blueprint (`blueprint.global_config(use_simulation=True)`)
 
 For environment variables/`.env` values, you have to prefix the name with `DIMOS_`.
 

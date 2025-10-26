@@ -93,12 +93,12 @@ If you don't like the name you can always override it like in the next section.
 
 By default `LCMTransport` is used if the object supports `lcm_encode`. If it doesn't `pLCMTransport` is used (meaning "pickled LCM").
 
-You can override transports with the `with_transports` method. It returns a new blueprint in which the override is set.
+You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
 ```python
 blueprint = autoconnect(...)
 expanded_blueprint = autoconnect(blueprint, ...)
-blueprint = blueprint.with_transports({
+blueprint = blueprint.transports({
     ("image", Image): pSHMTransport(
         "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
@@ -110,7 +110,7 @@ Note: `expanded_blueprint` does not get the transport overrides because it's cre
 
 ## Remapping connections
 
-Sometimes you need to rename a connection to match what other modules expect. You can use `with_remappings` to rename module connections:
+Sometimes you need to rename a connection to match what other modules expect. You can use `remappings` to rename module connections:
 
 ```python
 class ConnectionModule(Module):
@@ -126,7 +126,7 @@ blueprint = (
         ConnectionModule.blueprint(),
         ProcessingModule.blueprint(),
     )
-    .with_remappings([
+    .remappings([
         (ConnectionModule, 'color_image', 'rgb_image'),
     ])
 )
@@ -141,10 +141,10 @@ If you want to override the topic, you still have to do it manually:
 
 ```python
 blueprint
-.with_remappings([
+.remappings([
     (ConnectionModule, 'color_image', 'rgb_image'),
 ])
-.with_transports({
+.transports({
     ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
 })
 ```
@@ -163,7 +163,7 @@ class ModuleA(Module):
 The config is normally taken from .env or from environment variables. But you can specifically override the values for a specific blueprint:
 
 ```python
-blueprint = blueprint.with_global_config(n_dask_workers=8)
+blueprint = blueprint.global_config(n_dask_workers=8)
 ```
 
 ## Calling the methods of other modules
