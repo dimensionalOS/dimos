@@ -28,11 +28,12 @@ def deploy(dimos: DimosCluster, ip: str):
     connection = go2.deploy(dimos, ip)
     foxglove_bridge.deploy(dimos)
 
-    detector = moduleDB.deploy(
-        dimos,
-        camera=connection,
-        lidar=connection,
-    )
+    # detector = moduleDB.deploy(
+    #     dimos,
+    #     camera=connection,
+    #     lidar=connection,
+    # )
 
-    agent = agents2.deploy(dimos)
-    agent.register_skills(detector)
+    # agent = agents2.deploy(dimos)
+    # agent.register_skills(detector)
+    return connection
