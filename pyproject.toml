@@ -186,6 +186,7 @@ dev = [
     "pytest-timeout==2.4.0",
     "textual==3.7.1",
     "requests-mock==1.12.1",
+    "terminaltexteffects==0.12.2",
 ]
 
 sim = [
