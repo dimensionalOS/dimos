@@ -113,7 +113,7 @@ def run(
         blueprint = autoconnect(blueprint, *loaded_modules)
 
     dimos = blueprint.build(global_config=config)
-    dimos.wait_until_shutdown()
+    dimos.loop()
 
 
 @main.command()

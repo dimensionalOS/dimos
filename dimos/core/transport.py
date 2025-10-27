@@ -27,7 +27,8 @@ from typing import (
 )
 
 from dimos.core.stream import In, RemoteIn, Transport
-from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
+from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
 
 if TYPE_CHECKING:
@@ -79,7 +80,8 @@ class LCMTransport(PubSubTransport[T]):
 
     def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(LCMTopic(topic, type))
-        self.lcm = LCM(**kwargs)
+        if not hasattr(self, "lcm"):
+            self.lcm = LCM(**kwargs)
 
     def __reduce__(self):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
@@ -96,6 +98,15 @@ class LCMTransport(PubSubTransport[T]):
             self.lcm.start()
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class JpegLcmTransport(LCMTransport):
+    def __init__(self, topic: str, type: type, **kwargs):
+        self.lcm = JpegLCM(**kwargs)
+        super().__init__(topic, type)
+
+    def __reduce__(self):
+        return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
 
 
 class pSHMTransport(PubSubTransport[T]):
@@ -133,6 +144,31 @@ class SHMTransport(PubSubTransport[T]):
         return (SHMTransport, (self.topic,))
 
     def broadcast(self, _, msg) -> None:
+        if not self._started:
+            self.shm.start()
+            self._started = True
+
+        self.shm.publish(self.topic, msg)
+
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
+        if not self._started:
+            self.shm.start()
+            self._started = True
+        return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
+
+
+class JpegShmTransport(PubSubTransport[T]):
+    _started: bool = False
+
+    def __init__(self, topic: str, quality: int = 75, **kwargs):
+        super().__init__(topic)
+        self.shm = JpegSharedMemory(quality=quality, **kwargs)
+        self.quality = quality
+
+    def __reduce__(self):
+        return (JpegShmTransport, (self.topic, self.quality))
+
+    def broadcast(self, _, msg):
         if not self._started:
             self.shm.start()
             self._started = True
