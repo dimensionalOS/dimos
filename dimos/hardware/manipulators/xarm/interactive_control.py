@@ -426,9 +426,39 @@ def interactive_control_loop(xarm, traj_gen, num_joints):
 
 def main():
     """Run interactive xArm control."""
-    # Get IP address
-    ip_address = os.getenv("XARM_IP", "192.168.1.235")
-    num_joints = 6
+    import argparse
+
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Interactive xArm Control")
+    parser.add_argument(
+        "--ip", type=str, default=None, help="xArm IP address (overrides XARM_IP env var)"
+    )
+    parser.add_argument(
+        "--type",
+        type=str,
+        default="xarm6",
+        choices=["xarm5", "xarm6", "xarm7"],
+        help="xArm model type: xarm5, xarm6, or xarm7 (default: xarm6)",
+    )
+    args = parser.parse_args()
+
+    # Determine IP address: command-line arg > env var > default
+    if args.ip:
+        ip_address = args.ip
+        logger.info(f"Using xArm at IP (from --ip): {ip_address}")
+    else:
+        ip_address = os.getenv("XARM_IP", "192.168.1.235")
+        if ip_address == "192.168.1.235":
+            logger.warning(f"Using default IP: {ip_address}")
+            logger.warning("Specify IP with: --ip 192.168.1.XXX or export XARM_IP=192.168.1.XXX")
+        else:
+            logger.info(f"Using xArm at IP (from XARM_IP env): {ip_address}")
+
+    xarm_type = args.type
+    logger.info(f"Using {xarm_type.upper()}")
+
+    # Derive num_joints from xarm_type for compatibility with SampleTrajectoryGenerator
+    num_joints = {"xarm5": 5, "xarm6": 6, "xarm7": 7}[xarm_type]
 
     # Start dimos
     logger.info("Starting dimos...")
@@ -439,9 +469,9 @@ def main():
     xarm = dimos.deploy(
         XArmDriver,
         ip_address=ip_address,
+        xarm_type=xarm_type,
         report_type="dev",
         enable_on_start=True,
-        num_joints=num_joints,
     )
 
     # Set up driver transports
