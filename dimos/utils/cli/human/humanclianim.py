@@ -14,6 +14,7 @@
 # limitations under the License.
 
 import os
+import random
 import sys
 import threading
 import time
@@ -45,12 +46,15 @@ def import_cli_in_background():
 def get_effect_config(effect_name):
     """Get hardcoded configuration for a specific effect"""
     # Hardcoded configs for each effect
+    global_config = {
+        "final_gradient_stops": [Color(theme.ACCENT)],
+    }
+
     configs = {
         "randomsequence": {
             "speed": 0.075,
-            "final_gradient_stops": [Color(theme.ACCENT)],
         },
-        "slide": {"direction": "left", "final_gradient_stops": [Color(theme.ACCENT)]},
+        "slide": {"direction": "left", "movement_speed": 1.5},
         "sweep": {"direction": "left"},
         "print": {
             "print_speed": 10,
@@ -63,25 +67,35 @@ def get_effect_config(effect_name):
         "burn": {"fire_chars": "█", "flame_color": "ffffff"},
         "expand": {"expand_direction": "center"},
         "scattered": {"movement_speed": 0.5},
-        "rain": {"rain_symbols": "░▒▓█", "rain_fall_speed_range": (5, 10)},
+        "beams": {"movement_speed": 0.5, "beam_delay": 0},
+        "middleout": {"center_movement_speed": 3, "full_movement_speed": 0.5},
+        "rain": {
+            "rain_symbols": "░▒▓█",
+            "rain_fall_speed_range": (5, 10),
+        },
+        "highlight": {"highlight_brightness": 3},
     }
 
-    return configs.get(effect_name, {})
+    return {**configs.get(effect_name, {}), **global_config}
 
 
 def run_banner_animation():
     """Run the ASCII banner animation before launching Textual"""
 
     # Check if we should animate
-    animation_style = os.environ.get("DIMOS_BANNER_ANIMATION", "print").lower()
+    random_anim = ["scattered", "print", "expand", "slide", "rain"]
+    animation_style = os.environ.get("DIMOS_BANNER_ANIMATION", random.choice(random_anim)).lower()
 
     if animation_style == "none":
         return  # Skip animation
-
+    from terminaltexteffects.effects.effect_beams import Beams
     from terminaltexteffects.effects.effect_burn import Burn
+    from terminaltexteffects.effects.effect_colorshift import ColorShift
     from terminaltexteffects.effects.effect_decrypt import Decrypt
     from terminaltexteffects.effects.effect_expand import Expand
+    from terminaltexteffects.effects.effect_highlight import Highlight
     from terminaltexteffects.effects.effect_matrix import Matrix
+    from terminaltexteffects.effects.effect_middleout import MiddleOut
     from terminaltexteffects.effects.effect_overflow import Overflow
     from terminaltexteffects.effects.effect_pour import Pour
     from terminaltexteffects.effects.effect_print import Print
@@ -99,8 +113,7 @@ def run_banner_animation():
    ██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║
    ██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║
    ██████╔╝██║██║ ╚═╝ ██║███████╗██║ ╚████║███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗
-   ╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝
-"""
+   ╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝"""
 
     # Choose effect based on style
     effect_map = {
@@ -116,6 +129,9 @@ def run_banner_animation():
         "decrypt": Decrypt,
         "overflow": Overflow,
         "randomsequence": RandomSequence,
+        "beams": Beams,
+        "middleout": MiddleOut,
+        "highlight": Highlight,
     }
 
     EffectClass = effect_map.get(animation_style, Slide)
