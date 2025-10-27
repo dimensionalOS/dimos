@@ -26,9 +26,10 @@ class FoxgloveBridge(Module):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self, *args, shm_channels=None, **kwargs):
+    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
+        self.jpeg_shm_channels = jpeg_shm_channels or []
 
     @rpc
     def start(self):
@@ -50,6 +51,7 @@ class FoxgloveBridge(Module):
                     debug=False,
                     num_threads=4,
                     shm_channels=self.shm_channels,
+                    jpeg_shm_channels=self.jpeg_shm_channels,
                 )
                 self._loop.run_until_complete(bridge.run())
             except Exception as e:

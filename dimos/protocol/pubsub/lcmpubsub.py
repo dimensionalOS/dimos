@@ -24,10 +24,13 @@ from typing import Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
 
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
 from dimos.utils.deprecation import deprecated
 from dimos.utils.logging_config import setup_logger
+from turbojpeg import TurboJPEG
 
 
 logger = setup_logger(__name__)
@@ -109,6 +112,36 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
         return topic.lcm_type.lcm_decode(msg)
 
 
+class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
+    def encode(self, msg: LCMMsg, _: Topic) -> bytes:
+        return msg.lcm_jpeg_encode()
+
+    def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
+        if topic.lcm_type is None:
+            raise ValueError(
+                f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
+            )
+        return topic.lcm_type.lcm_jpeg_decode(msg)
+
+
+class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
+    def __init__(self, quality: int = 75, **kwargs):
+        super().__init__(**kwargs)
+        self.jpeg = TurboJPEG()
+        self.quality = quality
+
+    def encode(self, msg: Any, _topic: str) -> bytes:
+        if not isinstance(msg, Image):
+            raise ValueError("Can only encode images.")
+
+        bgr_image = msg.to_bgr().to_opencv()
+        return self.jpeg.encode(bgr_image, quality=self.quality)
+
+    def decode(self, msg: bytes, _topic: str) -> Image:
+        bgr_array = self.jpeg.decode(msg)
+        return Image(data=bgr_array, format=ImageFormat.BGR)
+
+
 class LCM(
     LCMEncoderMixin,
     LCMPubSubBase,
@@ -117,5 +150,11 @@ class LCM(
 
 class PickleLCM(
     PickleEncoderMixin,
+    LCMPubSubBase,
+): ...
+
+
+class JpegLCM(
+    JpegEncoderMixin,
     LCMPubSubBase,
 ): ...
