@@ -14,9 +14,6 @@
 
 """Fast stateful image generator with visual features for encoding tests."""
 
-import math
-from typing import List, Tuple
-
 import numpy as np
 
 
