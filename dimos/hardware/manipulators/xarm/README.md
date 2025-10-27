@@ -4,10 +4,26 @@ Real-time driver for UFACTORY xArm5/6/7 manipulators integrated with the dimos f
 
 ## Quick Start
 
-### 1. Set Robot IP
+### 1. Specify Robot IP
+
+**Option A: Command-line argument** (recommended)
+```bash
+python test_xarm_driver.py --ip 192.168.1.235
+python interactive_control.py --ip 192.168.1.235
+```
+
+**Option B: Environment variable**
 ```bash
 export XARM_IP=192.168.1.235
+python test_xarm_driver.py
 ```
+
+**Option C: Use default** (192.168.1.235)
+```bash
+python test_xarm_driver.py  # Uses default
+```
+
+**Note:** Command-line `--ip` takes precedence over `XARM_IP` environment variable.
 
 ### 2. Basic Usage
 
@@ -18,7 +34,7 @@ from dimos.msgs.sensor_msgs import JointState, JointCommand
 
 # Start dimos and deploy driver
 dimos = core.start(1)
-xarm = dimos.deploy(XArmDriver, ip_address="192.168.1.235", num_joints=6)
+xarm = dimos.deploy(XArmDriver, ip_address="192.168.1.235", xarm_type="xarm6")
 
 # Configure LCM transports
 xarm.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
@@ -34,29 +50,6 @@ xarm.set_joint_angles([0, 0, 0, 0, 0, 0], speed=50, mvacc=100, mvtime=0)
 # Cleanup
 xarm.stop()
 dimos.stop()
-```
-
-### 3. With Trajectory Generator
-
-```python
-from dimos.hardware.manipulators.xarm.sample_trajectory_generator import SampleTrajectoryGenerator
-
-# Deploy driver and trajectory generator
-xarm = dimos.deploy(XArmDriver, ip_address="192.168.1.235", num_joints=6)
-traj_gen = dimos.deploy(SampleTrajectoryGenerator, num_joints=6, control_mode="position")
-
-# Connect via LCM
-xarm.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
-xarm.joint_position_command.transport = core.LCMTransport("/xarm/joint_commands", JointCommand)
-traj_gen.joint_state_input.transport = core.LCMTransport("/xarm/joint_states", JointState)
-traj_gen.joint_position_command.transport = core.LCMTransport("/xarm/joint_commands", JointCommand)
-
-# Start and execute trajectory
-xarm.start()
-traj_gen.start()
-xarm.enable_servo_mode()
-traj_gen.enable_publishing()
-traj_gen.move_joint(joint_index=5, delta_degrees=10.0, duration=2.0)
 ```
 
 ## Key Features
@@ -100,7 +93,7 @@ position = xarm.get_position()
 
 Key parameters for `XArmDriver`:
 - `ip_address`: Robot IP (default: "192.168.1.235")
-- `num_joints`: 5, 6, or 7 (default: 6)
+- `xarm_type`: Robot model - "xarm5", "xarm6", or "xarm7" (default: "xarm6")
 - `control_frequency`: Control loop rate in Hz (default: 100.0)
 - `is_radian`: Use radians vs degrees (default: True)
 - `enable_on_start`: Auto-enable servo mode (default: True)
@@ -108,13 +101,42 @@ Key parameters for `XArmDriver`:
 
 ## Testing
 
-```bash
-# Interactive control (recommended)
-venv/bin/python dimos/hardware/manipulators/xarm/interactive_control.py
+### With Mock Hardware (No Physical Robot)
 
-# Run driver standalone
-venv/bin/python dimos/hardware/manipulators/xarm/test_xarm_driver.py
+```bash
+# Unit tests with mocked xArm hardware
+python tests/test_xarm_rt_driver.py
 ```
+
+### With Real Hardware
+
+**⚠️ Note:** Interactive control and hardware tests require a physical xArm connected to the network. Interactive control, and sample_trajectory_generator are part of test suite, and will be deprecated.
+
+**Using Alfred Embodiment:**
+
+To test with real hardware using the current Alfred embodiment:
+
+1. **Turn on the Flowbase** (xArm controller)
+2. **SSH into dimensional-cpu-2:**
+   ```
+3. **Verify PC is connected to the controller:**
+   ```bash
+   ping 192.168.1.235  # Should respond
+   ```
+4. **Run the interactive control:**
+   ```bash
+   # Interactive control (recommended)
+   venv/bin/python dimos/hardware/manipulators/xarm/interactive_control.py --ip 192.168.1.235
+
+   # Run driver standalone
+   venv/bin/python dimos/hardware/manipulators/xarm/test_xarm_driver.py --ip 192.168.1.235
+
+   # Run automated test suite
+   venv/bin/python dimos/hardware/manipulators/xarm/test_xarm_driver.py --ip 192.168.1.235 --run-tests
+
+   # Specify xArm model type (if using xArm7)
+   venv/bin/python dimos/hardware/manipulators/xarm/interactive_control.py --ip 192.168.1.235 --type xarm7
+   ```
 
 ## License
 

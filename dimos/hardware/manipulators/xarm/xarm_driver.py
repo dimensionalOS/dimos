@@ -18,7 +18,7 @@ xArm Real-time Driver Module
 This module provides a real-time controller for the xArm manipulator family
 (xArm5, xArm6, xArm7) compatible with the xArm Python SDK.
 
-Architecture (mirrors C++ xarm_driver.cpp):
+Architecture Overview:
 - Main thread: Handles RPC calls and manages lifecycle
 - Joint State Thread: Reads and publishes joint_state at joint_state_rate Hz
   (default: 100Hz for dev, 5Hz for normal report_type)
@@ -64,6 +64,7 @@ class XArmDriverConfig(ModuleConfig):
     """Configuration for xArm driver."""
 
     ip_address: str = "192.168.1.235"  # xArm IP address
+    xarm_type: str = "xarm6"  # xArm model type: 'xarm5', 'xarm6', or 'xarm7'
     is_radian: bool = True  # Use radians (True) or degrees (False)
     control_frequency: float = 100.0  # Control loop frequency in Hz (for sending commands)
     joint_state_rate: float = (
@@ -72,12 +73,21 @@ class XArmDriverConfig(ModuleConfig):
     robot_state_rate: float = 10.0  # Robot state publishing rate in Hz
     report_type: str = "normal"  # SDK report type: 'dev'=100Hz, 'rich'=5Hz+torque, 'normal'=5Hz
     enable_on_start: bool = True  # Enable servo mode on start
-    num_joints: int = 6  # Number of joints (5, 6, or 7)
     check_joint_limit: bool = True  # Check joint limits
     check_cmdnum_limit: bool = True  # Check command queue limit
     max_cmdnum: int = 512  # Maximum command queue size
     velocity_control: bool = False  # Use velocity control mode instead of position
     velocity_duration: float = 0.1  # Duration for velocity commands (seconds)
+
+    @property
+    def num_joints(self) -> int:
+        """Get number of joints from xArm type."""
+        xarm_type_map = {
+            "xarm5": 5,
+            "xarm6": 6,
+            "xarm7": 7,
+        }
+        return xarm_type_map.get(self.xarm_type.lower(), 6)
 
 
 class XArmDriver(
