@@ -44,6 +44,9 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
 
+# Global variable for robot IP (set by main())
+ROBOT_IP = "192.168.1.235"
+
 
 @pytest.mark.tool
 def test_basic_connection():
@@ -52,8 +55,8 @@ def test_basic_connection():
     logger.info("TEST 1: Basic Connection with dimos.deploy()")
     logger.info("=" * 80)
 
-    # Get IP from environment or use default
-    ip_address = os.getenv("XARM_IP", "192.168.1.235")
+    # Get IP from global variable
+    ip_address = ROBOT_IP
 
     # Start dimos with 1 worker
     logger.info("Starting dimos...")
@@ -517,20 +520,39 @@ def run_driver():
 def main():
     """Main entry point."""
     import sys
+    import argparse
 
-    # Check if XARM_IP is set
-    ip_address = os.getenv("XARM_IP")
-    if not ip_address:
-        logger.warning("XARM_IP environment variable not set, using default: 192.168.1.235")
-        logger.warning("Set XARM_IP to your xArm's IP address:")
-        logger.warning("  export XARM_IP=192.168.1.XXX")
-        logger.info("")
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="xArm RT Driver Test")
+    parser.add_argument(
+        "--ip", type=str, default=None, help="xArm IP address (overrides XARM_IP env var)"
+    )
+    parser.add_argument("--run-tests", action="store_true", help="Run automated test suite")
+    args = parser.parse_args()
+
+    # Determine IP address: command-line arg > env var > default
+    if args.ip:
+        ip_address = args.ip
+        logger.info(f"Using xArm at IP (from --ip): {ip_address}")
     else:
-        logger.info(f"Using xArm at IP: {ip_address}")
-        logger.info("")
+        ip_address = os.getenv("XARM_IP")
+        if not ip_address:
+            ip_address = "192.168.1.235"
+            logger.warning("No IP specified, using default: 192.168.1.235")
+            logger.warning("Specify IP with:")
+            logger.warning("  python test_xarm_driver.py --ip 192.168.1.XXX")
+            logger.warning("  OR export XARM_IP=192.168.1.XXX")
+            logger.info("")
+        else:
+            logger.info(f"Using xArm at IP (from XARM_IP env): {ip_address}")
+            logger.info("")
 
-    # Check for command-line arguments
-    if len(sys.argv) > 1 and sys.argv[1] == "--run-tests":
+    # Store IP for test functions to use
+    global ROBOT_IP
+    ROBOT_IP = ip_address
+
+    # Run tests or driver
+    if args.run_tests:
         run_tests()
     else:
         run_driver()
