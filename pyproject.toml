@@ -107,7 +107,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@bceb618ed431562a93f3d806c79656f85695a15d",
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@3aeb724863144a8ba6cf72c9f42761d1007deda4",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",
