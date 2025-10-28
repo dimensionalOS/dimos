@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import pytest
-import reactivex as rx
 from functools import partial
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -21,9 +20,6 @@ from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents2.system_prompt import get_system_prompt
-from dimos.mapping.types import LatLon
-from dimos.utils.data import get_data
-from dimos.msgs.sensor_msgs import Image
 
 
 system_prompt = get_system_prompt()
@@ -58,7 +54,7 @@ def navigation_skill_container(mocker):
 def gps_nav_skill_container(mocker):
     container = GpsNavSkillContainer()
     container.gps_location.connection = mocker.MagicMock()
-    container.gps_goal.connection = mocker.MagicMock()
+    container.gps_goal = mocker.MagicMock()
     container.start()
     yield container
     container.stop()
