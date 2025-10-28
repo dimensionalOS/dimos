@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, List, Optional, Tuple, Union
+from typing import Union
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -309,7 +309,7 @@ def project_3d_points_to_2d_cuda(
 
 
 def project_3d_points_to_2d_cpu(
-    points_3d: np.ndarray, camera_intrinsics: Union[list[float], np.ndarray]
+    points_3d: np.ndarray, camera_intrinsics: list[float] | np.ndarray
 ) -> np.ndarray:
     pts = np.asarray(points_3d, dtype=np.float64)
     valid_mask = pts[:, 2] > 0
@@ -382,7 +382,7 @@ def project_2d_points_to_3d_cuda(
 def project_2d_points_to_3d_cpu(
     points_2d: np.ndarray,
     depth_values: np.ndarray,
-    camera_intrinsics: Union[list[float], np.ndarray],
+    camera_intrinsics: list[float] | np.ndarray,
 ) -> np.ndarray:
     pts = np.asarray(points_2d, dtype=np.float64)
     depths = np.asarray(depth_values, dtype=np.float64)

@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import os
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 from dotenv import load_dotenv
@@ -261,7 +261,7 @@ class ClaudeAgent(LLMAgent):
     def _build_prompt(
         self,
         messages: list,
-        base64_image: Union[str, list[str]] | None = None,
+        base64_image: str | list[str] | None = None,
         dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
         rag_results: str = "",

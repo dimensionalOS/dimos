@@ -20,7 +20,6 @@ import termios
 import threading
 import time
 import tty
-from typing import Tuple
 
 from dimos_lcm.geometry_msgs import Pose, Twist, Vector3
 import kinpy as kp
@@ -220,7 +219,7 @@ class PiperArm:
             True if object is detected in gripper, False otherwise
         """
         # Get gripper feedback
-        angle_degrees, actual_effort = self.get_gripper_feedback()
+        _angle_degrees, actual_effort = self.get_gripper_feedback()
 
         # Check if object is grasped (effort > 80% of commanded effort)
         effort_threshold = 0.8 * commanded_effort

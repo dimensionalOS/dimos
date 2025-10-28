@@ -14,10 +14,8 @@
 
 from __future__ import annotations
 
-from io import BytesIO
-import struct
 import time
-from typing import BinaryIO, TypeAlias
+from typing import BinaryIO
 
 from dimos_lcm.geometry_msgs import (
     Point as LCMPoint,
@@ -33,11 +31,7 @@ try:
 except ImportError:
     ROSPath = None
 
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 from dimos.types.timestamped import Timestamped
 
 

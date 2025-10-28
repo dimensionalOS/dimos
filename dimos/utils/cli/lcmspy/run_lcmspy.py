@@ -14,19 +14,10 @@
 
 from __future__ import annotations
 
-import math
-import random
-import threading
-from typing import List
-
 from rich.text import Text
 from textual.app import App, ComposeResult
-from textual.binding import Binding
 from textual.color import Color
-from textual.containers import Container
-from textual.reactive import reactive
-from textual.renderables.sparkline import Sparkline as SparklineRenderable
-from textual.widgets import DataTable, Header, Label, Sparkline
+from textual.widgets import DataTable
 
 from dimos.utils.cli import theme
 from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic as SpyTopic

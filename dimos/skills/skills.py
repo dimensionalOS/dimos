@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from openai import pydantic_function_tool
 from pydantic import BaseModel
@@ -261,7 +261,9 @@ class AbstractSkill(BaseModel):
     def clone(self) -> "AbstractSkill":
         return AbstractSkill()
 
-    def register_as_running(self, name: str, skill_library: SkillLibrary, subscription=None) -> None:
+    def register_as_running(
+        self, name: str, skill_library: SkillLibrary, subscription=None
+    ) -> None:
         """
         Register this skill as running in the skill library.
 

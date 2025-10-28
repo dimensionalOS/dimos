@@ -30,7 +30,7 @@ from __future__ import annotations
 import json
 import os
 import threading
-from typing import TYPE_CHECKING, Any, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 # Third-party imports
 from dotenv import load_dotenv
@@ -714,7 +714,7 @@ class OpenAIAgent(LLMAgent):
         tokenizer: AbstractTokenizer | None = None,
         rag_query_n: int = 4,
         rag_similarity_threshold: float = 0.45,
-        skills: Union[AbstractSkill, list[AbstractSkill], SkillLibrary] | None = None,
+        skills: AbstractSkill | list[AbstractSkill] | SkillLibrary | None = None,
         response_model: BaseModel | None = None,
         frame_processor: FrameProcessor | None = None,
         image_detail: str = "low",

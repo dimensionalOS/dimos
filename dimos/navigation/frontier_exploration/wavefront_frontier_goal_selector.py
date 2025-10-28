@@ -23,7 +23,6 @@ from collections import deque
 from dataclasses import dataclass
 from enum import IntFlag
 import threading
-from typing import List, Optional, Tuple
 
 from dimos_lcm.std_msgs import Bool
 import numpy as np
@@ -417,7 +416,9 @@ class WavefrontFrontierExplorer(Module):
 
         return ranked_frontiers
 
-    def _update_exploration_direction(self, robot_pose: Vector3, goal_pose: Vector3 | None = None) -> None:
+    def _update_exploration_direction(
+        self, robot_pose: Vector3, goal_pose: Vector3 | None = None
+    ) -> None:
         """Update the current exploration direction based on robot movement or selected goal."""
         if goal_pose is not None:
             # Calculate direction from robot to goal

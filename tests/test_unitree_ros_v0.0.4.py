@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 import os
-import threading
-import time
 
 from dotenv import load_dotenv
 import reactivex as rx
@@ -25,18 +22,15 @@ from dimos.agents.claude_agent import ClaudeAgent
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import GetPose, NavigateToGoal, NavigateWithText
+from dimos.skills.navigation import GetPose, NavigateWithText
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.speak import Speak
 from dimos.skills.visual_navigation_skills import FollowHuman
 from dimos.stream.audio.pipelines import stt, tts
-from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 # Load API key from environment
 load_dotenv()

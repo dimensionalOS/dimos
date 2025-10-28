@@ -31,7 +31,9 @@ def test_set_gps_travel_points(create_gps_nav_agent, gps_nav_skill_container, mo
     )
 
 
-def test_set_gps_travel_points_multiple(create_gps_nav_agent, gps_nav_skill_container, mocker) -> None:
+def test_set_gps_travel_points_multiple(
+    create_gps_nav_agent, gps_nav_skill_container, mocker
+) -> None:
     gps_nav_skill_container._latest_location = LatLon(lat=37.782654, lon=-122.413273)
     gps_nav_skill_container._set_gps_travel_goal_points = mocker.Mock()
     agent = create_gps_nav_agent(fixture="test_set_gps_travel_points_multiple.json")

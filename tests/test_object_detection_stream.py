@@ -17,16 +17,14 @@ import os
 import sys
 import threading
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from dotenv import load_dotenv
-from reactivex import Subject, operators as ops
+from reactivex import operators as ops
 
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.stream.video_provider import VideoProvider
-from dimos.types.vector import Vector
-from dimos.utils.logging_config import logger
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
 

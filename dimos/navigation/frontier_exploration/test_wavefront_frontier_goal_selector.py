@@ -15,10 +15,10 @@
 import time
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import ImageDraw
 import pytest
 
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.navigation.frontier_exploration.utils import costmap_to_pil_image
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (

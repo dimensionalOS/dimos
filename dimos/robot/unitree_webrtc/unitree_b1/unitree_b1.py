@@ -22,7 +22,6 @@ Uses standard Twist interface for velocity commands.
 
 import logging
 import os
-from typing import Optional
 
 from dimos import core
 from dimos.core.module_coordinator import ModuleCoordinator
@@ -31,7 +30,6 @@ from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.unitree_b1.connection import (

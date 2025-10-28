@@ -30,7 +30,6 @@ from geometry_msgs.msg import (
 )
 from nav_msgs.msg import Odometry as ROSOdometry, Path as ROSPath
 import rclpy
-from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2
 from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8
@@ -40,7 +39,7 @@ from dimos import core
 from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import Odometry, Path
-from dimos.msgs.sensor_msgs import Joy, PointCloud2
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
 from dimos.navigation.rosnav import ROSNav

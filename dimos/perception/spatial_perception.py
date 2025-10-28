@@ -19,7 +19,7 @@ Spatial Memory module for creating a semantic map of the environment.
 from datetime import datetime
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 import uuid
 
 import cv2

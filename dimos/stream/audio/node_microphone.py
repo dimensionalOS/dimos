@@ -14,7 +14,7 @@
 # limitations under the License.
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from reactivex import Observable, create, disposable

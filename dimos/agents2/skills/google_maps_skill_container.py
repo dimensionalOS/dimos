@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-from typing import Any, Union
+from typing import Any
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
@@ -95,7 +95,7 @@ class GoogleMapsSkillContainer(SkillModule):
 
         location = self._get_latest_location()
 
-        results: list[Union[dict[str, Any], str]] = []
+        results: list[dict[str, Any] | str] = []
 
         for query in queries:
             try:

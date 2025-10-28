@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
-import os
-import pickle
-import time
-from typing import Dict, List, Optional, Union
 
 import cv2
 import numpy as np
@@ -42,8 +37,8 @@ class PointcloudFiltering:
 
     def __init__(
         self,
-        color_intrinsics: Union[str, list[float], np.ndarray] | None = None,
-        depth_intrinsics: Union[str, list[float], np.ndarray] | None = None,
+        color_intrinsics: str | list[float] | np.ndarray | None = None,
+        depth_intrinsics: str | list[float] | np.ndarray | None = None,
         color_weight: float = 0.3,
         enable_statistical_filtering: bool = True,
         statistical_neighbors: int = 20,

@@ -20,7 +20,7 @@ from RGBD images using Open3D.
 """
 
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 import cv2
 import numpy as np
@@ -32,7 +32,7 @@ from dimos.perception.common.utils import project_3d_points_to_2d
 
 
 def load_camera_matrix_from_yaml(
-    camera_info: Union[str, list[float], np.ndarray, dict] | None,
+    camera_info: str | list[float] | np.ndarray | dict | None,
 ) -> np.ndarray | None:
     """
     Load camera intrinsic matrix from various input formats.
@@ -310,7 +310,7 @@ def filter_point_cloud_radius(
 def overlay_point_clouds_on_image(
     base_image: np.ndarray,
     point_clouds: list[o3d.geometry.PointCloud],
-    camera_intrinsics: Union[list[float], np.ndarray],
+    camera_intrinsics: list[float] | np.ndarray,
     colors: list[tuple[int, int, int]],
     point_size: int = 2,
     alpha: float = 0.7,
@@ -1002,7 +1002,7 @@ def visualize_voxel_grid(
 
 
 def combine_object_pointclouds(
-    point_clouds: Union[list[np.ndarray], list[o3d.geometry.PointCloud]],
+    point_clouds: list[np.ndarray] | list[o3d.geometry.PointCloud],
     colors: list[np.ndarray] | None = None,
 ) -> o3d.geometry.PointCloud:
     """
@@ -1047,7 +1047,7 @@ def extract_centroids_from_masks(
     rgb_image: np.ndarray,
     depth_image: np.ndarray,
     masks: list[np.ndarray],
-    camera_intrinsics: Union[list[float], np.ndarray],
+    camera_intrinsics: list[float] | np.ndarray,
 ) -> list[dict[str, Any]]:
     """
     Extract 3D centroids and orientations from segmentation masks.

@@ -14,7 +14,7 @@
 
 from abc import ABC, abstractmethod
 import threading
-from typing import Any, Generic, Optional, TypeVar
+from typing import Generic, TypeVar
 
 T = TypeVar("T")
 

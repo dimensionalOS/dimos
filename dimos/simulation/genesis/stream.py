@@ -14,7 +14,6 @@
 
 from pathlib import Path
 import time
-from typing import Optional, Union
 
 import cv2
 import numpy as np
@@ -35,7 +34,7 @@ class GenesisStream(StreamBase):
         annotator_type: AnnotatorType = "rgb",
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
-        usd_path: Union[str, Path] | None = None,
+        usd_path: str | Path | None = None,
     ) -> None:
         """Initialize the Genesis stream."""
         super().__init__(
@@ -62,7 +61,7 @@ class GenesisStream(StreamBase):
         # Build scene after camera is set up
         simulator.build()
 
-    def _load_stage(self, usd_path: Union[str, Path]) -> None:
+    def _load_stage(self, usd_path: str | Path) -> None:
         """Load stage from file."""
         # Genesis handles stage loading through simulator
         pass

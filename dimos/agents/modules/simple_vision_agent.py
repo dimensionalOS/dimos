@@ -18,7 +18,6 @@ import asyncio
 import base64
 import io
 import threading
-from typing import Optional
 
 import numpy as np
 from PIL import Image as PILImage

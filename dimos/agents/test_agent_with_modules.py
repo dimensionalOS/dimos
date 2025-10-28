@@ -15,9 +15,6 @@
 """Test agent module with proper module connections."""
 
 import asyncio
-import os
-import threading
-import time
 
 from dotenv import load_dotenv
 import pytest

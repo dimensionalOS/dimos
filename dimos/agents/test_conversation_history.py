@@ -25,7 +25,7 @@ from pydantic import Field
 import pytest
 
 from dimos.agents.agent_message import AgentMessage
-from dimos.agents.agent_types import AgentResponse, ConversationHistory
+from dimos.agents.agent_types import AgentResponse
 from dimos.agents.modules.base import BaseAgent
 from dimos.msgs.sensor_msgs import Image
 from dimos.skills.skills import AbstractSkill, SkillLibrary

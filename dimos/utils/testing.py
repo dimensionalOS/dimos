@@ -11,16 +11,15 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable, Iterator
 import functools
 import glob
-import logging
 import os
 from pathlib import Path
 import pickle
 import re
-import shutil
 import time
-from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
+from typing import Any, Generic, TypeVar
 
 from reactivex import (
     from_iterable,
@@ -48,12 +47,12 @@ class SensorReplay(Generic[T]):
         self.root_dir = get_data(name)
         self.autocast = autocast
 
-    def load(self, *names: Union[int, str]) -> Union[T, Any, list[T], list[Any]]:
+    def load(self, *names: int | str) -> T | Any | list[T] | list[Any]:
         if len(names) == 1:
             return self.load_one(names[0])
         return list(map(lambda name: self.load_one(name), names))
 
-    def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+    def load_one(self, name: int | str | Path) -> T | Any:
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):
@@ -67,7 +66,7 @@ class SensorReplay(Generic[T]):
                 return self.autocast(data)
             return data
 
-    def first(self) -> Union[T, Any] | None:
+    def first(self) -> T | Any | None:
         try:
             return next(self.iterate())
         except StopIteration:
@@ -86,14 +85,14 @@ class SensorReplay(Generic[T]):
             key=extract_number,
         )
 
-    def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
+    def iterate(self, loop: bool = False) -> Iterator[T | Any]:
         while True:
             for file_path in self.files:
                 yield self.load_one(Path(file_path))
             if not loop:
                 break
 
-    def stream(self, rate_hz: float | None = None, loop: bool = False) -> Observable[Union[T, Any]]:
+    def stream(self, rate_hz: float | None = None, loop: bool = False) -> Observable[T | Any]:
         if rate_hz is None:
             return from_iterable(self.iterate(loop=loop))
 
@@ -135,11 +134,11 @@ class SensorStorage(Generic[T]):
             # Create the directory
             self.root_dir.mkdir(parents=True, exist_ok=True)
 
-    def consume_stream(self, observable: Observable[Union[T, Any]]) -> None:
+    def consume_stream(self, observable: Observable[T | Any]) -> None:
         """Consume an observable stream of sensor data without saving."""
         return observable.subscribe(self.save_one)
 
-    def save_stream(self, observable: Observable[Union[T, Any]]) -> Observable[int]:
+    def save_stream(self, observable: Observable[T | Any]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
         return observable.pipe(ops.map(lambda frame: self.save_one(frame)))
 
@@ -178,7 +177,7 @@ class TimedSensorStorage(SensorStorage[T]):
 
 
 class TimedSensorReplay(SensorReplay[T]):
-    def load_one(self, name: Union[int, str, Path]) -> Union[T, Any]:
+    def load_one(self, name: int | str | Path) -> T | Any:
         if isinstance(name, int):
             full_path = self.root_dir / f"/{name:03d}.pickle"
         elif isinstance(name, Path):
@@ -194,7 +193,7 @@ class TimedSensorReplay(SensorReplay[T]):
 
     def find_closest(
         self, timestamp: float, tolerance: float | None = None
-    ) -> Union[T, Any] | None:
+    ) -> T | Any | None:
         """Find the frame closest to the given timestamp.
 
         Args:
@@ -225,7 +224,7 @@ class TimedSensorReplay(SensorReplay[T]):
 
     def find_closest_seek(
         self, relative_seconds: float, tolerance: float | None = None
-    ) -> Union[T, Any] | None:
+    ) -> T | Any | None:
         """Find the frame closest to a time relative to the start.
 
         Args:
@@ -256,7 +255,7 @@ class TimedSensorReplay(SensorReplay[T]):
         except StopIteration:
             return None
 
-    def iterate(self, loop: bool = False) -> Iterator[Union[T, Any]]:
+    def iterate(self, loop: bool = False) -> Iterator[T | Any]:
         return (x[1] for x in super().iterate(loop=loop))
 
     def iterate_ts(
@@ -265,7 +264,7 @@ class TimedSensorReplay(SensorReplay[T]):
         duration: float | None = None,
         from_timestamp: float | None = None,
         loop: bool = False,
-    ) -> Iterator[Union[tuple[float, T], Any]]:
+    ) -> Iterator[tuple[float, T] | Any]:
         first_ts = None
         if (seek is not None) or (duration is not None):
             first_ts = self.first_timestamp()
@@ -295,7 +294,7 @@ class TimedSensorReplay(SensorReplay[T]):
         duration: float | None = None,
         from_timestamp: float | None = None,
         loop: bool = False,
-    ) -> Observable[Union[T, Any]]:
+    ) -> Observable[T | Any]:
         def _subscribe(observer, scheduler=None):
             from reactivex.disposable import CompositeDisposable, Disposable
 

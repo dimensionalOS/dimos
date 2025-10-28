@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Iterable
 import time
-from typing import Any, Callable, Iterable, Protocol, Union
+from typing import Any, Protocol
 
 import open3d as o3d
 from reactivex.observable import Observable
@@ -29,7 +30,7 @@ color = [color1, color2, color3, color4]
 #
 # (in case there is some preparation within the fuction and this time needs to be subtracted
 # from the benchmark target)
-def benchmark(calls: int, targetf: Callable[[], Union[int, None]]) -> float:
+def benchmark(calls: int, targetf: Callable[[], int | None]) -> float:
     start = time.time()
     timemod = 0
     for _ in range(calls):

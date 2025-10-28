@@ -21,7 +21,6 @@ Minimal implementation using WebRTC connection for robot control.
 import logging
 import os
 import time
-from typing import Optional
 
 from dimos_lcm.foxglove_msgs import SceneUpdate
 from geometry_msgs.msg import PoseStamped as ROSPoseStamped, TwistStamped as ROSTwistStamped
@@ -91,7 +90,9 @@ class G1ConnectionModule(Module):
     ip: str
     connection_type: str = "webrtc"
 
-    def __init__(self, ip: str | None = None, connection_type: str = "webrtc", *args, **kwargs) -> None:
+    def __init__(
+        self, ip: str | None = None, connection_type: str = "webrtc", *args, **kwargs
+    ) -> None:
         self.ip = ip
         self.connection_type = connection_type
         self.connection = None

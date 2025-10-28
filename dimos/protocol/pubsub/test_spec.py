@@ -15,10 +15,10 @@
 # limitations under the License.
 
 import asyncio
+from collections.abc import Callable
 from contextlib import contextmanager
 import time
-import traceback
-from typing import Any, Callable, List, Tuple
+from typing import Any
 
 import pytest
 
@@ -84,7 +84,7 @@ except (ConnectionError, ImportError):
     print("LCM not available")
 
 
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 
 
 @contextmanager

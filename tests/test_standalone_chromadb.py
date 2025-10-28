@@ -15,11 +15,8 @@
 import os
 
 # -----
-import chromadb
 from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
-
-import tests.test_header
 
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 if not OPENAI_API_KEY:

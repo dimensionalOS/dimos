@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from collections.abc import Callable
 import enum
 import functools
-from typing import Any, Callable, Union
+from typing import Any, Union
 
 from nav_msgs import msg
 from rclpy.qos import (

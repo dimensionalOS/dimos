@@ -39,7 +39,9 @@ def test_take_a_look_around(create_navigation_agent, navigation_skill_container,
     navigation_skill_container._explore.assert_called_once_with()
 
 
-def test_go_to_semantic_location(create_navigation_agent, navigation_skill_container, mocker) -> None:
+def test_go_to_semantic_location(
+    create_navigation_agent, navigation_skill_container, mocker
+) -> None:
     mocker.patch(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
         return_value=None,

@@ -16,13 +16,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import TYPE_CHECKING, Any, Dict, List, Sequence, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs import Image
-    from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
@@ -274,7 +273,7 @@ class Detection2DBBox(Detection2D):
         return self.to_image_annotations().lcm_encode()
 
     def to_text_annotation(self) -> list[TextAnnotation]:
-        x1, y1, x2, y2 = self.bbox
+        x1, y1, _x2, y2 = self.bbox
 
         font_size = self.image.width / 80
 

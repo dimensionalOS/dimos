@@ -14,11 +14,9 @@
 
 import asyncio
 import atexit
-import json
 import logging
 import os
 import signal
-import sys
 import threading
 import time
 import warnings
@@ -27,26 +25,21 @@ from dotenv import load_dotenv
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.agents.cerebras_agent import CerebrasAgent
 from dimos.agents.claude_agent import ClaudeAgent
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 
 # from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.skills.kill_skill import KillSkill
 from dimos.skills.navigation import Explore, GetPose, NavigateToGoal, NavigateWithText
 from dimos.skills.observe import Observe
 from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.unitree.unitree_speak import UnitreeSpeak
-from dimos.skills.visual_navigation_skills import FollowHuman
-from dimos.stream.audio.pipelines import stt, tts
+from dimos.stream.audio.pipelines import stt
 from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.web.websocket_vis.server import WebsocketVis
-import tests.test_header
 
 # Filter out known WebRTC warnings that don't affect functionality
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")

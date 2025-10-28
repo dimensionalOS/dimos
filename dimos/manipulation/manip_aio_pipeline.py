@@ -18,11 +18,8 @@ Asynchronous, reactive manipulation pipeline for realtime detection, filtering, 
 
 import asyncio
 import json
-import logging
 import threading
 import time
-import traceback
-from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np

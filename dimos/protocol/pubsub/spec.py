@@ -14,11 +14,11 @@
 
 from abc import ABC, abstractmethod
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import pickle
-from typing import Any, Callable, Generic, TypeVar
+from typing import Any, Generic, TypeVar
 
 from dimos.utils.logging_config import setup_logger
 

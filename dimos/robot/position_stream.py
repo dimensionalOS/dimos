@@ -20,7 +20,6 @@ This module creates a reactive stream of position updates from ROS odometry or p
 
 import logging
 import time
-from typing import Optional, Tuple
 
 from geometry_msgs.msg import PoseStamped
 from nav_msgs.msg import Odometry

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 from functools import wraps
 import threading
 import time
-from typing import Callable, Optional, Type
 
 from .accumulators import Accumulator, LatestAccumulator
 

@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from dimos_lcm.sensor_msgs import CameraInfo
 
@@ -37,7 +37,7 @@ def statistical(nb_neighbors=40, std_ratio=0.5) -> PointCloudFilter:
         det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> PointCloud2 | None:
         try:
-            statistical, removed = pc.pointcloud.remove_statistical_outlier(
+            statistical, _removed = pc.pointcloud.remove_statistical_outlier(
                 nb_neighbors=nb_neighbors, std_ratio=std_ratio
             )
             return PointCloud2(statistical, pc.frame_id, pc.ts)
@@ -74,7 +74,7 @@ def radius_outlier(min_neighbors: int = 20, radius: float = 0.3) -> PointCloudFi
     def filter_func(
         det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> PointCloud2 | None:
-        filtered_pcd, removed = pc.pointcloud.remove_radius_outlier(
+        filtered_pcd, _removed = pc.pointcloud.remove_radius_outlier(
             nb_points=min_neighbors, radius=radius
         )
         return PointCloud2(filtered_pcd, pc.frame_id, pc.ts)

@@ -14,7 +14,7 @@
 
 """Agent pool module for managing multiple agents."""
 
-from typing import Any, Dict, List, Union
+from typing import Any
 
 from reactivex import operators as ops
 from reactivex.subject import Subject
@@ -41,7 +41,9 @@ class AgentPoolModule(Module):
     query_in: In[dict[str, Any]] = None  # {agent_id: str, query: str, ...}
     response_out: Out[dict[str, Any]] = None  # {agent_id: str, response: str, ...}
 
-    def __init__(self, agents_config: dict[str, dict[str, Any]], default_agent: str | None = None) -> None:
+    def __init__(
+        self, agents_config: dict[str, dict[str, Any]], default_agent: str | None = None
+    ) -> None:
         """Initialize agent pool.
 
         Args:
@@ -175,7 +177,7 @@ class AgentPoolModule(Module):
         logger.info(f"Broadcasted query to {len(self._agents) - len(exclude)} agents")
 
     def _setup_agent_routing(
-        self, agent_id: str, agent: Union[BaseAgentModule, UnifiedAgentModule]
+        self, agent_id: str, agent: BaseAgentModule | UnifiedAgentModule
     ) -> None:
         """Setup response routing for an agent."""
 

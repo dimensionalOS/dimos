@@ -215,7 +215,7 @@ class GStreamerTCPSender:
             logger.warning(f"Pipeline warning: {warn}, {debug}")
         elif t == Gst.MessageType.STATE_CHANGED:
             if message.src == self.pipeline:
-                old_state, new_state, pending_state = message.parse_state_changed()
+                old_state, new_state, _pending_state = message.parse_state_changed()
                 logger.debug(
                     f"Pipeline state changed: {old_state.value_nick} -> {new_state.value_nick}"
                 )

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from functools import cache
 import threading
 import time
-from typing import Literal, Optional
+from typing import Literal
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo

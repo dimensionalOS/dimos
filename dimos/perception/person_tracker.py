@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Optional
 
 import cv2
 import numpy as np
@@ -179,7 +178,7 @@ class PersonTrackingStream(Module):
             target_data["angle"] = angle
 
             # Add text to visualization
-            x1, y1, x2, y2 = map(int, bbox)
+            _x1, y1, x2, _y2 = map(int, bbox)
             dist_text = f"{distance:.2f}m, {np.rad2deg(angle):.1f} deg"
 
             # Add black background for better visibility

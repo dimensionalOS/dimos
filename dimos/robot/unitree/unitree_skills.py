@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING
 
 from pydantic import Field
 
@@ -189,7 +189,7 @@ class MyUnitreeSkills(SkillLibrary):
     _robot: Robot | None = None
 
     @classmethod
-    def register_skills(cls, skill_classes: Union[AbstractSkill, list[AbstractSkill]]) -> None:
+    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]) -> None:
         """Add multiple skill classes as class attributes.
 
         Args:

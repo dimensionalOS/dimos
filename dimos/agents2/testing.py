@@ -14,10 +14,11 @@
 
 """Testing utilities for agents."""
 
+from collections.abc import Iterator, Sequence
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
@@ -39,7 +40,7 @@ class MockModel(SimpleChatModel):
     2. Record mode: Uses a real LLM and saves responses to a JSON file
     """
 
-    responses: list[Union[str, AIMessage]] = []
+    responses: list[str | AIMessage] = []
     i: int = 0
     json_path: Path | None = None
     record: bool = False
@@ -178,7 +179,7 @@ class MockModel(SimpleChatModel):
 
     def bind_tools(
         self,
-        tools: Sequence[Union[dict[str, Any], type, Any]],
+        tools: Sequence[dict[str, Any] | type | Any],
         *,
         tool_choice: str | None = None,
         **kwargs: Any,

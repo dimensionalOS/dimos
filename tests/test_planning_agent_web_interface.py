@@ -28,7 +28,6 @@ import sys
 
 # -----
 from textwrap import dedent
-import threading
 import time
 
 import reactivex as rx
@@ -44,7 +43,6 @@ from dimos.utils.threadpool import make_single_thread_scheduler
 
 # from dimos.web.fastapi_server import FastAPIServer
 from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 
 def main():

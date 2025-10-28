@@ -13,12 +13,13 @@
 # limitations under the License.
 
 from collections import defaultdict
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from functools import cached_property, reduce
 import inspect
 import operator
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module

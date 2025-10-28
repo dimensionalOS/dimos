@@ -25,7 +25,6 @@ import logging
 import os
 from threading import Lock
 import time
-from typing import Optional
 
 # Third-party imports
 import cv2

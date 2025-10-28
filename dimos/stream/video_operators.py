@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import base64
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Optional, Tuple
+from typing import TYPE_CHECKING, Any
 
 import cv2
 import numpy as np

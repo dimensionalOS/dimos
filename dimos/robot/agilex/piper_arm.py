@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import asyncio
-import logging
-from typing import List, Optional
 
 # Import LCM message types
 from dimos_lcm.sensor_msgs import CameraInfo

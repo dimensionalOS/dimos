@@ -19,7 +19,7 @@ This module extends the ChromaDB implementation to support storing images with
 their XY locations and querying by location or image similarity.
 """
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import chromadb
 import numpy as np

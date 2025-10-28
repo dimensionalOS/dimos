@@ -15,7 +15,6 @@
 import logging
 import multiprocessing
 import os
-from typing import List, Optional, Union
 
 import numpy as np
 from reactivex.disposable import CompositeDisposable
@@ -29,7 +28,7 @@ from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
+from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.types.costmap import Costmap
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.types.vector import Vector

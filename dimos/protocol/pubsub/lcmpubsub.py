@@ -15,23 +15,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import pickle
-import subprocess
-import sys
-import traceback
-from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import lcm
 from turbojpeg import TurboJPEG
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
-from dimos.utils.deprecation import deprecated
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     import threading
 
 logger = setup_logger(__name__)

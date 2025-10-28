@@ -16,7 +16,7 @@ import datetime
 import json
 from operator import itemgetter
 import os
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+from typing import Any, TypedDict
 import uuid
 
 from langchain.chat_models import init_chat_model
@@ -31,7 +31,6 @@ from langchain_core.messages import (
 from dimos.agents2.spec import AgentSpec
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import rpc
-from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
@@ -158,7 +157,7 @@ def snapshot_to_messages(
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
-    state_messages: list[Union[AIMessage, HumanMessage]]
+    state_messages: list[AIMessage | HumanMessage]
 
     def __init__(
         self,
@@ -210,7 +209,7 @@ class Agent(AgentSpec):
     def clear_history(self) -> None:
         self._history.clear()
 
-    def append_history(self, *msgs: list[Union[AIMessage, HumanMessage]]) -> None:
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
         for msg in msgs:
             self.publish(msg)
 

@@ -19,7 +19,6 @@ This module sets up a logger with color output for different log levels.
 
 import logging
 import os
-from typing import Optional
 
 import colorlog
 

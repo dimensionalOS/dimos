@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Type, Any, Dict, Optional, Tuple
+from types import TracebackType
+from typing import Any
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -29,7 +30,6 @@ from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.std_msgs import Header
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
-from types import TracebackType
 
 logger = setup_logger(__name__)
 
@@ -331,7 +331,7 @@ class ZEDCamera:
                 point_cloud_data = self.point_cloud.get_data()
 
                 # Convert to numpy array format
-                height, width = point_cloud_data.shape[:2]
+                _height, _width = point_cloud_data.shape[:2]
                 points = point_cloud_data.reshape(-1, 4)
 
                 # Extract XYZ coordinates
@@ -510,7 +510,12 @@ class ZEDCamera:
             raise RuntimeError("Failed to open ZED camera")
         return self
 
-    def __exit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         self.close()
 

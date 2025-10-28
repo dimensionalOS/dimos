@@ -18,7 +18,6 @@
 import asyncio
 import os
 import pickle
-import time
 
 from dotenv import load_dotenv
 import pytest

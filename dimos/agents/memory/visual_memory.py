@@ -19,7 +19,6 @@ Visual memory storage for managing image data persistence and retrieval
 import base64
 import os
 import pickle
-from typing import Optional
 
 import cv2
 import numpy as np

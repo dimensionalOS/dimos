@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 import json
 import threading
 import time
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 
 @dataclass
@@ -80,7 +80,7 @@ class ConversationMessage:
     """
 
     role: str  # "system", "user", "assistant", "tool"
-    content: Union[str, list[dict[str, Any]]]  # Text or content blocks
+    content: str | list[dict[str, Any]]  # Text or content blocks
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None  # For tool responses
     name: str | None = None  # For tool messages (function name)
@@ -146,7 +146,7 @@ class ConversationHistory:
         self._lock = threading.Lock()
         self.max_size = max_size
 
-    def add_user_message(self, content: Union[str, list[dict[str, Any]]]) -> None:
+    def add_user_message(self, content: str | list[dict[str, Any]]) -> None:
         """Add user message to history.
 
         Args:

@@ -33,7 +33,7 @@ import glob
 import os
 import pickle
 import time
-from typing import TYPE_CHECKING, Any, Generic, Iterator, List, Optional, Tuple, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
 
 from reactivex import from_iterable, interval, operators as ops
 
@@ -42,6 +42,7 @@ from dimos.utils.threadpool import get_scheduler
 
 if TYPE_CHECKING:
     import builtins
+    from collections.abc import Iterator
 
     from reactivex.observable import Observable
     from reactivex.scheduler import ThreadPoolScheduler
@@ -85,11 +86,11 @@ class Multimock(Generic[T], Timeseries[TEvent[T]]):
 
         return self.cnt
 
-    def load(self, *names: Union[int, str]) -> builtins.list[tuple[float, T]]:
+    def load(self, *names: int | str) -> builtins.list[tuple[float, T]]:
         """Load multiple items by name or index."""
         return list(map(self.load_one, names))
 
-    def load_one(self, name: Union[int, str]) -> TEvent[T]:
+    def load_one(self, name: int | str) -> TEvent[T]:
         """Load a single item by name or index."""
         if isinstance(name, int):
             file_name = f"/{self.file_prefix}_{name:03d}.pickle"

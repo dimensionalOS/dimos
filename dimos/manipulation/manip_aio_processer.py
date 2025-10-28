@@ -16,9 +16,8 @@
 Sequential manipulation processor for single-frame processing without reactive streams.
 """
 
-import logging
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import cv2
 import numpy as np

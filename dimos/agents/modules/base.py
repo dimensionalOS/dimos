@@ -17,7 +17,7 @@
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import json
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from reactivex.subject import Subject
 
@@ -67,7 +67,7 @@ class BaseAgent:
         self,
         model: str = "openai::gpt-4o-mini",
         system_prompt: str | None = None,
-        skills: Union[SkillLibrary, list[AbstractSkill], AbstractSkill] | None = None,
+        skills: SkillLibrary | list[AbstractSkill] | AbstractSkill | None = None,
         memory: AbstractAgentSemanticMemory | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
@@ -474,7 +474,7 @@ class BaseAgent:
             logger.error(f"Error handling tool calls: {e}")
             return f"Error executing tools: {e!s}"
 
-    def query(self, message: Union[str, AgentMessage]) -> AgentResponse:
+    def query(self, message: str | AgentMessage) -> AgentResponse:
         """Synchronous query method for direct usage.
 
         Args:
@@ -498,7 +498,7 @@ class BaseAgent:
         finally:
             loop.close()
 
-    async def aquery(self, message: Union[str, AgentMessage]) -> AgentResponse:
+    async def aquery(self, message: str | AgentMessage) -> AgentResponse:
         """Asynchronous query method.
 
         Args:

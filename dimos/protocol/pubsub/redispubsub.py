@@ -13,17 +13,18 @@
 # limitations under the License.
 
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass, field
 import json
 import threading
 import time
-from typing import Optional, Type, Any, Callable, Dict, List
+from types import TracebackType
+from typing import Any
 
 import redis
 
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import Service
-from types import TracebackType
 
 
 @dataclass
@@ -188,5 +189,10 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         self.close()

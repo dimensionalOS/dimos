@@ -14,13 +14,12 @@
 
 """Utilities for grasp generation and visualization."""
 
-from typing import Dict, List, Optional, Tuple, Union
 
 import cv2
 import numpy as np
 import open3d as o3d
 
-from dimos.perception.common.utils import project_2d_points_to_3d, project_3d_points_to_2d
+from dimos.perception.common.utils import project_3d_points_to_2d
 
 
 def create_gripper_geometry(
@@ -173,8 +172,8 @@ def create_all_gripper_geometries(
 
 def draw_grasps_on_image(
     image: np.ndarray,
-    grasp_data: Union[dict, dict[Union[int, str], list[dict]], list[dict]],
-    camera_intrinsics: Union[list[float], np.ndarray],  # [fx, fy, cx, cy] or 3x3 matrix
+    grasp_data: dict | dict[int | str, list[dict]] | list[dict],
+    camera_intrinsics: list[float] | np.ndarray,  # [fx, fy, cx, cy] or 3x3 matrix
     max_grasps: int = -1,  # -1 means show all grasps
     finger_length: float = 0.08,  # Match 3D gripper
     finger_thickness: float = 0.004,  # Match 3D gripper
@@ -503,7 +502,7 @@ def parse_grasp_results(grasps: list[dict]) -> list[dict]:
 def create_grasp_overlay(
     rgb_image: np.ndarray,
     grasps: list[dict],
-    camera_intrinsics: Union[list[float], np.ndarray],
+    camera_intrinsics: list[float] | np.ndarray,
 ) -> np.ndarray:
     """
     Create grasp visualization overlay on RGB image.

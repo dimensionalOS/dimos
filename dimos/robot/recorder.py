@@ -14,11 +14,12 @@
 
 # UNDER DEVELOPMENT 🚧🚧🚧, NEEDS TESTING
 
+from collections.abc import Callable
 from queue import Queue
 import threading
 import time
-from typing import Optional, Type, Callable, Literal
 from types import TracebackType
+from typing import Literal
 
 # from dimos.data.recording import Recorder
 
@@ -83,7 +84,12 @@ class RobotRecorder:
         """Enter the context manager, starting the recording."""
         self.start_recording(self.task)
 
-    def __exit__(self, exc_type: Optional[Type[BaseException]], exc_value: Optional[BaseException], traceback: Optional[TracebackType]) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
         """Exit the context manager, stopping the recording."""
         self.stop_recording()
 

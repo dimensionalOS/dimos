@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
 
 # -----
-from typing import Dict, List, Union
 
 import dotenv
-
-import tests.test_header
 
 dotenv.load_dotenv()
 

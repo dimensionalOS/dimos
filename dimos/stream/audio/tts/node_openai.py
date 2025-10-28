@@ -17,7 +17,6 @@ from enum import Enum
 import io
 import threading
 import time
-from typing import Optional
 
 from openai import OpenAI
 from reactivex import Observable, Subject

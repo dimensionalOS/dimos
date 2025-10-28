@@ -15,12 +15,9 @@
 # frame_ipc.py
 # Python 3.9+
 from abc import ABC, abstractmethod
-import base64
-from multiprocessing.managers import SharedMemoryManager
 from multiprocessing.shared_memory import SharedMemory
 import os
 import time
-from typing import Optional, Tuple
 
 import numpy as np
 

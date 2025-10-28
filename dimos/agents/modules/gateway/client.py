@@ -15,15 +15,16 @@
 """Unified gateway client for LLM access."""
 
 import asyncio
+from collections.abc import AsyncIterator, Iterator
 import logging
 import os
-from typing import Type, Any, AsyncIterator, Dict, Iterator, List, Optional, Union
+from types import TracebackType
+from typing import Any
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .tensorzero_embedded import TensorZeroEmbeddedGateway
-from types import TracebackType
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +91,7 @@ class UnifiedGatewayClient:
         max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[dict[str, Any], Iterator[dict[str, Any]]]:
+    ) -> dict[str, Any] | Iterator[dict[str, Any]]:
         """Synchronous inference call.
 
         Args:
@@ -125,7 +126,7 @@ class UnifiedGatewayClient:
         max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[dict[str, Any], AsyncIterator[dict[str, Any]]]:
+    ) -> dict[str, Any] | AsyncIterator[dict[str, Any]]:
         """Asynchronous inference call.
 
         Args:
@@ -187,7 +188,12 @@ class UnifiedGatewayClient:
         """Context manager entry."""
         return self
 
-    def __exit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Context manager exit."""
         self.close()
 
@@ -195,6 +201,11 @@ class UnifiedGatewayClient:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None:
         """Async context manager exit."""
         await self.aclose()

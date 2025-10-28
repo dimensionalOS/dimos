@@ -14,19 +14,14 @@
 
 import asyncio
 import os
-import shutil
 import tempfile
 import time
-from typing import Dict, List
-from unittest.mock import MagicMock, patch
-import warnings
 
-import numpy as np
 import pytest
 from reactivex import operators as ops
 
 from dimos import core
-from dimos.core import In, Module, Out, rpc
+from dimos.core import Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub

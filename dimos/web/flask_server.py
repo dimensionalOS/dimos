@@ -23,7 +23,9 @@ from dimos.web.edge_io import EdgeIO
 
 
 class FlaskServer(EdgeIO):
-    def __init__(self, dev_name="Flask Server", edge_type="Bidirectional", port=5555, **streams) -> None:
+    def __init__(
+        self, dev_name="Flask Server", edge_type="Bidirectional", port=5555, **streams
+    ) -> None:
         super().__init__(dev_name, edge_type)
         self.app = Flask(__name__)
         self.port = port

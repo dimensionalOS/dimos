@@ -26,17 +26,16 @@ from dotenv import load_dotenv
 
 # Third-party imports
 from flask import Flask
-from reactivex import interval, of, operators as ops, zip
+from reactivex import interval, operators as ops, zip
 from reactivex.disposable import CompositeDisposable
-from reactivex.scheduler import CurrentThreadScheduler, ImmediateScheduler, ThreadPoolScheduler
+from reactivex.scheduler import ThreadPoolScheduler
 
 # Local application imports
-from dimos.agents.agent import OpenAIAgent, PromptBuilder
+from dimos.agents.agent import OpenAIAgent
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider
 from dimos.web.flask_server import FlaskServer
-import tests.test_header
 
 # Load environment variables
 load_dotenv()

@@ -15,7 +15,6 @@
 import pytest
 
 from dimos.agents2.agent import Agent
-from dimos.core import start
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
 

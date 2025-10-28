@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import re
-from typing import Optional, Tuple
 
 from dimos.mapping.osm.osm import MapImage
 from dimos.mapping.types import LatLon

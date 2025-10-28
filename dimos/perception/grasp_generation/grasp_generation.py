@@ -17,7 +17,6 @@ Dimensional-hosted grasp generation for manipulation pipeline.
 """
 
 import asyncio
-from typing import Dict, List, Optional
 
 import numpy as np
 import open3d as o3d

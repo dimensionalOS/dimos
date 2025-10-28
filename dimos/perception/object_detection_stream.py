@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 
-import cv2
 import numpy as np
 from reactivex import Observable, operators as ops
 
@@ -27,7 +25,8 @@ try:
 except (ModuleNotFoundError, ImportError):
     DETIC_AVAILABLE = False
     Detic2DDetector = None
-from typing import TYPE_CHECKING, Callable, Optional, Union
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from dimos.models.depth.metric3d import Metric3D
 from dimos.perception.common.utils import draw_object_detection_visualization
@@ -67,7 +66,7 @@ class ObjectDetectionStream:
         min_confidence=0.7,
         class_filter=None,  # Optional list of class names to filter (e.g., ["person", "car"])
         get_pose: Callable | None = None,  # Optional function to transform coordinates to map frame
-        detector: Union[Detic2DDetector, Yolo2DDetector] | None = None,
+        detector: Detic2DDetector | Yolo2DDetector | None = None,
         video_stream: Observable = None,
         disable_depth: bool = False,  # Flag to disable monocular Metric3D depth estimation
         draw_masks: bool = False,  # Flag to enable drawing segmentation masks

@@ -20,8 +20,6 @@ import functools
 import logging
 import os
 import queue
-import time
-from typing import List, Optional
 import warnings
 
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -29,12 +27,11 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, pSHMTransport, rpc
-from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from collections.abc import Generator
 import datetime
 import time
-from typing import Generator, Optional
 
 import pytest
 

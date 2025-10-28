@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import heapq
-import math
-from typing import Optional
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path
@@ -99,7 +97,7 @@ def astar(
 
     while open_set:
         # Get the node with the lowest f_score
-        current_f, current = heapq.heappop(open_set)
+        _current_f, current = heapq.heappop(open_set)
         current_x, current_y = current
 
         # Remove from open set hash

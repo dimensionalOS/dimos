@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import PoseStamped

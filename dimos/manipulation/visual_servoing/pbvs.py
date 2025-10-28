@@ -18,7 +18,6 @@ Supports both eye-in-hand and eye-to-hand configurations.
 """
 
 from collections import deque
-from typing import List, Optional, Tuple
 
 from dimos_lcm.vision_msgs import Detection3D
 import numpy as np
@@ -267,7 +266,7 @@ class PBVS:
                 return None, None, False, True, None
         else:
             # Velocity control mode - use controller
-            velocity_cmd, angular_velocity_cmd, controller_reached = (
+            velocity_cmd, angular_velocity_cmd, _controller_reached = (
                 self.controller.compute_control(ee_pose, self.target_grasp_pose)
             )
             # Return has_target=True since we have a target, regardless of tracking status

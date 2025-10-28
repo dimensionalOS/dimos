@@ -17,7 +17,6 @@ import select
 import sys
 import threading
 import time
-from typing import List
 
 import numpy as np
 from reactivex import Observable

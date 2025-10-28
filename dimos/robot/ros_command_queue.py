@@ -20,11 +20,12 @@ including WebRTC requests and action client commands.
 Commands are processed sequentially and only when the robot is in IDLE state.
 """
 
+from collections.abc import Callable
 from enum import Enum, auto
 from queue import Empty, PriorityQueue
 import threading
 import time
-from typing import Any, Callable, Dict, NamedTuple, Optional
+from typing import Any, NamedTuple
 import uuid
 
 from dimos.utils.logging_config import setup_logger

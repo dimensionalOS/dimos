@@ -15,7 +15,6 @@
 """Minimal robot interface for DIMOS robots."""
 
 from abc import ABC
-from typing import List
 
 from dimos.types.robot_capabilities import RobotCapability
 

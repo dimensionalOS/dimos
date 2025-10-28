@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, List, Optional, Union
 
 import genesis as gs  # type: ignore
 
@@ -26,7 +25,7 @@ class GenesisSimulator(SimulatorBase):
         self,
         headless: bool = True,
         open_usd: str | None = None,  # Keep for compatibility
-        entities: list[dict[str, Union[str, dict]]] | None = None,
+        entities: list[dict[str, str | dict]] | None = None,
     ) -> None:
         """Initialize the Genesis simulation.
 
@@ -75,7 +74,7 @@ class GenesisSimulator(SimulatorBase):
         # Don't build scene yet - let stream add camera first
         self.is_built = False
 
-    def _load_entities(self, entities: list[dict[str, Union[str, dict]]]):
+    def _load_entities(self, entities: list[dict[str, str | dict]]):
         """Load multiple entities into the scene."""
         for entity in entities:
             entity_type = entity.get("type", "").lower()

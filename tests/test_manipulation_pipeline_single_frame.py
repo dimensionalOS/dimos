@@ -22,7 +22,6 @@ import matplotlib
 import numpy as np
 
 from dimos.utils.data import get_data
-import tests.test_header
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -163,7 +162,7 @@ def main():
     else:
         rows = 2
         cols = (num_plots + 1) // 2
-        fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
+        _fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 5 * rows))
 
     if num_plots == 1:
         axes = [axes]

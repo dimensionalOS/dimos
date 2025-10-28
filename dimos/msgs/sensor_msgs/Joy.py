@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import List, TypeAlias
+from typing import TypeAlias
 
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
 

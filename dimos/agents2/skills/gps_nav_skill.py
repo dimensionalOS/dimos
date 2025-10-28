@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-from typing import Optional
 
 from dimos.core.core import rpc
 from dimos.core.rpc_client import RpcCall

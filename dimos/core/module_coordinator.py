@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import time
-from typing import Optional, Type, TypeVar
+from typing import TypeVar
 
 from dimos import core
 from dimos.core import DimosCluster, Module

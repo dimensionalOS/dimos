@@ -16,10 +16,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import functools
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any
 
 from lcm_msgs.builtin_interfaces import Duration
-from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
+from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, TextPrimitive
 from lcm_msgs.geometry_msgs import Point, Pose, Quaternion, Vector3 as LCMVector3
 import numpy as np
 

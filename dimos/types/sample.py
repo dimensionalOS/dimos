@@ -14,11 +14,12 @@
 
 import builtins
 from collections import OrderedDict
+from collections.abc import Sequence
 from enum import Enum
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Sequence, Union, get_origin
+from typing import Annotated, Any, Literal, Union, get_origin
 
 from datasets import Dataset
 from gymnasium import spaces
@@ -29,7 +30,6 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import from_json
-from typing_extensions import Annotated
 
 Flattenable = Annotated[Literal["dict", "np", "pt", "list"], "Numpy, PyTorch, list, or dict"]
 

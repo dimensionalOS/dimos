@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -30,7 +31,6 @@ from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.detectors import Detector
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type import (
     ImageDetections2D,
 )

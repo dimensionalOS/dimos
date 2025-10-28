@@ -15,7 +15,7 @@
 import queue
 import threading
 import time
-from typing import Any, List, Optional
+from typing import Any
 
 from pydantic import Field
 from reactivex import Subject

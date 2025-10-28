@@ -14,10 +14,9 @@
 
 from __future__ import annotations
 
-import logging
 import threading
 import time
-from typing import TYPE_CHECKING, Callable, Dict, Optional
+from typing import TYPE_CHECKING
 
 from rich.text import Text
 from textual.app import App, ComposeResult
@@ -28,6 +27,8 @@ from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, Skill
 from dimos.utils.cli import theme
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from dimos.protocol.skill.comms import SkillMsg
 
 

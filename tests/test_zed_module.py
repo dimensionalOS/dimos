@@ -18,7 +18,6 @@
 import asyncio
 import threading
 import time
-from typing import Optional
 
 import cv2
 from dimos_lcm.geometry_msgs import PoseStamped

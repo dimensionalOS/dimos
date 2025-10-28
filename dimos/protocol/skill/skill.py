@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import asyncio
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-import threading
-from typing import Any, Callable, Optional
+from typing import Any
 
 # from dimos.core.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec

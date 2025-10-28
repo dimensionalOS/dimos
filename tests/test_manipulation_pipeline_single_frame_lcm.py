@@ -15,16 +15,12 @@
 """Test manipulation processor with LCM topic subscription."""
 
 import argparse
-import os
 import pickle
-import sys
 import threading
 
 import cv2
 import matplotlib
 import numpy as np
-
-import tests.test_header
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -34,21 +30,13 @@ except:
         matplotlib.use("Qt5Agg")
     except:
         matplotlib.use("Agg")  # Fallback to non-interactive
-from typing import Dict, List, Optional
 
 # LCM imports
 import lcm
 from lcm_msgs.sensor_msgs import CameraInfo as LCMCameraInfo, Image as LCMImage
-import matplotlib.pyplot as plt
 import open3d as o3d
 
 from dimos.manipulation.manip_aio_processer import ManipulationProcessor
-from dimos.perception.grasp_generation.utils import visualize_grasps_3d
-from dimos.perception.pointcloud.utils import (
-    visualize_clustered_point_clouds,
-    visualize_pcd,
-    visualize_voxel_grid,
-)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_pipeline_lcm")

@@ -20,7 +20,6 @@ import functools
 import logging
 import threading
 import time
-from typing import List
 
 from reactivex import Observable
 

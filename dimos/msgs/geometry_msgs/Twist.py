@@ -14,9 +14,7 @@
 
 from __future__ import annotations
 
-from io import BytesIO
-import struct
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING
 
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch

@@ -42,11 +42,9 @@ except ImportError:
     ROSTwistWithCovariance = None
     ROSVector3 = None
 
-from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.geometry_msgs.Vector3 import Vector3

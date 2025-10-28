@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import os
-from typing import Optional, Tuple
 
 import cv2
 import numpy as np
@@ -22,7 +21,9 @@ from reactivex import Observable, operators as ops
 
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class
 class FrameProcessor:
-    def __init__(self, output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=False) -> None:
+    def __init__(
+        self, output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=False
+    ) -> None:
         """Initializes the FrameProcessor.
 
         Sets up the output directory for frame storage and optionally cleans up
@@ -121,7 +122,7 @@ class FrameProcessor:
             ValueError: If input frames have invalid dimensions or types.
             TypeError: If acc is not a tuple of correct types.
         """
-        prev_frame, prev_flow, prev_relevancy = acc
+        prev_frame, _prev_flow, _prev_relevancy = acc
 
         if prev_frame is None:
             return (current_frame, None, None)

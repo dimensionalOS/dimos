@@ -35,8 +35,6 @@ from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import logger
 from dimos.web.fastapi_server import FastAPIServer
-from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
 
 
 def main():

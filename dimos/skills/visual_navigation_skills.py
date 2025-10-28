@@ -22,7 +22,6 @@ and navigating to specific objects using computer vision.
 import logging
 import threading
 import time
-from typing import Optional, Tuple
 
 from pydantic import Field
 
