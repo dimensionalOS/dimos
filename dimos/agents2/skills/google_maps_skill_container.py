@@ -109,3 +109,8 @@ class GoogleMapsSkillContainer(SkillModule):
                 results.append(f"no result for {query}")
 
         return json.dumps(results)
+
+
+google_maps_skill = GoogleMapsSkillContainer.blueprint
+
+__all__ = ["GoogleMapsSkillContainer", "google_maps_skill"]
