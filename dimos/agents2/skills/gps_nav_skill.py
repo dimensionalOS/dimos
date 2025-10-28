@@ -78,6 +78,11 @@ class GpsNavSkillContainer(SkillModule):
             parsed = json.dumps([x.__dict__ if x else x for x in new_points])
             return f"Not all points were valid. I parsed this: {parsed}"
 
+        for new_point in new_points:
+            distance = distance_in_meters(self._get_latest_location(), new_point)
+            if distance > self._max_valid_distance:
+                return f"Point {new_point} is too far ({int(distance)} meters away)."
+
         logger.info(f"Set travel points: {new_points}")
 
         self.gps_goal.publish(new_points)
@@ -96,9 +101,10 @@ class GpsNavSkillContainer(SkillModule):
         if lat is None or lon is None:
             return None
 
-        new_point = LatLon(lat=lat, lon=lon)
-        distance = distance_in_meters(self._get_latest_location(), new_point)
-        if distance > self._max_valid_distance:
-            return None
+        return LatLon(lat=lat, lon=lon)
 
-        return new_point
+
+gps_nav_skill = GpsNavSkillContainer.blueprint
+
+
+__all__ = ["GpsNavSkillContainer", "gps_nav_skill"]
