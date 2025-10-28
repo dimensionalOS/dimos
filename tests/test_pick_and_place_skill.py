@@ -18,8 +18,8 @@ Run script for Piper Arm robot with pick and place functionality.
 Uses hardcoded points and the PickAndPlace skill.
 """
 
-import sys
 import asyncio
+import sys
 
 try:
     import pyzed.sl as sl  # Required for ZED camera

@@ -10,12 +10,13 @@
 Copy-Paste from torchvision, but add utility of caching images on memory
 """
 
-from torchvision.datasets.vision import VisionDataset
-from PIL import Image
+from io import BytesIO
 import os
 import os.path
+
+from PIL import Image
+from torchvision.datasets.vision import VisionDataset
 import tqdm
-from io import BytesIO
 
 
 class CocoDetection(VisionDataset):
@@ -38,11 +39,11 @@ class CocoDetection(VisionDataset):
         transform=None,
         target_transform=None,
         transforms=None,
-        cache_mode=False,
-        local_rank=0,
-        local_size=1,
-    ):
-        super(CocoDetection, self).__init__(root, transforms, transform, target_transform)
+        cache_mode: bool=False,
+        local_rank: int=0,
+        local_size: int=1,
+    ) -> None:
+        super().__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO
 
         self.coco = COCO(annFile)
@@ -54,9 +55,9 @@ class CocoDetection(VisionDataset):
             self.cache = {}
             self.cache_images()
 
-    def cache_images(self):
+    def cache_images(self) -> None:
         self.cache = {}
-        for index, img_id in zip(tqdm.trange(len(self.ids)), self.ids):
+        for index, img_id in zip(tqdm.trange(len(self.ids)), self.ids, strict=False):
             if index % self.local_size != self.local_rank:
                 continue
             path = self.coco.loadImgs(img_id)[0]["file_name"]
@@ -91,5 +92,5 @@ class CocoDetection(VisionDataset):
 
         return img, target
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.ids)

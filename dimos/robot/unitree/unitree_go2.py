@@ -12,26 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import multiprocessing
-from typing import Optional, Union, List
-import numpy as np
-from dimos.robot.robot import Robot
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
-from reactivex.disposable import CompositeDisposable
 import logging
+import multiprocessing
 import os
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+
+import numpy as np
+from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler
-from dimos.utils.logging_config import setup_logger
-from dimos.perception.person_tracker import PersonTrackingStream
+
 from dimos.perception.object_tracker import ObjectTrackingStream
+from dimos.perception.person_tracker import PersonTrackingStream
+from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.robot.local_planner.local_planner import navigate_path_local
 from dimos.robot.local_planner.vfh_local_planner import VFHPurePursuitPlanner
-from dimos.robot.global_planner.planner import AstarPlanner
+from dimos.robot.robot import Robot
+from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.types.costmap import Costmap
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.types.vector import Vector
+from dimos.utils.logging_config import setup_logger
 
 # Set up logging
 logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
@@ -53,13 +54,13 @@ class UnitreeGo2(Robot):
         video_provider=None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "output"),
         skill_library: SkillLibrary = None,
-        robot_capabilities: List[RobotCapability] = None,
+        robot_capabilities: list[RobotCapability] | None = None,
         spatial_memory_collection: str = "spatial_memory",
         new_memory: bool = False,
         disable_video_stream: bool = False,
         mock_connection: bool = False,
         enable_perception: bool = True,
-    ):
+    ) -> None:
         """Initialize UnitreeGo2 robot with ROS control interface.
 
         Args:
@@ -190,7 +191,7 @@ class UnitreeGo2(Robot):
             self.global_planner = None
             self.local_planner_viz_stream = None
 
-    def get_skills(self) -> Optional[SkillLibrary]:
+    def get_skills(self) -> SkillLibrary | None:
         return self.skill_library
 
     def get_pose(self) -> dict:

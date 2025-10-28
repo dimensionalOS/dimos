@@ -11,18 +11,17 @@ import json
 from pathlib import Path
 
 import numpy as np
-import torch
-from PIL import Image
-
 from panopticapi.utils import rgb2id
+from PIL import Image
+import torch
 from util.box_ops import masks_to_boxes
 
 from .coco import make_coco_transforms
 
 
 class CocoPanoptic:
-    def __init__(self, img_folder, ann_folder, ann_file, transforms=None, return_masks=True):
-        with open(ann_file, "r") as f:
+    def __init__(self, img_folder, ann_folder, ann_file, transforms=None, return_masks: bool=True) -> None:
+        with open(ann_file) as f:
             self.coco = json.load(f)
 
         # sort 'images' field so that they are aligned with 'annotations'
@@ -30,7 +29,7 @@ class CocoPanoptic:
         self.coco["images"] = sorted(self.coco["images"], key=lambda x: x["id"])
         # sanity check
         if "annotations" in self.coco:
-            for img, ann in zip(self.coco["images"], self.coco["annotations"]):
+            for img, ann in zip(self.coco["images"], self.coco["annotations"], strict=False):
                 assert img["file_name"][:-4] == ann["file_name"][:-4]
 
         self.img_folder = img_folder
@@ -39,7 +38,7 @@ class CocoPanoptic:
         self.transforms = transforms
         self.return_masks = return_masks
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         ann_info = (
             self.coco["annotations"][idx]
             if "annotations" in self.coco
@@ -83,10 +82,10 @@ class CocoPanoptic:
 
         return img, target
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.coco["images"])
 
-    def get_height_and_width(self, idx):
+    def get_height_and_width(self, idx: int):
         img_info = self.coco["images"][idx]
         height = img_info["height"]
         width = img_info["width"]

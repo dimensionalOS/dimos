@@ -18,8 +18,6 @@
 Recovery server for handling stuck detection and recovery behaviors.
 """
 
-from collections import deque
-
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
@@ -39,7 +37,7 @@ class RecoveryServer:
         self,
         position_threshold: float = 0.2,
         stuck_duration: float = 3.0,
-    ):
+    ) -> None:
         """Initialize the recovery server.
 
         Args:

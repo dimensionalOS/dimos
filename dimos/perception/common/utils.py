@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Union
+
 import cv2
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.vision_msgs import BoundingBox2D, Detection2D, Detection3D
 import numpy as np
-from typing import List, Tuple, Optional, Any, Union
+import torch
+import yaml
+
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.std_msgs import Header
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
-from dimos_lcm.vision_msgs import Detection3D, Detection2D, BoundingBox2D
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image
-import torch
-import yaml
 
 logger = setup_logger("dimos.perception.common.utils")
 
@@ -66,7 +68,7 @@ def load_camera_info(yaml_path: str, frame_id: str = "camera_link") -> CameraInf
     Returns:
         CameraInfo: LCM CameraInfo message with all calibration data
     """
-    with open(yaml_path, "r") as f:
+    with open(yaml_path) as f:
         camera_info_data = yaml.safe_load(f)
 
     # Extract image dimensions
@@ -112,7 +114,7 @@ def load_camera_info(yaml_path: str, frame_id: str = "camera_link") -> CameraInf
     )
 
 
-def load_camera_info_opencv(yaml_path: str) -> Tuple[np.ndarray, np.ndarray]:
+def load_camera_info_opencv(yaml_path: str) -> tuple[np.ndarray, np.ndarray]:
     """
     Load ROS-style camera_info YAML file and convert to OpenCV camera matrix and distortion coefficients.
 
@@ -123,7 +125,7 @@ def load_camera_info_opencv(yaml_path: str) -> Tuple[np.ndarray, np.ndarray]:
         K: 3x3 camera intrinsic matrix
         dist: 1xN distortion coefficients array (for plumb_bob model)
     """
-    with open(yaml_path, "r") as f:
+    with open(yaml_path) as f:
         camera_info = yaml.safe_load(f)
 
     # Extract camera matrix (K)
@@ -288,7 +290,7 @@ def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarr
 
 
 def project_3d_points_to_2d_cuda(
-    points_3d: "cp.ndarray", camera_intrinsics: Union[List[float], "cp.ndarray"]
+    points_3d: "cp.ndarray", camera_intrinsics: Union[list[float], "cp.ndarray"]
 ) -> "cp.ndarray":
     xp = cp  # type: ignore
     pts = points_3d.astype(xp.float64, copy=False)
@@ -307,7 +309,7 @@ def project_3d_points_to_2d_cuda(
 
 
 def project_3d_points_to_2d_cpu(
-    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
+    points_3d: np.ndarray, camera_intrinsics: list[float] | np.ndarray
 ) -> np.ndarray:
     pts = np.asarray(points_3d, dtype=np.float64)
     valid_mask = pts[:, 2] > 0
@@ -326,7 +328,7 @@ def project_3d_points_to_2d_cpu(
 
 def project_3d_points_to_2d(
     points_3d: Union[np.ndarray, "cp.ndarray"],
-    camera_intrinsics: Union[List[float], np.ndarray, "cp.ndarray"],
+    camera_intrinsics: Union[list[float], np.ndarray, "cp.ndarray"],
 ) -> Union[np.ndarray, "cp.ndarray"]:
     """
     Project 3D points to 2D image coordinates using camera intrinsics.
@@ -357,7 +359,7 @@ def project_3d_points_to_2d(
 def project_2d_points_to_3d_cuda(
     points_2d: "cp.ndarray",
     depth_values: "cp.ndarray",
-    camera_intrinsics: Union[List[float], "cp.ndarray"],
+    camera_intrinsics: Union[list[float], "cp.ndarray"],
 ) -> "cp.ndarray":
     xp = cp  # type: ignore
     pts = points_2d.astype(xp.float64, copy=False)
@@ -380,7 +382,7 @@ def project_2d_points_to_3d_cuda(
 def project_2d_points_to_3d_cpu(
     points_2d: np.ndarray,
     depth_values: np.ndarray,
-    camera_intrinsics: Union[List[float], np.ndarray],
+    camera_intrinsics: list[float] | np.ndarray,
 ) -> np.ndarray:
     pts = np.asarray(points_2d, dtype=np.float64)
     depths = np.asarray(depth_values, dtype=np.float64)
@@ -406,7 +408,7 @@ def project_2d_points_to_3d_cpu(
 def project_2d_points_to_3d(
     points_2d: Union[np.ndarray, "cp.ndarray"],
     depth_values: Union[np.ndarray, "cp.ndarray"],
-    camera_intrinsics: Union[List[float], np.ndarray, "cp.ndarray"],
+    camera_intrinsics: Union[list[float], np.ndarray, "cp.ndarray"],
 ) -> Union[np.ndarray, "cp.ndarray"]:
     """
     Project 2D image points to 3D coordinates using depth values and camera intrinsics.
@@ -440,7 +442,7 @@ def project_2d_points_to_3d(
 
 def colorize_depth(
     depth_img: Union[np.ndarray, "cp.ndarray"], max_depth: float = 5.0, overlay_stats: bool = True
-) -> Optional[Union[np.ndarray, "cp.ndarray"]]:
+) -> Union[np.ndarray, "cp.ndarray"] | None:
     """
     Normalize and colorize depth image using COLORMAP_JET with optional statistics overlay.
 
@@ -579,12 +581,12 @@ def colorize_depth(
 
 def draw_bounding_box(
     image: Union[np.ndarray, "cp.ndarray"],
-    bbox: List[float],
-    color: Tuple[int, int, int] = (0, 255, 0),
+    bbox: list[float],
+    color: tuple[int, int, int] = (0, 255, 0),
     thickness: int = 2,
-    label: Optional[str] = None,
-    confidence: Optional[float] = None,
-    object_id: Optional[int] = None,
+    label: str | None = None,
+    confidence: float | None = None,
+    object_id: int | None = None,
     font_scale: float = 0.6,
 ) -> Union[np.ndarray, "cp.ndarray"]:
     """
@@ -647,7 +649,7 @@ def draw_bounding_box(
 def draw_segmentation_mask(
     image: Union[np.ndarray, "cp.ndarray"],
     mask: Union[np.ndarray, "cp.ndarray"],
-    color: Tuple[int, int, int] = (0, 200, 200),
+    color: tuple[int, int, int] = (0, 200, 200),
     alpha: float = 0.5,
     draw_contours: bool = True,
     contour_thickness: int = 2,
@@ -692,10 +694,10 @@ def draw_segmentation_mask(
 
 def draw_object_detection_visualization(
     image: Union[np.ndarray, "cp.ndarray"],
-    objects: List[ObjectData],
+    objects: list[ObjectData],
     draw_masks: bool = False,
-    bbox_color: Tuple[int, int, int] = (0, 255, 0),
-    mask_color: Tuple[int, int, int] = (0, 200, 200),
+    bbox_color: tuple[int, int, int] = (0, 255, 0),
+    mask_color: tuple[int, int, int] = (0, 200, 200),
     font_scale: float = 0.6,
 ) -> Union[np.ndarray, "cp.ndarray"]:
     """
@@ -731,7 +733,7 @@ def draw_object_detection_visualization(
                     obj_color = obj["color"]
                     if isinstance(obj_color, np.ndarray):
                         color = tuple(int(c) for c in obj_color)
-                    elif isinstance(obj_color, (list, tuple)):
+                    elif isinstance(obj_color, list | tuple):
                         color = tuple(int(c) for c in obj_color[:3])
 
                 viz_image = draw_bounding_box(
@@ -751,14 +753,14 @@ def draw_object_detection_visualization(
 
 
 def detection_results_to_object_data(
-    bboxes: List[List[float]],
-    track_ids: List[int],
-    class_ids: List[int],
-    confidences: List[float],
-    names: List[str],
-    masks: Optional[List[np.ndarray]] = None,
+    bboxes: list[list[float]],
+    track_ids: list[int],
+    class_ids: list[int],
+    confidences: list[float],
+    names: list[str],
+    masks: list[np.ndarray] | None = None,
     source: str = "detection",
-) -> List[ObjectData]:
+) -> list[ObjectData]:
     """
     Convert detection/segmentation results to ObjectData format.
 
@@ -781,8 +783,8 @@ def detection_results_to_object_data(
         bbox = bboxes[i]
         width = bbox[2] - bbox[0]
         height = bbox[3] - bbox[1]
-        center_x = bbox[0] + width / 2
-        center_y = bbox[1] + height / 2
+        bbox[0] + width / 2
+        bbox[1] + height / 2
 
         # Create ObjectData
         object_data: ObjectData = {
@@ -813,8 +815,8 @@ def detection_results_to_object_data(
 
 
 def combine_object_data(
-    list1: List[ObjectData], list2: List[ObjectData], overlap_threshold: float = 0.8
-) -> List[ObjectData]:
+    list1: list[ObjectData], list2: list[ObjectData], overlap_threshold: float = 0.8
+) -> list[ObjectData]:
     """
     Combine two ObjectData lists, removing duplicates based on segmentation mask overlap.
     """
@@ -858,7 +860,7 @@ def combine_object_data(
     return combined
 
 
-def point_in_bbox(point: Tuple[int, int], bbox: List[float]) -> bool:
+def point_in_bbox(point: tuple[int, int], bbox: list[float]) -> bool:
     """
     Check if a point is inside a bounding box.
 
@@ -874,7 +876,7 @@ def point_in_bbox(point: Tuple[int, int], bbox: List[float]) -> bool:
     return x1 <= x <= x2 and y1 <= y <= y2
 
 
-def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> Tuple[float, float, float, float]:
+def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> tuple[float, float, float, float]:
     """
     Convert BoundingBox2D from center format to corner format.
 
@@ -898,8 +900,8 @@ def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> Tuple[float, float, float, floa
 
 
 def find_clicked_detection(
-    click_pos: Tuple[int, int], detections_2d: List[Detection2D], detections_3d: List[Detection3D]
-) -> Optional[Detection3D]:
+    click_pos: tuple[int, int], detections_2d: list[Detection2D], detections_3d: list[Detection3D]
+) -> Detection3D | None:
     """
     Find which detection was clicked based on 2D bounding boxes.
 

@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from threading import Event, Thread
+import time
 
 import pytest
 
-from dimos.core import In, Module, Out, start, rpc
+from dimos.core import In, Module, Out, rpc, start
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -39,16 +39,16 @@ class MockRobotClient(Module):
 
     mov_msg_count = 0
 
-    def mov_callback(self, msg):
+    def mov_callback(self, msg) -> None:
         self.mov_msg_count += 1
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._stop_event = Event()
         self._thread = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         self._thread = Thread(target=self.odomloop)
@@ -63,7 +63,7 @@ class MockRobotClient(Module):
 
         super().stop()
 
-    def odomloop(self):
+    def odomloop(self) -> None:
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
         lidardata = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
 

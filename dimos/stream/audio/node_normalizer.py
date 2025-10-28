@@ -13,21 +13,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from collections.abc import Callable
 
 import numpy as np
 from reactivex import Observable, create, disposable
 
-from dimos.utils.logging_config import setup_logger
-from dimos.stream.audio.volume import (
-    calculate_rms_volume,
-    calculate_peak_volume,
-)
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
     AudioEvent,
 )
-
+from dimos.stream.audio.volume import (
+    calculate_peak_volume,
+    calculate_rms_volume,
+)
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.node_normalizer")
 
@@ -48,7 +47,7 @@ class AudioNormalizer(AbstractAudioTransform):
         decay_factor: float = 0.999,
         adapt_speed: float = 0.05,
         volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,
-    ):
+    ) -> None:
         """
         Initialize AudioNormalizer.
 
@@ -156,7 +155,7 @@ class AudioNormalizer(AbstractAudioTransform):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping audio normalizer")
                 audio_subscription.dispose()
 
@@ -167,12 +166,13 @@ class AudioNormalizer(AbstractAudioTransform):
 
 if __name__ == "__main__":
     import sys
+
     from dimos.stream.audio.node_microphone import (
         SounddeviceAudioSource,
     )
+    from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.node_simulated import SimulatedAudioSource
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.utils import keepalive
 
     # Parse command line arguments

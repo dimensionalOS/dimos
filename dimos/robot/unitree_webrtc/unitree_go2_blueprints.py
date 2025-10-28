@@ -14,34 +14,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.sensor_msgs import CameraInfo
+
+from dimos.agents2.agent import llm_agent
+from dimos.agents2.cli.human import human_input
+from dimos.agents2.skills.navigation import navigation_skill
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.perception.spatial_perception import spatial_memory
-from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree_webrtc.unitree_go2 import connection
-from dimos.utils.monitoring import utilization
-from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
-from dimos.navigation.global_planner import astar_planner
-from dimos.navigation.local_planner.holonomic_local_planner import (
-    holonomic_local_planner,
-)
 from dimos.navigation.bt_navigator.navigator import (
     behavior_tree_navigator,
 )
 from dimos.navigation.frontier_exploration import (
     wavefront_frontier_explorer,
 )
-from dimos.robot.unitree_webrtc.type.map import mapper
-from dimos.robot.unitree_webrtc.depth_module import depth_module
+from dimos.navigation.global_planner import astar_planner
+from dimos.navigation.local_planner.holonomic_local_planner import (
+    holonomic_local_planner,
+)
 from dimos.perception.object_tracker import object_tracking
-from dimos.agents2.agent import llm_agent
-from dimos.agents2.cli.human import human_input
-from dimos.agents2.skills.navigation import navigation_skill
-
+from dimos.perception.spatial_perception import spatial_memory
+from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.robot.unitree_webrtc.depth_module import depth_module
+from dimos.robot.unitree_webrtc.type.map import mapper
+from dimos.robot.unitree_webrtc.unitree_go2 import connection
+from dimos.utils.monitoring import utilization
+from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 basic = (
     autoconnect(

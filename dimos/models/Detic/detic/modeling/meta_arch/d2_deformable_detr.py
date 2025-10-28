@@ -1,35 +1,34 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import torch
-import torch.nn.functional as F
-from torch import nn
-
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone
 from detectron2.structures import Boxes, Instances
-from ..utils import load_class_freq, get_fed_loss_inds
-
 from models.backbone import Joiner
 from models.deformable_detr import DeformableDETR, SetCriterion
+from models.deformable_transformer import DeformableTransformer
 from models.matcher import HungarianMatcher
 from models.position_encoding import PositionEmbeddingSine
-from models.deformable_transformer import DeformableTransformer
 from models.segmentation import sigmoid_focal_loss
+import torch
+from torch import nn
+import torch.nn.functional as F
 from util.box_ops import box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from util.misc import NestedTensor, accuracy
 
+from ..utils import get_fed_loss_inds, load_class_freq
+from typing import Sequence
 
 __all__ = ["DeformableDetr"]
 
 
 class CustomSetCriterion(SetCriterion):
     def __init__(
-        self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25, use_fed_loss=False
-    ):
+        self, num_classes: int, matcher, weight_dict, losses, focal_alpha: float=0.25, use_fed_loss: bool=False
+    ) -> None:
         super().__init__(num_classes, matcher, weight_dict, losses, focal_alpha)
         self.use_fed_loss = use_fed_loss
         if self.use_fed_loss:
             self.register_buffer("fed_loss_weight", load_class_freq(freq_weight=0.5))
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_labels(self, outputs, targets, indices, num_boxes: int, log: bool=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -37,7 +36,7 @@ class CustomSetCriterion(SetCriterion):
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices, strict=False)])
         target_classes = torch.full(
             src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device
         )
@@ -87,7 +86,7 @@ class CustomSetCriterion(SetCriterion):
 class MaskedBackbone(nn.Module):
     """This is a thin wrapper around D2's backbone to provide padding masking"""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.backbone = build_backbone(cfg)
         backbone_shape = self.backbone.output_shape()
@@ -112,7 +111,7 @@ class DeformableDetr(nn.Module):
     Implement Deformable Detr
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.with_image_labels = cfg.WITH_IMAGE_LABELS
         self.weak_weight = cfg.MODEL.DETR.WEAK_WEIGHT
@@ -250,7 +249,7 @@ class DeformableDetr(nn.Module):
                 new_targets[-1].update({"masks": gt_masks})
         return new_targets
 
-    def post_process(self, outputs, target_sizes):
+    def post_process(self, outputs, target_sizes: Sequence[int]):
         """ """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         assert len(out_logits) == len(target_sizes)
@@ -272,7 +271,7 @@ class DeformableDetr(nn.Module):
         boxes = boxes * scale_fct[:, None, :]
 
         results = []
-        for s, l, b, size in zip(scores, labels, boxes, target_sizes):
+        for s, l, b, size in zip(scores, labels, boxes, target_sizes, strict=False):
             r = Instances((size[0], size[1]))
             r.pred_boxes = Boxes(b)
             r.scores = s
@@ -303,7 +302,7 @@ class DeformableDetr(nn.Module):
         loss = loss / len(batched_inputs)
         return loss
 
-    def _max_size_loss(self, logits, boxes, label):
+    def _max_size_loss(self, logits, boxes, label: str):
         """
         Inputs:
           logits: L x N x C

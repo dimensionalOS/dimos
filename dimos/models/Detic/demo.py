@@ -2,30 +2,29 @@
 import argparse
 import glob
 import multiprocessing as mp
-import numpy as np
 import os
+import sys
 import tempfile
 import time
 import warnings
-import cv2
-import tqdm
-import sys
-import mss
 
+import cv2
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
+import mss
+import numpy as np
+import tqdm
 
 sys.path.insert(0, "third_party/CenterNet2/")
 from centernet.config import add_centernet_config
 from detic.config import add_detic_config
-
 from detic.predictor import VisualizationDemo
 
 
 # Fake a video capture object OpenCV style - half width, half height of first screen using MSS
 class ScreenGrab:
-    def __init__(self):
+    def __init__(self) -> None:
         self.sct = mss.mss()
         m0 = self.sct.monitors[0]
         self.monitor = {"top": 0, "left": 0, "width": m0["width"] / 2, "height": m0["height"] / 2}
@@ -35,10 +34,10 @@ class ScreenGrab:
         nf = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
         return (True, nf)
 
-    def isOpened(self):
+    def isOpened(self) -> bool:
         return True
 
-    def release(self):
+    def release(self) -> bool:
         return True
 
 
@@ -112,7 +111,7 @@ def get_parser():
     return parser
 
 
-def test_opencv_video_format(codec, file_ext):
+def test_opencv_video_format(codec, file_ext) -> bool:
     with tempfile.TemporaryDirectory(prefix="video_format_test") as dir:
         filename = os.path.join(dir, "test_file" + file_ext)
         writer = cv2.VideoWriter(
@@ -196,7 +195,7 @@ if __name__ == "__main__":
             ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
         )
         if codec == ".mp4v":
-            warnings.warn("x264 codec not available, switching to mp4v")
+            warnings.warn("x264 codec not available, switching to mp4v", stacklevel=2)
         if args.output:
             if os.path.isdir(args.output):
                 output_fname = os.path.join(args.output, basename)

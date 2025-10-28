@@ -17,22 +17,25 @@ from __future__ import annotations
 # Standard library imports
 import logging
 import os
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 # Third-party imports
 from dotenv import load_dotenv
 from huggingface_hub import InferenceClient
-from reactivex import create, Observable
-from reactivex.scheduler import ThreadPoolScheduler
-from reactivex.subject import Subject
+from reactivex import Observable, create
 
 # Local imports
 from dimos.agents.agent import LLMAgent
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from reactivex.scheduler import ThreadPoolScheduler
+    from reactivex.subject import Subject
+
+    from dimos.agents.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents.tokenizer.base import AbstractTokenizer
 
 # Initialize environment variables
 load_dotenv()
@@ -49,21 +52,21 @@ class HuggingFaceRemoteAgent(LLMAgent):
         agent_type: str = "HF-LLM",
         model_name: str = "Qwen/QwQ-32B",
         query: str = "How many r's are in the word 'strawberry'?",
-        input_query_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        system_query: Optional[str] = None,
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        system_query: str | None = None,
         max_output_tokens_per_request: int = 16384,
-        prompt_builder: Optional[PromptBuilder] = None,
-        tokenizer: Optional[AbstractTokenizer] = None,
+        prompt_builder: PromptBuilder | None = None,
+        tokenizer: AbstractTokenizer | None = None,
         image_detail: str = "low",
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-        process_all_inputs: Optional[bool] = None,
-        api_key: Optional[str] = None,
-        hf_provider: Optional[str] = None,
-        hf_base_url: Optional[str] = None,
-    ):
+        pool_scheduler: ThreadPoolScheduler | None = None,
+        process_all_inputs: bool | None = None,
+        api_key: str | None = None,
+        hf_provider: str | None = None,
+        hf_base_url: str | None = None,
+    ) -> None:
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams

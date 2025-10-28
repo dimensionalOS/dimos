@@ -18,8 +18,6 @@ import pytest
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 
 try:
-    import cupy as cp
-
     HAS_CUDA = True
     print("Running image backend utils tests with CUDA/CuPy support (GPU mode)")
 except:
@@ -27,13 +25,13 @@ except:
     print("Running image backend utils tests in CPU-only mode")
 
 from dimos.perception.common.utils import (
-    rectify_image,
-    project_3d_points_to_2d,
-    project_2d_points_to_3d,
     colorize_depth,
     draw_bounding_box,
-    draw_segmentation_mask,
     draw_object_detection_visualization,
+    draw_segmentation_mask,
+    project_2d_points_to_3d,
+    project_3d_points_to_2d,
+    rectify_image,
 )
 
 
@@ -57,7 +55,7 @@ def _has_cupy() -> bool:
 @pytest.mark.parametrize(
     "shape,fmt", [((64, 64, 3), ImageFormat.BGR), ((64, 64), ImageFormat.GRAY)]
 )
-def test_rectify_image_cpu(shape, fmt):
+def test_rectify_image_cpu(shape, fmt) -> None:
     arr = (np.random.rand(*shape) * (255 if fmt != ImageFormat.GRAY else 65535)).astype(
         np.uint8 if fmt != ImageFormat.GRAY else np.uint16
     )
@@ -79,7 +77,7 @@ def test_rectify_image_cpu(shape, fmt):
 @pytest.mark.parametrize(
     "shape,fmt", [((32, 32, 3), ImageFormat.BGR), ((32, 32), ImageFormat.GRAY)]
 )
-def test_rectify_image_gpu_parity(shape, fmt):
+def test_rectify_image_gpu_parity(shape, fmt) -> None:
     import cupy as cp  # type: ignore
 
     arr_np = (np.random.rand(*shape) * (255 if fmt != ImageFormat.GRAY else 65535)).astype(
@@ -102,7 +100,7 @@ def test_rectify_image_gpu_parity(shape, fmt):
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_rectify_image_gpu_nonzero_dist_close():
+def test_rectify_image_gpu_nonzero_dist_close() -> None:
     import cupy as cp  # type: ignore
 
     H, W = 64, 96
@@ -135,7 +133,7 @@ def test_rectify_image_gpu_nonzero_dist_close():
     )
 
 
-def test_project_roundtrip_cpu():
+def test_project_roundtrip_cpu() -> None:
     pts3d = np.array([[0.1, 0.2, 1.0], [0.0, 0.0, 2.0], [0.5, -0.3, 3.0]], dtype=np.float32)
     fx, fy, cx, cy = 200.0, 220.0, 64.0, 48.0
     K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1.0]], dtype=np.float64)
@@ -149,7 +147,7 @@ def test_project_roundtrip_cpu():
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_project_parity_gpu_cpu():
+def test_project_parity_gpu_cpu() -> None:
     import cupy as cp  # type: ignore
 
     pts3d_np = np.array([[0.1, 0.2, 1.0], [0.0, 0.0, 2.0], [0.5, -0.3, 3.0]], dtype=np.float32)
@@ -168,7 +166,7 @@ def test_project_parity_gpu_cpu():
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_project_parity_gpu_cpu_random():
+def test_project_parity_gpu_cpu_random() -> None:
     import cupy as cp  # type: ignore
 
     rng = np.random.RandomState(0)
@@ -196,7 +194,7 @@ def test_project_parity_gpu_cpu_random():
     assert pts3d_cpu.shape == cp.asnumpy(pts3d_gpu).shape
 
 
-def test_colorize_depth_cpu():
+def test_colorize_depth_cpu() -> None:
     depth = np.zeros((32, 48), dtype=np.float32)
     depth[8:16, 12:24] = 1.5
     out = colorize_depth(depth, max_depth=3.0, overlay_stats=False)
@@ -206,7 +204,7 @@ def test_colorize_depth_cpu():
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_colorize_depth_gpu_parity():
+def test_colorize_depth_gpu_parity() -> None:
     import cupy as cp  # type: ignore
 
     depth_np = np.zeros((16, 20), dtype=np.float32)
@@ -216,7 +214,7 @@ def test_colorize_depth_gpu_parity():
     np.testing.assert_array_equal(cp.asnumpy(out_gpu), out_cpu)
 
 
-def test_draw_bounding_box_cpu():
+def test_draw_bounding_box_cpu() -> None:
     img = np.zeros((20, 30, 3), dtype=np.uint8)
     out = draw_bounding_box(img, [2, 3, 10, 12], color=(255, 0, 0), thickness=1)
     assert isinstance(out, np.ndarray)
@@ -225,7 +223,7 @@ def test_draw_bounding_box_cpu():
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_draw_bounding_box_gpu_parity():
+def test_draw_bounding_box_gpu_parity() -> None:
     import cupy as cp  # type: ignore
 
     img_np = np.zeros((20, 30, 3), dtype=np.uint8)
@@ -235,7 +233,7 @@ def test_draw_bounding_box_gpu_parity():
     np.testing.assert_array_equal(cp.asnumpy(out_gpu), out_cpu)
 
 
-def test_draw_segmentation_mask_cpu():
+def test_draw_segmentation_mask_cpu() -> None:
     img = np.zeros((20, 30, 3), dtype=np.uint8)
     mask = np.zeros((20, 30), dtype=np.uint8)
     mask[5:10, 8:15] = 1
@@ -244,7 +242,7 @@ def test_draw_segmentation_mask_cpu():
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_draw_segmentation_mask_gpu_parity():
+def test_draw_segmentation_mask_gpu_parity() -> None:
     import cupy as cp  # type: ignore
 
     img_np = np.zeros((20, 30, 3), dtype=np.uint8)
@@ -257,7 +255,7 @@ def test_draw_segmentation_mask_gpu_parity():
     np.testing.assert_array_equal(cp.asnumpy(out_gpu), out_cpu)
 
 
-def test_draw_object_detection_visualization_cpu():
+def test_draw_object_detection_visualization_cpu() -> None:
     img = np.zeros((30, 40, 3), dtype=np.uint8)
     objects = [
         {
@@ -272,7 +270,7 @@ def test_draw_object_detection_visualization_cpu():
 
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
-def test_draw_object_detection_visualization_gpu_parity():
+def test_draw_object_detection_visualization_gpu_parity() -> None:
     import cupy as cp  # type: ignore
 
     img_np = np.zeros((30, 40, 3), dtype=np.uint8)

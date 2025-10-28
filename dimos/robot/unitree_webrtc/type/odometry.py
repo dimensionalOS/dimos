@@ -14,13 +14,10 @@
 import time
 from typing import Literal, TypedDict
 
-from scipy.spatial.transform import Rotation as R
-
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.timeseries import (
     Timestamped,
 )
-from dimos.types.timestamped import to_human_readable, to_timestamp
 
 raw_odometry_msg_sample = {
     "type": "msg",

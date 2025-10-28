@@ -21,14 +21,14 @@ import pytest
 from dimos.utils.llm_utils import extract_json
 
 
-def test_extract_json_clean_response():
+def test_extract_json_clean_response() -> None:
     """Test extract_json with clean JSON response."""
     clean_json = '[["object", 1, 2, 3, 4]]'
     result = extract_json(clean_json)
     assert result == [["object", 1, 2, 3, 4]]
 
 
-def test_extract_json_with_text_before_after():
+def test_extract_json_with_text_before_after() -> None:
     """Test extract_json with text before and after JSON."""
     messy = """Here's what I found:
     [
@@ -40,7 +40,7 @@ def test_extract_json_with_text_before_after():
     assert result == [["person", 10, 20, 30, 40], ["car", 50, 60, 70, 80]]
 
 
-def test_extract_json_with_emojis():
+def test_extract_json_with_emojis() -> None:
     """Test extract_json with emojis and markdown code blocks."""
     messy = """Sure! 😊 Here are the detections:
 
@@ -53,7 +53,7 @@ def test_extract_json_with_emojis():
     assert result == [["human", 100, 200, 300, 400]]
 
 
-def test_extract_json_multiple_json_blocks():
+def test_extract_json_multiple_json_blocks() -> None:
     """Test extract_json when there are multiple JSON blocks."""
     messy = """First attempt (wrong format):
     {"error": "not what we want"}
@@ -70,14 +70,14 @@ def test_extract_json_multiple_json_blocks():
     assert result == [["cat", 10, 10, 50, 50], ["dog", 60, 60, 100, 100]]
 
 
-def test_extract_json_object():
+def test_extract_json_object() -> None:
     """Test extract_json with JSON object instead of array."""
     response = 'The result is: {"status": "success", "count": 5}'
     result = extract_json(response)
     assert result == {"status": "success", "count": 5}
 
 
-def test_extract_json_nested_structures():
+def test_extract_json_nested_structures() -> None:
     """Test extract_json with nested arrays and objects."""
     response = """Processing complete:
     [
@@ -91,7 +91,7 @@ def test_extract_json_nested_structures():
     assert result[2] == ["label2", 5, 6, 7, 8]
 
 
-def test_extract_json_invalid():
+def test_extract_json_invalid() -> None:
     """Test extract_json raises error when no valid JSON found."""
     response = "This response has no valid JSON at all!"
     with pytest.raises(json.JSONDecodeError) as exc_info:
@@ -114,7 +114,7 @@ MOCK_LLM_RESPONSE = """
    Hope this helps!😀😊 :)"""
 
 
-def test_extract_json_with_real_llm_response():
+def test_extract_json_with_real_llm_response() -> None:
     """Test extract_json with actual messy LLM response."""
     result = extract_json(MOCK_LLM_RESPONSE)
     assert isinstance(result, list)

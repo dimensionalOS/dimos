@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
+from functools import wraps
 import threading
 import time
-from functools import wraps
-from typing import Callable, Optional, Type
 
 from .accumulators import Accumulator, LatestAccumulator
 
 
-def limit(max_freq: float, accumulator: Optional[Accumulator] = None):
+def limit(max_freq: float, accumulator: Accumulator | None = None):
     """
     Decorator that limits function call frequency.
 
@@ -46,9 +46,9 @@ def limit(max_freq: float, accumulator: Optional[Accumulator] = None):
     def decorator(func: Callable) -> Callable:
         last_call_time = 0.0
         lock = threading.Lock()
-        timer: Optional[threading.Timer] = None
+        timer: threading.Timer | None = None
 
-        def execute_accumulated():
+        def execute_accumulated() -> None:
             nonlocal last_call_time, timer
             with lock:
                 if len(accumulator):
@@ -145,7 +145,7 @@ def simple_mcache(method: Callable) -> Callable:
     return getter
 
 
-def retry(max_retries: int = 3, on_exception: Type[Exception] = Exception, delay: float = 0.0):
+def retry(max_retries: int = 3, on_exception: type[Exception] = Exception, delay: float = 0.0):
     """
     Decorator that retries a function call if it raises an exception.
 

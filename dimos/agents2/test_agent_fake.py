@@ -13,13 +13,13 @@
 # limitations under the License.
 
 
-def test_what_is_your_name(create_potato_agent):
+def test_what_is_your_name(create_potato_agent) -> None:
     agent = create_potato_agent(fixture="test_what_is_your_name.json")
     response = agent.query("hi there, please tell me what's your name?")
     assert "Mr. Potato" in response
 
 
-def test_how_much_is_124181112_plus_124124(create_potato_agent):
+def test_how_much_is_124181112_plus_124124(create_potato_agent) -> None:
     agent = create_potato_agent(fixture="test_how_much_is_124181112_plus_124124.json")
 
     response = agent.query("how much is 124181112 + 124124?")
@@ -29,7 +29,7 @@ def test_how_much_is_124181112_plus_124124(create_potato_agent):
     assert "999000000" in response.replace(",", "")
 
 
-def test_what_do_you_see_in_this_picture(create_potato_agent):
+def test_what_do_you_see_in_this_picture(create_potato_agent) -> None:
     agent = create_potato_agent(fixture="test_what_do_you_see_in_this_picture.json")
 
     response = agent.query("take a photo and tell me what do you see")

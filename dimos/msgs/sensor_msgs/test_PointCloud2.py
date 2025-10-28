@@ -13,14 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import numpy as np
-import struct
 
+import numpy as np
+import pytest
 
 try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-    from sensor_msgs.msg import PointField as ROSPointField
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField as ROSPointField
     from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSPointCloud2 = None
@@ -38,7 +36,7 @@ except ImportError:
     ROS_AVAILABLE = False
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test LCM encode/decode preserves pointcloud data."""
     replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     lidar_msg: LidarMessage = replay.load_one("lidar_data_021")
@@ -100,7 +98,7 @@ def test_lcm_encode_decode():
 
 
 @pytest.mark.ros
-def test_ros_conversion():
+def test_ros_conversion() -> None:
     """Test ROS message conversion preserves pointcloud data."""
     if not ROS_AVAILABLE:
         print("ROS packages not available - skipping ROS conversion test")
@@ -234,37 +232,37 @@ def test_ros_conversion():
     print("\n✓ All ROS conversion tests passed!")
 
 
-def test_bounding_box_intersects():
+def test_bounding_box_intersects() -> None:
     """Test bounding_box_intersects method with various scenarios."""
     # Test 1: Overlapping boxes
     pc1 = PointCloud2.from_numpy(np.array([[0, 0, 0], [2, 2, 2]]))
     pc2 = PointCloud2.from_numpy(np.array([[1, 1, 1], [3, 3, 3]]))
-    assert pc1.bounding_box_intersects(pc2) == True
-    assert pc2.bounding_box_intersects(pc1) == True  # Should be symmetric
+    assert pc1.bounding_box_intersects(pc2)
+    assert pc2.bounding_box_intersects(pc1)  # Should be symmetric
 
     # Test 2: Non-overlapping boxes
     pc3 = PointCloud2.from_numpy(np.array([[0, 0, 0], [1, 1, 1]]))
     pc4 = PointCloud2.from_numpy(np.array([[2, 2, 2], [3, 3, 3]]))
-    assert pc3.bounding_box_intersects(pc4) == False
-    assert pc4.bounding_box_intersects(pc3) == False
+    assert not pc3.bounding_box_intersects(pc4)
+    assert not pc4.bounding_box_intersects(pc3)
 
     # Test 3: Touching boxes (edge case - should be True)
     pc5 = PointCloud2.from_numpy(np.array([[0, 0, 0], [1, 1, 1]]))
     pc6 = PointCloud2.from_numpy(np.array([[1, 1, 1], [2, 2, 2]]))
-    assert pc5.bounding_box_intersects(pc6) == True
-    assert pc6.bounding_box_intersects(pc5) == True
+    assert pc5.bounding_box_intersects(pc6)
+    assert pc6.bounding_box_intersects(pc5)
 
     # Test 4: One box completely inside another
     pc7 = PointCloud2.from_numpy(np.array([[0, 0, 0], [3, 3, 3]]))
     pc8 = PointCloud2.from_numpy(np.array([[1, 1, 1], [2, 2, 2]]))
-    assert pc7.bounding_box_intersects(pc8) == True
-    assert pc8.bounding_box_intersects(pc7) == True
+    assert pc7.bounding_box_intersects(pc8)
+    assert pc8.bounding_box_intersects(pc7)
 
     # Test 5: Boxes overlapping only in 2 dimensions (not all 3)
     pc9 = PointCloud2.from_numpy(np.array([[0, 0, 0], [2, 2, 1]]))
     pc10 = PointCloud2.from_numpy(np.array([[1, 1, 2], [3, 3, 3]]))
-    assert pc9.bounding_box_intersects(pc10) == False
-    assert pc10.bounding_box_intersects(pc9) == False
+    assert not pc9.bounding_box_intersects(pc10)
+    assert not pc10.bounding_box_intersects(pc9)
 
     # Test 6: Real-world detection scenario with floating point coordinates
     detection1_points = np.array(
@@ -277,7 +275,7 @@ def test_bounding_box_intersects():
     )
     pc_det2 = PointCloud2.from_numpy(detection2_points)
 
-    assert pc_det1.bounding_box_intersects(pc_det2) == True
+    assert pc_det1.bounding_box_intersects(pc_det2)
 
     # Test 7: Single point clouds
     pc_single1 = PointCloud2.from_numpy(np.array([[1.0, 1.0, 1.0]]))
@@ -285,14 +283,14 @@ def test_bounding_box_intersects():
     pc_single3 = PointCloud2.from_numpy(np.array([[2.0, 2.0, 2.0]]))
 
     # Same point should intersect
-    assert pc_single1.bounding_box_intersects(pc_single2) == True
+    assert pc_single1.bounding_box_intersects(pc_single2)
     # Different points should not intersect
-    assert pc_single1.bounding_box_intersects(pc_single3) == False
+    assert not pc_single1.bounding_box_intersects(pc_single3)
 
     # Test 8: Empty point clouds
     pc_empty1 = PointCloud2.from_numpy(np.array([]).reshape(0, 3))
     pc_empty2 = PointCloud2.from_numpy(np.array([]).reshape(0, 3))
-    pc_nonempty = PointCloud2.from_numpy(np.array([[1.0, 1.0, 1.0]]))
+    PointCloud2.from_numpy(np.array([[1.0, 1.0, 1.0]]))
 
     # Empty clouds should handle gracefully (Open3D returns inf bounds)
     # This might raise an exception or return False - we should handle gracefully

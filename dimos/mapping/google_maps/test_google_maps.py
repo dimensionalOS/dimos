@@ -12,13 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 
-from dimos.mapping.google_maps.google_maps import GoogleMaps
 from dimos.mapping.types import LatLon
 
 
-def test_get_position(maps_client, maps_fixture):
+def test_get_position(maps_client, maps_fixture) -> None:
     maps_client._client.geocode.return_value = maps_fixture("get_position.json")
 
     res = maps_client.get_position("golden gate bridge")
@@ -30,7 +28,7 @@ def test_get_position(maps_client, maps_fixture):
     }
 
 
-def test_get_position_with_places(maps_client, maps_fixture):
+def test_get_position_with_places(maps_client, maps_fixture) -> None:
     maps_client._client.places.return_value = maps_fixture("get_position_with_places.json")
 
     res = maps_client.get_position_with_places("golden gate bridge")
@@ -48,7 +46,7 @@ def test_get_position_with_places(maps_client, maps_fixture):
     }
 
 
-def test_get_location_context(maps_client, maps_fixture):
+def test_get_location_context(maps_client, maps_fixture) -> None:
     maps_client._client.reverse_geocode.return_value = maps_fixture(
         "get_location_context_reverse_geocode.json"
     )

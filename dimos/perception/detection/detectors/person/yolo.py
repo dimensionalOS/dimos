@@ -25,7 +25,12 @@ logger = setup_logger("dimos.perception.detection.yolo.person")
 
 
 class YoloPersonDetector(Detector):
-    def __init__(self, model_path="models_yolo", model_name="yolo11n-pose.pt", device: str = None):
+    def __init__(
+        self,
+        model_path: str = "models_yolo",
+        model_name: str = "yolo11n-pose.pt",
+        device: str | None = None,
+    ) -> None:
         self.model = YOLO(get_data(model_path) / model_name, task="track")
 
         self.tracker = get_data(model_path) / "botsort.yaml"
@@ -60,7 +65,7 @@ class YoloPersonDetector(Detector):
         )
         return ImageDetections2D.from_ultralytics_result(image, results)
 
-    def stop(self):
+    def stop(self) -> None:
         """
         Clean up resources used by the detector, including tracker threads.
         """

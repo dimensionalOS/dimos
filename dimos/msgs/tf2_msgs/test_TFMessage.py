@@ -15,8 +15,8 @@
 import pytest
 
 try:
-    from tf2_msgs.msg import TFMessage as ROSTFMessage
     from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+    from tf2_msgs.msg import TFMessage as ROSTFMessage
 except ImportError:
     ROSTransformStamped = None
     ROSTFMessage = None
@@ -27,7 +27,7 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.tf2_msgs import TFMessage
 
 
-def test_tfmessage_initialization():
+def test_tfmessage_initialization() -> None:
     """Test TFMessage initialization with Transform objects."""
     # Create some transforms
     tf1 = Transform(
@@ -52,14 +52,14 @@ def test_tfmessage_initialization():
     assert transforms == [tf1, tf2]
 
 
-def test_tfmessage_empty():
+def test_tfmessage_empty() -> None:
     """Test empty TFMessage."""
     msg = TFMessage()
     assert len(msg) == 0
     assert list(msg) == []
 
 
-def test_tfmessage_add_transform():
+def test_tfmessage_add_transform() -> None:
     """Test adding transforms to TFMessage."""
     msg = TFMessage()
 
@@ -70,7 +70,7 @@ def test_tfmessage_add_transform():
     assert msg[0] == tf
 
 
-def test_tfmessage_lcm_encode_decode():
+def test_tfmessage_lcm_encode_decode() -> None:
     """Test encoding TFMessage to LCM bytes."""
     # Create transforms
     tf1 = Transform(
@@ -118,7 +118,7 @@ def test_tfmessage_lcm_encode_decode():
 
 
 @pytest.mark.ros
-def test_tfmessage_from_ros_msg():
+def test_tfmessage_from_ros_msg() -> None:
     """Test creating a TFMessage from a ROS TFMessage message."""
 
     ros_msg = ROSTFMessage()
@@ -179,7 +179,7 @@ def test_tfmessage_from_ros_msg():
 
 
 @pytest.mark.ros
-def test_tfmessage_to_ros_msg():
+def test_tfmessage_to_ros_msg() -> None:
     """Test converting a TFMessage to a ROS TFMessage message."""
     # Create transforms
     tf1 = Transform(
@@ -230,7 +230,7 @@ def test_tfmessage_to_ros_msg():
 
 
 @pytest.mark.ros
-def test_tfmessage_ros_roundtrip():
+def test_tfmessage_ros_roundtrip() -> None:
     """Test round-trip conversion between TFMessage and ROS TFMessage."""
     # Create transforms with various properties
     tf1 = Transform(
@@ -256,7 +256,7 @@ def test_tfmessage_ros_roundtrip():
 
     assert len(restored) == len(original)
 
-    for orig_tf, rest_tf in zip(original, restored):
+    for orig_tf, rest_tf in zip(original, restored, strict=False):
         assert rest_tf.frame_id == orig_tf.frame_id
         assert rest_tf.child_frame_id == orig_tf.child_frame_id
         assert rest_tf.ts == orig_tf.ts

@@ -1,8 +1,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import os
 
-from detectron2.data.datasets.register_coco import register_coco_instances
 from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
+from detectron2.data.datasets.register_coco import register_coco_instances
+
 from .lvis_v1 import custom_register_lvis_instances
 
 categories_seen = [

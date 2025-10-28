@@ -1,9 +1,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from collections import defaultdict
-import torch
 import json
 
 from detectron2.structures import Boxes, pairwise_iou
+import torch
 
 COCO_PATH = "datasets/coco/annotations/instances_train2017.json"
 IMG_PATH = "datasets/coco/train2017/"
@@ -110,8 +110,8 @@ def get_bbox(ann):
 
 if __name__ == "__main__":
     file_name_key = "file_name" if "v0.5" in LVIS_PATH else "coco_url"
-    coco_data = json.load(open(COCO_PATH, "r"))
-    lvis_data = json.load(open(LVIS_PATH, "r"))
+    coco_data = json.load(open(COCO_PATH))
+    lvis_data = json.load(open(LVIS_PATH))
 
     coco_cats = coco_data["categories"]
     lvis_cats = lvis_data["categories"]

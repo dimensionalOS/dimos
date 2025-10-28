@@ -17,8 +17,8 @@ from dimos.core.blueprints import (
     ModuleBlueprintSet,
     ModuleConnection,
     _make_module_blueprint,
+    autoconnect,
 )
-from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
@@ -91,7 +91,7 @@ module_b = ModuleB.blueprint
 module_c = ModuleC.blueprint
 
 
-def test_get_connection_set():
+def test_get_connection_set() -> None:
     assert _make_module_blueprint(CatModule, args=("arg1"), kwargs={"k": "v"}) == ModuleBlueprint(
         module=CatModule,
         connections=(
@@ -103,7 +103,7 @@ def test_get_connection_set():
     )
 
 
-def test_autoconnect():
+def test_autoconnect() -> None:
     blueprint_set = autoconnect(module_a(), module_b())
 
     assert blueprint_set == ModuleBlueprintSet(
@@ -131,7 +131,7 @@ def test_autoconnect():
     )
 
 
-def test_transports():
+def test_transports() -> None:
     custom_transport = LCMTransport("/custom_topic", Data1)
     blueprint_set = autoconnect(module_a(), module_b()).transports(
         {("data1", Data1): custom_transport}
@@ -141,7 +141,7 @@ def test_transports():
     assert blueprint_set.transport_map[("data1", Data1)] == custom_transport
 
 
-def test_global_config():
+def test_global_config() -> None:
     blueprint_set = autoconnect(module_a(), module_b()).global_config(option1=True, option2=42)
 
     assert "option1" in blueprint_set.global_config_overrides
@@ -150,7 +150,7 @@ def test_global_config():
     assert blueprint_set.global_config_overrides["option2"] == 42
 
 
-def test_build_happy_path():
+def test_build_happy_path() -> None:
     pubsub.lcm.autoconf()
 
     blueprint_set = autoconnect(module_a(), module_b(), module_c())

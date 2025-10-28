@@ -18,25 +18,24 @@ Note, to enable ps-spy to run without sudo you need:
     echo 0 | sudo tee /proc/sys/kernel/yama/ptrace_scope
 """
 
+from functools import cache
+import os
+import re
+import shutil
 import subprocess
 import threading
-import re
-import os
-import shutil
-from functools import lru_cache, partial
-from typing import Optional
-from distributed.client import Client
 
 from distributed import get_client
+from distributed.client import Client
+
 from dimos.core import Module, rpc
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
 
-
 logger = setup_logger(__file__)
 
 
-def print_data_table(data):
+def print_data_table(data) -> None:
     headers = [
         "cpu_percent",
         "active_percent",
@@ -88,13 +87,13 @@ class UtilizationThread(threading.Thread):
     _stop_event: threading.Event
     _monitors: dict
 
-    def __init__(self, module):
+    def __init__(self, module) -> None:
         super().__init__(daemon=True)
         self._module = module
         self._stop_event = threading.Event()
         self._monitors = {}
 
-    def run(self):
+    def run(self) -> None:
         while not self._stop_event.is_set():
             workers = self._module.client.scheduler_info()["workers"]
             pids = {pid: None for pid in get_worker_pids()}
@@ -124,13 +123,13 @@ class UtilizationThread(threading.Thread):
             print_data_table(data)
             self._stop_event.wait(1)
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
         for monitor in self._monitors.values():
             monitor.stop()
             monitor.join(timeout=2)
 
-    def _fix_missing_ids(self, data):
+    def _fix_missing_ids(self, data) -> None:
         """
         Some worker IDs are None. But if we order the workers by PID and all
         non-None ids are in order, then we can deduce that the None ones are the
@@ -142,10 +141,10 @@ class UtilizationThread(threading.Thread):
 
 
 class UtilizationModule(Module):
-    client: Optional[Client]
-    _utilization_thread: Optional[UtilizationThread]
+    client: Client | None
+    _utilization_thread: UtilizationThread | None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.client = None
         self._utilization_thread = None
@@ -171,14 +170,14 @@ class UtilizationModule(Module):
         self._utilization_thread = UtilizationThread(self)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         if self._utilization_thread:
             self._utilization_thread.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._utilization_thread:
             self._utilization_thread.stop()
             self._utilization_thread.join(timeout=2)
@@ -201,7 +200,7 @@ def _can_use_py_spy():
     return False
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_pid_by_port(port: int) -> int | None:
     try:
         result = subprocess.run(
@@ -219,7 +218,7 @@ def get_worker_pids():
         if not pid.isdigit():
             continue
         try:
-            with open(f"/proc/{pid}/cmdline", "r") as f:
+            with open(f"/proc/{pid}/cmdline") as f:
                 cmdline = f.read().replace("\x00", " ")
                 if "spawn_main" in cmdline:
                     pids.append(int(pid))
@@ -234,7 +233,7 @@ class GilMonitorThread(threading.Thread):
     _stop_event: threading.Event
     _lock: threading.Lock
 
-    def __init__(self, pid):
+    def __init__(self, pid: int) -> None:
         super().__init__(daemon=True)
         self.pid = pid
         self._latest_values = (-1.0, -1.0, -1.0, -1)
@@ -279,7 +278,7 @@ class GilMonitorThread(threading.Thread):
                             active_percent,
                             num_threads,
                         )
-                except (ValueError, IndexError) as e:
+                except (ValueError, IndexError):
                     pass
         except Exception as e:
             logger.error(f"An error occurred in GilMonitorThread for PID {self.pid}: {e}")
@@ -294,7 +293,7 @@ class GilMonitorThread(threading.Thread):
         with self._lock:
             return self._latest_values
 
-    def stop(self):
+    def stop(self) -> None:
         self._stop_event.set()
 
 

@@ -16,8 +16,8 @@
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 
 
 def parse_tcss_colors(tcss_path: str | Path) -> dict[str, str]:

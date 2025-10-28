@@ -28,10 +28,10 @@ dimos_lcm_path = os.path.dirname(os.path.abspath(dimos_lcm.__file__))
 print(f"Using dimos_lcm from: {dimos_lcm_path}")
 
 
-def run_bridge_example():
+def run_bridge_example() -> None:
     """Example of running the bridge in a separate thread"""
 
-    def bridge_thread():
+    def bridge_thread() -> None:
         """Thread function to run the bridge"""
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -58,7 +58,7 @@ def run_bridge_example():
         print("Shutting down...")
 
 
-def main():
+def main() -> None:
     run_bridge_example()
 
 

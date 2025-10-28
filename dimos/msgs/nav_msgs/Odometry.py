@@ -15,10 +15,10 @@
 from __future__ import annotations
 
 import time
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
-import numpy as np
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry
+import numpy as np
 from plum import dispatch
 
 try:
@@ -30,8 +30,10 @@ from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Types that can be converted to/from Odometry
 OdometryConvertable: TypeAlias = (
@@ -281,7 +283,7 @@ class Odometry(LCMOdometry, Timestamped):
         return lcm_msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "Odometry":
+    def lcm_decode(cls, data: bytes) -> Odometry:
         """Decode from LCM binary format."""
         lcm_msg = LCMOdometry.lcm_decode(data)
 
@@ -328,7 +330,7 @@ class Odometry(LCMOdometry, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSOdometry) -> "Odometry":
+    def from_ros_msg(cls, ros_msg: ROSOdometry) -> Odometry:
         """Create an Odometry from a ROS nav_msgs/Odometry message.
 
         Args:

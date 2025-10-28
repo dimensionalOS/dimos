@@ -23,7 +23,7 @@ from dimos.perception.detection.type.imageDetections import ImageDetections
 class ImageDetections3DPC(ImageDetections[Detection3DPC]):
     """Specialized class for 3D detections in an image."""
 
-    def to_foxglove_scene_update(self) -> "SceneUpdate":
+    def to_foxglove_scene_update(self) -> SceneUpdate:
         """Convert all detections to a Foxglove SceneUpdate message.
 
         Returns:
