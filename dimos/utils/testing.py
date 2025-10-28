@@ -15,18 +15,18 @@ import functools
 import glob
 import logging
 import os
+from pathlib import Path
 import pickle
 import re
 import shutil
 import time
-from pathlib import Path
 from typing import Any, Callable, Generic, Iterator, Optional, Tuple, TypeVar, Union
 
 from reactivex import (
     from_iterable,
     interval,
+    operators as ops,
 )
-from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.scheduler import TimeoutScheduler
 
@@ -44,7 +44,7 @@ class SensorReplay(Generic[T]):
                   For example: lambda data: LidarMessage.from_msg(data)
     """
 
-    def __init__(self, name: str, autocast: Optional[Callable[[Any], T]] = None):
+    def __init__(self, name: str, autocast: Callable[[Any], T] | None = None) -> None:
         self.root_dir = get_data(name)
         self.autocast = autocast
 
@@ -67,7 +67,7 @@ class SensorReplay(Generic[T]):
                 return self.autocast(data)
             return data
 
-    def first(self) -> Optional[Union[T, Any]]:
+    def first(self) -> Union[T, Any] | None:
         try:
             return next(self.iterate())
         except StopIteration:
@@ -93,9 +93,7 @@ class SensorReplay(Generic[T]):
             if not loop:
                 break
 
-    def stream(
-        self, rate_hz: Optional[float] = None, loop: bool = False
-    ) -> Observable[Union[T, Any]]:
+    def stream(self, rate_hz: float | None = None, loop: bool = False) -> Observable[Union[T, Any]]:
         if rate_hz is None:
             return from_iterable(self.iterate(loop=loop))
 
@@ -117,7 +115,7 @@ class SensorStorage(Generic[T]):
             autocast: Optional function that takes data and returns a processed result before storage.
     """
 
-    def __init__(self, name: str, autocast: Optional[Callable[[T], Any]] = None):
+    def __init__(self, name: str, autocast: Callable[[T], Any] | None = None) -> None:
         self.name = name
         self.autocast = autocast
         self.cnt = 0
@@ -195,8 +193,8 @@ class TimedSensorReplay(SensorReplay[T]):
             return data
 
     def find_closest(
-        self, timestamp: float, tolerance: Optional[float] = None
-    ) -> Optional[Union[T, Any]]:
+        self, timestamp: float, tolerance: float | None = None
+    ) -> Union[T, Any] | None:
         """Find the frame closest to the given timestamp.
 
         Args:
@@ -226,8 +224,8 @@ class TimedSensorReplay(SensorReplay[T]):
         return closest_data
 
     def find_closest_seek(
-        self, relative_seconds: float, tolerance: Optional[float] = None
-    ) -> Optional[Union[T, Any]]:
+        self, relative_seconds: float, tolerance: float | None = None
+    ) -> Union[T, Any] | None:
         """Find the frame closest to a time relative to the start.
 
         Args:
@@ -246,7 +244,7 @@ class TimedSensorReplay(SensorReplay[T]):
         target_timestamp = first_ts + relative_seconds
         return self.find_closest(target_timestamp, tolerance)
 
-    def first_timestamp(self) -> Optional[float]:
+    def first_timestamp(self) -> float | None:
         """Get the timestamp of the first item in the dataset.
 
         Returns:
@@ -263,11 +261,11 @@ class TimedSensorReplay(SensorReplay[T]):
 
     def iterate_ts(
         self,
-        seek: Optional[float] = None,
-        duration: Optional[float] = None,
-        from_timestamp: Optional[float] = None,
+        seek: float | None = None,
+        duration: float | None = None,
+        from_timestamp: float | None = None,
         loop: bool = False,
-    ) -> Iterator[Union[Tuple[float, T], Any]]:
+    ) -> Iterator[Union[tuple[float, T], Any]]:
         first_ts = None
         if (seek is not None) or (duration is not None):
             first_ts = self.first_timestamp()
@@ -292,10 +290,10 @@ class TimedSensorReplay(SensorReplay[T]):
 
     def stream(
         self,
-        speed=1.0,
-        seek: Optional[float] = None,
-        duration: Optional[float] = None,
-        from_timestamp: Optional[float] = None,
+        speed: float = 1.0,
+        seek: float | None = None,
+        duration: float | None = None,
+        from_timestamp: float | None = None,
         loop: bool = False,
     ) -> Observable[Union[T, Any]]:
         def _subscribe(observer, scheduler=None):
@@ -330,7 +328,7 @@ class TimedSensorReplay(SensorReplay[T]):
                 observer.on_completed()
                 return disp
 
-            def schedule_emission(message):
+            def schedule_emission(message) -> None:
                 nonlocal next_message, is_disposed
 
                 if is_disposed:
@@ -348,7 +346,7 @@ class TimedSensorReplay(SensorReplay[T]):
                 target_time = start_local_time + (ts - start_replay_time) / speed
                 delay = max(0.0, target_time - time.time())
 
-                def emit():
+                def emit() -> None:
                     if is_disposed:
                         return
                     observer.on_next(data)
@@ -365,7 +363,7 @@ class TimedSensorReplay(SensorReplay[T]):
             schedule_emission(next_message)
 
             # Create a custom disposable that properly cleans up
-            def dispose():
+            def dispose() -> None:
                 nonlocal is_disposed
                 is_disposed = True
                 disp.dispose()

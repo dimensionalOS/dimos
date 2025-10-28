@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
 import os
 import time
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2, WebRTCConnectionMethod
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+import tests.test_header
 
 
 def get_env_var(var_name, default=None, required=False):
@@ -48,7 +47,7 @@ if __name__ == "__main__":
     connection_method = getattr(WebRTCConnectionMethod, connection_method)
 
     print("Initializing UnitreeGo2...")
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  IP: {robot_ip}")
     print(f"  Connection Method: {connection_method}")
     print(f"  Serial Number: {serial_number if serial_number else 'Not provided'}")

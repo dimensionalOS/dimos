@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import os
 import argparse
+import os
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

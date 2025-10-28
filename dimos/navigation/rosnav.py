@@ -18,26 +18,25 @@ NavBot class for navigation-related functionality.
 Encapsulates ROS bridge and topic remapping for Unitree robots.
 """
 
+from dataclasses import dataclass
 import logging
 import threading
 import time
-from dataclasses import dataclass
 from typing import Generator, Optional
 
-import rclpy
-from geometry_msgs.msg import PointStamped as ROSPointStamped
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
-
 # ROS2 message imports
-from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+from geometry_msgs.msg import (
+    PointStamped as ROSPointStamped,
+    PoseStamped as ROSPoseStamped,
+    TwistStamped as ROSTwistStamped,
+)
 from nav_msgs.msg import Path as ROSPath
+import rclpy
 from rclpy.node import Node
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import Joy as ROSJoy
-from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-from std_msgs.msg import Bool as ROSBool
-from std_msgs.msg import Int8 as ROSInt8
+from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2
+from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8
 from tf2_msgs.msg import TFMessage as ROSTFMessage
 
 from dimos import spec
@@ -88,10 +87,10 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
     _global_pointcloud_subject: Subject
 
     _current_position_running: bool = False
-    _spin_thread: Optional[threading.Thread] = None
-    _goal_reach: Optional[bool] = None
+    _spin_thread: threading.Thread | None = None
+    _goal_reach: bool | None = None
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         # Initialize RxPY Subjects for streaming data
@@ -132,7 +131,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         logger.info("NavigationModule initialized with ROS2 node")
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self._running = True
 
         self._disposables.add(
@@ -164,7 +163,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         self.goal_req.subscribe(self._on_goal_pose)
         logger.info("NavigationModule started with ROS2 spinning and RxPY streams")
 
-    def _spin_node(self):
+    def _spin_node(self) -> None:
         while self._running and rclpy.ok():
             try:
                 rclpy.spin_once(self._node, timeout_sec=0.1)
@@ -172,10 +171,10 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
                 if self._running:
                     logger.error(f"ROS2 spin error: {e}")
 
-    def _on_ros_goal_reached(self, msg: ROSBool):
+    def _on_ros_goal_reached(self, msg: ROSBool) -> None:
         self._goal_reach = msg.data
 
-    def _on_ros_goal_waypoint(self, msg: ROSPointStamped):
+    def _on_ros_goal_waypoint(self, msg: ROSPointStamped) -> None:
         dimos_pose = PoseStamped(
             ts=time.time(),
             frame_id=msg.header.frame_id,
@@ -184,21 +183,21 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         )
         self.goal_active.publish(dimos_pose)
 
-    def _on_ros_cmd_vel(self, msg: ROSTwistStamped):
+    def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
         self.cmd_vel.publish(TwistStamped.from_ros_msg(msg))
 
-    def _on_ros_registered_scan(self, msg: ROSPointCloud2):
+    def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
 
-    def _on_ros_global_pointcloud(self, msg: ROSPointCloud2):
+    def _on_ros_global_pointcloud(self, msg: ROSPointCloud2) -> None:
         self._global_pointcloud_subject.on_next(msg)
 
-    def _on_ros_path(self, msg: ROSPath):
+    def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = Path.from_ros_msg(msg)
         dimos_path.frame_id = "base_link"
         self.path_active.publish(dimos_path)
 
-    def _on_ros_tf(self, msg: ROSTFMessage):
+    def _on_ros_tf(self, msg: ROSTFMessage) -> None:
         ros_tf = TFMessage.from_ros_msg(msg)
 
         map_to_world_tf = Transform(
@@ -215,14 +214,14 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
             *ros_tf.transforms,
         )
 
-    def _on_goal_pose(self, msg: PoseStamped):
+    def _on_goal_pose(self, msg: PoseStamped) -> None:
         self.navigate_to(msg)
 
-    def _on_cancel_goal(self, msg: Bool):
+    def _on_cancel_goal(self, msg: Bool) -> None:
         if msg.data:
             self.stop()
 
-    def _set_autonomy_mode(self):
+    def _set_autonomy_mode(self) -> None:
         joy_msg = ROSJoy()
         joy_msg.axes = [
             0.0,  # axis 0
@@ -363,7 +362,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         return True
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the navigation module and clean up resources."""
         self.stop_navigation()
         try:

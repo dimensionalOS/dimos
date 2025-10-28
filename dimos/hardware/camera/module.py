@@ -12,13 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field
 import queue
 import time
-from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -32,18 +32,20 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 
-default_transform = lambda: Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-)
+
+def default_transform():
+    return Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        frame_id="base_link",
+        child_frame_id="camera_link",
+    )
 
 
 @dataclass
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Optional[Transform] = field(default_factory=default_transform)
+    transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
     frequency: float = 5.0
 
@@ -53,9 +55,9 @@ class CameraModule(Module, spec.Camera):
     camera_info_stream: Out[CameraInfo] = None
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None
-    _module_subscription: Optional[Disposable] = None
-    _camera_info_subscription: Optional[Disposable] = None
-    _skill_stream: Optional[Observable[Image]] = None
+    _module_subscription: Disposable | None = None
+    _camera_info_subscription: Disposable | None = None
+    _skill_stream: Observable[Image] | None = None
 
     default_config = CameraModuleConfig
 
@@ -64,7 +66,7 @@ class CameraModule(Module, spec.Camera):
         return self.hardware.camera_info
 
     @rpc
-    def start(self):
+    def start(self) -> str:
         if callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:
@@ -75,7 +77,7 @@ class CameraModule(Module, spec.Camera):
 
         stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))
 
-        def publish_info(camera_info: CameraInfo):
+        def publish_info(camera_info: CameraInfo) -> None:
             self.camera_info.publish(camera_info)
 
             if self.config.transform is None:
@@ -102,8 +104,7 @@ class CameraModule(Module, spec.Camera):
         _queue = queue.Queue(maxsize=1)
         self.hardware.image_stream().subscribe(_queue.put)
 
-        for image in iter(_queue.get, None):
-            yield image
+        yield from iter(_queue.get, None)
 
     def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
         def camera_info(_) -> CameraInfo:
@@ -112,7 +113,7 @@ class CameraModule(Module, spec.Camera):
 
         return rx.interval(1.0 / frequency).pipe(ops.map(camera_info))
 
-    def stop(self):
+    def stop(self) -> None:
         if self._module_subscription:
             self._module_subscription.dispose()
             self._module_subscription = None

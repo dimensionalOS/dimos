@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import numpy as np
+import torch
 
 
-def find_medoid_and_closest_points(points, num_closest=5):
+def find_medoid_and_closest_points(points, num_closest: int=5):
     """
     Find the medoid from a collection of points and the closest points to the medoid.
 
@@ -37,7 +37,7 @@ def find_medoid_and_closest_points(points, num_closest=5):
     return medoid, points[closest_indices]
 
 
-def sample_points_from_heatmap(heatmap, original_size, num_points=5, percentile=0.95):
+def sample_points_from_heatmap(heatmap, original_size: int, num_points: int=5, percentile: float=0.95):
     """
     Sample points from the given heatmap, focusing on areas with higher values.
     """

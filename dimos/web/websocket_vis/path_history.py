@@ -18,15 +18,16 @@ This is a minimal implementation to support websocket visualization.
 """
 
 from typing import List, Optional, Union
+
 from dimos.msgs.geometry_msgs import Vector3
 
 
 class PathHistory:
     """A simple container for storing a history of positions for visualization."""
 
-    def __init__(self, points: Optional[List[Union[Vector3, tuple, list]]] = None):
+    def __init__(self, points: list[Union[Vector3, tuple, list]] | None = None) -> None:
         """Initialize with optional list of points."""
-        self.points: List[Vector3] = []
+        self.points: list[Vector3] = []
         if points:
             for p in points:
                 if isinstance(p, Vector3):
@@ -48,7 +49,7 @@ class PathHistory:
             self.points = self.points[-max_length:]
         return self
 
-    def last(self) -> Optional[Vector3]:
+    def last(self) -> Vector3 | None:
         """Return the last point in the history, or None if empty."""
         return self.points[-1] if self.points else None
 

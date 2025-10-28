@@ -21,23 +21,23 @@ from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 
 if TYPE_CHECKING:
-    from dimos.core import DimosCluster, Module
+    from dimos.core import Module
 
 T = TypeVar("T", bound="Module")
 
 
 class ModuleCoordinator(Resource):
-    _client: Optional[DimosCluster] = None
-    _n: Optional[int] = None
+    _client: DimosCluster | None = None
+    _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[Type["Module"], "Module"] = {}
+    _deployed_modules: dict[type["Module"], "Module"] = {}
 
     def __init__(
         self,
-        n: Optional[int] = None,
+        n: int | None = None,
         memory_limit: str = "auto",
         global_config: GlobalConfig | None = None,
-    ):
+    ) -> None:
         cfg = global_config or GlobalConfig()
         self._n = n if n is not None else cfg.n_dask_workers
         self._memory_limit = memory_limit
@@ -51,7 +51,7 @@ class ModuleCoordinator(Resource):
 
         self._client.close_all()
 
-    def deploy(self, module_class: Type[T], *args, **kwargs) -> T:
+    def deploy(self, module_class: type[T], *args, **kwargs) -> T:
         if not self._client:
             raise ValueError("Not started")
 
@@ -63,7 +63,7 @@ class ModuleCoordinator(Resource):
         for module in self._deployed_modules.values():
             module.start()
 
-    def get_instance(self, module: Type[T]) -> T | None:
+    def get_instance(self, module: type[T]) -> T | None:
         return self._deployed_modules.get(module)
 
     def wait_until_shutdown(self) -> None:

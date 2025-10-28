@@ -12,19 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import glob
 import os
 import pickle
-import glob
-from typing import Union, Iterator, cast, overload
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
+from typing import Iterator, Union, cast, overload
 
-from reactivex import operators as ops
-from reactivex import interval, from_iterable
+from reactivex import from_iterable, interval, operators as ops
 from reactivex.observable import Observable
+
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
 
 
 class Mock:
-    def __init__(self, root="office", autocast: bool = True):
+    def __init__(self, root: str = "office", autocast: bool = True) -> None:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.root = os.path.join(current_dir, f"mockdata/{root}")
         self.autocast = autocast
@@ -48,7 +48,7 @@ class Mock:
 
         full_path = self.root + file_name
         with open(full_path, "rb") as f:
-            return LidarMessage.from_msg(cast(RawLidarMsg, pickle.load(f)))
+            return LidarMessage.from_msg(cast("RawLidarMsg", pickle.load(f)))
 
     def iterate(self) -> Iterator[LidarMessage]:
         pattern = os.path.join(self.root, "lidar_data_*.pickle")
@@ -58,7 +58,7 @@ class Mock:
             filename = os.path.splitext(basename)[0]
             yield self.load_one(filename)
 
-    def stream(self, rate_hz=10.0):
+    def stream(self, rate_hz: float = 10.0):
         sleep_time = 1.0 / rate_hz
 
         return from_iterable(self.iterate()).pipe(

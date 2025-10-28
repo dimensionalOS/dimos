@@ -16,7 +16,7 @@ import pytest
 from dimos.perception.detection.type import ImageDetections2D
 
 
-def test_from_ros_detection2d_array(get_moment_2d):
+def test_from_ros_detection2d_array(get_moment_2d) -> None:
     moment = get_moment_2d()
 
     detections2d = moment["detections2d"]
@@ -37,7 +37,7 @@ def test_from_ros_detection2d_array(get_moment_2d):
     recovered_det = recovered.detections[0]
 
     # Check bbox is approximately the same (allow 1 pixel tolerance due to float conversion)
-    for orig_val, rec_val in zip(original_det.bbox, recovered_det.bbox):
+    for orig_val, rec_val in zip(original_det.bbox, recovered_det.bbox, strict=False):
         assert orig_val == pytest.approx(rec_val, abs=1.0)
 
     # Check other properties
@@ -45,7 +45,7 @@ def test_from_ros_detection2d_array(get_moment_2d):
     assert recovered_det.class_id == original_det.class_id
     assert recovered_det.confidence == pytest.approx(original_det.confidence, abs=0.01)
 
-    print(f"\nSuccessfully round-tripped detection through ROS format:")
+    print("\nSuccessfully round-tripped detection through ROS format:")
     print(f"  Original bbox: {original_det.bbox}")
     print(f"  Recovered bbox: {recovered_det.bbox}")
     print(f"  Track ID: {recovered_det.track_id}")

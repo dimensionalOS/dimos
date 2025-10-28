@@ -11,7 +11,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading", args.ann)
-    data = json.load(open(args.ann, "r"))
+    data = json.load(open(args.ann))
     cats = data["categories"]
     image_count = {x["id"]: set() for x in cats}
     ann_count = {x["id"]: 0 for x in cats}

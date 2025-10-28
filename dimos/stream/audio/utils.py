@@ -15,7 +15,7 @@
 import time
 
 
-def keepalive():
+def keepalive() -> None:
     try:
         # Keep the program running
         print("Press Ctrl+C to exit")

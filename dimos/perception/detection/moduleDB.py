@@ -11,9 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from copy import copy
 import threading
 import time
-from copy import copy
 from typing import Any, Callable, Dict, List, Optional
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
@@ -32,12 +32,12 @@ from dimos.perception.detection.type.detection3d import Detection3DPC
 
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3DPC):
-    best_detection: Optional[Detection3DPC] = None  # type: ignore
-    center: Optional[Vector3] = None  # type: ignore
-    track_id: Optional[str] = None  # type: ignore
+    best_detection: Detection3DPC | None = None  # type: ignore
+    center: Vector3 | None = None  # type: ignore
+    track_id: str | None = None  # type: ignore
     detections: int = 0
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         if self.center is None:
             center_str = "None"
         else:
@@ -50,7 +50,9 @@ class Object3D(Detection3DPC):
             "center": center_str,
         }
 
-    def __init__(self, track_id: str, detection: Optional[Detection3DPC] = None, *args, **kwargs):
+    def __init__(
+        self, track_id: str, detection: Detection3DPC | None = None, *args, **kwargs
+    ) -> None:
         if detection is None:
             return
         self.ts = detection.ts
@@ -89,7 +91,7 @@ class Object3D(Detection3DPC):
 
         return new_object
 
-    def get_image(self) -> Optional[Image]:
+    def get_image(self) -> Image | None:
         return self.best_detection.image if self.best_detection else None
 
     def scene_entity_label(self) -> str:
@@ -100,7 +102,7 @@ class Object3D(Detection3DPC):
             "id": self.track_id,
             "name": self.name,
             "detections": self.detections,
-            "last_seen": f"{round((time.time() - self.ts))}s ago",
+            "last_seen": f"{round(time.time() - self.ts)}s ago",
             # "position": self.to_pose().position.agent_encode(),
         }
 
@@ -134,9 +136,9 @@ class Object3D(Detection3DPC):
 class ObjectDBModule(Detection3DModule, TableStr):
     cnt: int = 0
     objects: dict[str, Object3D]
-    object_stream: Optional[Observable[Object3D]] = None
+    object_stream: Observable[Object3D] | None = None
 
-    goto: Optional[Callable[[PoseStamped], Any]] = None
+    goto: Callable[[PoseStamped], Any] | None = None
 
     image: In[Image] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
@@ -156,17 +158,17 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     target: Out[PoseStamped] = None  # type: ignore
 
-    remembered_locations: Dict[str, PoseStamped]
+    remembered_locations: dict[str, PoseStamped]
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         Detection3DModule.start(self)
 
-        def update_objects(imageDetections: ImageDetections3DPC):
+        def update_objects(imageDetections: ImageDetections3DPC) -> None:
             for detection in imageDetections.detections:
                 self.add_detection(detection)
 
-        def scene_thread():
+        def scene_thread() -> None:
             while True:
                 scene_update = self.to_foxglove_scene_update()
                 self.scene_update.publish(scene_update)
@@ -176,13 +178,13 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         self.detection_stream_3d.subscribe(update_objects)
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.goto = None
         self.objects = {}
         self.remembered_locations = {}
 
-    def closest_object(self, detection: Detection3DPC) -> Optional[Object3D]:
+    def closest_object(self, detection: Detection3DPC) -> Object3D | None:
         # Filter objects to only those with matching names
         matching_objects = [obj for obj in self.objects.values() if obj.name == detection.name]
 
@@ -194,7 +196,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
         return distances[0]
 
-    def add_detections(self, detections: List[Detection3DPC]) -> List[Object3D]:
+    def add_detections(self, detections: list[Detection3DPC]) -> list[Object3D]:
         return [
             detection for detection in map(self.add_detection, detections) if detection is not None
         ]
@@ -263,7 +265,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     #     return ret[0] if ret else None
 
-    def lookup(self, label: str) -> List[Detection3DPC]:
+    def lookup(self, label: str) -> list[Detection3DPC]:
         """Look up a detection by label."""
         return []
 
@@ -271,7 +273,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
     def stop(self):
         return super().stop()
 
-    def goto_object(self, object_id: str) -> Optional[Object3D]:
+    def goto_object(self, object_id: str) -> Object3D | None:
         """Go to object by id."""
         return self.objects.get(object_id, None)
 
@@ -293,13 +295,13 @@ class ObjectDBModule(Detection3DModule, TableStr):
                 scene_update.entities.append(
                     obj.to_foxglove_scene_entity(entity_id=f"{obj.name}_{obj.track_id}")
                 )
-            except Exception as e:
+            except Exception:
                 pass
 
         scene_update.entities_length = len(scene_update.entities)
         return scene_update
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.objects.values())
 
 

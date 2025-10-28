@@ -4,22 +4,21 @@ import glob
 import multiprocessing as mp
 import os
 import time
-import cv2
-import tqdm
 
+from centernet.config import add_centernet_config
+import cv2
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
-
 from predictor import VisualizationDemo
-from centernet.config import add_centernet_config
+import tqdm
 
 # constants
 WINDOW_NAME = "CenterNet2 detections"
 
+from detectron2.data import MetadataCatalog
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode
-from detectron2.data import MetadataCatalog
 
 
 def setup_cfg(args):

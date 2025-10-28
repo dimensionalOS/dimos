@@ -1,8 +1,10 @@
 """Utility functions for one-off video frame queries using Qwen model."""
 
+import json
 import os
-import numpy as np
 from typing import Optional, Tuple
+
+import numpy as np
 from openai import OpenAI
 from reactivex import Observable, operators as ops
 from reactivex.subject import Subject
@@ -10,9 +12,8 @@ from reactivex.subject import Subject
 from dimos.agents.agent import OpenAIAgent
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.threadpool import get_scheduler
-import json
 
-BBox = Tuple[float, float, float, float]  # (x1, y1, x2, y2)
+BBox = tuple[float, float, float, float]  # (x1, y1, x2, y2)
 
 
 def query_single_frame_observable(
@@ -163,7 +164,7 @@ def query_single_frame(
 
 def get_bbox_from_qwen(
     video_stream: Observable, object_name: Optional[str] = None
-) -> Optional[Tuple[BBox, float]]:
+) -> Optional[tuple[BBox, float]]:
     """Get bounding box coordinates from Qwen for a specific object or any object.
 
     Args:

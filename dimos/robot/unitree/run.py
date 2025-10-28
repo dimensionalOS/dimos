@@ -26,15 +26,15 @@ Usage:
 import argparse
 import importlib
 import os
-import sys
 from pathlib import Path
+import sys
 
 from dotenv import load_dotenv
 
 from dimos.core import start, wait_exit
 
 
-def main():
+def main() -> None:
     load_dotenv()
 
     parser = argparse.ArgumentParser(description="Unitree Robot Modular Deployment Runner")
@@ -78,7 +78,7 @@ def main():
         full_module_path = f"dimos.robot.unitree.{module_path}"
         print(f"Importing module: {full_module_path}")
         module = importlib.import_module(full_module_path)
-    except ImportError as e:
+    except ImportError:
         # Try as a relative import from the unitree package
         try:
             module = importlib.import_module(f".{module_path}", package="dimos.robot.unitree")
@@ -88,10 +88,10 @@ def main():
             traceback.print_exc()
 
             print(f"\nERROR: Could not import module '{args.module}'")
-            print(f"Tried importing as:")
+            print("Tried importing as:")
             print(f"  1. {full_module_path}")
-            print(f"  2. Relative import from dimos.robot.unitree")
-            print(f"Make sure the module exists in dimos/robot/unitree/")
+            print("  2. Relative import from dimos.robot.unitree")
+            print("Make sure the module exists in dimos/robot/unitree/")
             print(f"Import error: {e2}")
 
             sys.exit(1)

@@ -20,6 +20,6 @@ _SYSTEM_PROMPT = None
 def get_system_prompt() -> str:
     global _SYSTEM_PROMPT
     if _SYSTEM_PROMPT is None:
-        with open(AGENT_SYSTEM_PROMPT_PATH, "r") as f:
+        with open(AGENT_SYSTEM_PROMPT_PATH) as f:
             _SYSTEM_PROMPT = f.read()
     return _SYSTEM_PROMPT

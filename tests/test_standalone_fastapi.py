@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
+import logging
 import os
 
-import logging
+import tests.test_header
 
 logging.basicConfig(level=logging.DEBUG)
 
-from fastapi import FastAPI, Response
 import cv2
-import uvicorn
+from fastapi import FastAPI, Response
 from starlette.responses import StreamingResponse
+import uvicorn
 
 app = FastAPI()
 

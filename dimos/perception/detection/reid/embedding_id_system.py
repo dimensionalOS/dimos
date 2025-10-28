@@ -39,7 +39,7 @@ class EmbeddingIDSystem(IDSystem):
         top_k: int = 30,
         max_embeddings_per_track: int = 500,
         min_embeddings_for_matching: int = 10,
-    ):
+    ) -> None:
         """Initialize track associator.
 
         Args:
@@ -69,17 +69,17 @@ class EmbeddingIDSystem(IDSystem):
         self.min_embeddings_for_matching = min_embeddings_for_matching
 
         # Track embeddings (list of all embeddings as numpy arrays)
-        self.track_embeddings: Dict[int, List[np.ndarray]] = {}
+        self.track_embeddings: dict[int, list[np.ndarray]] = {}
 
         # Negative constraints (track_ids that co-occurred = different objects)
-        self.negative_pairs: Dict[int, Set[int]] = {}
+        self.negative_pairs: dict[int, set[int]] = {}
 
         # Track ID to long-term unique ID mapping
-        self.track_to_long_term: Dict[int, int] = {}
+        self.track_to_long_term: dict[int, int] = {}
         self.long_term_counter: int = 0
 
         # Similarity history for optional adaptive thresholding
-        self.similarity_history: List[float] = []
+        self.similarity_history: list[float] = []
 
     def register_detection(self, detection: Detection2DBBox) -> int:
         """
@@ -128,7 +128,7 @@ class EmbeddingIDSystem(IDSystem):
             embeddings.pop(0)  # Remove oldest
 
     def _compute_group_similarity(
-        self, query_embeddings: List[np.ndarray], candidate_embeddings: List[np.ndarray]
+        self, query_embeddings: list[np.ndarray], candidate_embeddings: list[np.ndarray]
     ) -> float:
         """Compute similarity between two groups of embeddings.
 
@@ -164,7 +164,7 @@ class EmbeddingIDSystem(IDSystem):
         else:
             raise ValueError(f"Unknown comparison mode: {self.comparison_mode}")
 
-    def add_negative_constraints(self, track_ids: List[int]) -> None:
+    def add_negative_constraints(self, track_ids: list[int]) -> None:
         """Record that these track_ids co-occurred in same frame (different objects).
 
         Args:

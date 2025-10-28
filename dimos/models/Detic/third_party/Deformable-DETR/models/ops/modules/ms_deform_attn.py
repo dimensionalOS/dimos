@@ -6,29 +6,26 @@
 # Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
 # ------------------------------------------------------------------------------------------------
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
 
-import warnings
 import math
+import warnings
 
 import torch
 from torch import nn
 import torch.nn.functional as F
-from torch.nn.init import xavier_uniform_, constant_
+from torch.nn.init import constant_, xavier_uniform_
 
 from ..functions import MSDeformAttnFunction
 
 
 def _is_power_of_2(n):
     if (not isinstance(n, int)) or (n < 0):
-        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
+        raise ValueError(f"invalid input for _is_power_of_2: {n} (type: {type(n)})")
     return (n & (n - 1) == 0) and n != 0
 
 
 class MSDeformAttn(nn.Module):
-    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
+    def __init__(self, d_model: int=256, n_levels: int=4, n_heads: int=8, n_points: int=4) -> None:
         """
         Multi-Scale Deformable Attention Module
         :param d_model      hidden dimension
@@ -39,14 +36,14 @@ class MSDeformAttn(nn.Module):
         super().__init__()
         if d_model % n_heads != 0:
             raise ValueError(
-                "d_model must be divisible by n_heads, but got {} and {}".format(d_model, n_heads)
+                f"d_model must be divisible by n_heads, but got {d_model} and {n_heads}"
             )
         _d_per_head = d_model // n_heads
         # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
         if not _is_power_of_2(_d_per_head):
             warnings.warn(
                 "You'd better set d_model in MSDeformAttn to make the dimension of each attention head a power of 2 "
-                "which is more efficient in our CUDA implementation."
+                "which is more efficient in our CUDA implementation.", stacklevel=2
             )
 
         self.im2col_step = 64
@@ -63,7 +60,7 @@ class MSDeformAttn(nn.Module):
 
         self._reset_parameters()
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         constant_(self.sampling_offsets.weight.data, 0.0)
         thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
         grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
@@ -92,7 +89,7 @@ class MSDeformAttn(nn.Module):
         input_level_start_index,
         input_padding_mask=None,
     ):
-        """
+        r"""
         :param query                       (N, Length_{query}, C)
         :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
                                         or (N, Length_{query}, n_levels, 4), add additional (w, h) to form reference boxes
@@ -136,9 +133,7 @@ class MSDeformAttn(nn.Module):
             )
         else:
             raise ValueError(
-                "Last dim of reference_points must be 2 or 4, but get {} instead.".format(
-                    reference_points.shape[-1]
-                )
+                f"Last dim of reference_points must be 2 or 4, but get {reference_points.shape[-1]} instead."
             )
         output = MSDeformAttnFunction.apply(
             value,

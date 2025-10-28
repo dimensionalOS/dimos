@@ -1,19 +1,19 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import atexit
 import bisect
-import multiprocessing as mp
 from collections import deque
-import cv2
-import torch
+import multiprocessing as mp
 
+import cv2
 from detectron2.data import MetadataCatalog
 from detectron2.engine.defaults import DefaultPredictor
 from detectron2.utils.video_visualizer import VideoVisualizer
 from detectron2.utils.visualizer import ColorMode, Visualizer
+import torch
 
 
-class VisualizationDemo(object):
-    def __init__(self, cfg, instance_mode=ColorMode.IMAGE, parallel=False):
+class VisualizationDemo:
+    def __init__(self, cfg, instance_mode=ColorMode.IMAGE, parallel: bool=False) -> None:
         """
         Args:
             cfg (CfgNode):
@@ -161,13 +161,13 @@ class AsyncPredictor:
         pass
 
     class _PredictWorker(mp.Process):
-        def __init__(self, cfg, task_queue, result_queue):
+        def __init__(self, cfg, task_queue, result_queue) -> None:
             self.cfg = cfg
             self.task_queue = task_queue
             self.result_queue = result_queue
             super().__init__()
 
-        def run(self):
+        def run(self) -> None:
             predictor = DefaultPredictor(self.cfg)
 
             while True:
@@ -178,7 +178,7 @@ class AsyncPredictor:
                 result = predictor(data)
                 self.result_queue.put((idx, result))
 
-    def __init__(self, cfg, num_gpus: int = 1):
+    def __init__(self, cfg, num_gpus: int = 1) -> None:
         """
         Args:
             cfg (CfgNode):
@@ -191,7 +191,7 @@ class AsyncPredictor:
         for gpuid in range(max(num_gpus, 1)):
             cfg = cfg.clone()
             cfg.defrost()
-            cfg.MODEL.DEVICE = "cuda:{}".format(gpuid) if num_gpus > 0 else "cpu"
+            cfg.MODEL.DEVICE = f"cuda:{gpuid}" if num_gpus > 0 else "cpu"
             self.procs.append(
                 AsyncPredictor._PredictWorker(cfg, self.task_queue, self.result_queue)
             )
@@ -205,7 +205,7 @@ class AsyncPredictor:
             p.start()
         atexit.register(self.shutdown)
 
-    def put(self, image):
+    def put(self, image) -> None:
         self.put_idx += 1
         self.task_queue.put((self.put_idx, image))
 
@@ -225,14 +225,14 @@ class AsyncPredictor:
             self.result_rank.insert(insert, idx)
             self.result_data.insert(insert, res)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.put_idx - self.get_idx
 
     def __call__(self, image):
         self.put(image)
         return self.get()
 
-    def shutdown(self):
+    def shutdown(self) -> None:
         for _ in self.procs:
             self.task_queue.put(AsyncPredictor._StopToken())
 

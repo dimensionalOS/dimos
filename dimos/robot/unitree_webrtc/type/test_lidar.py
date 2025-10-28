@@ -24,7 +24,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.testing import SensorReplay
 
 
-def test_init():
+def test_init() -> None:
     lidar = SensorReplay("office_lidar")
 
     for raw_frame in itertools.islice(lidar.iterate(), 5):

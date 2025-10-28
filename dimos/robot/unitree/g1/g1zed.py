@@ -44,7 +44,7 @@ class G1ZedDeployResult(TypedDict):
 
 def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     camera = cast(
-        CameraModule,
+        "CameraModule",
         dimos.deploy(
             CameraModule,
             frequency=4.0,

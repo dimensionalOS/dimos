@@ -12,8 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+from typing import Sequence
+
 import cv2
+import numpy as np
+
 from dimos.types.vector import Vector
 
 
@@ -22,7 +25,7 @@ def filter_detections(
     track_ids,
     class_ids,
     confidences,
-    names,
+    names: Sequence[str],
     class_filter=None,
     name_filter=None,
     track_id_filter=None,
@@ -61,7 +64,7 @@ def filter_detections(
 
     # Filter detections
     for bbox, track_id, class_id, conf, name in zip(
-        bboxes, track_ids, class_ids, confidences, names
+        bboxes, track_ids, class_ids, confidences, names, strict=False
     ):
         # Check if detection passes all specified filters
         keep = True
@@ -154,7 +157,9 @@ def extract_detection_results(result, class_filter=None, name_filter=None, track
     return bboxes, track_ids, class_ids, confidences, names
 
 
-def plot_results(image, bboxes, track_ids, class_ids, confidences, names, alpha=0.5):
+def plot_results(
+    image, bboxes, track_ids, class_ids, confidences, names: Sequence[str], alpha: float = 0.5
+):
     """
     Draw bounding boxes and labels on the image.
 
@@ -172,7 +177,7 @@ def plot_results(image, bboxes, track_ids, class_ids, confidences, names, alpha=
     """
     vis_img = image.copy()
 
-    for bbox, track_id, conf, name in zip(bboxes, track_ids, confidences, names):
+    for bbox, track_id, conf, name in zip(bboxes, track_ids, confidences, names, strict=False):
         # Generate consistent color based on track_id or class name
         if track_id != -1:
             np.random.seed(track_id)
@@ -242,7 +247,7 @@ def calculate_depth_from_bbox(depth_map, bbox):
         return None
 
 
-def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
+def calculate_distance_angle_from_bbox(bbox, depth: int, camera_intrinsics):
     """
     Calculate distance and angle to object center based on bbox and depth.
 
@@ -263,7 +268,7 @@ def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
     # Calculate center of bounding box in pixels
     x1, y1, x2, y2 = bbox
     center_x = (x1 + x2) / 2
-    center_y = (y1 + y2) / 2
+    (y1 + y2) / 2
 
     # Calculate normalized image coordinates
     x_norm = (center_x - cx) / fx
@@ -277,7 +282,7 @@ def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
     return distance, angle
 
 
-def calculate_object_size_from_bbox(bbox, depth, camera_intrinsics):
+def calculate_object_size_from_bbox(bbox, depth: int, camera_intrinsics):
     """
     Estimate physical width and height of object in meters.
 

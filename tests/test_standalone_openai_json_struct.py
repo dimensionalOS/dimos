@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
 import os
 
 # -----
-
-from typing import List, Union, Dict
+from typing import Dict, List, Union
 
 import dotenv
+
+import tests.test_header
 
 dotenv.load_dotenv()
 
 from textwrap import dedent
+
 from openai import OpenAI
 from pydantic import BaseModel
 
@@ -79,7 +80,7 @@ if solution.refusal:
 # If we were able to successfully parse the response back
 parsed_solution = solution.parsed
 if not parsed_solution:
-    print(f"Unable to Parse Solution")
+    print("Unable to Parse Solution")
     exit()
 
 # Print solution from class definitions

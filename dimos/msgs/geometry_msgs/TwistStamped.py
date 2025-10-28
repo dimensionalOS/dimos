@@ -14,14 +14,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 import struct
 import time
-from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 from plum import dispatch
 
 try:
@@ -79,7 +78,7 @@ class TwistStamped(Twist, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> "TwistStamped":
+    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> TwistStamped:
         """Create a TwistStamped from a ROS geometry_msgs/TwistStamped message.
 
         Args:

@@ -1,10 +1,10 @@
-import warnings
 from functools import cached_property
 from typing import Optional
+import warnings
 
 import numpy as np
-import torch
 from PIL import Image as PILImage
+import torch
 from transformers import AutoModelForCausalLM
 
 from dimos.models.vl.base import VlModel
@@ -22,7 +22,7 @@ class MoondreamVlModel(VlModel):
         model_name: str = "vikhyatk/moondream2",
         device: Optional[str] = None,
         dtype: torch.dtype = torch.bfloat16,
-    ):
+    ) -> None:
         self._model_name = model_name
         self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self._dtype = dtype

@@ -131,13 +131,13 @@ class Model(str, Enum):
 
 @dataclass
 class AgentConfig(ModuleConfig):
-    system_prompt: Optional[str | SystemMessage] = None
-    skills: Optional[SkillContainer | list[SkillContainer]] = None
+    system_prompt: str | SystemMessage | None = None
+    skills: SkillContainer | list[SkillContainer] | None = None
 
     # we can provide model/provvider enums or instantiated model_instance
     model: Model = Model.GPT_4O
     provider: Provider = Provider.OPENAI
-    model_instance: Optional[BaseChatModel] = None
+    model_instance: BaseChatModel | None = None
 
     agent_transport: type[PubSub] = lcm.PickleLCM
     agent_topic: Any = field(default_factory=lambda: lcm.Topic("/agent"))
@@ -149,14 +149,14 @@ AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
 class AgentSpec(Service[AgentConfig], Module, ABC):
     default_config: type[AgentConfig] = AgentConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         Service.__init__(self, *args, **kwargs)
         Module.__init__(self, *args, **kwargs)
 
         if self.config.agent_transport:
             self.transport = self.config.agent_transport()
 
-    def publish(self, msg: AnyMessage):
+    def publish(self, msg: AnyMessage) -> None:
         if self.transport:
             self.transport.publish(self.config.agent_topic, msg)
 
@@ -171,10 +171,10 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
     def clear_history(self): ...
 
     @abstractmethod
-    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]): ...
+    def append_history(self, *msgs: list[Union[AIMessage, HumanMessage]]): ...
 
     @abstractmethod
-    def history(self) -> List[AnyMessage]: ...
+    def history(self) -> list[AnyMessage]: ...
 
     @rpc
     @abstractmethod

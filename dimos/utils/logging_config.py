@@ -33,7 +33,7 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 
 
 def setup_logger(
-    name: str, level: Optional[int] = None, log_format: Optional[str] = None
+    name: str, level: int | None = None, log_format: str | None = None
 ) -> logging.Logger:
     """Set up a logger with color output.
 

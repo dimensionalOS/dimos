@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Callable, Generic, Optional, TypeVar, Union
+from typing import TYPE_CHECKING, Callable, Generic, Optional, TypeVar, Union
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
-from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service import Service
 from dimos.protocol.skill.type import SkillMsg
+
+if TYPE_CHECKING:
+    from dimos.protocol.pubsub.spec import PubSub
 
 # defines a protocol for communication between skills and agents
 # it has simple requirements of pub/sub semantics capable of sending and receiving SkillMsg objects
@@ -46,7 +48,7 @@ TopicT = TypeVar("TopicT")
 
 @dataclass
 class PubSubCommsConfig(Generic[TopicT, MsgT]):
-    topic: Optional[TopicT] = None
+    topic: TopicT | None = None
     pubsub: Union[type[PubSub[TopicT, MsgT]], PubSub[TopicT, MsgT], None] = None
     autostart: bool = True
 
@@ -72,7 +74,7 @@ class PubSubComms(Service[PubSubCommsConfig], SkillCommsSpec):
     def start(self) -> None:
         self.pubsub.start()
 
-    def stop(self):
+    def stop(self) -> None:
         self.pubsub.stop()
 
     def publish(self, msg: SkillMsg) -> None:
