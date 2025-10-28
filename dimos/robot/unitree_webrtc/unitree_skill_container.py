@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import datetime
 import time
-from typing import TYPE_CHECKING, Optional
 
-from dimos.core import Module
 from dimos.core.core import rpc
+from dimos.core.rpc_client import RpcCall
+from dimos.core.skill_module import SkillModule
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
@@ -32,23 +32,17 @@ from dimos.utils.logging_config import setup_logger
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
 from go2_webrtc_driver.constants import RTC_TOPIC
 
-if TYPE_CHECKING:
-    from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
 
 
-class UnitreeSkillContainer(Module):
+class UnitreeSkillContainer(SkillModule):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    def __init__(self, robot: Optional[UnitreeGo2] = None):
-        """Initialize the skill container with robot reference.
+    _move: RpcCall | None = None
+    _publish_request: RpcCall | None = None
 
-        Args:
-            robot: The UnitreeGo2 robot instance
-        """
+    def __init__(self):
         super().__init__()
-        self._robot = robot
 
         # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
         self._generate_unitree_skills()
@@ -59,8 +53,17 @@ class UnitreeSkillContainer(Module):
 
     @rpc
     def stop(self) -> None:
-        # TODO: Do I need to clean up dynamic skills?
         super().stop()
+
+    @rpc
+    def set_ConnectionModule_move(self, callable: RpcCall) -> None:
+        self._move = callable
+        self._move.set_rpc(self.rpc)
+
+    @rpc
+    def set_ConnectionModule_publish_request(self, callable: RpcCall) -> None:
+        self._publish_request = callable
+        self._publish_request.set_rpc(self.rpc)
 
     def _generate_unitree_skills(self):
         """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""
@@ -135,11 +138,11 @@ class UnitreeSkillContainer(Module):
             yaw: Rotational velocity (rad/s)
             duration: How long to move (seconds)
         """
-        if self._robot is None:
+        if self._move is None:
             return "Error: Robot not connected"
 
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
-        self._robot.move(twist, duration=duration)
+        self._move(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
     @skill()
@@ -152,7 +155,7 @@ class UnitreeSkillContainer(Module):
         time.sleep(seconds)
         return f"Wait completed with length={seconds}s"
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest)
+    @skill(stream=Stream.passive, reducer=Reducer.latest, hide_skill=True)
     def current_time(self):
         """Provides current time implicitly, don't call this skill directly."""
         print("Starting current_time skill")
@@ -174,13 +177,11 @@ class UnitreeSkillContainer(Module):
             api_id: The API command ID
             name: Human-readable name of the command
         """
-        if self._robot is None:
+        if self._publish_request is None:
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            result = self._robot.connection.publish_request(
-                RTC_TOPIC["SPORT_MOD"], {"api_id": api_id}
-            )
+            self._publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": api_id})
             message = f"{name} command executed successfully (id={api_id})"
             logger.info(message)
             return message
@@ -188,3 +189,8 @@ class UnitreeSkillContainer(Module):
             error_msg = f"Failed to execute {name}: {e}"
             logger.error(error_msg)
             return error_msg
+
+
+unitree_skills = UnitreeSkillContainer.blueprint
+
+__all__ = ["UnitreeSkillContainer", "unitree_skills"]

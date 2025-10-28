@@ -23,6 +23,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree_webrtc.unitree_go2 import connection
+from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 from dimos.navigation.global_planner import astar_planner
@@ -52,6 +53,7 @@ basic = (
         behavior_tree_navigator(),
         wavefront_frontier_explorer(),
         websocket_vis(),
+        unitree_skills(),
         foxglove_bridge(),
     )
     .global_config(n_dask_workers=4)
