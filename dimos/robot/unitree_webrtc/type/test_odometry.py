@@ -14,14 +14,13 @@
 
 from __future__ import annotations
 
+from operator import add, sub
 import os
 import threading
-from operator import add, sub
-from typing import Optional
 
+from dotenv import load_dotenv
 import pytest
 import reactivex.operators as ops
-from dotenv import load_dotenv
 
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.testing import SensorReplay, SensorStorage
@@ -57,7 +56,7 @@ def test_last_yaw_value() -> None:
 
 def test_total_rotation_travel_iterate() -> None:
     total_rad = 0.0
-    prev_yaw: Optional[float] = None
+    prev_yaw: float | None = None
 
     for odom in SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg).iterate():
         yaw = odom.orientation.radians.z

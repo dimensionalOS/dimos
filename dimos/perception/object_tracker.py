@@ -12,20 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import numpy as np
-import time
 import threading
-from typing import Dict, List, Optional
+import time
 
-from dimos.core import In, Out, Module, rpc
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from reactivex.disposable import Disposable
-from dimos.msgs.geometry_msgs import Vector3, Quaternion, Transform, Pose
-from dimos.protocol.tf import TF
-from dimos.utils.logging_config import setup_logger
+import cv2
+from dimos_lcm.sensor_msgs import CameraInfo
 
 # Import LCM messages
 from dimos_lcm.vision_msgs import (
@@ -33,14 +24,23 @@ from dimos_lcm.vision_msgs import (
     Detection3D,
     ObjectHypothesisWithPose,
 )
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.utils.transform_utils import (
-    yaw_towards_point,
-    optical_to_robot_frame,
-    euler_to_quaternion,
-)
+import numpy as np
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
 from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.protocol.tf import TF
 from dimos.types.timestamped import align_timestamped
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import (
+    euler_to_quaternion,
+    optical_to_robot_frame,
+    yaw_towards_point,
+)
 
 logger = setup_logger("dimos.perception.object_tracker")
 
@@ -63,7 +63,7 @@ class ObjectTracking(Module):
         reid_threshold: int = 10,
         reid_fail_tolerance: int = 5,
         frame_id: str = "camera_link",
-    ):
+    ) -> None:
         """
         Initialize an object tracking module using OpenCV's CSRT tracker with ORB re-ID.
 
@@ -99,12 +99,12 @@ class ObjectTracking(Module):
         self.reid_warmup_frames = 3  # Number of frames before REID starts
 
         self._frame_lock = threading.Lock()
-        self._latest_rgb_frame: Optional[np.ndarray] = None
-        self._latest_depth_frame: Optional[np.ndarray] = None
-        self._latest_camera_info: Optional[CameraInfo] = None
+        self._latest_rgb_frame: np.ndarray | None = None
+        self._latest_depth_frame: np.ndarray | None = None
+        self._latest_camera_info: CameraInfo | None = None
 
         # Tracking thread control
-        self.tracking_thread: Optional[threading.Thread] = None
+        self.tracking_thread: threading.Thread | None = None
         self.stop_tracking = threading.Event()
         self.tracking_rate = 30.0  # Hz
         self.tracking_period = 1.0 / self.tracking_rate
@@ -113,16 +113,16 @@ class ObjectTracking(Module):
         self.tf = TF()
 
         # Store latest detections for RPC access
-        self._latest_detection2d: Optional[Detection2DArray] = None
-        self._latest_detection3d: Optional[Detection3DArray] = None
+        self._latest_detection2d: Detection2DArray | None = None
+        self._latest_detection3d: Detection3DArray | None = None
         self._detection_event = threading.Event()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         # Subscribe to aligned rgb and depth streams
-        def on_aligned_frames(frames_tuple):
+        def on_aligned_frames(frames_tuple) -> None:
             rgb_msg, depth_msg = frames_tuple
             with self._frame_lock:
                 self._latest_rgb_frame = rgb_msg.data
@@ -144,7 +144,7 @@ class ObjectTracking(Module):
         self._disposables.add(unsub)
 
         # Subscribe to camera info stream separately (doesn't need alignment)
-        def on_camera_info(camera_info_msg: CameraInfo):
+        def on_camera_info(camera_info_msg: CameraInfo) -> None:
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics from camera info K matrix
             # K is a 3x3 matrix in row-major order: [fx, 0, cx, 0, fy, cy, 0, 0, 1]
@@ -172,8 +172,8 @@ class ObjectTracking(Module):
     @rpc
     def track(
         self,
-        bbox: List[float],
-    ) -> Dict:
+        bbox: list[float],
+    ) -> dict:
         """
         Initialize tracking with a bounding box and process current frame.
 
@@ -269,14 +269,14 @@ class ObjectTracking(Module):
 
         return good_matches >= self.reid_threshold
 
-    def _start_tracking_thread(self):
+    def _start_tracking_thread(self) -> None:
         """Start the tracking thread."""
         self.stop_tracking.clear()
         self.tracking_thread = threading.Thread(target=self._tracking_loop, daemon=True)
         self.tracking_thread.start()
         logger.info("Started tracking thread")
 
-    def _tracking_loop(self):
+    def _tracking_loop(self) -> None:
         """Main tracking loop that runs in a separate thread."""
         while not self.stop_tracking.is_set() and self.tracking_initialized:
             # Process tracking for current frame
@@ -287,7 +287,7 @@ class ObjectTracking(Module):
 
         logger.info("Tracking loop ended")
 
-    def _reset_tracking_state(self):
+    def _reset_tracking_state(self) -> None:
         """Reset tracking state without stopping the thread."""
         self.tracker = None
         self.tracking_bbox = None
@@ -346,7 +346,7 @@ class ObjectTracking(Module):
         """
         return self.tracking_initialized and self.reid_confirmed
 
-    def _process_tracking(self):
+    def _process_tracking(self) -> None:
         """Process current frame for tracking and publish detections."""
         if self.tracker is None or not self.tracking_initialized:
             return
@@ -495,7 +495,7 @@ class ObjectTracking(Module):
                         translation=robot_pose.position,
                         rotation=robot_pose.orientation,
                         frame_id=self.frame_id,  # Use configured camera frame
-                        child_frame_id=f"tracked_object",
+                        child_frame_id="tracked_object",
                         ts=header.ts,
                     )
                     self.tf.publish(tracked_object_tf)
@@ -550,7 +550,7 @@ class ObjectTracking(Module):
         """Draw REID feature matches on the image."""
         viz_image = image.copy()
 
-        x1, y1, x2, y2 = self.last_roi_bbox
+        x1, y1, _x2, _y2 = self.last_roi_bbox
 
         # Draw keypoints from current ROI in green
         for kp in self.last_roi_kps:
@@ -590,7 +590,7 @@ class ObjectTracking(Module):
 
         return viz_image
 
-    def _get_depth_from_bbox(self, bbox: List[int], depth_frame: np.ndarray) -> Optional[float]:
+    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:
         """Calculate depth from bbox using the 25th percentile of closest points.
 
         Args:

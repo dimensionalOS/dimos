@@ -30,29 +30,32 @@ from __future__ import annotations
 import json
 import os
 import threading
-from typing import Any, Tuple, Optional, Union
+from typing import TYPE_CHECKING, Any
 
 # Third-party imports
 from dotenv import load_dotenv
 from openai import NOT_GIVEN, OpenAI
 from pydantic import BaseModel
-from reactivex import Observer, create, Observable, empty, operators as RxOps, just
+from reactivex import Observable, Observer, create, empty, just, operators as RxOps
 from reactivex.disposable import CompositeDisposable, Disposable
-from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.subject import Subject
 
 # Local imports
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.stream_merger import create_stream_merger
 from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
-from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.threadpool import get_scheduler
+
+if TYPE_CHECKING:
+    from reactivex.scheduler import ThreadPoolScheduler
+
+    from dimos.agents.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents.tokenizer.base import AbstractTokenizer
 
 # Initialize environment variables
 load_dotenv()
@@ -75,9 +78,9 @@ class Agent:
         self,
         dev_name: str = "NA",
         agent_type: str = "Base",
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-    ):
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        pool_scheduler: ThreadPoolScheduler | None = None,
+    ) -> None:
         """
         Initializes a new instance of the Agent.
 
@@ -94,7 +97,7 @@ class Agent:
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
 
-    def dispose_all(self):
+    def dispose_all(self) -> None:
         """Disposes of all active subscriptions managed by this agent."""
         if self.disposables:
             self.disposables.dispose()
@@ -145,16 +148,16 @@ class LLMAgent(Agent):
         self,
         dev_name: str = "NA",
         agent_type: str = "LLM",
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        pool_scheduler: ThreadPoolScheduler | None = None,
         process_all_inputs: bool = False,
-        system_query: Optional[str] = None,
+        system_query: str | None = None,
         max_output_tokens_per_request: int = 16384,
         max_input_tokens_per_request: int = 128000,
-        input_query_stream: Optional[Observable] = None,
-        input_data_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
-    ):
+        input_query_stream: Observable | None = None,
+        input_data_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
+    ) -> None:
         """
         Initializes a new instance of the LLMAgent.
 
@@ -169,9 +172,9 @@ class LLMAgent(Agent):
         """
         super().__init__(dev_name, agent_type, agent_memory, pool_scheduler)
         # These attributes can be configured by a subclass if needed.
-        self.query: Optional[str] = None
-        self.prompt_builder: Optional[PromptBuilder] = None
-        self.system_query: Optional[str] = system_query
+        self.query: str | None = None
+        self.prompt_builder: PromptBuilder | None = None
+        self.system_query: str | None = system_query
         self.image_detail: str = "low"
         self.max_input_tokens_per_request: int = max_input_tokens_per_request
         self.max_output_tokens_per_request: int = max_output_tokens_per_request
@@ -180,7 +183,7 @@ class LLMAgent(Agent):
         )
         self.rag_query_n: int = 4
         self.rag_similarity_threshold: float = 0.45
-        self.frame_processor: Optional[FrameProcessor] = None
+        self.frame_processor: FrameProcessor | None = None
         self.output_dir: str = os.path.join(os.getcwd(), "assets", "agent")
         self.process_all_inputs: bool = process_all_inputs
         os.makedirs(self.output_dir, exist_ok=True)
@@ -225,8 +228,11 @@ class LLMAgent(Agent):
             )
 
             logger.info("Subscribing to merged input stream...")
+
             # Define a query extractor for the merged stream
-            query_extractor = lambda emission: (emission[0], emission[1][0])
+            def query_extractor(emission):
+                return (emission[0], emission[1][0])
+
             self.disposables.add(
                 self.subscribe_to_image_processing(
                     self.merged_stream, query_extractor=query_extractor
@@ -241,7 +247,7 @@ class LLMAgent(Agent):
                 logger.info("Subscribing to input query stream...")
                 self.disposables.add(self.subscribe_to_query_processing(self.input_query_stream))
 
-    def _update_query(self, incoming_query: Optional[str]) -> None:
+    def _update_query(self, incoming_query: str | None) -> None:
         """Updates the query if an incoming query is provided.
 
         Args:
@@ -250,7 +256,7 @@ class LLMAgent(Agent):
         if incoming_query is not None:
             self.query = incoming_query
 
-    def _get_rag_context(self) -> Tuple[str, str]:
+    def _get_rag_context(self) -> tuple[str, str]:
         """Queries the agent memory to retrieve RAG context.
 
         Returns:
@@ -273,8 +279,8 @@ class LLMAgent(Agent):
 
     def _build_prompt(
         self,
-        base64_image: Optional[str],
-        dimensions: Optional[Tuple[int, int]],
+        base64_image: str | None,
+        dimensions: tuple[int, int] | None,
         override_token_limit: bool,
         condensed_results: str,
     ) -> list:
@@ -370,10 +376,10 @@ class LLMAgent(Agent):
     def _observable_query(
         self,
         observer: Observer,
-        base64_image: Optional[str] = None,
-        dimensions: Optional[Tuple[int, int]] = None,
+        base64_image: str | None = None,
+        dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
-        incoming_query: Optional[str] = None,
+        incoming_query: str | None = None,
     ):
         """Prepares and sends a query to the LLM, emitting the response to the observer.
 
@@ -449,7 +455,7 @@ class LLMAgent(Agent):
         """
         raise NotImplementedError("Subclasses must implement _send_query method.")
 
-    def _log_response_to_file(self, response, output_dir: str = None):
+    def _log_response_to_file(self, response, output_dir: str | None = None) -> None:
         """Logs the LLM response to a file.
 
         Args:
@@ -670,7 +676,7 @@ class LLMAgent(Agent):
             )
         )
 
-    def dispose_all(self):
+    def dispose_all(self) -> None:
         """Disposes of all active subscriptions managed by this agent."""
         super().dispose_all()
         self.response_subject.on_completed()
@@ -695,27 +701,27 @@ class OpenAIAgent(LLMAgent):
         dev_name: str,
         agent_type: str = "Vision",
         query: str = "What do you see?",
-        input_query_stream: Optional[Observable] = None,
-        input_data_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
+        input_data_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        system_query: Optional[str] = None,
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        system_query: str | None = None,
         max_input_tokens_per_request: int = 128000,
         max_output_tokens_per_request: int = 16384,
         model_name: str = "gpt-4o",
-        prompt_builder: Optional[PromptBuilder] = None,
-        tokenizer: Optional[AbstractTokenizer] = None,
+        prompt_builder: PromptBuilder | None = None,
+        tokenizer: AbstractTokenizer | None = None,
         rag_query_n: int = 4,
         rag_similarity_threshold: float = 0.45,
-        skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
-        response_model: Optional[BaseModel] = None,
-        frame_processor: Optional[FrameProcessor] = None,
+        skills: AbstractSkill | list[AbstractSkill] | SkillLibrary | None = None,
+        response_model: BaseModel | None = None,
+        frame_processor: FrameProcessor | None = None,
         image_detail: str = "low",
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-        process_all_inputs: Optional[bool] = None,
-        openai_client: Optional[OpenAI] = None,
-    ):
+        pool_scheduler: ThreadPoolScheduler | None = None,
+        process_all_inputs: bool | None = None,
+        openai_client: OpenAI | None = None,
+    ) -> None:
         """
         Initializes a new instance of the OpenAIAgent.
 
@@ -803,7 +809,7 @@ class OpenAIAgent(LLMAgent):
 
         logger.info("OpenAI Agent Initialized.")
 
-    def _add_context_to_memory(self):
+    def _add_context_to_memory(self) -> None:
         """Adds initial context to the agent's memory."""
         context_data = [
             (

@@ -15,10 +15,10 @@
 """Agent-specific types for message passing."""
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Union
+import json
 import threading
 import time
-import json
+from typing import Any
 
 
 @dataclass
@@ -30,9 +30,9 @@ class AgentImage:
     """
 
     base64_jpeg: str
-    width: Optional[int] = None
-    height: Optional[int] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    width: int | None = None
+    height: int | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         return f"AgentImage(size={self.width}x{self.height}, metadata={list(self.metadata.keys())})"
@@ -44,7 +44,7 @@ class ToolCall:
 
     id: str
     name: str
-    arguments: Dict[str, Any]
+    arguments: dict[str, Any]
     status: str = "pending"  # pending, executing, completed, failed
 
     def __repr__(self) -> str:
@@ -60,9 +60,9 @@ class AgentResponse:
 
     content: str
     role: str = "assistant"
-    tool_calls: Optional[List[ToolCall]] = None
+    tool_calls: list[ToolCall] | None = None
     requires_follow_up: bool = False  # Indicates if tool execution is needed
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: float = field(default_factory=time.time)
 
     def __repr__(self) -> str:
@@ -80,13 +80,13 @@ class ConversationMessage:
     """
 
     role: str  # "system", "user", "assistant", "tool"
-    content: Union[str, List[Dict[str, Any]]]  # Text or content blocks
-    tool_calls: Optional[List[ToolCall]] = None
-    tool_call_id: Optional[str] = None  # For tool responses
-    name: Optional[str] = None  # For tool messages (function name)
+    content: str | list[dict[str, Any]]  # Text or content blocks
+    tool_calls: list[ToolCall] | None = None
+    tool_call_id: str | None = None  # For tool responses
+    name: str | None = None  # For tool messages (function name)
     timestamp: float = field(default_factory=time.time)
 
-    def to_openai_format(self) -> Dict[str, Any]:
+    def to_openai_format(self) -> dict[str, Any]:
         """Convert to OpenAI API format."""
         msg = {"role": self.role}
 
@@ -136,17 +136,17 @@ class ConversationHistory:
     LLM providers and automatic trimming.
     """
 
-    def __init__(self, max_size: int = 20):
+    def __init__(self, max_size: int = 20) -> None:
         """Initialize conversation history.
 
         Args:
             max_size: Maximum number of messages to keep
         """
-        self._messages: List[ConversationMessage] = []
+        self._messages: list[ConversationMessage] = []
         self._lock = threading.Lock()
         self.max_size = max_size
 
-    def add_user_message(self, content: Union[str, List[Dict[str, Any]]]) -> None:
+    def add_user_message(self, content: str | list[dict[str, Any]]) -> None:
         """Add user message to history.
 
         Args:
@@ -156,9 +156,7 @@ class ConversationHistory:
             self._messages.append(ConversationMessage(role="user", content=content))
             self._trim()
 
-    def add_assistant_message(
-        self, content: str, tool_calls: Optional[List[ToolCall]] = None
-    ) -> None:
+    def add_assistant_message(self, content: str, tool_calls: list[ToolCall] | None = None) -> None:
         """Add assistant response to history.
 
         Args:
@@ -171,7 +169,7 @@ class ConversationHistory:
             )
             self._trim()
 
-    def add_tool_result(self, tool_call_id: str, content: str, name: Optional[str] = None) -> None:
+    def add_tool_result(self, tool_call_id: str, content: str, name: str | None = None) -> None:
         """Add tool execution result to history.
 
         Args:
@@ -187,7 +185,7 @@ class ConversationHistory:
             )
             self._trim()
 
-    def add_raw_message(self, message: Dict[str, Any]) -> None:
+    def add_raw_message(self, message: dict[str, Any]) -> None:
         """Add a raw message dict to history.
 
         Args:
@@ -223,7 +221,7 @@ class ConversationHistory:
             )
             self._trim()
 
-    def to_openai_format(self) -> List[Dict[str, Any]]:
+    def to_openai_format(self) -> list[dict[str, Any]]:
         """Export history in OpenAI format.
 
         Returns:

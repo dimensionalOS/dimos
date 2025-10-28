@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import TYPE_CHECKING, TypeAlias
 
-import numpy as np
 from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
+import numpy as np
 from plum import dispatch
 
 try:
@@ -26,8 +26,10 @@ except ImportError:
     ROSPoseWithCovariance = None
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion
-from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs.Quaternion import Quaternion
+    from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Types that can be converted to/from PoseWithCovariance
 PoseWithCovarianceConvertable: TypeAlias = (
@@ -86,7 +88,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         self.pose = Pose(pose_tuple[0])
         self.covariance = np.array(pose_tuple[1], dtype=float).reshape(36)
 
-    def __getattribute__(self, name):
+    def __getattribute__(self, name: str):
         """Override to ensure covariance is always returned as numpy array."""
         if name == "covariance":
             cov = object.__getattribute__(self, "covariance")
@@ -95,7 +97,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
             return cov
         return super().__getattribute__(name)
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value) -> None:
         """Override to ensure covariance is stored as numpy array."""
         if name == "covariance":
             if not isinstance(value, np.ndarray):
@@ -180,7 +182,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         return lcm_msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "PoseWithCovariance":
+    def lcm_decode(cls, data: bytes) -> PoseWithCovariance:
         """Decode from LCM binary format."""
         lcm_msg = LCMPoseWithCovariance.lcm_decode(data)
         pose = Pose(
@@ -195,7 +197,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         return cls(pose, lcm_msg.covariance)
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseWithCovariance) -> "PoseWithCovariance":
+    def from_ros_msg(cls, ros_msg: ROSPoseWithCovariance) -> PoseWithCovariance:
         """Create a PoseWithCovariance from a ROS geometry_msgs/PoseWithCovariance message.
 
         Args:

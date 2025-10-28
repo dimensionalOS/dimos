@@ -25,7 +25,7 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image
 
 
 @pytest.mark.tool
-def test_streaming_single():
+def test_streaming_single() -> None:
     dimos = core.start(1)
 
     camera = dimos.deploy(
@@ -57,7 +57,7 @@ def test_streaming_single():
 
 
 @pytest.mark.tool
-def test_streaming_double():
+def test_streaming_double() -> None:
     dimos = core.start(2)
 
     camera1 = dimos.deploy(

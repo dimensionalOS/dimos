@@ -12,42 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import rclpy
-from rclpy.node import Node
-from rclpy.executors import MultiThreadedExecutor
-from rclpy.action import ActionClient
-from geometry_msgs.msg import Twist
-from nav2_msgs.action import Spin
-
-from sensor_msgs.msg import Image, CompressedImage
-from cv_bridge import CvBridge
+from abc import ABC, abstractmethod
 from enum import Enum, auto
+import math
 import threading
 import time
-from typing import Optional, Dict, Any, Type
-from abc import ABC, abstractmethod
+from typing import Any
+
+from builtin_interfaces.msg import Duration
+from cv_bridge import CvBridge
+from geometry_msgs.msg import Point, Twist, Vector3
+from nav2_msgs.action import Spin
+from nav_msgs.msg import OccupancyGrid, Odometry
+import rclpy
+from rclpy.action import ActionClient
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
 from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
     QoSProfile,
     QoSReliabilityPolicy,
-    QoSHistoryPolicy,
-    QoSDurabilityPolicy,
 )
-from dimos.stream.ros_video_provider import ROSVideoProvider
-import math
-from builtin_interfaces.msg import Duration
-from geometry_msgs.msg import Point, Vector3
-from dimos.robot.ros_command_queue import ROSCommandQueue
-from dimos.utils.logging_config import setup_logger
-
-from nav_msgs.msg import OccupancyGrid
-
+from sensor_msgs.msg import CompressedImage, Image
 import tf2_ros
-from dimos.robot.ros_transform import ROSTransformAbility
-from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
-from dimos.robot.connection_interface import ConnectionInterface
-from dimos.types.vector import Vector
 
-from nav_msgs.msg import Odometry
+from dimos.robot.connection_interface import ConnectionInterface
+from dimos.robot.ros_command_queue import ROSCommandQueue
+from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
+from dimos.robot.ros_transform import ROSTransformAbility
+from dimos.stream.ros_video_provider import ROSVideoProvider
+from dimos.types.vector import Vector
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.ros_control")
 
@@ -70,24 +66,24 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
     def __init__(
         self,
         node_name: str,
-        camera_topics: Dict[str, str] = None,
+        camera_topics: dict[str, str] | None = None,
         max_linear_velocity: float = 1.0,
         mock_connection: bool = False,
         max_angular_velocity: float = 2.0,
-        state_topic: str = None,
-        imu_topic: str = None,
-        state_msg_type: Type = None,
-        imu_msg_type: Type = None,
-        webrtc_topic: str = None,
-        webrtc_api_topic: str = None,
-        webrtc_msg_type: Type = None,
-        move_vel_topic: str = None,
-        pose_topic: str = None,
+        state_topic: str | None = None,
+        imu_topic: str | None = None,
+        state_msg_type: type | None = None,
+        imu_msg_type: type | None = None,
+        webrtc_topic: str | None = None,
+        webrtc_api_topic: str | None = None,
+        webrtc_msg_type: type | None = None,
+        move_vel_topic: str | None = None,
+        pose_topic: str | None = None,
         odom_topic: str = "/odom",
         global_costmap_topic: str = "map",
         costmap_topic: str = "/local_costmap/costmap",
         debug: bool = False,
-    ):
+    ) -> None:
         """
         Initialize base ROS control interface
         Args:
@@ -269,7 +265,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         logger.info(f"{node_name} initialized with multi-threaded executor")
         print(f"{node_name} initialized with multi-threaded executor")
 
-    def get_global_costmap(self) -> Optional[OccupancyGrid]:
+    def get_global_costmap(self) -> OccupancyGrid | None:
         """
         Get current global_costmap data
 
@@ -287,25 +283,25 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         else:
             return None
 
-    def _global_costmap_callback(self, msg):
+    def _global_costmap_callback(self, msg) -> None:
         """Callback for costmap data"""
         self._global_costmap_data = msg
 
-    def _imu_callback(self, msg):
+    def _imu_callback(self, msg) -> None:
         """Callback for IMU data"""
         self._imu_state = msg
         # Log IMU state (very verbose)
         # logger.debug(f"IMU state updated: {self._imu_state}")
 
-    def _odom_callback(self, msg):
+    def _odom_callback(self, msg) -> None:
         """Callback for odometry data"""
         self._odom_data = msg
 
-    def _costmap_callback(self, msg):
+    def _costmap_callback(self, msg) -> None:
         """Callback for costmap data"""
         self._costmap_data = msg
 
-    def _state_callback(self, msg):
+    def _state_callback(self, msg) -> None:
         """Callback for state messages to track mode and progress"""
 
         # Call the abstract method to update RobotMode enum based on the received state
@@ -315,11 +311,11 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         # logger.debug(f"Robot state updated: {self._robot_state}")
 
     @property
-    def robot_state(self) -> Optional[Any]:
+    def robot_state(self) -> Any | None:
         """Get the full robot state message"""
         return self._robot_state
 
-    def _ros_spin(self):
+    def _ros_spin(self) -> None:
         """Background thread for spinning the multi-threaded executor."""
         self._executor.add_node(self._node)
         try:
@@ -336,7 +332,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         """Update robot mode based on state - to be implemented by child classes"""
         pass
 
-    def get_state(self) -> Optional[Any]:
+    def get_state(self) -> Any | None:
         """
         Get current robot state
 
@@ -352,7 +348,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         return self._robot_state
 
-    def get_imu_state(self) -> Optional[Any]:
+    def get_imu_state(self) -> Any | None:
         """
         Get current IMU state
 
@@ -367,7 +363,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return None
         return self._imu_state
 
-    def get_odometry(self) -> Optional[Odometry]:
+    def get_odometry(self) -> Odometry | None:
         """
         Get current odometry data
 
@@ -381,7 +377,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return None
         return self._odom_data
 
-    def get_costmap(self) -> Optional[OccupancyGrid]:
+    def get_costmap(self) -> OccupancyGrid | None:
         """
         Get current costmap data
 
@@ -393,7 +389,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return None
         return self._costmap_data
 
-    def _image_callback(self, msg):
+    def _image_callback(self, msg) -> None:
         """Convert ROS image to numpy array and push to data stream"""
         if self._video_provider and self._bridge:
             try:
@@ -407,14 +403,14 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
                 self._video_provider.push_data(frame)
             except Exception as e:
                 logger.error(f"Error converting image: {e}")
-                print(f"Full conversion error: {str(e)}")
+                print(f"Full conversion error: {e!s}")
 
     @property
-    def video_provider(self) -> Optional[ROSVideoProvider]:
+    def video_provider(self) -> ROSVideoProvider | None:
         """Data provider property for streaming data"""
         return self._video_provider
 
-    def get_video_stream(self, fps: int = 30) -> Optional[Observable]:
+    def get_video_stream(self, fps: int = 30) -> Observable | None:
         """Get the video stream from the robot's camera.
 
         Args:
@@ -428,7 +424,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         return self.video_provider.get_stream(fps=fps)
 
-    def _send_action_client_goal(self, client, goal_msg, description=None, time_allowance=20.0):
+    def _send_action_client_goal(
+        self, client, goal_msg, description: str | None = None, time_allowance: float = 20.0
+    ) -> bool:
         """
         Generic function to send any action client goal and wait for completion.
 
@@ -656,7 +654,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             logger.error(f"Failed to stop movement: {e}")
             return False
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup the executor, ROS node, and stop robot."""
         self.stop()
 
@@ -679,10 +677,10 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
     def webrtc_req(
         self,
         api_id: int,
-        topic: str = None,
+        topic: str | None = None,
         parameter: str = "",
         priority: int = 0,
-        request_id: str = None,
+        request_id: str | None = None,
         data=None,
     ) -> bool:
         """
@@ -725,7 +723,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         """
         return self._mode
 
-    def print_robot_mode(self):
+    def print_robot_mode(self) -> None:
         """Print the current robot mode to the console"""
         mode = self.get_robot_mode()
         print(f"Current RobotMode: {mode.name}")
@@ -734,11 +732,11 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
     def queue_webrtc_req(
         self,
         api_id: int,
-        topic: str = None,
+        topic: str | None = None,
         parameter: str = "",
         priority: int = 0,
         timeout: float = 90.0,
-        request_id: str = None,
+        request_id: str | None = None,
         data=None,
     ) -> str:
         """
@@ -840,7 +838,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         return position_provider.get_position_stream()
 
-    def _goal_response_callback(self, future):
+    def _goal_response_callback(self, future) -> None:
         """Handle the goal response."""
         goal_handle = future.result()
         if not goal_handle.accepted:
@@ -854,7 +852,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._goal_result_callback)
 
-    def _goal_result_callback(self, future):
+    def _goal_result_callback(self, future) -> None:
         """Handle the goal result."""
         try:
             result = future.result().result

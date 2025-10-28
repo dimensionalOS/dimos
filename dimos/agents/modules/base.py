@@ -15,18 +15,18 @@
 """Base agent class with all features (non-module)."""
 
 import asyncio
-import json
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Union
+import json
+from typing import Any
 
 from reactivex.subject import Subject
 
+from dimos.agents.agent_message import AgentMessage
+from dimos.agents.agent_types import AgentResponse, ConversationHistory, ToolCall
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
-from dimos.agents.agent_message import AgentMessage
-from dimos.agents.agent_types import AgentResponse, ToolCall, ConversationHistory
 
 try:
     from .gateway import UnifiedGatewayClient
@@ -66,21 +66,21 @@ class BaseAgent:
     def __init__(
         self,
         model: str = "openai::gpt-4o-mini",
-        system_prompt: Optional[str] = None,
-        skills: Optional[Union[SkillLibrary, List[AbstractSkill], AbstractSkill]] = None,
-        memory: Optional[AbstractAgentSemanticMemory] = None,
+        system_prompt: str | None = None,
+        skills: SkillLibrary | list[AbstractSkill] | AbstractSkill | None = None,
+        memory: AbstractAgentSemanticMemory | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
         max_input_tokens: int = 128000,
         max_history: int = 20,
         rag_n: int = 4,
         rag_threshold: float = 0.45,
-        seed: Optional[int] = None,
+        seed: int | None = None,
         # Legacy compatibility
         dev_name: str = "BaseAgent",
         agent_type: str = "LLM",
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the base agent with all features.
 
         Args:
@@ -155,7 +155,7 @@ class BaseAgent:
         return self._max_history
 
     @max_history.setter
-    def max_history(self, value: int):
+    def max_history(self, value: int) -> None:
         """Set max history size and update conversation."""
         self._max_history = value
         self.conversation.max_size = value
@@ -164,7 +164,7 @@ class BaseAgent:
         """Check if the model supports vision."""
         return self.model in VISION_MODELS
 
-    def _initialize_memory(self):
+    def _initialize_memory(self) -> None:
         """Initialize memory with default context."""
         try:
             contexts = [
@@ -252,7 +252,7 @@ class BaseAgent:
 
         # Check for tool calls
         tool_calls = None
-        if "tool_calls" in message and message["tool_calls"]:
+        if message.get("tool_calls"):
             tool_calls = [
                 ToolCall(
                     id=tc["id"],
@@ -319,7 +319,7 @@ class BaseAgent:
 
     def _build_messages(
         self, agent_msg: AgentMessage, rag_context: str = ""
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Build messages list from AgentMessage."""
         messages = []
 
@@ -376,9 +376,9 @@ class BaseAgent:
 
     async def _handle_tool_calls(
         self,
-        tool_calls: List[ToolCall],
-        messages: List[Dict[str, Any]],
-        user_message: Dict[str, Any],
+        tool_calls: list[ToolCall],
+        messages: list[dict[str, Any]],
+        user_message: dict[str, Any],
     ) -> str:
         """Handle tool calls from LLM (blocking mode by default)."""
         try:
@@ -424,7 +424,7 @@ class BaseAgent:
                     tool_result = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": f"Error: {str(e)}",
+                        "content": f"Error: {e!s}",
                         "name": tool_call.name,
                     }
                     tool_results.append(tool_result)
@@ -472,9 +472,9 @@ class BaseAgent:
 
         except Exception as e:
             logger.error(f"Error handling tool calls: {e}")
-            return f"Error executing tools: {str(e)}"
+            return f"Error executing tools: {e!s}"
 
-    def query(self, message: Union[str, AgentMessage]) -> AgentResponse:
+    def query(self, message: str | AgentMessage) -> AgentResponse:
         """Synchronous query method for direct usage.
 
         Args:
@@ -498,7 +498,7 @@ class BaseAgent:
         finally:
             loop.close()
 
-    async def aquery(self, message: Union[str, AgentMessage]) -> AgentResponse:
+    async def aquery(self, message: str | AgentMessage) -> AgentResponse:
         """Asynchronous query method.
 
         Args:

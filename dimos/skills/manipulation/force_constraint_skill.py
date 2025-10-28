@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, List, Tuple
+
 from pydantic import Field
 
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
-from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.manipulation import ForceConstraint, Vector
 from dimos.utils.logging_config import setup_logger
 
@@ -37,7 +36,7 @@ class ForceConstraintSkill(AbstractManipulationSkill):
     max_force: float = Field(100.0, description="Maximum force magnitude in Newtons to apply")
 
     # Force direction as (x,y) tuple
-    force_direction: Optional[Tuple[float, float]] = Field(
+    force_direction: tuple[float, float] | None = Field(
         None, description="Force direction vector (x,y)"
     )
 

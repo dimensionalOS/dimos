@@ -18,22 +18,22 @@ Run script for Unitree G1 humanoid robot with Claude agent integration.
 Provides interaction capabilities with natural language interface and ZED vision.
 """
 
+import argparse
 import os
 import sys
 import time
-import argparse
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 import reactivex as rx
 import reactivex.operators as ops
 
+from dimos.agents.claude_agent import ClaudeAgent
 from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.agents.claude_agent import ClaudeAgent
 from dimos.skills.kill_skill import KillSkill
 from dimos.skills.navigation import GetPose
-from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger("dimos.robot.unitree_webrtc.g1_run")
 
@@ -87,7 +87,7 @@ def main():
 
     # Load system prompt
     try:
-        with open(SYSTEM_PROMPT_PATH, "r") as f:
+        with open(SYSTEM_PROMPT_PATH) as f:
             system_prompt = f.read()
     except FileNotFoundError:
         logger.error(f"System prompt file not found at {SYSTEM_PROMPT_PATH}")
@@ -154,7 +154,7 @@ def main():
 
         logger.info("=" * 60)
         logger.info("Unitree G1 Agent Ready!")
-        logger.info(f"Web interface available at: http://localhost:5555")
+        logger.info("Web interface available at: http://localhost:5555")
         logger.info("You can:")
         logger.info("  - Type commands in the web interface")
         logger.info("  - Use voice commands")

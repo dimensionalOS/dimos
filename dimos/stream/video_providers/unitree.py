@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.video_provider import AbstractVideoProvider
-
-from queue import Queue
-from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
-from aiortc import MediaStreamTrack
 import asyncio
-from reactivex import Observable, create, operators as ops
 import logging
+from queue import Queue
 import threading
 import time
+
+from aiortc import MediaStreamTrack
+from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
+from reactivex import Observable, create, operators as ops
+
+from dimos.stream.video_provider import AbstractVideoProvider
 
 
 class UnitreeVideoProvider(AbstractVideoProvider):
@@ -29,9 +30,9 @@ class UnitreeVideoProvider(AbstractVideoProvider):
         self,
         dev_name: str = "UnitreeGo2",
         connection_method: WebRTCConnectionMethod = WebRTCConnectionMethod.LocalSTA,
-        serial_number: str = None,
-        ip: str = None,
-    ):
+        serial_number: str | None = None,
+        ip: str | None = None,
+    ) -> None:
         """Initialize the Unitree video stream with WebRTC connection.
 
         Args:
@@ -60,7 +61,7 @@ class UnitreeVideoProvider(AbstractVideoProvider):
         else:
             raise ValueError("Unsupported connection method")
 
-    async def _recv_camera_stream(self, track: MediaStreamTrack):
+    async def _recv_camera_stream(self, track: MediaStreamTrack) -> None:
         """Receive video frames from WebRTC and put them in the queue."""
         while True:
             frame = await track.recv()
@@ -68,7 +69,7 @@ class UnitreeVideoProvider(AbstractVideoProvider):
             img = frame.to_ndarray(format="bgr24")
             self.frame_queue.put(img)
 
-    def _run_asyncio_loop(self, loop):
+    def _run_asyncio_loop(self, loop) -> None:
         """Run the asyncio event loop in a separate thread."""
         asyncio.set_event_loop(loop)
 
@@ -115,7 +116,7 @@ class UnitreeVideoProvider(AbstractVideoProvider):
         """
         frame_interval = 1.0 / fps
 
-        def emit_frames(observer, scheduler):
+        def emit_frames(observer, scheduler) -> None:
             try:
                 # Start asyncio loop if not already running
                 if not self.loop:
@@ -158,7 +159,7 @@ class UnitreeVideoProvider(AbstractVideoProvider):
             ops.share()  # Share the stream among multiple subscribers
         )
 
-    def dispose_all(self):
+    def dispose_all(self) -> None:
         """Clean up resources."""
         if self.loop:
             self.loop.call_soon_threadsafe(self.loop.stop)

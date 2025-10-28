@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -30,7 +31,6 @@ from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.detectors import Detector
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
-from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type import (
     ImageDetections2D,
 )
@@ -41,7 +41,7 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
+    detector: Callable[[Any], Detector] | None = YoloPersonDetector
     camera_info: CameraInfo = CameraInfo()
 
 
@@ -61,7 +61,7 @@ class Detection2DModule(Module):
 
     cnt: int = 0
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.config: Config = Config(**kwargs)
         self.detector = self.config.detector()
@@ -85,7 +85,7 @@ class Detection2DModule(Module):
 
     def pixel_to_3d(
         self,
-        pixel: Tuple[int, int],
+        pixel: tuple[int, int],
         camera_info: CameraInfo,
         assumed_depth: float = 1.0,
     ) -> Vector3:
@@ -110,7 +110,7 @@ class Detection2DModule(Module):
         # Camera optical frame: X right, Y down, Z forward
         return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
 
-    def track(self, detections: ImageDetections2D):
+    def track(self, detections: ImageDetections2D) -> None:
         sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
@@ -150,7 +150,7 @@ class Detection2DModule(Module):
         self.tf.publish(*transforms)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(
@@ -161,7 +161,7 @@ class Detection2DModule(Module):
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
-        def publish_cropped_images(detections: ImageDetections2D):
+        def publish_cropped_images(detections: ImageDetections2D) -> None:
             for index, detection in enumerate(detections[:3]):
                 image_topic = getattr(self, "detected_image_" + str(index))
                 image_topic.publish(detection.cropped_image())
@@ -169,4 +169,4 @@ class Detection2DModule(Module):
         self.detection_stream_2d().subscribe(publish_cropped_images)
 
     @rpc
-    def stop(self): ...
+    def stop(self) -> None: ...

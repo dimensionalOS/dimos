@@ -16,7 +16,7 @@ from abc import ABC, abstractmethod
 
 
 class AbstractSensor(ABC):
-    def __init__(self, sensor_type=None):
+    def __init__(self, sensor_type=None) -> None:
         self.sensor_type = sensor_type
 
     @abstractmethod

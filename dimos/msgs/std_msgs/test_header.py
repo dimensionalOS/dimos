@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from datetime import datetime
-
-import pytest
+import time
 
 from dimos.msgs.std_msgs import Header
 
 
-def test_header_initialization_methods():
+def test_header_initialization_methods() -> None:
     """Test various ways to initialize a Header."""
 
     # Method 1: With timestamp and frame_id
@@ -69,7 +67,7 @@ def test_header_initialization_methods():
     assert header7.frame_id == "lidar"
 
 
-def test_header_properties():
+def test_header_properties() -> None:
     """Test Header property accessors."""
     header = Header(1234567890.123456789, "test")
 
@@ -82,7 +80,7 @@ def test_header_properties():
     assert abs(dt.timestamp() - 1234567890.123456789) < 1e-6
 
 
-def test_header_string_representation():
+def test_header_string_representation() -> None:
     """Test Header string representations."""
     header = Header(100.5, "map", seq=10)
 

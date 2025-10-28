@@ -1,28 +1,29 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import os
-import torch
 
-import detectron2.data.transforms as T
 from detectron2.config import LazyCall as L
-from detectron2.layers import ShapeSpec
+import detectron2.data.transforms as T
 from detectron2.evaluation.lvis_evaluation import LVISEvaluator
+from detectron2.layers import ShapeSpec
 from detectron2.layers.batch_norm import NaiveSyncBatchNorm
-from detectron2.solver import WarmupParamScheduler
-from detectron2.solver.build import get_default_optimizer_params
+from detectron2.model_zoo import get_config
+from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.matcher import Matcher
 from detectron2.modeling.roi_heads import FastRCNNConvFCHead
-from detectron2.modeling.box_regression import Box2BoxTransform
-from detectron2.model_zoo import get_config
-from fvcore.common.param_scheduler import CosineParamScheduler
-
-from detic.modeling.roi_heads.zero_shot_classifier import ZeroShotClassifier
-from detic.modeling.roi_heads.detic_roi_heads import DeticCascadeROIHeads
-from detic.modeling.roi_heads.detic_fast_rcnn import DeticFastRCNNOutputLayers
+from detectron2.solver import WarmupParamScheduler
+from detectron2.solver.build import get_default_optimizer_params
+from detic.data.custom_dataset_dataloader import (
+    MultiDatasetSampler,
+    build_custom_train_loader,
+    get_detection_dataset_dicts_with_source,
+)
 from detic.data.custom_dataset_mapper import CustomDatasetMapper
 from detic.modeling.meta_arch.custom_rcnn import CustomRCNN
-from detic.data.custom_dataset_dataloader import build_custom_train_loader
-from detic.data.custom_dataset_dataloader import MultiDatasetSampler
-from detic.data.custom_dataset_dataloader import get_detection_dataset_dicts_with_source
+from detic.modeling.roi_heads.detic_fast_rcnn import DeticFastRCNNOutputLayers
+from detic.modeling.roi_heads.detic_roi_heads import DeticCascadeROIHeads
+from detic.modeling.roi_heads.zero_shot_classifier import ZeroShotClassifier
+from fvcore.common.param_scheduler import CosineParamScheduler
+import torch
 
 default_configs = get_config("new_baselines/mask_rcnn_R_50_FPN_100ep_LSJ.py")
 dataloader = default_configs["dataloader"]
@@ -153,4 +154,4 @@ optimizer = L(torch.optim.AdamW)(
 )
 
 train.checkpointer.period = 20000 // num_nodes
-train.output_dir = "./output/Lazy/{}".format(os.path.basename(__file__)[:-3])
+train.output_dir = f"./output/Lazy/{os.path.basename(__file__)[:-3]}"

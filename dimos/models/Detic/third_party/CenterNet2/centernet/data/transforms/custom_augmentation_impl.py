@@ -1,14 +1,13 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # Modified by Xingyi Zhou
 """
 Implement many useful :class:`Augmentation`.
 """
 
+from detectron2.data.transforms.augmentation import Augmentation
 import numpy as np
 from PIL import Image
 
-from detectron2.data.transforms.augmentation import Augmentation
 from .custom_transform import EfficientDetResizeCropTransform
 
 __all__ = [
@@ -22,7 +21,7 @@ class EfficientDetResizeCrop(Augmentation):
     If `max_size` is reached, then downscale so that the longer edge does not exceed max_size.
     """
 
-    def __init__(self, size, scale, interp=Image.BILINEAR):
+    def __init__(self, size: int, scale, interp=Image.BILINEAR) -> None:
         """
         Args:
         """

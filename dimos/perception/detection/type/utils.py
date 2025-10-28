@@ -50,7 +50,7 @@ def _hash_to_color(name: str) -> str:
 class TableStr:
     """Mixin class that provides table-based string representation for detection collections."""
 
-    def __str__(self):
+    def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
 
         # Create a table for detections

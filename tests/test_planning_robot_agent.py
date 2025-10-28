@@ -24,14 +24,11 @@ Environment Variables:
     USE_TERMINAL: Optional. If set to "true", use terminal interface instead of web.
 """
 
-import tests.test_header
 import os
 import sys
 
 # -----
-
 from textwrap import dedent
-import threading
 import time
 
 # Local application imports
@@ -40,8 +37,8 @@ from dimos.agents.planning_agent import PlanningAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import logger
-from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.threadpool import make_single_thread_scheduler
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def main():
@@ -110,7 +107,7 @@ def main():
         system_query = dedent(
             """
             You are a robot execution agent that can execute tasks on a virtual
-            robot. You are given a task to execute and a list of skills that 
+            robot. You are given a task to execute and a list of skills that
             you can use to execute the task. ONLY OUTPUT THE SKILLS TO EXECUTE,
             NOTHING ELSE.
             """

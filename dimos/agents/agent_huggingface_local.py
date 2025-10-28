@@ -17,24 +17,27 @@ from __future__ import annotations
 # Standard library imports
 import logging
 import os
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 # Third-party imports
 from dotenv import load_dotenv
 from reactivex import Observable, create
-from reactivex.scheduler import ThreadPoolScheduler
-from reactivex.subject import Subject
 import torch
 from transformers import AutoModelForCausalLM
 
 # Local imports
 from dimos.agents.agent import LLMAgent
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.memory.chroma_impl import LocalSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from reactivex.scheduler import ThreadPoolScheduler
+    from reactivex.subject import Subject
+
+    from dimos.agents.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents.tokenizer.base import AbstractTokenizer
 
 # Initialize environment variables
 load_dotenv()
@@ -52,19 +55,19 @@ class HuggingFaceLocalAgent(LLMAgent):
         model_name: str = "Qwen/Qwen2.5-3B",
         device: str = "auto",
         query: str = "How many r's are in the word 'strawberry'?",
-        input_query_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        system_query: Optional[str] = None,
-        max_output_tokens_per_request: int = None,
-        max_input_tokens_per_request: int = None,
-        prompt_builder: Optional[PromptBuilder] = None,
-        tokenizer: Optional[AbstractTokenizer] = None,
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        system_query: str | None = None,
+        max_output_tokens_per_request: int | None = None,
+        max_input_tokens_per_request: int | None = None,
+        prompt_builder: PromptBuilder | None = None,
+        tokenizer: AbstractTokenizer | None = None,
         image_detail: str = "low",
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-        process_all_inputs: Optional[bool] = None,
-    ):
+        pool_scheduler: ThreadPoolScheduler | None = None,
+        process_all_inputs: bool | None = None,
+    ) -> None:
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams
@@ -134,7 +137,7 @@ class HuggingFaceLocalAgent(LLMAgent):
 
         try:
             # Log the incoming messages
-            print(f"{_BLUE_PRINT_COLOR}Messages: {str(messages)}{_RESET_COLOR}")
+            print(f"{_BLUE_PRINT_COLOR}Messages: {messages!s}{_RESET_COLOR}")
 
             # Process with chat template
             try:
@@ -163,7 +166,9 @@ class HuggingFaceLocalAgent(LLMAgent):
                 print("Processing generated output...")
                 generated_ids = [
                     output_ids[len(input_ids) :]
-                    for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+                    for input_ids, output_ids in zip(
+                        model_inputs.input_ids, generated_ids, strict=False
+                    )
                 ]
 
                 # Convert tokens back to text

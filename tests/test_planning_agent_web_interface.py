@@ -23,15 +23,13 @@ Environment Variables:
     ROS_OUTPUT_DIR: Optional. Directory for ROS output files.
 """
 
-import tests.test_header
 import os
 import sys
 
 # -----
-
 from textwrap import dedent
-import threading
 import time
+
 import reactivex as rx
 import reactivex.operators as ops
 
@@ -41,10 +39,10 @@ from dimos.agents.planning_agent import PlanningAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import logger
+from dimos.utils.threadpool import make_single_thread_scheduler
 
 # from dimos.web.fastapi_server import FastAPIServer
 from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.utils.threadpool import make_single_thread_scheduler
 
 
 def main():

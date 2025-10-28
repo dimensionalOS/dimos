@@ -18,9 +18,9 @@ Test file for UnitreeSkillContainer with agents2 framework.
 Tests skill registration and basic functionality.
 """
 
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
@@ -96,7 +96,7 @@ def test_agent_with_skills():
         time.sleep(0.1)
 
 
-def test_skill_schemas():
+def test_skill_schemas() -> None:
     """Test that skill schemas are properly generated for LangChain."""
     print("\n=== Testing Skill Schemas ===")
 

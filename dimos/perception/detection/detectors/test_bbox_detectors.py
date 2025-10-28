@@ -29,7 +29,7 @@ def detections(detector, test_image):
     return detector.process_image(test_image)
 
 
-def test_detection_basic(detections):
+def test_detection_basic(detections) -> None:
     """Test that we can detect objects with all detectors."""
     assert len(detections.detections) > 0
 
@@ -42,7 +42,7 @@ def test_detection_basic(detections):
     assert detection.name is not None
 
 
-def test_detection_bbox_properties(detections):
+def test_detection_bbox_properties(detections) -> None:
     """Test Detection2D bbox properties work for all detectors."""
     detection = detections.detections[0]
 
@@ -66,7 +66,7 @@ def test_detection_bbox_properties(detections):
     assert height == y2 - y1
 
 
-def test_detection_cropped_image(detections, test_image):
+def test_detection_cropped_image(detections, test_image) -> None:
     """Test cropping image to detection bbox."""
     detection = detections.detections[0]
 
@@ -80,7 +80,7 @@ def test_detection_cropped_image(detections, test_image):
         assert cropped.shape[1] <= test_image.shape[1]
 
 
-def test_detection_annotations(detections):
+def test_detection_annotations(detections) -> None:
     """Test annotation generation for detections."""
     detection = detections.detections[0]
 
@@ -98,7 +98,7 @@ def test_detection_annotations(detections):
     assert annotations.points_length >= 1
 
 
-def test_detection_ros_conversion(detections):
+def test_detection_ros_conversion(detections) -> None:
     """Test conversion to ROS Detection2D message."""
     detection = detections.detections[0]
 
@@ -117,7 +117,7 @@ def test_detection_ros_conversion(detections):
     assert ros_det.results[0].hypothesis.class_id == detection.class_id
 
 
-def test_detection_is_valid(detections):
+def test_detection_is_valid(detections) -> None:
     """Test bbox validation."""
     detection = detections.detections[0]
 
@@ -125,14 +125,14 @@ def test_detection_is_valid(detections):
     assert detection.is_valid()
 
 
-def test_image_detections2d_structure(detections):
+def test_image_detections2d_structure(detections) -> None:
     """Test that process_image returns ImageDetections2D."""
     assert isinstance(detections, ImageDetections2D)
     assert len(detections.detections) > 0
     assert all(isinstance(d, Detection2D) for d in detections.detections)
 
 
-def test_multiple_detections(detections):
+def test_multiple_detections(detections) -> None:
     """Test that multiple objects can be detected."""
     print(f"\nDetected {len(detections.detections)} objects in test image")
 
@@ -146,7 +146,7 @@ def test_multiple_detections(detections):
         print(f"  Track ID: {detection.track_id}")
 
 
-def test_detection_string_representation(detections):
+def test_detection_string_representation(detections) -> None:
     """Test string representation of detections."""
     detection = detections.detections[0]
     str_repr = str(detection)

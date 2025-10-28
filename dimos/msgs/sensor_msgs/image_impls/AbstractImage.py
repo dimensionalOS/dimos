@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-import base64
-import os
 from abc import ABC, abstractmethod
+import base64
 from enum import Enum
+import os
 from typing import Any
 
 import cv2
@@ -148,28 +148,28 @@ class AbstractImage(ABC):
         ...
 
     @abstractmethod
-    def to_rgb(self) -> "AbstractImage":  # pragma: no cover - abstract
+    def to_rgb(self) -> AbstractImage:  # pragma: no cover - abstract
         ...
 
     @abstractmethod
-    def to_bgr(self) -> "AbstractImage":  # pragma: no cover - abstract
+    def to_bgr(self) -> AbstractImage:  # pragma: no cover - abstract
         ...
 
     @abstractmethod
-    def to_grayscale(self) -> "AbstractImage":  # pragma: no cover - abstract
+    def to_grayscale(self) -> AbstractImage:  # pragma: no cover - abstract
         ...
 
     @abstractmethod
     def resize(
         self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR
-    ) -> "AbstractImage":  # pragma: no cover - abstract
+    ) -> AbstractImage:  # pragma: no cover - abstract
         ...
 
     @abstractmethod
     def sharpness(self) -> float:  # pragma: no cover - abstract
         ...
 
-    def copy(self) -> "AbstractImage":
+    def copy(self) -> AbstractImage:
         return self.__class__(
             data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts
         )  # type: ignore

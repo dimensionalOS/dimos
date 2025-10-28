@@ -14,5 +14,4 @@
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 
-
 AGENT_SYSTEM_PROMPT_PATH = DIMOS_PROJECT_ROOT / "assets/agent/prompt_agents2.txt"

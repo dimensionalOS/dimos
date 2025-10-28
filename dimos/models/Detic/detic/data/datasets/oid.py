@@ -1,7 +1,8 @@
 # Part of the code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/data/datasets/oid.py
 # Copyright (c) Facebook, Inc. and its affiliates.
-from .register_oid import register_oid_instances
 import os
+
+from .register_oid import register_oid_instances
 
 categories = [
     {"id": 1, "name": "Infant bed", "freebase_id": "/m/061hd_"},
@@ -508,7 +509,7 @@ categories = [
 
 
 def _get_builtin_metadata(cats):
-    id_to_name = {x["id"]: x["name"] for x in cats}
+    {x["id"]: x["name"] for x in cats}
     thing_dataset_id_to_contiguous_id = {i + 1: i for i in range(len(cats))}
     thing_classes = [x["name"] for x in sorted(cats, key=lambda x: x["id"])]
     return {

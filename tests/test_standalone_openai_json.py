@@ -12,17 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import os
 
 # -----
-
 import dotenv
 
 dotenv.load_dotenv()
 
 import json
 from textwrap import dedent
+
 from openai import OpenAI
 from pydantic import BaseModel
 
