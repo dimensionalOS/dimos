@@ -53,7 +53,7 @@ class ImageAnalyzer:
         _, buffer = cv2.imencode(".jpg", image)
         return base64.b64encode(buffer).decode("utf-8")
 
-    def analyze_images(self, images, detail="auto", prompt_type="normal"):
+    def analyze_images(self, images, detail: str = "auto", prompt_type: str = "normal"):
         """
         Takes a list of cropped images and returns descriptions from OpenAI's Vision model.
 

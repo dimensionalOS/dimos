@@ -1,4 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from collections.abc import Sequence
+
 from detectron2.config import configurable
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads, _ScaleGradient
@@ -72,7 +74,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         return ret
 
     def _forward_box(
-        self, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)
+        self, features, proposals, targets=None, ann_type: str="box", classifier_info=(None, None, None)
     ):
         """
         Add mult proposal scores at testing
@@ -158,7 +160,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         features,
         proposals,
         targets=None,
-        ann_type="box",
+        ann_type: str="box",
         classifier_info=(None, None, None),
     ):
         """
@@ -224,7 +226,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         else:
             return {}
 
-    def _create_proposals_from_boxes(self, boxes, image_sizes, logits):
+    def _create_proposals_from_boxes(self, boxes, image_sizes: Sequence[int], logits):
         """
         Add objectness_logits
         """

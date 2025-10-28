@@ -124,7 +124,7 @@ class Vector3(LCMVector3):
         """Get the underlying numpy array."""
         return np.array([self.x, self.y, self.z], dtype=float)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         if idx == 0:
             return self.x
         elif idx == 1:

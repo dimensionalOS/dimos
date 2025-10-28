@@ -40,7 +40,7 @@ T = TypeVar("T")
 class ObservableMixin(Generic[T]):
     # subscribes and returns the first value it receives
     # might be nicer to write without rxpy but had this snippet ready
-    def get_next(self, timeout=10.0) -> T:
+    def get_next(self, timeout: float = 10.0) -> T:
         try:
             return (
                 self.observable()

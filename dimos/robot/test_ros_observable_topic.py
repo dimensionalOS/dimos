@@ -35,7 +35,7 @@ class MockROSNode:
         self.sub_id_cnt += 1
         return sub_id
 
-    def create_subscription(self, msg_type, topic_name, callback, qos):
+    def create_subscription(self, msg_type, topic_name: str, callback, qos):
         # Mock implementation of ROS subscription
 
         sub_id = self._get_sub_id()

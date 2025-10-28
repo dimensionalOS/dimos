@@ -28,11 +28,11 @@ PointCloudFilter = Callable[
 ]
 
 
-def height_filter(height=0.1) -> PointCloudFilter:
+def height_filter(height: float = 0.1) -> PointCloudFilter:
     return lambda det, pc, ci, tf: pc.filter_by_height(height)
 
 
-def statistical(nb_neighbors=40, std_ratio=0.5) -> PointCloudFilter:
+def statistical(nb_neighbors: int = 40, std_ratio: float = 0.5) -> PointCloudFilter:
     def filter_func(
         det: Detection2DBBox, pc: PointCloud2, ci: CameraInfo, tf: Transform
     ) -> PointCloud2 | None:

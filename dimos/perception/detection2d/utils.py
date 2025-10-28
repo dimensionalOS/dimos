@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
+
 import cv2
 import numpy as np
 
@@ -21,7 +23,7 @@ def filter_detections(
     track_ids,
     class_ids,
     confidences,
-    names,
+    names: Sequence[str],
     class_filter=None,
     name_filter=None,
     track_id_filter=None,
@@ -153,7 +155,9 @@ def extract_detection_results(result, class_filter=None, name_filter=None, track
     return bboxes, track_ids, class_ids, confidences, names
 
 
-def plot_results(image, bboxes, track_ids, class_ids, confidences, names, alpha=0.5):
+def plot_results(
+    image, bboxes, track_ids, class_ids, confidences, names: Sequence[str], alpha: float = 0.5
+):
     """
     Draw bounding boxes and labels on the image.
 
@@ -241,7 +245,7 @@ def calculate_depth_from_bbox(depth_map, bbox):
         return None
 
 
-def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
+def calculate_distance_angle_from_bbox(bbox, depth: int, camera_intrinsics):
     """
     Calculate distance and angle to object center based on bbox and depth.
 
@@ -276,7 +280,7 @@ def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
     return distance, angle
 
 
-def calculate_object_size_from_bbox(bbox, depth, camera_intrinsics):
+def calculate_object_size_from_bbox(bbox, depth: int, camera_intrinsics):
     """
     Estimate physical width and height of object in meters.
 

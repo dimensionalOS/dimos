@@ -85,7 +85,7 @@ def check_forward_equal_with_pytorch_float() -> None:
 
 
 def check_gradient_numerical(
-    channels=4, grad_value=True, grad_sampling_loc=True, grad_attn_weight=True
+    channels: int=4, grad_value: bool=True, grad_sampling_loc: bool=True, grad_attn_weight: bool=True
 ) -> None:
     value = torch.rand(N, S, M, channels).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()

@@ -14,7 +14,7 @@ import torch
 from .modeling.utils import reset_cls_test
 
 
-def get_clip_embeddings(vocabulary, prompt="a "):
+def get_clip_embeddings(vocabulary, prompt: str="a "):
     from detic.modeling.text.text_encoder import build_text_encoder
 
     text_encoder = build_text_encoder(pretrain=True)
@@ -40,7 +40,7 @@ BUILDIN_METADATA_PATH = {
 
 
 class VisualizationDemo:
-    def __init__(self, cfg, args, instance_mode=ColorMode.IMAGE, parallel=False) -> None:
+    def __init__(self, cfg, args, instance_mode=ColorMode.IMAGE, parallel: bool=False) -> None:
         """
         Args:
             cfg (CfgNode):

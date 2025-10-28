@@ -84,7 +84,7 @@ def test_retry_success_after_failures() -> None:
     attempts = []
 
     @retry(max_retries=3)
-    def flaky_function(fail_times=2) -> str:
+    def flaky_function(fail_times: int = 2) -> str:
         attempts.append(len(attempts))
         if len(attempts) <= fail_times:
             raise ValueError(f"Attempt {len(attempts)} failed")
@@ -211,7 +211,7 @@ def test_retry_with_methods() -> None:
             self.instance_value = 42
 
         @retry(max_retries=3)
-        def instance_method(self, fail_times=2) -> str:
+        def instance_method(self, fail_times: int = 2) -> str:
             """Test retry on instance method."""
             self.instance_attempts.append(len(self.instance_attempts))
             if len(self.instance_attempts) <= fail_times:
@@ -220,7 +220,7 @@ def test_retry_with_methods() -> None:
 
         @classmethod
         @retry(max_retries=2)
-        def class_method(cls, attempts_list, fail_times=1) -> str:
+        def class_method(cls, attempts_list, fail_times: int = 1) -> str:
             """Test retry on class method."""
             attempts_list.append(len(attempts_list))
             if len(attempts_list) <= fail_times:
@@ -229,7 +229,7 @@ def test_retry_with_methods() -> None:
 
         @staticmethod
         @retry(max_retries=2)
-        def static_method(attempts_list, fail_times=1) -> str:
+        def static_method(attempts_list, fail_times: int = 1) -> str:
             """Test retry on static method."""
             attempts_list.append(len(attempts_list))
             if len(attempts_list) <= fail_times:

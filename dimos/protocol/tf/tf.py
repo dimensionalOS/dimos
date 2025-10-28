@@ -290,7 +290,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
         if self.config.autostart:
             self.start()
 
-    def start(self, sub=True) -> None:
+    def start(self, sub: bool = True) -> None:
         self.pubsub.start()
         if sub:
             topic = getattr(self.config, "topic", None)

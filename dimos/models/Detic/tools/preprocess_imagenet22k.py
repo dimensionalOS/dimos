@@ -16,7 +16,7 @@ from detic.data.tar_dataset import _TarDataset
 
 
 class _RawTarDataset:
-    def __init__(self, filename, indexname, preload=False) -> None:
+    def __init__(self, filename, indexname: str, preload: bool=False) -> None:
         self.filename = filename
         self.names = []
         self.offsets = []
@@ -43,7 +43,7 @@ class _RawTarDataset:
     def __len__(self) -> int:
         return len(self.names)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         if self.data is None:
             self.data = np.memmap(self.filename, mode="r", dtype="uint8")
         ofs = self.offsets[idx] * 512

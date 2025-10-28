@@ -48,16 +48,16 @@ class CTransformersTokenizerAdapter:
     def __init__(self, model) -> None:
         self.model = model
 
-    def encode(self, text, **kwargs):
+    def encode(self, text: str, **kwargs):
         return self.model.tokenize(text)
 
     def decode(self, token_ids, **kwargs):
         return self.model.detokenize(token_ids)
 
-    def token_count(self, text):
+    def token_count(self, text: str):
         return len(self.tokenize_text(text)) if text else 0
 
-    def tokenize_text(self, text):
+    def tokenize_text(self, text: str):
         return self.model.tokenize(text)
 
     def detokenize_text(self, tokenized_text):
@@ -66,7 +66,9 @@ class CTransformersTokenizerAdapter:
         except Exception as e:
             raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
-    def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=True):
+    def apply_chat_template(
+        self, conversation, tokenize: bool = False, add_generation_prompt: bool = True
+    ):
         prompt = ""
         for message in conversation:
             role = message["role"]

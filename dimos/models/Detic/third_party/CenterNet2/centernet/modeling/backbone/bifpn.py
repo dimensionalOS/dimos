@@ -14,7 +14,7 @@ from torch import nn
 from .dlafpn import dla34
 
 
-def get_fpn_config(base_reduction=8):
+def get_fpn_config(base_reduction: int=8):
     """BiFPN config with sum."""
     p = {
         "nodes": [
@@ -72,12 +72,12 @@ class ConvBnAct2d(nn.Module):
         self,
         in_channels,
         out_channels,
-        kernel_size,
-        stride=1,
-        dilation=1,
-        padding="",
-        bias=False,
-        norm="",
+        kernel_size: int,
+        stride: int=1,
+        dilation: int=1,
+        padding: str="",
+        bias: bool=False,
+        norm: str="",
         act_layer=Swish,
     ) -> None:
         super().__init__()
@@ -110,15 +110,15 @@ class SeparableConv2d(nn.Module):
         self,
         in_channels,
         out_channels,
-        kernel_size=3,
-        stride=1,
-        dilation=1,
-        padding="",
-        bias=False,
-        channel_multiplier=1.0,
-        pw_kernel_size=1,
+        kernel_size: int=3,
+        stride: int=1,
+        dilation: int=1,
+        padding: str="",
+        bias: bool=False,
+        channel_multiplier: float=1.0,
+        pw_kernel_size: int=1,
         act_layer=Swish,
-        norm="",
+        norm: str="",
     ) -> None:
         super().__init__()
 
@@ -166,13 +166,13 @@ class ResampleFeatureMap(nn.Sequential):
         self,
         in_channels,
         out_channels,
-        reduction_ratio=1.0,
-        pad_type="",
-        pooling_type="max",
-        norm="",
-        apply_bn=False,
-        conv_after_downsample=False,
-        redundant_bias=False,
+        reduction_ratio: float=1.0,
+        pad_type: str="",
+        pooling_type: str="max",
+        norm: str="",
+        apply_bn: bool=False,
+        conv_after_downsample: bool=False,
+        redundant_bias: bool=False,
     ) -> None:
         super().__init__()
         pooling_type = pooling_type or "max"
@@ -222,13 +222,13 @@ class FpnCombine(nn.Module):
         fpn_channels,
         inputs_offsets,
         target_reduction,
-        pad_type="",
-        pooling_type="max",
-        norm="",
-        apply_bn_for_resampling=False,
-        conv_after_downsample=False,
-        redundant_bias=False,
-        weight_method="attn",
+        pad_type: str="",
+        pooling_type: str="max",
+        norm: str="",
+        apply_bn_for_resampling: bool=False,
+        conv_after_downsample: bool=False,
+        redundant_bias: bool=False,
+        weight_method: str="attn",
     ) -> None:
         super().__init__()
         self.inputs_offsets = inputs_offsets
@@ -295,16 +295,16 @@ class BiFpnLayer(nn.Module):
         feature_info,
         fpn_config,
         fpn_channels,
-        num_levels=5,
-        pad_type="",
-        pooling_type="max",
-        norm="",
+        num_levels: int=5,
+        pad_type: str="",
+        pooling_type: str="max",
+        norm: str="",
         act_layer=Swish,
-        apply_bn_for_resampling=False,
-        conv_after_downsample=True,
-        conv_bn_relu_pattern=False,
-        separable_conv=True,
-        redundant_bias=False,
+        apply_bn_for_resampling: bool=False,
+        conv_after_downsample: bool=True,
+        conv_bn_relu_pattern: bool=False,
+        separable_conv: bool=True,
+        redundant_bias: bool=False,
     ) -> None:
         super().__init__()
         self.fpn_config = fpn_config
@@ -375,10 +375,10 @@ class BiFPN(Backbone):
         bottom_up,
         in_features,
         out_channels,
-        norm="",
-        num_levels=5,
-        num_bifpn=4,
-        separable_conv=False,
+        norm: str="",
+        num_levels: int=5,
+        num_bifpn: int=4,
+        separable_conv: bool=False,
     ) -> None:
         super().__init__()
         assert isinstance(bottom_up, Backbone)

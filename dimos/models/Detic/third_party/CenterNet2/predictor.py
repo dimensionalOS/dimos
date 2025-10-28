@@ -13,7 +13,7 @@ import torch
 
 
 class VisualizationDemo:
-    def __init__(self, cfg, instance_mode=ColorMode.IMAGE, parallel=False) -> None:
+    def __init__(self, cfg, instance_mode=ColorMode.IMAGE, parallel: bool=False) -> None:
         """
         Args:
             cfg (CfgNode):

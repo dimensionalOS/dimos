@@ -21,7 +21,7 @@ class EfficientDetResizeCrop(Augmentation):
     If `max_size` is reached, then downscale so that the longer edge does not exceed max_size.
     """
 
-    def __init__(self, size, scale, interp=Image.BILINEAR) -> None:
+    def __init__(self, size: int, scale, interp=Image.BILINEAR) -> None:
         """
         Args:
         """

@@ -19,7 +19,7 @@ except ImportError:
 
 
 class PanopticEvaluator:
-    def __init__(self, ann_file, ann_folder, output_dir="panoptic_eval") -> None:
+    def __init__(self, ann_file, ann_folder, output_dir: str="panoptic_eval") -> None:
         self.gt_json = ann_file
         self.gt_folder = ann_folder
         if utils.is_main_process():

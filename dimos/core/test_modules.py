@@ -309,7 +309,7 @@ def get_all_module_subclasses():
     ids=lambda val: val[0] if isinstance(val, str) else str(val),
 )
 def test_module_has_start_and_stop(
-    class_name, filepath, has_start, has_stop, forbidden_methods
+    class_name: str, filepath, has_start, has_stop, forbidden_methods
 ) -> None:
     """Test that Module subclasses implement start and stop methods and don't use forbidden methods."""
     # Get relative path for better error messages

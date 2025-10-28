@@ -88,7 +88,7 @@ def do_test(cfg, model):
     return results
 
 
-def do_train(cfg, model, resume=False) -> None:
+def do_train(cfg, model, resume: bool=False) -> None:
     model.train()
     if cfg.SOLVER.USE_CUSTOM_SOLVER:
         optimizer = build_custom_optimizer(cfg, model)

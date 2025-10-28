@@ -40,8 +40,8 @@ class PersonTrackingStream(Module):
     def __init__(
         self,
         camera_intrinsics=None,
-        camera_pitch=0.0,
-        camera_height=1.0,
+        camera_pitch: float = 0.0,
+        camera_height: float = 1.0,
     ) -> None:
         """
         Initialize a person tracking stream using Yolo2DDetector and PersonDistanceEstimator.

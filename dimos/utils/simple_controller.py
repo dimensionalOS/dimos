@@ -15,7 +15,7 @@
 import math
 
 
-def normalize_angle(angle):
+def normalize_angle(angle: float):
     """Normalize angle to the range [-pi, pi]."""
     return math.atan2(math.sin(angle), math.cos(angle))
 
@@ -27,13 +27,13 @@ class PIDController:
     def __init__(
         self,
         kp,
-        ki=0.0,
-        kd=0.0,
+        ki: float = 0.0,
+        kd: float = 0.0,
         output_limits=(None, None),
         integral_limit=None,
-        deadband=0.0,
-        output_deadband=0.0,
-        inverse_output=False,
+        deadband: float = 0.0,
+        output_deadband: float = 0.0,
+        inverse_output: bool = False,
     ) -> None:
         """
         Initialize the PID controller.

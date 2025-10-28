@@ -31,7 +31,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
     produce nans.
     """
 
-    def __init__(self, n, eps=1e-5) -> None:
+    def __init__(self, n, eps: float=1e-5) -> None:
         super().__init__()
         self.register_buffer("weight", torch.ones(n))
         self.register_buffer("bias", torch.zeros(n))
@@ -40,7 +40,7 @@ class FrozenBatchNorm2d(torch.nn.Module):
         self.eps = eps
 
     def _load_from_state_dict(
-        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+        self, state_dict, prefix: str, local_metadata, strict: bool, missing_keys, unexpected_keys, error_msgs
     ) -> None:
         num_batches_tracked_key = prefix + "num_batches_tracked"
         if num_batches_tracked_key in state_dict:

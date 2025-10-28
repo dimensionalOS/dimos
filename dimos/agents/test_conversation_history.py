@@ -281,7 +281,7 @@ def test_conversation_thread_safety() -> None:
 
     try:
 
-        async def query_async(text):
+        async def query_async(text: str):
             """Async wrapper for query."""
             return await agent.aquery(text)
 

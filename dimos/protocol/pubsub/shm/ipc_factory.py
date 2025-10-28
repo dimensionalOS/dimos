@@ -100,7 +100,7 @@ import os
 import weakref
 
 
-def _safe_unlink(name) -> None:
+def _safe_unlink(name: str) -> None:
     try:
         shm = SharedMemory(name=name)
         shm.unlink()
@@ -116,12 +116,14 @@ def _safe_unlink(name) -> None:
 
 
 class CpuShmChannel(FrameChannel):
-    def __init__(self, shape, dtype=np.uint8, *, data_name=None, ctrl_name=None) -> None:
+    def __init__(
+        self, shape, dtype=np.uint8, *, data_name: str | None = None, ctrl_name: str | None = None
+    ) -> None:
         self._shape = tuple(shape)
         self._dtype = np.dtype(dtype)
         self._nbytes = int(self._dtype.itemsize * np.prod(self._shape))
 
-        def _create_or_open(name, size):
+        def _create_or_open(name: str, size: int):
             try:
                 shm = SharedMemory(create=True, size=size, name=name)
                 owner = True
@@ -196,7 +198,7 @@ class CpuShmChannel(FrameChannel):
         self._ctrl[2] = inactive
         self._ctrl[0] += 1
 
-    def read(self, last_seq: int = -1, require_new=True):
+    def read(self, last_seq: int = -1, require_new: bool = True):
         for _ in range(3):
             seq1 = int(self._ctrl[0])
             idx = int(self._ctrl[2])
@@ -221,7 +223,7 @@ class CpuShmChannel(FrameChannel):
         }
 
     @classmethod
-    def attach(cls, desc):
+    def attach(cls, desc: str):
         obj = object.__new__(cls)
         obj._shape = tuple(desc["shape"])
         obj._dtype = np.dtype(desc["dtype"])

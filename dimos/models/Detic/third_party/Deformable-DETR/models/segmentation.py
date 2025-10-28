@@ -12,6 +12,7 @@ This file provides the definition of the convolutional heads used to predict mas
 """
 
 from collections import defaultdict
+from collections.abc import Sequence
 import io
 
 from PIL import Image
@@ -28,7 +29,7 @@ except ImportError:
 
 
 class DETRsegm(nn.Module):
-    def __init__(self, detr, freeze_detr=False) -> None:
+    def __init__(self, detr, freeze_detr: bool=False) -> None:
         super().__init__()
         self.detr = detr
 
@@ -80,7 +81,7 @@ class MaskHeadSmallConv(nn.Module):
     Upsampling is done using a FPN approach
     """
 
-    def __init__(self, dim, fpn_dims, context_dim) -> None:
+    def __init__(self, dim: int, fpn_dims, context_dim) -> None:
         super().__init__()
 
         inter_dims = [
@@ -115,7 +116,7 @@ class MaskHeadSmallConv(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, bbox_mask, fpns):
-        def expand(tensor, length):
+        def expand(tensor, length: int):
             return tensor.unsqueeze(1).repeat(1, int(length), 1, 1, 1).flatten(0, 1)
 
         x = torch.cat([expand(x, bbox_mask.shape[1]), bbox_mask.flatten(0, 1)], 1)
@@ -158,7 +159,7 @@ class MaskHeadSmallConv(nn.Module):
 class MHAttentionMap(nn.Module):
     """This is a 2D attention module, which only returns the attention softmax (no multiplication by value)"""
 
-    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0, bias=True) -> None:
+    def __init__(self, query_dim, hidden_dim, num_heads: int, dropout: int=0, bias: bool=True) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
@@ -189,7 +190,7 @@ class MHAttentionMap(nn.Module):
         return weights
 
 
-def dice_loss(inputs, targets, num_boxes):
+def dice_loss(inputs, targets, num_boxes: int):
     """
     Compute the DICE loss, similar to generalized IOU for masks
     Args:
@@ -207,7 +208,7 @@ def dice_loss(inputs, targets, num_boxes):
     return loss.sum() / num_boxes
 
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(inputs, targets, num_boxes: int, alpha: float = 0.25, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -236,12 +237,12 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
 
 
 class PostProcessSegm(nn.Module):
-    def __init__(self, threshold=0.5) -> None:
+    def __init__(self, threshold: float=0.5) -> None:
         super().__init__()
         self.threshold = threshold
 
     @torch.no_grad()
-    def forward(self, results, outputs, orig_target_sizes, max_target_sizes):
+    def forward(self, results, outputs, orig_target_sizes: Sequence[int], max_target_sizes: Sequence[int]):
         assert len(orig_target_sizes) == len(max_target_sizes)
         max_h, max_w = max_target_sizes.max(0)[0].tolist()
         outputs_masks = outputs["pred_masks"].squeeze(2)
@@ -266,7 +267,7 @@ class PostProcessPanoptic(nn.Module):
     """This class converts the output of the model to the final panoptic result, in the format expected by the
     coco panoptic API"""
 
-    def __init__(self, is_thing_map, threshold=0.85) -> None:
+    def __init__(self, is_thing_map: bool, threshold: float=0.85) -> None:
         """
         Parameters:
            is_thing_map: This is a whose keys are the class ids, and the values a boolean indicating whether
@@ -277,7 +278,7 @@ class PostProcessPanoptic(nn.Module):
         self.threshold = threshold
         self.is_thing_map = is_thing_map
 
-    def forward(self, outputs, processed_sizes, target_sizes=None):
+    def forward(self, outputs, processed_sizes: Sequence[int], target_sizes: Sequence[int] | None=None):
         """This function computes the panoptic prediction from the model's predictions.
         Parameters:
             outputs: This is a dict coming directly from the model. See the model doc for the content.
@@ -326,7 +327,7 @@ class PostProcessPanoptic(nn.Module):
                 if not self.is_thing_map[label.item()]:
                     stuff_equiv_classes[label.item()].append(k)
 
-            def get_ids_area(masks, scores, dedup=False):
+            def get_ids_area(masks, scores, dedup: bool=False):
                 # This helper function creates the final panoptic segmentation image
                 # It also returns the area of the masks that appears on the image
 

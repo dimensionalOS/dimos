@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from typing import Generic, TypeVar, Union
 
@@ -210,7 +210,7 @@ class TimestampedCollection(Generic[T]):
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self._items)
 
     def __getitem__(self, idx: int) -> T:

@@ -25,7 +25,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
 
 
 class Mock:
-    def __init__(self, root="office", autocast: bool = True) -> None:
+    def __init__(self, root: str = "office", autocast: bool = True) -> None:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.root = os.path.join(current_dir, f"mockdata/{root}")
         self.autocast = autocast
@@ -59,7 +59,7 @@ class Mock:
             filename = os.path.splitext(basename)[0]
             yield self.load_one(filename)
 
-    def stream(self, rate_hz=10.0):
+    def stream(self, rate_hz: float = 10.0):
         sleep_time = 1.0 / rate_hz
 
         return from_iterable(self.iterate()).pipe(

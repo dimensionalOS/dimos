@@ -425,7 +425,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         return self.video_provider.get_stream(fps=fps)
 
     def _send_action_client_goal(
-        self, client, goal_msg, description=None, time_allowance=20.0
+        self, client, goal_msg, description: str | None = None, time_allowance: float = 20.0
     ) -> bool:
         """
         Generic function to send any action client goal and wait for completion.

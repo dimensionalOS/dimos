@@ -113,7 +113,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
             self.twist = Twist(twist[0], twist[1])
         self.covariance = np.array(twist_tuple[1], dtype=float).reshape(36)
 
-    def __getattribute__(self, name):
+    def __getattribute__(self, name: str):
         """Override to ensure covariance is always returned as numpy array."""
         if name == "covariance":
             cov = object.__getattribute__(self, "covariance")
@@ -122,7 +122,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
             return cov
         return super().__getattribute__(name)
 
-    def __setattr__(self, name, value) -> None:
+    def __setattr__(self, name: str, value) -> None:
         """Override to ensure covariance is stored as numpy array."""
         if name == "covariance":
             if not isinstance(value, np.ndarray):

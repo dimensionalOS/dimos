@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import os
 import sys
 
@@ -43,7 +44,7 @@ from detectron2.data import MetadataCatalog
 class SimpleTracker:
     """Simple IOU-based tracker implementation without external dependencies"""
 
-    def __init__(self, iou_threshold=0.3, max_age=5) -> None:
+    def __init__(self, iou_threshold: float = 0.3, max_age: int = 5) -> None:
         self.iou_threshold = iou_threshold
         self.max_age = max_age
         self.next_id = 1
@@ -160,7 +161,9 @@ class SimpleTracker:
 
 
 class Detic2DDetector(Detector):
-    def __init__(self, model_path=None, device="cuda", vocabulary=None, threshold=0.5) -> None:
+    def __init__(
+        self, model_path=None, device: str = "cuda", vocabulary=None, threshold: float = 0.5
+    ) -> None:
         """
         Initialize the Detic detector with open vocabulary support.
 
@@ -300,7 +303,7 @@ class Detic2DDetector(Detector):
         self.reset_cls_test(self.predictor.model, classifier, num_classes)
         return self.class_names
 
-    def _get_clip_embeddings(self, vocabulary, prompt="a "):
+    def _get_clip_embeddings(self, vocabulary, prompt: str = "a "):
         """
         Generate CLIP embeddings for a vocabulary list.
 
@@ -395,7 +398,9 @@ class Detic2DDetector(Detector):
             # tracked_masks,
         )
 
-    def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):
+    def visualize_results(
+        self, image, bboxes, track_ids, class_ids, confidences, names: Sequence[str]
+    ):
         """
         Generate visualization of detection results.
 

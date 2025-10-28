@@ -24,7 +24,7 @@ __all__ = [
 class EfficientDetResizeCropTransform(Transform):
     """ """
 
-    def __init__(self, scaled_h, scaled_w, offset_y, offset_x, img_scale, target_size, interp=None) -> None:
+    def __init__(self, scaled_h, scaled_w, offset_y, offset_x, img_scale, target_size: int, interp=None) -> None:
         """
         Args:
             h, w (int): original image size

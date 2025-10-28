@@ -53,7 +53,7 @@ from torch.nn.parallel import DistributedDataParallel
 logger = logging.getLogger("detectron2")
 
 
-def get_evaluator(cfg, dataset_name, output_folder=None):
+def get_evaluator(cfg, dataset_name: str, output_folder=None):
     """
     Create evaluator(s) for a given dataset.
     This uses the special metadata "evaluator_type" associated with each builtin dataset.
@@ -116,7 +116,7 @@ def do_test(cfg, model):
     return results
 
 
-def do_train(cfg, model, resume=False) -> None:
+def do_train(cfg, model, resume: bool=False) -> None:
     model.train()
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)

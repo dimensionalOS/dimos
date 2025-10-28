@@ -47,13 +47,15 @@ def assert_time(
     return result
 
 
-def min_time(func: Callable[[], Any], min_t: int, assert_fail_msg="Function returned too fast"):
+def min_time(
+    func: Callable[[], Any], min_t: int, assert_fail_msg: str = "Function returned too fast"
+):
     return assert_time(
         func, (lambda t: t >= min_t * 0.98), assert_fail_msg + f", min: {min_t} seconds"
     )
 
 
-def max_time(func: Callable[[], Any], max_t: int, assert_fail_msg="Function took too long"):
+def max_time(func: Callable[[], Any], max_t: int, assert_fail_msg: str = "Function took too long"):
     return assert_time(func, (lambda t: t < max_t), assert_fail_msg + f", max: {max_t} seconds")
 
 

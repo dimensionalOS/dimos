@@ -1,5 +1,7 @@
 # This file is modified from https://github.com/aim-uofa/AdelaiDet/blob/master/adet/modeling/backbone/bifpn.py
 # The original file is under 2-clause BSD License for academic use, and *non-commercial use*.
+from collections.abc import Sequence
+
 from detectron2.layers import Conv2d, ShapeSpec, get_norm
 from detectron2.modeling import BACKBONE_REGISTRY
 from detectron2.modeling.backbone import Backbone, build_resnet_backbone
@@ -16,7 +18,7 @@ def swish(x):
     return x * x.sigmoid()
 
 
-def split_name(name):
+def split_name(name: str):
     for i, c in enumerate(name):
         if not c.isalpha():
             return name[:i], int(name[i:])
@@ -24,7 +26,7 @@ def split_name(name):
 
 
 class FeatureMapResampler(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, norm="") -> None:
+    def __init__(self, in_channels, out_channels, stride: int, norm: str="") -> None:
         super().__init__()
         if in_channels != out_channels:
             self.reduction = Conv2d(
@@ -55,7 +57,7 @@ class FeatureMapResampler(nn.Module):
 
 
 class BackboneWithTopLevels(Backbone):
-    def __init__(self, backbone, out_channels, num_top_levels, norm="") -> None:
+    def __init__(self, backbone, out_channels, num_top_levels: int, norm: str="") -> None:
         super().__init__()
         self.backbone = backbone
         backbone_output_shape = backbone.output_shape()
@@ -106,7 +108,7 @@ class SingleBiFPN(Backbone):
     It creates pyramid features built on top of some input feature maps.
     """
 
-    def __init__(self, in_channels_list, out_channels, norm="") -> None:
+    def __init__(self, in_channels_list, out_channels, norm: str="") -> None:
         """
         Args:
             bottom_up (Backbone): module representing the bottom up subnetwork.
@@ -269,7 +271,7 @@ class BiFPN(Backbone):
     It creates pyramid features built on top of some input feature maps.
     """
 
-    def __init__(self, bottom_up, in_features, out_channels, num_top_levels, num_repeats, norm="") -> None:
+    def __init__(self, bottom_up, in_features, out_channels, num_top_levels: int, num_repeats: int, norm: str="") -> None:
         """
         Args:
             bottom_up (Backbone): module representing the bottom up subnetwork.
@@ -345,7 +347,7 @@ class BiFPN(Backbone):
         return dict(zip(self._out_features, feats, strict=False))
 
 
-def _assert_strides_are_log2_contiguous(strides) -> None:
+def _assert_strides_are_log2_contiguous(strides: Sequence[int]) -> None:
     """
     Assert that each stride is 2x times its preceding stride, i.e. "contiguous in log2".
     """

@@ -22,13 +22,13 @@ class DFConv2d(nn.Module):
         self,
         in_channels,
         out_channels,
-        with_modulated_dcn=True,
-        kernel_size=3,
-        stride=1,
-        groups=1,
-        dilation=1,
-        deformable_groups=1,
-        bias=False,
+        with_modulated_dcn: bool=True,
+        kernel_size: int=3,
+        stride: int=1,
+        groups: int=1,
+        dilation: int=1,
+        deformable_groups: int=1,
+        bias: bool=False,
         padding=None,
     ) -> None:
         super().__init__()
@@ -90,7 +90,7 @@ class DFConv2d(nn.Module):
         self.dilation = dilation
         self.offset_split = offset_base_channels * deformable_groups * 2
 
-    def forward(self, x, return_offset=False):
+    def forward(self, x, return_offset: bool=False):
         if x.numel() > 0:
             if not self.with_modulated_dcn:
                 offset_mask = self.offset(x)

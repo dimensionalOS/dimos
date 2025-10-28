@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.geometry_msgs import (
     Point as LCMPoint,
@@ -33,6 +33,9 @@ except ImportError:
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def sec_nsec(ts):
@@ -164,7 +167,7 @@ class Path(Timestamped):
         """Allow indexing and slicing of poses."""
         return self.poses[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         """Allow iteration over poses."""
         return iter(self.poses)
 

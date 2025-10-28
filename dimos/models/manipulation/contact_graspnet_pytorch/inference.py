@@ -14,11 +14,11 @@ from dimos.utils.data import get_data
 def inference(global_config,
               ckpt_dir,
               input_paths,
-              local_regions=True,
-              filter_grasps=True,
-              skip_border_objects=False,
+              local_regions: bool=True,
+              filter_grasps: bool=True,
+              skip_border_objects: bool=False,
               z_range = None,
-              forward_passes=1,
+              forward_passes: int=1,
               K=None,):
     """
     Predict 6-DoF grasp distribution for given model and input data

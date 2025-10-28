@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+
 import cv2
 
 
 class VideoStream:
-    def __init__(self, source=0) -> None:
+    def __init__(self, source: int = 0) -> None:
         """
         Initialize the video stream from a camera source.
 
@@ -27,7 +29,7 @@ class VideoStream:
         if not self.capture.isOpened():
             raise ValueError(f"Unable to open video source {source}")
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return self
 
     def __next__(self):

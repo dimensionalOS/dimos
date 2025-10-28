@@ -39,9 +39,9 @@ class CocoDetection(VisionDataset):
         transform=None,
         target_transform=None,
         transforms=None,
-        cache_mode=False,
-        local_rank=0,
-        local_size=1,
+        cache_mode: bool=False,
+        local_rank: int=0,
+        local_size: int=1,
     ) -> None:
         super().__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO

@@ -77,7 +77,7 @@ def quick_costmap():
     return occupancy_grid, MockLidar()
 
 
-def create_test_costmap(width=40, height=40, resolution=0.1):
+def create_test_costmap(width: int = 40, height: int = 40, resolution: float = 0.1):
     """Create a simple test costmap with free, occupied, and unknown regions.
 
     Default size reduced from 100x100 to 40x40 for faster tests.

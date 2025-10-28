@@ -22,14 +22,14 @@ class CustomRCNN(GeneralizedRCNN):
     @configurable
     def __init__(
         self,
-        with_image_labels=False,
+        with_image_labels: bool=False,
         dataset_loss_weight=None,
-        fp16=False,
-        sync_caption_batch=False,
-        roi_head_name="",
-        cap_batch_ratio=4,
-        with_caption=False,
-        dynamic_classifier=False,
+        fp16: bool=False,
+        sync_caption_batch: bool=False,
+        roi_head_name: str="",
+        cap_batch_ratio: int=4,
+        with_caption: bool=False,
+        dynamic_classifier: bool=False,
         **kwargs,
     ) -> None:
         """ """
@@ -205,7 +205,7 @@ class CustomRCNN(GeneralizedRCNN):
         )  # (NB) x (D + 1)
         return caption_features
 
-    def _sample_cls_inds(self, gt_instances, ann_type="box"):
+    def _sample_cls_inds(self, gt_instances, ann_type: str="box"):
         if ann_type == "box":
             gt_classes = torch.cat([x.gt_classes for x in gt_instances])
             C = len(self.freq_weight)

@@ -23,7 +23,7 @@ except Exception as e:
 
 
 class S3Utils:
-    def __init__(self, bucket_name) -> None:
+    def __init__(self, bucket_name: str) -> None:
         self.s3 = boto3.client("s3")
         self.bucket_name = bucket_name
 
@@ -75,7 +75,7 @@ class S3Utils:
         return restored_pointclouds
 
     @staticmethod
-    def upload_text_file(bucket_name, local_path, s3_key) -> None:
+    def upload_text_file(bucket_name: str, local_path, s3_key) -> None:
         s3 = boto3.client("s3")
         try:
             with open(local_path) as file:

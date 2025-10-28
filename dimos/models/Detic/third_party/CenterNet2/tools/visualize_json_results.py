@@ -16,7 +16,7 @@ import numpy as np
 import tqdm
 
 
-def create_instances(predictions, image_size):
+def create_instances(predictions, image_size: int):
     ret = Instances(image_size)
 
     score = np.asarray([x["score"] for x in predictions])

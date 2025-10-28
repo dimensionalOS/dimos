@@ -11,6 +11,7 @@
 Deformable DETR model and criterion classes.
 """
 
+from collections.abc import Sequence
 import copy
 import math
 
@@ -51,12 +52,12 @@ class DeformableDETR(nn.Module):
         self,
         backbone,
         transformer,
-        num_classes,
-        num_queries,
-        num_feature_levels,
-        aux_loss=True,
-        with_box_refine=False,
-        two_stage=False,
+        num_classes: int,
+        num_queries: int,
+        num_feature_levels: int,
+        aux_loss: bool=True,
+        with_box_refine: bool=False,
+        two_stage: bool=False,
     ) -> None:
         """Initializes the model.
         Parameters:
@@ -237,7 +238,7 @@ class SetCriterion(nn.Module):
         2) we supervise each pair of matched ground-truth / prediction (supervise class and box)
     """
 
-    def __init__(self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25) -> None:
+    def __init__(self, num_classes: int, matcher, weight_dict, losses, focal_alpha: float=0.25) -> None:
         """Create the criterion.
         Parameters:
             num_classes: number of object categories, omitting the special no-object category
@@ -253,7 +254,7 @@ class SetCriterion(nn.Module):
         self.losses = losses
         self.focal_alpha = focal_alpha
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_labels(self, outputs, targets, indices, num_boxes: int, log: bool=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -290,7 +291,7 @@ class SetCriterion(nn.Module):
         return losses
 
     @torch.no_grad()
-    def loss_cardinality(self, outputs, targets, indices, num_boxes):
+    def loss_cardinality(self, outputs, targets, indices, num_boxes: int):
         """Compute the cardinality error, ie the absolute error in the number of predicted non-empty boxes
         This is not really a loss, it is intended for logging purposes only. It doesn't propagate gradients
         """
@@ -303,7 +304,7 @@ class SetCriterion(nn.Module):
         losses = {"cardinality_error": card_err}
         return losses
 
-    def loss_boxes(self, outputs, targets, indices, num_boxes):
+    def loss_boxes(self, outputs, targets, indices, num_boxes: int):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
         targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
         The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
@@ -326,7 +327,7 @@ class SetCriterion(nn.Module):
         losses["loss_giou"] = loss_giou.sum() / num_boxes
         return losses
 
-    def loss_masks(self, outputs, targets, indices, num_boxes):
+    def loss_masks(self, outputs, targets, indices, num_boxes: int):
         """Compute the losses related to the masks: the focal loss and the dice loss.
         targets dicts must contain the key "masks" containing a tensor of dim [nb_target_boxes, h, w]
         """
@@ -370,7 +371,7 @@ class SetCriterion(nn.Module):
         tgt_idx = torch.cat([tgt for (_, tgt) in indices])
         return batch_idx, tgt_idx
 
-    def get_loss(self, loss, outputs, targets, indices, num_boxes, **kwargs):
+    def get_loss(self, loss, outputs, targets, indices, num_boxes: int, **kwargs):
         loss_map = {
             "labels": self.loss_labels,
             "cardinality": self.loss_cardinality,
@@ -450,7 +451,7 @@ class PostProcess(nn.Module):
     """This module converts the model's output into the format expected by the coco api"""
 
     @torch.no_grad()
-    def forward(self, outputs, target_sizes):
+    def forward(self, outputs, target_sizes: Sequence[int]):
         """Perform the computation
         Parameters:
             outputs: raw outputs of the model
@@ -484,7 +485,7 @@ class PostProcess(nn.Module):
 class MLP(nn.Module):
     """Very simple multi-layer perceptron (also called FFN)"""
 
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers) -> None:
+    def __init__(self, input_dim, hidden_dim, output_dim, num_layers: int) -> None:
         super().__init__()
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)

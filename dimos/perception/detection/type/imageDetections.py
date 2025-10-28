@@ -23,6 +23,8 @@ from dimos.msgs.std_msgs import Header
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from dimos.msgs.sensor_msgs import Image
     from dimos.perception.detection.type.detection2d.base import Detection2D
 
@@ -51,7 +53,7 @@ class ImageDetections(Generic[T], TableStr):
     def __len__(self) -> int:
         return len(self.detections)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self.detections)
 
     def __getitem__(self, index):

@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
+
 import cv2
 import numpy as np
 import torch
 
 
 class SimpleTracker:
-    def __init__(self, history_size=100, min_count=10, count_window=20) -> None:
+    def __init__(
+        self, history_size: int = 100, min_count: int = 10, count_window: int = 20
+    ) -> None:
         """
         Simple temporal tracker that counts appearances in a fixed window.
         :param history_size: Number of past frames to remember
@@ -58,7 +62,7 @@ class SimpleTracker:
         return self.total_counts
 
 
-def extract_masks_bboxes_probs_names(result, max_size=0.7):
+def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):
     """
     Extracts masks, bounding boxes, probabilities, and class names from one Ultralytics result object.
 
@@ -110,7 +114,7 @@ def extract_masks_bboxes_probs_names(result, max_size=0.7):
     return masks, bboxes, track_ids, probs, names, areas
 
 
-def compute_texture_map(frame, blur_size=3):
+def compute_texture_map(frame, blur_size: int = 3):
     """
     Compute texture map using gradient statistics.
     Returns high values for textured regions and low values for smooth regions.
@@ -149,7 +153,15 @@ def compute_texture_map(frame, blur_size=3):
 
 
 def filter_segmentation_results(
-    frame, masks, bboxes, track_ids, probs, names, areas, texture_threshold=0.07, size_filter=800
+    frame,
+    masks,
+    bboxes,
+    track_ids,
+    probs: Sequence[float],
+    names: Sequence[str],
+    areas,
+    texture_threshold: float = 0.07,
+    size_filter: int = 800,
 ):
     """
     Filters segmentation results using both overlap and saliency detection.
@@ -228,7 +240,15 @@ def filter_segmentation_results(
     )
 
 
-def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
+def plot_results(
+    image,
+    masks,
+    bboxes,
+    track_ids,
+    probs: Sequence[float],
+    names: Sequence[str],
+    alpha: float = 0.5,
+):
     """
     Draws bounding boxes, masks, and labels on the given image with enhanced visualization.
     Includes object names in the overlay and improved text visibility.
@@ -293,7 +313,7 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
     return result
 
 
-def crop_images_from_bboxes(image, bboxes, buffer=0):
+def crop_images_from_bboxes(image, bboxes, buffer: int = 0):
     """
     Crops regions from an image based on bounding boxes with an optional buffer.
 

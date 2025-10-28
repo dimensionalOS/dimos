@@ -233,7 +233,7 @@ class GilMonitorThread(threading.Thread):
     _stop_event: threading.Event
     _lock: threading.Lock
 
-    def __init__(self, pid) -> None:
+    def __init__(self, pid: int) -> None:
         super().__init__(daemon=True)
         self.pid = pid
         self._latest_values = (-1.0, -1.0, -1.0, -1)

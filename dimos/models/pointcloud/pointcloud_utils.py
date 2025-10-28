@@ -53,7 +53,7 @@ def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):
     return pcd
 
 
-def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
+def canonicalize_point_cloud(pcd, canonicalize_threshold: float=0.3):
     # Segment the largest plane, assumed to be the floor
     plane_model, inliers = pcd.segment_plane(
         distance_threshold=0.01, ransac_n=3, num_iterations=1000

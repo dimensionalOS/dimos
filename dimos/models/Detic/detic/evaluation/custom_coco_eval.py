@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from collections.abc import Sequence
 import itertools
 
 from detectron2.evaluation.coco_evaluation import COCOEvaluator
@@ -10,7 +11,7 @@ from ..data.datasets.coco_zeroshot import categories_seen, categories_unseen
 
 
 class CustomCOCOEvaluator(COCOEvaluator):
-    def _derive_coco_results(self, coco_eval, iou_type, class_names=None):
+    def _derive_coco_results(self, coco_eval, iou_type, class_names: Sequence[str] | None=None):
         """
         Additionally plot mAP for 'seen classes' and 'unseen classes'
         """

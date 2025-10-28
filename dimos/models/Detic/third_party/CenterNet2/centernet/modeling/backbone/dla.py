@@ -33,12 +33,12 @@ HASH = {
 }
 
 
-def get_model_url(data, name, hash):
+def get_model_url(data, name: str, hash):
     return join("http://dl.yf.io/dla/models", data, f"{name}-{hash}.pth")
 
 
 class BasicBlock(nn.Module):
-    def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN") -> None:
+    def __init__(self, inplanes, planes, stride: int=1, dilation: int=1, norm: str="BN") -> None:
         super().__init__()
         self.conv1 = nn.Conv2d(
             inplanes,
@@ -77,7 +77,7 @@ class BasicBlock(nn.Module):
 class Bottleneck(nn.Module):
     expansion = 2
 
-    def __init__(self, inplanes, planes, stride=1, dilation=1, norm="BN") -> None:
+    def __init__(self, inplanes, planes, stride: int=1, dilation: int=1, norm: str="BN") -> None:
         super().__init__()
         expansion = Bottleneck.expansion
         bottle_planes = planes // expansion
@@ -120,7 +120,7 @@ class Bottleneck(nn.Module):
 
 
 class Root(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, residual, norm="BN") -> None:
+    def __init__(self, in_channels, out_channels, kernel_size: int, residual, norm: str="BN") -> None:
         super().__init__()
         self.conv = nn.Conv2d(
             in_channels, out_channels, 1, stride=1, bias=False, padding=(kernel_size - 1) // 2
@@ -147,13 +147,13 @@ class Tree(nn.Module):
         block,
         in_channels,
         out_channels,
-        stride=1,
-        level_root=False,
-        root_dim=0,
-        root_kernel_size=1,
-        dilation=1,
-        root_residual=False,
-        norm="BN",
+        stride: int=1,
+        level_root: bool=False,
+        root_dim: int=0,
+        root_kernel_size: int=1,
+        dilation: int=1,
+        root_residual: bool=False,
+        norm: str="BN",
     ) -> None:
         super().__init__()
         if root_dim == 0:
@@ -220,7 +220,7 @@ class Tree(nn.Module):
 
 class DLA(nn.Module):
     def __init__(
-        self, num_layers, levels, channels, block=BasicBlock, residual_root=False, norm="BN"
+        self, num_layers: int, levels, channels, block=BasicBlock, residual_root: bool=False, norm: str="BN"
     ) -> None:
         """
         Args:
@@ -279,7 +279,7 @@ class DLA(nn.Module):
             data="imagenet", name=f"dla{num_layers}", hash=HASH[num_layers]
         )
 
-    def load_pretrained_model(self, data, name, hash) -> None:
+    def load_pretrained_model(self, data, name: str, hash) -> None:
         model_url = get_model_url(data, name, hash)
         model_weights = model_zoo.load_url(model_url)
         num_classes = len(model_weights[list(model_weights.keys())[-1]])
@@ -289,7 +289,7 @@ class DLA(nn.Module):
         print("Loading pretrained")
         self.load_state_dict(model_weights, strict=False)
 
-    def _make_conv_level(self, inplanes, planes, convs, stride=1, dilation=1):
+    def _make_conv_level(self, inplanes, planes, convs, stride: int=1, dilation: int=1):
         modules = []
         for i in range(convs):
             modules.extend(
@@ -331,7 +331,7 @@ def fill_up_weights(up) -> None:
 
 
 class _DeformConv(nn.Module):
-    def __init__(self, chi, cho, norm="BN") -> None:
+    def __init__(self, chi, cho, norm: str="BN") -> None:
         super().__init__()
         self.actf = nn.Sequential(get_norm(norm, cho), nn.ReLU(inplace=True))
         if DCNV1:
@@ -362,7 +362,7 @@ class _DeformConv(nn.Module):
 
 
 class IDAUp(nn.Module):
-    def __init__(self, o, channels, up_f, norm="BN") -> None:
+    def __init__(self, o, channels, up_f, norm: str="BN") -> None:
         super().__init__()
         for i in range(1, len(channels)):
             c = channels[i]
@@ -389,7 +389,7 @@ class IDAUp(nn.Module):
 
 
 class DLAUp(nn.Module):
-    def __init__(self, startp, channels, scales, in_channels=None, norm="BN") -> None:
+    def __init__(self, startp, channels, scales, in_channels=None, norm: str="BN") -> None:
         super().__init__()
         self.startp = startp
         if in_channels is None:
@@ -423,7 +423,7 @@ DLA_CONFIGS = {
 
 
 class DLASeg(Backbone):
-    def __init__(self, num_layers, out_features, use_dla_up=True, ms_output=False, norm="BN") -> None:
+    def __init__(self, num_layers: int, out_features, use_dla_up: bool=True, ms_output: bool=False, norm: str="BN") -> None:
         super().__init__()
         # depth = 34
         levels, channels, Block = DLA_CONFIGS[num_layers]

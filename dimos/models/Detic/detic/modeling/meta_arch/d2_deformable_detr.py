@@ -1,4 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from collections.abc import Sequence
+
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone
 from detectron2.structures import Boxes, Instances
 from models.backbone import Joiner
@@ -20,14 +22,14 @@ __all__ = ["DeformableDetr"]
 
 class CustomSetCriterion(SetCriterion):
     def __init__(
-        self, num_classes, matcher, weight_dict, losses, focal_alpha=0.25, use_fed_loss=False
+        self, num_classes: int, matcher, weight_dict, losses, focal_alpha: float=0.25, use_fed_loss: bool=False
     ) -> None:
         super().__init__(num_classes, matcher, weight_dict, losses, focal_alpha)
         self.use_fed_loss = use_fed_loss
         if self.use_fed_loss:
             self.register_buffer("fed_loss_weight", load_class_freq(freq_weight=0.5))
 
-    def loss_labels(self, outputs, targets, indices, num_boxes, log=True):
+    def loss_labels(self, outputs, targets, indices, num_boxes: int, log: bool=True):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -248,7 +250,7 @@ class DeformableDetr(nn.Module):
                 new_targets[-1].update({"masks": gt_masks})
         return new_targets
 
-    def post_process(self, outputs, target_sizes):
+    def post_process(self, outputs, target_sizes: Sequence[int]):
         """ """
         out_logits, out_bbox = outputs["pred_logits"], outputs["pred_boxes"]
         assert len(out_logits) == len(target_sizes)
@@ -301,7 +303,7 @@ class DeformableDetr(nn.Module):
         loss = loss / len(batched_inputs)
         return loss
 
-    def _max_size_loss(self, logits, boxes, label):
+    def _max_size_loss(self, logits, boxes, label: str):
         """
         Inputs:
           logits: L x N x C
