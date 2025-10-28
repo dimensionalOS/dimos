@@ -9,7 +9,6 @@
 # The original code is under Apache-2.0 License
 # Copyright (c) Facebook, Inc. and its affiliates.
 from collections import OrderedDict, defaultdict
-from collections.abc import Sequence
 import copy
 import datetime
 import itertools
@@ -29,6 +28,7 @@ import numpy as np
 import pycocotools.mask as mask_utils
 from tabulate import tabulate
 import torch
+from typing import Optional, Sequence
 
 
 def compute_average_precision(precision, recall):
@@ -104,7 +104,7 @@ class OIDEval:
 
         if isinstance(lvis_dt, LVISResults):
             self.lvis_dt = lvis_dt
-        elif isinstance(lvis_dt, (str, list)):
+        elif isinstance(lvis_dt, str | list):
             # self.lvis_dt = LVISResults(self.lvis_gt, lvis_dt, max_dets=-1)
             self.lvis_dt = LVISResults(self.lvis_gt, lvis_dt)
         else:
@@ -620,7 +620,7 @@ class OIDEvaluator(DatasetEvaluator):
         return copy.deepcopy(self._results)
 
 
-def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg: bool=False, class_names: Sequence[str] | None=None):
+def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg: bool=False, class_names: Optional[Sequence[str]]=None):
     logger = logging.getLogger(__name__)
 
     results = {}

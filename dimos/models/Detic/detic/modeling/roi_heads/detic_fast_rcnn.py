@@ -19,6 +19,7 @@ from torch.nn import functional as F
 
 from ..utils import get_fed_loss_inds, load_class_freq
 from .zero_shot_classifier import ZeroShotClassifier
+from typing import Sequence
 
 __all__ = ["DeticFastRCNNOutputLayers"]
 

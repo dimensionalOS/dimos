@@ -2,6 +2,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
 import os
+from typing import Dict, List, Tuple
 
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
@@ -129,7 +130,7 @@ def export_tracing(torch_model, inputs):
 
     if args.format != "torchscript":
         return None
-    if not isinstance(torch_model, (GeneralizedRCNN, RetinaNet)):
+    if not isinstance(torch_model, GeneralizedRCNN | RetinaNet):
         return None
 
     def eval_wrapper(inputs):

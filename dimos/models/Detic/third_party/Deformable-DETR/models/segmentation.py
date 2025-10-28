@@ -12,7 +12,6 @@ This file provides the definition of the convolutional heads used to predict mas
 """
 
 from collections import defaultdict
-from collections.abc import Sequence
 import io
 
 from PIL import Image
@@ -21,6 +20,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import util.box_ops as box_ops
 from util.misc import NestedTensor, interpolate, nested_tensor_from_tensor_list
+from typing import Optional, Sequence
 
 try:
     from panopticapi.utils import id2rgb, rgb2id
@@ -278,7 +278,7 @@ class PostProcessPanoptic(nn.Module):
         self.threshold = threshold
         self.is_thing_map = is_thing_map
 
-    def forward(self, outputs, processed_sizes: Sequence[int], target_sizes: Sequence[int] | None=None):
+    def forward(self, outputs, processed_sizes: Sequence[int], target_sizes: Optional[Sequence[int]]=None):
         """This function computes the panoptic prediction from the model's predictions.
         Parameters:
             outputs: This is a dict coming directly from the model. See the model doc for the content.

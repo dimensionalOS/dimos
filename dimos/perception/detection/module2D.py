@@ -151,7 +151,7 @@ class Detection2DModule(Module):
             self.detection_stream_2d().subscribe(publish_cropped_images)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         return super().stop()
 
 

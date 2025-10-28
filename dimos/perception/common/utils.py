@@ -733,7 +733,7 @@ def draw_object_detection_visualization(
                     obj_color = obj["color"]
                     if isinstance(obj_color, np.ndarray):
                         color = tuple(int(c) for c in obj_color)
-                    elif isinstance(obj_color, (list, tuple)):
+                    elif isinstance(obj_color, list | tuple):
                         color = tuple(int(c) for c in obj_color[:3])
 
                 viz_image = draw_bounding_box(

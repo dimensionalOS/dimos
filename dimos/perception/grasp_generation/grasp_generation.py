@@ -170,7 +170,7 @@ class HostedGraspGenerator:
                 if isinstance(grasps, dict) and "error" in grasps:
                     logger.error(f"Server returned error: {grasps['error']}")
                     return None
-                elif isinstance(grasps, (int, float)) and grasps == 0:
+                elif isinstance(grasps, int | float) and grasps == 0:
                     return None
                 elif not isinstance(grasps, list):
                     logger.error(f"Server returned unexpected response type: {type(grasps)}")

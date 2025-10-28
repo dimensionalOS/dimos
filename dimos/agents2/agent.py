@@ -30,7 +30,7 @@ from langchain_core.messages import (
 
 from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
-from dimos.core import DimosCluster, rpc
+from dimos.core import rpc
 from dimos.protocol.skill.coordinator import (
     SkillContainer,
     SkillCoordinator,
@@ -87,7 +87,7 @@ def summary_from_state(state: SkillState, special_data: bool = False) -> SkillSt
 
 
 def _custom_json_serializers(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
+    if isinstance(obj, datetime.date | datetime.datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
 

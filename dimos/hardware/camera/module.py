@@ -61,6 +61,9 @@ class CameraModule(Module, spec.Camera):
 
     default_config = CameraModuleConfig
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+
     @property
     def camera_info(self) -> CameraInfo:
         return self.hardware.camera_info
@@ -76,6 +79,8 @@ class CameraModule(Module, spec.Camera):
             return "already started"
 
         stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))
+
+        # camera_info_stream = self.camera_info_stream(frequency=5.0)
 
         def publish_info(camera_info: CameraInfo) -> None:
             self.camera_info.publish(camera_info)

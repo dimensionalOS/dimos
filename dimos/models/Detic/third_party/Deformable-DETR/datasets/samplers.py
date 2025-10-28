@@ -6,13 +6,13 @@
 # Modified from codes in torch.utils.data.distributed
 # ------------------------------------------------------------------------
 
-from collections.abc import Iterator
 import math
 import os
 
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
+from typing import Iterator, Optional
 
 
 class DistributedSampler(Sampler):
@@ -31,7 +31,7 @@ class DistributedSampler(Sampler):
     """
 
     def __init__(
-        self, dataset, num_replicas: int | None=None, rank=None, local_rank=None, local_size: int | None=None, shuffle: bool=True
+        self, dataset, num_replicas: Optional[int]=None, rank=None, local_rank=None, local_size: Optional[int]=None, shuffle: bool=True
     ) -> None:
         if num_replicas is None:
             if not dist.is_available():
@@ -92,7 +92,7 @@ class NodeDistributedSampler(Sampler):
     """
 
     def __init__(
-        self, dataset, num_replicas: int | None=None, rank=None, local_rank=None, local_size: int | None=None, shuffle: bool=True
+        self, dataset, num_replicas: Optional[int]=None, rank=None, local_rank=None, local_size: Optional[int]=None, shuffle: bool=True
     ) -> None:
         if num_replicas is None:
             if not dist.is_available():

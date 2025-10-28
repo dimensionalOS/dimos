@@ -41,7 +41,8 @@ def create_dynamic_callback():
         field_type = field_info.annotation
 
         # Handle Optional types
-        if get_origin(field_type) is type(Optional[str]):  # Check for Optional/Union with None
+        # Check for Optional/Union with None
+        if get_origin(field_type) is type(Optional[str]):  # noqa: UP045
             inner_types = get_args(field_type)
             if len(inner_types) == 2 and type(None) in inner_types:
                 # It's Optional[T], get the actual type T
@@ -65,7 +66,7 @@ def create_dynamic_callback():
                     f"--{cli_option_name}/--no-{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=Optional[bool],
+                annotation=Optional[bool],  # noqa: UP045
             )
         else:
             # For non-boolean fields, use regular option
@@ -77,7 +78,7 @@ def create_dynamic_callback():
                     f"--{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=Optional[actual_type],
+                annotation=Optional[actual_type],  # noqa: UP045
             )
         params.append(param)
 
@@ -112,7 +113,7 @@ def run(
         blueprint = autoconnect(blueprint, *loaded_modules)
 
     dimos = blueprint.build(global_config=config)
-    dimos.wait_until_shutdown()
+    dimos.loop()
 
 
 @main.command()

@@ -47,7 +47,7 @@ def to_datetime(ts: EpochLike, tz: timezone | None = None) -> datetime:
         # if ts.tzinfo is None:
         #    ts = ts.astimezone(tz)
         return ts
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         return datetime.fromtimestamp(ts, tz=tz)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return datetime.fromtimestamp(ts["sec"] + ts["nanosec"] / 1e9, tz=tz)

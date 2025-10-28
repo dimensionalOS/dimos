@@ -11,6 +11,7 @@
 Backbone modules.
 """
 
+from typing import Dict, List
 
 import torch
 from torch import nn

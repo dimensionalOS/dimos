@@ -1,6 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from collections.abc import Sequence
-
 from detectron2.config import configurable
 from detectron2.modeling.box_regression import Box2BoxTransform
 from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads, _ScaleGradient
@@ -11,6 +9,7 @@ from detectron2.utils.events import get_event_storage
 import torch
 
 from .detic_fast_rcnn import DeticFastRCNNOutputLayers
+from typing import Sequence
 
 
 @ROI_HEADS_REGISTRY.register()

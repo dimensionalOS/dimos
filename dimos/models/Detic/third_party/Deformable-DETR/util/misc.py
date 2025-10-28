@@ -19,6 +19,7 @@ import os
 import pickle
 import subprocess
 import time
+from typing import List, Optional
 
 import torch
 from torch import Tensor
@@ -50,7 +51,7 @@ if float(torchvision.__version__[:3]) < 0.5:
         if size is not None:
             return size
         # if dim is not 2 or scale_factor is iterable use _ntuple instead of concat
-        assert scale_factor is not None and isinstance(scale_factor, (int, float))
+        assert scale_factor is not None and isinstance(scale_factor, int | float)
         scale_factors = [scale_factor, scale_factor]
         # math.floor might return float in py2.7
         return [math.floor(input.size(i + 2) * scale_factors[i]) for i in range(dim)]
@@ -201,7 +202,7 @@ class MetricLogger:
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor):
                 v = v.item()
-            assert isinstance(v, (float, int))
+            assert isinstance(v, float | int)
             self.meters[k].update(v)
 
     def __getattr__(self, attr):
@@ -339,7 +340,7 @@ def nested_tensor_from_tensor_list(tensor_list: list[Tensor]):
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
         batch_shape = [len(tensor_list), *max_size]
-        b, _c, h, w = batch_shape
+        b, c, h, w = batch_shape
         dtype = tensor_list[0].dtype
         device = tensor_list[0].device
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
@@ -499,7 +500,7 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def interpolate(input, size: int | None=None, scale_factor=None, mode: str="nearest", align_corners=None):
+def interpolate(input, size: Optional[int]=None, scale_factor=None, mode: str="nearest", align_corners=None):
     # type: (Tensor, Optional[List[int]], Optional[float], str, Optional[bool]) -> Tensor
     """
     Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
