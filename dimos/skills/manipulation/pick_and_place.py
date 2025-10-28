@@ -60,9 +60,9 @@ def parse_qwen_points_response(response: str) -> tuple[tuple[int, int], tuple[in
 
                 # Validate points have x,y coordinates
                 if (
-                    isinstance(pick, (list, tuple))
+                    isinstance(pick, list | tuple)
                     and len(pick) >= 2
-                    and isinstance(place, (list, tuple))
+                    and isinstance(place, list | tuple)
                     and len(place) >= 2
                 ):
                     return (int(pick[0]), int(pick[1])), (int(place[0]), int(place[1]))
@@ -161,7 +161,7 @@ def parse_qwen_single_point_response(response: str) -> tuple[int, int] | None:
                     break
 
             # Validate point has x,y coordinates
-            if point and isinstance(point, (list, tuple)) and len(point) >= 2:
+            if point and isinstance(point, list | tuple) and len(point) >= 2:
                 return int(point[0]), int(point[1])
 
     except Exception as e:

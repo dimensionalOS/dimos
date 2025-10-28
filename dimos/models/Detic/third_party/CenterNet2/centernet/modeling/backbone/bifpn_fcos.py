@@ -1,7 +1,5 @@
 # This file is modified from https://github.com/aim-uofa/AdelaiDet/blob/master/adet/modeling/backbone/bifpn.py
 # The original file is under 2-clause BSD License for academic use, and *non-commercial use*.
-from collections.abc import Sequence
-
 from detectron2.layers import Conv2d, ShapeSpec, get_norm
 from detectron2.modeling import BACKBONE_REGISTRY
 from detectron2.modeling.backbone import Backbone, build_resnet_backbone
@@ -10,6 +8,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from .dlafpn import dla34
+from typing import Sequence
 
 __all__ = []
 

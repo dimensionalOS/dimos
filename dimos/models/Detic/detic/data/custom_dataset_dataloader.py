@@ -1,10 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Part of the code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/data/multi_dataset_dataloader.py (Apache-2.0 License)
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
 import itertools
 import math
 import operator
+from typing import Iterator, Sequence, Optional
 
 from detectron2.config import configurable
 from detectron2.data.build import (

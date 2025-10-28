@@ -367,7 +367,7 @@ def overlay_point_clouds_on_image(
         color = colors[i % len(colors)]
 
         # Ensure color is a tuple of integers for OpenCV
-        if isinstance(color, (list, tuple, np.ndarray)):
+        if isinstance(color, list | tuple | np.ndarray):
             color = tuple(int(c) for c in color[:3])
         else:
             color = (255, 255, 255)
@@ -411,7 +411,7 @@ def create_point_cloud_overlay_visualization(
             color = obj["color"]
             if isinstance(color, np.ndarray):
                 color = tuple(int(c) for c in color)
-            elif isinstance(color, (list, tuple)):
+            elif isinstance(color, list | tuple):
                 color = tuple(int(c) for c in color[:3])
             colors.append(color)
 

@@ -1,8 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 from collections import defaultdict
-from collections.abc import Iterator, Sequence
 import itertools
 import logging
+from typing import Iterator, Sequence, Optional
 
 from detectron2.data.build import (
     build_batch_data_loader,

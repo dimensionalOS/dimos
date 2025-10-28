@@ -82,7 +82,7 @@ def summary_from_state(state: SkillState, special_data: bool = False) -> SkillSt
 
 
 def _custom_json_serializers(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
+    if isinstance(obj, datetime.date | datetime.datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
 

@@ -75,8 +75,8 @@ class Pose(LCMPose):
     @dispatch
     def __init__(
         self,
-        position: VectorConvertable | Vector3 = None,
-        orientation: QuaternionConvertable | Quaternion = None,
+        position: VectorConvertable | Vector3 | None = None,
+        orientation: QuaternionConvertable | Quaternion | None = None,
     ) -> None:
         """Initialize a pose with position and orientation."""
         if orientation is None:
@@ -193,7 +193,7 @@ class Pose(LCMPose):
             new_pose = pose + transform
         """
         # Handle Transform objects
-        if isinstance(other, (LCMTransform, Transform)):
+        if isinstance(other, LCMTransform | Transform):
             # Convert Transform to Pose using its translation and rotation
             other_position = Vector3(other.translation)
             other_orientation = Quaternion(other.rotation)

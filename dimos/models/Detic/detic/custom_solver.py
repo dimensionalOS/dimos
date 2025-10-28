@@ -1,6 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import itertools
-from typing import Any
+from typing import Any, Dict, List, Set
 
 from detectron2.config import CfgNode
 from detectron2.solver.build import maybe_add_gradient_clipping

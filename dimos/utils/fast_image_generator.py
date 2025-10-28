@@ -189,9 +189,6 @@ class FastImageGenerator:
         Returns:
             numpy array of shape (height, width, 3) with uint8 values
         """
-        # Simple time-based animation parameter
-        self.frame_count * 0.02
-
         # Fast gradient background - use only one gradient per frame
         if self.frame_count % 2 == 0:
             base_gradient = self.h_gradient

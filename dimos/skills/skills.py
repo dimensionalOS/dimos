@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from openai import pydantic_function_tool
 from pydantic import BaseModel
 
 from dimos.types.constants import Colors
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Configure logging for the module
 logging.basicConfig(level=logging.INFO)
@@ -46,7 +50,7 @@ class SkillLibrary:
         # Temporary
         self.registered_skills = self.class_skills.copy()
 
-    def get_class_skills(self) -> list["AbstractSkill"]:
+    def get_class_skills(self) -> list[AbstractSkill]:
         """Extract all AbstractSkill subclasses from a class.
 
         Returns:
@@ -79,14 +83,14 @@ class SkillLibrary:
     def refresh_class_skills(self) -> None:
         self.class_skills = self.get_class_skills()
 
-    def add(self, skill: "AbstractSkill") -> None:
+    def add(self, skill: AbstractSkill) -> None:
         if skill not in self.registered_skills:
             self.registered_skills.append(skill)
 
-    def get(self) -> list["AbstractSkill"]:
+    def get(self) -> list[AbstractSkill]:
         return self.registered_skills.copy()
 
-    def remove(self, skill: "AbstractSkill") -> None:
+    def remove(self, skill: AbstractSkill) -> None:
         try:
             self.registered_skills.remove(skill)
         except ValueError:
@@ -101,7 +105,7 @@ class SkillLibrary:
     def __len__(self) -> int:
         return len(self.registered_skills)
 
-    def __contains__(self, skill: "AbstractSkill") -> bool:
+    def __contains__(self, skill: AbstractSkill) -> bool:
         return skill in self.registered_skills
 
     def __getitem__(self, index):
@@ -157,7 +161,7 @@ class SkillLibrary:
         # print(f"{Colors.YELLOW_PRINT_COLOR}Tools JSON: {tools_json}{Colors.RESET_COLOR}")
         return tools_json
 
-    def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
+    def get_list_of_skills_as_json(self, list_of_skills: list[AbstractSkill]) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
 
     def register_running_skill(self, name: str, instance: Any, subscription=None) -> None:
@@ -259,7 +263,7 @@ class AbstractSkill(BaseModel):
         self._list_of_skills = []  # Initialize the list of skills
         print(f"Instances: {self._instances}")
 
-    def clone(self) -> "AbstractSkill":
+    def clone(self) -> AbstractSkill:
         return AbstractSkill()
 
     def register_as_running(
@@ -291,7 +295,7 @@ class AbstractSkill(BaseModel):
         # print(f"Tools JSON: {tools_json}")
         return tools_json
 
-    def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
+    def get_list_of_skills_as_json(self, list_of_skills: list[AbstractSkill]) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
 
 

@@ -11,7 +11,6 @@
 Transforms and data augmentation for both image + bbox.
 """
 
-from collections.abc import Sequence
 import random
 
 import PIL
@@ -20,6 +19,7 @@ import torchvision.transforms as T
 import torchvision.transforms.functional as F
 from util.box_ops import box_xyxy_to_cxcywh
 from util.misc import interpolate
+from typing import Optional, Sequence
 
 
 def crop(image, target, region):
@@ -68,7 +68,7 @@ def crop(image, target, region):
 def hflip(image, target):
     flipped_image = F.hflip(image)
 
-    w, _h = image.size
+    w, h = image.size
 
     target = target.copy()
     if "boxes" in target:
@@ -84,10 +84,10 @@ def hflip(image, target):
     return flipped_image, target
 
 
-def resize(image, target, size: int, max_size: int | None=None):
+def resize(image, target, size: int, max_size: Optional[int]=None):
     # size can be min_size (scalar) or (w, h) tuple
 
-    def get_size_with_aspect_ratio(image_size: int, size: int, max_size: int | None=None):
+    def get_size_with_aspect_ratio(image_size: int, size: int, max_size: Optional[int]=None):
         w, h = image_size
         if max_size is not None:
             min_original_size = float(min((w, h)))
@@ -107,8 +107,8 @@ def resize(image, target, size: int, max_size: int | None=None):
 
         return (oh, ow)
 
-    def get_size(image_size: int, size: int, max_size: int | None=None):
-        if isinstance(size, (list, tuple)):
+    def get_size(image_size: int, size: int, max_size: Optional[int]=None):
+        if isinstance(size, list | tuple):
             return size[::-1]
         else:
             return get_size_with_aspect_ratio(image_size, size, max_size)
@@ -203,8 +203,8 @@ class RandomHorizontalFlip:
 
 
 class RandomResize:
-    def __init__(self, sizes: Sequence[int], max_size: int | None=None) -> None:
-        assert isinstance(sizes, (list, tuple))
+    def __init__(self, sizes: Sequence[int], max_size: Optional[int]=None) -> None:
+        assert isinstance(sizes, list | tuple)
         self.sizes = sizes
         self.max_size = max_size
 

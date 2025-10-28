@@ -22,7 +22,7 @@ from turbojpeg import TurboJPEG
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -154,3 +154,15 @@ class JpegLCM(
     JpegEncoderMixin,
     LCMPubSubBase,
 ): ...
+
+
+__all__ = [
+    "LCM",
+    "JpegLCM",
+    "LCMEncoderMixin",
+    "LCMMsg",
+    "LCMMsg",
+    "LCMPubSubBase",
+    "PickleLCM",
+    "autoconf",
+]

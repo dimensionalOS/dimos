@@ -15,6 +15,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.utils.model_zoo as model_zoo
+from typing import Optional
 
 WEB_ROOT = "http://dl.yf.io/dla/models"
 
@@ -461,7 +462,7 @@ class DLAUP(Backbone):
         return ret
 
 
-def dla34(cfg, pretrained: bool | None=None):  # DLA-34
+def dla34(cfg, pretrained: Optional[bool]=None):  # DLA-34
     model = DLA(cfg, [1, 1, 1, 2, 2, 1], [16, 32, 64, 128, 256, 512], block=BasicBlock)
     return model
 

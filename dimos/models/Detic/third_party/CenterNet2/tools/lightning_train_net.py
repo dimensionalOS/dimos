@@ -9,7 +9,7 @@ from collections import OrderedDict
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Dict, List
 import weakref
 
 from detectron2.checkpoint import DetectionCheckpointer

@@ -117,7 +117,12 @@ def _safe_unlink(name: str) -> None:
 
 class CpuShmChannel(FrameChannel):
     def __init__(
-        self, shape, dtype=np.uint8, *, data_name: str | None = None, ctrl_name: str | None = None
+        self,
+        shape,
+        dtype=np.uint8,
+        *,
+        data_name: str | None = None,
+        ctrl_name: str | None = None,
     ) -> None:
         self._shape = tuple(shape)
         self._dtype = np.dtype(dtype)

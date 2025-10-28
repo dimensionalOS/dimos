@@ -70,7 +70,7 @@ class PersonTrackingStream(Module):
 
         # Validate camera intrinsics format [fx, fy, cx, cy]
         if (
-            not isinstance(camera_intrinsics, (list, tuple, np.ndarray))
+            not isinstance(camera_intrinsics, list | tuple | np.ndarray)
             or len(camera_intrinsics) != 4
         ):
             raise ValueError("Camera intrinsics must be provided as [fx, fy, cx, cy]")

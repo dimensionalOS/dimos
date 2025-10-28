@@ -46,7 +46,7 @@ def to_timestamp(ts: TimeLike) -> float:
     """Convert TimeLike to a timestamp in seconds."""
     if isinstance(ts, datetime):
         return ts.timestamp()
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         return float(ts)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts["sec"] + ts["nanosec"] / 1e9

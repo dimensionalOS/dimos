@@ -1,4 +1,5 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from typing import Dict, List, Optional, Tuple
 
 from detectron2.config import configurable
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY

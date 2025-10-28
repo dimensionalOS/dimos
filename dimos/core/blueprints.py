@@ -157,7 +157,7 @@ class ModuleBlueprintSet:
 
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
-            for method_name, method in blueprint.module.rpcs.items():
+            for method_name in blueprint.module.rpcs.keys():
                 if not method_name.startswith("set_"):
                     continue
                 linked_name = method_name.removeprefix("set_")

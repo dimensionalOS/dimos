@@ -1,11 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from collections.abc import Sequence
 import os
 
 import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from typing import Optional, Sequence
 
 COLORS = ((np.random.rand(1300, 3) * 0.4 + 0.6) * 255).astype(np.uint8).reshape(1300, 1, 1, 3)
 
@@ -266,7 +266,7 @@ def debug_second_stage(
     vis_thresh: float=0.3,
     save_debug: bool=False,
     debug_show_name: bool=False,
-    image_labels: Sequence[str] | None=None,
+    image_labels: Optional[Sequence[str]]=None,
     save_debug_path: str="output/save_debug/",
     bgr: bool=False,
 ) -> None:

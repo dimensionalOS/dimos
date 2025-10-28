@@ -73,7 +73,7 @@ class AgentMessageMonitor:
     def _handle_message(self, msg: Any, topic: str) -> None:
         """Handle incoming messages."""
         # Check if it's one of the message types we care about
-        if isinstance(msg, (SystemMessage, ToolMessage, AIMessage, HumanMessage)):
+        if isinstance(msg, SystemMessage | ToolMessage | AIMessage | HumanMessage):
             entry = MessageEntry(timestamp=time.time(), message=msg)
             self.messages.append(entry)
 

@@ -253,7 +253,23 @@ class DaskModule(ModuleBase):
     def __init__(self, *args, **kwargs) -> None:
         self.ref = None
 
-        for name, ann in get_type_hints(self, include_extras=True).items():
+        # Get type hints with proper namespace resolution for subclasses
+        # Collect namespaces from all classes in the MRO chain
+        import sys
+
+        globalns = {}
+        for cls in self.__class__.__mro__:
+            if cls.__module__ in sys.modules:
+                globalns.update(sys.modules[cls.__module__].__dict__)
+
+        try:
+            hints = get_type_hints(self.__class__, globalns=globalns, include_extras=True)
+        except (NameError, AttributeError, TypeError):
+            # If we still can't resolve hints, skip type hint processing
+            # This can happen with complex forward references
+            hints = {}
+
+        for name, ann in hints.items():
             origin = get_origin(ann)
             if origin is Out:
                 inner, *_ = get_args(ann) or (Any,)

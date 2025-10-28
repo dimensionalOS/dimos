@@ -3,6 +3,7 @@
 # The original code is under MIT license
 # Copyright (c) Facebook, Inc. and its affiliates.
 from collections import OrderedDict
+from typing import List, Union
 
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
 import torch
@@ -139,7 +140,7 @@ class CLIPTEXT(nn.Module):
     def dtype(self):
         return self.text_projection.dtype
 
-    def tokenize(self, texts: str | list[str], context_length: int = 77) -> torch.LongTensor:
+    def tokenize(self, texts: Union[str, list[str]], context_length: int = 77) -> torch.LongTensor:
         """ """
         if isinstance(texts, str):
             texts = [texts]

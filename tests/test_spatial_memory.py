@@ -225,7 +225,7 @@ def visualize_spatial_memory_with_objects(
         if isinstance(loc, dict):
             x_coords.append(loc.get("pos_x", 0))
             y_coords.append(loc.get("pos_y", 0))
-        elif isinstance(loc, (tuple, list)) and len(loc) >= 2:
+        elif isinstance(loc, tuple | list) and len(loc) >= 2:
             x_coords.append(loc[0])
             y_coords.append(loc[1])
         else:
