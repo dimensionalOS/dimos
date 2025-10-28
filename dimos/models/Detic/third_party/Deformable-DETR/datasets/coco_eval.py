@@ -29,7 +29,7 @@ from util.misc import all_gather
 
 class CocoEvaluator:
     def __init__(self, coco_gt, iou_types) -> None:
-        assert isinstance(iou_types, (list, tuple))
+        assert isinstance(iou_types, list | tuple)
         coco_gt = copy.deepcopy(coco_gt)
         self.coco_gt = coco_gt
 

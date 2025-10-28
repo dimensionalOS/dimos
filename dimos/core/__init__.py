@@ -3,7 +3,6 @@ from __future__ import annotations
 import multiprocessing as mp
 import signal
 import time
-from typing import Any, Optional, Protocol, Type, TypeVar
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
@@ -167,8 +166,6 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             return
         dask_client._closed = True
 
-        import time
-
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:
@@ -177,7 +174,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             from dimos.protocol.pubsub import shmpubsub
 
             for obj in gc.get_objects():
-                if isinstance(obj, (shmpubsub.SharedMemory, shmpubsub.PickleSharedMemory)):
+                if isinstance(obj, shmpubsub.SharedMemory | shmpubsub.PickleSharedMemory):
                     try:
                         obj.stop()
                     except Exception:

@@ -1,5 +1,3 @@
-from collections.abc import Sequence
-
 from detectron2.config import configurable
 from detectron2.layers import cat
 from detectron2.modeling.proposal_generator.build import PROPOSAL_GENERATOR_REGISTRY
@@ -14,6 +12,7 @@ from ..layers.iou_loss import IOULoss
 from ..layers.ml_nms import ml_nms
 from .centernet_head import CenterNetHead
 from .utils import _transpose, reduce_sum
+from typing import Sequence
 
 __all__ = ["CenterNet"]
 

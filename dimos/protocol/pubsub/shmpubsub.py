@@ -150,7 +150,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     # ----- PubSub API (bytes on the wire) ----------------------------------
 
     def publish(self, topic: str, message: bytes) -> None:
-        if not isinstance(message, (bytes, bytearray, memoryview)):
+        if not isinstance(message, bytes | bytearray | memoryview):
             raise TypeError(f"publish expects bytes-like, got {type(message)!r}")
 
         st = self._ensure_topic(topic)
@@ -298,7 +298,7 @@ class SharedMemoryBytesEncoderMixin(PubSubEncoderMixin[str, bytes]):
     """Identity encoder for raw bytes."""
 
     def encode(self, msg: bytes, _: str) -> bytes:
-        if isinstance(msg, (bytes, bytearray, memoryview)):
+        if isinstance(msg, bytes | bytearray | memoryview):
             return bytes(msg)
         raise TypeError(f"SharedMemory expects bytes-like, got {type(msg)!r}")
 

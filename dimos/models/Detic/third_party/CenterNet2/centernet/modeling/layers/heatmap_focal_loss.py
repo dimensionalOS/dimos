@@ -1,6 +1,7 @@
 from collections.abc import Sequence
 
 import torch
+from typing import Sequence
 
 
 # TODO: merge these two function

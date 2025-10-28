@@ -11,8 +11,8 @@ def register_distill_coco_instances(name: str, metadata, json_file, image_root) 
     add extra_annotation_keys
     """
     assert isinstance(name, str), name
-    assert isinstance(json_file, (str, os.PathLike)), json_file
-    assert isinstance(image_root, (str, os.PathLike)), image_root
+    assert isinstance(json_file, str | os.PathLike), json_file
+    assert isinstance(image_root, str | os.PathLike), image_root
     # 1. register a function which returns dicts
     DatasetCatalog.register(
         name, lambda: load_coco_json(json_file, image_root, name, extra_annotation_keys=["score"])

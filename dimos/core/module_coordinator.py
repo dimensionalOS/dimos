@@ -13,15 +13,12 @@
 # limitations under the License.
 
 import time
-from typing import TYPE_CHECKING, TypeVar
+from typing import TypeVar
 
 from dimos import core
 from dimos.core import DimosCluster, Module
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
-
-if TYPE_CHECKING:
-    from dimos.core import Module
 
 T = TypeVar("T", bound="Module")
 
@@ -30,7 +27,7 @@ class ModuleCoordinator(Resource):
     _client: DimosCluster | None = None
     _n: int | None = None
     _memory_limit: str = "auto"
-    _deployed_modules: dict[type["Module"], "Module"] = {}
+    _deployed_modules: dict[type[Module], Module] = {}
 
     def __init__(
         self,
@@ -66,7 +63,7 @@ class ModuleCoordinator(Resource):
     def get_instance(self, module: type[T]) -> T | None:
         return self._deployed_modules.get(module)
 
-    def wait_until_shutdown(self) -> None:
+    def loop(self) -> None:
         try:
             while True:
                 time.sleep(0.1)

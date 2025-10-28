@@ -11,7 +11,6 @@
 Deformable DETR model and criterion classes.
 """
 
-from collections.abc import Sequence
 import copy
 import math
 
@@ -39,6 +38,7 @@ from .segmentation import (
     dice_loss,
     sigmoid_focal_loss,
 )
+from typing import Sequence
 
 
 def _get_clones(module, N):
@@ -339,7 +339,7 @@ class SetCriterion(nn.Module):
         src_masks = outputs["pred_masks"]
 
         # TODO use valid to mask invalid areas due to padding in loss
-        target_masks, _valid = nested_tensor_from_tensor_list(
+        target_masks, valid = nested_tensor_from_tensor_list(
             [t["masks"] for t in targets]
         ).decompose()
         target_masks = target_masks.to(src_masks)

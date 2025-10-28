@@ -7,6 +7,7 @@ from detectron2.data.datasets.lvis import get_lvis_instances_meta
 from detectron2.structures import BoxMode
 from fvcore.common.file_io import PathManager
 from fvcore.common.timer import Timer
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ def custom_register_lvis_instances(name: str, metadata, json_file, image_root) -
     )
 
 
-def custom_load_lvis_json(json_file, image_root, dataset_name: str | None=None):
+def custom_load_lvis_json(json_file, image_root, dataset_name: Optional[str]=None):
     """
     Modifications:
       use `file_name`

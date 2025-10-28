@@ -38,7 +38,7 @@ from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import Vector3
+    from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"

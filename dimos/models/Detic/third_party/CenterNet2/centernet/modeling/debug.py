@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from typing import Sequence
 
 COLORS = ((np.random.rand(1300, 3) * 0.4 + 0.6) * 255).astype(np.uint8).reshape(1300, 1, 1, 3)
 

@@ -1,6 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from collections.abc import Sequence
-
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone
 from detectron2.structures import Boxes, Instances
 from models.backbone import Joiner
@@ -16,6 +14,7 @@ from util.box_ops import box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from util.misc import NestedTensor, accuracy
 
 from ..utils import get_fed_loss_inds, load_class_freq
+from typing import Sequence
 
 __all__ = ["DeformableDetr"]
 

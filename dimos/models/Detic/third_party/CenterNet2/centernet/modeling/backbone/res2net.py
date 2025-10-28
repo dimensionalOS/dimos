@@ -1,7 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # This file is modified from https://github.com/Res2Net/Res2Net-detectron2/blob/master/detectron2/modeling/backbone/resnet.py
 # The original file is under Apache-2.0 License
-
 from detectron2.layers import (
     CNNBlockBase,
     Conv2d,
@@ -21,6 +20,7 @@ import torch.nn.functional as F
 
 from .bifpn import BiFPN
 from .fpn_p5 import LastLevelP6P7_P5
+from typing import Optional
 
 __all__ = [
     "BasicBlock",
@@ -574,7 +574,7 @@ class BasicStem(CNNBlockBase):
 
 
 class ResNet(Backbone):
-    def __init__(self, stem, stages, num_classes: int | None=None, out_features=None) -> None:
+    def __init__(self, stem, stages, num_classes: Optional[int]=None, out_features=None) -> None:
         """
         Args:
             stem (nn.Module): a stem module

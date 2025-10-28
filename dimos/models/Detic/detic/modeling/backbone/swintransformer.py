@@ -9,8 +9,6 @@
 # Modified by Xingyi Zhou from https://github.com/SwinTransformer/Swin-Transformer-Object-Detection/blob/master/mmdet/models/backbones/swin_transformer.py
 
 
-from collections.abc import Sequence
-
 from centernet.modeling.backbone.bifpn import BiFPN
 from centernet.modeling.backbone.fpn_p5 import LastLevelP6P7_P5
 from detectron2.layers import ShapeSpec
@@ -23,6 +21,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as checkpoint
+from typing import Optional, Sequence
 
 # from .checkpoint import load_checkpoint
 
@@ -537,8 +536,8 @@ class SwinTransformer(Backbone):
         patch_size: int=4,
         in_chans: int=3,
         embed_dim: int=96,
-        depths: Sequence[int] | None=None,
-        num_heads: int | None=None,
+        depths: Optional[Sequence[int]]=None,
+        num_heads: Optional[int]=None,
         window_size: int=7,
         mlp_ratio: float=4.0,
         qkv_bias: bool=True,
@@ -650,7 +649,7 @@ class SwinTransformer(Backbone):
                 for param in m.parameters():
                     param.requires_grad = False
 
-    def init_weights(self, pretrained: bool | None=None):
+    def init_weights(self, pretrained: Optional[bool]=None):
         """Initialize the weights in backbone.
         Args:
             pretrained (str, optional): Path to pre-trained weights.

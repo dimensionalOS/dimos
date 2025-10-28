@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import cv2
+import numpy as np
+from PIL import Image
 import torch
 
 # May need to add this back for import to work
@@ -70,7 +72,7 @@ class Metric3D:
         img = self.rescale_input(img, self.rgb_origin)
 
         with torch.no_grad():
-            pred_depth, _confidence, _output_dict = self.depth_model.inference({"input": img})
+            pred_depth, confidence, output_dict = self.depth_model.inference({"input": img})
 
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)

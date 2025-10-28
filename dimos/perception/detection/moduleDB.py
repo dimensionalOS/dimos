@@ -236,7 +236,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return "\n".join(ret)
 
     # @rpc
-    # def vlm_query(self, description: str) -> Optional[Object3D]:  # type: ignore[override]
+    # def vlm_query(self, description: str) -> Object3D | None:  # type: ignore[override]
     #     imageDetections2D = super().ask_vlm(description)
     #     print("VLM query found", imageDetections2D, "detections")
     #     time.sleep(3)

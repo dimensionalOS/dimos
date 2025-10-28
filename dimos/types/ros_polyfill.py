@@ -22,4 +22,17 @@ try:
     from nav_msgs.msg import OccupancyGrid, Odometry
     from std_msgs.msg import Header
 except ImportError:
-    pass
+    from dimos_lcm.geometry_msgs import Point, Pose, Quaternion, Twist
+    from dimos_lcm.nav_msgs import OccupancyGrid, Odometry
+    from dimos_lcm.std_msgs import Header
+
+__all__ = [
+    "Header",
+    "OccupancyGrid",
+    "Odometry",
+    "Point",
+    "Pose",
+    "Quaternion",
+    "Twist",
+    "Vector3",
+]
