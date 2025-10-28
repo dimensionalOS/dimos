@@ -22,7 +22,14 @@ from basic teleoperation to full autonomous agent configurations.
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,
+    Twist,
+    TwistStamped,
+    Transform,
+    Vector3,
+    Quaternion,
+)
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -117,15 +124,12 @@ basic = (
 )
 
 # Standard configuration with perception and memory
-standard = (
-    autoconnect(
-        basic,
-        spatial_memory(),
-        object_tracking(frame_id="camera_link"),
-        utilization(),
-    )
-    .with_global_config(n_dask_workers=8)
-)
+standard = autoconnect(
+    basic,
+    spatial_memory(),
+    object_tracking(frame_id="camera_link"),
+    utilization(),
+).with_global_config(n_dask_workers=8)
 
 # Optimized configuration using shared memory for images
 standard_with_shm = autoconnect(
