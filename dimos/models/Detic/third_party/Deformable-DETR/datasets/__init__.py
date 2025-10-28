@@ -8,9 +8,9 @@
 # ------------------------------------------------------------------------
 
 import torch.utils.data
-from .torchvision_datasets import CocoDetection
 
 from .coco import build as build_coco
+from .torchvision_datasets import CocoDetection
 
 
 def get_coco_api_from_dataset(dataset):

@@ -12,22 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+
 import cv2
-import os
-import torch
+import numpy as np
 import open3d as o3d
-import argparse
-import pickle
-from typing import Dict, List, Optional, Union
-import time
+import torch
+
+from dimos.perception.pointcloud.cuboid_fit import fit_cuboid
+from dimos.perception.pointcloud.utils import (
+    create_point_cloud_and_extract_masks,
+    load_camera_matrix_from_yaml,
+)
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
-from dimos.perception.pointcloud.utils import (
-    load_camera_matrix_from_yaml,
-    create_point_cloud_and_extract_masks,
-)
-from dimos.perception.pointcloud.cuboid_fit import fit_cuboid
 
 
 class PointcloudFiltering:
@@ -40,8 +37,8 @@ class PointcloudFiltering:
 
     def __init__(
         self,
-        color_intrinsics: Optional[Union[str, List[float], np.ndarray]] = None,
-        depth_intrinsics: Optional[Union[str, List[float], np.ndarray]] = None,
+        color_intrinsics: str | list[float] | np.ndarray | None = None,
+        depth_intrinsics: str | list[float] | np.ndarray | None = None,
         color_weight: float = 0.3,
         enable_statistical_filtering: bool = True,
         statistical_neighbors: int = 20,
@@ -55,7 +52,7 @@ class PointcloudFiltering:
         min_points_for_cuboid: int = 10,
         cuboid_method: str = "oriented",
         max_bbox_size_percent: float = 30.0,
-    ):
+    ) -> None:
         """
         Initialize the point cloud filtering pipeline.
 
@@ -117,13 +114,13 @@ class PointcloudFiltering:
         return color
 
     def _validate_inputs(
-        self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]
+        self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]
     ):
         """Validate input parameters."""
         if color_img.shape[:2] != depth_img.shape:
             raise ValueError("Color and depth image dimensions don't match")
 
-    def _prepare_masks(self, masks: List[np.ndarray], target_shape: tuple) -> List[np.ndarray]:
+    def _prepare_masks(self, masks: list[np.ndarray], target_shape: tuple) -> list[np.ndarray]:
         """Prepare and validate masks to match target shape."""
         processed_masks = []
         for mask in masks:
@@ -187,7 +184,7 @@ class PointcloudFiltering:
             return pcd.voxel_down_sample(self.voxel_size)
         return pcd
 
-    def _extract_masks_from_objects(self, objects: List[ObjectData]) -> List[np.ndarray]:
+    def _extract_masks_from_objects(self, objects: list[ObjectData]) -> list[np.ndarray]:
         """Extract segmentation masks from ObjectData objects."""
         return [obj["segmentation_mask"] for obj in objects]
 
@@ -196,8 +193,8 @@ class PointcloudFiltering:
         return self._apply_subsampling(self.full_pcd)
 
     def process_images(
-        self, color_img: np.ndarray, depth_img: np.ndarray, objects: List[ObjectData]
-    ) -> List[ObjectData]:
+        self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]
+    ) -> list[ObjectData]:
         """
         Process color and depth images with object detection results to create filtered point clouds.
 
@@ -276,7 +273,9 @@ class PointcloudFiltering:
         # Process each object and update ObjectData
         updated_objects = []
 
-        for i, (obj, mask, pcd) in enumerate(zip(objects, processed_masks, masked_pcds)):
+        for i, (obj, _mask, pcd) in enumerate(
+            zip(objects, processed_masks, masked_pcds, strict=False)
+        ):
             # Skip empty point clouds
             if len(np.asarray(pcd.points)) == 0:
                 continue
@@ -353,7 +352,7 @@ class PointcloudFiltering:
 
         return updated_objects
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

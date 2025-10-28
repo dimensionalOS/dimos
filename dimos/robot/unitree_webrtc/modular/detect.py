@@ -107,7 +107,7 @@ def broadcast(
     odom_frame: Odometry,
     detections,
     annotations,
-):
+) -> None:
     from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 
     from dimos.core import LCMTransport
@@ -167,7 +167,7 @@ def process_data():
     return data
 
 
-def main():
+def main() -> None:
     try:
         with open("filename.pkl", "rb") as file:
             data = pickle.load(file)

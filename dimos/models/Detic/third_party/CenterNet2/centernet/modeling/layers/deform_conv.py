@@ -1,7 +1,6 @@
+from detectron2.layers import Conv2d
 import torch
 from torch import nn
-
-from detectron2.layers import Conv2d
 
 
 class _NewEmptyTensorOp(torch.autograd.Function):
@@ -23,19 +22,19 @@ class DFConv2d(nn.Module):
         self,
         in_channels,
         out_channels,
-        with_modulated_dcn=True,
-        kernel_size=3,
-        stride=1,
-        groups=1,
-        dilation=1,
-        deformable_groups=1,
-        bias=False,
+        with_modulated_dcn: bool=True,
+        kernel_size: int=3,
+        stride: int=1,
+        groups: int=1,
+        dilation: int=1,
+        deformable_groups: int=1,
+        bias: bool=False,
         padding=None,
-    ):
-        super(DFConv2d, self).__init__()
-        if isinstance(kernel_size, (list, tuple)):
-            assert isinstance(stride, (list, tuple))
-            assert isinstance(dilation, (list, tuple))
+    ) -> None:
+        super().__init__()
+        if isinstance(kernel_size, list | tuple):
+            assert isinstance(stride, list | tuple)
+            assert isinstance(dilation, list | tuple)
             assert len(kernel_size) == 2
             assert len(stride) == 2
             assert len(dilation) == 2
@@ -91,7 +90,7 @@ class DFConv2d(nn.Module):
         self.dilation = dilation
         self.offset_split = offset_base_channels * deformable_groups * 2
 
-    def forward(self, x, return_offset=False):
+    def forward(self, x, return_offset: bool=False):
         if x.numel() > 0:
             if not self.with_modulated_dcn:
                 offset_mask = self.offset(x)
@@ -108,8 +107,8 @@ class DFConv2d(nn.Module):
         output_shape = [
             (i + 2 * p - (di * (k - 1) + 1)) // d + 1
             for i, p, di, k, d in zip(
-                x.shape[-2:], self.padding, self.dilation, self.kernel_size, self.stride
+                x.shape[-2:], self.padding, self.dilation, self.kernel_size, self.stride, strict=False
             )
         ]
-        output_shape = [x.shape[0], self.conv.weight.shape[0]] + output_shape
+        output_shape = [x.shape[0], self.conv.weight.shape[0], *output_shape]
         return _NewEmptyTensorOp.apply(x, output_shape)

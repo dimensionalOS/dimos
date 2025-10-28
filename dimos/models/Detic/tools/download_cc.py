@@ -1,9 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import os
-import json
 import argparse
-from PIL import Image
+import json
+import os
+
 import numpy as np
+from PIL import Image
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -13,7 +14,7 @@ if __name__ == "__main__":
     parser.add_argument("--out_path", default="datasets/cc3m/train_image_info.json")
     parser.add_argument("--not_download_image", action="store_true")
     args = parser.parse_args()
-    categories = json.load(open(args.cat_info, "r"))["categories"]
+    categories = json.load(open(args.cat_info))["categories"]
     images = []
     if not os.path.exists(args.save_image_path):
         os.makedirs(args.save_image_path)
@@ -22,16 +23,16 @@ if __name__ == "__main__":
         cap, path = line[:-1].split("\t")
         print(i, cap, path)
         if not args.not_download_image:
-            os.system("wget {} -O {}/{}.jpg".format(path, args.save_image_path, i + 1))
+            os.system(f"wget {path} -O {args.save_image_path}/{i + 1}.jpg")
         try:
-            img = Image.open(open("{}/{}.jpg".format(args.save_image_path, i + 1), "rb"))
+            img = Image.open(open(f"{args.save_image_path}/{i + 1}.jpg", "rb"))
             img = np.asarray(img.convert("RGB"))
             h, w = img.shape[:2]
         except:
             continue
         image_info = {
             "id": i + 1,
-            "file_name": "{}.jpg".format(i + 1),
+            "file_name": f"{i + 1}.jpg",
             "height": h,
             "width": w,
             "captions": [cap],

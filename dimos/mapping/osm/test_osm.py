@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import requests_mock
-import pytest
+from collections.abc import Generator
+from typing import Any
+
 import cv2
 import numpy as np
-from typing import Any, Generator
+import pytest
 from requests import Request
+import requests_mock
 
 from dimos.mapping.osm.osm import get_osm_map
 from dimos.mapping.types import LatLon
@@ -26,7 +28,7 @@ from dimos.utils.data import get_data
 _fixture_dir = get_data("osm_map_test")
 
 
-def _tile_callback(request: Request, context: Any) -> bytes:  # noqa: ANN401
+def _tile_callback(request: Request, context: Any) -> bytes:
     parts = (request.url or "").split("/")
     zoom, x, y_png = parts[-3], parts[-2], parts[-1]
     y = y_png.removesuffix(".png")

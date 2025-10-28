@@ -2,6 +2,7 @@
 import os
 
 from detectron2.data.datasets.lvis import get_lvis_instances_meta
+
 from .lvis_v1 import custom_register_lvis_instances
 
 _CUSTOM_SPLITS = {

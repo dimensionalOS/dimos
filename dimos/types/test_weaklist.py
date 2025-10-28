@@ -24,14 +24,14 @@ from dimos.types.weaklist import WeakList
 class SampleObject:
     """Simple test object."""
 
-    def __init__(self, value):
+    def __init__(self, value) -> None:
         self.value = value
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"SampleObject({self.value})"
 
 
-def test_weaklist_basic_operations():
+def test_weaklist_basic_operations() -> None:
     """Test basic append, iterate, and length operations."""
     wl = WeakList()
 
@@ -54,7 +54,7 @@ def test_weaklist_basic_operations():
     assert SampleObject(4) not in wl
 
 
-def test_weaklist_auto_removal():
+def test_weaklist_auto_removal() -> None:
     """Test that objects are automatically removed when garbage collected."""
     wl = WeakList()
 
@@ -77,7 +77,7 @@ def test_weaklist_auto_removal():
     assert list(wl) == [obj1, obj3]
 
 
-def test_weaklist_explicit_remove():
+def test_weaklist_explicit_remove() -> None:
     """Test explicit removal of objects."""
     wl = WeakList()
 
@@ -98,7 +98,7 @@ def test_weaklist_explicit_remove():
         wl.remove(SampleObject(3))
 
 
-def test_weaklist_indexing():
+def test_weaklist_indexing() -> None:
     """Test index access."""
     wl = WeakList()
 
@@ -119,7 +119,7 @@ def test_weaklist_indexing():
         _ = wl[3]
 
 
-def test_weaklist_clear():
+def test_weaklist_clear() -> None:
     """Test clearing the list."""
     wl = WeakList()
 
@@ -136,7 +136,7 @@ def test_weaklist_clear():
     assert obj1 not in wl
 
 
-def test_weaklist_iteration_during_modification():
+def test_weaklist_iteration_during_modification() -> None:
     """Test that iteration works even if objects are deleted during iteration."""
     wl = WeakList()
 

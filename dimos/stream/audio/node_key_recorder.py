@@ -13,17 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List
-import numpy as np
-import time
-import threading
-import sys
 import select
+import sys
+import threading
+import time
+
+import numpy as np
 from reactivex import Observable
-from reactivex.subject import Subject, ReplaySubject
+from reactivex.subject import ReplaySubject, Subject
 
 from dimos.stream.audio.base import AbstractAudioTransform, AudioEvent
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.audio.key_recorder")
@@ -39,7 +38,7 @@ class KeyRecorder(AbstractAudioTransform):
         self,
         max_recording_time: float = 120.0,
         always_subscribe: bool = False,
-    ):
+    ) -> None:
         """
         Initialize KeyRecorder.
 
@@ -113,7 +112,7 @@ class KeyRecorder(AbstractAudioTransform):
         """
         return self._recording_subject
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop recording and clean up resources."""
         logger.info("Stopping audio recorder")
 
@@ -131,7 +130,7 @@ class KeyRecorder(AbstractAudioTransform):
         if self._input_thread.is_alive():
             self._input_thread.join(1.0)
 
-    def _input_monitor(self):
+    def _input_monitor(self) -> None:
         """Monitor for key presses to toggle recording."""
         logger.info("Press Enter to start/stop recording...")
 
@@ -148,7 +147,7 @@ class KeyRecorder(AbstractAudioTransform):
             # Sleep a bit to reduce CPU usage
             time.sleep(0.1)
 
-    def _start_recording(self):
+    def _start_recording(self) -> None:
         """Start recording audio and subscribe to the audio source if not always subscribed."""
         if not self._audio_observable:
             logger.error("Cannot start recording: No audio source has been set")
@@ -168,7 +167,7 @@ class KeyRecorder(AbstractAudioTransform):
         self._audio_buffer = []
         logger.info("Recording... (press Enter to stop)")
 
-    def _stop_recording(self):
+    def _stop_recording(self) -> None:
         """Stop recording, unsubscribe from audio source if not always subscribed, and emit the combined audio event."""
         self._is_recording = False
         recording_duration = time.time() - self._recording_start_time
@@ -188,7 +187,7 @@ class KeyRecorder(AbstractAudioTransform):
         else:
             logger.warning("No audio was recorded")
 
-    def _process_audio_event(self, audio_event):
+    def _process_audio_event(self, audio_event) -> None:
         """Process incoming audio events."""
 
         # Only buffer if recording
@@ -212,7 +211,7 @@ class KeyRecorder(AbstractAudioTransform):
             logger.warning(f"Max recording time ({self.max_recording_time}s) reached")
             self._stop_recording()
 
-    def _combine_audio_events(self, audio_events: List[AudioEvent]) -> AudioEvent:
+    def _combine_audio_events(self, audio_events: list[AudioEvent]) -> AudioEvent:
         """Combine multiple audio events into a single event."""
         if not audio_events:
             logger.warning("Attempted to combine empty audio events list")
@@ -287,11 +286,11 @@ class KeyRecorder(AbstractAudioTransform):
             logger.warning("Failed to create valid combined audio event")
             return None
 
-    def _handle_error(self, error):
+    def _handle_error(self, error) -> None:
         """Handle errors from the observable."""
         logger.error(f"Error in audio observable: {error}")
 
-    def _handle_completion(self):
+    def _handle_completion(self) -> None:
         """Handle completion of the observable."""
         logger.info("Audio observable completed")
         self.stop()
@@ -301,9 +300,9 @@ if __name__ == "__main__":
     from dimos.stream.audio.node_microphone import (
         SounddeviceAudioSource,
     )
+    from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.utils import keepalive
 
     # Create microphone source, recorder, and audio output

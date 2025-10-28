@@ -20,31 +20,32 @@ for Cerebras inference API using the official Cerebras Python SDK.
 
 from __future__ import annotations
 
+import copy
+import json
 import os
 import threading
-import copy
-from typing import Any, Dict, List, Optional, Union, Tuple
-import logging
-import json
-import re
 import time
+from typing import TYPE_CHECKING
 
 from cerebras.cloud.sdk import Cerebras
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from reactivex import Observable
-from reactivex.observer import Observer
-from reactivex.scheduler import ThreadPoolScheduler
 
 # Local imports
 from dimos.agents.agent import LLMAgent
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.base import AbstractTokenizer
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-from dimos.stream.frame_processor import FrameProcessor
-from dimos.utils.logging_config import setup_logger
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
+from dimos.skills.skills import AbstractSkill, SkillLibrary
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+    from reactivex import Observable
+    from reactivex.observer import Observer
+    from reactivex.scheduler import ThreadPoolScheduler
+
+    from dimos.agents.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents.tokenizer.base import AbstractTokenizer
+    from dimos.stream.frame_processor import FrameProcessor
 
 # Initialize environment variables
 load_dotenv()
@@ -57,9 +58,9 @@ logger = setup_logger("dimos.agents.cerebras")
 class CerebrasResponseMessage(dict):
     def __init__(
         self,
-        content="",
+        content: str = "",
         tool_calls=None,
-    ):
+    ) -> None:
         self.content = content
         self.tool_calls = tool_calls or []
         self.parsed = None
@@ -67,7 +68,7 @@ class CerebrasResponseMessage(dict):
         # Initialize as dict with the proper structure
         super().__init__(self.to_dict())
 
-    def __str__(self):
+    def __str__(self) -> str:
         # Return a string representation for logging
         if self.content:
             return self.content
@@ -115,24 +116,24 @@ class CerebrasAgent(LLMAgent):
         dev_name: str,
         agent_type: str = "Vision",
         query: str = "What do you see?",
-        input_query_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
-        input_data_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
+        input_data_stream: Observable | None = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        system_query: Optional[str] = None,
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        system_query: str | None = None,
         max_input_tokens_per_request: int = 128000,
         max_output_tokens_per_request: int = 16384,
         model_name: str = "llama-4-scout-17b-16e-instruct",
-        skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
-        response_model: Optional[BaseModel] = None,
-        frame_processor: Optional[FrameProcessor] = None,
+        skills: AbstractSkill | list[AbstractSkill] | SkillLibrary | None = None,
+        response_model: BaseModel | None = None,
+        frame_processor: FrameProcessor | None = None,
         image_detail: str = "low",
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-        process_all_inputs: Optional[bool] = None,
-        tokenizer: Optional[AbstractTokenizer] = None,
-        prompt_builder: Optional[PromptBuilder] = None,
-    ):
+        pool_scheduler: ThreadPoolScheduler | None = None,
+        process_all_inputs: bool | None = None,
+        tokenizer: AbstractTokenizer | None = None,
+        prompt_builder: PromptBuilder | None = None,
+    ) -> None:
         """
         Initializes a new instance of the CerebrasAgent.
 
@@ -229,7 +230,7 @@ class CerebrasAgent(LLMAgent):
 
         logger.info("Cerebras Agent Initialized.")
 
-    def _add_context_to_memory(self):
+    def _add_context_to_memory(self) -> None:
         """Adds initial context to the agent's memory."""
         context_data = [
             (
@@ -256,8 +257,8 @@ class CerebrasAgent(LLMAgent):
     def _build_prompt(
         self,
         messages: list,
-        base64_image: Optional[Union[str, List[str]]] = None,
-        dimensions: Optional[Tuple[int, int]] = None,
+        base64_image: str | list[str] | None = None,
+        dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
         condensed_results: str = "",
     ) -> list:
@@ -405,7 +406,11 @@ class CerebrasAgent(LLMAgent):
         return cleaned
 
     def create_tool_call(
-        self, name: str = None, arguments: dict = None, call_id: str = None, content: str = None
+        self,
+        name: str | None = None,
+        arguments: dict | None = None,
+        call_id: str | None = None,
+        content: str | None = None,
     ):
         """Create a tool call object from either direct parameters or JSON content."""
         # If content is provided, parse it as JSON
@@ -520,10 +525,10 @@ class CerebrasAgent(LLMAgent):
     def _observable_query(
         self,
         observer: Observer,
-        base64_image: Optional[str] = None,
-        dimensions: Optional[Tuple[int, int]] = None,
+        base64_image: str | None = None,
+        dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
-        incoming_query: Optional[str] = None,
+        incoming_query: str | None = None,
         reset_conversation: bool = False,
     ):
         """Main query handler that manages conversation history and Cerebras interactions.

@@ -16,7 +16,7 @@ import pytest
 
 
 @pytest.mark.skip
-def test_to_foxglove_scene_update(detections3dpc):
+def test_to_foxglove_scene_update(detections3dpc) -> None:
     # Convert to scene update
     scene_update = detections3dpc.to_foxglove_scene_update()
 
@@ -28,7 +28,9 @@ def test_to_foxglove_scene_update(detections3dpc):
     assert len(scene_update.entities) == len(detections3dpc.detections)
 
     # Verify each entity corresponds to a detection
-    for i, (entity, detection) in enumerate(zip(scene_update.entities, detections3dpc.detections)):
+    for _i, (entity, detection) in enumerate(
+        zip(scene_update.entities, detections3dpc.detections, strict=False)
+    ):
         assert entity.id == str(detection.track_id)
         assert entity.frame_id == detection.frame_id
         assert entity.cubes_length == 1

@@ -23,21 +23,24 @@ from __future__ import annotations
 
 import json
 import os
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any
 
 import anthropic
 from dotenv import load_dotenv
-from pydantic import BaseModel
-from reactivex import Observable
-from reactivex.scheduler import ThreadPoolScheduler
 
 # Local imports
 from dimos.agents.agent import LLMAgent
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
-from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from pydantic import BaseModel
+    from reactivex import Observable
+    from reactivex.scheduler import ThreadPoolScheduler
+
+    from dimos.agents.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents.prompt_builder.impl import PromptBuilder
 
 # Initialize environment variables
 load_dotenv()
@@ -48,13 +51,13 @@ logger = setup_logger("dimos.agents.claude")
 
 # Response object compatible with LLMAgent
 class ResponseMessage:
-    def __init__(self, content="", tool_calls=None, thinking_blocks=None):
+    def __init__(self, content: str = "", tool_calls=None, thinking_blocks=None) -> None:
         self.content = content
         self.tool_calls = tool_calls or []
         self.thinking_blocks = thinking_blocks or []
         self.parsed = None
 
-    def __str__(self):
+    def __str__(self) -> str:
         # Return a string representation for logging
         parts = []
 
@@ -82,26 +85,26 @@ class ClaudeAgent(LLMAgent):
         dev_name: str,
         agent_type: str = "Vision",
         query: str = "What do you see?",
-        input_query_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
-        input_data_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
+        input_data_stream: Observable | None = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        system_query: Optional[str] = None,
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        system_query: str | None = None,
         max_input_tokens_per_request: int = 128000,
         max_output_tokens_per_request: int = 16384,
         model_name: str = "claude-3-7-sonnet-20250219",
-        prompt_builder: Optional[PromptBuilder] = None,
+        prompt_builder: PromptBuilder | None = None,
         rag_query_n: int = 4,
         rag_similarity_threshold: float = 0.45,
-        skills: Optional[AbstractSkill] = None,
-        response_model: Optional[BaseModel] = None,
-        frame_processor: Optional[FrameProcessor] = None,
+        skills: AbstractSkill | None = None,
+        response_model: BaseModel | None = None,
+        frame_processor: FrameProcessor | None = None,
         image_detail: str = "low",
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-        process_all_inputs: Optional[bool] = None,
-        thinking_budget_tokens: Optional[int] = 2000,
-    ):
+        pool_scheduler: ThreadPoolScheduler | None = None,
+        process_all_inputs: bool | None = None,
+        thinking_budget_tokens: int | None = 2000,
+    ) -> None:
         """
         Initializes a new instance of the ClaudeAgent.
 
@@ -192,7 +195,7 @@ class ClaudeAgent(LLMAgent):
 
         logger.info("Claude Agent Initialized.")
 
-    def _add_context_to_memory(self):
+    def _add_context_to_memory(self) -> None:
         """Adds initial context to the agent's memory."""
         context_data = [
             (
@@ -216,7 +219,7 @@ class ClaudeAgent(LLMAgent):
         for doc_id, text in context_data:
             self.agent_memory.add_vector(doc_id, text)
 
-    def _convert_tools_to_claude_format(self, tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _convert_tools_to_claude_format(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """
         Converts DIMOS tools to Claude format.
 
@@ -258,11 +261,11 @@ class ClaudeAgent(LLMAgent):
     def _build_prompt(
         self,
         messages: list,
-        base64_image: Optional[Union[str, List[str]]] = None,
-        dimensions: Optional[Tuple[int, int]] = None,
+        base64_image: str | list[str] | None = None,
+        dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
         rag_results: str = "",
-        thinking_budget_tokens: int = None,
+        thinking_budget_tokens: int | None = None,
     ) -> list:
         """Builds a prompt message specifically for Claude API, using local messages copy."""
         """Builds a prompt message specifically for Claude API.
@@ -535,13 +538,13 @@ class ClaudeAgent(LLMAgent):
     def _observable_query(
         self,
         observer: Observer,
-        base64_image: Optional[str] = None,
-        dimensions: Optional[Tuple[int, int]] = None,
+        base64_image: str | None = None,
+        dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
-        incoming_query: Optional[str] = None,
+        incoming_query: str | None = None,
         reset_conversation: bool = False,
-        thinking_budget_tokens: int = None,
-    ):
+        thinking_budget_tokens: int | None = None,
+    ) -> None:
         """Main query handler that manages conversation history and Claude interactions.
 
         This is the primary method for handling all queries, whether they come through
@@ -695,7 +698,7 @@ class ClaudeAgent(LLMAgent):
                     }
                 )
 
-    def _tooling_callback(self, response_message):
+    def _tooling_callback(self, response_message) -> None:
         """Runs the observable query for each tool call in the current response_message"""
         if not hasattr(response_message, "tool_calls") or not response_message.tool_calls:
             return

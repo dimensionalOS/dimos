@@ -5,14 +5,13 @@
 # Depending on how you launch the trainer, there are issues with processes terminating correctly
 # This module is still dependent on D2 logging, but could be transferred to use Lightning logging
 
+from collections import OrderedDict
 import logging
 import os
 import time
-import weakref
-from collections import OrderedDict
 from typing import Any, Dict, List
+import weakref
 
-import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import build_detection_test_loader, build_detection_train_loader
@@ -28,9 +27,9 @@ from detectron2.evaluation import print_csv_format
 from detectron2.evaluation.testing import flatten_results_dict
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
+import detectron2.utils.comm as comm
 from detectron2.utils.events import EventStorage
 from detectron2.utils.logger import setup_logger
-
 import pytorch_lightning as pl  # type: ignore
 from pytorch_lightning import LightningDataModule, LightningModule
 from train_net import build_evaluator
@@ -40,7 +39,7 @@ logger = logging.getLogger("detectron2")
 
 
 class TrainingModule(LightningModule):
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         if not logger.isEnabledFor(logging.INFO):  # setup_logger is not called for d2
             setup_logger()
@@ -51,14 +50,14 @@ class TrainingModule(LightningModule):
         self.start_iter = 0
         self.max_iter = cfg.SOLVER.MAX_ITER
 
-    def on_save_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+    def on_save_checkpoint(self, checkpoint: dict[str, Any]) -> None:
         checkpoint["iteration"] = self.storage.iter
 
-    def on_load_checkpoint(self, checkpointed_state: Dict[str, Any]) -> None:
+    def on_load_checkpoint(self, checkpointed_state: dict[str, Any]) -> None:
         self.start_iter = checkpointed_state["iteration"]
         self.storage.iter = self.start_iter
 
-    def setup(self, stage: str):
+    def setup(self, stage: str) -> None:
         if self.cfg.MODEL.WEIGHTS:
             self.checkpointer = DetectionCheckpointer(
                 # Assume you want to save checkpoints together with logs/statistics
@@ -110,7 +109,7 @@ class TrainingModule(LightningModule):
         self.data_start = time.perf_counter()
         return training_step_outpus
 
-    def training_epoch_end(self, training_step_outputs):
+    def training_epoch_end(self, training_step_outputs) -> None:
         self.iteration_timer.after_train()
         if comm.is_main_process():
             self.checkpointer.save("model_final")
@@ -127,17 +126,17 @@ class TrainingModule(LightningModule):
                 print_csv_format(results[dataset_name])
 
         if len(results) == 1:
-            results = list(results.values())[0]
+            results = next(iter(results.values()))
         return results
 
-    def _reset_dataset_evaluators(self):
+    def _reset_dataset_evaluators(self) -> None:
         self._evaluators = []
         for dataset_name in self.cfg.DATASETS.TEST:
             evaluator = build_evaluator(self.cfg, dataset_name)
             evaluator.reset()
             self._evaluators.append(evaluator)
 
-    def on_validation_epoch_start(self, _outputs):
+    def on_validation_epoch_start(self, _outputs) -> None:
         self._reset_dataset_evaluators()
 
     def validation_epoch_end(self, _outputs):
@@ -149,14 +148,12 @@ class TrainingModule(LightningModule):
                 v = float(v)
             except Exception as e:
                 raise ValueError(
-                    "[EvalHook] eval_function should return a nested dict of float. Got '{}: {}' instead.".format(
-                        k, v
-                    )
+                    f"[EvalHook] eval_function should return a nested dict of float. Got '{k}: {v}' instead."
                 ) from e
         self.storage.put_scalars(**flattened_results, smoothing_hint=False)
 
     def validation_step(self, batch, batch_idx: int, dataloader_idx: int = 0) -> None:
-        if not isinstance(batch, List):
+        if not isinstance(batch, list):
             batch = [batch]
         outputs = self.model(batch)
         self._evaluators[dataloader_idx].process(batch, outputs)
@@ -169,7 +166,7 @@ class TrainingModule(LightningModule):
 
 
 class DataModule(LightningDataModule):
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.cfg = DefaultTrainer.auto_scale_workers(cfg, comm.get_world_size())
 
@@ -183,12 +180,12 @@ class DataModule(LightningDataModule):
         return dataloaders
 
 
-def main(args):
+def main(args) -> None:
     cfg = setup(args)
     train(cfg, args)
 
 
-def train(cfg, args):
+def train(cfg, args) -> None:
     trainer_params = {
         # training loop is bounded by max steps, use a large max_epochs to make
         # sure max_steps is met first

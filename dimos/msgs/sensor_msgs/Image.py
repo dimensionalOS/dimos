@@ -15,30 +15,34 @@
 from __future__ import annotations
 
 import base64
-import functools
 import time
-from typing import Literal, Optional, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import cv2
-import numpy as np
-import reactivex as rx
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
+import numpy as np
+import reactivex as rx
 from reactivex import operators as ops
-from reactivex.observable import Observable
 from turbojpeg import TurboJPEG
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     HAS_CUDA,
     HAS_NVIMGCODEC,
     NVIMGCODEC_LAST_USED,
-    AbstractImage,
     ImageFormat,
 )
 from dimos.msgs.sensor_msgs.image_impls.CudaImage import CudaImage
 from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to_human_readable
 from dimos.utils.reactive import quality_barrier
+
+if TYPE_CHECKING:
+    from reactivex.observable import Observable
+
+    from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
+        AbstractImage,
+    )
 
 try:
     import cupy as cp  # type: ignore
@@ -71,7 +75,7 @@ class Image(Timestamped):
         format: ImageFormat | None = None,
         frame_id: str | None = None,
         ts: float | None = None,
-    ):
+    ) -> None:
         """Construct an Image facade.
 
         Usage:
@@ -121,7 +125,7 @@ class Image(Timestamped):
         )
 
     @classmethod
-    def from_impl(cls, impl: AbstractImage) -> "Image":
+    def from_impl(cls, impl: AbstractImage) -> Image:
         return cls(impl)
 
     @classmethod
@@ -131,7 +135,7 @@ class Image(Timestamped):
         format: ImageFormat = ImageFormat.BGR,
         to_cuda: bool = False,
         **kwargs,
-    ) -> "Image":
+    ) -> Image:
         if kwargs.pop("to_gpu", False):
             to_cuda = True
         if to_cuda and HAS_CUDA:
@@ -155,7 +159,7 @@ class Image(Timestamped):
     @classmethod
     def from_file(
         cls, filepath: str, format: ImageFormat = ImageFormat.RGB, to_cuda: bool = False, **kwargs
-    ) -> "Image":
+    ) -> Image:
         if kwargs.pop("to_gpu", False):
             to_cuda = True
         arr = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
@@ -174,7 +178,7 @@ class Image(Timestamped):
     @classmethod
     def from_opencv(
         cls, cv_image: np.ndarray, format: ImageFormat = ImageFormat.BGR, **kwargs
-    ) -> "Image":
+    ) -> Image:
         """Construct from an OpenCV image (NumPy array)."""
         return cls(
             NumpyImage(cv_image, format, kwargs.get("frame_id", ""), kwargs.get("ts", time.time()))
@@ -182,8 +186,8 @@ class Image(Timestamped):
 
     @classmethod
     def from_depth(
-        cls, depth_data, frame_id: str = "", ts: float = None, to_cuda: bool = False
-    ) -> "Image":
+        cls, depth_data, frame_id: str = "", ts: float | None = None, to_cuda: bool = False
+    ) -> Image:
         arr = np.asarray(depth_data)
         if arr.dtype != np.float32:
             arr = arr.astype(np.float32)
@@ -267,10 +271,10 @@ class Image(Timestamped):
     def dtype(self):
         return self._impl.dtype
 
-    def copy(self) -> "Image":
+    def copy(self) -> Image:
         return Image(self._impl.copy())
 
-    def to_cpu(self) -> "Image":
+    def to_cpu(self) -> Image:
         if isinstance(self._impl, NumpyImage):
             return self.copy()
 
@@ -285,7 +289,7 @@ class Image(Timestamped):
             )
         )
 
-    def to_cupy(self) -> "Image":
+    def to_cupy(self) -> Image:
         if isinstance(self._impl, CudaImage):
             return self.copy()
         return Image(
@@ -297,19 +301,19 @@ class Image(Timestamped):
     def to_opencv(self) -> np.ndarray:
         return self._impl.to_opencv()
 
-    def to_rgb(self) -> "Image":
+    def to_rgb(self) -> Image:
         return Image(self._impl.to_rgb())
 
-    def to_bgr(self) -> "Image":
+    def to_bgr(self) -> Image:
         return Image(self._impl.to_bgr())
 
-    def to_grayscale(self) -> "Image":
+    def to_grayscale(self) -> Image:
         return Image(self._impl.to_grayscale())
 
-    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "Image":
+    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
         return Image(self._impl.resize(width, height, interpolation))
 
-    def crop(self, x: int, y: int, width: int, height: int) -> "Image":
+    def crop(self, x: int, y: int, width: int, height: int) -> Image:
         return Image(self._impl.crop(x, y, width, height))
 
     @property
@@ -324,8 +328,8 @@ class Image(Timestamped):
         self,
         quality: int = 80,
         *,
-        max_width: Optional[int] = None,
-        max_height: Optional[int] = None,
+        max_width: int | None = None,
+        max_height: int | None = None,
     ) -> str:
         """Encode the image as a base64 JPEG string.
 
@@ -347,8 +351,8 @@ class Image(Timestamped):
             scale = min(scale, max_height / height)
 
         if scale < 1.0:
-            new_width = max(1, int(round(width * scale)))
-            new_height = max(1, int(round(height * scale)))
+            new_width = max(1, round(width * scale))
+            new_height = max(1, round(height * scale))
             bgr_image = cv2.resize(bgr_image, (new_width, new_height), interpolation=cv2.INTER_AREA)
 
         encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), int(np.clip(quality, 0, 100))]
@@ -367,7 +371,7 @@ class Image(Timestamped):
         ]
 
     # LCM encode/decode
-    def lcm_encode(self, frame_id: Optional[str] = None) -> bytes:
+    def lcm_encode(self, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message."""
         msg = LCMImage()
 
@@ -403,7 +407,7 @@ class Image(Timestamped):
         return msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes, **kwargs) -> "Image":
+    def lcm_decode(cls, data: bytes, **kwargs) -> Image:
         msg = LCMImage.lcm_decode(data)
         fmt, dtype, channels = _parse_lcm_encoding(msg.encoding)
         arr = np.frombuffer(msg.data, dtype=dtype)
@@ -472,7 +476,7 @@ class Image(Timestamped):
         return msg.lcm_encode()
 
     @classmethod
-    def lcm_jpeg_decode(cls, data: bytes, **kwargs) -> "Image":
+    def lcm_jpeg_decode(cls, data: bytes, **kwargs) -> Image:
         """Decode an LCM Image message with JPEG-compressed data.
 
         Args:
@@ -522,7 +526,7 @@ class Image(Timestamped):
         return self._impl.csrt_update(*args, **kwargs)  # type: ignore
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSImage) -> "Image":
+    def from_ros_msg(cls, ros_msg: ROSImage) -> Image:
         """Create an Image from a ROS sensor_msgs/Image message.
 
         Args:
@@ -626,7 +630,7 @@ class Image(Timestamped):
     def __getstate__(self):
         return {"data": self.data, "format": self.format, "frame_id": self.frame_id, "ts": self.ts}
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         self.__init__(
             data=state.get("data"),
             format=state.get("format"),
@@ -642,11 +646,11 @@ NVIMGCODEC_LAST_USED = NVIMGCODEC_LAST_USED
 HAS_NVIMGCODEC = HAS_NVIMGCODEC
 __all__ = [
     "HAS_CUDA",
-    "ImageFormat",
-    "NVIMGCODEC_LAST_USED",
     "HAS_NVIMGCODEC",
-    "sharpness_window",
+    "NVIMGCODEC_LAST_USED",
+    "ImageFormat",
     "sharpness_barrier",
+    "sharpness_window",
 ]
 
 

@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from abc import abstractmethod
-from typing import List
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation, TextAnnotation
 from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
@@ -37,12 +36,12 @@ class Detection2D(Timestamped):
         ...
 
     @abstractmethod
-    def to_text_annotation(self) -> List[TextAnnotation]:
+    def to_text_annotation(self) -> list[TextAnnotation]:
         """Return text annotations for visualization."""
         ...
 
     @abstractmethod
-    def to_points_annotation(self) -> List[PointsAnnotation]:
+    def to_points_annotation(self) -> list[PointsAnnotation]:
         """Return points/shape annotations for visualization."""
         ...
 

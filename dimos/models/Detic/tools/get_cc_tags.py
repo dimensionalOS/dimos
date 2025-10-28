@@ -1,7 +1,8 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
-import json
 from collections import defaultdict
+import json
+
 from detectron2.data.datasets.lvis_v1_categories import LVIS_CATEGORIES
 
 # This mapping is extracted from the official LVIS mapping:
@@ -110,7 +111,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # lvis_data = json.load(open(args.lvis_ann, 'r'))
-    cc_data = json.load(open(args.cc_ann, "r"))
+    cc_data = json.load(open(args.cc_ann))
     if args.convert_caption:
         num_caps = 0
         caps = defaultdict(list)

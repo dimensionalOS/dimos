@@ -44,7 +44,7 @@ def test_image():
 
 
 @pytest.mark.gpu
-def test_update_embedding_single(track_associator, mobileclip_model, test_image):
+def test_update_embedding_single(track_associator, mobileclip_model, test_image) -> None:
     """Test updating embedding for a single track."""
     embedding = mobileclip_model.embed(test_image)
 
@@ -63,7 +63,7 @@ def test_update_embedding_single(track_associator, mobileclip_model, test_image)
 
 
 @pytest.mark.gpu
-def test_update_embedding_running_average(track_associator, mobileclip_model, test_image):
+def test_update_embedding_running_average(track_associator, mobileclip_model, test_image) -> None:
     """Test running average of embeddings."""
     embedding1 = mobileclip_model.embed(test_image)
     embedding2 = mobileclip_model.embed(test_image)
@@ -88,7 +88,7 @@ def test_update_embedding_running_average(track_associator, mobileclip_model, te
 
 
 @pytest.mark.gpu
-def test_negative_constraints(track_associator):
+def test_negative_constraints(track_associator) -> None:
     """Test negative constraint recording."""
     # Simulate frame with 3 tracks
     track_ids = [1, 2, 3]
@@ -104,7 +104,7 @@ def test_negative_constraints(track_associator):
 
 
 @pytest.mark.gpu
-def test_associate_new_track(track_associator, mobileclip_model, test_image):
+def test_associate_new_track(track_associator, mobileclip_model, test_image) -> None:
     """Test associating a new track creates new long_term_id."""
     embedding = mobileclip_model.embed(test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding)
@@ -118,7 +118,7 @@ def test_associate_new_track(track_associator, mobileclip_model, test_image):
 
 
 @pytest.mark.gpu
-def test_associate_similar_tracks(track_associator, mobileclip_model, test_image):
+def test_associate_similar_tracks(track_associator, mobileclip_model, test_image) -> None:
     """Test associating similar tracks to same long_term_id."""
     # Create embeddings from same image (should be very similar)
     embedding1 = mobileclip_model.embed(test_image)
@@ -138,7 +138,7 @@ def test_associate_similar_tracks(track_associator, mobileclip_model, test_image
 
 
 @pytest.mark.gpu
-def test_associate_with_negative_constraint(track_associator, mobileclip_model, test_image):
+def test_associate_with_negative_constraint(track_associator, mobileclip_model, test_image) -> None:
     """Test that negative constraints prevent association."""
     # Create similar embeddings
     embedding1 = mobileclip_model.embed(test_image)
@@ -163,7 +163,7 @@ def test_associate_with_negative_constraint(track_associator, mobileclip_model, 
 
 
 @pytest.mark.gpu
-def test_associate_different_objects(track_associator, mobileclip_model, test_image):
+def test_associate_different_objects(track_associator, mobileclip_model, test_image) -> None:
     """Test that dissimilar embeddings get different long_term_ids."""
     # Create embeddings for image and text (very different)
     image_emb = mobileclip_model.embed(test_image)
@@ -183,7 +183,7 @@ def test_associate_different_objects(track_associator, mobileclip_model, test_im
 
 
 @pytest.mark.gpu
-def test_associate_returns_cached(track_associator, mobileclip_model, test_image):
+def test_associate_returns_cached(track_associator, mobileclip_model, test_image) -> None:
     """Test that repeated calls return same long_term_id."""
     embedding = mobileclip_model.embed(test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding)
@@ -199,14 +199,14 @@ def test_associate_returns_cached(track_associator, mobileclip_model, test_image
 
 
 @pytest.mark.gpu
-def test_associate_not_ready(track_associator):
+def test_associate_not_ready(track_associator) -> None:
     """Test that associate returns -1 for track without embedding."""
     long_term_id = track_associator.associate(track_id=999)
     assert long_term_id == -1, "Should return -1 for track without embedding"
 
 
 @pytest.mark.gpu
-def test_gpu_performance(track_associator, mobileclip_model, test_image):
+def test_gpu_performance(track_associator, mobileclip_model, test_image) -> None:
     """Test that embeddings stay on GPU for performance."""
     embedding = mobileclip_model.embed(test_image)
     track_associator.update_embedding(track_id=1, new_embedding=embedding)
@@ -227,7 +227,7 @@ def test_gpu_performance(track_associator, mobileclip_model, test_image):
 
 
 @pytest.mark.gpu
-def test_similarity_threshold_configurable(mobileclip_model):
+def test_similarity_threshold_configurable(mobileclip_model) -> None:
     """Test that similarity threshold is configurable."""
     associator_strict = EmbeddingIDSystem(model=lambda: mobileclip_model, similarity_threshold=0.95)
     associator_loose = EmbeddingIDSystem(model=lambda: mobileclip_model, similarity_threshold=0.50)
@@ -237,7 +237,7 @@ def test_similarity_threshold_configurable(mobileclip_model):
 
 
 @pytest.mark.gpu
-def test_multi_track_scenario(track_associator, mobileclip_model, test_image):
+def test_multi_track_scenario(track_associator, mobileclip_model, test_image) -> None:
     """Test realistic scenario with multiple tracks across frames."""
     # Frame 1: Track 1 appears
     emb1 = mobileclip_model.embed(test_image)

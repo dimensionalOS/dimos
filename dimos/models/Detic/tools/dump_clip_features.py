@@ -1,10 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
-import json
-import torch
-import numpy as np
 import itertools
+import json
+
 from nltk.corpus import wordnet
+import numpy as np
+import torch
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -20,7 +21,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading", args.ann)
-    data = json.load(open(args.ann, "r"))
+    data = json.load(open(args.ann))
     cat_names = [x["name"] for x in sorted(data["categories"], key=lambda x: x["id"])]
     if "synonyms" in data["categories"][0]:
         if args.use_wn_name:
@@ -48,12 +49,12 @@ if __name__ == "__main__":
         sentences = [x for x in cat_names]
         sentences_synonyms = [[xx for xx in x] for x in synonyms]
     elif args.prompt == "photo":
-        sentences = ["a photo of a {}".format(x) for x in cat_names]
-        sentences_synonyms = [["a photo of a {}".format(xx) for xx in x] for x in synonyms]
+        sentences = [f"a photo of a {x}" for x in cat_names]
+        sentences_synonyms = [[f"a photo of a {xx}" for xx in x] for x in synonyms]
     elif args.prompt == "scene":
-        sentences = ["a photo of a {} in the scene".format(x) for x in cat_names]
+        sentences = [f"a photo of a {x} in the scene" for x in cat_names]
         sentences_synonyms = [
-            ["a photo of a {} in the scene".format(xx) for xx in x] for x in synonyms
+            [f"a photo of a {xx} in the scene" for xx in x] for x in synonyms
         ]
 
     print("sentences_synonyms", len(sentences_synonyms), sum(len(x) for x in sentences_synonyms))
@@ -86,7 +87,7 @@ if __name__ == "__main__":
             print("after stack", text_features.shape)
         text_features = text_features.cpu().numpy()
     elif args.model in ["bert", "roberta"]:
-        from transformers import AutoTokenizer, AutoModel
+        from transformers import AutoModel, AutoTokenizer
 
         if args.model == "bert":
             model_name = "bert-large-uncased"

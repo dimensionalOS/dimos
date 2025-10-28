@@ -15,73 +15,73 @@
 from dimos.protocol.skill.utils import interpret_tool_call_args
 
 
-def test_list():
+def test_list() -> None:
     args, kwargs = interpret_tool_call_args([1, 2, 3])
     assert args == [1, 2, 3]
     assert kwargs == {}
 
 
-def test_none():
+def test_none() -> None:
     args, kwargs = interpret_tool_call_args(None)
     assert args == []
     assert kwargs == {}
 
 
-def test_none_nested():
+def test_none_nested() -> None:
     args, kwargs = interpret_tool_call_args({"args": None})
     assert args == []
     assert kwargs == {}
 
 
-def test_non_dict():
+def test_non_dict() -> None:
     args, kwargs = interpret_tool_call_args("test")
     assert args == ["test"]
     assert kwargs == {}
 
 
-def test_dict_with_args_and_kwargs():
+def test_dict_with_args_and_kwargs() -> None:
     args, kwargs = interpret_tool_call_args({"args": [1, 2], "kwargs": {"key": "value"}})
     assert args == [1, 2]
     assert kwargs == {"key": "value"}
 
 
-def test_dict_with_only_kwargs():
+def test_dict_with_only_kwargs() -> None:
     args, kwargs = interpret_tool_call_args({"kwargs": {"a": 1, "b": 2}})
     assert args == []
     assert kwargs == {"a": 1, "b": 2}
 
 
-def test_dict_as_kwargs():
+def test_dict_as_kwargs() -> None:
     args, kwargs = interpret_tool_call_args({"x": 10, "y": 20})
     assert args == []
     assert kwargs == {"x": 10, "y": 20}
 
 
-def test_dict_with_only_args_first_pass():
+def test_dict_with_only_args_first_pass() -> None:
     args, kwargs = interpret_tool_call_args({"args": [5, 6, 7]})
     assert args == [5, 6, 7]
     assert kwargs == {}
 
 
-def test_dict_with_only_args_nested():
+def test_dict_with_only_args_nested() -> None:
     args, kwargs = interpret_tool_call_args({"args": {"inner": "value"}})
     assert args == []
     assert kwargs == {"inner": "value"}
 
 
-def test_empty_list():
+def test_empty_list() -> None:
     args, kwargs = interpret_tool_call_args([])
     assert args == []
     assert kwargs == {}
 
 
-def test_empty_dict():
+def test_empty_dict() -> None:
     args, kwargs = interpret_tool_call_args({})
     assert args == []
     assert kwargs == {}
 
 
-def test_integer():
+def test_integer() -> None:
     args, kwargs = interpret_tool_call_args(42)
     assert args == [42]
     assert kwargs == {}

@@ -20,20 +20,21 @@ locations based on natural language queries, then executes the manipulation.
 """
 
 import json
-import cv2
 import os
-from typing import Optional, Tuple, Dict, Any
+from typing import Any
+
+import cv2
 import numpy as np
 from pydantic import Field
 
-from dimos.skills.skills import AbstractRobotSkill
 from dimos.models.qwen.video_query import query_single_frame
+from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.skills.manipulation.pick_and_place")
 
 
-def parse_qwen_points_response(response: str) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+def parse_qwen_points_response(response: str) -> tuple[tuple[int, int], tuple[int, int]] | None:
     """
     Parse Qwen's response containing two points.
 
@@ -59,9 +60,9 @@ def parse_qwen_points_response(response: str) -> Optional[Tuple[Tuple[int, int],
 
                 # Validate points have x,y coordinates
                 if (
-                    isinstance(pick, (list, tuple))
+                    isinstance(pick, list | tuple)
                     and len(pick) >= 2
-                    and isinstance(place, (list, tuple))
+                    and isinstance(place, list | tuple)
                     and len(place) >= 2
                 ):
                     return (int(pick[0]), int(pick[1])), (int(place[0]), int(place[1]))
@@ -75,8 +76,8 @@ def parse_qwen_points_response(response: str) -> Optional[Tuple[Tuple[int, int],
 
 def save_debug_image_with_points(
     image: np.ndarray,
-    pick_point: Optional[Tuple[int, int]] = None,
-    place_point: Optional[Tuple[int, int]] = None,
+    pick_point: tuple[int, int] | None = None,
+    place_point: tuple[int, int] | None = None,
     filename_prefix: str = "qwen_debug",
 ) -> str:
     """
@@ -133,7 +134,7 @@ def save_debug_image_with_points(
     return filepath
 
 
-def parse_qwen_single_point_response(response: str) -> Optional[Tuple[int, int]]:
+def parse_qwen_single_point_response(response: str) -> tuple[int, int] | None:
     """
     Parse Qwen's response containing a single point.
 
@@ -160,7 +161,7 @@ def parse_qwen_single_point_response(response: str) -> Optional[Tuple[int, int]]
                     break
 
             # Validate point has x,y coordinates
-            if point and isinstance(point, (list, tuple)) and len(point) >= 2:
+            if point and isinstance(point, list | tuple) and len(point) >= 2:
                 return int(point[0]), int(point[1])
 
     except Exception as e:
@@ -195,7 +196,7 @@ class PickAndPlace(AbstractRobotSkill):
         description="Natural language description of the object to pick (e.g., 'red mug', 'small box')",
     )
 
-    target_query: Optional[str] = Field(
+    target_query: str | None = Field(
         None,
         description="Natural language description of where to place the object (e.g., 'on the table', 'in the basket'). If not provided, only pick operation will be performed.",
     )
@@ -204,7 +205,7 @@ class PickAndPlace(AbstractRobotSkill):
         "qwen2.5-vl-72b-instruct", description="Qwen model to use for visual queries"
     )
 
-    def __init__(self, robot=None, **data):
+    def __init__(self, robot=None, **data) -> None:
         """
         Initialize the PickAndPlace skill.
 
@@ -214,7 +215,7 @@ class PickAndPlace(AbstractRobotSkill):
         """
         super().__init__(robot=robot, **data)
 
-    def _get_camera_frame(self) -> Optional[np.ndarray]:
+    def _get_camera_frame(self) -> np.ndarray | None:
         """
         Get a single RGB frame from the robot's camera.
 
@@ -237,7 +238,7 @@ class PickAndPlace(AbstractRobotSkill):
 
     def _query_pick_and_place_points(
         self, frame: np.ndarray
-    ) -> Optional[Tuple[Tuple[int, int], Tuple[int, int]]]:
+    ) -> tuple[tuple[int, int], tuple[int, int]] | None:
         """
         Query Qwen to get both pick and place points in a single query.
 
@@ -270,7 +271,7 @@ class PickAndPlace(AbstractRobotSkill):
 
     def _query_single_point(
         self, frame: np.ndarray, query: str, point_type: str
-    ) -> Optional[Tuple[int, int]]:
+    ) -> tuple[int, int] | None:
         """
         Query Qwen to get a single point location.
 
@@ -315,7 +316,7 @@ class PickAndPlace(AbstractRobotSkill):
             logger.error(f"Error querying Qwen for {point_type} point: {e}")
             return None
 
-    def __call__(self) -> Dict[str, Any]:
+    def __call__(self) -> dict[str, Any]:
         """
         Execute the pick and place operation.
 
@@ -417,7 +418,7 @@ class PickAndPlace(AbstractRobotSkill):
             logger.error(f"Error executing pick and place: {e}")
             return {
                 "success": False,
-                "error": f"Execution error: {str(e)}",
+                "error": f"Execution error: {e!s}",
                 "pick_point": pick_point,
                 "place_point": place_point,
             }

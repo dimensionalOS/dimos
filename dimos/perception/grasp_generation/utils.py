@@ -14,18 +14,18 @@
 
 """Utilities for grasp generation and visualization."""
 
+import cv2
 import numpy as np
 import open3d as o3d
-import cv2
-from typing import List, Dict, Tuple, Optional, Union
-from dimos.perception.common.utils import project_3d_points_to_2d, project_2d_points_to_3d
+
+from dimos.perception.common.utils import project_3d_points_to_2d
 
 
 def create_gripper_geometry(
     grasp_data: dict,
     finger_length: float = 0.08,
     finger_thickness: float = 0.004,
-) -> List[o3d.geometry.TriangleMesh]:
+) -> list[o3d.geometry.TriangleMesh]:
     """
     Create a simple fork-like gripper geometry from grasp data.
 
@@ -146,8 +146,8 @@ def create_gripper_geometry(
 
 
 def create_all_gripper_geometries(
-    grasp_list: List[dict], max_grasps: int = -1
-) -> List[o3d.geometry.TriangleMesh]:
+    grasp_list: list[dict], max_grasps: int = -1
+) -> list[o3d.geometry.TriangleMesh]:
     """
     Create gripper geometries for multiple grasps.
 
@@ -171,8 +171,8 @@ def create_all_gripper_geometries(
 
 def draw_grasps_on_image(
     image: np.ndarray,
-    grasp_data: Union[dict, Dict[Union[int, str], List[dict]], List[dict]],
-    camera_intrinsics: Union[List[float], np.ndarray],  # [fx, fy, cx, cy] or 3x3 matrix
+    grasp_data: dict | dict[int | str, list[dict]] | list[dict],
+    camera_intrinsics: list[float] | np.ndarray,  # [fx, fy, cx, cy] or 3x3 matrix
     max_grasps: int = -1,  # -1 means show all grasps
     finger_length: float = 0.08,  # Match 3D gripper
     finger_thickness: float = 0.004,  # Match 3D gripper
@@ -215,7 +215,7 @@ def draw_grasps_on_image(
     else:
         # Dictionary of grasps by object ID
         grasps_to_draw = []
-        for obj_id, grasps in grasp_data.items():
+        for _obj_id, grasps in grasp_data.items():
             for i, grasp in enumerate(grasps):
                 grasps_to_draw.append((grasp, i))
 
@@ -393,7 +393,7 @@ def draw_grasps_on_image(
             center_2d = project_3d_points_to_2d(translation.reshape(1, -1), camera_matrix)[0]
             cv2.circle(result, tuple(center_2d.astype(int)), 3, color, -1)
 
-        except Exception as e:
+        except Exception:
             # Skip this grasp if there's an error
             continue
 
@@ -426,9 +426,9 @@ def get_standard_coordinate_transform():
 
 def visualize_grasps_3d(
     point_cloud: o3d.geometry.PointCloud,
-    grasp_list: List[dict],
+    grasp_list: list[dict],
     max_grasps: int = -1,
-):
+) -> None:
     """
     Visualize grasps in 3D with point cloud.
 
@@ -459,7 +459,7 @@ def visualize_grasps_3d(
     o3d.visualization.draw_geometries(geometries, window_name="3D Grasp Visualization")
 
 
-def parse_grasp_results(grasps: List[Dict]) -> List[Dict]:
+def parse_grasp_results(grasps: list[dict]) -> list[dict]:
     """
     Parse grasp results into visualization format.
 
@@ -500,8 +500,8 @@ def parse_grasp_results(grasps: List[Dict]) -> List[Dict]:
 
 def create_grasp_overlay(
     rgb_image: np.ndarray,
-    grasps: List[Dict],
-    camera_intrinsics: Union[List[float], np.ndarray],
+    grasps: list[dict],
+    camera_intrinsics: list[float] | np.ndarray,
 ) -> np.ndarray:
     """
     Create grasp visualization overlay on RGB image.
@@ -524,5 +524,5 @@ def create_grasp_overlay(
             max_grasps=-1,
         )
         return cv2.cvtColor(result_bgr, cv2.COLOR_BGR2RGB)
-    except Exception as e:
+    except Exception:
         return rgb_image.copy()

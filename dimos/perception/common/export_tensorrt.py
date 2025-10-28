@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+
 from ultralytics import YOLO, FastSAM
 
 
@@ -39,7 +40,7 @@ def parse_args():
     return parser.parse_args()
 
 
-def main():
+def main() -> None:
     args = parse_args()
     half = args.precision == "fp16"
     int8 = args.precision == "int8"

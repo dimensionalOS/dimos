@@ -13,28 +13,27 @@
 # limitations under the License.
 
 import asyncio
+from dataclasses import dataclass
 import functools
 import threading
 import time
-from dataclasses import dataclass
-from typing import Literal, Optional, TypeAlias
+from typing import Literal, TypeAlias
 
-import numpy as np
 from aiortc import MediaStreamTrack
 from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
 from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
     Go2WebRTCConnection,
     WebRTCConnectionMethod,
 )
+import numpy as np
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import rpc
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, Twist, Vector3
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.connection_interface import ConnectionInterface
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -49,12 +48,12 @@ class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
     data: np.ndarray
-    pts: Optional[int] = None
-    time: Optional[float] = None
-    dts: Optional[int] = None
-    width: Optional[int] = None
-    height: Optional[int] = None
-    format: Optional[str] = None
+    pts: int | None = None
+    time: float | None = None
+    dts: int | None = None
+    width: int | None = None
+    height: int | None = None
+    format: str | None = None
 
     @classmethod
     def from_av_frame(cls, frame):
@@ -73,7 +72,7 @@ class SerializableVideoFrame:
 
 
 class UnitreeWebRTCConnection(Resource):
-    def __init__(self, ip: str, mode: str = "ai"):
+    def __init__(self, ip: str, mode: str = "ai") -> None:
         self.ip = ip
         self.mode = mode
         self.stop_timer = None
@@ -81,13 +80,13 @@ class UnitreeWebRTCConnection(Resource):
         self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
-    def connect(self):
+    def connect(self) -> None:
         self.loop = asyncio.new_event_loop()
         self.task = None
         self.connected_event = asyncio.Event()
         self.connection_ready = threading.Event()
 
-        async def async_connect():
+        async def async_connect() -> None:
             await self.conn.connect()
             await self.conn.datachannel.disableTrafficSaving(True)
 
@@ -103,7 +102,7 @@ class UnitreeWebRTCConnection(Resource):
             while True:
                 await asyncio.sleep(1)
 
-        def start_background_loop():
+        def start_background_loop() -> None:
             asyncio.set_event_loop(self.loop)
             self.task = self.loop.create_task(async_connect())
             self.loop.run_forever()
@@ -155,13 +154,13 @@ class UnitreeWebRTCConnection(Resource):
         # x - Positive right, negative left
         # y - positive forward, negative backwards
         # yaw - Positive rotate right, negative rotate left
-        async def async_move():
+        async def async_move() -> None:
             self.conn.datachannel.pub_sub.publish_without_callback(
                 RTC_TOPIC["WIRELESS_CONTROLLER"],
                 data={"lx": -y, "ly": x, "rx": -yaw, "ry": 0},
             )
 
-        async def async_move_duration():
+        async def async_move_duration() -> None:
             """Send movement commands continuously for the specified duration."""
             start_time = time.time()
             sleep_time = 0.01
@@ -197,17 +196,17 @@ class UnitreeWebRTCConnection(Resource):
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
-        def subscribe_in_thread(cb):
+        def subscribe_in_thread(cb) -> None:
             # Run the subscription in the background thread that has the event loop
-            def run_subscription():
+            def run_subscription() -> None:
                 self.conn.datachannel.pub_sub.subscribe(topic_name, cb)
 
             # Use call_soon_threadsafe to run in the background thread
             self.loop.call_soon_threadsafe(run_subscription)
 
-        def unsubscribe_in_thread(cb):
+        def unsubscribe_in_thread(cb) -> None:
             # Run the unsubscription in the background thread that has the event loop
-            def run_unsubscription():
+            def run_unsubscription() -> None:
                 self.conn.datachannel.pub_sub.unsubscribe(topic_name)
 
             # Use call_soon_threadsafe to run in the background thread
@@ -272,7 +271,7 @@ class UnitreeWebRTCConnection(Resource):
     def standup_ai(self):
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
 
-    def standup_normal(self):
+    def standup_normal(self) -> bool:
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
         time.sleep(0.5)
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["RecoveryStand"]})
@@ -324,17 +323,17 @@ class UnitreeWebRTCConnection(Resource):
         self.conn.video.add_track_callback(accept_track)
 
         # Run the video channel switching in the background thread
-        def switch_video_channel():
+        def switch_video_channel() -> None:
             self.conn.video.switchVideoChannel(True)
 
         self.loop.call_soon_threadsafe(switch_video_channel)
 
-        def stop():
+        def stop() -> None:
             stop_event.set()  # Signal the loop to stop
             self.conn.video.track_callbacks.remove(accept_track)
 
             # Run the video channel switching off in the background thread
-            def switch_video_channel_off():
+            def switch_video_channel_off() -> None:
                 self.conn.video.switchVideoChannel(False)
 
             self.loop.call_soon_threadsafe(switch_video_channel_off)
@@ -388,7 +387,7 @@ class UnitreeWebRTCConnection(Resource):
             self.task.cancel()
         if hasattr(self, "conn"):
 
-            async def async_disconnect():
+            async def async_disconnect() -> None:
                 try:
                     await self.conn.disconnect()
                 except:

@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
-from PIL import Image as PILImage
-from transformers import CLIPModel as HFCLIPModel
-from transformers import CLIPProcessor
+from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
 
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
@@ -35,7 +34,7 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
         model_name: str = "openai/clip-vit-base-patch32",
         device: str | None = None,
         normalize: bool = False,
-    ):
+    ) -> None:
         """
         Initialize CLIP model.
 

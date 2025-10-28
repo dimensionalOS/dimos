@@ -17,8 +17,8 @@
 Simple test script to verify ZED camera setup and basic functionality.
 """
 
-import sys
 from pathlib import Path
+import sys
 
 
 def test_imports():
@@ -108,11 +108,12 @@ def test_basic_functionality():
 
     try:
         import pyzed.sl as sl
+
         from dimos.hardware.zed_camera import ZEDCamera
         from dimos.perception.zed_visualizer import ZEDVisualizer
 
         # Test camera initialization (without opening)
-        camera = ZEDCamera(
+        ZEDCamera(
             camera_id=0,
             resolution=sl.RESOLUTION.HD720,
             depth_mode=sl.DEPTH_MODE.NEURAL,
@@ -127,7 +128,7 @@ def test_basic_functionality():
         dummy_rgb = np.zeros((480, 640, 3), dtype=np.uint8)
         dummy_depth = np.ones((480, 640), dtype=np.float32) * 2.0
 
-        vis = visualizer.create_side_by_side_image(dummy_rgb, dummy_depth)
+        visualizer.create_side_by_side_image(dummy_rgb, dummy_depth)
         print("✓ Dummy visualization created successfully")
 
         return True

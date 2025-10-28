@@ -12,22 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import numpy as np
 import os
-import sys
 
-from dimos.stream.video_provider import VideoProvider
+import cv2
+from reactivex import Subject, operators as RxOps
+
+from dimos.agents.agent import OpenAIAgent
 from dimos.perception.semantic_seg import SemanticSegmentationStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.stream.video_operators import VideoOperators as MyVideoOps, Operators as MyOps
 from dimos.stream.frame_processor import FrameProcessor
-from reactivex import Subject, operators as RxOps
-from dimos.agents.agent import OpenAIAgent
+from dimos.stream.video_operators import VideoOperators as MyVideoOps
 from dimos.utils.threadpool import get_scheduler
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def main():
@@ -54,7 +52,7 @@ def main():
     # Throttling to slowdown SegmentationAgent calls
     # TODO: add Agent parameter to handle this called api_call_interval
 
-    frame_processor = FrameProcessor(delete_on_init=True)
+    FrameProcessor(delete_on_init=True)
     seg_stream = segmentation_stream.pipe(
         RxOps.share(),
         RxOps.map(lambda x: x.metadata["viz_frame"] if x is not None else None),

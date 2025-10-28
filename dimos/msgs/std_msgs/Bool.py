@@ -15,8 +15,6 @@
 
 """Bool message type."""
 
-from typing import ClassVar
-
 from dimos_lcm.std_msgs import Bool as LCMBool
 
 try:
@@ -30,7 +28,7 @@ class Bool(LCMBool):
 
     msg_name = "std_msgs.Bool"
 
-    def __init__(self, data: bool = False):
+    def __init__(self, data: bool = False) -> None:
         """Initialize Bool with data value."""
         self.data = data
 

@@ -189,6 +189,26 @@ dev = [
     "pytest-timeout==2.4.0",
     "textual==3.7.1",
     "requests-mock==1.12.1",
+
+    # Types
+    "lxml-stubs>=0.5.1,<1",
+    "pandas-stubs>=2.3.2.250926,<3",
+    "types-PySocks>=1.7.1.20251001,<2",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-colorama>=0.4.15.20250801,<1",
+    "types-defusedxml>=0.7.0.20250822,<1",
+    "types-gevent>=25.4.0.20250915,<26",
+    "types-greenlet>=3.2.0.20250915,<4",
+    "types-jmespath>=1.0.2.20250809,<2",
+    "types-jsonschema>=4.25.1.20251009,<5",
+    "types-networkx>=3.5.0.20251001,<4",
+    "types-protobuf>=6.32.1.20250918,<7",
+    "types-psutil>=7.0.0.20251001,<8",
+    "types-pytz>=2025.2.0.20250809,<2026",
+    "types-simplejson>=3.20.0.20250822,<4",
+    "types-tabulate>=0.9.0.20241207,<1",
+    "types-tensorflow>=2.18.0.20251008,<3",
+    "types-tqdm>=4.67.0.20250809,<5",
 ]
 
 sim = [
@@ -226,6 +246,16 @@ exclude = [
     "external",
     "src"
 ]
+
+[tool.ruff.lint]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
+# TODO: All of these should be fixed, but it's easier commit autofixes first
+ignore = ["A001", "A002", "A004", "B008", "B017", "B018", "B019", "B023", "B024", "B026", "B027", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F401", "F403", "F405", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N812", "N813", "N813", "N816", "N817", "N999", "RUF001", "RUF002", "RUF003", "RUF006", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "TC010", "UP007", "UP035"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dimos"]
+combine-as-imports = true
+force-sort-within-sections = true
 
 [tool.mypy]
 # mypy doesn't understand plum @dispatch decorator

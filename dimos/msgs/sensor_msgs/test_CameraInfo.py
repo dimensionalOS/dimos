@@ -17,8 +17,7 @@ import numpy as np
 import pytest
 
 try:
-    from sensor_msgs.msg import CameraInfo as ROSCameraInfo
-    from sensor_msgs.msg import RegionOfInterest as ROSRegionOfInterest
+    from sensor_msgs.msg import CameraInfo as ROSCameraInfo, RegionOfInterest as ROSRegionOfInterest
     from std_msgs.msg import Header as ROSHeader
 except ImportError:
     ROSCameraInfo = None
@@ -29,7 +28,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider, CameraInfo
 from dimos.utils.path_utils import get_project_root
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test LCM encode/decode preserves CameraInfo data."""
     print("Testing CameraInfo LCM encode/decode...")
 
@@ -150,7 +149,7 @@ def test_lcm_encode_decode():
     print("✓ LCM encode/decode test passed - all properties preserved!")
 
 
-def test_numpy_matrix_operations():
+def test_numpy_matrix_operations() -> None:
     """Test numpy matrix getter/setter operations."""
     print("\nTesting numpy matrix operations...")
 
@@ -188,7 +187,7 @@ def test_numpy_matrix_operations():
 
 
 @pytest.mark.ros
-def test_ros_conversion():
+def test_ros_conversion() -> None:
     """Test ROS message conversion preserves CameraInfo data."""
     print("\nTesting ROS CameraInfo conversion...")
 
@@ -336,7 +335,7 @@ def test_ros_conversion():
     assert dimos_info.frame_id == "test_camera", (
         f"Frame ID not preserved: expected 'test_camera', got '{dimos_info.frame_id}'"
     )
-    assert dimos_info.distortion_model == "plumb_bob", f"Distortion model not preserved"
+    assert dimos_info.distortion_model == "plumb_bob", "Distortion model not preserved"
     assert len(dimos_info.D) == 5, (
         f"Wrong number of distortion coefficients: expected 5, got {len(dimos_info.D)}"
     )
@@ -356,7 +355,7 @@ def test_ros_conversion():
     print("\n✓ All ROS conversion tests passed!")
 
 
-def test_equality():
+def test_equality() -> None:
     """Test CameraInfo equality comparison."""
     print("\nTesting CameraInfo equality...")
 
@@ -391,7 +390,7 @@ def test_equality():
     print("✓ Equality comparison works correctly")
 
 
-def test_camera_info_from_yaml():
+def test_camera_info_from_yaml() -> None:
     """Test loading CameraInfo from YAML file."""
 
     # Get path to the single webcam YAML file
@@ -427,7 +426,7 @@ def test_camera_info_from_yaml():
     print("✓ CameraInfo loaded successfully from YAML file")
 
 
-def test_calibration_provider():
+def test_calibration_provider() -> None:
     """Test CalibrationProvider lazy loading of YAML files."""
     # Get the directory containing calibration files (not the file itself)
     calibration_dir = get_project_root() / "dimos" / "hardware" / "camera" / "zed"

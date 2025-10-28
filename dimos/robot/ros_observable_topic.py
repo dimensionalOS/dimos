@@ -12,30 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import functools
+from collections.abc import Callable
 import enum
+import functools
+from typing import Any, Union
+
+from nav_msgs import msg
+from rclpy.qos import (
+    QoSDurabilityPolicy,
+    QoSHistoryPolicy,
+    QoSProfile,
+    QoSReliabilityPolicy,
+)
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
 from rxpy_backpressure import BackPressure
 
-from nav_msgs import msg
+from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
-from dimos.types.vector import Vector
-from dimos.msgs.nav_msgs import OccupancyGrid
 
-from typing import Union, Callable, Any
-
-from rclpy.qos import (
-    QoSProfile,
-    QoSReliabilityPolicy,
-    QoSHistoryPolicy,
-    QoSDurabilityPolicy,
-)
-
-__all__ = ["ROSObservableTopicAbility", "QOS"]
+__all__ = ["QOS", "ROSObservableTopicAbility"]
 
 TopicType = Union[OccupancyGrid, msg.OccupancyGrid, msg.Odometry]
 
@@ -97,7 +97,7 @@ class ROSObservableTopicAbility:
 
         return msg_type
 
-    @functools.lru_cache(maxsize=None)
+    @functools.cache
     def topic(
         self,
         topic_name: str,
@@ -219,7 +219,7 @@ class ROSObservableTopicAbility:
 
         core = self.topic(topic_name, msg_type, qos=qos)  # single ROS callback
 
-        def _on_next(v):
+        def _on_next(v) -> None:
             cache["val"] = v
             if not first.done():
                 loop.call_soon_threadsafe(first.set_result, v)

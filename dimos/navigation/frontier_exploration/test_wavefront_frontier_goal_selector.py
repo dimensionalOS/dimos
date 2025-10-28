@@ -15,10 +15,10 @@
 import time
 
 import numpy as np
+from PIL import ImageDraw
 import pytest
-from PIL import Image, ImageDraw
 
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.navigation.frontier_exploration.utils import costmap_to_pil_image
 from dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector import (
@@ -71,13 +71,13 @@ def quick_costmap():
     )
 
     class MockLidar:
-        def __init__(self):
+        def __init__(self) -> None:
             self.origin = Vector3(0.0, 0.0, 0.0)
 
     return occupancy_grid, MockLidar()
 
 
-def create_test_costmap(width=40, height=40, resolution=0.1):
+def create_test_costmap(width: int = 40, height: int = 40, resolution: float = 0.1):
     """Create a simple test costmap with free, occupied, and unknown regions.
 
     Default size reduced from 100x100 to 40x40 for faster tests.
@@ -114,13 +114,13 @@ def create_test_costmap(width=40, height=40, resolution=0.1):
 
     # Create a mock lidar message with origin
     class MockLidar:
-        def __init__(self):
+        def __init__(self) -> None:
             self.origin = Vector3(0.0, 0.0, 0.0)
 
     return occupancy_grid, MockLidar()
 
 
-def test_frontier_detection_with_office_lidar(explorer, quick_costmap):
+def test_frontier_detection_with_office_lidar(explorer, quick_costmap) -> None:
     """Test frontier detection using a test costmap."""
     # Get test costmap
     costmap, first_lidar = quick_costmap
@@ -164,7 +164,7 @@ def test_frontier_detection_with_office_lidar(explorer, quick_costmap):
     explorer.stop()  # TODO: this should be a in try-finally
 
 
-def test_exploration_goal_selection(explorer):
+def test_exploration_goal_selection(explorer) -> None:
     """Test the complete exploration goal selection pipeline."""
     # Get test costmap - use regular size for more realistic test
     costmap, first_lidar = create_test_costmap()
@@ -198,7 +198,7 @@ def test_exploration_goal_selection(explorer):
     explorer.stop()  # TODO: this should be a in try-finally
 
 
-def test_exploration_session_reset(explorer):
+def test_exploration_session_reset(explorer) -> None:
     """Test exploration session reset functionality."""
     # Get test costmap
     costmap, first_lidar = create_test_costmap()
@@ -229,7 +229,7 @@ def test_exploration_session_reset(explorer):
     explorer.stop()  # TODO: this should be a in try-finally
 
 
-def test_frontier_ranking(explorer):
+def test_frontier_ranking(explorer) -> None:
     """Test frontier ranking and scoring logic."""
     # Get test costmap
     costmap, first_lidar = create_test_costmap()
@@ -275,7 +275,7 @@ def test_frontier_ranking(explorer):
     explorer.stop()  # TODO: this should be a in try-finally
 
 
-def test_exploration_with_no_gain_detection():
+def test_exploration_with_no_gain_detection() -> None:
     """Test information gain detection and exploration termination."""
     # Get initial costmap
     costmap1, first_lidar = create_test_costmap()
@@ -313,7 +313,7 @@ def test_exploration_with_no_gain_detection():
 
 
 @pytest.mark.vis
-def test_frontier_detection_visualization():
+def test_frontier_detection_visualization() -> None:
     """Test frontier detection with visualization (marked with @pytest.mark.vis)."""
     # Get test costmap
     costmap, first_lidar = create_test_costmap()
@@ -398,7 +398,7 @@ def test_frontier_detection_visualization():
         explorer.stop()
 
 
-def test_performance_timing():
+def test_performance_timing() -> None:
     """Test performance by timing frontier detection operations."""
     import time
 
@@ -427,7 +427,7 @@ def test_performance_timing():
 
             # Time goal selection
             start = time.time()
-            goal = explorer.get_exploration_goal(robot_pose, costmap)
+            explorer.get_exploration_goal(robot_pose, costmap)
             goal_time = time.time() - start
 
             results.append(
