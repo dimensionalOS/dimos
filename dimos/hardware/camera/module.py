@@ -126,4 +126,5 @@ class CameraModule(Module):
             self.hardware.stop()
         super().stop()
 
+
 camera_module = CameraModule.blueprint

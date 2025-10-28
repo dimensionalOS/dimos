@@ -29,7 +29,14 @@ from rclpy.executors import SingleThreadedExecutor
 from dimos import core
 from dimos.protocol import pubsub
 from dimos.core import In, Out, rpc, DimosCluster, LCMTransport, pSHMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Transform, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import (
+    PoseStamped,
+    Twist,
+    TwistStamped,
+    Transform,
+    Vector3,
+    Quaternion,
+)
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import PointCloud2, Joy
 from dimos.msgs.std_msgs import Bool
@@ -318,8 +325,10 @@ class ROSNavigationModule(ROSNav):
             self._node.destroy_node()
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
-            
-navigation_module  = ROSNavigationModule.blueprint
+
+
+navigation_module = ROSNavigationModule.blueprint
+
 
 class NavBot:
     """
