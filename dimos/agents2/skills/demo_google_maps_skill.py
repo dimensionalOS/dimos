@@ -18,16 +18,16 @@ from dotenv import load_dotenv
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.demo_robot import demo_robot
-from dimos.agents2.skills.osm import osm_skill
+from dimos.agents2.skills.google_maps_skill_container import google_maps_skill
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core.blueprints import autoconnect
 
 load_dotenv()
 
 
-demo_osm = autoconnect(
+demo_google_maps_skill = autoconnect(
     demo_robot(),
-    osm_skill(),
+    google_maps_skill(),
     human_input(),
     llm_agent(system_prompt=get_system_prompt()),
 )
