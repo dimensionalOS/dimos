@@ -95,8 +95,8 @@ basic = (
         websocket_vis(),
         foxglove_bridge(),
     )
-    .with_global_config(n_dask_workers=4)
-    .with_transports(
+    .global_config(n_dask_workers=4)
+    .transports(
         {
             # G1 uses Twist for movement commands
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
@@ -129,11 +129,11 @@ standard = autoconnect(
     spatial_memory(),
     object_tracking(frame_id="camera_link"),
     utilization(),
-).with_global_config(n_dask_workers=8)
+).global_config(n_dask_workers=8)
 
 # Optimized configuration using shared memory for images
 standard_with_shm = autoconnect(
-    standard.with_transports(
+    standard.transports(
         {
             ("color_image", Image): pSHMTransport(
                 "/g1/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
