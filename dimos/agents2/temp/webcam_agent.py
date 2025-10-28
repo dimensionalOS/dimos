@@ -46,13 +46,13 @@ class WebModule(Module):
 
     _human_messages_running = False
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.agent_response = rx.subject.Subject()
         self.human_query = rx.subject.Subject()
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         super().start()
 
         text_streams = {
@@ -72,7 +72,7 @@ class WebModule(Module):
         self.thread.start()
 
     @rpc
-    def stop(self) -> None:
+    def stop(self):
         if self.web_interface:
             self.web_interface.stop()
         if self.thread:
@@ -95,7 +95,7 @@ class WebModule(Module):
             yield message
 
 
-def main() -> None:
+def main():
     dimos = start(4)
     # Create agent
     agent = Agent(

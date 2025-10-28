@@ -67,7 +67,7 @@ class HuggingFaceLocalAgent(LLMAgent):
         image_detail: str = "low",
         pool_scheduler: ThreadPoolScheduler | None = None,
         process_all_inputs: bool | None = None,
-    ) -> None:
+    ):
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams

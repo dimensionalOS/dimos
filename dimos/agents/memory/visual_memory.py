@@ -38,7 +38,7 @@ class VisualMemory:
     load the image data from disk.
     """
 
-    def __init__(self, output_dir: str | None = None) -> None:
+    def __init__(self, output_dir: str | None = None):
         """
         Initialize the visual memory system.
 

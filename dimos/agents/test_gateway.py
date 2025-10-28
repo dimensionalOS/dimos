@@ -25,7 +25,7 @@ from dimos.agents.modules.gateway import UnifiedGatewayClient
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_basic() -> None:
+async def test_gateway_basic():
     """Test basic gateway functionality."""
     load_dotenv()
 
@@ -72,7 +72,7 @@ async def test_gateway_basic() -> None:
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_streaming() -> None:
+async def test_gateway_streaming():
     """Test gateway streaming functionality."""
     load_dotenv()
 
@@ -113,7 +113,7 @@ async def test_gateway_streaming() -> None:
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_tools() -> None:
+async def test_gateway_tools():
     """Test gateway can pass tool definitions to LLM and get responses."""
     load_dotenv()
 
@@ -158,7 +158,7 @@ async def test_gateway_tools() -> None:
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_providers() -> None:
+async def test_gateway_providers():
     """Test gateway with different providers."""
     load_dotenv()
 

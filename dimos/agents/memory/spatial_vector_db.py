@@ -45,7 +45,7 @@ class SpatialVectorDB:
         chroma_client=None,
         visual_memory=None,
         embedding_provider=None,
-    ) -> None:
+    ):
         """
         Initialize the spatial vector database.
 

@@ -19,7 +19,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 class HuggingFaceTokenizer(AbstractTokenizer):
-    def __init__(self, model_name: str = "Qwen/Qwen2.5-0.5B", **kwargs) -> None:
+    def __init__(self, model_name: str = "Qwen/Qwen2.5-0.5B", **kwargs):
         super().__init__(**kwargs)
 
         # Initilize the tokenizer for the huggingface models
@@ -31,7 +31,7 @@ class HuggingFaceTokenizer(AbstractTokenizer):
                 f"Failed to initialize tokenizer for model {self.model_name}. Error: {e!s}"
             )
 
-    def tokenize_text(self, text: str):
+    def tokenize_text(self, text):
         """
         Tokenize a text string using the openai tokenizer.
         """
@@ -46,14 +46,14 @@ class HuggingFaceTokenizer(AbstractTokenizer):
         except Exception as e:
             raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
-    def token_count(self, text: str):
+    def token_count(self, text):
         """
         Gets the token count of a text string using the openai tokenizer.
         """
         return len(self.tokenize_text(text)) if text else 0
 
     @staticmethod
-    def image_token_count(image_width, image_height, image_detail: str = "high"):
+    def image_token_count(image_width, image_height, image_detail="high"):
         """
         Calculate the number of tokens in an image. Low detail is 85 tokens, high detail is 170 tokens per 512x512 square.
         """

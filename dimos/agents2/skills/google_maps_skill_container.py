@@ -37,7 +37,7 @@ class GoogleMapsSkillContainer(SkillContainer, Resource):
     _current_location_map: CurrentLocationMap
     _started: bool
 
-    def __init__(self, robot: Robot, position_stream: Observable[LatLon]) -> None:
+    def __init__(self, robot: Robot, position_stream: Observable[LatLon]):
         super().__init__()
         self._robot = robot
         self._disposables = CompositeDisposable()

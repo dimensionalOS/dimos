@@ -35,10 +35,10 @@ class PoolRouter(Module):
     agent3_out: Out[str] = None
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         self.query_in.subscribe(self._route)
 
-    def _route(self, msg: dict) -> None:
+    def _route(self, msg: dict):
         agent_id = msg.get("agent_id", "agent1")
         query = msg.get("query", "")
 
@@ -67,7 +67,7 @@ class PoolAggregator(Module):
     response_out: Out[dict] = None
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         if self.agent1_in:
             self.agent1_in.subscribe(lambda r: self._handle_response("agent1", r))
         if self.agent2_in:
@@ -75,7 +75,7 @@ class PoolAggregator(Module):
         if self.agent3_in:
             self.agent3_in.subscribe(lambda r: self._handle_response("agent3", r))
 
-    def _handle_response(self, agent_id: str, response: str) -> None:
+    def _handle_response(self, agent_id: str, response: str):
         if self.response_out:
             self.response_out.publish({"agent_id": agent_id, "response": response})
 
@@ -86,11 +86,11 @@ class PoolController(Module):
     query_out: Out[dict] = None
 
     @rpc
-    def send_to_agent(self, agent_id: str, query: str) -> None:
+    def send_to_agent(self, agent_id: str, query: str):
         self.query_out.publish({"agent_id": agent_id, "query": query})
 
     @rpc
-    def broadcast(self, query: str) -> None:
+    def broadcast(self, query: str):
         self.query_out.publish({"agent_id": "all", "query": query})
 
 
@@ -99,12 +99,12 @@ class PoolCollector(Module):
 
     response_in: In[dict] = None
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         self.response_in.subscribe(lambda r: self.responses.append(r))
 
     @rpc
@@ -119,7 +119,7 @@ class PoolCollector(Module):
 @pytest.mark.skip("Skipping pool tests for now")
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_pool() -> None:
+async def test_agent_pool():
     """Test agent pool with multiple agents."""
     load_dotenv()
     pubsub.lcm.autoconf()
@@ -253,7 +253,7 @@ async def test_agent_pool() -> None:
 @pytest.mark.skip("Skipping pool tests for now")
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_mock_agent_pool() -> None:
+async def test_mock_agent_pool():
     """Test agent pool with mock agents."""
     pubsub.lcm.autoconf()
 
@@ -263,15 +263,15 @@ async def test_mock_agent_pool() -> None:
         query_in: In[str] = None
         response_out: Out[str] = None
 
-        def __init__(self, agent_id: str) -> None:
+        def __init__(self, agent_id: str):
             super().__init__()
             self.agent_id = agent_id
 
         @rpc
-        def start(self) -> None:
+        def start(self):
             self.query_in.subscribe(self._handle_query)
 
-        def _handle_query(self, query: str) -> None:
+        def _handle_query(self, query: str):
             if "1+1" in query:
                 self.response_out.publish(f"{self.agent_id}: The answer is 2")
             else:

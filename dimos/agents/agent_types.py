@@ -136,7 +136,7 @@ class ConversationHistory:
     LLM providers and automatic trimming.
     """
 
-    def __init__(self, max_size: int = 20) -> None:
+    def __init__(self, max_size: int = 20):
         """Initialize conversation history.
 
         Args:

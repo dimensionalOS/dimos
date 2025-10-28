@@ -96,7 +96,7 @@ def test_agent_with_skills():
         time.sleep(0.1)
 
 
-def test_skill_schemas() -> None:
+def test_skill_schemas():
     """Test that skill schemas are properly generated for LangChain."""
     print("\n=== Testing Skill Schemas ===")
 

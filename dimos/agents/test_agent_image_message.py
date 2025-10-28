@@ -34,7 +34,7 @@ logging.getLogger("dimos.agents.modules.base").setLevel(logging.DEBUG)
 
 
 @pytest.mark.tofix
-def test_agent_single_image() -> None:
+def test_agent_single_image():
     """Test agent with single image in AgentMessage."""
     load_dotenv()
 
@@ -95,7 +95,7 @@ def test_agent_single_image() -> None:
 
 
 @pytest.mark.tofix
-def test_agent_multiple_images() -> None:
+def test_agent_multiple_images():
     """Test agent with multiple images in AgentMessage."""
     load_dotenv()
 
@@ -163,7 +163,7 @@ def test_agent_multiple_images() -> None:
 
 
 @pytest.mark.tofix
-def test_agent_image_with_context() -> None:
+def test_agent_image_with_context():
     """Test agent maintaining context with image queries."""
     load_dotenv()
 
@@ -212,7 +212,7 @@ def test_agent_image_with_context() -> None:
 
 
 @pytest.mark.tofix
-def test_agent_mixed_content() -> None:
+def test_agent_mixed_content():
     """Test agent with mixed text-only and image queries."""
     load_dotenv()
 
@@ -290,7 +290,7 @@ def test_agent_mixed_content() -> None:
 
 
 @pytest.mark.tofix
-def test_agent_empty_image_message() -> None:
+def test_agent_empty_image_message():
     """Test edge case with empty parts of AgentMessage."""
     load_dotenv()
 
@@ -338,7 +338,7 @@ def test_agent_empty_image_message() -> None:
 
 
 @pytest.mark.tofix
-def test_agent_non_vision_model_with_images() -> None:
+def test_agent_non_vision_model_with_images():
     """Test that non-vision models handle image input gracefully."""
     load_dotenv()
 
@@ -375,7 +375,7 @@ def test_agent_non_vision_model_with_images() -> None:
 
 
 @pytest.mark.tofix
-def test_mock_agent_with_images() -> None:
+def test_mock_agent_with_images():
     """Test mock agent with images for CI."""
     # This test doesn't need API keys
 

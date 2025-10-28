@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 
 @pytest.mark.tofix
-def test_conversation_history_basic() -> None:
+def test_conversation_history_basic():
     """Test basic conversation history functionality."""
     load_dotenv()
 
@@ -91,7 +91,7 @@ def test_conversation_history_basic() -> None:
 
 
 @pytest.mark.tofix
-def test_conversation_history_with_images() -> None:
+def test_conversation_history_with_images():
     """Test conversation history with multimodal content."""
     load_dotenv()
 
@@ -152,7 +152,7 @@ def test_conversation_history_with_images() -> None:
 
 
 @pytest.mark.tofix
-def test_conversation_history_trimming() -> None:
+def test_conversation_history_trimming():
     """Test that conversation history is trimmed to max size."""
     load_dotenv()
 
@@ -211,7 +211,7 @@ def test_conversation_history_trimming() -> None:
 
 
 @pytest.mark.tofix
-def test_conversation_history_with_tools() -> None:
+def test_conversation_history_with_tools():
     """Test conversation history with tool calls."""
     load_dotenv()
 
@@ -270,7 +270,7 @@ def test_conversation_history_with_tools() -> None:
 
 
 @pytest.mark.tofix
-def test_conversation_thread_safety() -> None:
+def test_conversation_thread_safety():
     """Test that conversation history is thread-safe."""
     load_dotenv()
 
@@ -281,7 +281,7 @@ def test_conversation_thread_safety() -> None:
 
     try:
 
-        async def query_async(text: str):
+        async def query_async(text):
             """Async wrapper for query."""
             return await agent.aquery(text)
 
@@ -304,7 +304,7 @@ def test_conversation_thread_safety() -> None:
 
 
 @pytest.mark.tofix
-def test_conversation_history_formats() -> None:
+def test_conversation_history_formats():
     """Test ConversationHistory formatting methods."""
     load_dotenv()
 
@@ -364,7 +364,7 @@ def test_conversation_history_formats() -> None:
 
 @pytest.mark.tofix
 @pytest.mark.timeout(30)  # Add timeout to prevent hanging
-def test_conversation_edge_cases() -> None:
+def test_conversation_edge_cases():
     """Test edge cases in conversation history."""
     load_dotenv()
 

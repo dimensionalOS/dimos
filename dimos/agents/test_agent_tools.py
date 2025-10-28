@@ -81,7 +81,7 @@ class ToolTestController(Module):
     message_out: Out[AgentMessage] = None
 
     @rpc
-    def send_query(self, query: str) -> None:
+    def send_query(self, query: str):
         msg = AgentMessage()
         msg.add_text(query)
         self.message_out.publish(msg)
@@ -92,17 +92,17 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         logger.info("ResponseCollector starting subscription")
         self.response_in.subscribe(self._on_response)
         logger.info("ResponseCollector subscription active")
 
-    def _on_response(self, response) -> None:
+    def _on_response(self, response):
         logger.info(f"ResponseCollector received response #{len(self.responses) + 1}: {response}")
         self.responses.append(response)
 
@@ -114,7 +114,7 @@ class ResponseCollector(Module):
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_module_with_tools() -> None:
+async def test_agent_module_with_tools():
     """Test BaseAgentModule with tool execution."""
     load_dotenv()
 
@@ -241,7 +241,7 @@ async def test_agent_module_with_tools() -> None:
 
 
 @pytest.mark.tofix
-def test_base_agent_direct_tools() -> None:
+def test_base_agent_direct_tools():
     """Test BaseAgent direct usage with tools."""
     load_dotenv()
 
@@ -317,7 +317,7 @@ def test_base_agent_direct_tools() -> None:
 class MockToolAgent(BaseAgent):
     """Mock agent for CI testing without API calls."""
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs):
         # Skip gateway initialization
         self.model = kwargs.get("model", "mock::test")
         self.system_prompt = kwargs.get("system_prompt", "Mock agent")
@@ -363,12 +363,12 @@ class MockToolAgent(BaseAgent):
         # Default response
         return AgentResponse(content=f"Mock response to: {query}")
 
-    def dispose(self) -> None:
+    def dispose(self):
         pass
 
 
 @pytest.mark.tofix
-def test_mock_agent_tools() -> None:
+def test_mock_agent_tools():
     """Test mock agent with tools for CI."""
     # Create skill library
     skill_library = SkillLibrary()

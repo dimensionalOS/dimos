@@ -45,19 +45,19 @@ if TYPE_CHECKING:
 
 
 class CTransformersTokenizerAdapter:
-    def __init__(self, model) -> None:
+    def __init__(self, model):
         self.model = model
 
-    def encode(self, text: str, **kwargs):
+    def encode(self, text, **kwargs):
         return self.model.tokenize(text)
 
     def decode(self, token_ids, **kwargs):
         return self.model.detokenize(token_ids)
 
-    def token_count(self, text: str):
+    def token_count(self, text):
         return len(self.tokenize_text(text)) if text else 0
 
-    def tokenize_text(self, text: str):
+    def tokenize_text(self, text):
         return self.model.tokenize(text)
 
     def detokenize_text(self, tokenized_text):
@@ -66,9 +66,7 @@ class CTransformersTokenizerAdapter:
         except Exception as e:
             raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
-    def apply_chat_template(
-        self, conversation, tokenize: bool = False, add_generation_prompt: bool = True
-    ):
+    def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=True):
         prompt = ""
         for message in conversation:
             role = message["role"]
@@ -106,7 +104,7 @@ class CTransformersGGUFAgent(LLMAgent):
         prompt_builder: PromptBuilder | None = None,
         pool_scheduler: ThreadPoolScheduler | None = None,
         process_all_inputs: bool | None = None,
-    ) -> None:
+    ):
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams

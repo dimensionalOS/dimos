@@ -28,15 +28,11 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.agents2.spec import AgentSpec, Model, Provider
+from dimos.agents2.spec import AgentSpec
 from dimos.agents2.system_prompt import get_system_prompt
-from dimos.core import DimosCluster, rpc
-from dimos.protocol.skill.coordinator import (
-    SkillContainer,
-    SkillCoordinator,
-    SkillState,
-    SkillStateDict,
-)
+from dimos.core import rpc
+from dimos.msgs.sensor_msgs import Image
+from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
@@ -87,7 +83,7 @@ def summary_from_state(state: SkillState, special_data: bool = False) -> SkillSt
 
 
 def _custom_json_serializers(obj):
-    if isinstance(obj, datetime.date | datetime.datetime):
+    if isinstance(obj, (datetime.date, datetime.datetime)):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
 
@@ -168,7 +164,7 @@ class Agent(AgentSpec):
         self,
         *args,
         **kwargs,
-    ) -> None:
+    ):
         AgentSpec.__init__(self, *args, **kwargs)
 
         self.state_messages = []
@@ -201,20 +197,20 @@ class Agent(AgentSpec):
         return self._agent_id
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         super().start()
         self.coordinator.start()
 
     @rpc
-    def stop(self) -> None:
+    def stop(self):
         self.coordinator.stop()
         self._agent_stopped = True
         super().stop()
 
-    def clear_history(self) -> None:
+    def clear_history(self):
         self._history.clear()
 
-    def append_history(self, *msgs: list[Union[AIMessage, HumanMessage]]) -> None:
+    def append_history(self, *msgs: list[Union[AIMessage, HumanMessage]]):
         for msg in msgs:
             self.publish(msg)
 
@@ -289,8 +285,8 @@ class Agent(AgentSpec):
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
 
-                # print(self)
-                # print(self.coordinator)
+                print(self)
+                print(self.coordinator)
 
                 self._write_debug_history_file()
 
@@ -325,7 +321,7 @@ class Agent(AgentSpec):
             traceback.print_exc()
 
     @rpc
-    def loop_thread(self) -> bool:
+    def loop_thread(self):
         asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
         return True
 
@@ -351,7 +347,7 @@ class Agent(AgentSpec):
     def get_tools(self):
         return self.coordinator.get_tools()
 
-    def _write_debug_history_file(self) -> None:
+    def _write_debug_history_file(self):
         file_path = os.getenv("DEBUG_AGENT_HISTORY_FILE")
         if not file_path:
             return
@@ -376,38 +372,4 @@ class LlmAgent(Agent):
 llm_agent = LlmAgent.blueprint
 
 
-def deploy(
-    dimos: DimosCluster,
-    system_prompt: str = "You are a helpful assistant for controlling a Unitree Go2 robot.",
-    model: Model = Model.GPT_4O,
-    provider: Provider = Provider.OPENAI,
-    skill_containers: list[SkillContainer] | None = None,
-) -> Agent:
-    from dimos.agents2.cli.human import HumanInput
-
-    if skill_containers is None:
-        skill_containers = []
-    agent = dimos.deploy(
-        Agent,
-        system_prompt=system_prompt,
-        model=model,
-        provider=provider,
-    )
-
-    human_input = dimos.deploy(HumanInput)
-    human_input.start()
-
-    agent.register_skills(human_input)
-
-    for skill_container in skill_containers:
-        print("Registering skill container:", skill_container)
-        agent.register_skills(skill_container)
-
-    agent.run_implicit_skill("human")
-    agent.start()
-    agent.loop_thread()
-
-    return agent
-
-
-__all__ = ["Agent", "deploy", "llm_agent"]
+__all__ = ["Agent", "llm_agent"]

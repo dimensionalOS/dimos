@@ -34,7 +34,7 @@ class QuerySender(Module):
     message_out: Out[AgentMessage] = None
 
     @rpc
-    def send_query(self, query: str) -> None:
+    def send_query(self, query: str):
         """Send a query."""
         msg = AgentMessage()
         msg.add_text(query)
@@ -46,16 +46,16 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         """Start collecting."""
         self.response_in.subscribe(self._on_response)
 
-    def _on_response(self, response: AgentResponse) -> None:
+    def _on_response(self, response: AgentResponse):
         """Handle response."""
         self.responses.append(response)
 
@@ -65,7 +65,7 @@ class ResponseCollector(Module):
         return self.responses
 
     @rpc
-    def clear(self) -> None:
+    def clear(self):
         """Clear responses."""
         self.responses = []
 
@@ -82,7 +82,7 @@ class ResponseCollector(Module):
         ("qwen::qwen-turbo", "Qwen"),
     ],
 )
-async def test_simple_agent_module(model, provider) -> None:
+async def test_simple_agent_module(model, provider):
     """Test simple agent module with different providers."""
     load_dotenv()
 
@@ -155,7 +155,7 @@ async def test_simple_agent_module(model, provider) -> None:
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_mock_agent_module() -> None:
+async def test_mock_agent_module():
     """Test agent module with mock responses (no API needed)."""
     pubsub.lcm.autoconf()
 
@@ -166,10 +166,10 @@ async def test_mock_agent_module() -> None:
         response_out: Out[AgentResponse] = None
 
         @rpc
-        def start(self) -> None:
+        def start(self):
             self.message_in.subscribe(self._handle_message)
 
-        def _handle_message(self, msg: AgentMessage) -> None:
+        def _handle_message(self, msg: AgentMessage):
             query = msg.get_combined_text()
             if "2+2" in query:
                 self.response_out.publish(AgentResponse(content="4"))

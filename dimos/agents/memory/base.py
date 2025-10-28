@@ -28,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
-    def __init__(self, connection_type: str = "local", **kwargs) -> None:
+    def __init__(self, connection_type="local", **kwargs):
         """
         Initialize with dynamic connection parameters.
         Args:
@@ -88,7 +88,7 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
         """
 
     @abstractmethod
-    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):
+    def query(self, query_texts, n_results=4, similarity_threshold=None):
         """Performs a semantic search in the vector database.
 
         Args:

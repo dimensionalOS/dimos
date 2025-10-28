@@ -60,9 +60,9 @@ logger = setup_logger("dimos.agents.cerebras")
 class CerebrasResponseMessage(dict):
     def __init__(
         self,
-        content: str = "",
+        content="",
         tool_calls=None,
-    ) -> None:
+    ):
         self.content = content
         self.tool_calls = tool_calls or []
         self.parsed = None
@@ -70,7 +70,7 @@ class CerebrasResponseMessage(dict):
         # Initialize as dict with the proper structure
         super().__init__(self.to_dict())
 
-    def __str__(self) -> str:
+    def __str__(self):
         # Return a string representation for logging
         if self.content:
             return self.content
@@ -135,7 +135,7 @@ class CerebrasAgent(LLMAgent):
         process_all_inputs: bool | None = None,
         tokenizer: AbstractTokenizer | None = None,
         prompt_builder: PromptBuilder | None = None,
-    ) -> None:
+    ):
         """
         Initializes a new instance of the CerebrasAgent.
 
@@ -232,7 +232,7 @@ class CerebrasAgent(LLMAgent):
 
         logger.info("Cerebras Agent Initialized.")
 
-    def _add_context_to_memory(self) -> None:
+    def _add_context_to_memory(self):
         """Adds initial context to the agent's memory."""
         context_data = [
             (

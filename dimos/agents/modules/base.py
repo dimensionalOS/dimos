@@ -80,7 +80,7 @@ class BaseAgent:
         dev_name: str = "BaseAgent",
         agent_type: str = "LLM",
         **kwargs,
-    ) -> None:
+    ):
         """Initialize the base agent with all features.
 
         Args:
@@ -155,7 +155,7 @@ class BaseAgent:
         return self._max_history
 
     @max_history.setter
-    def max_history(self, value: int) -> None:
+    def max_history(self, value: int):
         """Set max history size and update conversation."""
         self._max_history = value
         self.conversation.max_size = value
@@ -164,7 +164,7 @@ class BaseAgent:
         """Check if the model supports vision."""
         return self.model in VISION_MODELS
 
-    def _initialize_memory(self) -> None:
+    def _initialize_memory(self):
         """Initialize memory with default context."""
         try:
             contexts = [

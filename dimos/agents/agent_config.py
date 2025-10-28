@@ -18,7 +18,7 @@ from dimos.agents.agent import Agent
 
 
 class AgentConfig:
-    def __init__(self, agents: list[Agent] | None = None) -> None:
+    def __init__(self, agents: list[Agent] | None = None):
         """
         Initialize an AgentConfig with a list of agents.
 
@@ -27,7 +27,7 @@ class AgentConfig:
         """
         self.agents = agents if agents is not None else []
 
-    def add_agent(self, agent: Agent) -> None:
+    def add_agent(self, agent: Agent):
         """
         Add an agent to the configuration.
 
@@ -36,7 +36,7 @@ class AgentConfig:
         """
         self.agents.append(agent)
 
-    def remove_agent(self, agent: Agent) -> None:
+    def remove_agent(self, agent: Agent):
         """
         Remove an agent from the configuration.
 

@@ -26,14 +26,14 @@ logger = logging.getLogger(__name__)
 class TensorZeroEmbeddedGateway:
     """TensorZero embedded gateway using patch_openai_client."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         """Initialize TensorZero embedded gateway."""
         self._client = None
         self._config_path = None
         self._setup_config()
         self._initialize_client()
 
-    def _setup_config(self) -> None:
+    def _setup_config(self):
         """Create TensorZero configuration with correct format."""
         config_dir = Path("/tmp/tensorzero_embedded")
         config_dir.mkdir(exist_ok=True)
@@ -270,12 +270,12 @@ weight = 0.4
             )
             return result
 
-    def close(self) -> None:
+    def close(self):
         """Close the client."""
         # TensorZero embedded doesn't need explicit cleanup
         pass
 
-    async def aclose(self) -> None:
+    async def aclose(self):
         """Async close."""
         # TensorZero embedded doesn't need explicit cleanup
         pass

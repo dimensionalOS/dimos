@@ -193,7 +193,7 @@ class Pose(LCMPose):
             new_pose = pose + transform
         """
         # Handle Transform objects
-        if isinstance(other, LCMTransform | Transform):
+        if isinstance(other, (LCMTransform, Transform)):
             # Convert Transform to Pose using its translation and rotation
             other_position = Vector3(other.translation)
             other_orientation = Quaternion(other.rotation)

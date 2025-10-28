@@ -52,7 +52,7 @@ SYSTEM_PROMPT_PATH = os.path.join(
 class UnitreeAgentRunner:
     """Manages the Unitree robot with the new agents2 framework."""
 
-    def __init__(self) -> None:
+    def __init__(self):
         self.robot = None
         self.agent = None
         self.agent_thread = None
@@ -99,7 +99,7 @@ class UnitreeAgentRunner:
         agent.loop_thread()
         return agent
 
-    def run(self) -> None:
+    def run(self):
         """Main run loop."""
         print("\n" + "=" * 60)
         print("Unitree Go2 Robot with agents2 Framework")
@@ -157,7 +157,7 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
         # finally:
         # self.shutdown()
 
-    def shutdown(self) -> None:
+    def shutdown(self):
         logger.info("Shutting down...")
         self.running = False
 
@@ -178,7 +178,7 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
         logger.info("Shutdown complete")
 
 
-def main() -> None:
+def main():
     runner = UnitreeAgentRunner()
     runner.run()
 

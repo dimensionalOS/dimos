@@ -40,11 +40,8 @@ class PromptBuilder:
     """)
 
     def __init__(
-        self,
-        model_name: str = "gpt-4o",
-        max_tokens: int = 128000,
-        tokenizer: AbstractTokenizer | None = None,
-    ) -> None:
+        self, model_name="gpt-4o", max_tokens=128000, tokenizer: AbstractTokenizer | None = None
+    ):
         """
         Initialize the prompt builder.
         Args:
@@ -56,7 +53,7 @@ class PromptBuilder:
         self.max_tokens = max_tokens
         self.tokenizer: AbstractTokenizer = tokenizer or OpenAITokenizer(model_name=self.model_name)
 
-    def truncate_tokens(self, text: str, max_tokens, strategy):
+    def truncate_tokens(self, text, max_tokens, strategy):
         """
         Truncate text to fit within max_tokens using a specified strategy.
         Args:
@@ -92,11 +89,11 @@ class PromptBuilder:
         base64_image=None,
         image_width=None,
         image_height=None,
-        image_detail: str = "low",
+        image_detail="low",
         rag_context=None,
         budgets=None,
         policies=None,
-        override_token_limit: bool = False,
+        override_token_limit=False,
     ):
         """
         Builds a dynamic prompt tailored to token limits, respecting budgets and policies.

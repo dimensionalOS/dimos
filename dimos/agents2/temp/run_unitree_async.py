@@ -74,7 +74,7 @@ async def handle_query(agent, query_text):
         return f"Error: {e!s}"
 
 
-async def interactive_loop(agent) -> None:
+async def interactive_loop(agent):
     """Run an interactive query loop."""
     print("\n" + "=" * 60)
     print("Interactive Agent Mode")
@@ -102,7 +102,7 @@ async def interactive_loop(agent) -> None:
             logger.error(f"Error in interactive loop: {e}")
 
 
-async def main() -> None:
+async def main():
     """Main async function."""
     print("\n" + "=" * 60)
     print("Unitree Go2 Robot with agents2 Framework (Async)")

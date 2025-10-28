@@ -17,8 +17,7 @@
 import asyncio
 import logging
 import os
-from types import TracebackType
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -37,7 +36,7 @@ class UnifiedGatewayClient:
 
     def __init__(
         self, gateway_url: str | None = None, timeout: float = 60.0, use_simple: bool = False
-    ) -> None:
+    ):
         """Initialize the gateway client.
 
         Args:
@@ -150,7 +149,7 @@ class UnifiedGatewayClient:
             **kwargs,
         )
 
-    def close(self) -> None:
+    def close(self):
         """Close the HTTP clients."""
         if self._client:
             self._client.close()
@@ -161,14 +160,14 @@ class UnifiedGatewayClient:
             pass
         self._tensorzero_client.close()
 
-    async def aclose(self) -> None:
+    async def aclose(self):
         """Async close method."""
         if self._async_client:
             await self._async_client.aclose()
             self._async_client = None
         await self._tensorzero_client.aclose()
 
-    def __del__(self) -> None:
+    def __del__(self):
         """Cleanup on deletion."""
         self.close()
         if self._async_client:
@@ -187,12 +186,7 @@ class UnifiedGatewayClient:
         """Context manager entry."""
         return self
 
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
+    def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self.close()
 
@@ -200,11 +194,6 @@ class UnifiedGatewayClient:
         """Async context manager entry."""
         return self
 
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.aclose()

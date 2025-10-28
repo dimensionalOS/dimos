@@ -27,7 +27,7 @@ def fixture_dir():
 
 
 @pytest.fixture
-def potato_system_prompt() -> str:
+def potato_system_prompt():
     return "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
 
 

@@ -43,14 +43,14 @@ class VideoMessageSender(Module):
 
     message_out: Out[AgentMessage] = None
 
-    def __init__(self, video_path: str) -> None:
+    def __init__(self, video_path: str):
         super().__init__()
         self.video_path = video_path
         self._subscription = None
         self._frame_count = 0
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         """Start sending video messages."""
         # Use TimedSensorReplay to replay video frames
         video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
@@ -83,7 +83,7 @@ class VideoMessageSender(Module):
         logger.info(f"Created message with frame {self._frame_count}")
         return msg
 
-    def _send_message(self, msg: AgentMessage) -> None:
+    def _send_message(self, msg: AgentMessage):
         """Send the message and test pickling."""
         # Test that message can be pickled (for module communication)
         try:
@@ -96,7 +96,7 @@ class VideoMessageSender(Module):
         self.message_out.publish(msg)
 
     @rpc
-    def stop(self) -> None:
+    def stop(self):
         """Stop streaming."""
         if self._subscription:
             self._subscription.dispose()
@@ -108,13 +108,13 @@ class MultiImageMessageSender(Module):
 
     message_out: Out[AgentMessage] = None
 
-    def __init__(self, video_path: str) -> None:
+    def __init__(self, video_path: str):
         super().__init__()
         self.video_path = video_path
         self.frames = []
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         """Collect some frames."""
         video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
 
@@ -124,7 +124,7 @@ class MultiImageMessageSender(Module):
             on_completed=self._send_multi_image_query,
         )
 
-    def _send_multi_image_query(self) -> None:
+    def _send_multi_image_query(self):
         """Send query with multiple images."""
         if len(self.frames) >= 2:
             msg = AgentMessage()
@@ -150,15 +150,15 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self) -> None:
+    def __init__(self):
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self) -> None:
+    def start(self):
         self.response_in.subscribe(self._on_response)
 
-    def _on_response(self, resp: AgentResponse) -> None:
+    def _on_response(self, resp: AgentResponse):
         logger.info(f"Collected response: {resp.content[:100] if resp.content else 'None'}...")
         self.responses.append(resp)
 
@@ -170,7 +170,7 @@ class ResponseCollector(Module):
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_message_video_stream() -> None:
+async def test_agent_message_video_stream():
     """Test BaseAgentModule with AgentMessage containing video frames."""
     load_dotenv()
 
@@ -254,7 +254,7 @@ async def test_agent_message_video_stream() -> None:
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_message_multi_image() -> None:
+async def test_agent_message_multi_image():
     """Test BaseAgentModule with AgentMessage containing multiple images."""
     load_dotenv()
 
@@ -330,7 +330,7 @@ async def test_agent_message_multi_image() -> None:
 
 
 @pytest.mark.tofix
-def test_agent_message_text_only() -> None:
+def test_agent_message_text_only():
     """Test BaseAgent with text-only AgentMessage."""
     load_dotenv()
 
