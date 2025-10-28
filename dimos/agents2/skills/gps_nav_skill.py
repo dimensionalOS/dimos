@@ -14,49 +14,44 @@
 
 import json
 from typing import Optional
-from reactivex import Observable
 
-from dimos.core.resource import Resource
-from dimos.mapping.google_maps.google_maps import GoogleMaps
-from dimos.mapping.osm.current_location_map import CurrentLocationMap
+from dimos.core.core import rpc
+from dimos.core.rpc_client import RpcCall
+from dimos.core.skill_module import SkillModule
+from dimos.core.stream import In, Out
 from dimos.mapping.types import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.robot.robot import Robot
+from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-
-from reactivex.disposable import CompositeDisposable
 
 
 logger = setup_logger(__file__)
 
 
-class GpsNavSkillContainer(SkillContainer, Resource):
-    _robot: Robot
-    _disposables: CompositeDisposable
-    _latest_location: Optional[LatLon]
-    _position_stream: Observable[LatLon]
-    _current_location_map: CurrentLocationMap
-    _started: bool
-    _max_valid_distance: int
+class GpsNavSkillContainer(SkillModule):
+    _latest_location: LatLon | None = None
+    _max_valid_distance: int = 50000
+    _set_gps_travel_goal_points: RpcCall | None = None
 
-    def __init__(self, robot: Robot, position_stream: Observable[LatLon]):
+    gps_location: In[LatLon] = None
+    gps_goal: Out[LatLon] = None
+
+    def __init__(self):
         super().__init__()
-        self._robot = robot
-        self._disposables = CompositeDisposable()
-        self._latest_location = None
-        self._position_stream = position_stream
-        self._client = GoogleMaps()
-        self._started = False
-        self._max_valid_distance = 50000
 
+    @rpc
     def start(self) -> None:
-        self._started = True
-        self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
+        super().start()
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
 
+    @rpc
     def stop(self) -> None:
-        self._disposables.dispose()
         super().stop()
+
+    @rpc
+    def set_WebsocketVisModule_set_gps_travel_goal_points(self, callable: RpcCall) -> None:
+        self._set_gps_travel_goal_points = callable
+        self._set_gps_travel_goal_points.set_rpc(self.rpc)
 
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location
@@ -77,9 +72,6 @@ class GpsNavSkillContainer(SkillContainer, Resource):
             # then travel to {"lat": 37.7915, "lon": -122.4276}
         """
 
-        if not self._started:
-            raise ValueError(f"{self} has not been started.")
-
         new_points = [self._convert_point(x) for x in points]
 
         if not all(new_points):
@@ -88,7 +80,10 @@ class GpsNavSkillContainer(SkillContainer, Resource):
 
         logger.info(f"Set travel points: {new_points}")
 
-        self._robot.set_gps_travel_goal_points(new_points)
+        self.gps_goal.publish(new_points)
+
+        if self._set_gps_travel_goal_points:
+            self._set_gps_travel_goal_points(new_points)
 
         return "I've successfully set the travel points."
 

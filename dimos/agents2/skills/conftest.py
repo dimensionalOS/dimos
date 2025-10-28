@@ -22,7 +22,6 @@ from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.mapping.types import LatLon
-from dimos.robot.robot import GpsRobot
 from dimos.utils.data import get_data
 from dimos.msgs.sensor_msgs import Image
 
@@ -45,31 +44,6 @@ def cleanup_threadpool_scheduler(monkeypatch):
     threadpool.scheduler = ThreadPoolScheduler(max_workers=threadpool.get_max_workers())
 
 
-# TODO: Delete
-@pytest.fixture
-def fake_robot(mocker):
-    return mocker.MagicMock()
-
-
-# TODO: Delete
-@pytest.fixture
-def fake_gps_robot(mocker):
-    return mocker.Mock(spec=GpsRobot)
-
-
-@pytest.fixture
-def fake_video_stream():
-    image_path = get_data("chair-image.png")
-    image = Image.from_file(str(image_path))
-    return rx.of(image)
-
-
-# TODO: Delete
-@pytest.fixture
-def fake_gps_position_stream():
-    return rx.of(LatLon(lat=37.783, lon=-122.413))
-
-
 @pytest.fixture
 def navigation_skill_container(mocker):
     container = NavigationSkillContainer()
@@ -81,16 +55,19 @@ def navigation_skill_container(mocker):
 
 
 @pytest.fixture
-def gps_nav_skill_container(fake_gps_robot, fake_gps_position_stream):
-    container = GpsNavSkillContainer(fake_gps_robot, fake_gps_position_stream)
+def gps_nav_skill_container(mocker):
+    container = GpsNavSkillContainer()
+    container.gps_location.connection = mocker.MagicMock()
+    container.gps_goal.connection = mocker.MagicMock()
     container.start()
     yield container
     container.stop()
 
 
 @pytest.fixture
-def google_maps_skill_container(fake_gps_robot, fake_gps_position_stream, mocker):
-    container = GoogleMapsSkillContainer(fake_gps_robot, fake_gps_position_stream)
+def google_maps_skill_container(mocker):
+    container = GoogleMapsSkillContainer()
+    container.gps_location.connection = mocker.MagicMock()
     container.start()
     container._client = mocker.MagicMock()
     yield container

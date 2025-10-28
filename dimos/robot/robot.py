@@ -82,13 +82,3 @@ class UnitreeRobot(Robot):
     @property
     @abstractmethod
     def spatial_memory(self) -> Optional[SpatialMemory]: ...
-
-
-# TODO: Delete
-class GpsRobot(ABC):
-    @property
-    @abstractmethod
-    def gps_position_stream(self) -> Observable[LatLon]: ...
-
-    @abstractmethod
-    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None: ...

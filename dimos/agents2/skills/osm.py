@@ -33,7 +33,6 @@ logger = setup_logger(__file__)
 class OsmSkill(SkillModule):
     _latest_location: Optional[LatLon]
     _current_location_map: CurrentLocationMap
-    _skill_started: bool
 
     gps_location: In[LatLon] = None
 
@@ -41,11 +40,9 @@ class OsmSkill(SkillModule):
         super().__init__()
         self._latest_location = None
         self._current_location_map = CurrentLocationMap(QwenVlModel())
-        self._skill_started = False
 
     def start(self):
         super().start()
-        self._skill_started = True
         self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
 
     def stop(self):
@@ -67,9 +64,6 @@ class OsmSkill(SkillModule):
         Args:
             query_sentence (str): The query sentence.
         """
-
-        if not self._skill_started:
-            raise ValueError(f"{self} has not been started.")
 
         self._current_location_map.update_position(self._latest_location)
         location = self._current_location_map.query_for_one_position_and_context(
