@@ -1,13 +1,14 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
 import json
-import numpy as np
+import operator
 import sys
 import time
+
 from nltk.corpus import wordnet
-from tqdm import tqdm
-import operator
+import numpy as np
 import torch
+from tqdm import tqdm
 
 sys.path.insert(0, "third_party/CenterNet2/")
 sys.path.insert(0, "third_party/Deformable-DETR")

@@ -26,10 +26,11 @@ from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 from dimos.utils.actor_registry import ActorRegistry
 
 __all__ = [
-    "DimosCluster",
-    "In",
     "LCMRPC",
     "LCMTF",
+    "TF",
+    "DimosCluster",
+    "In",
     "LCMTransport",
     "Module",
     "ModuleBase",
@@ -40,7 +41,6 @@ __all__ = [
     "RemoteIn",
     "RemoteOut",
     "SHMTransport",
-    "TF",
     "TFConfig",
     "TFSpec",
     "Transport",
@@ -55,11 +55,11 @@ __all__ = [
 class CudaCleanupPlugin:
     """Dask worker plugin to cleanup CUDA resources on shutdown."""
 
-    def setup(self, worker):
+    def setup(self, worker) -> None:
         """Called when worker starts."""
         pass
 
-    def teardown(self, worker):
+    def teardown(self, worker) -> None:
         """Clean up CUDA resources when worker shuts down."""
         try:
             import sys
@@ -79,7 +79,7 @@ class CudaCleanupPlugin:
             pass
 
 
-def patch_actor(actor, cls): ...
+def patch_actor(actor, cls) -> None: ...
 
 
 DimosCluster = Client
@@ -101,14 +101,14 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             ).result()
 
             worker = actor.set_ref(actor).result()
-            print((f"deployed: {colors.blue(actor)} @ {colors.orange('worker ' + str(worker))}"))
+            print(f"deployed: {colors.blue(actor)} @ {colors.orange('worker ' + str(worker))}")
 
             # Register actor deployment in shared memory
             ActorRegistry.update(str(actor), str(worker))
 
             return RPCClient(actor, actor_class)
 
-    def check_worker_memory():
+    def check_worker_memory() -> None:
         """Check memory usage of all workers."""
         info = dask_client.scheduler_info()
         console = Console()
@@ -130,7 +130,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             memory_used_gb = memory_used / 1e9
             memory_limit_gb = memory_limit / 1e9
             managed_gb = managed_bytes / 1e9
-            spilled_gb = spilled / 1e9
+            spilled / 1e9
 
             total_memory_used += memory_used
             total_memory_limit += memory_limit
@@ -161,7 +161,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
                 f"[bold]Total: {total_used_gb:.2f}/{total_limit_gb:.2f}GB ({total_percentage:.1f}%) across {total_workers} workers[/bold]"
             )
 
-    def close_all():
+    def close_all() -> None:
         # Prevents multiple calls to close_all
         if hasattr(dask_client, "_closed") and dask_client._closed:
             return
@@ -227,7 +227,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     return dask_client  # type: ignore[return-value]
 
 
-def start(n: Optional[int] = None, memory_limit: str = "auto") -> DimosCluster:
+def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     """Start a Dask LocalCluster with specified workers and memory limits.
 
     Args:
@@ -260,7 +260,7 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> DimosCluster:
     patched_client._shutting_down = False
 
     # Signal handler with proper exit handling
-    def signal_handler(sig, frame):
+    def signal_handler(sig, frame) -> None:
         # If already shutting down, force exit
         if patched_client._shutting_down:
             import os
@@ -286,7 +286,7 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> DimosCluster:
     return patched_client
 
 
-def wait_exit():
+def wait_exit() -> None:
     while True:
         try:
             time.sleep(1)

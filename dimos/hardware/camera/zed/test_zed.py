@@ -16,7 +16,7 @@
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 
 
-def test_zed_import_and_calibration_access():
+def test_zed_import_and_calibration_access() -> None:
     """Test that zed module can be imported and calibrations accessed."""
     # Import zed module from camera
     from dimos.hardware.camera import zed

@@ -1,10 +1,10 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
+from detectron2.config import configurable
+from detectron2.layers import ShapeSpec
 import numpy as np
 import torch
 from torch import nn
 from torch.nn import functional as F
-from detectron2.config import configurable
-from detectron2.layers import ShapeSpec
 
 
 class ZeroShotClassifier(nn.Module):
@@ -19,7 +19,7 @@ class ZeroShotClassifier(nn.Module):
         use_bias: float = 0.0,
         norm_weight: bool = True,
         norm_temperature: float = 50.0,
-    ):
+    ) -> None:
         super().__init__()
         if isinstance(input_shape, int):  # some backward compatibility
             input_shape = ShapeSpec(channels=input_shape)

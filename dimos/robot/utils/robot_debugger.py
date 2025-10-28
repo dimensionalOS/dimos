@@ -21,7 +21,7 @@ logger = setup_logger(__file__)
 
 
 class RobotDebugger(Resource):
-    def __init__(self, robot):
+    def __init__(self, robot) -> None:
         self._robot = robot
         self._threaded_server = None
 

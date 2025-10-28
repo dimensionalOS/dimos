@@ -16,12 +16,10 @@ this file as an example of how to use the library.
 You may want to write your own script with your datasets and other customizations.
 """
 
+from collections import OrderedDict
 import logging
 import os
-from collections import OrderedDict
-import torch
 
-import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import MetadataCatalog
@@ -38,9 +36,11 @@ from detectron2.evaluation import (
     verify_results,
 )
 from detectron2.modeling import GeneralizedRCNNWithTTA
+import detectron2.utils.comm as comm
+import torch
 
 
-def build_evaluator(cfg, dataset_name, output_folder=None):
+def build_evaluator(cfg, dataset_name: str, output_folder=None):
     """
     Create evaluator(s) for a given dataset.
     This uses the special metadata "evaluator_type" associated with each builtin dataset.
@@ -79,7 +79,7 @@ def build_evaluator(cfg, dataset_name, output_folder=None):
         return LVISEvaluator(dataset_name, output_dir=output_folder)
     if len(evaluator_list) == 0:
         raise NotImplementedError(
-            "no Evaluator for the dataset {} with the type {}".format(dataset_name, evaluator_type)
+            f"no Evaluator for the dataset {dataset_name} with the type {evaluator_type}"
         )
     elif len(evaluator_list) == 1:
         return evaluator_list[0]
@@ -95,7 +95,7 @@ class Trainer(DefaultTrainer):
     """
 
     @classmethod
-    def build_evaluator(cls, cfg, dataset_name, output_folder=None):
+    def build_evaluator(cls, cfg, dataset_name: str, output_folder=None):
         return build_evaluator(cfg, dataset_name, output_folder)
 
     @classmethod

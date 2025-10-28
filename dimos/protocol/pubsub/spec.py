@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import pickle
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator
+import asyncio
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from typing import Any, Callable, Generic, TypeVar
+import pickle
+from typing import Any, Generic, TypeVar
+
 from dimos.utils.logging_config import setup_logger
 
 MsgT = TypeVar("MsgT")
@@ -57,7 +58,7 @@ class PubSub(Generic[TopicT, MsgT], ABC):
         def __enter__(self):
             return self
 
-        def __exit__(self, *exc):
+        def __exit__(self, *exc) -> None:
             self.unsubscribe()
 
     # public helper: returns disposable object
@@ -69,7 +70,7 @@ class PubSub(Generic[TopicT, MsgT], ABC):
     async def aiter(self, topic: TopicT, *, max_pending: int | None = None) -> AsyncIterator[MsgT]:
         q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
 
-        def _cb(msg: MsgT, topic: TopicT):
+        def _cb(msg: MsgT, topic: TopicT) -> None:
             q.put_nowait(msg)
 
         unsubscribe_fn = self.subscribe(topic, _cb)
@@ -85,7 +86,7 @@ class PubSub(Generic[TopicT, MsgT], ABC):
     async def queue(self, topic: TopicT, *, max_pending: int | None = None):
         q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
 
-        def _queue_cb(msg: MsgT, topic: TopicT):
+        def _queue_cb(msg: MsgT, topic: TopicT) -> None:
             q.put_nowait(msg)
 
         unsubscribe_fn = self.subscribe(topic, _queue_cb)
@@ -113,7 +114,7 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     @abstractmethod
     def decode(self, msg: bytes, topic: TopicT) -> MsgT: ...
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._encode_callback_map: dict = {}
 
@@ -131,7 +132,7 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     ) -> Callable[[], None]:
         """Subscribe with automatic decoding."""
 
-        def wrapper_cb(encoded_data: bytes, topic: TopicT):
+        def wrapper_cb(encoded_data: bytes, topic: TopicT) -> None:
             decoded_message = self.decode(encoded_data, topic)
             callback(decoded_message, topic)
 

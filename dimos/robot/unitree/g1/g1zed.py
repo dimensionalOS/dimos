@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Dict, TypedDict, cast
+from typing import TypedDict, cast
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
-from dimos.core import DimosCluster, LCMTransport, RPCClient, pSHMTransport
+from dimos.core import DimosCluster, LCMTransport, pSHMTransport
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
@@ -44,7 +44,7 @@ class G1ZedDeployResult(TypedDict):
 
 def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     camera = cast(
-        CameraModule,
+        "CameraModule",
         dimos.deploy(
             CameraModule,
             frequency=4.0,

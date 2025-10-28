@@ -6,16 +6,12 @@
 # Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
 # ------------------------------------------------------------------------------------------------
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
-
-import torch
-import torch.nn.functional as F
-from torch.autograd import Function
-from torch.autograd.function import once_differentiable
 
 import MultiScaleDeformableAttention as MSDA
+import torch
+from torch.autograd import Function
+from torch.autograd.function import once_differentiable
+import torch.nn.functional as F
 
 
 class MSDeformAttnFunction(Function):

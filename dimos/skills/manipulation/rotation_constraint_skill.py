@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Dict, Any, Optional, Tuple, Literal
+from typing import Literal
+
 from pydantic import Field
 
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
 from dimos.types.manipulation import RotationConstraint
-from dimos.utils.logging_config import setup_logger
 from dimos.types.vector import Vector
+from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
 logger = setup_logger("dimos.skills.rotation_constraint_skill")
@@ -39,16 +40,16 @@ class RotationConstraintSkill(AbstractManipulationSkill):
     )
 
     # Simple angle values for rotation (in degrees)
-    start_angle: Optional[float] = Field(None, description="Starting angle in degrees")
-    end_angle: Optional[float] = Field(None, description="Ending angle in degrees")
+    start_angle: float | None = Field(None, description="Starting angle in degrees")
+    end_angle: float | None = Field(None, description="Ending angle in degrees")
 
     # Pivot points as (x,y) tuples
-    pivot_point: Optional[Tuple[float, float]] = Field(
+    pivot_point: tuple[float, float] | None = Field(
         None, description="Pivot point (x,y) for rotation"
     )
 
     # TODO: Secondary pivot point for more complex rotations
-    secondary_pivot_point: Optional[Tuple[float, float]] = Field(
+    secondary_pivot_point: tuple[float, float] | None = Field(
         None, description="Secondary pivot point (x,y) for double-pivot rotation"
     )
 

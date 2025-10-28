@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, cast
 
 from dimos import spec
 from dimos.core import DimosCluster, In, Module, rpc
@@ -25,11 +24,11 @@ from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 
 class G1Connection(Module):
     cmd_vel: In[TwistStamped] = None  # type: ignore
-    ip: Optional[str]
+    ip: str | None
 
     connection: UnitreeWebRTCConnection
 
-    def __init__(self, ip: Optional[str] = None, **kwargs):
+    def __init__(self, ip: str | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
 
         if ip is None:
@@ -37,7 +36,7 @@ class G1Connection(Module):
         self.connection = UnitreeWebRTCConnection(ip)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
         self.connection.start()
         self._disposables.add(
@@ -50,7 +49,7 @@ class G1Connection(Module):
         super().stop()
 
     @rpc
-    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> None:
         """Send movement command to robot."""
         twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
         self.connection.move(twist, duration)

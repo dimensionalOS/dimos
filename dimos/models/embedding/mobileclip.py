@@ -15,9 +15,9 @@
 from pathlib import Path
 
 import open_clip
+from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
-from PIL import Image as PILImage
 
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
@@ -35,7 +35,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         model_path: Path | str | None = None,
         device: str | None = None,
         normalize: bool = True,
-    ):
+    ) -> None:
         """
         Initialize MobileCLIP model.
 

@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import logging
-import time
 from threading import Thread
-from typing import List, Optional, Protocol
+import time
+from typing import Protocol
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable
@@ -96,7 +96,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
     def __init__(
         self,
         **kwargs,
-    ):
+    ) -> None:
         get_data(self.dir_name)
         self.replay_config = {
             "loop": kwargs.get("loop"),
@@ -104,16 +104,16 @@ class ReplayConnection(UnitreeWebRTCConnection):
             "duration": kwargs.get("duration"),
         }
 
-    def connect(self):
+    def connect(self) -> None:
         pass
 
-    def start(self):
+    def start(self) -> None:
         pass
 
-    def standup(self):
+    def standup(self) -> None:
         print("standup suppressed")
 
-    def liedown(self):
+    def liedown(self) -> None:
         print("liedown suppressed")
 
     @simple_mcache
@@ -136,7 +136,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
         return video_store.stream(**self.replay_config)
 
-    def move(self, twist: TwistStamped, duration: float = 0.0):
+    def move(self, twist: TwistStamped, duration: float = 0.0) -> None:
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -153,16 +153,16 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     connection: Go2ConnectionProtocol
 
-    ip: Optional[str]
+    ip: str | None
 
     camera_info: CameraInfo = camera_info
 
     def __init__(
         self,
-        ip: Optional[str] = None,
+        ip: str | None = None,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         match ip:
             case None | "fake" | "mock" | "replay":
                 self.connection = ReplayConnection()
@@ -214,7 +214,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         super().stop()
 
     @classmethod
-    def _odom_to_tf(self, odom: PoseStamped) -> List[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -246,16 +246,16 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             sensor,
         ]
 
-    def _publish_tf(self, msg):
+    def _publish_tf(self, msg) -> None:
         self.tf.publish(*self._odom_to_tf(msg))
 
-    def publish_camera_info(self):
+    def publish_camera_info(self) -> None:
         while True:
             self.camera_info_stream.publish(camera_info)
             time.sleep(1.0)
 
     @rpc
-    def move(self, twist: TwistStamped, duration: float = 0.0):
+    def move(self, twist: TwistStamped, duration: float = 0.0) -> None:
         """Send movement command to robot."""
         self.connection.move(twist, duration)
 
@@ -281,7 +281,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         return self.connection.publish_request(topic, data)
 
 
-def deploy(dimos: DimosCluster, ip: str, prefix="") -> GO2Connection:
+def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
     connection = dimos.deploy(GO2Connection, ip)

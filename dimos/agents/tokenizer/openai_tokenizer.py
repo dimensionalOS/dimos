@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import tiktoken
+
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.utils.logging_config import setup_logger
 
 
 class OpenAITokenizer(AbstractTokenizer):
-    def __init__(self, model_name: str = "gpt-4o", **kwargs):
+    def __init__(self, model_name: str = "gpt-4o", **kwargs) -> None:
         super().__init__(**kwargs)
 
         # Initilize the tokenizer for the openai set of models
@@ -27,10 +28,10 @@ class OpenAITokenizer(AbstractTokenizer):
             self.tokenizer = tiktoken.encoding_for_model(self.model_name)
         except Exception as e:
             raise ValueError(
-                f"Failed to initialize tokenizer for model {self.model_name}. Error: {str(e)}"
+                f"Failed to initialize tokenizer for model {self.model_name}. Error: {e!s}"
             )
 
-    def tokenize_text(self, text):
+    def tokenize_text(self, text: str):
         """
         Tokenize a text string using the openai tokenizer.
         """
@@ -43,16 +44,16 @@ class OpenAITokenizer(AbstractTokenizer):
         try:
             return self.tokenizer.decode(tokenized_text, errors="ignore")
         except Exception as e:
-            raise ValueError(f"Failed to detokenize text. Error: {str(e)}")
+            raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
-    def token_count(self, text):
+    def token_count(self, text: str):
         """
         Gets the token count of a text string using the openai tokenizer.
         """
         return len(self.tokenize_text(text)) if text else 0
 
     @staticmethod
-    def image_token_count(image_width, image_height, image_detail="high"):
+    def image_token_count(image_width, image_height, image_detail: str = "high"):
         """
         Calculate the number of tokens in an image. Low detail is 85 tokens, high detail is 170 tokens per 512x512 square.
         """

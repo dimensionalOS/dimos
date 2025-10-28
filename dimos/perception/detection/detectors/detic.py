@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Sequence
 import os
 import sys
 
 import numpy as np
 
+# Add Detic to Python path
+from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector
 from dimos.perception.detection2d.utils import plot_results
-
-# Add Detic to Python path
-from dimos.constants import DIMOS_PROJECT_ROOT
 
 detic_path = DIMOS_PROJECT_ROOT / "dimos/models/Detic"
 if str(detic_path) not in sys.path:
@@ -44,7 +44,7 @@ from detectron2.data import MetadataCatalog
 class SimpleTracker:
     """Simple IOU-based tracker implementation without external dependencies"""
 
-    def __init__(self, iou_threshold=0.3, max_age=5):
+    def __init__(self, iou_threshold: float = 0.3, max_age: int = 5) -> None:
         self.iou_threshold = iou_threshold
         self.max_age = max_age
         self.next_id = 1
@@ -161,7 +161,9 @@ class SimpleTracker:
 
 
 class Detic2DDetector(Detector):
-    def __init__(self, model_path=None, device="cuda", vocabulary=None, threshold=0.5):
+    def __init__(
+        self, model_path=None, device: str = "cuda", vocabulary=None, threshold: float = 0.5
+    ) -> None:
         """
         Initialize the Detic detector with open vocabulary support.
 
@@ -278,7 +280,7 @@ class Detic2DDetector(Detector):
             if isinstance(vocabulary, str):
                 # If it's a string but not a built-in dataset, treat as a file
                 try:
-                    with open(vocabulary, "r") as f:
+                    with open(vocabulary) as f:
                         class_names = [line.strip() for line in f if line.strip()]
                 except:
                     # Default to LVIS if there's an issue
@@ -301,7 +303,7 @@ class Detic2DDetector(Detector):
         self.reset_cls_test(self.predictor.model, classifier, num_classes)
         return self.class_names
 
-    def _get_clip_embeddings(self, vocabulary, prompt="a "):
+    def _get_clip_embeddings(self, vocabulary, prompt: str = "a "):
         """
         Generate CLIP embeddings for a vocabulary list.
 
@@ -354,7 +356,7 @@ class Detic2DDetector(Detector):
             bboxes.append([x1, y1, x2, y2])
 
         # Get class names
-        names = [self.class_names[class_id] for class_id in class_ids]
+        [self.class_names[class_id] for class_id in class_ids]
 
         # Apply tracking
         detections = []
@@ -362,7 +364,7 @@ class Detic2DDetector(Detector):
         for i, bbox in enumerate(bboxes):
             if scores[i] >= self.threshold:
                 # Format for tracker: [x1, y1, x2, y2, score, class_id]
-                detections.append(bbox + [scores[i], class_ids[i]])
+                detections.append([*bbox, scores[i], class_ids[i]])
                 filtered_masks.append(masks[i])
 
         if not detections:
@@ -396,7 +398,9 @@ class Detic2DDetector(Detector):
             # tracked_masks,
         )
 
-    def visualize_results(self, image, bboxes, track_ids, class_ids, confidences, names):
+    def visualize_results(
+        self, image, bboxes, track_ids, class_ids, confidences, names: Sequence[str]
+    ):
         """
         Generate visualization of detection results.
 
@@ -414,7 +418,7 @@ class Detic2DDetector(Detector):
 
         return plot_results(image, bboxes, track_ids, class_ids, confidences, names)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         # Nothing specific to clean up for Detic
         pass

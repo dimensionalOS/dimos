@@ -19,16 +19,17 @@ FakeZEDModule - Replays recorded ZED data for testing without hardware.
 
 import functools
 import logging
+
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.std_msgs import Header
-from dimos.utils.testing import TimedSensorReplay
-from dimos.utils.logging_config import setup_logger
 from dimos.protocol.tf import TF
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(__name__, level=logging.INFO)
 
@@ -44,7 +45,7 @@ class FakeZEDModule(Module):
     camera_info: Out[CameraInfo] = None
     pose: Out[PoseStamped] = None
 
-    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs):
+    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
@@ -197,7 +198,7 @@ class FakeZEDModule(Module):
         return info_replay.stream()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying recorded data."""
         super().start()
 
@@ -261,14 +262,15 @@ class FakeZEDModule(Module):
 
         super().stop()
 
-    def _publish_pose(self, msg):
+    def _publish_pose(self, msg) -> None:
         """Publish pose and TF transform."""
         if msg:
             self.pose.publish(msg)
 
             # Publish TF transform from world to camera
-            from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
             import time
+
+            from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
             transform = Transform(
                 translation=Vector3(*msg.position),

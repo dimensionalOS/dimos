@@ -31,7 +31,7 @@ def reconstruct_pointcloud(points_array):
     return pc
 
 
-def register_picklers():
+def register_picklers() -> None:
     # Register for the actual PointCloud class that gets instantiated
     # We need to create a dummy PointCloud to get its actual class
     _dummy_pc = o3d.geometry.PointCloud()

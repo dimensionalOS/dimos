@@ -12,20 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import sys
-import os
-
 # -----
-
 import ast
 import inspect
-import types
 import sys
 
 
 def extract_function_info(filename):
-    with open(filename, "r") as f:
+    with open(filename) as f:
         source = f.read()
         tree = ast.parse(source, filename=filename)
 

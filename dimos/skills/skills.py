@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
 import logging
-from typing import Any, Optional
-from pydantic import BaseModel
+from typing import Any
+
 from openai import pydantic_function_tool
+from pydantic import BaseModel
 
 from dimos.types.constants import Colors
 
@@ -30,14 +32,14 @@ logger.setLevel(logging.INFO)
 class SkillLibrary:
     # ==== Flat Skill Library ====
 
-    def __init__(self):
-        self.registered_skills: list["AbstractSkill"] = []
-        self.class_skills: list["AbstractSkill"] = []
+    def __init__(self) -> None:
+        self.registered_skills: list[AbstractSkill] = []
+        self.class_skills: list[AbstractSkill] = []
         self._running_skills = {}  # {skill_name: (instance, subscription)}
 
         self.init()
 
-    def init(self):
+    def init(self) -> None:
         # Collect all skills from the parent class and update self.skills
         self.refresh_class_skills()
 
@@ -74,7 +76,7 @@ class SkillLibrary:
 
         return skills
 
-    def refresh_class_skills(self):
+    def refresh_class_skills(self) -> None:
         self.class_skills = self.get_class_skills()
 
     def add(self, skill: "AbstractSkill") -> None:
@@ -93,7 +95,7 @@ class SkillLibrary:
     def clear(self) -> None:
         self.registered_skills.clear()
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self.registered_skills)
 
     def __len__(self) -> int:
@@ -109,7 +111,7 @@ class SkillLibrary:
 
     _instances: dict[str, dict] = {}
 
-    def create_instance(self, name, **kwargs):
+    def create_instance(self, name: str, **kwargs) -> None:
         # Key based only on the name
         key = name
 
@@ -117,7 +119,7 @@ class SkillLibrary:
             # Instead of creating an instance, store the args for later use
             self._instances[key] = kwargs
 
-    def call(self, name, **args):
+    def call(self, name: str, **args):
         try:
             # Get the stored args if available; otherwise, use an empty dict
             stored_args = self._instances.get(name, {})
@@ -144,7 +146,7 @@ class SkillLibrary:
             # Call the instance directly
             return instance()
         except Exception as e:
-            error_msg = f"Error executing skill '{name}': {str(e)}"
+            error_msg = f"Error executing skill '{name}': {e!s}"
             logger.error(error_msg)
             return error_msg
 
@@ -158,7 +160,7 @@ class SkillLibrary:
     def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
 
-    def register_running_skill(self, name: str, instance: Any, subscription=None):
+    def register_running_skill(self, name: str, instance: Any, subscription=None) -> None:
         """
         Register a running skill with its subscription.
 
@@ -171,7 +173,7 @@ class SkillLibrary:
         self._running_skills[name] = (instance, subscription)
         logger.info(f"Registered running skill: {name}")
 
-    def unregister_running_skill(self, name: str):
+    def unregister_running_skill(self, name: str) -> bool:
         """
         Unregister a running skill.
 
@@ -214,7 +216,7 @@ class SkillLibrary:
             try:
                 # Call the stop method if it exists
                 if hasattr(instance, "stop") and callable(instance.stop):
-                    result = instance.stop()
+                    instance.stop()
                     logger.info(f"Stopped skill: {name}")
                 else:
                     logger.warning(f"Skill {name} does not have a stop method")
@@ -250,7 +252,7 @@ class SkillLibrary:
 
 
 class AbstractSkill(BaseModel):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         print("Initializing AbstractSkill Class")
         super().__init__(*args, **kwargs)
         self._instances = {}
@@ -260,7 +262,9 @@ class AbstractSkill(BaseModel):
     def clone(self) -> "AbstractSkill":
         return AbstractSkill()
 
-    def register_as_running(self, name: str, skill_library: SkillLibrary, subscription=None):
+    def register_as_running(
+        self, name: str, skill_library: SkillLibrary, subscription=None
+    ) -> None:
         """
         Register this skill as running in the skill library.
 
@@ -271,7 +275,7 @@ class AbstractSkill(BaseModel):
         """
         skill_library.register_running_skill(name, self, subscription)
 
-    def unregister_as_running(self, name: str, skill_library: SkillLibrary):
+    def unregister_as_running(self, name: str, skill_library: SkillLibrary) -> None:
         """
         Unregister this skill from the skill library.
 
@@ -306,7 +310,7 @@ else:
 class AbstractRobotSkill(AbstractSkill):
     _robot: Robot = None
 
-    def __init__(self, *args, robot: Optional[Robot] = None, **kwargs):
+    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._robot = robot
         print(

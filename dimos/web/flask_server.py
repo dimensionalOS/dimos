@@ -12,17 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from flask import Flask, Response, render_template
+from queue import Queue
+
 import cv2
+from flask import Flask, Response, render_template
 from reactivex import operators as ops
 from reactivex.disposable import SingleAssignmentDisposable
-from queue import Queue
 
 from dimos.web.edge_io import EdgeIO
 
 
 class FlaskServer(EdgeIO):
-    def __init__(self, dev_name="Flask Server", edge_type="Bidirectional", port=5555, **streams):
+    def __init__(
+        self,
+        dev_name: str = "Flask Server",
+        edge_type: str = "Bidirectional",
+        port: int = 5555,
+        **streams,
+    ) -> None:
         super().__init__(dev_name, edge_type)
         self.app = Flask(__name__)
         self.port = port
@@ -44,7 +51,7 @@ class FlaskServer(EdgeIO):
         _, buffer = cv2.imencode(".jpg", frame)
         return buffer.tobytes()
 
-    def setup_routes(self):
+    def setup_routes(self) -> None:
         @self.app.route("/")
         def index():
             stream_keys = list(self.streams.keys())  # Get the keys from the streams dictionary
@@ -90,6 +97,6 @@ class FlaskServer(EdgeIO):
                 f"/video_feed/{key}", endpoint, view_func=make_response_generator(key)
             )
 
-    def run(self, host="0.0.0.0", port=5555, threaded=True):
+    def run(self, host: str = "0.0.0.0", port: int = 5555, threaded: bool = True) -> None:
         self.port = port
         self.app.run(host=host, port=self.port, debug=False, threaded=threaded)

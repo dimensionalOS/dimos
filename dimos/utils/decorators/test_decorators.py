@@ -16,15 +16,15 @@ import time
 
 import pytest
 
-from dimos.utils.decorators import LatestAccumulator, RollingAverageAccumulator, limit, retry
+from dimos.utils.decorators import RollingAverageAccumulator, limit, retry
 
 
-def test_limit():
+def test_limit() -> None:
     """Test limit decorator with keyword arguments."""
     calls = []
 
     @limit(20)  # 20 Hz
-    def process(msg: str, keyword: int = 0):
+    def process(msg: str, keyword: int = 0) -> str:
         calls.append((msg, keyword))
         return f"{msg}:{keyword}"
 
@@ -49,14 +49,14 @@ def test_limit():
     assert calls == [("first", 1), ("third", 3), ("fourth", 0)]
 
 
-def test_latest_rolling_average():
+def test_latest_rolling_average() -> None:
     """Test RollingAverageAccumulator with limit decorator."""
     calls = []
 
     accumulator = RollingAverageAccumulator()
 
     @limit(20, accumulator=accumulator)  # 20 Hz
-    def process(value: float, label: str = ""):
+    def process(value: float, label: str = "") -> str:
         calls.append((value, label))
         return f"{value}:{label}"
 
@@ -79,12 +79,12 @@ def test_latest_rolling_average():
     assert calls == [(10.0, "first"), (25.0, "third")]  # (20+30)/2 = 25
 
 
-def test_retry_success_after_failures():
+def test_retry_success_after_failures() -> None:
     """Test that retry decorator retries on failure and eventually succeeds."""
     attempts = []
 
     @retry(max_retries=3)
-    def flaky_function(fail_times=2):
+    def flaky_function(fail_times: int = 2) -> str:
         attempts.append(len(attempts))
         if len(attempts) <= fail_times:
             raise ValueError(f"Attempt {len(attempts)} failed")
@@ -95,7 +95,7 @@ def test_retry_success_after_failures():
     assert len(attempts) == 3  # Failed twice, succeeded on third attempt
 
 
-def test_retry_exhausted():
+def test_retry_exhausted() -> None:
     """Test that retry decorator raises exception when retries are exhausted."""
     attempts = []
 
@@ -111,12 +111,12 @@ def test_retry_exhausted():
     assert len(attempts) == 3  # Initial attempt + 2 retries
 
 
-def test_retry_specific_exception():
+def test_retry_specific_exception() -> None:
     """Test that retry only catches specified exception types."""
     attempts = []
 
     @retry(max_retries=3, on_exception=ValueError)
-    def raises_different_exceptions():
+    def raises_different_exceptions() -> str:
         attempts.append(len(attempts))
         if len(attempts) == 1:
             raise ValueError("First attempt")
@@ -132,12 +132,12 @@ def test_retry_specific_exception():
     assert len(attempts) == 2  # First attempt with ValueError, second with TypeError
 
 
-def test_retry_no_failures():
+def test_retry_no_failures() -> None:
     """Test that retry decorator works when function succeeds immediately."""
     attempts = []
 
     @retry(max_retries=5)
-    def always_succeeds():
+    def always_succeeds() -> str:
         attempts.append(len(attempts))
         return "immediate success"
 
@@ -146,13 +146,13 @@ def test_retry_no_failures():
     assert len(attempts) == 1  # Only one attempt needed
 
 
-def test_retry_with_delay():
+def test_retry_with_delay() -> None:
     """Test that retry decorator applies delay between attempts."""
     attempts = []
     times = []
 
     @retry(max_retries=2, delay=0.1)
-    def delayed_failures():
+    def delayed_failures() -> str:
         times.append(time.time())
         attempts.append(len(attempts))
         if len(attempts) < 2:
@@ -172,7 +172,7 @@ def test_retry_with_delay():
         assert times[1] - times[0] >= 0.1
 
 
-def test_retry_zero_retries():
+def test_retry_zero_retries() -> None:
     """Test retry with max_retries=0 (no retries, just one attempt)."""
     attempts = []
 
@@ -187,31 +187,31 @@ def test_retry_zero_retries():
     assert len(attempts) == 1  # Only the initial attempt
 
 
-def test_retry_invalid_parameters():
+def test_retry_invalid_parameters() -> None:
     """Test that retry decorator validates parameters."""
     with pytest.raises(ValueError):
 
         @retry(max_retries=-1)
-        def invalid_retries():
+        def invalid_retries() -> None:
             pass
 
     with pytest.raises(ValueError):
 
         @retry(delay=-0.5)
-        def invalid_delay():
+        def invalid_delay() -> None:
             pass
 
 
-def test_retry_with_methods():
+def test_retry_with_methods() -> None:
     """Test that retry decorator works with class methods, instance methods, and static methods."""
 
     class TestClass:
-        def __init__(self):
+        def __init__(self) -> None:
             self.instance_attempts = []
             self.instance_value = 42
 
         @retry(max_retries=3)
-        def instance_method(self, fail_times=2):
+        def instance_method(self, fail_times: int = 2) -> str:
             """Test retry on instance method."""
             self.instance_attempts.append(len(self.instance_attempts))
             if len(self.instance_attempts) <= fail_times:
@@ -220,7 +220,7 @@ def test_retry_with_methods():
 
         @classmethod
         @retry(max_retries=2)
-        def class_method(cls, attempts_list, fail_times=1):
+        def class_method(cls, attempts_list, fail_times: int = 1) -> str:
             """Test retry on class method."""
             attempts_list.append(len(attempts_list))
             if len(attempts_list) <= fail_times:
@@ -229,7 +229,7 @@ def test_retry_with_methods():
 
         @staticmethod
         @retry(max_retries=2)
-        def static_method(attempts_list, fail_times=1):
+        def static_method(attempts_list, fail_times: int = 1) -> str:
             """Test retry on static method."""
             attempts_list.append(len(attempts_list))
             if len(attempts_list) <= fail_times:

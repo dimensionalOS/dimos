@@ -16,8 +16,6 @@
 
 from dataclasses import dataclass
 
-from typing_extensions import TypedDict
-
 from dimos.protocol.service.spec import Service
 
 
@@ -38,7 +36,7 @@ class DatabaseService(Service[DatabaseConfig]):
     def stop(self) -> None: ...
 
 
-def test_default_configuration():
+def test_default_configuration() -> None:
     """Test that default configuration is applied correctly."""
     service = DatabaseService()
 
@@ -51,7 +49,7 @@ def test_default_configuration():
     assert service.config.ssl_enabled is False
 
 
-def test_partial_configuration_override():
+def test_partial_configuration_override() -> None:
     """Test that partial configuration correctly overrides defaults."""
     service = DatabaseService(host="production-db", port=3306, ssl_enabled=True)
 
@@ -66,7 +64,7 @@ def test_partial_configuration_override():
     assert service.config.max_connections == 10
 
 
-def test_complete_configuration_override():
+def test_complete_configuration_override() -> None:
     """Test that all configuration values can be overridden."""
     service = DatabaseService(
         host="custom-host",
@@ -86,7 +84,7 @@ def test_complete_configuration_override():
     assert service.config.ssl_enabled is True
 
 
-def test_service_subclassing():
+def test_service_subclassing() -> None:
     @dataclass
     class ExtraConfig(DatabaseConfig):
         extra_param: str = "default_value"
@@ -94,7 +92,7 @@ def test_service_subclassing():
     class ExtraDatabaseService(DatabaseService):
         default_config = ExtraConfig
 
-        def __init__(self, *args, **kwargs):
+        def __init__(self, *args, **kwargs) -> None:
             super().__init__(*args, **kwargs)
 
     bla = ExtraDatabaseService(host="custom-host2", extra_param="extra_value")

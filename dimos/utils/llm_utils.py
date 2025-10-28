@@ -14,10 +14,9 @@
 
 import json
 import re
-from typing import Union
 
 
-def extract_json(response: str) -> Union[dict, list]:
+def extract_json(response: str) -> dict | list:
     """Extract JSON from potentially messy LLM response.
 
     Tries multiple strategies:

@@ -11,8 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
@@ -38,12 +39,12 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Optional[Callable[[Any], Detector]] = Yolo2DDetector
+    detector: Callable[[Any], Detector] | None = Yolo2DDetector
     publish_detection_images: bool = True
     camera_info: CameraInfo = None  # type: ignore
     filter: list[Filter2D] | Filter2D | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.filter is None:
             self.filter = []
         elif not isinstance(self.filter, list):
@@ -66,7 +67,7 @@ class Detection2DModule(Module):
 
     cnt: int = 0
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.detector = self.config.detector()
         self.vlm_detections_subject = Subject()
@@ -90,7 +91,7 @@ class Detection2DModule(Module):
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
         return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
-    def track(self, detections: ImageDetections2D):
+    def track(self, detections: ImageDetections2D) -> None:
         sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
@@ -130,7 +131,7 @@ class Detection2DModule(Module):
         self.tf.publish(*transforms)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(
@@ -141,7 +142,7 @@ class Detection2DModule(Module):
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
-        def publish_cropped_images(detections: ImageDetections2D):
+        def publish_cropped_images(detections: ImageDetections2D) -> None:
             for index, detection in enumerate(detections[:3]):
                 image_topic = getattr(self, "detected_image_" + str(index))
                 image_topic.publish(detection.cropped_image())

@@ -14,9 +14,7 @@
 
 import logging
 
-from dimos import agents2
 from dimos.core import DimosCluster
-from dimos.perception.detection import moduleDB
 from dimos.robot import foxglove_bridge
 from dimos.robot.unitree.connection import go2
 from dimos.utils.logging_config import setup_logger

@@ -13,30 +13,34 @@
 # limitations under the License.
 
 import os
+from typing import TYPE_CHECKING
+
 import cv2
 import numpy as np
-import pytest
 import open3d as o3d
+import pytest
 
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.pointcloud.utils import load_camera_matrix_from_yaml
-from dimos.types.manipulation import ObjectData
+
+if TYPE_CHECKING:
+    from dimos.types.manipulation import ObjectData
 
 
 class TestPointcloudFiltering:
-    def test_pointcloud_filtering_initialization(self):
+    def test_pointcloud_filtering_initialization(self) -> None:
         """Test PointcloudFiltering initializes correctly with default parameters."""
         try:
             filtering = PointcloudFiltering()
             assert filtering is not None
             assert filtering.color_weight == 0.3
-            assert filtering.enable_statistical_filtering == True
-            assert filtering.enable_radius_filtering == True
-            assert filtering.enable_subsampling == True
+            assert filtering.enable_statistical_filtering
+            assert filtering.enable_radius_filtering
+            assert filtering.enable_subsampling
         except Exception as e:
             pytest.skip(f"Skipping test due to initialization error: {e}")
 
-    def test_pointcloud_filtering_with_custom_params(self):
+    def test_pointcloud_filtering_with_custom_params(self) -> None:
         """Test PointcloudFiltering with custom parameters."""
         try:
             filtering = PointcloudFiltering(
@@ -47,14 +51,14 @@ class TestPointcloudFiltering:
                 max_num_objects=5,
             )
             assert filtering.color_weight == 0.5
-            assert filtering.enable_statistical_filtering == False
-            assert filtering.enable_radius_filtering == False
+            assert not filtering.enable_statistical_filtering
+            assert not filtering.enable_radius_filtering
             assert filtering.voxel_size == 0.01
             assert filtering.max_num_objects == 5
         except Exception as e:
             pytest.skip(f"Skipping test due to initialization error: {e}")
 
-    def test_pointcloud_filtering_process_images(self):
+    def test_pointcloud_filtering_process_images(self) -> None:
         """Test PointcloudFiltering can process RGB-D images and return filtered point clouds."""
         try:
             # Import data inside method to avoid pytest fixture confusion
@@ -204,7 +208,7 @@ class TestPointcloudFiltering:
         except Exception as e:
             pytest.skip(f"Skipping test due to error: {e}")
 
-    def test_pointcloud_filtering_empty_objects(self):
+    def test_pointcloud_filtering_empty_objects(self) -> None:
         """Test PointcloudFiltering with empty object list."""
         try:
             from dimos.utils.data import get_data
@@ -234,7 +238,7 @@ class TestPointcloudFiltering:
         except Exception as e:
             pytest.skip(f"Skipping test due to error: {e}")
 
-    def test_color_generation_consistency(self):
+    def test_color_generation_consistency(self) -> None:
         """Test that color generation is consistent for the same object ID."""
         try:
             filtering = PointcloudFiltering()

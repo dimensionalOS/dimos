@@ -15,7 +15,6 @@
 import asyncio
 import logging
 import threading
-from typing import List, Optional
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
 from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
@@ -30,15 +29,15 @@ class FoxgloveBridge(Module):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self, *args, shm_channels=None, **kwargs):
+    def __init__(self, *args, shm_channels=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
-        def run_bridge():
+        def run_bridge() -> None:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             try:
@@ -63,7 +62,7 @@ class FoxgloveBridge(Module):
         self._thread.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=2)
@@ -73,12 +72,14 @@ class FoxgloveBridge(Module):
 
 def deploy(
     dimos: DimosCluster,
-    shm_channels: Optional[List[str]] = [
-        "/image#sensor_msgs.Image",
-        "/lidar#sensor_msgs.PointCloud2",
-        "/map#sensor_msgs.PointCloud2",
-    ],
+    shm_channels: list[str] | None = None,
 ) -> FoxgloveBridge:
+    if shm_channels is None:
+        shm_channels = [
+            "/image#sensor_msgs.Image",
+            "/lidar#sensor_msgs.PointCloud2",
+            "/map#sensor_msgs.PointCloud2",
+        ]
     foxglove_bridge = dimos.deploy(
         FoxgloveBridge,
         shm_channels=shm_channels,
@@ -90,4 +91,4 @@ def deploy(
 foxglove_bridge = FoxgloveBridge.blueprint
 
 
-__all__ = ["FoxgloveBridge", "foxglove_bridge", "deploy"]
+__all__ = ["FoxgloveBridge", "deploy", "foxglove_bridge"]
