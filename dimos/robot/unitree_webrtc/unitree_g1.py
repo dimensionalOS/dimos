@@ -87,7 +87,7 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
-    movecmd: In[TwistStamped] = None
+    movecmd: In[Twist] = None
     odom_in: In[Odometry] = None
 
     odom_pose: Out[PoseStamped] = None
@@ -138,9 +138,8 @@ class G1ConnectionModule(Module):
         )
 
     @rpc
-    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0):
         """Send movement command to robot."""
-        twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
         self.connection.move(twist, duration)
 
     @rpc

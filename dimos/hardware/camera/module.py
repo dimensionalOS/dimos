@@ -125,3 +125,5 @@ class CameraModule(Module):
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()
         super().stop()
+
+camera_module = CameraModule.blueprint

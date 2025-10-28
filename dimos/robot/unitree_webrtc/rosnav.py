@@ -38,7 +38,7 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
-
+# TODO: Remove, deprecated
 class NavigationModule(Module):
     goal_pose: Out[PoseStamped] = None
     goal_reached: In[Bool] = None
@@ -148,6 +148,3 @@ class NavigationModule(Module):
 
         return False
 
-
-# Create blueprint function for easy instantiation
-navigation_module = NavigationModule.blueprint

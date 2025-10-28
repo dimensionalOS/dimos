@@ -22,15 +22,15 @@ from basic teleoperation to full autonomous agent configurations.
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
-from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.nav_msgs import Odometry
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Transform, Vector3, Quaternion
+from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.nav_msgs import Odometry, Path
 from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.std_msgs import Bool
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree_webrtc.unitree_g1 import connection
-from dimos.robot.unitree_webrtc.rosnav import navigation_module
+from dimos.navigation.rosnav.nav_bot import navigation_module
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 from dimos.navigation.global_planner import astar_planner
@@ -51,6 +51,9 @@ from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.navigation import navigation_skill
 from dimos.robot.unitree_webrtc.g1_joystick_module import g1_joystick
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
+from dimos.hardware.camera.module import camera_module
+from dimos.hardware.camera.webcam import Webcam
+from dimos.hardware.camera import zed
 
 
 # Basic configuration with navigation and visualization
@@ -58,6 +61,21 @@ basic = (
     autoconnect(
         # Core connection module for G1
         connection(),
+        # Camera module
+        camera_module(
+            transform=Transform(
+                translation=Vector3(0.05, 0.0, 0.0),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.2, 0.0)),
+                frame_id="sensor",
+                child_frame_id="camera_link",
+            ),
+            hardware=lambda: Webcam(
+                camera_index=0,
+                frequency=15,
+                stereo_slice="left",
+                camera_info=zed.CameraInfo.SingleWebcam,
+            ),
+        ),
         # SLAM and mapping
         mapper(voxel_size=0.5, global_publish_interval=2.5),
         # Navigation stack
@@ -73,17 +91,25 @@ basic = (
     .with_global_config(n_dask_workers=4)
     .with_transports(
         {
-            # G1 uses TwistStamped for movement commands
-            ("cmd_vel", TwistStamped): LCMTransport("/cmd_vel", TwistStamped),
+            # G1 uses Twist for movement commands
+            ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
+            ("movecmd", Twist): LCMTransport("/cmd_vel", Twist),
             # State estimation from ROS
             ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
-            # Odometry output
-            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
-            # Navigation topics
+            # Odometry output from ROSNavigationModule
+            ("odom_pose", PoseStamped): LCMTransport("/odom", PoseStamped),
+            # Navigation module topics from nav_bot
+            ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
+            ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),
+            ("path_active", Path): LCMTransport("/path_active", Path),
+            ("pointcloud", PointCloud2): LCMTransport("/lidar", PointCloud2),
+            ("global_pointcloud", PointCloud2): LCMTransport("/map", PointCloud2),
+            # Original navigation topics for backwards compatibility
             ("goal_pose", PoseStamped): LCMTransport("/goal_pose", PoseStamped),
             ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
             ("cancel_goal", Bool): LCMTransport("/cancel_goal", Bool),
             # Camera topics (if camera module is added)
+            ("image", Image): LCMTransport("/g1/color_image", Image),
             ("color_image", Image): LCMTransport("/g1/color_image", Image),
             ("camera_info", CameraInfo): LCMTransport("/g1/camera_info", CameraInfo),
         }
@@ -96,15 +122,9 @@ standard = (
         basic,
         spatial_memory(),
         object_tracking(frame_id="camera_link"),
-        depth_module(),
         utilization(),
     )
     .with_global_config(n_dask_workers=8)
-    .with_transports(
-        {
-            ("depth_image", Image): LCMTransport("/g1/depth_image", Image),
-        }
-    )
 )
 
 # Optimized configuration using shared memory for images
@@ -114,15 +134,11 @@ standard_with_shm = autoconnect(
             ("color_image", Image): pSHMTransport(
                 "/g1/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
-            ("depth_image", Image): pSHMTransport(
-                "/g1/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
-            ),
         }
     ),
     foxglove_bridge(
         shm_channels=[
             "/g1/color_image#sensor_msgs.Image",
-            "/g1/depth_image#sensor_msgs.Image",
         ]
     ),
 )
