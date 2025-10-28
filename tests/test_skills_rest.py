@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
 from textwrap import dedent
-from dimos.skills.skills import SkillLibrary
 
 from dotenv import load_dotenv
-from dimos.agents.claude_agent import ClaudeAgent
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.skills.rest.rest import GenericRestSkill
 import reactivex as rx
 import reactivex.operators as ops
+
+from dimos.agents.claude_agent import ClaudeAgent
+from dimos.skills.rest.rest import GenericRestSkill
+from dimos.skills.skills import SkillLibrary
+from dimos.web.robot_web_interface import RobotWebInterface
 
 # Load API key from environment
 load_dotenv()
@@ -48,9 +47,9 @@ agent = ClaudeAgent(
     skills=skills,
     system_query=dedent(
         """
-        You are a virtual agent. When given a query, respond by using 
+        You are a virtual agent. When given a query, respond by using
         the appropriate tool calls if needed to execute commands on the robot.
-        
+
         IMPORTANT:
         Only return the response directly asked of the user. E.G. if the user asks for the time,
         only return the time. If the user asks for the weather, only return the weather.

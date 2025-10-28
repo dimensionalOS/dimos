@@ -12,25 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+import queue
+import sys
+import threading
+
 import cv2
 import numpy as np
-import os
-import sys
-import queue
-import threading
 
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dimos.stream.video_provider import VideoProvider
+from reactivex import operators as RxOps
+
 from dimos.perception.semantic_seg import SemanticSegmentationStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.stream.video_operators import VideoOperators as MyVideoOps, Operators as MyOps
 from dimos.stream.frame_processor import FrameProcessor
-from reactivex import operators as RxOps
+from dimos.stream.video_operators import Operators as MyOps
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def main():
@@ -111,7 +111,7 @@ def main():
             "counts": {},
         }
 
-        frame_processor = FrameProcessor(delete_on_init=True)
+        FrameProcessor(delete_on_init=True)
         subscription = segmentation_stream.pipe(
             MyOps.print_emission(id="A", **print_emission_args),
             RxOps.share(),

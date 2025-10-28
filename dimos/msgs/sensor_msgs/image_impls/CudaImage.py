@@ -14,27 +14,27 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+import time
 
 import cv2
 import numpy as np
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
+    HAS_CUDA,
     AbstractImage,
     ImageFormat,
-    HAS_CUDA,
+    _ascontig,
     _is_cu,
     _to_cpu,
-    _ascontig,
 )
-from dimos.msgs.sensor_msgs.image_impls.NumpyImage import NumpyImage
 
 try:
     import cupy as cp  # type: ignore
-    from cupyx.scipy import ndimage as cndimage  # type: ignore
-    from cupyx.scipy import signal as csignal  # type: ignore
+    from cupyx.scipy import (
+        ndimage as cndimage,  # type: ignore
+        signal as csignal,  # type: ignore
+    )
 except Exception:  # pragma: no cover
     cp = None  # type: ignore
     cndimage = None  # type: ignore
@@ -267,7 +267,7 @@ if cp is not None:
     _pnp_kernel = _mod.get_function("pnp_gn_batch")
 
 
-def _solve_pnp_cuda_kernel(obj, img, K, iterations=15, damping=1e-6):
+def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1e-6):
     if cp is None:
         raise RuntimeError("CuPy/CUDA not available")
 
@@ -466,7 +466,7 @@ def _rodrigues(x, inverse: bool = False):
         I = I[None, :, :] if n == 1 else xp.broadcast_to(I, (n, 3, 3))
         KK = xp.matmul(K, K)
         out = I + A * K + B * KK
-        return out.reshape(orig_shape + (3, 3)) if orig_shape else out[0]
+        return out.reshape((*orig_shape, 3, 3)) if orig_shape else out[0]
 
     mat = arr
     if mat.shape[-2:] != (3, 3):
@@ -503,13 +503,13 @@ def _rodrigues(x, inverse: bool = False):
         axis = axis / axis_norm[:, None]
         r_pi = theta[:, None] * axis
         r = xp.where(pi_mask[:, None], r_pi, r)
-    out = r.reshape(orig_shape + (3,)) if orig_shape else r[0]
+    out = r.reshape((*orig_shape, 3)) if orig_shape else r[0]
     return out
 
 
 def _undistort_points_cuda(
-    img_px: "cp.ndarray", K: "cp.ndarray", dist: "cp.ndarray", iterations: int = 8
-) -> "cp.ndarray":
+    img_px: cp.ndarray, K: cp.ndarray, dist: cp.ndarray, iterations: int = 8
+) -> cp.ndarray:
     """Iteratively undistort pixel coordinates on device (Brown–Conrady).
 
     Returns pixel coordinates after undistortion (fx*xu+cx, fy*yu+cy).
@@ -570,7 +570,7 @@ class CudaImage(AbstractImage):
             return _to_cpu(self.to_bgr().data)
         return _to_cpu(self.data)
 
-    def to_rgb(self) -> "CudaImage":
+    def to_rgb(self) -> CudaImage:
         if self.format == ImageFormat.RGB:
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
@@ -588,7 +588,7 @@ class CudaImage(AbstractImage):
             return CudaImage(_gray_to_rgb_cuda(gray8), ImageFormat.RGB, self.frame_id, self.ts)
         return self.copy()  # type: ignore
 
-    def to_bgr(self) -> "CudaImage":
+    def to_bgr(self) -> CudaImage:
         if self.format == ImageFormat.BGR:
             return self.copy()  # type: ignore
         if self.format == ImageFormat.RGB:
@@ -613,7 +613,7 @@ class CudaImage(AbstractImage):
             )
         return self.copy()  # type: ignore
 
-    def to_grayscale(self) -> "CudaImage":
+    def to_grayscale(self) -> CudaImage:
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
@@ -634,12 +634,12 @@ class CudaImage(AbstractImage):
             return CudaImage(_rgb_to_gray_cuda(rgb), ImageFormat.GRAY, self.frame_id, self.ts)
         raise ValueError(f"Unsupported format: {self.format}")
 
-    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> "CudaImage":
+    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> CudaImage:
         return CudaImage(
             _resize_bilinear_hwc_cuda(self.data, height, width), self.format, self.frame_id, self.ts
         )
 
-    def crop(self, x: int, y: int, width: int, height: int) -> "CudaImage":
+    def crop(self, x: int, y: int, width: int, height: int) -> CudaImage:
         """Crop the image to the specified region.
 
         Args:
@@ -710,7 +710,7 @@ class CudaImage(AbstractImage):
             raise ValueError("Invalid bbox for CUDA tracker")
         return _CudaTemplateTracker(tmpl, x0=x, y0=y)
 
-    def csrt_update(self, tracker) -> Tuple[bool, Tuple[int, int, int, int]]:
+    def csrt_update(self, tracker) -> tuple[bool, tuple[int, int, int, int]]:
         if not isinstance(tracker, _CudaTemplateTracker):
             raise TypeError("Expected CUDA tracker instance")
         gray = self.to_grayscale().data.astype(cp.float32)
@@ -723,9 +723,9 @@ class CudaImage(AbstractImage):
         object_points: np.ndarray,
         image_points: np.ndarray,
         camera_matrix: np.ndarray,
-        dist_coeffs: Optional[np.ndarray] = None,
+        dist_coeffs: np.ndarray | None = None,
         flags: int = cv2.SOLVEPNP_ITERATIVE,
-    ) -> Tuple[bool, np.ndarray, np.ndarray]:
+    ) -> tuple[bool, np.ndarray, np.ndarray]:
         if not HAS_CUDA or cp is None or (dist_coeffs is not None and np.any(dist_coeffs)):
             obj = np.asarray(object_points, dtype=np.float32).reshape(-1, 3)
             img = np.asarray(image_points, dtype=np.float32).reshape(-1, 2)
@@ -743,10 +743,10 @@ class CudaImage(AbstractImage):
         object_points_batch: np.ndarray,
         image_points_batch: np.ndarray,
         camera_matrix: np.ndarray,
-        dist_coeffs: Optional[np.ndarray] = None,
+        dist_coeffs: np.ndarray | None = None,
         iterations: int = 15,
         damping: float = 1e-6,
-    ) -> Tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         """Batched PnP (each block = one instance)."""
         if not HAS_CUDA or cp is None or (dist_coeffs is not None and np.any(dist_coeffs)):
             obj = np.asarray(object_points_batch, dtype=np.float32)
@@ -792,12 +792,12 @@ class CudaImage(AbstractImage):
         object_points: np.ndarray,
         image_points: np.ndarray,
         camera_matrix: np.ndarray,
-        dist_coeffs: Optional[np.ndarray] = None,
+        dist_coeffs: np.ndarray | None = None,
         iterations_count: int = 100,
         reprojection_error: float = 3.0,
         confidence: float = 0.99,
         min_sample: int = 6,
-    ) -> Tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
         """RANSAC with CUDA PnP solver."""
         if not HAS_CUDA or cp is None or (dist_coeffs is not None and np.any(dist_coeffs)):
             obj = np.asarray(object_points, dtype=np.float32)
@@ -829,7 +829,7 @@ class CudaImage(AbstractImage):
         N = obj.shape[0]
         rng = cp.random.RandomState(1234)
         best_inliers = -1
-        best_r, best_t, best_mask = None, None, None
+        _best_r, _best_t, best_mask = None, None, None
 
         for _ in range(iterations_count):
             idx = rng.choice(N, size=min_sample, replace=False)
@@ -843,7 +843,7 @@ class CudaImage(AbstractImage):
             mask = (err < reprojection_error).astype(cp.uint8)
             inliers = int(mask.sum())
             if inliers > best_inliers:
-                best_inliers, best_r, best_t, best_mask = inliers, rvec, tvec, mask
+                best_inliers, _best_r, _best_t, best_mask = inliers, rvec, tvec, mask
                 if inliers >= int(confidence * N):
                     break
 
@@ -857,13 +857,13 @@ class CudaImage(AbstractImage):
 class _CudaTemplateTracker:
     def __init__(
         self,
-        tmpl: "cp.ndarray",
+        tmpl: cp.ndarray,
         scale_step: float = 1.05,
         lr: float = 0.1,
         search_radius: int = 16,
         x0: int = 0,
         y0: int = 0,
-    ):
+    ) -> None:
         self.tmpl = tmpl.astype(cp.float32)
         self.h, self.w = int(tmpl.shape[0]), int(tmpl.shape[1])
         self.scale_step = float(scale_step)
@@ -877,7 +877,7 @@ class _CudaTemplateTracker:
         self.y = int(y0)
         self.x = int(x0)
 
-    def update(self, gray: "cp.ndarray"):
+    def update(self, gray: cp.ndarray):
         H, W = int(gray.shape[0]), int(gray.shape[1])
         r = self.search_radius
         x0 = max(0, self.x - r)
@@ -891,8 +891,8 @@ class _CudaTemplateTracker:
         best = (self.x, self.y, self.w, self.h)
         best_score = -1e9
         for s in (1.0 / self.scale_step, 1.0, self.scale_step):
-            th = max(1, int(round(self.h * s)))
-            tw = max(1, int(round(self.w * s)))
+            th = max(1, round(self.h * s))
+            tw = max(1, round(self.w * s))
             tmpl_s = _resize_bilinear_hwc_cuda(self.tmpl, th, tw)
             if tmpl_s.ndim == 3:
                 tmpl_s = tmpl_s[..., 0]

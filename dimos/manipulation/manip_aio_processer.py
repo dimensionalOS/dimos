@@ -16,28 +16,28 @@
 Sequential manipulation processor for single-frame processing without reactive streams.
 """
 
-import logging
 import time
-from typing import Dict, List, Optional, Any, Tuple
-import numpy as np
-import cv2
+from typing import Any
 
-from dimos.utils.logging_config import setup_logger
+import cv2
+import numpy as np
+
+from dimos.perception.common.utils import (
+    colorize_depth,
+    combine_object_data,
+    detection_results_to_object_data,
+)
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
-from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.grasp_generation.grasp_generation import HostedGraspGenerator
 from dimos.perception.grasp_generation.utils import create_grasp_overlay
+from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.pointcloud.utils import (
     create_point_cloud_overlay_visualization,
     extract_and_cluster_misc_points,
     overlay_point_clouds_on_image,
 )
-from dimos.perception.common.utils import (
-    colorize_depth,
-    detection_results_to_object_data,
-    combine_object_data,
-)
+from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.manip_aio_processor")
 
@@ -52,14 +52,14 @@ class ManipulationProcessor:
 
     def __init__(
         self,
-        camera_intrinsics: List[float],  # [fx, fy, cx, cy]
+        camera_intrinsics: list[float],  # [fx, fy, cx, cy]
         min_confidence: float = 0.6,
         max_objects: int = 20,
-        vocabulary: Optional[str] = None,
+        vocabulary: str | None = None,
         enable_grasp_generation: bool = False,
-        grasp_server_url: Optional[str] = None,  # Required when enable_grasp_generation=True
+        grasp_server_url: str | None = None,  # Required when enable_grasp_generation=True
         enable_segmentation: bool = True,
-    ):
+    ) -> None:
         """
         Initialize the manipulation processor.
 
@@ -119,8 +119,8 @@ class ManipulationProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, generate_grasps: bool = None
-    ) -> Dict[str, Any]:
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, generate_grasps: bool | None = None
+    ) -> dict[str, Any]:
         """
         Process a single RGB-D frame through the complete pipeline.
 
@@ -295,7 +295,7 @@ class ManipulationProcessor:
 
         return results
 
-    def run_object_detection(self, rgb_image: np.ndarray) -> Dict[str, Any]:
+    def run_object_detection(self, rgb_image: np.ndarray) -> dict[str, Any]:
         """Run object detection on RGB image."""
         try:
             # Convert RGB to BGR for Detic detector
@@ -329,8 +329,8 @@ class ManipulationProcessor:
             return {"objects": [], "viz_frame": rgb_image.copy()}
 
     def run_pointcloud_filtering(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: List[Dict]
-    ) -> List[Dict]:
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: list[dict]
+    ) -> list[dict]:
         """Run point cloud filtering on detected objects."""
         try:
             filtered_objects = self.pointcloud_filter.process_images(
@@ -341,7 +341,7 @@ class ManipulationProcessor:
             logger.error(f"Point cloud filtering failed: {e}")
             return []
 
-    def run_segmentation(self, rgb_image: np.ndarray) -> Dict[str, Any]:
+    def run_segmentation(self, rgb_image: np.ndarray) -> dict[str, Any]:
         """Run semantic segmentation on RGB image."""
         if not self.segmenter:
             return {"objects": [], "viz_frame": rgb_image.copy()}
@@ -380,7 +380,7 @@ class ManipulationProcessor:
             logger.error(f"Segmentation failed: {e}")
             return {"objects": [], "viz_frame": rgb_image.copy()}
 
-    def run_grasp_generation(self, filtered_objects: List[Dict], full_pcd) -> Optional[List[Dict]]:
+    def run_grasp_generation(self, filtered_objects: list[dict], full_pcd) -> list[dict] | None:
         """Run grasp generation using the configured generator."""
         if not self.grasp_generator:
             logger.warning("Grasp generation requested but no generator available")
@@ -397,7 +397,7 @@ class ManipulationProcessor:
             logger.error(f"Grasp generation failed: {e}")
             return None
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()

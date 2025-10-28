@@ -12,21 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 import threading
+import time
 import unittest
-import numpy as np
 
+import numpy as np
 import pytest
 
 try:
+    from geometry_msgs.msg import TransformStamped, TwistStamped as ROSTwistStamped
     import rclpy
     from rclpy.node import Node
-    from geometry_msgs.msg import TwistStamped as ROSTwistStamped
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2
-    from sensor_msgs.msg import PointField
+    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField
     from tf2_msgs.msg import TFMessage as ROSTFMessage
-    from geometry_msgs.msg import TransformStamped
 except ImportError:
     rclpy = None
     Node = None
@@ -36,18 +34,18 @@ except ImportError:
     ROSTFMessage = None
     TransformStamped = None
 
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.msgs.geometry_msgs import TwistStamped
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.tf2_msgs import TFMessage
-from dimos.robot.ros_bridge import ROSBridge, BridgeDirection
+from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 
 
 @pytest.mark.ros
 class TestROSBridge(unittest.TestCase):
     """Test suite for ROS-DIMOS bridge."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Set up test fixtures."""
         # Skip if ROS is not available
         if rclpy is None:
@@ -68,14 +66,14 @@ class TestROSBridge(unittest.TestCase):
         self.dimos_messages = []
         self.message_timestamps = {"ros": [], "dimos": []}
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """Clean up test fixtures."""
         self.test_node.destroy_node()
         self.bridge.stop()
         if rclpy.ok():
             rclpy.try_shutdown()
 
-    def test_ros_to_dimos_twist(self):
+    def test_ros_to_dimos_twist(self) -> None:
         """Test ROS TwistStamped to DIMOS conversion and transmission."""
         # Set up bridge
         self.bridge.add_topic(
@@ -87,7 +85,7 @@ class TestROSBridge(unittest.TestCase):
         lcm.start()
         topic = Topic("/test_twist", TwistStamped)
 
-        def dimos_callback(msg, _topic):
+        def dimos_callback(msg, _topic) -> None:
             self.dimos_messages.append(msg)
             self.message_timestamps["dimos"].append(time.time())
 
@@ -122,7 +120,7 @@ class TestROSBridge(unittest.TestCase):
             self.assertAlmostEqual(msg.linear.y, float(i * 2), places=5)
             self.assertAlmostEqual(msg.angular.z, float(i * 0.1), places=5)
 
-    def test_dimos_to_ros_twist(self):
+    def test_dimos_to_ros_twist(self) -> None:
         """Test DIMOS TwistStamped to ROS conversion and transmission."""
         # Set up bridge
         self.bridge.add_topic(
@@ -130,7 +128,7 @@ class TestROSBridge(unittest.TestCase):
         )
 
         # Subscribe to ROS side
-        def ros_callback(msg):
+        def ros_callback(msg) -> None:
             self.ros_messages.append(msg)
             self.message_timestamps["ros"].append(time.time())
 
@@ -164,7 +162,7 @@ class TestROSBridge(unittest.TestCase):
             self.assertAlmostEqual(msg.twist.linear.y, float(i * 4), places=5)
             self.assertAlmostEqual(msg.twist.angular.z, float(i * 0.2), places=5)
 
-    def test_frequency_preservation(self):
+    def test_frequency_preservation(self) -> None:
         """Test that message frequencies are preserved through the bridge."""
         # Set up bridge
         self.bridge.add_topic(
@@ -178,7 +176,7 @@ class TestROSBridge(unittest.TestCase):
 
         receive_times = []
 
-        def dimos_callback(_msg, _topic):
+        def dimos_callback(_msg, _topic) -> None:
             receive_times.append(time.time())
 
         lcm.subscribe(topic, dimos_callback)
@@ -229,7 +227,7 @@ class TestROSBridge(unittest.TestCase):
                 msg=f"Frequency not preserved for {target_freq}Hz: sent={send_freq:.1f}Hz, received={receive_freq:.1f}Hz",
             )
 
-    def test_pointcloud_conversion(self):
+    def test_pointcloud_conversion(self) -> None:
         """Test PointCloud2 message conversion with numpy optimization."""
         # Set up bridge
         self.bridge.add_topic(
@@ -243,7 +241,7 @@ class TestROSBridge(unittest.TestCase):
 
         received_cloud = []
 
-        def dimos_callback(msg, _topic):
+        def dimos_callback(msg, _topic) -> None:
             received_cloud.append(msg)
 
         lcm.subscribe(topic, dimos_callback)
@@ -286,7 +284,7 @@ class TestROSBridge(unittest.TestCase):
         self.assertEqual(received_points.shape, points.shape)
         np.testing.assert_array_almost_equal(received_points, points, decimal=5)
 
-    def test_tf_high_frequency(self):
+    def test_tf_high_frequency(self) -> None:
         """Test TF message handling at high frequency."""
         # Set up bridge
         self.bridge.add_topic("/test_tf", TFMessage, ROSTFMessage, BridgeDirection.ROS_TO_DIMOS)
@@ -299,7 +297,7 @@ class TestROSBridge(unittest.TestCase):
         received_tfs = []
         receive_times = []
 
-        def dimos_callback(msg, _topic):
+        def dimos_callback(msg, _topic) -> None:
             received_tfs.append(msg)
             receive_times.append(time.time())
 
@@ -351,7 +349,7 @@ class TestROSBridge(unittest.TestCase):
                 msg=f"High frequency TF not preserved: expected={target_freq}Hz, got={receive_freq:.1f}Hz",
             )
 
-    def test_bidirectional_bridge(self):
+    def test_bidirectional_bridge(self) -> None:
         """Test simultaneous bidirectional message flow."""
         # Set up bidirectional bridges for same topic type
         self.bridge.add_topic(
@@ -382,7 +380,7 @@ class TestROSBridge(unittest.TestCase):
         stop_spinning = threading.Event()
 
         # Spin the test node in background to receive messages
-        def spin_test_node():
+        def spin_test_node() -> None:
             while not stop_spinning.is_set():
                 rclpy.spin_once(self.test_node, timeout_sec=0.01)
 
@@ -390,7 +388,7 @@ class TestROSBridge(unittest.TestCase):
         spin_thread.start()
 
         # Send messages in both directions simultaneously
-        def send_ros_messages():
+        def send_ros_messages() -> None:
             for i in range(50):
                 msg = ROSTwistStamped()
                 msg.header.stamp = self.test_node.get_clock().now().to_msg()
@@ -398,7 +396,7 @@ class TestROSBridge(unittest.TestCase):
                 ros_pub.publish(msg)
                 time.sleep(0.02)  # 50Hz
 
-        def send_dimos_messages():
+        def send_dimos_messages() -> None:
             for i in range(50):
                 msg = TwistStamped(ts=time.time())
                 msg.linear.y = float(i * 2)

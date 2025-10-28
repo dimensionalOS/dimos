@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-import time
 from dataclasses import dataclass, field
 from functools import cache
-from typing import Literal, Optional
+import threading
+import time
+from typing import Literal
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import create
 from reactivex.observable import Observable
 
+from dimos.hardware.camera.spec import CameraConfig, CameraHardware
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
-from dimos.hardware.camera.spec import CameraConfig, CameraHardware
 from dimos.utils.reactive import backpressure
 
 
@@ -36,14 +36,14 @@ class WebcamConfig(CameraConfig):
     frame_height: int = 480
     frequency: int = 15
     camera_info: CameraInfo = field(default_factory=CameraInfo)
-    frame_id_prefix: Optional[str] = None
-    stereo_slice: Optional[Literal["left", "right"]] = None  # For stereo cameras
+    frame_id_prefix: str | None = None
+    stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
 
 class Webcam(CameraHardware[WebcamConfig]):
     default_config = WebcamConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._capture = None
         self._capture_thread = None
@@ -66,7 +66,7 @@ class Webcam(CameraHardware[WebcamConfig]):
                 return
 
             # Return a dispose function to stop camera when unsubscribed
-            def dispose():
+            def dispose() -> None:
                 self._observer = None
                 self.stop()
 
@@ -92,7 +92,7 @@ class Webcam(CameraHardware[WebcamConfig]):
         self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._capture_thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop capturing frames"""
         # Signal thread to stop
         self._stop_event.set()
@@ -140,7 +140,7 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         return image
 
-    def _capture_loop(self):
+    def _capture_loop(self) -> None:
         """Capture frames at the configured frequency"""
         frame_interval = 1.0 / self.config.frequency
         next_frame_time = time.time()
@@ -167,4 +167,4 @@ class Webcam(CameraHardware[WebcamConfig]):
     def camera_info(self) -> CameraInfo:
         return self.config.camera_info
 
-    def emit(self, image: Image): ...
+    def emit(self, image: Image) -> None: ...

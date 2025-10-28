@@ -12,22 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import time
-import sys
 import argparse
+import os
+import sys
 import threading
-from typing import List, Dict, Any
-from reactivex import Subject, operators as ops
+import time
+from typing import Any
 
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.utils.logging_config import logger
-from dimos.stream.video_provider import VideoProvider
-from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.types.vector import Vector
-from dimos.utils.reactive import backpressure
 from dotenv import load_dotenv
+from reactivex import operators as ops
+
+from dimos.perception.object_detection_stream import ObjectDetectionStream
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.stream.video_provider import VideoProvider
+from dimos.utils.reactive import backpressure
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def parse_args():
@@ -58,7 +57,7 @@ class ResultPrinter:
         self.print_interval = print_interval
         self.last_print_time = 0
 
-    def print_results(self, objects: List[Dict[str, Any]]):
+    def print_results(self, objects: list[dict[str, Any]]):
         """Print object detection results to console with rate limiting."""
         current_time = time.time()
 

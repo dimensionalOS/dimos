@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Callable
-
+from collections.abc import Callable
+from typing import Any
 
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 
@@ -38,7 +37,7 @@ class RpcCall:
         remote_name: str,
         unsub_fns: list,
         stop_client: Callable[[], None] | None = None,
-    ):
+    ) -> None:
         self._original_method = original_method
         self._rpc = rpc
         self._name = name
@@ -51,7 +50,7 @@ class RpcCall:
             self.__name__ = original_method.__name__
             self.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
 
-    def set_rpc(self, rpc: LCMRPC):
+    def set_rpc(self, rpc: LCMRPC) -> None:
         self._rpc = rpc
 
     def __call__(self, *args, **kwargs):
@@ -74,7 +73,7 @@ class RpcCall:
     def __getstate__(self):
         return (self._original_method, self._name, self._remote_name)
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         self._original_method, self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
@@ -82,7 +81,7 @@ class RpcCall:
 
 
 class RPCClient:
-    def __init__(self, actor_instance, actor_class):
+    def __init__(self, actor_instance, actor_class) -> None:
         self.rpc = LCMRPC()
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
@@ -91,7 +90,7 @@ class RPCClient:
         self.rpc.start()
         self._unsub_fns = []
 
-    def stop_rpc_client(self):
+    def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:
             try:
                 unsub()

@@ -1,7 +1,7 @@
 from detectron2.layers import batched_nms
 
 
-def ml_nms(boxlist, nms_thresh, max_proposals=-1, score_field="scores", label_field="labels"):
+def ml_nms(boxlist, nms_thresh, max_proposals=-1, score_field: str="scores", label_field: str="labels"):
     """
     Performs non-maximum suppression on a boxlist, with scores specified
     in a boxlist field via score_field.

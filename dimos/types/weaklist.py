@@ -14,8 +14,9 @@
 
 """Weak reference list implementation that automatically removes dead references."""
 
+from collections.abc import Iterator
+from typing import Any
 import weakref
-from typing import Any, Iterator, Optional
 
 
 class WeakList:
@@ -25,13 +26,13 @@ class WeakList:
     Supports iteration, append, remove, and length operations.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._refs = []
 
     def append(self, obj: Any) -> None:
         """Add an object to the list (stored as weak reference)."""
 
-        def _cleanup(ref):
+        def _cleanup(ref) -> None:
             try:
                 self._refs.remove(ref)
             except ValueError:

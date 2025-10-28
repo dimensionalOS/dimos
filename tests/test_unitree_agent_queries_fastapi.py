@@ -23,9 +23,9 @@ Environment Variables:
     ROS_OUTPUT_DIR: Optional. Directory for ROS output files.
 """
 
-import tests.test_header
 import os
 import sys
+
 import reactivex as rx
 import reactivex.operators as ops
 
@@ -34,7 +34,6 @@ from dimos.agents.agent import OpenAIAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import logger
-from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.web.fastapi_server import FastAPIServer
 
 

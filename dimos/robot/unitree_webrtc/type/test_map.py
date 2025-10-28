@@ -22,7 +22,7 @@ from dimos.utils.testing import SensorReplay
 
 
 @pytest.mark.vis
-def test_costmap_vis():
+def test_costmap_vis() -> None:
     map = Map()
     map.start()
     mock = Mock("office")
@@ -39,7 +39,7 @@ def test_costmap_vis():
 
 
 @pytest.mark.vis
-def test_reconstruction_with_realtime_vis():
+def test_reconstruction_with_realtime_vis() -> None:
     map = Map()
     map.start()
     mock = Mock("office")
@@ -52,7 +52,7 @@ def test_reconstruction_with_realtime_vis():
 
 
 @pytest.mark.vis
-def test_splice_vis():
+def test_splice_vis() -> None:
     mock = Mock("test")
     target = mock.load("a")
     insert = mock.load("b")
@@ -60,7 +60,7 @@ def test_splice_vis():
 
 
 @pytest.mark.vis
-def test_robot_vis():
+def test_robot_vis() -> None:
     map = Map()
     map.start()
     mock = Mock("office")
@@ -72,13 +72,13 @@ def test_robot_vis():
     show3d(map.pointcloud, title="global dynamic map test").run()
 
 
-def test_robot_mapping():
+def test_robot_mapping() -> None:
     lidar_replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
     map = Map(voxel_size=0.5)
 
     # Mock the output streams to avoid publishing errors
     class MockStream:
-        def publish(self, msg):
+        def publish(self, msg) -> None:
             pass  # Do nothing
 
     map.local_costmap = MockStream()

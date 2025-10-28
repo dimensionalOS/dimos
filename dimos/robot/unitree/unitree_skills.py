@@ -14,12 +14,13 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import time
+from typing import TYPE_CHECKING
+
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from dimos.robot.robot import Robot, MockRobot
+    from dimos.robot.robot import MockRobot, Robot
 else:
     Robot = "Robot"
     MockRobot = "MockRobot"
@@ -29,7 +30,7 @@ from dimos.types.constants import Colors
 from dimos.types.vector import Vector
 
 # Module-level constant for Unitree ROS control definitions
-UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
+UNITREE_ROS_CONTROLS: list[tuple[str, int, str]] = [
     ("Damp", 1001, "Lowers the robot to the ground fully."),
     (
         "BalanceStand",
@@ -185,10 +186,10 @@ UNITREE_ROS_CONTROLS: List[Tuple[str, int, str]] = [
 class MyUnitreeSkills(SkillLibrary):
     """My Unitree Skills."""
 
-    _robot: Optional[Robot] = None
+    _robot: Robot | None = None
 
     @classmethod
-    def register_skills(cls, skill_classes: Union["AbstractSkill", list["AbstractSkill"]]):
+    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]) -> None:
         """Add multiple skill classes as class attributes.
 
         Args:
@@ -200,7 +201,7 @@ class MyUnitreeSkills(SkillLibrary):
         else:
             setattr(cls, skill_classes.__name__, skill_classes)
 
-    def __init__(self, robot: Optional[Robot] = None):
+    def __init__(self, robot: Robot | None = None) -> None:
         super().__init__()
         self._robot: Robot = None
 
@@ -211,7 +212,7 @@ class MyUnitreeSkills(SkillLibrary):
             self._robot = robot
             self.initialize_skills()
 
-    def initialize_skills(self):
+    def initialize_skills(self) -> None:
         # Create the skills and add them to the list of skills
         self.register_skills(self.create_skills_live())
 
@@ -225,7 +226,7 @@ class MyUnitreeSkills(SkillLibrary):
         # Refresh the class skills
         self.refresh_class_skills()
 
-    def create_skills_live(self) -> List[AbstractRobotSkill]:
+    def create_skills_live(self) -> list[AbstractRobotSkill]:
         # ================================================
         # Procedurally created skills
         # ================================================
@@ -309,6 +310,6 @@ class MyUnitreeSkills(SkillLibrary):
 
         seconds: float = Field(..., description="Seconds to wait")
 
-        def __call__(self):
+        def __call__(self) -> str:
             time.sleep(self.seconds)
             return f"Wait completed with length={self.seconds}s"

@@ -23,7 +23,7 @@ class Counter(Module):
 
     count_stream: Out[int] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.current_count = 0
 
@@ -40,7 +40,7 @@ class CounterValidator(Module):
 
     count_in: In[int] = None
 
-    def __init__(self, increment_func):
+    def __init__(self, increment_func) -> None:
         super().__init__()
         self.increment_func = increment_func
         self.last_seen = 0
@@ -53,7 +53,7 @@ class CounterValidator(Module):
         self.waiting_for_response = False
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the validator."""
         self.count_in.subscribe(self._on_count_received)
         self.running = True
@@ -61,13 +61,13 @@ class CounterValidator(Module):
         self.call_thread.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the validator."""
         self.running = False
         if self.call_thread:
             self.call_thread.join()
 
-    def _on_count_received(self, count: int):
+    def _on_count_received(self, count: int) -> None:
         """Check if we received all numbers in sequence and trigger next call."""
         # Calculate round trip time
         if self.call_start_time:
@@ -83,7 +83,7 @@ class CounterValidator(Module):
         # Signal that we can make the next call
         self.waiting_for_response = False
 
-    def _call_loop(self):
+    def _call_loop(self) -> None:
         """Call increment only after receiving response from previous call."""
         while self.running:
             if not self.waiting_for_response:
@@ -159,7 +159,7 @@ if __name__ == "__main__":
 
     # Get stats before stopping
     stats = validator.get_stats()
-    print(f"\n[MAIN] Final statistics:")
+    print("\n[MAIN] Final statistics:")
     print(f"  - Total calls made: {stats['call_count']}")
     print(f"  - Last number seen: {stats['last_seen']}")
     print(f"  - Missing numbers: {stats['missing_count']}")

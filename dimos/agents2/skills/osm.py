@@ -12,43 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
-from dimos.core.core import rpc
-from dimos.core.module import Module
-from dimos.core.rpc_client import RPCClient, RpcCall
 from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
 from dimos.mapping.osm.current_location_map import CurrentLocationMap
-from dimos.mapping.utils.distance import distance_in_meters
 from dimos.mapping.types import LatLon
+from dimos.mapping.utils.distance import distance_in_meters
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 
 
 class OsmSkill(SkillModule):
-    _latest_location: Optional[LatLon]
+    _latest_location: LatLon | None
     _current_location_map: CurrentLocationMap
     _skill_started: bool
 
     gps_location: In[LatLon] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._latest_location = None
         self._current_location_map = CurrentLocationMap(QwenVlModel())
         self._skill_started = False
 
-    def start(self):
+    def start(self) -> None:
         super().start()
         self._skill_started = True
         self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
 
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:

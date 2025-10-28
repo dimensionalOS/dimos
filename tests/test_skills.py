@@ -17,13 +17,10 @@
 import unittest
 from unittest import mock
 
-import tests.test_header
-
-from dimos.skills.skills import AbstractSkill, SkillLibrary
+from dimos.agents.agent import OpenAIAgent
 from dimos.robot.robot import MockRobot
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.types.constants import Colors
-from dimos.agents.agent import OpenAIAgent
+from dimos.skills.skills import AbstractSkill
 
 
 class TestSkill(AbstractSkill):
