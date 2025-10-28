@@ -12,14 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 
 import pytest
 
-
 try:
-    from nav_msgs.msg import Path as ROSPath
     from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+    from nav_msgs.msg import Path as ROSPath
 except ImportError:
     ROSPoseStamped = None
     ROSPath = None
@@ -38,7 +36,7 @@ def create_test_pose(x: float, y: float, z: float, frame_id: str = "map") -> Pos
     )
 
 
-def test_init_empty():
+def test_init_empty() -> None:
     """Test creating an empty path."""
     path = Path(frame_id="map")
     assert path.frame_id == "map"
@@ -47,7 +45,7 @@ def test_init_empty():
     assert path.poses == []
 
 
-def test_init_with_poses():
+def test_init_with_poses() -> None:
     """Test creating a path with initial poses."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(frame_id="map", poses=poses)
@@ -56,7 +54,7 @@ def test_init_with_poses():
     assert path.poses == poses
 
 
-def test_head():
+def test_head() -> None:
     """Test getting the first pose."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(poses=poses)
@@ -67,7 +65,7 @@ def test_head():
     assert empty_path.head() is None
 
 
-def test_last():
+def test_last() -> None:
     """Test getting the last pose."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(poses=poses)
@@ -78,7 +76,7 @@ def test_last():
     assert empty_path.last() is None
 
 
-def test_tail():
+def test_tail() -> None:
     """Test getting all poses except the first."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(poses=poses)
@@ -96,7 +94,7 @@ def test_tail():
     assert len(empty_path.tail()) == 0
 
 
-def test_push_immutable():
+def test_push_immutable() -> None:
     """Test immutable push operation."""
     path = Path(frame_id="map")
     pose1 = create_test_pose(1, 1, 0)
@@ -115,7 +113,7 @@ def test_push_immutable():
     assert path3.poses == [pose1, pose2]
 
 
-def test_push_mutable():
+def test_push_mutable() -> None:
     """Test mutable push operation."""
     path = Path(frame_id="map")
     pose1 = create_test_pose(1, 1, 0)
@@ -131,7 +129,7 @@ def test_push_mutable():
     assert path.poses == [pose1, pose2]
 
 
-def test_indexing():
+def test_indexing() -> None:
     """Test indexing and slicing."""
     poses = [create_test_pose(i, i, 0) for i in range(5)]
     path = Path(poses=poses)
@@ -146,7 +144,7 @@ def test_indexing():
     assert path[3:] == poses[3:]
 
 
-def test_iteration():
+def test_iteration() -> None:
     """Test iterating over poses."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(poses=poses)
@@ -157,7 +155,7 @@ def test_iteration():
     assert collected == poses
 
 
-def test_slice_method():
+def test_slice_method() -> None:
     """Test slice method."""
     poses = [create_test_pose(i, i, 0) for i in range(5)]
     path = Path(frame_id="map", poses=poses)
@@ -172,7 +170,7 @@ def test_slice_method():
     assert sliced2.poses == poses[2:]
 
 
-def test_extend_immutable():
+def test_extend_immutable() -> None:
     """Test immutable extend operation."""
     poses1 = [create_test_pose(i, i, 0) for i in range(2)]
     poses2 = [create_test_pose(i + 2, i + 2, 0) for i in range(2)]
@@ -187,7 +185,7 @@ def test_extend_immutable():
     assert extended.frame_id == "map"  # Keeps first path's frame
 
 
-def test_extend_mutable():
+def test_extend_mutable() -> None:
     """Test mutable extend operation."""
     poses1 = [create_test_pose(i, i, 0) for i in range(2)]
     poses2 = [create_test_pose(i + 2, i + 2, 0) for i in range(2)]
@@ -198,13 +196,13 @@ def test_extend_mutable():
     path1.extend_mut(path2)
     assert len(path1) == 4
     # Check poses are the same as concatenation
-    for i, (p1, p2) in enumerate(zip(path1.poses, poses1 + poses2)):
+    for _i, (p1, p2) in enumerate(zip(path1.poses, poses1 + poses2, strict=False)):
         assert p1.x == p2.x
         assert p1.y == p2.y
         assert p1.z == p2.z
 
 
-def test_reverse():
+def test_reverse() -> None:
     """Test reverse operation."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(poses=poses)
@@ -214,7 +212,7 @@ def test_reverse():
     assert reversed_path.poses == list(reversed(poses))
 
 
-def test_clear():
+def test_clear() -> None:
     """Test clear operation."""
     poses = [create_test_pose(i, i, 0) for i in range(3)]
     path = Path(poses=poses)
@@ -224,7 +222,7 @@ def test_clear():
     assert path.poses == []
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test encoding and decoding of Path to/from binary LCM format."""
     # Create path with poses
     # Use timestamps that can be represented exactly in float64
@@ -258,7 +256,7 @@ def test_lcm_encode_decode():
     # Check poses
     assert len(path_dest.poses) == len(path_source.poses)
 
-    for orig, decoded in zip(path_source.poses, path_dest.poses):
+    for orig, decoded in zip(path_source.poses, path_dest.poses, strict=False):
         # Check pose timestamps
         assert abs(decoded.ts - orig.ts) < 1e-6
         # All poses should have the path's frame_id
@@ -276,7 +274,7 @@ def test_lcm_encode_decode():
         assert decoded.orientation.w == orig.orientation.w
 
 
-def test_lcm_encode_decode_empty():
+def test_lcm_encode_decode_empty() -> None:
     """Test encoding and decoding of empty Path."""
     path_source = Path(frame_id="base_link")
 
@@ -288,7 +286,7 @@ def test_lcm_encode_decode_empty():
     assert len(path_dest.poses) == 0
 
 
-def test_str_representation():
+def test_str_representation() -> None:
     """Test string representation."""
     path = Path(frame_id="map")
     assert str(path) == "Path(frame_id='map', poses=0)"
@@ -299,7 +297,7 @@ def test_str_representation():
 
 
 @pytest.mark.ros
-def test_path_from_ros_msg():
+def test_path_from_ros_msg() -> None:
     """Test creating a Path from a ROS Path message."""
     ros_msg = ROSPath()
     ros_msg.header.frame_id = "map"
@@ -335,7 +333,7 @@ def test_path_from_ros_msg():
 
 
 @pytest.mark.ros
-def test_path_to_ros_msg():
+def test_path_to_ros_msg() -> None:
     """Test converting a Path to a ROS Path message."""
     poses = [
         PoseStamped(
@@ -362,7 +360,7 @@ def test_path_to_ros_msg():
 
 
 @pytest.mark.ros
-def test_path_ros_roundtrip():
+def test_path_ros_roundtrip() -> None:
     """Test round-trip conversion between Path and ROS Path."""
     poses = [
         PoseStamped(
@@ -383,7 +381,7 @@ def test_path_ros_roundtrip():
     assert restored.ts == original.ts
     assert len(restored.poses) == len(original.poses)
 
-    for orig_pose, rest_pose in zip(original.poses, restored.poses):
+    for orig_pose, rest_pose in zip(original.poses, restored.poses, strict=False):
         assert rest_pose.position.x == orig_pose.position.x
         assert rest_pose.position.y == orig_pose.position.y
         assert rest_pose.position.z == orig_pose.position.z

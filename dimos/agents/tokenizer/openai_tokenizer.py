@@ -13,12 +13,13 @@
 # limitations under the License.
 
 import tiktoken
+
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.utils.logging_config import setup_logger
 
 
 class OpenAITokenizer(AbstractTokenizer):
-    def __init__(self, model_name: str = "gpt-4o", **kwargs):
+    def __init__(self, model_name: str = "gpt-4o", **kwargs) -> None:
         super().__init__(**kwargs)
 
         # Initilize the tokenizer for the openai set of models
@@ -27,7 +28,7 @@ class OpenAITokenizer(AbstractTokenizer):
             self.tokenizer = tiktoken.encoding_for_model(self.model_name)
         except Exception as e:
             raise ValueError(
-                f"Failed to initialize tokenizer for model {self.model_name}. Error: {str(e)}"
+                f"Failed to initialize tokenizer for model {self.model_name}. Error: {e!s}"
             )
 
     def tokenize_text(self, text):
@@ -43,7 +44,7 @@ class OpenAITokenizer(AbstractTokenizer):
         try:
             return self.tokenizer.decode(tokenized_text, errors="ignore")
         except Exception as e:
-            raise ValueError(f"Failed to detokenize text. Error: {str(e)}")
+            raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
     def token_count(self, text):
         """

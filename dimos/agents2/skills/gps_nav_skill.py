@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import json
-from typing import Optional
 
 from dimos.core.core import rpc
 from dimos.core.rpc_client import RpcCall
@@ -23,7 +22,6 @@ from dimos.mapping.types import LatLon
 from dimos.mapping.utils.distance import distance_in_meters
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 
@@ -36,7 +34,7 @@ class GpsNavSkillContainer(SkillModule):
     gps_location: In[LatLon] = None
     gps_goal: Out[LatLon] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @rpc
@@ -92,7 +90,7 @@ class GpsNavSkillContainer(SkillModule):
 
         return "I've successfully set the travel points."
 
-    def _convert_point(self, point: dict[str, float]) -> Optional[LatLon]:
+    def _convert_point(self, point: dict[str, float]) -> LatLon | None:
         if not isinstance(point, dict):
             return None
         lat = point.get("lat")

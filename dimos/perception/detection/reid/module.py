@@ -42,7 +42,7 @@ class ReidModule(Module):
     image: In[Image] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
-    def __init__(self, idsystem: IDSystem | None = None, **kwargs):
+    def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:
         super().__init__(**kwargs)
         if idsystem is None:
             try:
@@ -69,14 +69,14 @@ class ReidModule(Module):
         )
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.detections_stream().subscribe(self.ingress)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
-    def ingress(self, imageDetections: ImageDetections2D):
+    def ingress(self, imageDetections: ImageDetections2D) -> None:
         text_annotations = []
 
         for detection in imageDetections:

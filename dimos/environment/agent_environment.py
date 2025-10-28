@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
+
 import cv2
 import numpy as np
-from pathlib import Path
-from typing import List, Union
+
 from .environment import Environment
 
 
 class AgentEnvironment(Environment):
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.environment_type = "agent"
         self.frames = []
@@ -29,7 +30,7 @@ class AgentEnvironment(Environment):
         self._segmentations = []
         self._point_clouds = []
 
-    def initialize_from_images(self, images: Union[List[str], List[np.ndarray]]) -> bool:
+    def initialize_from_images(self, images: list[str] | list[np.ndarray]) -> bool:
         """Initialize environment from a list of image paths or numpy arrays.
 
         Args:
@@ -88,37 +89,42 @@ class AgentEnvironment(Environment):
         # TODO: Implement directory initialization
         raise NotImplementedError("Directory initialization not yet implemented")
 
-    def label_objects(self) -> List[str]:
+    def label_objects(self) -> list[str]:
         """Implementation of abstract method to label objects."""
         # TODO: Implement object labeling using a detection model
         raise NotImplementedError("Object labeling not yet implemented")
 
     def generate_segmentations(
-        self, model: str = None, objects: List[str] = None, *args, **kwargs
-    ) -> List[np.ndarray]:
+        self, model: str | None = None, objects: list[str] | None = None, *args, **kwargs
+    ) -> list[np.ndarray]:
         """Generate segmentations for the current frame."""
         # TODO: Implement segmentation generation using specified model
         raise NotImplementedError("Segmentation generation not yet implemented")
 
-    def get_segmentations(self) -> List[np.ndarray]:
+    def get_segmentations(self) -> list[np.ndarray]:
         """Return pre-computed segmentations for the current frame."""
         if self._segmentations:
             return self._segmentations[self.current_frame_idx]
         return []
 
-    def generate_point_cloud(self, object: str = None, *args, **kwargs) -> np.ndarray:
+    def generate_point_cloud(self, object: str | None = None, *args, **kwargs) -> np.ndarray:
         """Generate point cloud from the current frame."""
         # TODO: Implement point cloud generation
         raise NotImplementedError("Point cloud generation not yet implemented")
 
-    def get_point_cloud(self, object: str = None) -> np.ndarray:
+    def get_point_cloud(self, object: str | None = None) -> np.ndarray:
         """Return pre-computed point cloud."""
         if self._point_clouds:
             return self._point_clouds[self.current_frame_idx]
         return np.array([])
 
     def generate_depth_map(
-        self, stereo: bool = None, monocular: bool = None, model: str = None, *args, **kwargs
+        self,
+        stereo: bool | None = None,
+        monocular: bool | None = None,
+        model: str | None = None,
+        *args,
+        **kwargs,
     ) -> np.ndarray:
         """Generate depth map for the current frame."""
         # TODO: Implement depth map generation using specified method

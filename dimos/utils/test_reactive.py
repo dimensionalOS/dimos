@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import time
-from typing import Any, Callable, TypeVar
+from typing import Any, TypeVar
 
 import numpy as np
 import pytest
@@ -66,7 +67,7 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
         state["active"] += 1
         upstream = source.subscribe(observer, scheduler=scheduler)
 
-        def _dispose():
+        def _dispose() -> None:
             upstream.dispose()
             state["active"] -= 1
 
@@ -78,7 +79,7 @@ def dispose_spy(source: rx.Observable[T]) -> rx.Observable[T]:
     return proxy
 
 
-def test_backpressure_handling():
+def test_backpressure_handling() -> None:
     # Create a dedicated scheduler for this test to avoid thread leaks
     test_scheduler = ThreadPoolScheduler(max_workers=8)
     try:
@@ -137,7 +138,7 @@ def test_backpressure_handling():
         test_scheduler.executor.shutdown(wait=True)
 
 
-def test_getter_streaming_blocking():
+def test_getter_streaming_blocking() -> None:
     source = dispose_spy(
         rx.interval(0.2).pipe(ops.map(lambda i: np.array([i, i + 1, i + 2])), ops.take(50))
     )
@@ -162,7 +163,7 @@ def test_getter_streaming_blocking():
     assert source.is_disposed(), "Observable should be disposed"
 
 
-def test_getter_streaming_blocking_timeout():
+def test_getter_streaming_blocking_timeout() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     with pytest.raises(Exception):
         getter = getter_streaming(source, timeout=0.1)
@@ -171,7 +172,7 @@ def test_getter_streaming_blocking_timeout():
     assert source.is_disposed()
 
 
-def test_getter_streaming_nonblocking():
+def test_getter_streaming_nonblocking() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
 
     getter = max_time(
@@ -196,7 +197,7 @@ def test_getter_streaming_nonblocking():
     assert source.is_disposed(), "Observable should be disposed"
 
 
-def test_getter_streaming_nonblocking_timeout():
+def test_getter_streaming_nonblocking_timeout() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     getter = getter_streaming(source, timeout=0.1, nonblocking=True)
     with pytest.raises(Exception):
@@ -210,7 +211,7 @@ def test_getter_streaming_nonblocking_timeout():
     assert source.is_disposed(), "Observable should be disposed after cleanup"
 
 
-def test_getter_ondemand():
+def test_getter_ondemand() -> None:
     # Create a controlled scheduler to avoid thread leaks from rx.interval
     test_scheduler = ThreadPoolScheduler(max_workers=4)
     try:
@@ -232,7 +233,7 @@ def test_getter_ondemand():
         test_scheduler.executor.shutdown(wait=True)
 
 
-def test_getter_ondemand_timeout():
+def test_getter_ondemand_timeout() -> None:
     source = dispose_spy(rx.interval(0.2).pipe(ops.take(50)))
     getter = getter_ondemand(source, timeout=0.1)
     with pytest.raises(Exception):
@@ -242,13 +243,13 @@ def test_getter_ondemand_timeout():
     time.sleep(0.3)
 
 
-def test_callback_to_observable():
+def test_callback_to_observable() -> None:
     # Test converting a callback-based API to an Observable
     received = []
     callback = None
 
     # Mock start function that captures the callback
-    def start_fn(cb):
+    def start_fn(cb) -> str:
         nonlocal callback
         callback = cb
         return "start_result"
@@ -256,7 +257,7 @@ def test_callback_to_observable():
     # Mock stop function
     stop_called = False
 
-    def stop_fn(cb):
+    def stop_fn(cb) -> None:
         nonlocal stop_called
         stop_called = True
 

@@ -17,8 +17,8 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-import numpy as np
 from dimos_lcm.geometry_msgs import TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped
+import numpy as np
 from plum import dispatch
 
 try:
@@ -121,7 +121,7 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistWithCovarianceStamped) -> "TwistWithCovarianceStamped":
+    def from_ros_msg(cls, ros_msg: ROSTwistWithCovarianceStamped) -> TwistWithCovarianceStamped:
         """Create a TwistWithCovarianceStamped from a ROS geometry_msgs/TwistWithCovarianceStamped message.
 
         Args:

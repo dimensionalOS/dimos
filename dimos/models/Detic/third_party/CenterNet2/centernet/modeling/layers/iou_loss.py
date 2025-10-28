@@ -3,8 +3,8 @@ from torch import nn
 
 
 class IOULoss(nn.Module):
-    def __init__(self, loc_loss_type="iou"):
-        super(IOULoss, self).__init__()
+    def __init__(self, loc_loss_type="iou") -> None:
+        super().__init__()
         self.loc_loss_type = loc_loss_type
 
     def forward(self, pred, target, weight=None, reduction="sum"):

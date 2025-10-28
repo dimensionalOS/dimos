@@ -16,7 +16,7 @@ import cv2
 
 
 class VideoStream:
-    def __init__(self, source=0):
+    def __init__(self, source=0) -> None:
         """
         Initialize the video stream from a camera source.
 
@@ -37,5 +37,5 @@ class VideoStream:
             raise StopIteration
         return frame
 
-    def release(self):
+    def release(self) -> None:
         self.capture.release()

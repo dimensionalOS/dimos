@@ -1,5 +1,5 @@
-import json
 from abc import ABC, abstractmethod
+import json
 from typing import Generic, Protocol, TypeVar
 
 MsgT = TypeVar("MsgT")
@@ -67,7 +67,7 @@ class LCM(Encoder[LCMMsgT, bytes]):
 class LCMTypedEncoder(LCM, Generic[LCMMsgT]):
     """Typed LCM encoder for specific message types."""
 
-    def __init__(self, message_type: type[LCMMsgT]):
+    def __init__(self, message_type: type[LCMMsgT]) -> None:
         self.message_type = message_type
 
     @staticmethod

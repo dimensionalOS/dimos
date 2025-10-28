@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 
 
-def test_detection3dpc(detection3dpc):
+def test_detection3dpc(detection3dpc) -> None:
     # def test_oriented_bounding_box(detection3dpc):
     """Test oriented bounding box calculation and values."""
     obb = detection3dpc.get_oriented_bounding_box()

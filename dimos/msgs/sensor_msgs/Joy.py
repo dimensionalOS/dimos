@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import List, TypeAlias
+from typing import TypeAlias
 
 from dimos_lcm.sensor_msgs import Joy as LCMJoy
 
@@ -30,7 +30,7 @@ from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from Joy
 JoyConvertable: TypeAlias = (
-    tuple[List[float], List[int]] | dict[str, List[float] | List[int]] | LCMJoy
+    tuple[list[float], list[int]] | dict[str, list[float] | list[int]] | LCMJoy
 )
 
 
@@ -43,16 +43,16 @@ class Joy(Timestamped):
     msg_name = "sensor_msgs.Joy"
     ts: float
     frame_id: str
-    axes: List[float]
-    buttons: List[int]
+    axes: list[float]
+    buttons: list[int]
 
     @dispatch
     def __init__(
         self,
         ts: float = 0.0,
         frame_id: str = "",
-        axes: List[float] | None = None,
-        buttons: List[int] | None = None,
+        axes: list[float] | None = None,
+        buttons: list[int] | None = None,
     ) -> None:
         """Initialize a Joy message.
 
@@ -68,7 +68,7 @@ class Joy(Timestamped):
         self.buttons = buttons if buttons is not None else []
 
     @dispatch
-    def __init__(self, joy_tuple: tuple[List[float], List[int]]) -> None:
+    def __init__(self, joy_tuple: tuple[list[float], list[int]]) -> None:
         """Initialize from a tuple of (axes, buttons)."""
         self.ts = time.time()
         self.frame_id = ""
@@ -76,7 +76,7 @@ class Joy(Timestamped):
         self.buttons = list(joy_tuple[1])
 
     @dispatch
-    def __init__(self, joy_dict: dict[str, List[float] | List[int]]) -> None:
+    def __init__(self, joy_dict: dict[str, list[float] | list[int]]) -> None:
         """Initialize from a dictionary with 'axes' and 'buttons' keys."""
         self.ts = joy_dict.get("ts", time.time())
         self.frame_id = joy_dict.get("frame_id", "")
@@ -142,7 +142,7 @@ class Joy(Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSJoy) -> "Joy":
+    def from_ros_msg(cls, ros_msg: ROSJoy) -> Joy:
         """Create a Joy from a ROS sensor_msgs/Joy message.
 
         Args:

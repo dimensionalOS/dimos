@@ -14,23 +14,25 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Optional, Tuple, Union
 import time
+from typing import TYPE_CHECKING
+
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from dimos.robot.robot import Robot, MockRobot
+    from dimos.robot.robot import MockRobot, Robot
 else:
     Robot = "Robot"
     MockRobot = "MockRobot"
 
+from go2_webrtc_driver.constants import RTC_TOPIC
+
+from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.types.constants import Colors
-from dimos.msgs.geometry_msgs import Twist, Vector3
-from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD
 
 # Module-level constant for Unitree Go2 WebRTC control definitions
-UNITREE_WEBRTC_CONTROLS: List[Tuple[str, int, str]] = [
+UNITREE_WEBRTC_CONTROLS: list[tuple[str, int, str]] = [
     ("Damp", 1001, "Lowers the robot to the ground fully."),
     (
         "BalanceStand",
@@ -180,7 +182,7 @@ UNITREE_WEBRTC_CONTROLS: List[Tuple[str, int, str]] = [
 
 # Module-level constants for Unitree G1 WebRTC control definitions
 # G1 Arm Actions - all use api_id 7106 on topic "rt/api/arm/request"
-G1_ARM_CONTROLS: List[Tuple[str, int, str]] = [
+G1_ARM_CONTROLS: list[tuple[str, int, str]] = [
     ("Handshake", 27, "Perform a handshake gesture with the right hand."),
     ("HighFive", 18, "Give a high five with the right hand."),
     ("Hug", 19, "Perform a hugging gesture with both arms."),
@@ -198,7 +200,7 @@ G1_ARM_CONTROLS: List[Tuple[str, int, str]] = [
 ]
 
 # G1 Movement Modes - all use api_id 7101 on topic "rt/api/sport/request"
-G1_MODE_CONTROLS: List[Tuple[str, int, str]] = [
+G1_MODE_CONTROLS: list[tuple[str, int, str]] = [
     ("WalkMode", 500, "Switch to normal walking mode."),
     ("WalkControlWaist", 501, "Switch to walking mode with waist control."),
     ("RunMode", 801, "Switch to running mode."),
@@ -210,7 +212,7 @@ G1_MODE_CONTROLS: List[Tuple[str, int, str]] = [
 class MyUnitreeSkills(SkillLibrary):
     """My Unitree Skills for WebRTC interface."""
 
-    def __init__(self, robot: Optional[Robot] = None, robot_type: str = "go2"):
+    def __init__(self, robot: Robot | None = None, robot_type: str = "go2") -> None:
         """Initialize Unitree skills library.
 
         Args:
@@ -229,7 +231,7 @@ class MyUnitreeSkills(SkillLibrary):
         self.register_skills(dynamic_skills)
 
     @classmethod
-    def register_skills(cls, skill_classes: Union["AbstractSkill", list["AbstractSkill"]]):
+    def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]) -> None:
         """Add multiple skill classes as class attributes.
 
         Args:
@@ -242,28 +244,28 @@ class MyUnitreeSkills(SkillLibrary):
             # Add to the class as a skill
             setattr(cls, skill_class.__name__, skill_class)
 
-    def initialize_skills(self):
+    def initialize_skills(self) -> None:
         for skill_class in self.get_class_skills():
             self.create_instance(skill_class.__name__, robot=self._robot)
 
         # Refresh the class skills
         self.refresh_class_skills()
 
-    def create_skills_live(self) -> List[AbstractRobotSkill]:
+    def create_skills_live(self) -> list[AbstractRobotSkill]:
         # ================================================
         # Procedurally created skills
         # ================================================
         class BaseUnitreeSkill(AbstractRobotSkill):
             """Base skill for dynamic skill creation."""
 
-            def __call__(self):
+            def __call__(self) -> str:
                 super().__call__()
 
                 # For Go2: Simple api_id based call
                 if hasattr(self, "_app_id"):
                     string = f"{Colors.GREEN_PRINT_COLOR}Executing Go2 skill: {self.__class__.__name__} with api_id={self._app_id}{Colors.RESET_COLOR}"
                     print(string)
-                    result = self._robot.connection.publish_request(
+                    self._robot.connection.publish_request(
                         RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
                     )
                     return f"{self.__class__.__name__} executed successfully"
@@ -272,7 +274,7 @@ class MyUnitreeSkills(SkillLibrary):
                 elif hasattr(self, "_data_value"):
                     string = f"{Colors.GREEN_PRINT_COLOR}Executing G1 skill: {self.__class__.__name__} with data={self._data_value}{Colors.RESET_COLOR}"
                     print(string)
-                    result = self._robot.connection.publish_request(
+                    self._robot.connection.publish_request(
                         self._topic,
                         {"api_id": self._api_id, "parameter": {"data": self._data_value}},
                     )
@@ -333,7 +335,7 @@ class MyUnitreeSkills(SkillLibrary):
         yaw: float = Field(default=0.0, description="Rotational velocity (rad/s)")
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
-        def __call__(self):
+        def __call__(self) -> str:
             self._robot.move(
                 Twist(linear=Vector3(self.x, self.y, 0.0), angular=Vector3(0.0, 0.0, self.yaw)),
                 duration=self.duration,
@@ -345,7 +347,7 @@ class MyUnitreeSkills(SkillLibrary):
 
         seconds: float = Field(..., description="Seconds to wait")
 
-        def __call__(self):
+        def __call__(self) -> str:
             time.sleep(self.seconds)
             return f"Wait completed with length={self.seconds}s"
 

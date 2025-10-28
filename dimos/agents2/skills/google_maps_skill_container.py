@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import json
-from typing import Any, Union
+from typing import Any
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
@@ -22,7 +22,6 @@ from dimos.mapping.google_maps.google_maps import GoogleMaps
 from dimos.mapping.types import LatLon
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 
@@ -33,7 +32,7 @@ class GoogleMapsSkillContainer(SkillModule):
 
     gps_location: In[LatLon] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._client = GoogleMaps()
 
@@ -96,7 +95,7 @@ class GoogleMapsSkillContainer(SkillModule):
 
         location = self._get_latest_location()
 
-        results: list[Union[dict[str, Any], str]] = []
+        results: list[dict[str, Any] | str] = []
 
         for query in queries:
             try:

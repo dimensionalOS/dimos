@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
 import os
-from dimos.agents.agent import OpenAIAgent
+
 from openai import OpenAI
-from dimos.stream.video_provider import VideoProvider
-from dimos.utils.threadpool import get_scheduler
+
+from dimos.agents.agent import OpenAIAgent
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.stream.video_provider import VideoProvider
+from dimos.utils.threadpool import get_scheduler
 
 # Initialize video stream
 video_stream = VideoProvider(

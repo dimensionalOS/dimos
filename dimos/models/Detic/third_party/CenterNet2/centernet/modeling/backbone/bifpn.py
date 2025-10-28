@@ -1,16 +1,16 @@
 # Modified from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/efficientdet.py
 # The original file is under Apache-2.0 License
-import math
 from collections import OrderedDict
+import math
 
+from detectron2.layers import Conv2d, ShapeSpec
+from detectron2.layers.batch_norm import get_norm
+from detectron2.modeling.backbone import Backbone
+from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
+from detectron2.modeling.backbone.resnet import build_resnet_backbone
 import torch
 from torch import nn
 
-from detectron2.layers import ShapeSpec, Conv2d
-from detectron2.modeling.backbone.resnet import build_resnet_backbone
-from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from detectron2.layers.batch_norm import get_norm
-from detectron2.modeling.backbone import Backbone
 from .dlafpn import dla34
 
 
@@ -38,8 +38,8 @@ def swish(x, inplace: bool = False):
 
 
 class Swish(nn.Module):
-    def __init__(self, inplace: bool = False):
-        super(Swish, self).__init__()
+    def __init__(self, inplace: bool = False) -> None:
+        super().__init__()
         self.inplace = inplace
 
     def forward(self, x):
@@ -47,8 +47,8 @@ class Swish(nn.Module):
 
 
 class SequentialAppend(nn.Sequential):
-    def __init__(self, *args):
-        super(SequentialAppend, self).__init__(*args)
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
 
     def forward(self, x):
         for module in self:
@@ -57,8 +57,8 @@ class SequentialAppend(nn.Sequential):
 
 
 class SequentialAppendLast(nn.Sequential):
-    def __init__(self, *args):
-        super(SequentialAppendLast, self).__init__(*args)
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
 
     # def forward(self, x: List[torch.Tensor]):
     def forward(self, x):
@@ -79,8 +79,8 @@ class ConvBnAct2d(nn.Module):
         bias=False,
         norm="",
         act_layer=Swish,
-    ):
-        super(ConvBnAct2d, self).__init__()
+    ) -> None:
+        super().__init__()
         # self.conv = create_conv2d(
         #     in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, padding=padding, bias=bias)
         self.conv = Conv2d(
@@ -119,8 +119,8 @@ class SeparableConv2d(nn.Module):
         pw_kernel_size=1,
         act_layer=Swish,
         norm="",
-    ):
-        super(SeparableConv2d, self).__init__()
+    ) -> None:
+        super().__init__()
 
         # self.conv_dw = create_conv2d(
         #     in_channels, int(in_channels * channel_multiplier), kernel_size,
@@ -173,8 +173,8 @@ class ResampleFeatureMap(nn.Sequential):
         apply_bn=False,
         conv_after_downsample=False,
         redundant_bias=False,
-    ):
-        super(ResampleFeatureMap, self).__init__()
+    ) -> None:
+        super().__init__()
         pooling_type = pooling_type or "max"
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -229,13 +229,13 @@ class FpnCombine(nn.Module):
         conv_after_downsample=False,
         redundant_bias=False,
         weight_method="attn",
-    ):
-        super(FpnCombine, self).__init__()
+    ) -> None:
+        super().__init__()
         self.inputs_offsets = inputs_offsets
         self.weight_method = weight_method
 
         self.resample = nn.ModuleDict()
-        for idx, offset in enumerate(inputs_offsets):
+        for _idx, offset in enumerate(inputs_offsets):
             in_channels = fpn_channels
             if offset < len(feature_info):
                 in_channels = feature_info[offset]["num_chs"]
@@ -284,7 +284,7 @@ class FpnCombine(nn.Module):
         elif self.weight_method == "sum":
             x = torch.stack(nodes, dim=-1)
         else:
-            raise ValueError("unknown weight_method {}".format(self.weight_method))
+            raise ValueError(f"unknown weight_method {self.weight_method}")
         x = torch.sum(x, dim=-1)
         return x
 
@@ -305,8 +305,8 @@ class BiFpnLayer(nn.Module):
         conv_bn_relu_pattern=False,
         separable_conv=True,
         redundant_bias=False,
-    ):
-        super(BiFpnLayer, self).__init__()
+    ) -> None:
+        super().__init__()
         self.fpn_config = fpn_config
         self.num_levels = num_levels
         self.conv_bn_relu_pattern = False
@@ -379,8 +379,8 @@ class BiFPN(Backbone):
         num_levels=5,
         num_bifpn=4,
         separable_conv=False,
-    ):
-        super(BiFPN, self).__init__()
+    ) -> None:
+        super().__init__()
         assert isinstance(bottom_up, Backbone)
 
         # Feature map strides and channels from the bottom up network (e.g. ResNet)
@@ -394,11 +394,11 @@ class BiFPN(Backbone):
         self.in_features = in_features
         self._size_divisibility = 128
         levels = [int(math.log2(s)) for s in in_strides]
-        self._out_feature_strides = {"p{}".format(int(math.log2(s))): s for s in in_strides}
+        self._out_feature_strides = {f"p{int(math.log2(s))}": s for s in in_strides}
         if len(in_features) < num_levels:
             for l in range(num_levels - len(in_features)):
                 s = l + levels[-1]
-                self._out_feature_strides["p{}".format(s + 1)] = 2 ** (s + 1)
+                self._out_feature_strides[f"p{s + 1}"] = 2 ** (s + 1)
         self._out_features = list(sorted(self._out_feature_strides.keys()))
         self._out_feature_channels = {k: out_channels for k in self._out_features}
 
@@ -470,10 +470,10 @@ class BiFPN(Backbone):
         x = [bottom_up_features[f] for f in self.in_features]
         assert len(self.resample) == self.num_levels - len(x)
         x = self.resample(x)
-        shapes = [xx.shape for xx in x]
+        [xx.shape for xx in x]
         # print('resample shapes', shapes)
         x = self.cell(x)
-        out = {f: xx for f, xx in zip(self._out_features, x)}
+        out = {f: xx for f, xx in zip(self._out_features, x, strict=False)}
         # import pdb; pdb.set_trace()
         return out
 

@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import numpy as np
+import torch
 
 
 def find_medoid_and_closest_points(points, num_closest=5):
@@ -53,7 +53,7 @@ def sample_points_from_heatmap(heatmap, original_size, num_points=5, percentile=
     )
 
     sampled_coords = np.array(np.unravel_index(sampled_indices, attn.shape)).T
-    medoid, sampled_coords = find_medoid_and_closest_points(sampled_coords)
+    _medoid, sampled_coords = find_medoid_and_closest_points(sampled_coords)
     pts = []
     for pt in sampled_coords.tolist():
         x, y = pt

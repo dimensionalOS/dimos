@@ -20,6 +20,6 @@ from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 __all__ = [
     "Detection2D",
     "Detection2DBBox",
-    "ImageDetections2D",
     "Detection2DPerson",
+    "ImageDetections2D",
 ]

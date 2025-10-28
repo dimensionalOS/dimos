@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from pathlib import Path
+
+import pytest
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.testing import MockModel
@@ -26,7 +27,7 @@ def fixture_dir():
 
 
 @pytest.fixture
-def potato_system_prompt():
+def potato_system_prompt() -> str:
     return "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
 
 

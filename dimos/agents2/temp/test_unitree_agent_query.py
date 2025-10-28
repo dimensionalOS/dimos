@@ -20,17 +20,18 @@ Shows different ways to call the agent and handle async.
 
 import asyncio
 import os
+from pathlib import Path
 import sys
 import time
-from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.agents2 import Agent
 from dimos.agents2.spec import Model, Provider
+from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_agent_query")
@@ -80,7 +81,7 @@ async def test_async_query():
     return future
 
 
-def test_sync_query_with_thread():
+def test_sync_query_with_thread() -> None:
     """Test agent query using threading for the event loop."""
     print("\n=== Testing Sync Query with Thread ===\n")
 
@@ -111,7 +112,7 @@ def test_sync_query_with_thread():
         logger.warning("Agent's event loop is NOT running - this is the problem!")
 
         # Try to run the loop in a thread
-        def run_loop():
+        def run_loop() -> None:
             asyncio.set_event_loop(agent._loop)
             agent._loop.run_forever()
 
@@ -189,7 +190,7 @@ def test_sync_query_with_thread():
 #     dimos.stop()
 
 
-def main():
+def main() -> None:
     """Run tests based on available API key."""
 
     if not os.getenv("OPENAI_API_KEY"):

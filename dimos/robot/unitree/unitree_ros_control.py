@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from go2_interfaces.msg import Go2State, IMU
+
+from go2_interfaces.msg import IMU, Go2State
+from sensor_msgs.msg import CameraInfo, CompressedImage, Image
 from unitree_go.msg import WebRtcReq
-from typing import Type
-from sensor_msgs.msg import Image, CompressedImage, CameraInfo
-from dimos.robot.ros_control import ROSControl, RobotMode
+
+from dimos.robot.ros_control import RobotMode, ROSControl
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree.unitree_ros_control")
@@ -51,24 +52,24 @@ class UnitreeROSControl(ROSControl):
     def __init__(
         self,
         node_name: str = "unitree_hardware_interface",
-        state_topic: str = None,
-        imu_topic: str = None,
-        webrtc_topic: str = None,
-        webrtc_api_topic: str = None,
-        move_vel_topic: str = None,
-        pose_topic: str = None,
-        odom_topic: str = None,
-        costmap_topic: str = None,
-        state_msg_type: Type = None,
-        imu_msg_type: Type = None,
-        webrtc_msg_type: Type = None,
-        max_linear_velocity: float = None,
-        max_angular_velocity: float = None,
+        state_topic: str | None = None,
+        imu_topic: str | None = None,
+        webrtc_topic: str | None = None,
+        webrtc_api_topic: str | None = None,
+        move_vel_topic: str | None = None,
+        pose_topic: str | None = None,
+        odom_topic: str | None = None,
+        costmap_topic: str | None = None,
+        state_msg_type: type | None = None,
+        imu_msg_type: type | None = None,
+        webrtc_msg_type: type | None = None,
+        max_linear_velocity: float | None = None,
+        max_angular_velocity: float | None = None,
         use_raw: bool = False,
         debug: bool = False,
         disable_video_stream: bool = False,
         mock_connection: bool = False,
-    ):
+    ) -> None:
         """
         Initialize Unitree ROS control interface with default values for Unitree Go2
 
@@ -134,7 +135,7 @@ class UnitreeROSControl(ROSControl):
         )
 
     # Unitree-specific RobotMode State update conditons
-    def _update_mode(self, msg: Go2State):
+    def _update_mode(self, msg: Go2State) -> None:
         """
         Implementation of abstract method to update robot mode
 

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+import os
+import time
 
 import cv2
 import onnxruntime
@@ -32,7 +32,6 @@ from dimos.perception.segmentation.utils import (
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.path_utils import get_project_root
 
 logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
 
@@ -47,7 +46,7 @@ class Sam2DSegmenter:
         use_analyzer=True,
         use_rich_labeling=False,
         use_filtering=True,
-    ):
+    ) -> None:
         if is_cuda_available():
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
@@ -225,7 +224,7 @@ class Sam2DSegmenter:
                 if results is not None:
                     # Map results to track IDs
                     object_list = eval(results)
-                    for track_id, result in zip(self.current_queue_ids, object_list):
+                    for track_id, result in zip(self.current_queue_ids, object_list, strict=False):
                         self.object_names[track_id] = result
             except Exception as e:
                 print(f"Queue analysis failed: {e}")
@@ -255,7 +254,7 @@ class Sam2DSegmenter:
                 return queue_indices, queue_ids
         return None, None
 
-    def run_analysis(self, frame, tracked_bboxes, tracked_target_ids):
+    def run_analysis(self, frame, tracked_bboxes, tracked_target_ids) -> None:
         """Run queue image analysis in background."""
         if not self.use_analyzer:
             return
@@ -285,20 +284,20 @@ class Sam2DSegmenter:
 
         return [
             self.object_names.get(track_id, tracked_name)
-            for track_id, tracked_name in zip(track_ids, tracked_names)
+            for track_id, tracked_name in zip(track_ids, tracked_names, strict=False)
         ]
 
     def visualize_results(self, image, masks, bboxes, track_ids, probs, names):
         """Generate an overlay visualization with segmentation results and object names."""
         return plot_results(image, masks, bboxes, track_ids, probs, names)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources."""
         if self.use_analyzer:
             self.analysis_executor.shutdown()
 
 
-def main():
+def main() -> None:
     # Example usage with different configurations
     cap = cv2.VideoCapture(0)
 
@@ -328,7 +327,7 @@ def main():
             if not ret:
                 break
 
-            start_time = time.time()
+            time.time()
 
             # Process image and get results
             masks, bboxes, target_ids, probs, names = segmenter.process_image(frame)

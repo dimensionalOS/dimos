@@ -13,11 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from reactivex import Observable, Subject
 import pyttsx3
+from reactivex import Observable, Subject
 
 from dimos.stream.audio.text.abstract import AbstractTextTransform
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -31,7 +30,7 @@ class PyTTSNode(AbstractTextTransform):
     text observables, allowing it to be inserted into a text processing pipeline.
     """
 
-    def __init__(self, rate: int = 200, volume: float = 1.0):
+    def __init__(self, rate: int = 200, volume: float = 1.0) -> None:
         """
         Initialize PyTTSNode.
 

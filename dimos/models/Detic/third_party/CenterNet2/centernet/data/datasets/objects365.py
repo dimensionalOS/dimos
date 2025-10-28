@@ -1,5 +1,6 @@
-from detectron2.data.datasets.register_coco import register_coco_instances
 import os
+
+from detectron2.data.datasets.register_coco import register_coco_instances
 
 categories_v1 = [
     {"id": 164, "name": "cutting/chopping board"},

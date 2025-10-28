@@ -13,22 +13,20 @@
 # limitations under the License.
 
 import asyncio
-import logging
-from typing import Optional, List
+
+# Import LCM message types
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos import core
 from dimos.hardware.camera.zed import ZEDModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.robot.robot import Robot
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.logging_config import setup_logger
-from dimos.robot.robot import Robot
-
-# Import LCM message types
-from dimos_lcm.sensor_msgs import CameraInfo
 
 logger = setup_logger("dimos.robot.agilex.piper_arm")
 
@@ -36,7 +34,7 @@ logger = setup_logger("dimos.robot.agilex.piper_arm")
 class PiperArmRobot(Robot):
     """Piper Arm robot with ZED camera and manipulation capabilities."""
 
-    def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
+    def __init__(self, robot_capabilities: list[RobotCapability] | None = None) -> None:
         super().__init__()
         self.dimos = None
         self.stereo_camera = None
@@ -49,7 +47,7 @@ class PiperArmRobot(Robot):
             RobotCapability.MANIPULATION,
         ]
 
-    async def start(self):
+    async def start(self) -> None:
         """Start the robot modules."""
         # Start Dimos
         self.dimos = core.start(2)  # Need 2 workers for ZED and manipulation modules
@@ -109,7 +107,7 @@ class PiperArmRobot(Robot):
         logger.info("PiperArmRobot initialized and started")
 
     def pick_and_place(
-        self, pick_x: int, pick_y: int, place_x: Optional[int] = None, place_y: Optional[int] = None
+        self, pick_x: int, pick_y: int, place_x: int | None = None, place_y: int | None = None
     ):
         """Execute pick and place task.
 
@@ -143,7 +141,7 @@ class PiperArmRobot(Robot):
             logger.error("Manipulation module not initialized")
             return None
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop all modules and clean up."""
         logger.info("Stopping PiperArmRobot...")
 
@@ -163,7 +161,7 @@ class PiperArmRobot(Robot):
         logger.info("PiperArmRobot stopped")
 
 
-async def run_piper_arm():
+async def run_piper_arm() -> None:
     """Run the Piper Arm robot."""
     robot = PiperArmRobot()
 

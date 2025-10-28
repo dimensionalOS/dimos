@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
+import cv2
 import numpy as np
 import open3d as o3d
-import cv2
-from typing import Dict, Optional, Union, Tuple
 
 
 def fit_cuboid(
-    points: Union[np.ndarray, o3d.geometry.PointCloud], method: str = "minimal"
-) -> Optional[Dict]:
+    points: np.ndarray | o3d.geometry.PointCloud, method: str = "minimal"
+) -> dict | None:
     """
     Fit a cuboid to a point cloud using Open3D's built-in methods.
 
@@ -103,7 +103,7 @@ def fit_cuboid(
         return None
 
 
-def fit_cuboid_simple(points: Union[np.ndarray, o3d.geometry.PointCloud]) -> Optional[Dict]:
+def fit_cuboid_simple(points: np.ndarray | o3d.geometry.PointCloud) -> dict | None:
     """
     Simple wrapper for minimal oriented bounding box fitting.
 
@@ -190,11 +190,11 @@ def get_cuboid_corners(
 
 def visualize_cuboid_on_image(
     image: np.ndarray,
-    cuboid_params: Dict,
+    cuboid_params: dict,
     camera_matrix: np.ndarray,
-    extrinsic_rotation: Optional[np.ndarray] = None,
-    extrinsic_translation: Optional[np.ndarray] = None,
-    color: Tuple[int, int, int] = (0, 255, 0),
+    extrinsic_rotation: np.ndarray | None = None,
+    extrinsic_translation: np.ndarray | None = None,
+    color: tuple[int, int, int] = (0, 255, 0),
     thickness: int = 2,
     show_dimensions: bool = True,
 ) -> np.ndarray:
@@ -320,7 +320,7 @@ def visualize_cuboid_on_image(
     return vis_img
 
 
-def compute_cuboid_volume(cuboid_params: Dict) -> float:
+def compute_cuboid_volume(cuboid_params: dict) -> float:
     """
     Compute the volume of a cuboid.
 
@@ -337,7 +337,7 @@ def compute_cuboid_volume(cuboid_params: Dict) -> float:
     return float(np.prod(dims))
 
 
-def compute_cuboid_surface_area(cuboid_params: Dict) -> float:
+def compute_cuboid_surface_area(cuboid_params: dict) -> float:
     """
     Compute the surface area of a cuboid.
 
@@ -354,7 +354,7 @@ def compute_cuboid_surface_area(cuboid_params: Dict) -> float:
     return 2.0 * (dims[0] * dims[1] + dims[1] * dims[2] + dims[2] * dims[0])
 
 
-def check_cuboid_quality(cuboid_params: Dict, points: np.ndarray) -> Dict:
+def check_cuboid_quality(cuboid_params: dict, points: np.ndarray) -> dict:
     """
     Assess the quality of a cuboid fit.
 
