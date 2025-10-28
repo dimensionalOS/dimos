@@ -67,7 +67,6 @@ from dimos.utils.testing import TimedSensorReplay
 from dimos.perception.object_tracker_2d import ObjectTracker2D
 from dimos.navigation.bbox_navigation import BBoxNavigationModule
 from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -331,7 +330,7 @@ class ConnectionModule(Module):
 connection = ConnectionModule.blueprint
 
 
-class UnitreeGo2(UnitreeRobot, Resource):
+class UnitreeGo2(Resource):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     _dimos: ModuleCoordinator

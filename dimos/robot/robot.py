@@ -14,14 +14,10 @@
 
 """Minimal robot interface for DIMOS robots."""
 
-from abc import ABC, abstractmethod
-from typing import List, Optional
+from abc import ABC
+from typing import List
 
-from reactivex import Observable
 
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.perception.spatial_perception import SpatialMemory
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -63,22 +59,3 @@ class Robot(ABC):
         Override this method to provide cleanup logic.
         """
         pass
-
-
-# TODO: Delete
-class UnitreeRobot(Robot):
-    @abstractmethod
-    def get_odom(self) -> PoseStamped: ...
-
-    @abstractmethod
-    def explore(self) -> bool: ...
-
-    @abstractmethod
-    def stop_exploration(self) -> bool: ...
-
-    @abstractmethod
-    def is_exploration_active(self) -> bool: ...
-
-    @property
-    @abstractmethod
-    def spatial_memory(self) -> Optional[SpatialMemory]: ...
