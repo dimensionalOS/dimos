@@ -103,9 +103,9 @@ will not pass ``--local_rank`` when you specify this flag.
     how things can go wrong if you don't do this correctly.
 """
 
-import subprocess
+from argparse import REMAINDER, ArgumentParser
 import os
-from argparse import ArgumentParser, REMAINDER
+import subprocess
 
 
 def parse_args():
@@ -189,7 +189,7 @@ def main():
         current_env["RANK"] = str(dist_rank)
         current_env["LOCAL_RANK"] = str(local_rank)
 
-        cmd = [args.training_script] + args.training_script_args
+        cmd = [args.training_script, *args.training_script_args]
 
         process = subprocess.Popen(cmd, env=current_env)
         processes.append(process)

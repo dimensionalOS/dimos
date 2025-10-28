@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import asyncio
-import threading
 import logging
+import threading
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
 from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
@@ -26,16 +26,16 @@ class FoxgloveBridge(Module):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, **kwargs):
+    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
         self.jpeg_shm_channels = jpeg_shm_channels or []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
-        def run_bridge():
+        def run_bridge() -> None:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
             try:
@@ -61,7 +61,7 @@ class FoxgloveBridge(Module):
         self._thread.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._loop and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._loop.stop)
             self._thread.join(timeout=2)

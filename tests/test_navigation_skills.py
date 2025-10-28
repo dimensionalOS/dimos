@@ -25,16 +25,14 @@ Usage:
   python simple_navigation_test.py --skip-build --query "kitchen"
 """
 
+import argparse
+import logging
 import os
 import sys
-import time
-import logging
-import argparse
 import threading
-from reactivex import Subject, operators as RxOps
-import os
+import time
 
-import tests.test_header
+from reactivex import Subject, operators as RxOps
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
@@ -42,6 +40,7 @@ from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.navigation import BuildSemanticMap, Navigate
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
+import tests.test_header
 
 # Setup logging
 logger = setup_logger("simple_navigation_test")

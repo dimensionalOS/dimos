@@ -6,8 +6,9 @@
 # Modified from codes in torch.utils.data.distributed
 # ------------------------------------------------------------------------
 
-import os
 import math
+import os
+
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
@@ -30,7 +31,7 @@ class DistributedSampler(Sampler):
 
     def __init__(
         self, dataset, num_replicas=None, rank=None, local_rank=None, local_size=None, shuffle=True
-    ):
+    ) -> None:
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -43,7 +44,7 @@ class DistributedSampler(Sampler):
         self.num_replicas = num_replicas
         self.rank = rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = math.ceil(len(self.dataset) * 1.0 / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
         self.shuffle = shuffle
 
@@ -67,10 +68,10 @@ class DistributedSampler(Sampler):
 
         return iter(indices)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
-    def set_epoch(self, epoch):
+    def set_epoch(self, epoch) -> None:
         self.epoch = epoch
 
 
@@ -91,7 +92,7 @@ class NodeDistributedSampler(Sampler):
 
     def __init__(
         self, dataset, num_replicas=None, rank=None, local_rank=None, local_size=None, shuffle=True
-    ):
+    ) -> None:
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -111,7 +112,7 @@ class NodeDistributedSampler(Sampler):
         self.rank = rank
         self.local_rank = local_rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = math.ceil(len(self.dataset) * 1.0 / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
 
         self.total_size_parts = self.num_samples * self.num_replicas // self.num_parts
@@ -139,8 +140,8 @@ class NodeDistributedSampler(Sampler):
 
         return iter(indices)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
-    def set_epoch(self, epoch):
+    def set_epoch(self, epoch) -> None:
         self.epoch = epoch

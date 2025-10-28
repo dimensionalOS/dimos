@@ -49,7 +49,7 @@ def test_image():
 
 
 @pytest.mark.heavy
-def test_single_image_embedding(embedding_model, test_image):
+def test_single_image_embedding(embedding_model, test_image) -> None:
     """Test embedding a single image."""
     embedding = embedding_model.embed(test_image)
 
@@ -74,7 +74,7 @@ def test_single_image_embedding(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_batch_image_embedding(embedding_model, test_image):
+def test_batch_image_embedding(embedding_model, test_image) -> None:
     """Test embedding multiple images at once."""
     embeddings = embedding_model.embed(test_image, test_image, test_image)
 
@@ -92,7 +92,7 @@ def test_batch_image_embedding(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_single_text_embedding(embedding_model):
+def test_single_text_embedding(embedding_model) -> None:
     """Test embedding a single text string."""
     import torch
 
@@ -117,7 +117,7 @@ def test_single_text_embedding(embedding_model):
 
 
 @pytest.mark.heavy
-def test_batch_text_embedding(embedding_model):
+def test_batch_text_embedding(embedding_model) -> None:
     """Test embedding multiple text strings at once."""
     import torch
 
@@ -137,7 +137,7 @@ def test_batch_text_embedding(embedding_model):
 
 
 @pytest.mark.heavy
-def test_text_image_similarity(embedding_model, test_image):
+def test_text_image_similarity(embedding_model, test_image) -> None:
     """Test cross-modal text-image similarity using @ operator."""
     if not hasattr(embedding_model, "embed_text"):
         pytest.skip("Model does not support text embeddings")
@@ -150,7 +150,7 @@ def test_text_image_similarity(embedding_model, test_image):
 
     # Compute similarities using @ operator
     similarities = {}
-    for query, text_emb in zip(queries, text_embeddings):
+    for query, text_emb in zip(queries, text_embeddings, strict=False):
         similarity = img_embedding @ text_emb
         similarities[query] = similarity
         print(f"\n'{query}': {similarity:.4f}")
@@ -161,7 +161,7 @@ def test_text_image_similarity(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_cosine_distance(embedding_model, test_image):
+def test_cosine_distance(embedding_model, test_image) -> None:
     """Test cosine distance computation (1 - similarity)."""
     emb1 = embedding_model.embed(test_image)
     emb2 = embedding_model.embed(test_image)
@@ -180,7 +180,7 @@ def test_cosine_distance(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_query_functionality(embedding_model, test_image):
+def test_query_functionality(embedding_model, test_image) -> None:
     """Test query method for top-k retrieval."""
     if not hasattr(embedding_model, "embed_text"):
         pytest.skip("Model does not support text embeddings")
@@ -206,7 +206,7 @@ def test_query_functionality(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_embedding_operator(embedding_model, test_image):
+def test_embedding_operator(embedding_model, test_image) -> None:
     """Test that @ operator works on embeddings."""
     emb1 = embedding_model.embed(test_image)
     emb2 = embedding_model.embed(test_image)
@@ -220,7 +220,7 @@ def test_embedding_operator(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_warmup(embedding_model):
+def test_warmup(embedding_model) -> None:
     """Test that warmup runs without error."""
     # Warmup is already called in fixture, but test it explicitly
     embedding_model.warmup()
@@ -229,7 +229,7 @@ def test_warmup(embedding_model):
 
 
 @pytest.mark.heavy
-def test_compare_one_to_many(embedding_model, test_image):
+def test_compare_one_to_many(embedding_model, test_image) -> None:
     """Test GPU-accelerated one-to-many comparison."""
     import torch
 
@@ -253,7 +253,7 @@ def test_compare_one_to_many(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_compare_many_to_many(embedding_model):
+def test_compare_many_to_many(embedding_model) -> None:
     """Test GPU-accelerated many-to-many comparison."""
     import torch
 
@@ -280,7 +280,7 @@ def test_compare_many_to_many(embedding_model):
 
 
 @pytest.mark.heavy
-def test_gpu_query_performance(embedding_model, test_image):
+def test_gpu_query_performance(embedding_model, test_image) -> None:
     """Test that query method uses GPU acceleration."""
     # Create a larger gallery
     gallery_size = 20
@@ -303,7 +303,7 @@ def test_gpu_query_performance(embedding_model, test_image):
 
 
 @pytest.mark.heavy
-def test_embedding_performance(embedding_model):
+def test_embedding_performance(embedding_model) -> None:
     """Measure embedding performance over multiple real video frames."""
     import time
 
@@ -317,7 +317,7 @@ def test_embedding_performance(embedding_model):
 
     # Collect 10 real frames from the video
     test_images = []
-    for ts, frame in video_replay.iterate_ts(duration=1.0):
+    for _ts, frame in video_replay.iterate_ts(duration=1.0):
         test_images.append(frame.to_rgb())
         if len(test_images) >= 10:
             break
@@ -391,7 +391,7 @@ def test_embedding_performance(embedding_model):
 
         text_embeddings = embedding_model.embed_text(*test_queries)
         similarities = []
-        for query, text_emb in zip(test_queries, text_embeddings):
+        for query, text_emb in zip(test_queries, text_embeddings, strict=False):
             sim = first_frame_emb @ text_emb
             similarities.append((query, sim))
 

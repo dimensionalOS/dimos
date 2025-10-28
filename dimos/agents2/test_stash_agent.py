@@ -21,7 +21,7 @@ from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
 @pytest.mark.tool
 @pytest.mark.asyncio
-async def test_agent_init():
+async def test_agent_init() -> None:
     system_prompt = (
         "Your name is Mr. Potato, potatoes are bad at math. Use a tools if asked to calculate"
     )

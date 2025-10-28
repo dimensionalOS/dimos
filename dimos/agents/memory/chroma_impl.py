@@ -12,18 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
-
-from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
 import os
+
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings
 import torch
+
+from dimos.agents.memory.base import AbstractAgentSemanticMemory
 
 
 class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
     """Base class for Chroma-based semantic memory implementations."""
 
-    def __init__(self, collection_name="my_collection"):
+    def __init__(self, collection_name="my_collection") -> None:
         """Initialize the connection to the local Chroma DB."""
         self.collection_name = collection_name
         self.db_connection = None
@@ -85,7 +86,7 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
 
     def __init__(
         self, collection_name="my_collection", model="text-embedding-3-large", dimensions=1024
-    ):
+    ) -> None:
         """Initialize OpenAI-based semantic memory.
 
         Args:
@@ -124,7 +125,7 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
 
     def __init__(
         self, collection_name="my_collection", model_name="sentence-transformers/all-MiniLM-L6-v2"
-    ):
+    ) -> None:
         """Initialize the local semantic memory using SentenceTransformer.
 
         Args:
@@ -135,7 +136,7 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
         self.model_name = model_name
         super().__init__(collection_name=collection_name)
 
-    def create(self):
+    def create(self) -> None:
         """Create local embedding model and initialize the ChromaDB client."""
         # Load the sentence transformer model
         # Use CUDA if available, otherwise fall back to CPU
@@ -145,7 +146,7 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
 
         # Create a custom embedding class that implements the embed_query method
         class SentenceTransformerEmbeddings:
-            def __init__(self, model):
+            def __init__(self, model) -> None:
                 self.model = model
 
             def embed_query(self, text):

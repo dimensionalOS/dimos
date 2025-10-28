@@ -38,10 +38,9 @@ from typing import (
 
 import dimos.core.colors as colors
 from dimos.core.stream import In, RemoteIn, Transport
-from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM
-from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
-from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
+from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
 
 T = TypeVar("T")
 
@@ -49,7 +48,7 @@ T = TypeVar("T")
 class PubSubTransport(Transport[T]):
     topic: any
 
-    def __init__(self, topic: any):
+    def __init__(self, topic: any) -> None:
         self.topic = topic
 
     def __str__(self) -> str:
@@ -63,14 +62,14 @@ class PubSubTransport(Transport[T]):
 class pLCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs):
+    def __init__(self, topic: str, **kwargs) -> None:
         super().__init__(topic)
         self.lcm = PickleLCM(**kwargs)
 
     def __reduce__(self):
         return (pLCMTransport, (self.topic,))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -87,7 +86,7 @@ class pLCMTransport(PubSubTransport[T]):
 class LCMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, type: type, **kwargs):
+    def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(LCMTopic(topic, type))
         if not hasattr(self, "lcm"):
             self.lcm = LCM(**kwargs)
@@ -95,7 +94,7 @@ class LCMTransport(PubSubTransport[T]):
     def __reduce__(self):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
@@ -110,7 +109,7 @@ class LCMTransport(PubSubTransport[T]):
 
 
 class JpegLcmTransport(LCMTransport):
-    def __init__(self, topic: str, type: type, **kwargs):
+    def __init__(self, topic: str, type: type, **kwargs) -> None:
         self.lcm = JpegLCM(**kwargs)
         super().__init__(topic, type)
 
@@ -121,14 +120,14 @@ class JpegLcmTransport(LCMTransport):
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs):
+    def __init__(self, topic: str, **kwargs) -> None:
         super().__init__(topic)
         self.shm = PickleSharedMemory(**kwargs)
 
     def __reduce__(self):
         return (pSHMTransport, (self.topic,))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.shm.start()
             self._started = True
@@ -145,14 +144,14 @@ class pSHMTransport(PubSubTransport[T]):
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, **kwargs):
+    def __init__(self, topic: str, **kwargs) -> None:
         super().__init__(topic)
         self.shm = SharedMemory(**kwargs)
 
     def __reduce__(self):
         return (SHMTransport, (self.topic,))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.shm.start()
             self._started = True
@@ -169,7 +168,7 @@ class SHMTransport(PubSubTransport[T]):
 class JpegShmTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, quality: int = 75, **kwargs):
+    def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:
         super().__init__(topic)
         self.shm = JpegSharedMemory(quality=quality, **kwargs)
         self.quality = quality
@@ -177,7 +176,7 @@ class JpegShmTransport(PubSubTransport[T]):
     def __reduce__(self):
         return (JpegShmTransport, (self.topic, self.quality))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.shm.start()
             self._started = True
@@ -192,10 +191,10 @@ class JpegShmTransport(PubSubTransport[T]):
 
 
 class DaskTransport(Transport[T]):
-    subscribers: List[Callable[[T], None]]
+    subscribers: list[Callable[[T], None]]
     _started: bool = False
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.subscribers = []
 
     def __str__(self) -> str:

@@ -17,20 +17,22 @@ Position-Based Visual Servoing (PBVS) system for robotic manipulation.
 Supports both eye-in-hand and eye-to-hand configurations.
 """
 
-import numpy as np
-from typing import Optional, Tuple, List
 from collections import deque
-from scipy.spatial.transform import Rotation as R
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos.msgs.vision_msgs import Detection3DArray
+from typing import List, Optional, Tuple
+
 from dimos_lcm.vision_msgs import Detection3D
-from dimos.utils.logging_config import setup_logger
+import numpy as np
+from scipy.spatial.transform import Rotation as R
+
 from dimos.manipulation.visual_servoing.utils import (
-    update_target_grasp_pose,
-    find_best_object_match,
     create_pbvs_visualization,
+    find_best_object_match,
     is_target_reached,
+    update_target_grasp_pose,
 )
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.vision_msgs import Detection3DArray
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.pbvs")
 
@@ -59,7 +61,7 @@ class PBVS:
         max_tracking_distance_threshold: float = 0.12,  # Max distance for target tracking (m)
         min_size_similarity: float = 0.6,  # Min size similarity threshold (0.0-1.0)
         direct_ee_control: bool = True,  # If True, output target poses instead of velocities
-    ):
+    ) -> None:
         """
         Initialize PBVS system.
 
@@ -127,7 +129,7 @@ class PBVS:
             return True
         return False
 
-    def clear_target(self):
+    def clear_target(self) -> None:
         """Clear the current target."""
         self.current_target = None
         self.target_grasp_pose = None
@@ -138,7 +140,7 @@ class PBVS:
             self.controller.clear_state()
         logger.info("Target cleared")
 
-    def get_current_target(self) -> Optional[Detection3D]:
+    def get_current_target(self) -> Detection3D | None:
         """
         Get the current target object.
 
@@ -147,7 +149,7 @@ class PBVS:
         """
         return self.current_target
 
-    def update_tracking(self, new_detections: Optional[Detection3DArray] = None) -> bool:
+    def update_tracking(self, new_detections: Detection3DArray | None = None) -> bool:
         """
         Update target tracking with new detections using a rolling window.
         If tracking is lost, keeps the old target pose.
@@ -214,7 +216,7 @@ class PBVS:
         ee_pose: Pose,
         grasp_distance: float = 0.15,
         grasp_pitch_degrees: float = 45.0,
-    ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
+    ) -> tuple[Vector3 | None, Vector3 | None, bool, bool, Pose | None]:
         """
         Compute PBVS control with position and orientation servoing.
 
@@ -314,7 +316,7 @@ class PBVSController:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
-    ):
+    ) -> None:
         """
         Initialize PBVS controller.
 
@@ -343,7 +345,7 @@ class PBVSController:
             f"target_tolerance={target_tolerance}m"
         )
 
-    def clear_state(self):
+    def clear_state(self) -> None:
         """Clear controller state."""
         self.last_position_error = None
         self.last_rotation_error = None
@@ -353,7 +355,7 @@ class PBVSController:
 
     def compute_control(
         self, ee_pose: Pose, grasp_pose: Pose
-    ) -> Tuple[Optional[Vector3], Optional[Vector3], bool]:
+    ) -> tuple[Vector3 | None, Vector3 | None, bool]:
         """
         Compute PBVS control with position and orientation servoing.
 
@@ -466,7 +468,7 @@ class PBVSController:
     def create_status_overlay(
         self,
         image: np.ndarray,
-        current_target: Optional[Detection3D] = None,
+        current_target: Detection3D | None = None,
     ) -> np.ndarray:
         """
         Create PBVS status overlay on image.

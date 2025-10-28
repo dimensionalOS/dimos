@@ -21,16 +21,20 @@ from __future__ import annotations
 
 import datetime
 import time
+from typing import TYPE_CHECKING
+
+from go2_webrtc_driver.constants import RTC_TOPIC
 
 from dimos.core.core import rpc
-from dimos.core.rpc_client import RpcCall
 from dimos.core.skill_module import SkillModule
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
-from dimos.utils.logging_config import setup_logger
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
-from go2_webrtc_driver.constants import RTC_TOPIC
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.rpc_client import RpcCall
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
 
@@ -41,7 +45,7 @@ class UnitreeSkillContainer(SkillModule):
     _move: RpcCall | None = None
     _publish_request: RpcCall | None = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
@@ -65,7 +69,7 @@ class UnitreeSkillContainer(SkillModule):
         self._publish_request = callable
         self._publish_request.set_rpc(self.rpc)
 
-    def _generate_unitree_skills(self):
+    def _generate_unitree_skills(self) -> None:
         """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""
         logger.info(f"Generating {len(UNITREE_WEBRTC_CONTROLS)} dynamic Unitree skills")
 
@@ -92,7 +96,7 @@ class UnitreeSkillContainer(SkillModule):
 
     def _create_dynamic_skill(
         self, skill_name: str, api_id: int, description: str, original_name: str
-    ):
+    ) -> None:
         """Create a dynamic skill method with the @skill decorator.
 
         Args:
@@ -164,7 +168,7 @@ class UnitreeSkillContainer(SkillModule):
             time.sleep(1)
 
     @skill()
-    def speak(self, text: str):
+    def speak(self, text: str) -> str:
         """Speak text out loud through the robot's speakers."""
         return f"This is being said aloud: {text}"
 

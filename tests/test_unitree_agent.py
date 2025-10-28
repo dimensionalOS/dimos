@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
 import os
 import time
 
 from dimos.web.fastapi_server import FastAPIServer
+import tests.test_header
 
 print(f"Current working directory: {os.getcwd()}")
 
@@ -304,7 +304,7 @@ if __name__ == "__main__":
     elif test_to_run == 4:
         myUnitreeAgentDemo.run_with_queries_and_fast_api()
     elif test_to_run < 0 or test_to_run >= 5:
-        assert False, f"Invalid test number: {test_to_run}"
+        raise AssertionError(f"Invalid test number: {test_to_run}")
 
     # Keep the program running to allow the Unitree Agent Demo to operate continuously
     try:

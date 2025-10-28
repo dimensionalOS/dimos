@@ -15,8 +15,8 @@
 
 def is_cuda_available():
     try:
-        import pycuda.driver as cuda
         import pycuda.autoinit  # implicitly initializes the CUDA driver
+        import pycuda.driver as cuda
 
         cuda.init()
         return cuda.Device.count() > 0

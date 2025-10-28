@@ -13,8 +13,8 @@
 # limitations under the License.
 import time
 
-import pytest
 from lcm_msgs.foxglove_msgs import SceneUpdate
+import pytest
 
 from dimos.core import LCMTransport
 from dimos.msgs.foxglove_msgs import ImageAnnotations
@@ -28,7 +28,7 @@ from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModul
 
 
 @pytest.mark.module
-def test_moduleDB(dimos_cluster):
+def test_moduleDB(dimos_cluster) -> None:
     connection = deploy_connection(dimos_cluster)
 
     moduleDB = dimos_cluster.deploy(

@@ -1,6 +1,6 @@
+from abc import ABC, abstractmethod
 import json
 import logging
-from abc import ABC, abstractmethod
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D

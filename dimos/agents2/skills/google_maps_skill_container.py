@@ -23,7 +23,6 @@ from dimos.mapping.types import LatLon
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
-
 logger = setup_logger(__file__)
 
 
@@ -33,7 +32,7 @@ class GoogleMapsSkillContainer(SkillModule):
 
     gps_location: In[LatLon] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._client = GoogleMaps()
 

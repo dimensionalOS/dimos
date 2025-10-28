@@ -1,6 +1,7 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from detectron2.data.datasets.register_coco import register_coco_instances
 import os
+
+from detectron2.data.datasets.register_coco import register_coco_instances
 
 # categories_v2 = [
 #     {'id': 1, 'name': 'Person'},

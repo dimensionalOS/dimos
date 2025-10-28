@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from dataclasses import dataclass
 from functools import partial
 import inspect
 import threading
-from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
@@ -24,9 +24,9 @@ from typing import (
     get_origin,
     get_type_hints,
 )
-from reactivex.disposable import CompositeDisposable
 
 from dask.distributed import Actor, get_worker
+from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
@@ -40,7 +40,7 @@ from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.utils.generic import classproperty
 
 
-def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
+def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
     # we are actually instantiating a new loop here
     # to not interfere with an existing dask loop
 
@@ -75,15 +75,15 @@ class ModuleConfig:
 
 
 class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
-    _rpc: Optional[RPCSpec] = None
-    _tf: Optional[TFSpec] = None
-    _loop: Optional[asyncio.AbstractEventLoop] = None
-    _loop_thread: Optional[threading.Thread]
+    _rpc: RPCSpec | None = None
+    _tf: TFSpec | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
+    _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
 
     default_config = ModuleConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
@@ -107,7 +107,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         self._close_module()
         super().stop()
 
-    def _close_module(self):
+    def _close_module(self) -> None:
         self._close_rpc()
         if hasattr(self, "_loop") and self._loop_thread:
             if self._loop_thread.is_alive():
@@ -121,7 +121,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         if hasattr(self, "_disposables"):
             self._disposables.dispose()
 
-    def _close_rpc(self):
+    def _close_rpc(self) -> None:
         # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
         if hasattr(self, "rpc") and self.rpc:
             self.rpc.stop()
@@ -138,7 +138,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         state.pop("_tf", None)
         return state
 
-    def __setstate__(self, state):
+    def __setstate__(self, state) -> None:
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes
@@ -156,7 +156,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return self._tf
 
     @tf.setter
-    def tf(self, value):
+    def tf(self, value) -> None:
         import warnings
 
         warnings.warn(
@@ -197,9 +197,9 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     def io(self) -> str:
         def _box(name: str) -> str:
             return [
-                f"┌┴" + "─" * (len(name) + 1) + "┐",
+                "┌┴" + "─" * (len(name) + 1) + "┐",
                 f"│ {name} │",
-                f"└┬" + "─" * (len(name) + 1) + "┘",
+                "└┬" + "─" * (len(name) + 1) + "┘",
             ]
 
         # can't modify __str__ on a function like we are doing for I/O
@@ -241,18 +241,18 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return "\n".join(ret)
 
     @classproperty
-    def blueprint(cls):
+    def blueprint(self):
         # Here to prevent circular imports.
         from dimos.core.blueprints import create_module_blueprint
 
-        return partial(create_module_blueprint, cls)
+        return partial(create_module_blueprint, self)
 
 
 class DaskModule(ModuleBase):
     ref: Actor
     worker: int
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.ref = None
 
         for name, ann in get_type_hints(self, include_extras=True).items():
@@ -273,11 +273,11 @@ class DaskModule(ModuleBase):
         self.worker = worker.name
         return worker.name
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
     # called from remote
-    def set_transport(self, stream_name: str, transport: Transport):
+    def set_transport(self, stream_name: str, transport: Transport) -> bool:
         stream = getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
@@ -297,10 +297,10 @@ class DaskModule(ModuleBase):
             raise TypeError(f"Input {input_name} is not a valid stream")
         input_stream.connection = remote_stream
 
-    def dask_receive_msg(self, input_name: str, msg: Any):
+    def dask_receive_msg(self, input_name: str, msg: Any) -> None:
         getattr(self, input_name).transport.dask_receive_msg(msg)
 
-    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]):
+    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]) -> None:
         getattr(self, output_name).transport.dask_register_subscriber(subscriber)
 
 

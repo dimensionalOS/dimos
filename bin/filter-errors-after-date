@@ -3,11 +3,10 @@
 # Used to filter errors to only show lines committed on or after a specific date
 # Can be chained with filter-errors-for-user
 
-import sys
+from datetime import datetime
 import re
 import subprocess
-from datetime import datetime
-
+import sys
 
 _blame = {}
 

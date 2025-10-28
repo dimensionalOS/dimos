@@ -13,9 +13,10 @@
 # limitations under the License.
 
 from abc import abstractmethod
+
 from dimos.exceptions.agent_memory_exceptions import (
-    UnknownConnectionTypeError,
     AgentMemoryConnectionError,
+    UnknownConnectionTypeError,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -27,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
-    def __init__(self, connection_type="local", **kwargs):
+    def __init__(self, connection_type="local", **kwargs) -> None:
         """
         Initialize with dynamic connection parameters.
         Args:

@@ -38,13 +38,13 @@ def live_connection() -> Observable[OccupancyGrid]:
         lcm.autoconf()
         l = lcm.LCM()
 
-        def on_message(grid: OccupancyGrid, _):
+        def on_message(grid: OccupancyGrid, _) -> None:
             observer.on_next(grid)
 
         l.subscribe(lcm.Topic("/global_costmap", OccupancyGrid), on_message)
         l.start()
 
-        def dispose():
+        def dispose() -> None:
             l.stop()
 
         return Disposable(dispose)

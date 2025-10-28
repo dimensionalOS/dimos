@@ -42,7 +42,7 @@ class ImageEmbeddingProvider:
     that can be stored in a vector database and used for similarity search.
     """
 
-    def __init__(self, model_name: str = "clip", dimensions: int = 512):
+    def __init__(self, model_name: str = "clip", dimensions: int = 512) -> None:
         """
         Initialize the image embedding provider.
 

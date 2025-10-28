@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 import pickle
 import time
 
+import pytest
 
 try:
     from geometry_msgs.msg import TwistStamped as ROSTwistStamped
@@ -25,7 +25,7 @@ except ImportError:
 from dimos.msgs.geometry_msgs.TwistStamped import TwistStamped
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test encoding and decoding of TwistStamped to/from binary LCM format."""
     twist_source = TwistStamped(
         ts=time.time(),
@@ -46,7 +46,7 @@ def test_lcm_encode_decode():
     assert twist_dest == twist_source
 
 
-def test_pickle_encode_decode():
+def test_pickle_encode_decode() -> None:
     """Test encoding and decoding of TwistStamped to/from binary pickle format."""
 
     twist_source = TwistStamped(
@@ -62,7 +62,7 @@ def test_pickle_encode_decode():
 
 
 @pytest.mark.ros
-def test_twist_stamped_from_ros_msg():
+def test_twist_stamped_from_ros_msg() -> None:
     """Test creating a TwistStamped from a ROS TwistStamped message."""
     ros_msg = ROSTwistStamped()
     ros_msg.header.frame_id = "world"
@@ -88,7 +88,7 @@ def test_twist_stamped_from_ros_msg():
 
 
 @pytest.mark.ros
-def test_twist_stamped_to_ros_msg():
+def test_twist_stamped_to_ros_msg() -> None:
     """Test converting a TwistStamped to a ROS TwistStamped message."""
     twist_stamped = TwistStamped(
         ts=123.456,
@@ -112,7 +112,7 @@ def test_twist_stamped_to_ros_msg():
 
 
 @pytest.mark.ros
-def test_twist_stamped_ros_roundtrip():
+def test_twist_stamped_ros_roundtrip() -> None:
     """Test round-trip conversion between TwistStamped and ROS TwistStamped."""
     original = TwistStamped(
         ts=123.789,

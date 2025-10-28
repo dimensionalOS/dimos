@@ -11,14 +11,13 @@
 This file provides the definition of the convolutional heads used to predict masks, as well as the losses
 """
 
-import io
 from collections import defaultdict
+import io
 
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
-
 import util.box_ops as box_ops
 from util.misc import NestedTensor, interpolate, nested_tensor_from_tensor_list
 
@@ -29,7 +28,7 @@ except ImportError:
 
 
 class DETRsegm(nn.Module):
-    def __init__(self, detr, freeze_detr=False):
+    def __init__(self, detr, freeze_detr=False) -> None:
         super().__init__()
         self.detr = detr
 
@@ -58,7 +57,7 @@ class DETRsegm(nn.Module):
         if self.detr.aux_loss:
             out["aux_outputs"] = [
                 {"pred_logits": a, "pred_boxes": b}
-                for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1], strict=False)
             ]
 
         # FIXME h_boxes takes the last one computed, keep this in mind
@@ -81,7 +80,7 @@ class MaskHeadSmallConv(nn.Module):
     Upsampling is done using a FPN approach
     """
 
-    def __init__(self, dim, fpn_dims, context_dim):
+    def __init__(self, dim, fpn_dims, context_dim) -> None:
         super().__init__()
 
         inter_dims = [
@@ -159,7 +158,7 @@ class MaskHeadSmallConv(nn.Module):
 class MHAttentionMap(nn.Module):
     """This is a 2D attention module, which only returns the attention softmax (no multiplication by value)"""
 
-    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0, bias=True):
+    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0, bias=True) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
@@ -237,7 +236,7 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
 
 
 class PostProcessSegm(nn.Module):
-    def __init__(self, threshold=0.5):
+    def __init__(self, threshold=0.5) -> None:
         super().__init__()
         self.threshold = threshold
 
@@ -252,7 +251,7 @@ class PostProcessSegm(nn.Module):
         outputs_masks = (outputs_masks.sigmoid() > self.threshold).cpu()
 
         for i, (cur_mask, t, tt) in enumerate(
-            zip(outputs_masks, max_target_sizes, orig_target_sizes)
+            zip(outputs_masks, max_target_sizes, orig_target_sizes, strict=False)
         ):
             img_h, img_w = t[0], t[1]
             results[i]["masks"] = cur_mask[:, :img_h, :img_w].unsqueeze(1)
@@ -267,7 +266,7 @@ class PostProcessPanoptic(nn.Module):
     """This class converts the output of the model to the final panoptic result, in the format expected by the
     coco panoptic API"""
 
-    def __init__(self, is_thing_map, threshold=0.85):
+    def __init__(self, is_thing_map, threshold=0.85) -> None:
         """
         Parameters:
            is_thing_map: This is a whose keys are the class ids, and the values a boolean indicating whether
@@ -304,7 +303,7 @@ class PostProcessPanoptic(nn.Module):
             return tuple(tup.cpu().tolist())
 
         for cur_logits, cur_masks, cur_boxes, size, target_size in zip(
-            out_logits, raw_masks, raw_boxes, processed_sizes, target_sizes
+            out_logits, raw_masks, raw_boxes, processed_sizes, target_sizes, strict=False
         ):
             # we filter empty queries and detection below threshold
             scores, labels = cur_logits.softmax(-1).max(-1)

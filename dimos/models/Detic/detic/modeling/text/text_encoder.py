@@ -2,12 +2,12 @@
 # Modified by Xingyi Zhou
 # The original code is under MIT license
 # Copyright (c) Facebook, Inc. and its affiliates.
-from typing import Union, List
 from collections import OrderedDict
-import torch
-from torch import nn
+from typing import List, Union
 
 from clip.simple_tokenizer import SimpleTokenizer as _Tokenizer
+import torch
+from torch import nn
 
 __all__ = ["tokenize"]
 
@@ -29,7 +29,7 @@ class QuickGELU(nn.Module):
 
 
 class ResidualAttentionBlock(nn.Module):
-    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
+    def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None) -> None:
         super().__init__()
 
         self.attn = nn.MultiheadAttention(d_model, n_head)
@@ -61,7 +61,7 @@ class ResidualAttentionBlock(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None):
+    def __init__(self, width: int, layers: int, heads: int, attn_mask: torch.Tensor = None) -> None:
         super().__init__()
         self.width = width
         self.layers = layers
@@ -83,7 +83,7 @@ class CLIPTEXT(nn.Module):
         transformer_width=512,
         transformer_heads=8,
         transformer_layers=12,
-    ):
+    ) -> None:
         super().__init__()
 
         self._tokenizer = _Tokenizer()
@@ -108,7 +108,7 @@ class CLIPTEXT(nn.Module):
 
         self.initialize_parameters()
 
-    def initialize_parameters(self):
+    def initialize_parameters(self) -> None:
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
 
@@ -140,14 +140,14 @@ class CLIPTEXT(nn.Module):
     def dtype(self):
         return self.text_projection.dtype
 
-    def tokenize(self, texts: Union[str, List[str]], context_length: int = 77) -> torch.LongTensor:
+    def tokenize(self, texts: Union[str, list[str]], context_length: int = 77) -> torch.LongTensor:
         """ """
         if isinstance(texts, str):
             texts = [texts]
 
         sot_token = self._tokenizer.encoder["<|startoftext|>"]
         eot_token = self._tokenizer.encoder["<|endoftext|>"]
-        all_tokens = [[sot_token] + self._tokenizer.encode(text) + [eot_token] for text in texts]
+        all_tokens = [[sot_token, *self._tokenizer.encode(text), eot_token] for text in texts]
         result = torch.zeros(len(all_tokens), context_length, dtype=torch.long)
 
         for i, tokens in enumerate(all_tokens):

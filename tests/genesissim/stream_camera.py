@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import os
+
 from dimos.simulation.genesis import GenesisSimulator, GenesisStream
 
 

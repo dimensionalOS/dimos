@@ -31,12 +31,12 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.robot.unitree_webrtc.multiprocess.unitree_go2_navonly import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.utils.cli.boxglove.connection import Connection
 
 if TYPE_CHECKING:
     from reactivex.disposable import Disposable
 
     from dimos.msgs.nav_msgs import OccupancyGrid
+    from dimos.utils.cli.boxglove.connection import Connection
 
 
 blocks = "█▗▖▝▘"
@@ -64,7 +64,7 @@ class OccupancyGridApp(App):
         layout: vertical;
         overflow: hidden;
     }
-    
+
     #grid-container {
         width: 100%;
         height: 1fr;
@@ -72,14 +72,14 @@ class OccupancyGridApp(App):
         margin: 0;
         padding: 0;
     }
-    
+
     #grid-display {
         width: 100%;
         height: 100%;
         margin: 0;
         padding: 0;
     }
-    
+
     Footer {
         dock: bottom;
         height: 1;
@@ -87,19 +87,19 @@ class OccupancyGridApp(App):
     """
 
     # Reactive properties
-    grid_data: reactive[Optional["OccupancyGrid"]] = reactive(None)
+    grid_data: reactive[OccupancyGrid | None] = reactive(None)
 
     BINDINGS = [
         ("q", "quit", "Quit"),
         ("ctrl+c", "quit", "Quit"),
     ]
 
-    def __init__(self, connection: Connection, *args, **kwargs):
+    def __init__(self, connection: Connection, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.connection = connection
-        self.subscription: Optional[Disposable] = None
-        self.grid_display: Optional[Static] = None
-        self.cached_grid: Optional["OccupancyGrid"] = None
+        self.subscription: Disposable | None = None
+        self.grid_display: Static | None = None
+        self.cached_grid: OccupancyGrid | None = None
 
     def compose(self) -> ComposeResult:
         """Create the app layout."""
@@ -115,7 +115,7 @@ class OccupancyGridApp(App):
         self.theme = "flexoki"
 
         # Subscribe to the OccupancyGrid stream
-        def on_grid(grid: "OccupancyGrid") -> None:
+        def on_grid(grid: OccupancyGrid) -> None:
             self.grid_data = grid
 
         def on_error(error: Exception) -> None:
@@ -128,7 +128,7 @@ class OccupancyGridApp(App):
         if self.subscription:
             self.subscription.dispose()
 
-    def watch_grid_data(self, grid: Optional["OccupancyGrid"]) -> None:
+    def watch_grid_data(self, grid: OccupancyGrid | None) -> None:
         """Update display when new grid data arrives."""
         if grid is None:
             return
@@ -147,7 +147,7 @@ class OccupancyGridApp(App):
             grid_text = self.render_grid(self.cached_grid)
             self.grid_display.update(grid_text)
 
-    def render_grid(self, grid: "OccupancyGrid") -> Text:
+    def render_grid(self, grid: OccupancyGrid) -> Text:
         """Render the OccupancyGrid as colored ASCII art, scaled to fit terminal."""
         text = Text()
 
@@ -177,7 +177,7 @@ class OccupancyGridApp(App):
         render_height = min(int(grid.height / scale_float), terminal_height)
 
         # Store both integer and float scale for different uses
-        scale = int(np.ceil(scale_float))  # For legacy compatibility
+        int(np.ceil(scale_float))  # For legacy compatibility
 
         # Adjust render dimensions to use all available space
         # This reduces jumping by allowing fractional cell sizes
@@ -276,7 +276,7 @@ class OccupancyGridApp(App):
         return text
 
 
-def main():
+def main() -> None:
     """Run the OccupancyGrid visualizer with a connection."""
     # app = OccupancyGridApp(core.LCMTransport("/global_costmap", OccupancyGrid).observable)
 

@@ -38,11 +38,11 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
 
-def detection_unitree():
+def detection_unitree() -> None:
     dimos = start(8)
     connection = deploy_connection(dimos)
 
-    def goto(pose):
+    def goto(pose) -> bool:
         print("NAVIGATION REQUESTED:", pose)
         return True
 
@@ -130,7 +130,7 @@ def detection_unitree():
         logger.info("Shutting down...")
 
 
-def main():
+def main() -> None:
     lcm.autoconf()
     detection_unitree()
 

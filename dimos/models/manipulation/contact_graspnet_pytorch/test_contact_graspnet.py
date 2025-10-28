@@ -1,11 +1,13 @@
+import glob
+import importlib.util
 import os
 import sys
-import glob
-import pytest
-import importlib.util
-import numpy as np
 
-def is_manipulation_installed():
+import numpy as np
+import pytest
+
+
+def is_manipulation_installed() -> bool:
     """Check if the manipulation extras are installed."""
     try:
         import contact_graspnet_pytorch
@@ -13,38 +15,39 @@ def is_manipulation_installed():
     except ImportError:
         return False
 
-@pytest.mark.skipif(not is_manipulation_installed(), 
+@pytest.mark.skipif(not is_manipulation_installed(),
                    reason="This test requires 'pip install .[manipulation]' to be run")
-def test_contact_graspnet_inference():
+def test_contact_graspnet_inference() -> None:
     """Test contact graspnet inference with local regions and filter grasps."""
     # Skip test if manipulation dependencies not installed
     if not is_manipulation_installed():
         pytest.skip("contact_graspnet_pytorch not installed. Run 'pip install .[manipulation]' first.")
         return
-    
+
     try:
-        from dimos.utils.data import get_data
         from contact_graspnet_pytorch import config_utils
+
         from dimos.models.manipulation.contact_graspnet_pytorch.inference import inference
+        from dimos.utils.data import get_data
     except ImportError:
         pytest.skip("Required modules could not be imported. Make sure you have run 'pip install .[manipulation]'.")
         return
 
     # Test data path - use the default test data path
     test_data_path = os.path.join(get_data("models_contact_graspnet"), "test_data/0.npy")
-    
+
     # Check if test data exists
     test_files = glob.glob(test_data_path)
     if not test_files:
         pytest.fail(f"No test data found at {test_data_path}")
-    
+
     # Load config with default values
     ckpt_dir = 'models_contact_graspnet'
     global_config = config_utils.load_config(ckpt_dir, batch_size=1)
-    
+
     # Run inference function with the same params as the command line
     result_files_before = glob.glob('results/predictions_*.npz')
-    
+
     inference(
         global_config=global_config,
         ckpt_dir=ckpt_dir,
@@ -56,11 +59,11 @@ def test_contact_graspnet_inference():
         forward_passes=1,
         K=None
     )
-    
+
     # Verify results were created
     result_files_after = glob.glob('results/predictions_*.npz')
     assert len(result_files_after) >= len(result_files_before), "No result files were generated"
-    
+
     # Load at least one result file and verify it contains expected data
     if result_files_after:
         latest_result = sorted(result_files_after)[-1]

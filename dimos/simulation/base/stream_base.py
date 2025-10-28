@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-from typing import Literal, Optional, Union
 from pathlib import Path
 import subprocess
+from typing import Literal, Optional, Union
 
 AnnotatorType = Literal["rgb", "normals", "bounding_box_3d", "motion_vectors"]
 TransportType = Literal["tcp", "udp"]
@@ -35,8 +35,8 @@ class StreamBase(ABC):
         annotator_type: AnnotatorType = "rgb",
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
-        usd_path: Optional[Union[str, Path]] = None,
-    ):
+        usd_path: Union[str, Path] | None = None,
+    ) -> None:
         """Initialize the stream.
 
         Args:
@@ -70,7 +70,7 @@ class StreamBase(ABC):
         """Setup and validate camera."""
         pass
 
-    def _setup_ffmpeg(self):
+    def _setup_ffmpeg(self) -> None:
         """Setup FFmpeg process for streaming."""
         command = [
             "ffmpeg",

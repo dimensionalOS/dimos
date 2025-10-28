@@ -21,7 +21,7 @@ from dimos.perception.detection.reid.module import ReidModule
 
 
 @pytest.mark.tool
-def test_reid_ingress(imageDetections2d):
+def test_reid_ingress(imageDetections2d) -> None:
     try:
         from dimos.models.embedding import TorchReIDModel
     except Exception:

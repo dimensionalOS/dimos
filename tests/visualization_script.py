@@ -15,12 +15,13 @@
 
 """Visualize pickled manipulation pipeline results."""
 
-import os
-import sys
-import pickle
-import numpy as np
 import json
+import os
+import pickle
+import sys
+
 import matplotlib
+import numpy as np
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -35,77 +36,63 @@ import open3d as o3d
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
-from dimos.perception.grasp_generation.utils import visualize_grasps_3d
-from dimos.perception.pointcloud.utils import visualize_pcd
-from dimos.utils.logging_config import setup_logger
-import trimesh
-
-import tf_lcm_py
-import cv2
-from contextlib import contextmanager
-import lcm_msgs
-from lcm_msgs.sensor_msgs import JointState, PointCloud2, CameraInfo, PointCloud2, PointField
-from lcm_msgs.std_msgs import Header
-from typing import List, Tuple, Optional
 import atexit
+from contextlib import contextmanager
 from datetime import datetime
 import time
+from typing import List, Optional, Tuple
 
+import cv2
+import lcm_msgs
+from lcm_msgs.sensor_msgs import CameraInfo, JointState, PointCloud2, PointField
+from lcm_msgs.std_msgs import Header
+from manipulation.meshcat_utils import (  # TODO(russt): switch to pydrake version
+    _MeshcatPoseSliders,
+)
+from manipulation.scenarios import AddIiwa, AddMultibodyTriad, AddShape, AddWsg
 from pydrake.all import (
     AddMultibodyPlantSceneGraph,
     CoulombFriction,
+    DepthImageToPointCloud,
     Diagram,
     DiagramBuilder,
+    DifferentialInverseKinematicsParameters,
+    DifferentialInverseKinematicsStatus,
+    DoDifferentialInverseKinematics,
     InverseKinematics,
+    JointIndex,
     MeshcatVisualizer,
     MeshcatVisualizerParams,
-    MultibodyPlant,
-    Parser,
-    RigidTransform,
-    RollPitchYaw,
-    RotationMatrix,
-    JointIndex,
-    Solve,
-    StartMeshcat,
-)
-from pydrake.geometry import (
-    CollisionFilterDeclaration,
-    Mesh,
-    ProximityProperties,
-    InMemoryMesh,
-    Box,
-    Cylinder,
-)
-from pydrake.math import RigidTransform as DrakeRigidTransform
-from pydrake.common import MemoryFile
-
-from pydrake.all import (
     MinimumDistanceLowerBoundConstraint,
     MultibodyPlant,
     Parser,
-    DiagramBuilder,
-    AddMultibodyPlantSceneGraph,
-    MeshcatVisualizer,
-    StartMeshcat,
     RigidTransform,
     Role,
     RollPitchYaw,
     RotationMatrix,
     Solve,
-    InverseKinematics,
-    MeshcatVisualizerParams,
-    MinimumDistanceLowerBoundConstraint,
-    DoDifferentialInverseKinematics,
-    DifferentialInverseKinematicsStatus,
-    DifferentialInverseKinematicsParameters,
-    DepthImageToPointCloud,
+    StartMeshcat,
 )
-from manipulation.scenarios import AddMultibodyTriad
-from manipulation.meshcat_utils import (  # TODO(russt): switch to pydrake version
-    _MeshcatPoseSliders,
+from pydrake.common import MemoryFile
+from pydrake.geometry import (
+    Box,
+    CollisionFilterDeclaration,
+    Cylinder,
+    InMemoryMesh,
+    Mesh,
+    ProximityProperties,
 )
-from manipulation.scenarios import AddIiwa, AddShape, AddWsg
+from pydrake.math import RigidTransform as DrakeRigidTransform
+import tf_lcm_py
+import trimesh
+
+from dimos.perception.grasp_generation.utils import visualize_grasps_3d
+from dimos.perception.pointcloud.utils import (
+    visualize_clustered_point_clouds,
+    visualize_pcd,
+    visualize_voxel_grid,
+)
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("visualization_script")
 
@@ -132,9 +119,9 @@ def deserialize_point_cloud(data):
         return None
 
     pcd = o3d.geometry.PointCloud()
-    if "points" in data and data["points"]:
+    if data.get("points"):
         pcd.points = o3d.utility.Vector3dVector(np.array(data["points"]))
-    if "colors" in data and data["colors"]:
+    if data.get("colors"):
         pcd.colors = o3d.utility.Vector3dVector(np.array(data["colors"]))
     return pcd
 
@@ -177,9 +164,9 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
             data = pickle.load(f)
 
         results = data["results"]
-        color_img = data["color_img"]
-        depth_img = data["depth_img"]
-        intrinsics = data["intrinsics"]
+        data["color_img"]
+        data["depth_img"]
+        data["intrinsics"]
 
         print(f"Loaded results with keys: {list(results.keys())}")
 
@@ -284,7 +271,7 @@ def visualize_results(pickle_path="manipulation_results.pkl"):
         print("No full point cloud available for visualization")
 
     # Reconstruct misc clusters if available
-    if "misc_clusters" in results and results["misc_clusters"]:
+    if results.get("misc_clusters"):
         misc_clusters = [deserialize_point_cloud(cluster) for cluster in results["misc_clusters"]]
         cluster_count = len(misc_clusters)
         total_misc_points = sum(len(np.asarray(cluster.points)) for cluster in misc_clusters)
@@ -333,8 +320,8 @@ class DrakeKinematicsEnv:
     def __init__(
         self,
         urdf_path: str,
-        kinematic_chain_joints: List[str],
-        links_to_ignore: Optional[List[str]] = None,
+        kinematic_chain_joints: list[str],
+        links_to_ignore: list[str] | None = None,
     ):
         self._resources_to_cleanup = []
 
@@ -544,7 +531,7 @@ class DrakeKinematicsEnv:
 
     def _create_clustered_convex_hulls(
         self, points: np.ndarray, object_id: int
-    ) -> List[o3d.geometry.TriangleMesh]:
+    ) -> list[o3d.geometry.TriangleMesh]:
         """
         Create convex hulls from DBSCAN clusters of point cloud data.
         Fast approach: cluster points, then convex hull each cluster.
@@ -579,7 +566,7 @@ class DrakeKinematicsEnv:
                 # Compute nearest neighbor distances for better eps estimation
                 distances = pcd.compute_nearest_neighbor_distance()
                 avg_nn_distance = np.mean(distances)
-                std_nn_distance = np.std(distances)
+                np.std(distances)
 
                 print(
                     f"Object {object_id}: {len(points)} points, avg_nn_dist={avg_nn_distance:.4f}"
@@ -740,7 +727,7 @@ class DrakeKinematicsEnv:
         print(f"Updated joint positions: {joint_positions}")
 
     def register_convex_hulls_as_collision(
-        self, meshes: List[o3d.geometry.TriangleMesh], hull_type: str
+        self, meshes: list[o3d.geometry.TriangleMesh], hull_type: str
     ):
         """Register convex hulls as collision and visual geometry"""
         if not meshes:
@@ -864,7 +851,7 @@ class DrakeKinematicsEnv:
                     timestamp = self.buffer.get_most_recent_timestamp()
                     if attempts % 10 == 0:
                         print(f"Using timestamp from buffer: {timestamp}")
-                except Exception as e:
+                except Exception:
                     # Fall back to current time if get_most_recent_timestamp fails
                     timestamp = datetime.now()
                     if not hasattr(timestamp, "timestamp"):

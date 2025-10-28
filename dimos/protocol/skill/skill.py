@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import asyncio
-import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import threading
 from typing import Any, Callable, Optional
 
 # from dimos.core.core import rpc
@@ -148,18 +148,18 @@ def threaded(f: Callable[..., Any]) -> Callable[..., None]:
 
 class SkillContainer:
     skill_transport_class: type[SkillCommsSpec] = LCMSkillComms
-    _skill_thread_pool: Optional[ThreadPoolExecutor] = None
-    _skill_transport: Optional[SkillCommsSpec] = None
+    _skill_thread_pool: ThreadPoolExecutor | None = None
+    _skill_transport: SkillCommsSpec | None = None
 
     @rpc
-    def dynamic_skills(self):
+    def dynamic_skills(self) -> bool:
         return False
 
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._skill_transport:
             self._skill_transport.stop()
             self._skill_transport = None

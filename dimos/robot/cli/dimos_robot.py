@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 from enum import Enum
+import inspect
 from typing import Optional, get_args, get_origin
 
 import typer
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
-from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 from dimos.protocol import pubsub
-
+from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})
 
@@ -82,7 +81,7 @@ def create_dynamic_callback():
             )
         params.append(param)
 
-    def callback(**kwargs):
+    def callback(**kwargs) -> None:
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         ctx.obj = GlobalConfig().model_copy(update=overrides)
@@ -102,7 +101,7 @@ def run(
     extra_modules: list[str] = typer.Option(
         [], "--extra-module", help="Extra modules to add to the blueprint"
     ),
-):
+) -> None:
     """Run the robot with the specified configuration."""
     config: GlobalConfig = ctx.obj
     pubsub.lcm.autoconf()
@@ -117,7 +116,7 @@ def run(
 
 
 @main.command()
-def show_config(ctx: typer.Context):
+def show_config(ctx: typer.Context) -> None:
     """Show current configuration status."""
     config: GlobalConfig = ctx.obj
 

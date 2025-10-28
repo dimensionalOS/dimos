@@ -14,15 +14,15 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import pickle
 import subprocess
 import sys
-import threading
 import traceback
-from dataclasses import dataclass
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Optional, Protocol, runtime_checkable
 
 import lcm
+from turbojpeg import TurboJPEG
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
@@ -30,8 +30,9 @@ from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoder
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
 from dimos.utils.deprecation import deprecated
 from dimos.utils.logging_config import setup_logger
-from turbojpeg import TurboJPEG
 
+if TYPE_CHECKING:
+    import threading
 
 logger = setup_logger(__name__)
 
@@ -41,7 +42,7 @@ class LCMMsg(Protocol):
     msg_name: str
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "LCMMsg":
+    def lcm_decode(cls, data: bytes) -> LCMMsg:
         """Decode bytes into an LCM message instance."""
         ...
 
@@ -53,7 +54,7 @@ class LCMMsg(Protocol):
 @dataclass
 class Topic:
     topic: str = ""
-    lcm_type: Optional[type[LCMMsg]] = None
+    lcm_type: type[LCMMsg] | None = None
 
     def __str__(self) -> str:
         if self.lcm_type is None:
@@ -64,7 +65,7 @@ class Topic:
 class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     default_config = LCMConfig
     _stop_event: threading.Event
-    _thread: Optional[threading.Thread]
+    _thread: threading.Thread | None
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:
@@ -72,7 +73,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         super().__init__(**kwargs)
         self._callbacks = {}
 
-    def publish(self, topic: Topic, message: bytes):
+    def publish(self, topic: Topic, message: bytes) -> None:
         """Publish a message to the specified channel."""
         if self.l is None:
             logger.error("Tried to publish after LCM was closed")
@@ -85,14 +86,14 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         if self.l is None:
             logger.error("Tried to subscribe after LCM was closed")
 
-            def noop():
+            def noop() -> None:
                 pass
 
             return noop
 
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
-        def unsubscribe():
+        def unsubscribe() -> None:
             if self.l is None:
                 return
             self.l.unsubscribe(lcm_subscription)
@@ -125,7 +126,7 @@ class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
 
 
 class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
-    def __init__(self, quality: int = 75, **kwargs):
+    def __init__(self, quality: int = 75, **kwargs) -> None:
         super().__init__(**kwargs)
         self.jpeg = TurboJPEG()
         self.quality = quality

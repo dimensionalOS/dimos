@@ -9,20 +9,19 @@
 # Modified by Xingyi Zhou from https://github.com/SwinTransformer/Swin-Transformer-Object-Detection/blob/master/mmdet/models/backbones/swin_transformer.py
 
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.utils.checkpoint as checkpoint
-import numpy as np
-from timm.models.layers import DropPath, to_2tuple, trunc_normal_
-
+from centernet.modeling.backbone.bifpn import BiFPN
+from centernet.modeling.backbone.fpn_p5 import LastLevelP6P7_P5
 from detectron2.layers import ShapeSpec
 from detectron2.modeling.backbone.backbone import Backbone
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
 from detectron2.modeling.backbone.fpn import FPN
+import numpy as np
+from timm.models.layers import DropPath, to_2tuple, trunc_normal_
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.utils.checkpoint as checkpoint
 
-from centernet.modeling.backbone.fpn_p5 import LastLevelP6P7_P5
-from centernet.modeling.backbone.bifpn import BiFPN
 # from .checkpoint import load_checkpoint
 
 
@@ -31,7 +30,7 @@ class Mlp(nn.Module):
 
     def __init__(
         self, in_features, hidden_features=None, out_features=None, act_layer=nn.GELU, drop=0.0
-    ):
+    ) -> None:
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
@@ -101,7 +100,7 @@ class WindowAttention(nn.Module):
         qk_scale=None,
         attn_drop=0.0,
         proj_drop=0.0,
-    ):
+    ) -> None:
         super().__init__()
         self.dim = dim
         self.window_size = window_size  # Wh, Ww
@@ -209,7 +208,7 @@ class SwinTransformerBlock(nn.Module):
         drop_path=0.0,
         act_layer=nn.GELU,
         norm_layer=nn.LayerNorm,
-    ):
+    ) -> None:
         super().__init__()
         self.dim = dim
         self.num_heads = num_heads
@@ -309,7 +308,7 @@ class PatchMerging(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer.  Default: nn.LayerNorm
     """
 
-    def __init__(self, dim, norm_layer=nn.LayerNorm):
+    def __init__(self, dim, norm_layer=nn.LayerNorm) -> None:
         super().__init__()
         self.dim = dim
         self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
@@ -377,7 +376,7 @@ class BasicLayer(nn.Module):
         norm_layer=nn.LayerNorm,
         downsample=None,
         use_checkpoint=False,
-    ):
+    ) -> None:
         super().__init__()
         self.window_size = window_size
         self.shift_size = window_size // 2
@@ -442,8 +441,8 @@ class BasicLayer(nn.Module):
         )  # nW, window_size, window_size, 1
         mask_windows = mask_windows.view(-1, self.window_size * self.window_size)
         attn_mask = mask_windows.unsqueeze(1) - mask_windows.unsqueeze(2)
-        attn_mask = attn_mask.masked_fill(attn_mask != 0, float(-100.0)).masked_fill(
-            attn_mask == 0, float(0.0)
+        attn_mask = attn_mask.masked_fill(attn_mask != 0, (-100.0)).masked_fill(
+            attn_mask == 0, 0.0
         )
 
         for blk in self.blocks:
@@ -469,7 +468,7 @@ class PatchEmbed(nn.Module):
         norm_layer (nn.Module, optional): Normalization layer. Default: None
     """
 
-    def __init__(self, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None):
+    def __init__(self, patch_size=4, in_chans=3, embed_dim=96, norm_layer=None) -> None:
         super().__init__()
         patch_size = to_2tuple(patch_size)
         self.patch_size = patch_size
@@ -536,8 +535,8 @@ class SwinTransformer(Backbone):
         patch_size=4,
         in_chans=3,
         embed_dim=96,
-        depths=[2, 2, 6, 2],
-        num_heads=[3, 6, 12, 24],
+        depths=None,
+        num_heads=None,
         window_size=7,
         mlp_ratio=4.0,
         qkv_bias=True,
@@ -551,7 +550,11 @@ class SwinTransformer(Backbone):
         out_indices=(0, 1, 2, 3),
         frozen_stages=-1,
         use_checkpoint=False,
-    ):
+    ) -> None:
+        if num_heads is None:
+            num_heads = [3, 6, 12, 24]
+        if depths is None:
+            depths = [2, 2, 6, 2]
         super().__init__()
 
         self.pretrain_img_size = pretrain_img_size
@@ -621,14 +624,14 @@ class SwinTransformer(Backbone):
             self.add_module(layer_name, layer)
 
         self._freeze_stages()
-        self._out_features = ["swin{}".format(i) for i in self.out_indices]
+        self._out_features = [f"swin{i}" for i in self.out_indices]
         self._out_feature_channels = {
-            "swin{}".format(i): self.embed_dim * 2**i for i in self.out_indices
+            f"swin{i}": self.embed_dim * 2**i for i in self.out_indices
         }
-        self._out_feature_strides = {"swin{}".format(i): 2 ** (i + 2) for i in self.out_indices}
+        self._out_feature_strides = {f"swin{i}": 2 ** (i + 2) for i in self.out_indices}
         self._size_devisibility = 32
 
-    def _freeze_stages(self):
+    def _freeze_stages(self) -> None:
         if self.frozen_stages >= 0:
             self.patch_embed.eval()
             for param in self.patch_embed.parameters():
@@ -652,7 +655,7 @@ class SwinTransformer(Backbone):
                 Defaults to None.
         """
 
-        def _init_weights(m):
+        def _init_weights(m) -> None:
             if isinstance(m, nn.Linear):
                 trunc_normal_(m.weight, std=0.02)
                 if isinstance(m, nn.Linear) and m.bias is not None:
@@ -696,13 +699,13 @@ class SwinTransformer(Backbone):
 
                 out = x_out.view(-1, H, W, self.num_features[i]).permute(0, 3, 1, 2).contiguous()
                 # outs.append(out)
-                outs["swin{}".format(i)] = out
+                outs[f"swin{i}"] = out
 
         return outs
 
-    def train(self, mode=True):
+    def train(self, mode=True) -> None:
         """Convert the model into training mode while keep layers freezed."""
-        super(SwinTransformer, self).train(mode)
+        super().train(mode)
         self._freeze_stages()
 
 

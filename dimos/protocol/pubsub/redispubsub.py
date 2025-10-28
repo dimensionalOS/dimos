@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import defaultdict
+from dataclasses import dataclass, field
 import json
 import threading
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List
+from typing import Optional, Type, Any, Callable, Dict, List
 
 import redis
 
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import Service
+from types import TracebackType
 
 
 @dataclass
@@ -30,7 +31,7 @@ class RedisConfig:
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 class Redis(PubSub[str, Any], Service[RedisConfig]):
@@ -46,7 +47,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         self._pubsub = None
 
         # Subscription management
-        self._callbacks: Dict[str, List[Callable[[Any, str], None]]] = defaultdict(list)
+        self._callbacks: dict[str, list[Callable[[Any, str], None]]] = defaultdict(list)
         self._listener_thread = None
         self._running = False
 
@@ -85,7 +86,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
                 f"Failed to connect to Redis at {self.config.host}:{self.config.port}: {e}"
             )
 
-    def _listen_loop(self):
+    def _listen_loop(self) -> None:
         """Listen for messages from Redis and dispatch to callbacks."""
         while self._running:
             try:
@@ -141,7 +142,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         self._callbacks[topic].append(callback)
 
         # Return unsubscribe function
-        def unsubscribe():
+        def unsubscribe() -> None:
             self.unsubscribe(topic, callback)
 
         return unsubscribe
@@ -161,7 +162,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
             except ValueError:
                 pass  # Callback wasn't in the list
 
-    def close(self):
+    def close(self) -> None:
         """Close Redis connections and stop listener thread."""
         self._running = False
 
@@ -187,5 +188,5 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
     def __enter__(self):
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
+    def __exit__(self, exc_type: Optional[Type[BaseException]], exc_val: Optional[BaseException], exc_tb: Optional[TracebackType]) -> None:
         self.close()

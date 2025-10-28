@@ -18,7 +18,6 @@ import os
 # llava v1.6
 from llama_cpp import Llama
 from llama_cpp.llama_chat_format import Llava15ChatHandler
-
 from vqasynth.datasets.utils import image_to_base64_data_uri
 
 
@@ -28,7 +27,7 @@ class Llava:
         mmproj=f"{os.getcwd()}/models/mmproj-model-f16.gguf",
         model_path=f"{os.getcwd()}/models/llava-v1.6-34b.Q4_K_M.gguf",
         gpu=True,
-    ):
+    ) -> None:
         chat_handler = Llava15ChatHandler(clip_model_path=mmproj, verbose=True)
         n_gpu_layers = 0
         if gpu:

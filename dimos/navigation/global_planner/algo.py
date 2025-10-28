@@ -29,7 +29,7 @@ def astar(
     start: VectorLike = (0.0, 0.0),
     cost_threshold: int = 90,
     unknown_penalty: float = 0.8,
-) -> Optional[Path]:
+) -> Path | None:
     """
     A* path planning algorithm from start to goal position.
 

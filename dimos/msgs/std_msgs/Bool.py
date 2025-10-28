@@ -30,7 +30,7 @@ class Bool(LCMBool):
 
     msg_name = "std_msgs.Bool"
 
-    def __init__(self, data: bool = False):
+    def __init__(self, data: bool = False) -> None:
         """Initialize Bool with data value."""
         self.data = data
 

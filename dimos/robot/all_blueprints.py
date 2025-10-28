@@ -14,7 +14,6 @@
 
 from dimos.core.blueprints import ModuleBlueprintSet
 
-
 # The blueprints are defined as import strings so as not to trigger unnecessary imports.
 all_blueprints = {
     "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard",
