@@ -1,6 +1,22 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Callable, Iterable
 import time
+from typing import Any, Protocol
+
 import open3d as o3d
-from typing import Callable, Union, Any, Protocol, Iterable
 from reactivex.observable import Observable
 
 color1 = [1, 0.706, 0]
@@ -14,7 +30,7 @@ color = [color1, color2, color3, color4]
 #
 # (in case there is some preparation within the fuction and this time needs to be subtracted
 # from the benchmark target)
-def benchmark(calls: int, targetf: Callable[[], Union[int, None]]) -> float:
+def benchmark(calls: int, targetf: Callable[[], int | None]) -> float:
     start = time.time()
     timemod = 0
     for _ in range(calls):
@@ -25,7 +41,12 @@ def benchmark(calls: int, targetf: Callable[[], Union[int, None]]) -> float:
     return (end - start + timemod) * 1000 / calls
 
 
-O3dDrawable = o3d.geometry.Geometry | o3d.geometry.LineSet | o3d.geometry.TriangleMesh | o3d.geometry.PointCloud
+O3dDrawable = (
+    o3d.geometry.Geometry
+    | o3d.geometry.LineSet
+    | o3d.geometry.TriangleMesh
+    | o3d.geometry.PointCloud
+)
 
 
 class ReturnsDrawable(Protocol):
@@ -70,8 +91,8 @@ def show3d_stream(
     Subsequent geometries update the visualizer. If no new geometry, just poll events.
     geometry_observable: Observable of objects with .o3d_geometry or Open3D geometry
     """
-    import threading
     import queue
+    import threading
     import time
     from typing import Any
 

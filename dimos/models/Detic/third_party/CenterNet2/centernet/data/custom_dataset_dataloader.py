@@ -1,31 +1,27 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import copy
+from collections import defaultdict
+import itertools
 import logging
-import numpy as np
-import operator
+from typing import Iterator, Sequence, Optional
+
+from detectron2.data.build import (
+    build_batch_data_loader,
+    check_metadata_consistency,
+    filter_images_with_few_keypoints,
+    filter_images_with_only_crowd_annotations,
+    get_detection_dataset_dicts,
+    print_instances_class_histogram,
+)
+from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
+from detectron2.data.common import DatasetFromList, MapDataset
+from detectron2.data.samplers import RepeatFactorTrainingSampler, TrainingSampler
+from detectron2.utils import comm
 import torch
 import torch.utils.data
-import json
-from detectron2.utils.comm import get_world_size
-
-from detectron2.data import samplers
-from torch.utils.data.sampler import BatchSampler, Sampler
-from detectron2.data.common import DatasetFromList, MapDataset
-from detectron2.data.dataset_mapper import DatasetMapper
-from detectron2.data.build import get_detection_dataset_dicts, build_batch_data_loader
-from detectron2.data.samplers import TrainingSampler, RepeatFactorTrainingSampler
-from detectron2.data.build import worker_init_reset_seed, print_instances_class_histogram
-from detectron2.data.build import filter_images_with_only_crowd_annotations
-from detectron2.data.build import filter_images_with_few_keypoints
-from detectron2.data.build import check_metadata_consistency
-from detectron2.data.catalog import MetadataCatalog, DatasetCatalog
-from detectron2.utils import comm
-import itertools
-import math
-from collections import defaultdict
-from typing import Optional
+from torch.utils.data.sampler import Sampler
 
 # from .custom_build_augmentation import build_custom_augmentation
+
 
 def build_custom_train_loader(cfg, mapper=None):
     """
@@ -44,8 +40,8 @@ def build_custom_train_loader(cfg, mapper=None):
         )
         sizes = [0 for _ in range(len(cfg.DATASETS.TRAIN))]
         for d in dataset_dicts:
-            sizes[d['dataset_source']] += 1
-        print('dataset sizes', sizes)
+            sizes[d["dataset_source"]] += 1
+        print("dataset sizes", sizes)
     else:
         dataset_dicts = get_detection_dataset_dicts(
             cfg.DATASETS.TRAIN,
@@ -64,7 +60,7 @@ def build_custom_train_loader(cfg, mapper=None):
 
     sampler_name = cfg.DATALOADER.SAMPLER_TRAIN
     logger = logging.getLogger(__name__)
-    logger.info("Using training sampler {}".format(sampler_name))
+    logger.info(f"Using training sampler {sampler_name}")
     # TODO avoid if-else?
     if sampler_name == "TrainingSampler":
         sampler = TrainingSampler(len(dataset))
@@ -79,7 +75,7 @@ def build_custom_train_loader(cfg, mapper=None):
     elif sampler_name == "ClassAwareSampler":
         sampler = ClassAwareSampler(dataset_dicts)
     else:
-        raise ValueError("Unknown training sampler: {}".format(sampler_name))
+        raise ValueError(f"Unknown training sampler: {sampler_name}")
 
     return build_batch_data_loader(
         dataset,
@@ -91,7 +87,7 @@ def build_custom_train_loader(cfg, mapper=None):
 
 
 class ClassAwareSampler(Sampler):
-    def __init__(self, dataset_dicts, seed: Optional[int] = None):
+    def __init__(self, dataset_dicts, seed: int | None = None) -> None:
         """
         Args:
             size (int): the total number of data of the underlying dataset to sample from
@@ -104,29 +100,23 @@ class ClassAwareSampler(Sampler):
         if seed is None:
             seed = comm.shared_random_seed()
         self._seed = int(seed)
-        
+
         self._rank = comm.get_rank()
         self._world_size = comm.get_world_size()
         self.weights = self._get_class_balance_factor(dataset_dicts)
 
-
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         start = self._rank
-        yield from itertools.islice(
-            self._infinite_indices(), start, None, self._world_size)
-
+        yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 
     def _infinite_indices(self):
         g = torch.Generator()
         g.manual_seed(self._seed)
         while True:
-            ids = torch.multinomial(
-                self.weights, self._size, generator=g, 
-                replacement=True)
+            ids = torch.multinomial(self.weights, self._size, generator=g, replacement=True)
             yield from ids
 
-
-    def _get_class_balance_factor(self, dataset_dicts, l=1.):
+    def _get_class_balance_factor(self, dataset_dicts, l: float=1.0):
         # 1. For each category c, compute the fraction of images that contain it: f(c)
         ret = []
         category_freq = defaultdict(int)
@@ -134,26 +124,24 @@ class ClassAwareSampler(Sampler):
             cat_ids = {ann["category_id"] for ann in dataset_dict["annotations"]}
             for cat_id in cat_ids:
                 category_freq[cat_id] += 1
-        for i, dataset_dict in enumerate(dataset_dicts):
+        for _i, dataset_dict in enumerate(dataset_dicts):
             cat_ids = {ann["category_id"] for ann in dataset_dict["annotations"]}
-            ret.append(sum(
-                [1. / (category_freq[cat_id] ** l) for cat_id in cat_ids]))
+            ret.append(sum([1.0 / (category_freq[cat_id] ** l) for cat_id in cat_ids]))
         return torch.tensor(ret).float()
 
 
 def get_detection_dataset_dicts_with_source(
-    dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None
+    dataset_names: Sequence[str], filter_empty: bool=True, min_keypoints: int=0, proposal_files=None
 ):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
-    for dataset_name, dicts in zip(dataset_names, dataset_dicts):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
-    
-    for source_id, (dataset_name, dicts) in \
-        enumerate(zip(dataset_names, dataset_dicts)):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
+    for dataset_name, dicts in zip(dataset_names, dataset_dicts, strict=False):
+        assert len(dicts), f"Dataset '{dataset_name}' is empty!"
+
+    for source_id, (dataset_name, dicts) in enumerate(zip(dataset_names, dataset_dicts, strict=False)):
+        assert len(dicts), f"Dataset '{dataset_name}' is empty!"
         for d in dicts:
-            d['dataset_source'] = source_id
+            d["dataset_source"] = source_id
 
         if "annotations" in dicts[0]:
             try:
@@ -175,8 +163,9 @@ def get_detection_dataset_dicts_with_source(
 
     return dataset_dicts
 
+
 class MultiDatasetSampler(Sampler):
-    def __init__(self, cfg, sizes, dataset_dicts, seed: Optional[int] = None):
+    def __init__(self, cfg, sizes: Sequence[int], dataset_dicts, seed: int | None = None) -> None:
         """
         Args:
             size (int): the total number of data of the underlying dataset to sample from
@@ -187,43 +176,42 @@ class MultiDatasetSampler(Sampler):
         self.sizes = sizes
         dataset_ratio = cfg.DATALOADER.DATASET_RATIO
         self._batch_size = cfg.SOLVER.IMS_PER_BATCH
-        assert len(dataset_ratio) == len(sizes), \
-            'length of dataset ratio {} should be equal to number if dataset {}'.format(
-                len(dataset_ratio), len(sizes)
-            )
+        assert len(dataset_ratio) == len(sizes), (
+            f"length of dataset ratio {len(dataset_ratio)} should be equal to number if dataset {len(sizes)}"
+        )
         if seed is None:
             seed = comm.shared_random_seed()
         self._seed = int(seed)
         self._rank = comm.get_rank()
         self._world_size = comm.get_world_size()
-        
-        self._ims_per_gpu = self._batch_size // self._world_size
-        self.dataset_ids =  torch.tensor(
-            [d['dataset_source'] for d in dataset_dicts], dtype=torch.long)
 
-        dataset_weight = [torch.ones(s) * max(sizes) / s * r / sum(dataset_ratio) \
-            for i, (r, s) in enumerate(zip(dataset_ratio, sizes))]
+        self._ims_per_gpu = self._batch_size // self._world_size
+        self.dataset_ids = torch.tensor(
+            [d["dataset_source"] for d in dataset_dicts], dtype=torch.long
+        )
+
+        dataset_weight = [
+            torch.ones(s) * max(sizes) / s * r / sum(dataset_ratio)
+            for i, (r, s) in enumerate(zip(dataset_ratio, sizes, strict=False))
+        ]
         dataset_weight = torch.cat(dataset_weight)
         self.weights = dataset_weight
         self.sample_epoch_size = len(self.weights)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         start = self._rank
-        yield from itertools.islice(
-            self._infinite_indices(), start, None, self._world_size)
-
+        yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 
     def _infinite_indices(self):
         g = torch.Generator()
         g.manual_seed(self._seed)
         while True:
             ids = torch.multinomial(
-                self.weights, self.sample_epoch_size, generator=g, 
-                replacement=True)
-            nums = [(self.dataset_ids[ids] == i).sum().int().item() \
-                for i in range(len(self.sizes))]
-            print('_rank, len, nums', self._rank, len(ids), nums, flush=True)
-            # print('_rank, len, nums, self.dataset_ids[ids[:10]], ', 
-            #     self._rank, len(ids), nums, self.dataset_ids[ids[:10]], 
+                self.weights, self.sample_epoch_size, generator=g, replacement=True
+            )
+            nums = [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
+            print("_rank, len, nums", self._rank, len(ids), nums, flush=True)
+            # print('_rank, len, nums, self.dataset_ids[ids[:10]], ',
+            #     self._rank, len(ids), nums, self.dataset_ids[ids[:10]],
             #     flush=True)
             yield from ids

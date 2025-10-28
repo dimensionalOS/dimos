@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.data_provider import QueryDataProvider
-import tests.test_header
-
 import os
-from dimos.stream.video_provider import VideoProvider
-from dimos.utils.threadpool import get_scheduler
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
+
 from dimos.agents.agent_huggingface_local import HuggingFaceLocalAgent
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.stream.data_provider import QueryDataProvider
+from dimos.stream.video_provider import VideoProvider
+from dimos.utils.threadpool import get_scheduler
 
 # Initialize video stream
 video_stream = VideoProvider(
@@ -42,7 +40,7 @@ system_query = "You are a robot with the following functions. Move(), Reverse(),
 # Initialize agent
 agent = HuggingFaceLocalAgent(
     dev_name="HuggingFaceLLMAgent",
-    model_name= "Qwen/Qwen2.5-3B",
+    model_name="Qwen/Qwen2.5-3B",
     agent_type="HF-LLM",
     system_query=system_query,
     input_query_stream=query_provider.data_stream,
@@ -59,12 +57,12 @@ agent = HuggingFaceLocalAgent(
 # This will cause listening agents to consume the queries and respond
 # to them via skill execution and provide 1-shot responses.
 query_provider.start_query_stream(
-    query_template=
-    "{query}; User: travel forward by 10 meters",
+    query_template="{query}; User: travel forward by 10 meters",
     frequency=10,
     start_count=1,
     end_count=10000,
-    step=1)
+    step=1,
+)
 
 try:
     input("Press ESC to exit...")

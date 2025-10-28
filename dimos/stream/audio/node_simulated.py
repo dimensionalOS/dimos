@@ -1,12 +1,27 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import threading
+import time
+
+import numpy as np
+from reactivex import Observable, create, disposable
+
 from dimos.stream.audio.abstract import (
     AbstractAudioEmitter,
     AudioEvent,
 )
-import numpy as np
-from reactivex import Observable, create, disposable
-import threading
-import time
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.node_simulated")
@@ -26,7 +41,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         modulation_rate: float = 0.5,  # Modulation rate in Hz
         volume_oscillation: bool = True,  # Enable sinusoidal volume changes
         volume_oscillation_rate: float = 0.2,  # Volume oscillation rate in Hz
-    ):
+    ) -> None:
         """
         Initialize SimulatedAudioSource.
 
@@ -64,9 +79,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         # Add frequency modulation for more interesting sounds
         if self.modulation_rate > 0:
             # Modulate frequency between 0.5x and 1.5x the base frequency
-            freq_mod = self.frequency * (
-                1.0 + 0.5 * np.sin(2 * np.pi * self.modulation_rate * t)
-            )
+            freq_mod = self.frequency * (1.0 + 0.5 * np.sin(2 * np.pi * self.modulation_rate * t))
         else:
             freq_mod = np.ones_like(t) * self.frequency
 
@@ -80,20 +93,11 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             wave = np.sign(np.sin(phase_arg))
         elif self.waveform == "triangle":
             wave = (
-                2
-                * np.abs(
-                    2
-                    * (
-                        phase_arg / (2 * np.pi)
-                        - np.floor(phase_arg / (2 * np.pi) + 0.5)
-                    )
-                )
+                2 * np.abs(2 * (phase_arg / (2 * np.pi) - np.floor(phase_arg / (2 * np.pi) + 0.5)))
                 - 1
             )
         elif self.waveform == "sawtooth":
-            wave = 2 * (
-                phase_arg / (2 * np.pi) - np.floor(0.5 + phase_arg / (2 * np.pi))
-            )
+            wave = 2 * (phase_arg / (2 * np.pi) - np.floor(0.5 + phase_arg / (2 * np.pi)))
         else:
             # Default to sine wave
             wave = np.sin(phase_arg)
@@ -104,9 +108,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             vol_t = t + self.volume_phase
 
             # Volume oscillates between 0.0 and 1.0 using a sine wave (complete silence to full volume)
-            volume_factor = 0.5 + 0.5 * np.sin(
-                2 * np.pi * self.volume_oscillation_rate * vol_t
-            )
+            volume_factor = 0.5 + 0.5 * np.sin(2 * np.pi * self.volume_oscillation_rate * vol_t)
 
             # Apply the volume factor
             wave *= volume_factor * 0.7
@@ -117,9 +119,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             )
 
         # Update phase for next frame
-        self.phase += (
-            time_points[-1] - time_points[0] + (time_points[1] - time_points[0])
-        )
+        self.phase += time_points[-1] - time_points[0] + (time_points[1] - time_points[0])
 
         # Add a second channel if needed
         if self.channels == 2:
@@ -133,7 +133,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 
         return wave
 
-    def _audio_thread(self, observer, interval: float):
+    def _audio_thread(self, observer, interval: float) -> None:
         """Thread function for simulated audio generation."""
         try:
             sample_index = 0
@@ -142,8 +142,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             while self._running:
                 # Calculate time points for this frame
                 time_points = (
-                    np.arange(sample_index, sample_index + self.frame_length)
-                    / self.sample_rate
+                    np.arange(sample_index, sample_index + self.frame_length) / self.sample_rate
                 )
 
                 # Generate audio data
@@ -199,7 +198,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             )
 
             # Return a disposable to clean up
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping simulated audio")
                 self._running = False
                 if self._thread and self._thread.is_alive():
@@ -211,9 +210,9 @@ class SimulatedAudioSource(AbstractAudioEmitter):
 
 
 if __name__ == "__main__":
-    from dimos.stream.audio.utils import keepalive
-    from dimos.stream.audio.node_volume_monitor import monitor
     from dimos.stream.audio.node_output import SounddeviceAudioOutput
+    from dimos.stream.audio.node_volume_monitor import monitor
+    from dimos.stream.audio.utils import keepalive
 
     source = SimulatedAudioSource()
     speaker = SounddeviceAudioOutput()

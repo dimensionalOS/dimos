@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from enum import Enum
+import io
 import threading
 import time
-from enum import Enum
-from typing import Optional
-from reactivex import Observable, Subject
-import io
-import soundfile as sf
-from openai import OpenAI
 
-from dimos.stream.audio.text.base import AbstractTextConsumer, AbstractTextEmitter
+from openai import OpenAI
+from reactivex import Observable, Subject
+import soundfile as sf
+
 from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
-
+from dimos.stream.audio.text.base import AbstractTextConsumer, AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.tts.openai")
@@ -41,12 +54,12 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         voice: Voice = Voice.ECHO,
         model: str = "tts-1",
         buffer_size: int = 1024,
         speed: float = 1.0,
-    ):
+    ) -> None:
         """
         Initialize OpenAITTSNode.
 
@@ -205,10 +218,12 @@ class OpenAITTSNode(AbstractTextConsumer, AbstractAudioEmitter, AbstractTextEmit
 
 if __name__ == "__main__":
     import time
-    from dimos.stream.audio.utils import keepalive
+
     from reactivex import Subject
+
     from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.text.node_stdout import TextPrinterNode
+    from dimos.stream.audio.utils import keepalive
 
     # Create a simple text subject that we can push values to
     text_subject = Subject()
@@ -233,7 +248,7 @@ if __name__ == "__main__":
     print("Starting OpenAI TTS test...")
     print("-" * 60)
 
-    for i, message in enumerate(test_messages):
+    for _i, message in enumerate(test_messages):
         text_subject.on_next(message)
 
     keepalive()

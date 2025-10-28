@@ -1,21 +1,292 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["dimos*"]
+
+[tool.setuptools.package-data]
+"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+
 [project]
 name = "dimos"
 authors = [
-    {name = "Stash Pomichter", email = "stash@dimensionalOS.com"},
+    {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.2"
+version = "0.0.4"
 description = "Powering agentive generalist robotics"
+requires-python = ">=3.10"
+
+dependencies = [
+    # Core requirements
+    "opencv-python",
+    "python-dotenv",
+    "openai",
+    "anthropic>=0.19.0",
+    "cerebras-cloud-sdk",
+    "numpy>=1.26.4,<2.0.0",
+    "colorlog==6.9.0",
+    "yapf==0.40.2",
+    "typeguard",
+    "empy==3.3.4",
+    "catkin_pkg",
+    "lark",
+    "plum-dispatch==2.5.7",
+    "ffmpeg-python",
+    "tiktoken>=0.8.0",
+    "Flask>=2.2",
+    "python-multipart==0.0.20",
+    "reactivex",
+    "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
+    "asyncio==3.4.3",
+    "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
+    "tensorzero==2025.7.5",
+    
+    # Web Extensions
+    "fastapi>=0.115.6",
+    "sse-starlette>=2.2.1",
+    "uvicorn>=0.34.0",
+    
+    # Agents
+    "langchain>=0.3.27",
+    "langchain-chroma>=0.2.5",
+    "langchain-core>=0.3.72",
+    "langchain-openai>=0.3.28",
+    "langchain-text-splitters>=0.3.9",  
+    
+    # Class Extraction
+    "pydantic",
+    
+    # Developer Specific
+    "ipykernel",
+    
+    # Unitree webrtc streaming
+    "aiortc==1.9.0",
+    "pycryptodome",
+    "sounddevice",
+    "pyaudio",
+    "requests",
+    "wasmtime",
+
+    # Image
+    "PyTurboJPEG==1.8.2",
+    
+    # Audio
+    "openai-whisper",
+    "soundfile",
+    
+    # Hugging Face
+    "transformers[torch]==4.49.0",
+    
+    # Vector Embedding
+    "sentence_transformers",    
+    
+    # Perception Dependencies
+    "ultralytics>=8.3.70",
+    "filterpy>=1.4.5",
+    "scipy>=1.15.1",
+    "scikit-learn",
+    "Pillow",
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "timm>=1.0.15",
+    "lap>=0.5.12",
+    "opencv-contrib-python==4.10.0.84",
+
+    # Mapping
+    "open3d",
+    "googlemaps>=4.10.0",
+
+    # Inference
+    "onnx",
+
+    # Multiprocess 
+    "dask[complete]==2025.5.1",
+
+    # LCM / DimOS utilities
+    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@3aeb724863144a8ba6cf72c9f42761d1007deda4",
+
+    # CLI
+    "pydantic-settings>=2.11.0,<3",
+    "typer>=0.19.2,<1",
+]
+
+[project.scripts]
+lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
+foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
+skillspy = "dimos.utils.cli.skillspy.skillspy:main"
+agentspy = "dimos.utils.cli.agentspy.agentspy:main"
+human-cli = "dimos.utils.cli.human.humancli:main"
+dimos-robot = "dimos.robot.cli.dimos_robot:main"
+
+[project.optional-dependencies]
+manipulation = [
+
+    # Contact Graspnet Dependencies
+    "h5py>=3.7.0",
+    "pyrender>=0.1.45",
+    "trimesh>=3.22.0",
+    "python-fcl>=0.7.0.4",
+    "pyquaternion>=0.9.9",
+    "matplotlib>=3.7.1",
+    "rtree",
+    "pandas>=1.5.2",
+    "tqdm>=4.65.0",
+    "pyyaml>=6.0",
+    "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
+
+    # piper arm
+    "piper-sdk",
+
+    # Visualization (Optional)
+    "kaleido>=0.2.1",
+    "plotly>=5.9.0",
+]
+
+
+cpu = [
+    # CPU inference backends
+    "onnxruntime",
+    "ctransformers==0.2.27",
+]
+
+cuda = [
+    "cupy-cuda12x==13.6.0",
+    "nvidia-nvimgcodec-cu12[all]",
+    "onnxruntime-gpu>=1.17.1", # Only versions supporting both cuda11 and cuda12
+    "ctransformers[cuda]==0.2.27",
+    "mmengine>=0.10.3",
+    "mmcv>=2.1.0",
+    "xformers>=0.0.20",
+
+    # Detic GPU stack 
+    "mss",
+    "dataclasses",
+    "ftfy",
+    "regex",
+    "fasttext",
+    "lvis",
+    "nltk",
+    "clip @ git+https://github.com/openai/CLIP.git",
+    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
+
+    # embedding models
+    "open_clip_torch>=3.0.0",
+    "torchreid==0.2.5",
+]
+
+dev = [
+    "ruff==0.11.10",
+    "mypy==1.18.2",
+    "pre_commit==4.2.0",
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "pytest-mock==3.15.0",
+    "pytest-env==1.1.5",
+    "pytest-timeout==2.4.0",
+    "textual==3.7.1",
+    "requests-mock==1.12.1",
+
+    # Types
+    "lxml-stubs>=0.5.1,<1",
+    "pandas-stubs>=2.3.2.250926,<3",
+    "types-PySocks>=1.7.1.20251001,<2",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-colorama>=0.4.15.20250801,<1",
+    "types-defusedxml>=0.7.0.20250822,<1",
+    "types-gevent>=25.4.0.20250915,<26",
+    "types-greenlet>=3.2.0.20250915,<4",
+    "types-jmespath>=1.0.2.20250809,<2",
+    "types-jsonschema>=4.25.1.20251009,<5",
+    "types-networkx>=3.5.0.20251001,<4",
+    "types-protobuf>=6.32.1.20250918,<7",
+    "types-psutil>=7.0.0.20251001,<8",
+    "types-pytz>=2025.2.0.20250809,<2026",
+    "types-simplejson>=3.20.0.20250822,<4",
+    "types-tabulate>=0.9.0.20241207,<1",
+    "types-tensorflow>=2.18.0.20251008,<3",
+    "types-tqdm>=4.67.0.20250809,<5",
+]
+
+sim = [
+    # Simulation
+    "mujoco>=3.3.4",
+    "playground>=0.0.5",
+    "pygame>=2.6.1",
+]
+
+jetson-jp6-cuda126 = [
+    # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels
+    # Note: Alternative torch wheel from docs: https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
+    "torch @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/564/4d4458f1ba159/torch-2.8.0-cp310-cp310-linux_aarch64.whl",
+    "torchvision @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/1c0/3de08a69e9554/torchvision-0.23.0-cp310-cp310-linux_aarch64.whl",
+    "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/4eb/e6a8902dc7708/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl",
+    "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/731/15133b0ebb2b3/xformers-0.0.33+ac00641.d20250830-cp39-abi3-linux_aarch64.whl",
+]
 
 [tool.ruff]
-line-length = 120
+line-length = 100
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "libs",
+    "external",
+    "src"
+]
+
+[tool.ruff.lint]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
+# TODO: All of these should be fixed, but it's easier commit autofixes first
+ignore = ["A001", "A002", "A004", "B008", "B017", "B018", "B019", "B023", "B024", "B026", "B027", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F401", "F403", "F405", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N812", "N813", "N813", "N816", "N817", "N999", "RUF001", "RUF002", "RUF003", "RUF006", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "TC010", "UP007", "UP035"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["dimos"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.mypy]
+# mypy doesn't understand plum @dispatch decorator
+# so we gave up on this check globally
+disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
+files = [
+    "dimos/msgs/**/*.py",
+    "dimos/protocol/**/*.py"
+]
 
 [tool.pytest.ini_options]
-testpaths = ["dimos/robot"]
-norecursedirs = ["dimos/robot/unitree/external"]
+testpaths = ["dimos"]
 markers = [
+    "heavy: resource heavy test",
     "vis: marks tests that run visuals and require a visual check by dev",
     "benchmark: benchmark, executes something multiple times, calculates avg, prints to console",
     "exclude: arbitrary exclusion from CI and default test exec",
-    "tool: dev tooling"
+    "tool: dev tooling",
+    "needsdata: needs test data to be downloaded",
+    "ros: depend on ros",
+    "lcm: tests that run actual LCM bus (can't execute in CI)",
+    "module: tests that need to run directly as modules",
+    "gpu: tests that require GPU",
+    "tofix: temporarily disabled test"
 ]
-addopts = "-m 'not vis and not benchmark and not exclude and not tool'"
+env = [
+  "GOOGLE_MAPS_API_KEY=AIzafake_google_key"
+]
+addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+
+

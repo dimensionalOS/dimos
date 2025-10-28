@@ -1,19 +1,35 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import sys
+
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 import os
 import time
-import math
+
+from dimos.robot.unitree.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 
 # Initialize robot
-robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-                  ros_control=UnitreeROSControl(),
-                  skills=MyUnitreeSkills())
+robot = UnitreeGo2(
+    ip=os.getenv("ROBOT_IP"), ros_control=UnitreeROSControl(), skills=MyUnitreeSkills()
+)
+
 
 # Helper function to send pose commands continuously for a duration
 def send_pose_for_duration(roll, pitch, yaw, duration, hz=10):
@@ -21,7 +37,8 @@ def send_pose_for_duration(roll, pitch, yaw, duration, hz=10):
     start_time = time.time()
     while time.time() - start_time < duration:
         robot.pose_command(roll=roll, pitch=pitch, yaw=yaw)
-        time.sleep(1.0/hz)  # Sleep to achieve the desired frequency
+        time.sleep(1.0 / hz)  # Sleep to achieve the desired frequency
+
 
 # Test pose commands
 

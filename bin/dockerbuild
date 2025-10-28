@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Exit on error
+set -e
+
+# Check for directory argument
+if [ $# -lt 1 ]; then
+    echo "Usage: $0 <docker-directory-name> [additional-docker-build-args]"
+    echo "Example: $0 base-ros-python --no-cache"
+    exit 1
+fi
+
+# Get the docker directory name
+DOCKER_DIR=$1
+shift  # Remove the first argument, leaving any additional args
+
+# Check if directory exists
+if [ ! -d "docker/$DOCKER_DIR" ]; then
+    echo "Error: Directory docker/$DOCKER_DIR does not exist"
+    exit 1
+fi
+
+# Set image name based on directory
+IMAGE_NAME="ghcr.io/dimensionalos/$DOCKER_DIR"
+
+echo "Building image $IMAGE_NAME from docker/$DOCKER_DIR..."
+echo "Build context: $(pwd)"
+
+# Build the docker image with the current directory as context
+docker build -t "$IMAGE_NAME" -f "docker/$DOCKER_DIR/Dockerfile" "$@" .
+
+echo "Successfully built $IMAGE_NAME"

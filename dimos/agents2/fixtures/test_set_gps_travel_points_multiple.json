@@ -1,0 +1,34 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "set_gps_travel_points",
+          "args": {
+            "args": [
+              {
+                "lat": 37.782654,
+                "lon": -122.413273
+              },
+              {
+                "lat": 37.78266,
+                "lon": -122.41326
+              },
+              {
+                "lat": 37.78267,
+                "lon": -122.41327
+              }
+            ]
+          },
+          "id": "call_Q09MRMEgRnJPBOGZpM0j8sL2",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I've successfully set the travel points and will navigate to them sequentially.",
+      "tool_calls": []
+    }
+  ]
+}

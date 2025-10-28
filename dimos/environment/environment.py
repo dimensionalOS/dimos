@@ -13,10 +13,12 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
+
 import numpy as np
 
+
 class Environment(ABC):
-    def __init__(self):
+    def __init__(self) -> None:
         self.environment_type = None
         self.graph = None
 
@@ -24,7 +26,7 @@ class Environment(ABC):
     def label_objects(self) -> list[str]:
         """
         Label all objects in the environment.
-        
+
         Returns:
             A list of string labels representing the objects in the environment.
         """
@@ -34,9 +36,11 @@ class Environment(ABC):
     def get_visualization(self, format_type):
         """Return different visualization formats like images, NERFs, or other 3D file types."""
         pass
-    
+
     @abstractmethod
-    def generate_segmentations(self, model: str = None, objects: list[str] = None, *args, **kwargs) -> list[np.ndarray]:
+    def generate_segmentations(
+        self, model: str | None = None, objects: list[str] | None = None, *args, **kwargs
+    ) -> list[np.ndarray]:
         """
         Generate object segmentations of objects[] using neural methods.
 
@@ -66,9 +70,8 @@ class Environment(ABC):
         """
         pass
 
-
     @abstractmethod
-    def generate_point_cloud(self, object: str = None, *args, **kwargs) -> np.ndarray:
+    def generate_point_cloud(self, object: str | None = None, *args, **kwargs) -> np.ndarray:
         """
         Generate a point cloud for the entire environment or a specific object.
 
@@ -88,7 +91,7 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def get_point_cloud(self, object: str = None) -> np.ndarray:
+    def get_point_cloud(self, object: str | None = None) -> np.ndarray:
         """
         Return point clouds of the entire environment or a specific object.
 
@@ -102,7 +105,14 @@ class Environment(ABC):
         pass
 
     @abstractmethod
-    def generate_depth_map(self, stereo: bool = None, monocular: bool = None, model: str = None, *args, **kwargs) -> np.ndarray:
+    def generate_depth_map(
+        self,
+        stereo: bool | None = None,
+        monocular: bool | None = None,
+        model: str | None = None,
+        *args,
+        **kwargs,
+    ) -> np.ndarray:
         """
         Generate a depth map using monocular or stereo camera methods.
 
@@ -166,5 +176,3 @@ class Environment(ABC):
             NotImplementedError: If the method is not implemented for this environment type.
         """
         raise NotImplementedError("This method is not implemented for this environment type.")
-
-

@@ -1,19 +1,32 @@
 #!/usr/bin/env python3
-from typing import Callable
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Callable
 
 import numpy as np
 from reactivex import Observable, create, disposable
 
-from dimos.utils.logging_config import setup_logger
-from dimos.stream.audio.volume import (
-    calculate_rms_volume,
-    calculate_peak_volume,
-)
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
     AudioEvent,
 )
-
+from dimos.stream.audio.volume import (
+    calculate_peak_volume,
+    calculate_rms_volume,
+)
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.node_normalizer")
 
@@ -34,7 +47,7 @@ class AudioNormalizer(AbstractAudioTransform):
         decay_factor: float = 0.999,
         adapt_speed: float = 0.05,
         volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,
-    ):
+    ) -> None:
         """
         Initialize AudioNormalizer.
 
@@ -138,12 +151,11 @@ class AudioNormalizer(AbstractAudioTransform):
             )
 
             logger.info(
-                f"Started audio normalizer with target level: {self.target_level}, "
-                f"max gain: {self.max_gain}"
+                f"Started audio normalizer with target level: {self.target_level}, max gain: {self.max_gain}"
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping audio normalizer")
                 audio_subscription.dispose()
 
@@ -154,12 +166,13 @@ class AudioNormalizer(AbstractAudioTransform):
 
 if __name__ == "__main__":
     import sys
+
     from dimos.stream.audio.node_microphone import (
         SounddeviceAudioSource,
     )
+    from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.node_simulated import SimulatedAudioSource
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.utils import keepalive
 
     # Parse command line arguments
@@ -191,9 +204,7 @@ if __name__ == "__main__":
         print("Using simulated audio source")
 
     # Select volume function
-    volume_func = (
-        calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
-    )
+    volume_func = calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
 
     # Create normalizer
     normalizer = AudioNormalizer(target_level=target_level, volume_func=volume_func)

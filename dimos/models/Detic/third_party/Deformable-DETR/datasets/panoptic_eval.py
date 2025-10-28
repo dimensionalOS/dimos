@@ -18,8 +18,8 @@ except ImportError:
     pass
 
 
-class PanopticEvaluator(object):
-    def __init__(self, ann_file, ann_folder, output_dir="panoptic_eval"):
+class PanopticEvaluator:
+    def __init__(self, ann_file, ann_folder, output_dir: str="panoptic_eval") -> None:
         self.gt_json = ann_file
         self.gt_folder = ann_folder
         if utils.is_main_process():
@@ -28,14 +28,14 @@ class PanopticEvaluator(object):
         self.output_dir = output_dir
         self.predictions = []
 
-    def update(self, predictions):
+    def update(self, predictions) -> None:
         for p in predictions:
             with open(os.path.join(self.output_dir, p["file_name"]), "wb") as f:
                 f.write(p.pop("png_string"))
 
         self.predictions += predictions
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         all_predictions = utils.all_gather(self.predictions)
         merged_predictions = []
         for p in all_predictions:
@@ -48,5 +48,10 @@ class PanopticEvaluator(object):
             predictions_json = os.path.join(self.output_dir, "predictions.json")
             with open(predictions_json, "w") as f:
                 f.write(json.dumps(json_data))
-            return pq_compute(self.gt_json, predictions_json, gt_folder=self.gt_folder, pred_folder=self.output_dir)
+            return pq_compute(
+                self.gt_json,
+                predictions_json,
+                gt_folder=self.gt_folder,
+                pred_folder=self.output_dir,
+            )
         return None

@@ -1,25 +1,40 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import base64
-import requests
-from openai import OpenAI
-import cv2
-import numpy as np
 import os
+
+import cv2
+from openai import OpenAI
 
 NORMAL_PROMPT = "What are in these images? Give a short word answer with at most two words, \
                 if not sure, give a description of its shape or color like 'small tube', 'blue item'. \" \
                 if does not look like an object, say 'unknown'. Export objects as a list of strings \
                 in this exact format '['object 1', 'object 2', '...']'."
 
-RICH_PROMPT = "What are in these images? Give a detailed description of each item, the first n images will be \
+RICH_PROMPT = (
+    "What are in these images? Give a detailed description of each item, the first n images will be \
                cropped patches of the original image detected by the object detection model. \
                The last image will be the original image. Use the last image only for context, \
                do not describe objects in the last image. \
                Export the objects as a list of strings in this exact format, '['description of object 1', '...', '...']', \
                don't include anything else. "
+)
 
 
 class ImageAnalyzer:
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initializes the ImageAnalyzer with OpenAI API credentials.
         """
@@ -38,7 +53,7 @@ class ImageAnalyzer:
         _, buffer = cv2.imencode(".jpg", image)
         return base64.b64encode(buffer).decode("utf-8")
 
-    def analyze_images(self, images, detail="auto", prompt_type="normal"):
+    def analyze_images(self, images, detail: str = "auto", prompt_type: str = "normal"):
         """
         Takes a list of cropped images and returns descriptions from OpenAI's Vision model.
 
@@ -53,7 +68,10 @@ class ImageAnalyzer:
         image_data = [
             {
                 "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{self.encode_image(img)}", "detail": detail},
+                "image_url": {
+                    "url": f"data:image/jpeg;base64,{self.encode_image(img)}",
+                    "detail": detail,
+                },
             }
             for img in images
         ]
@@ -70,7 +88,7 @@ class ImageAnalyzer:
             messages=[
                 {
                     "role": "user",
-                    "content": [{"type": "text", "text": prompt}] + image_data,
+                    "content": [{"type": "text", "text": prompt}, *image_data],
                 }
             ],
             max_tokens=300,
@@ -78,16 +96,16 @@ class ImageAnalyzer:
         )
 
         # Accessing the content of the response using dot notation
-        return [choice.message.content for choice in response.choices][0]
+        return next(choice.message.content for choice in response.choices)
 
 
-def main():
+def main() -> None:
     # Define the directory containing cropped images
     cropped_images_dir = "cropped_images"
     if not os.path.exists(cropped_images_dir):
         print(f"Directory '{cropped_images_dir}' does not exist.")
         return
-    
+
     # Load all images from the directory
     images = []
     for filename in os.listdir(cropped_images_dir):
@@ -98,41 +116,43 @@ def main():
                 images.append(image)
             else:
                 print(f"Warning: Could not read image {image_path}")
-    
+
     if not images:
         print("No valid images found in the directory.")
         return
-    
+
     # Initialize ImageAnalyzer
     analyzer = ImageAnalyzer()
-    
+
     # Analyze images
     results = analyzer.analyze_images(images)
-    
+
     # Split results into a list of items
-    object_list = [item.strip()[2:] for item in results.split('\n')]
+    object_list = [item.strip()[2:] for item in results.split("\n")]
 
     # Overlay text on images and display them
-    for i, (img, obj) in enumerate(zip(images, object_list)):
+    for i, (img, obj) in enumerate(zip(images, object_list, strict=False)):
         if obj:  # Only process non-empty lines
             # Add text to image
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.5
             thickness = 2
             text = obj.strip()
-            
+
             # Get text size
             (text_width, text_height), _ = cv2.getTextSize(text, font, font_scale, thickness)
-            
+
             # Position text at top of image
             x = 10
             y = text_height + 10
-            
+
             # Add white background for text
-            cv2.rectangle(img, (x-5, y-text_height-5), (x+text_width+5, y+5), (255,255,255), -1)
+            cv2.rectangle(
+                img, (x - 5, y - text_height - 5), (x + text_width + 5, y + 5), (255, 255, 255), -1
+            )
             # Add text
-            cv2.putText(img, text, (x, y), font, font_scale, (0,0,0), thickness)
-            
+            cv2.putText(img, text, (x, y), font, font_scale, (0, 0, 0), thickness)
+
             # Save or display the image
             cv2.imwrite(f"annotated_image_{i}.jpg", img)
             print(f"Detected object: {obj}")

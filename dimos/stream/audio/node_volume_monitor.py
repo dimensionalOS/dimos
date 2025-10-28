@@ -1,8 +1,23 @@
 #!/usr/bin/env python3
-from typing import Callable
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from collections.abc import Callable
+
 from reactivex import Observable, create, disposable
 
-from dimos.stream.audio.base import AudioEvent, AbstractAudioConsumer
+from dimos.stream.audio.base import AbstractAudioConsumer, AudioEvent
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.stream.audio.text.node_stdout import TextPrinterNode
 from dimos.stream.audio.volume import calculate_peak_volume
@@ -21,7 +36,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
         threshold: float = 0.01,
         bar_length: int = 50,
         volume_func: Callable = calculate_peak_volume,
-    ):
+    ) -> None:
         """
         Initialize VolumeMonitorNode.
 
@@ -87,7 +102,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
             logger.info(f"Starting volume monitor (method: {self.func_name})")
 
             # Subscribe to the audio source
-            def on_audio_event(event: AudioEvent):
+            def on_audio_event(event: AudioEvent) -> None:
                 try:
                     # Calculate volume
                     volume = self.volume_func(event.data)
@@ -109,7 +124,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping volume monitor")
                 subscription.dispose()
 
@@ -153,8 +168,8 @@ def monitor(
 
 
 if __name__ == "__main__":
-    from utils import keepalive
     from audio.node_simulated import SimulatedAudioSource
+    from utils import keepalive
 
     # Use the monitor function to create and connect the nodes
     volume_monitor = monitor(SimulatedAudioSource().emit_audio())

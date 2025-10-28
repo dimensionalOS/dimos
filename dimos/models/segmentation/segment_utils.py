@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
 import numpy as np
+import torch
 
-def find_medoid_and_closest_points(points, num_closest=5):
+
+def find_medoid_and_closest_points(points, num_closest: int=5):
     """
     Find the medoid from a collection of points and the closest points to the medoid.
 
@@ -32,10 +33,11 @@ def find_medoid_and_closest_points(points, num_closest=5):
     medoid_idx = np.argmin(distance_sums)
     medoid = points[medoid_idx]
     sorted_indices = np.argsort(distances[medoid_idx])
-    closest_indices = sorted_indices[1:num_closest + 1]
+    closest_indices = sorted_indices[1 : num_closest + 1]
     return medoid, points[closest_indices]
 
-def sample_points_from_heatmap(heatmap, original_size, num_points=5, percentile=0.95):
+
+def sample_points_from_heatmap(heatmap, original_size: int, num_points: int=5, percentile: float=0.95):
     """
     Sample points from the given heatmap, focusing on areas with higher values.
     """
@@ -46,7 +48,9 @@ def sample_points_from_heatmap(heatmap, original_size, num_points=5, percentile=
 
     attn = torch.sigmoid(heatmap)
     w = attn.shape[0]
-    sampled_indices = torch.multinomial(torch.tensor(probabilities.ravel()), num_points, replacement=True)
+    sampled_indices = torch.multinomial(
+        torch.tensor(probabilities.ravel()), num_points, replacement=True
+    )
 
     sampled_coords = np.array(np.unravel_index(sampled_indices, attn.shape)).T
     medoid, sampled_coords = find_medoid_and_closest_points(sampled_coords)

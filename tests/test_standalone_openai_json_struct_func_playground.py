@@ -1,58 +1,57 @@
-import tests.test_header
-import os
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 # -----
 # # Milestone 1
-
-
 # from typing import List, Dict, Optional
 # import requests
 # import json
 # from pydantic import BaseModel, Field
 # from openai import OpenAI, pydantic_function_tool
-
 # # Environment setup
 # import dotenv
 # dotenv.load_dotenv()
-
 # # Constants and prompts
 # MODEL = "gpt-4o-2024-08-06"
 # GENERAL_PROMPT = '''
 #     Follow the instructions. Output a step by step solution, along with a final answer.
 #     Use the explanation field to detail the reasoning.
 # '''
-
 # # Initialize OpenAI client
 # client = OpenAI()
-
 # # Models and functions
 # class Step(BaseModel):
 #     explanation: str
 #     output: str
-
 # class MathReasoning(BaseModel):
 #     steps: List[Step]
 #     final_answer: str
-
 # class GetWeather(BaseModel):
 #     latitude: str = Field(..., description="Latitude e.g., Bogotá, Colombia")
 #     longitude: str = Field(..., description="Longitude e.g., Bogotá, Colombia")
-
 # def fetch_weather(latitude: str, longitude: str) -> Dict:
 #     url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m&temperature_unit=fahrenheit"
 #     response = requests.get(url)
 #     return response.json().get('current', {})
-
 # # Tool management
 # def get_tools() -> List[BaseModel]:
 #     return [pydantic_function_tool(GetWeather)]
-
 # def handle_function_call(tool_call: Dict) -> Optional[str]:
 #     if tool_call['name'] == "get_weather":
 #         result = fetch_weather(**tool_call['args'])
 #         return f"Temperature is {result['temperature_2m']}°F"
 #     return None
-
 # # Communication and processing with OpenAI
 # def process_message_with_openai(question: str) -> MathReasoning:
 #     messages = [
@@ -66,11 +65,9 @@ import os
 #         tools=get_tools()
 #     )
 #     return response.choices[0].message
-
 # def get_math_solution(question: str) -> MathReasoning:
 #     solution = process_message_with_openai(question)
 #     return solution
-
 # # Example usage
 # def main():
 #     problems = [
@@ -79,57 +76,52 @@ import os
 #     ]
 #     problem = problems[1]
 #     print(f"Problem: {problem}")
-
 #     solution = get_math_solution(problem)
 #     if not solution:
 #         print("Failed to get a solution.")
 #         return
-
 #     if not solution.parsed:
 #         print("Failed to get a parsed solution.")
 #         print(f"Solution: {solution}")
 #         return
-
 #     print(f"Steps: {solution.parsed.steps}")
 #     print(f"Final Answer: {solution.parsed.final_answer}")
-
 # if __name__ == "__main__":
 #     main()
-
-
 # # Milestone 1
-
 # Milestone 2
 import json
-import os
-import requests
 
 from dotenv import load_dotenv
+import requests
+
 load_dotenv()
 
 from openai import OpenAI
 
 client = OpenAI()
 
+
 def get_current_weather(latitude, longitude):
     """Get the current weather in a given latitude and longitude using the 7Timer API"""
     base = "http://www.7timer.info/bin/api.pl"
     request_url = f"{base}?lon={longitude}&lat={latitude}&product=civillight&output=json"
     response = requests.get(request_url)
-    
+
     # Parse response to extract the main weather data
     weather_data = response.json()
-    current_data = weather_data.get('dataseries', [{}])[0]
-    
+    current_data = weather_data.get("dataseries", [{}])[0]
+
     result = {
         "latitude": latitude,
         "longitude": longitude,
-        "temp": current_data.get('temp2m', {'max': 'Unknown', 'min': 'Unknown'}),
-        "humidity": "Unknown"
+        "temp": current_data.get("temp2m", {"max": "Unknown", "min": "Unknown"}),
+        "humidity": "Unknown",
     }
-    
+
     # Convert the dictionary to JSON string to match the given structure
     return json.dumps(result)
+
 
 def run_conversation(content):
     messages = [{"role": "user", "content": content}]
@@ -192,15 +184,14 @@ def run_conversation(content):
             )
 
         second_response = client.chat.completions.create(
-            model="gpt-3.5-turbo-0125",
-            messages=messages,
-            stream=True
+            model="gpt-3.5-turbo-0125", messages=messages, stream=True
         )
         return second_response
+
 
 if __name__ == "__main__":
     question = "What's the weather like in Paris and San Francisco?"
     response = run_conversation(question)
     for chunk in response:
-        print(chunk.choices[0].delta.content or "", end='', flush=True)
+        print(chunk.choices[0].delta.content or "", end="", flush=True)
 # Milestone 2

@@ -13,8 +13,6 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod
-import tiktoken
-from dimos.utils.logging_config import setup_logger
 
 # TODO: Add a class for specific tokenizer exceptions
 # TODO: Build out testing and logging
@@ -22,9 +20,8 @@ from dimos.utils.logging_config import setup_logger
 
 
 class AbstractTokenizer(ABC):
-
     @abstractmethod
-    def tokenize_text(self, text):
+    def tokenize_text(self, text: str):
         pass
 
     @abstractmethod
@@ -32,9 +29,9 @@ class AbstractTokenizer(ABC):
         pass
 
     @abstractmethod
-    def token_count(self, text):
+    def token_count(self, text: str):
         pass
 
     @abstractmethod
-    def image_token_count(self, image_width, image_height, image_detail="low"):
+    def image_token_count(self, image_width, image_height, image_detail: str = "low"):
         pass

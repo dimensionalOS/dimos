@@ -3,7 +3,27 @@
   import Input from './components/Input.svelte';
   import History from './components/History.svelte';
   import StreamViewer from './components/StreamViewer.svelte';
+  import VoiceButton from './components/VoiceButton.svelte';
   import { theme } from './stores/theme';
+  import { history } from './stores/history';
+
+  const handleVoiceCommand = async (event: CustomEvent) => {
+    if (event.detail.success) {
+      // Show voice processing message
+      history.update(h => [...h, { 
+        command: '[voice command]', 
+        outputs: ['Processing voice command...'] 
+      }]);
+      
+      // The actual command will be processed by the agent through the audio pipeline
+      // and will appear in the text stream
+    } else {
+      history.update(h => [...h, { 
+        command: '[voice command]', 
+        outputs: [`Error: ${event.detail.error}`] 
+      }]);
+    }
+  };
 </script>
 
 <svelte:head>
@@ -29,3 +49,5 @@
     <Input />
   </div>
 </main>
+
+<VoiceButton on:voiceCommand={handleVoiceCommand} />

@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import numpy as np
 
 
@@ -55,6 +69,7 @@ def calculate_peak_volume(audio_data: np.ndarray) -> float:
 if __name__ == "__main__":
     # Example usage
     import time
+
     from .node_simulated import SimulatedAudioSource
 
     # Create a simulated audio source
@@ -63,19 +78,19 @@ if __name__ == "__main__":
     # Create observable and subscribe to get a single frame
     audio_observable = audio_source.capture_audio_as_observable()
 
-    def process_frame(frame):
+    def process_frame(frame) -> None:
         # Calculate and print both RMS and peak volumes
         rms_vol = calculate_rms_volume(frame.data)
         peak_vol = calculate_peak_volume(frame.data)
 
         print(f"RMS Volume: {rms_vol:.4f}")
         print(f"Peak Volume: {peak_vol:.4f}")
-        print(f"Ratio (Peak/RMS): {peak_vol/rms_vol:.2f}")
+        print(f"Ratio (Peak/RMS): {peak_vol / rms_vol:.2f}")
 
     # Set a flag to track when processing is complete
     processed = {"done": False}
 
-    def process_frame_wrapper(frame):
+    def process_frame_wrapper(frame) -> None:
         # Process the frame
         process_frame(frame)
         # Mark as processed

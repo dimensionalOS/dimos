@@ -10,15 +10,16 @@
 """
 Transforms and data augmentation for both image + bbox.
 """
+
 import random
 
 import PIL
 import torch
 import torchvision.transforms as T
 import torchvision.transforms.functional as F
-
 from util.box_ops import box_xyxy_to_cxcywh
 from util.misc import interpolate
+from typing import Optional, Sequence
 
 
 def crop(image, target, region):
@@ -45,7 +46,7 @@ def crop(image, target, region):
 
     if "masks" in target:
         # FIXME should we update the area here if there are no boxes?
-        target['masks'] = target['masks'][:, i:i + h, j:j + w]
+        target["masks"] = target["masks"][:, i : i + h, j : j + w]
         fields.append("masks")
 
     # remove elements for which the boxes or masks that have zero area
@@ -53,10 +54,10 @@ def crop(image, target, region):
         # favor boxes selection when defining which elements to keep
         # this is compatible with previous implementation
         if "boxes" in target:
-            cropped_boxes = target['boxes'].reshape(-1, 2, 2)
+            cropped_boxes = target["boxes"].reshape(-1, 2, 2)
             keep = torch.all(cropped_boxes[:, 1, :] > cropped_boxes[:, 0, :], dim=1)
         else:
-            keep = target['masks'].flatten(1).any(1)
+            keep = target["masks"].flatten(1).any(1)
 
         for field in fields:
             target[field] = target[field][keep]
@@ -72,25 +73,27 @@ def hflip(image, target):
     target = target.copy()
     if "boxes" in target:
         boxes = target["boxes"]
-        boxes = boxes[:, [2, 1, 0, 3]] * torch.as_tensor([-1, 1, -1, 1]) + torch.as_tensor([w, 0, w, 0])
+        boxes = boxes[:, [2, 1, 0, 3]] * torch.as_tensor([-1, 1, -1, 1]) + torch.as_tensor(
+            [w, 0, w, 0]
+        )
         target["boxes"] = boxes
 
     if "masks" in target:
-        target['masks'] = target['masks'].flip(-1)
+        target["masks"] = target["masks"].flip(-1)
 
     return flipped_image, target
 
 
-def resize(image, target, size, max_size=None):
+def resize(image, target, size: int, max_size: Optional[int]=None):
     # size can be min_size (scalar) or (w, h) tuple
 
-    def get_size_with_aspect_ratio(image_size, size, max_size=None):
+    def get_size_with_aspect_ratio(image_size: int, size: int, max_size: Optional[int]=None):
         w, h = image_size
         if max_size is not None:
             min_original_size = float(min((w, h)))
             max_original_size = float(max((w, h)))
             if max_original_size / min_original_size * size > max_size:
-                size = int(round(max_size * min_original_size / max_original_size))
+                size = round(max_size * min_original_size / max_original_size)
 
         if (w <= h and w == size) or (h <= w and h == size):
             return (h, w)
@@ -104,8 +107,8 @@ def resize(image, target, size, max_size=None):
 
         return (oh, ow)
 
-    def get_size(image_size, size, max_size=None):
-        if isinstance(size, (list, tuple)):
+    def get_size(image_size: int, size: int, max_size: Optional[int]=None):
+        if isinstance(size, list | tuple):
             return size[::-1]
         else:
             return get_size_with_aspect_ratio(image_size, size, max_size)
@@ -116,13 +119,15 @@ def resize(image, target, size, max_size=None):
     if target is None:
         return rescaled_image, None
 
-    ratios = tuple(float(s) / float(s_orig) for s, s_orig in zip(rescaled_image.size, image.size))
+    ratios = tuple(float(s) / float(s_orig) for s, s_orig in zip(rescaled_image.size, image.size, strict=False))
     ratio_width, ratio_height = ratios
 
     target = target.copy()
     if "boxes" in target:
         boxes = target["boxes"]
-        scaled_boxes = boxes * torch.as_tensor([ratio_width, ratio_height, ratio_width, ratio_height])
+        scaled_boxes = boxes * torch.as_tensor(
+            [ratio_width, ratio_height, ratio_width, ratio_height]
+        )
         target["boxes"] = scaled_boxes
 
     if "area" in target:
@@ -134,8 +139,9 @@ def resize(image, target, size, max_size=None):
     target["size"] = torch.tensor([h, w])
 
     if "masks" in target:
-        target['masks'] = interpolate(
-            target['masks'][:, None].float(), size, mode="nearest")[:, 0] > 0.5
+        target["masks"] = (
+            interpolate(target["masks"][:, None].float(), size, mode="nearest")[:, 0] > 0.5
+        )
 
     return rescaled_image, target
 
@@ -149,12 +155,12 @@ def pad(image, target, padding):
     # should we do something wrt the original size?
     target["size"] = torch.tensor(padded_image[::-1])
     if "masks" in target:
-        target['masks'] = torch.nn.functional.pad(target['masks'], (0, padding[0], 0, padding[1]))
+        target["masks"] = torch.nn.functional.pad(target["masks"], (0, padding[0], 0, padding[1]))
     return padded_image, target
 
 
-class RandomCrop(object):
-    def __init__(self, size):
+class RandomCrop:
+    def __init__(self, size: int) -> None:
         self.size = size
 
     def __call__(self, img, target):
@@ -162,8 +168,8 @@ class RandomCrop(object):
         return crop(img, target, region)
 
 
-class RandomSizeCrop(object):
-    def __init__(self, min_size: int, max_size: int):
+class RandomSizeCrop:
+    def __init__(self, min_size: int, max_size: int) -> None:
         self.min_size = min_size
         self.max_size = max_size
 
@@ -174,20 +180,20 @@ class RandomSizeCrop(object):
         return crop(img, target, region)
 
 
-class CenterCrop(object):
-    def __init__(self, size):
+class CenterCrop:
+    def __init__(self, size: int) -> None:
         self.size = size
 
     def __call__(self, img, target):
         image_width, image_height = img.size
         crop_height, crop_width = self.size
-        crop_top = int(round((image_height - crop_height) / 2.))
-        crop_left = int(round((image_width - crop_width) / 2.))
+        crop_top = round((image_height - crop_height) / 2.0)
+        crop_left = round((image_width - crop_width) / 2.0)
         return crop(img, target, (crop_top, crop_left, crop_height, crop_width))
 
 
-class RandomHorizontalFlip(object):
-    def __init__(self, p=0.5):
+class RandomHorizontalFlip:
+    def __init__(self, p: float=0.5) -> None:
         self.p = p
 
     def __call__(self, img, target):
@@ -196,9 +202,9 @@ class RandomHorizontalFlip(object):
         return img, target
 
 
-class RandomResize(object):
-    def __init__(self, sizes, max_size=None):
-        assert isinstance(sizes, (list, tuple))
+class RandomResize:
+    def __init__(self, sizes: Sequence[int], max_size: Optional[int]=None) -> None:
+        assert isinstance(sizes, list | tuple)
         self.sizes = sizes
         self.max_size = max_size
 
@@ -207,8 +213,8 @@ class RandomResize(object):
         return resize(img, target, size, self.max_size)
 
 
-class RandomPad(object):
-    def __init__(self, max_pad):
+class RandomPad:
+    def __init__(self, max_pad) -> None:
         self.max_pad = max_pad
 
     def __call__(self, img, target):
@@ -217,12 +223,13 @@ class RandomPad(object):
         return pad(img, target, (pad_x, pad_y))
 
 
-class RandomSelect(object):
+class RandomSelect:
     """
     Randomly selects between transforms1 and transforms2,
     with probability p for transforms1 and (1 - p) for transforms2
     """
-    def __init__(self, transforms1, transforms2, p=0.5):
+
+    def __init__(self, transforms1, transforms2, p: float=0.5) -> None:
         self.transforms1 = transforms1
         self.transforms2 = transforms2
         self.p = p
@@ -233,22 +240,21 @@ class RandomSelect(object):
         return self.transforms2(img, target)
 
 
-class ToTensor(object):
+class ToTensor:
     def __call__(self, img, target):
         return F.to_tensor(img), target
 
 
-class RandomErasing(object):
-
-    def __init__(self, *args, **kwargs):
+class RandomErasing:
+    def __init__(self, *args, **kwargs) -> None:
         self.eraser = T.RandomErasing(*args, **kwargs)
 
     def __call__(self, img, target):
         return self.eraser(img), target
 
 
-class Normalize(object):
-    def __init__(self, mean, std):
+class Normalize:
+    def __init__(self, mean, std) -> None:
         self.mean = mean
         self.std = std
 
@@ -266,8 +272,8 @@ class Normalize(object):
         return image, target
 
 
-class Compose(object):
-    def __init__(self, transforms):
+class Compose:
+    def __init__(self, transforms) -> None:
         self.transforms = transforms
 
     def __call__(self, image, target):
@@ -275,10 +281,10 @@ class Compose(object):
             image, target = t(image, target)
         return image, target
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         format_string = self.__class__.__name__ + "("
         for t in self.transforms:
             format_string += "\n"
-            format_string += "    {0}".format(t)
+            format_string += f"    {t}"
         format_string += "\n)"
         return format_string

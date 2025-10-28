@@ -1,0 +1,64 @@
+default_stages: [pre-commit]
+exclude: (dimos/models/.*)|(deprecated)
+repos:
+
+  - repo: https://github.com/Lucas-C/pre-commit-hooks
+    rev: v1.5.5
+    hooks:
+      - id: forbid-crlf
+      - id: remove-crlf
+      - id: insert-license
+        files: \.py$
+        exclude: __init__\.py$
+        args:
+          # use if you want to remove licences from all files
+          # (for globally changing wording or something)
+          #- --remove-header
+          - --license-filepath
+          - assets/license_file_header.txt
+          - --use-current-year
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.14.1
+    hooks:
+      - id: ruff-format
+        stages: [pre-commit]
+      - id: ruff-check
+        args: [--fix, --unsafe-fixes]
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: check-case-conflict
+      - id: trailing-whitespace
+        language: python
+        types: [text]
+        stages: [pre-push]
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+      - id: pretty-format-json
+        name: format json
+        args: [ --autofix, --no-sort-keys ]
+
+  # - repo: local
+  #   hooks:
+  #     - id: mypy
+  #       name: Type check
+  #       # possible to also run within the dev image
+  #       #entry: "./bin/dev mypy"
+  #       entry: "./bin/mypy"
+  #       language: python
+  #       additional_dependencies: ["mypy==1.15.0", "numpy>=1.26.4,<2.0.0"]
+  #       types: [python]
+
+  - repo: local
+    hooks:
+      - id: lfs_check
+        name: LFS data
+        always_run: true
+        pass_filenames: false
+        entry: bin/lfs_check
+        language: script
+
+        

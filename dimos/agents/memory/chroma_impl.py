@@ -12,29 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
-
-import chromadb
-from langchain_openai import OpenAIEmbeddings
-from langchain_chroma import Chroma
+from collections.abc import Sequence
 import os
+
+from langchain_chroma import Chroma
+from langchain_openai import OpenAIEmbeddings
 import torch
+
+from dimos.agents.memory.base import AbstractAgentSemanticMemory
 
 
 class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
     """Base class for Chroma-based semantic memory implementations."""
-    
-    def __init__(self, collection_name="my_collection"):
+
+    def __init__(self, collection_name: str = "my_collection") -> None:
         """Initialize the connection to the local Chroma DB."""
         self.collection_name = collection_name
         self.db_connection = None
         self.embeddings = None
-        super().__init__(connection_type='local')
+        super().__init__(connection_type="local")
 
     def connect(self):
         # Stub
         return super().connect()
-    
+
     def create(self):
         """Create the embedding function and initialize the Chroma database.
         This method must be implemented by child classes."""
@@ -52,27 +53,22 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
 
     def get_vector(self, vector_id):
         """Retrieve a vector from the ChromaDB by its identifier."""
-        result = self.db_connection.get(include=['embeddings'], ids=[vector_id])
+        result = self.db_connection.get(include=["embeddings"], ids=[vector_id])
         return result
 
-    def query(self, query_texts, n_results=4, similarity_threshold=None):
+    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):
         """Query the collection with a specific text and return up to n results."""
         if not self.db_connection:
             raise Exception("Collection not initialized. Call connect() first.")
-        
+
         if similarity_threshold is not None:
             if not (0 <= similarity_threshold <= 1):
                 raise ValueError("similarity_threshold must be between 0 and 1.")
             return self.db_connection.similarity_search_with_relevance_scores(
-                query=query_texts,
-                k=n_results,
-                score_threshold=similarity_threshold
+                query=query_texts, k=n_results, score_threshold=similarity_threshold
             )
         else:
-            documents = self.db_connection.similarity_search(
-                query=query_texts,
-                k=n_results
-            )
+            documents = self.db_connection.similarity_search(query=query_texts, k=n_results)
             return [(doc, None) for doc in documents]
 
     def update_vector(self, vector_id, new_vector_data):
@@ -88,10 +84,15 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
 
 class OpenAISemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using OpenAI's embedding API."""
-    
-    def __init__(self, collection_name="my_collection", model="text-embedding-3-large", dimensions=1024):
+
+    def __init__(
+        self,
+        collection_name: str = "my_collection",
+        model: str = "text-embedding-3-large",
+        dimensions: int = 1024,
+    ) -> None:
         """Initialize OpenAI-based semantic memory.
-        
+
         Args:
             collection_name (str): Name of the Chroma collection
             model (str): OpenAI embedding model to use
@@ -119,46 +120,49 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
         self.db_connection = Chroma(
             collection_name=self.collection_name,
             embedding_function=self.embeddings,
-            collection_metadata={"hnsw:space": "cosine"}
+            collection_metadata={"hnsw:space": "cosine"},
         )
 
 
 class LocalSemanticMemory(ChromaAgentSemanticMemory):
     """Semantic memory implementation using local models."""
-    
-    def __init__(self, collection_name="my_collection", model_name="sentence-transformers/all-MiniLM-L6-v2"):
+
+    def __init__(
+        self,
+        collection_name: str = "my_collection",
+        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+    ) -> None:
         """Initialize the local semantic memory using SentenceTransformer.
-        
+
         Args:
             collection_name (str): Name of the Chroma collection
             model_name (str): Embeddings model
         """
-        from sentence_transformers import SentenceTransformer
-        
+
         self.model_name = model_name
         super().__init__(collection_name=collection_name)
 
-    def create(self):
+    def create(self) -> None:
         """Create local embedding model and initialize the ChromaDB client."""
         # Load the sentence transformer model
         # Use CUDA if available, otherwise fall back to CPU
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {device}")
         self.model = SentenceTransformer(self.model_name, device=device)
-        
+
         # Create a custom embedding class that implements the embed_query method
         class SentenceTransformerEmbeddings:
-            def __init__(self, model):
+            def __init__(self, model) -> None:
                 self.model = model
-                
-            def embed_query(self, text):
+
+            def embed_query(self, text: str):
                 """Embed a single query text."""
                 return self.model.encode(text, normalize_embeddings=True).tolist()
-                
-            def embed_documents(self, texts):
+
+            def embed_documents(self, texts: Sequence[str]):
                 """Embed multiple documents/texts."""
                 return self.model.encode(texts, normalize_embeddings=True).tolist()
-        
+
         # Create an instance of our custom embeddings class
         self.embeddings = SentenceTransformerEmbeddings(self.model)
 
@@ -166,6 +170,5 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
         self.db_connection = Chroma(
             collection_name=self.collection_name,
             embedding_function=self.embeddings,
-            collection_metadata={"hnsw:space": "cosine"}
+            collection_metadata={"hnsw:space": "cosine"},
         )
-

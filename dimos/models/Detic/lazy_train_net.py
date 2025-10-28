@@ -9,6 +9,7 @@ few common configuration parameters currently defined in "configs/common/train.p
 To add more complicated training logic, you can easily add other configs
 in the config file and implement a new train_net.py to handle them.
 """
+
 import logging
 import sys
 
@@ -26,9 +27,11 @@ from detectron2.engine import (
 from detectron2.engine.defaults import create_ddp_model
 from detectron2.evaluation import inference_on_dataset, print_csv_format
 from detectron2.utils import comm
-sys.path.insert(0, 'third_party/CenterNet2/')
-sys.path.insert(0, 'third_party/Deformable-DETR')
+
+sys.path.insert(0, "third_party/CenterNet2/")
+sys.path.insert(0, "third_party/Deformable-DETR")
 logger = logging.getLogger("detectron2")
+
 
 def do_test(cfg, model):
     if "evaluator" in cfg.dataloader:
@@ -39,7 +42,7 @@ def do_test(cfg, model):
         return ret
 
 
-def do_train(args, cfg):
+def do_train(args, cfg) -> None:
     """
     Args:
         cfg: an object with the following attributes:
@@ -60,7 +63,7 @@ def do_train(args, cfg):
     """
     model = instantiate(cfg.model)
     logger = logging.getLogger("detectron2")
-    logger.info("Model:\n{}".format(model))
+    logger.info(f"Model:\n{model}")
     model.to(cfg.train.device)
 
     cfg.optimizer.params.model = model
@@ -102,7 +105,7 @@ def do_train(args, cfg):
     trainer.train(start_iter, cfg.train.max_iter)
 
 
-def main(args):
+def main(args) -> None:
     cfg = LazyConfig.load(args.config_file)
     cfg = LazyConfig.apply_overrides(cfg, args.opts)
     default_setup(cfg, args)

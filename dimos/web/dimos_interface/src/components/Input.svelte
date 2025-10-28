@@ -29,6 +29,32 @@
 
   const handleKeyDown = async (event: KeyboardEvent) => {
     if (event.key === 'Enter') {
+      await executeCommand();
+    } else if (event.key === 'ArrowUp') {
+      if (historyIndex < $history.length - 1) {
+        historyIndex++;
+        command = $history[$history.length - 1 - historyIndex].command;
+      }
+      event.preventDefault();
+    } else if (event.key === 'ArrowDown') {
+      if (historyIndex > -1) {
+        historyIndex--;
+        command = historyIndex >= 0 ? $history[$history.length - 1 - historyIndex].command : '';
+      }
+      event.preventDefault();
+    } else if (event.key === 'Tab') {
+      event.preventDefault();
+      const autoCompleteCommand = Object.keys(commands).find((cmd) => cmd.startsWith(command));
+      if (autoCompleteCommand) {
+        command = autoCompleteCommand;
+      }
+    } else if (event.ctrlKey && event.key === 'l') {
+      event.preventDefault();
+      $history = [];
+    }
+  };
+
+  const executeCommand = async () => {
       const [commandName, ...args] = command.split(' ');
 
       if (import.meta.env.VITE_TRACKING_ENABLED === 'true') {
@@ -57,28 +83,6 @@
 
       command = '';
       historyIndex = -1;
-    } else if (event.key === 'ArrowUp') {
-      if (historyIndex < $history.length - 1) {
-        historyIndex++;
-        command = $history[$history.length - 1 - historyIndex].command;
-      }
-      event.preventDefault();
-    } else if (event.key === 'ArrowDown') {
-      if (historyIndex > -1) {
-        historyIndex--;
-        command = historyIndex >= 0 ? $history[$history.length - 1 - historyIndex].command : '';
-      }
-      event.preventDefault();
-    } else if (event.key === 'Tab') {
-      event.preventDefault();
-      const autoCompleteCommand = Object.keys(commands).find((cmd) => cmd.startsWith(command));
-      if (autoCompleteCommand) {
-        command = autoCompleteCommand;
-      }
-    } else if (event.ctrlKey && event.key === 'l') {
-      event.preventDefault();
-      $history = [];
-    }
   };
 </script>
 

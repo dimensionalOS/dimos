@@ -1,30 +1,43 @@
-import tests.test_header
-import os
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 
 # -----
 
-from typing import List, Union, Dict
-
 import dotenv
+
 dotenv.load_dotenv()
 
 from textwrap import dedent
+
 from openai import OpenAI
 from pydantic import BaseModel
 
 MODEL = "gpt-4o-2024-08-06"
 
-math_tutor_prompt = '''
+math_tutor_prompt = """
     You are a helpful math tutor. You will be provided with a math problem,
     and your goal will be to output a step by step solution, along with a final answer.
     For each step, just provide the output as an equation use the explanation field to detail the reasoning.
-'''
+"""
 
-general_prompt = '''
+general_prompt = """
     Follow the instructions. Output a step by step solution, along with a final answer. Use the explanation field to detail the reasoning.
-'''
+"""
 
 client = OpenAI()
+
 
 class MathReasoning(BaseModel):
     class Step(BaseModel):
@@ -33,6 +46,7 @@ class MathReasoning(BaseModel):
 
     steps: list[Step]
     final_answer: str
+
 
 def get_math_solution(question: str):
     prompt = general_prompt
@@ -45,6 +59,7 @@ def get_math_solution(question: str):
         response_format=MathReasoning,
     )
     return completion.choices[0].message
+
 
 # Define Problem
 problem = "What is the derivative of 3x^2"
@@ -61,9 +76,9 @@ if solution.refusal:
 # If we were able to successfully parse the response back
 parsed_solution = solution.parsed
 if not parsed_solution:
-    print(f"Unable to Parse Solution")
+    print("Unable to Parse Solution")
     exit()
-    
+
 # Print solution from class definitions
 print(f"Parsed: {parsed_solution}")
 

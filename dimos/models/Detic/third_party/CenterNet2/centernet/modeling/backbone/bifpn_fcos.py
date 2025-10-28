@@ -1,14 +1,14 @@
 # This file is modified from https://github.com/aim-uofa/AdelaiDet/blob/master/adet/modeling/backbone/bifpn.py
 # The original file is under 2-clause BSD License for academic use, and *non-commercial use*.
-import torch
-import torch.nn.functional as F
-from torch import nn
-
 from detectron2.layers import Conv2d, ShapeSpec, get_norm
-
-from detectron2.modeling.backbone import Backbone, build_resnet_backbone
 from detectron2.modeling import BACKBONE_REGISTRY
+from detectron2.modeling.backbone import Backbone, build_resnet_backbone
+import torch
+from torch import nn
+import torch.nn.functional as F
+
 from .dlafpn import dla34
+from typing import Sequence
 
 __all__ = []
 
@@ -17,7 +17,7 @@ def swish(x):
     return x * x.sigmoid()
 
 
-def split_name(name):
+def split_name(name: str):
     for i, c in enumerate(name):
         if not c.isalpha():
             return name[:i], int(name[i:])
@@ -25,14 +25,16 @@ def split_name(name):
 
 
 class FeatureMapResampler(nn.Module):
-    def __init__(self, in_channels, out_channels, stride, norm=""):
-        super(FeatureMapResampler, self).__init__()
+    def __init__(self, in_channels, out_channels, stride: int, norm: str="") -> None:
+        super().__init__()
         if in_channels != out_channels:
             self.reduction = Conv2d(
-                in_channels, out_channels, kernel_size=1,
+                in_channels,
+                out_channels,
+                kernel_size=1,
                 bias=(norm == ""),
                 norm=get_norm(norm, out_channels),
-                activation=None
+                activation=None,
             )
         else:
             self.reduction = None
@@ -45,10 +47,7 @@ class FeatureMapResampler(nn.Module):
             x = self.reduction(x)
 
         if self.stride == 2:
-            x = F.max_pool2d(
-                x, kernel_size=self.stride + 1,
-                stride=self.stride, padding=1
-            )
+            x = F.max_pool2d(x, kernel_size=self.stride + 1, stride=self.stride, padding=1)
         elif self.stride == 1:
             pass
         else:
@@ -57,13 +56,17 @@ class FeatureMapResampler(nn.Module):
 
 
 class BackboneWithTopLevels(Backbone):
-    def __init__(self, backbone, out_channels, num_top_levels, norm=""):
-        super(BackboneWithTopLevels, self).__init__()
+    def __init__(self, backbone, out_channels, num_top_levels: int, norm: str="") -> None:
+        super().__init__()
         self.backbone = backbone
         backbone_output_shape = backbone.output_shape()
 
-        self._out_feature_channels = {name: shape.channels for name, shape in backbone_output_shape.items()}
-        self._out_feature_strides = {name: shape.stride for name, shape in backbone_output_shape.items()}
+        self._out_feature_channels = {
+            name: shape.channels for name, shape in backbone_output_shape.items()
+        }
+        self._out_feature_strides = {
+            name: shape.stride for name, shape in backbone_output_shape.items()
+        }
         self._out_features = list(self._out_feature_strides.keys())
 
         last_feature_name = max(self._out_feature_strides.keys(), key=lambda x: split_name(x)[1])
@@ -77,9 +80,7 @@ class BackboneWithTopLevels(Backbone):
         prev_channels = last_channels
         for i in range(num_top_levels):
             name = prefix + str(suffix + i + 1)
-            self.add_module(name, FeatureMapResampler(
-                prev_channels, out_channels, 2, norm
-            ))
+            self.add_module(name, FeatureMapResampler(prev_channels, out_channels, 2, norm))
             prev_channels = out_channels
 
             self._out_feature_channels[name] = out_channels
@@ -106,9 +107,7 @@ class SingleBiFPN(Backbone):
     It creates pyramid features built on top of some input feature maps.
     """
 
-    def __init__(
-        self, in_channels_list, out_channels, norm=""
-    ):
+    def __init__(self, in_channels_list, out_channels, norm: str="") -> None:
         """
         Args:
             bottom_up (Backbone): module representing the bottom up subnetwork.
@@ -122,27 +121,27 @@ class SingleBiFPN(Backbone):
             out_channels (int): number of channels in the output feature maps.
             norm (str): the normalization to use.
         """
-        super(SingleBiFPN, self).__init__()
+        super().__init__()
 
         self.out_channels = out_channels
         # build 5-levels bifpn
         if len(in_channels_list) == 5:
             self.nodes = [
-                {'feat_level': 3, 'inputs_offsets': [3, 4]},
-                {'feat_level': 2, 'inputs_offsets': [2, 5]},
-                {'feat_level': 1, 'inputs_offsets': [1, 6]},
-                {'feat_level': 0, 'inputs_offsets': [0, 7]},
-                {'feat_level': 1, 'inputs_offsets': [1, 7, 8]},
-                {'feat_level': 2, 'inputs_offsets': [2, 6, 9]},
-                {'feat_level': 3, 'inputs_offsets': [3, 5, 10]},
-                {'feat_level': 4, 'inputs_offsets': [4, 11]},
+                {"feat_level": 3, "inputs_offsets": [3, 4]},
+                {"feat_level": 2, "inputs_offsets": [2, 5]},
+                {"feat_level": 1, "inputs_offsets": [1, 6]},
+                {"feat_level": 0, "inputs_offsets": [0, 7]},
+                {"feat_level": 1, "inputs_offsets": [1, 7, 8]},
+                {"feat_level": 2, "inputs_offsets": [2, 6, 9]},
+                {"feat_level": 3, "inputs_offsets": [3, 5, 10]},
+                {"feat_level": 4, "inputs_offsets": [4, 11]},
             ]
         elif len(in_channels_list) == 3:
             self.nodes = [
-                {'feat_level': 1, 'inputs_offsets': [1, 2]},
-                {'feat_level': 0, 'inputs_offsets': [0, 3]},
-                {'feat_level': 1, 'inputs_offsets': [1, 3, 4]},
-                {'feat_level': 2, 'inputs_offsets': [2, 5]},
+                {"feat_level": 1, "inputs_offsets": [1, 2]},
+                {"feat_level": 0, "inputs_offsets": [0, 3]},
+                {"feat_level": 1, "inputs_offsets": [1, 3, 4]},
+                {"feat_level": 2, "inputs_offsets": [2, 5]},
             ]
         else:
             raise NotImplementedError
@@ -160,34 +159,34 @@ class SingleBiFPN(Backbone):
                 in_channels = node_info[input_offset]
                 if in_channels != out_channels:
                     lateral_conv = Conv2d(
-                        in_channels,
-                        out_channels,
-                        kernel_size=1,
-                        norm=get_norm(norm, out_channels)
+                        in_channels, out_channels, kernel_size=1, norm=get_norm(norm, out_channels)
                     )
-                    self.add_module(
-                        "lateral_{}_f{}".format(input_offset, feat_level), lateral_conv
-                    )
+                    self.add_module(f"lateral_{input_offset}_f{feat_level}", lateral_conv)
             node_info.append(out_channels)
             num_output_connections.append(0)
 
             # generate attention weights
-            name = "weights_f{}_{}".format(feat_level, inputs_offsets_str)
-            self.__setattr__(name, nn.Parameter(
-                    torch.ones(len(inputs_offsets), dtype=torch.float32),
-                    requires_grad=True
-                ))
+            name = f"weights_f{feat_level}_{inputs_offsets_str}"
+            self.__setattr__(
+                name,
+                nn.Parameter(
+                    torch.ones(len(inputs_offsets), dtype=torch.float32), requires_grad=True
+                ),
+            )
 
             # generate convolutions after combination
-            name = "outputs_f{}_{}".format(feat_level, inputs_offsets_str)
-            self.add_module(name, Conv2d(
-                out_channels,
-                out_channels,
-                kernel_size=3,
-                padding=1,
-                norm=get_norm(norm, out_channels),
-                bias=(norm == "")
-            ))
+            name = f"outputs_f{feat_level}_{inputs_offsets_str}"
+            self.add_module(
+                name,
+                Conv2d(
+                    out_channels,
+                    out_channels,
+                    kernel_size=3,
+                    padding=1,
+                    norm=get_norm(norm, out_channels),
+                    bias=(norm == ""),
+                ),
+            )
 
     def forward(self, feats):
         """
@@ -216,7 +215,7 @@ class SingleBiFPN(Backbone):
 
                 # reduction
                 if input_node.size(1) != self.out_channels:
-                    name = "lateral_{}_f{}".format(input_offset, feat_level)
+                    name = f"lateral_{input_offset}_f{feat_level}"
                     input_node = self.__getattr__(name)(input_node)
 
                 # maybe downsample
@@ -226,22 +225,22 @@ class SingleBiFPN(Backbone):
                     width_stride_size = int((w - 1) // target_w + 1)
                     assert height_stride_size == width_stride_size == 2
                     input_node = F.max_pool2d(
-                        input_node, kernel_size=(height_stride_size + 1, width_stride_size + 1),
-                        stride=(height_stride_size, width_stride_size), padding=1
+                        input_node,
+                        kernel_size=(height_stride_size + 1, width_stride_size + 1),
+                        stride=(height_stride_size, width_stride_size),
+                        padding=1,
                     )
                 elif h <= target_h and w <= target_w:
                     if h < target_h or w < target_w:
                         input_node = F.interpolate(
-                            input_node,
-                            size=(target_h, target_w),
-                            mode="nearest"
+                            input_node, size=(target_h, target_w), mode="nearest"
                         )
                 else:
                     raise NotImplementedError()
                 input_nodes.append(input_node)
 
             # attention
-            name = "weights_f{}_{}".format(feat_level, inputs_offsets_str)
+            name = f"weights_f{feat_level}_{inputs_offsets_str}"
             weights = F.relu(self.__getattr__(name))
             norm_weights = weights / (weights.sum() + 0.0001)
 
@@ -249,7 +248,7 @@ class SingleBiFPN(Backbone):
             new_node = (norm_weights * new_node).sum(dim=-1)
             new_node = swish(new_node)
 
-            name = "outputs_f{}_{}".format(feat_level, inputs_offsets_str)
+            name = f"outputs_f{feat_level}_{inputs_offsets_str}"
             feats.append(self.__getattr__(name)(new_node))
 
             num_output_connections.append(0)
@@ -257,7 +256,7 @@ class SingleBiFPN(Backbone):
         output_feats = []
         for idx in range(num_levels):
             for i, fnode in enumerate(reversed(self.nodes)):
-                if fnode['feat_level'] == idx:
+                if fnode["feat_level"] == idx:
                     output_feats.append(feats[-1 - i])
                     break
             else:
@@ -271,9 +270,7 @@ class BiFPN(Backbone):
     It creates pyramid features built on top of some input feature maps.
     """
 
-    def __init__(
-        self, bottom_up, in_features, out_channels, num_top_levels, num_repeats, norm=""
-    ):
+    def __init__(self, bottom_up, in_features, out_channels, num_top_levels: int, num_repeats: int, norm: str="") -> None:
         """
         Args:
             bottom_up (Backbone): module representing the bottom up subnetwork.
@@ -289,18 +286,15 @@ class BiFPN(Backbone):
             num_repeats (int): the number of repeats of BiFPN.
             norm (str): the normalization to use.
         """
-        super(BiFPN, self).__init__()
+        super().__init__()
         assert isinstance(bottom_up, Backbone)
 
         # add extra feature levels (i.e., 6 and 7)
-        self.bottom_up = BackboneWithTopLevels(
-            bottom_up, out_channels,
-            num_top_levels, norm
-        )
+        self.bottom_up = BackboneWithTopLevels(bottom_up, out_channels, num_top_levels, norm)
         bottom_up_output_shapes = self.bottom_up.output_shape()
 
         in_features = sorted(in_features, key=lambda x: split_name(x)[1])
-        self._size_divisibility = 128 #bottom_up_output_shapes[in_features[-1]].stride
+        self._size_divisibility = 128  # bottom_up_output_shapes[in_features[-1]].stride
         self.out_channels = out_channels
         self.min_level = split_name(in_features[0])[1]
 
@@ -311,10 +305,10 @@ class BiFPN(Backbone):
         self.in_features = in_features
 
         # generate output features
-        self._out_features = ["p{}".format(split_name(name)[1]) for name in in_features]
+        self._out_features = [f"p{split_name(name)[1]}" for name in in_features]
         self._out_feature_strides = {
             out_name: bottom_up_output_shapes[in_name].stride
-            for out_name, in_name in zip(self._out_features, in_features)
+            for out_name, in_name in zip(self._out_features, in_features, strict=False)
         }
         self._out_feature_channels = {k: out_channels for k in self._out_features}
 
@@ -322,16 +316,10 @@ class BiFPN(Backbone):
         self.repeated_bifpn = nn.ModuleList()
         for i in range(num_repeats):
             if i == 0:
-                in_channels_list = [
-                    bottom_up_output_shapes[name].channels for name in in_features
-                ]
+                in_channels_list = [bottom_up_output_shapes[name].channels for name in in_features]
             else:
-                in_channels_list = [
-                    self._out_feature_channels[name] for name in self._out_features
-                ]
-            self.repeated_bifpn.append(SingleBiFPN(
-                in_channels_list, out_channels, norm
-            ))
+                in_channels_list = [self._out_feature_channels[name] for name in self._out_features]
+            self.repeated_bifpn.append(SingleBiFPN(in_channels_list, out_channels, norm))
 
     @property
     def size_divisibility(self):
@@ -353,19 +341,17 @@ class BiFPN(Backbone):
         feats = [bottom_up_features[f] for f in self.in_features]
 
         for bifpn in self.repeated_bifpn:
-             feats = bifpn(feats)
+            feats = bifpn(feats)
 
-        return dict(zip(self._out_features, feats))
+        return dict(zip(self._out_features, feats, strict=False))
 
 
-def _assert_strides_are_log2_contiguous(strides):
+def _assert_strides_are_log2_contiguous(strides: Sequence[int]) -> None:
     """
     Assert that each stride is 2x times its preceding stride, i.e. "contiguous in log2".
     """
     for i, stride in enumerate(strides[1:], 1):
-        assert stride == 2 * strides[i - 1], "Strides {} {} are not log2 contiguous".format(
-            stride, strides[i - 1]
-        )
+        assert stride == 2 * strides[i - 1], f"Strides {stride} {strides[i - 1]} are not log2 contiguous"
 
 
 @BACKBONE_REGISTRY.register()
@@ -388,10 +374,9 @@ def build_fcos_resnet_bifpn_backbone(cfg, input_shape: ShapeSpec):
         out_channels=out_channels,
         num_top_levels=top_levels,
         num_repeats=num_repeats,
-        norm=cfg.MODEL.BIFPN.NORM
+        norm=cfg.MODEL.BIFPN.NORM,
     )
     return backbone
-
 
 
 @BACKBONE_REGISTRY.register()
@@ -414,7 +399,7 @@ def build_p35_fcos_resnet_bifpn_backbone(cfg, input_shape: ShapeSpec):
         out_channels=out_channels,
         num_top_levels=top_levels,
         num_repeats=num_repeats,
-        norm=cfg.MODEL.BIFPN.NORM
+        norm=cfg.MODEL.BIFPN.NORM,
     )
     return backbone
 
@@ -439,9 +424,10 @@ def build_p35_fcos_dla_bifpn_backbone(cfg, input_shape: ShapeSpec):
         out_channels=out_channels,
         num_top_levels=top_levels,
         num_repeats=num_repeats,
-        norm=cfg.MODEL.BIFPN.NORM
+        norm=cfg.MODEL.BIFPN.NORM,
     )
     return backbone
+
 
 @BACKBONE_REGISTRY.register()
 def build_p37_fcos_dla_bifpn_backbone(cfg, input_shape: ShapeSpec):
@@ -464,6 +450,6 @@ def build_p37_fcos_dla_bifpn_backbone(cfg, input_shape: ShapeSpec):
         out_channels=out_channels,
         num_top_levels=top_levels,
         num_repeats=num_repeats,
-        norm=cfg.MODEL.BIFPN.NORM
+        norm=cfg.MODEL.BIFPN.NORM,
     )
     return backbone

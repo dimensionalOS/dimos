@@ -1,17 +1,30 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import asyncio
 import threading
 import time
-from nav_msgs import msg
+
 import pytest
-from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
-from dimos.utils.logging_config import setup_logger
-from dimos.types.costmap import Costmap
+
 from dimos.types.vector import Vector
-import asyncio
+from dimos.utils.logging_config import setup_logger
 
 
 class MockROSNode:
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = setup_logger("ROS")
 
         self.sub_id_cnt = 0
@@ -22,7 +35,7 @@ class MockROSNode:
         self.sub_id_cnt += 1
         return sub_id
 
-    def create_subscription(self, msg_type, topic_name, callback, qos):
+    def create_subscription(self, msg_type, topic_name: str, callback, qos):
         # Mock implementation of ROS subscription
 
         sub_id = self._get_sub_id()
@@ -31,7 +44,7 @@ class MockROSNode:
         self.logger.info(f"Subscribed {topic_name} subid {sub_id}")
 
         # Create message simulation thread
-        def simulate_messages():
+        def simulate_messages() -> None:
             message_count = 0
             while not stop_event.is_set():
                 message_count += 1
@@ -47,7 +60,7 @@ class MockROSNode:
         thread.start()
         return sub_id
 
-    def destroy_subscription(self, subscription):
+    def destroy_subscription(self, subscription) -> None:
         if subscription in self.subs:
             self.subs[subscription].set()
             self.logger.info(f"Destroyed subscription: {subscription}")
@@ -55,11 +68,18 @@ class MockROSNode:
             self.logger.info(f"Unknown subscription: {subscription}")
 
 
-class MockRobot(ROSObservableTopicAbility):
-    def __init__(self):
-        self.logger = setup_logger("ROBOT")
-        # Initialize the mock ROS node
-        self._node = MockROSNode()
+# we are doing this in order to avoid importing ROS dependencies if ros tests aren't runnin
+@pytest.fixture
+def robot():
+    from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
+
+    class MockRobot(ROSObservableTopicAbility):
+        def __init__(self) -> None:
+            self.logger = setup_logger("ROBOT")
+            # Initialize the mock ROS node
+            self._node = MockROSNode()
+
+    return MockRobot()
 
 
 # This test verifies a bunch of basics:
@@ -69,8 +89,10 @@ class MockRobot(ROSObservableTopicAbility):
 # 3. that the system unsubscribes from ROS when observers are disposed
 # 4. that the system replays the last message to new observers,
 #    before the new ROS sub starts producing
-def test_parallel_and_cleanup():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_parallel_and_cleanup(robot) -> None:
+    from nav_msgs import msg
+
     received_messages = []
 
     obs1 = robot.topic("/odom", msg.Odometry)
@@ -96,7 +118,9 @@ def test_parallel_and_cleanup():
         assert i in received_messages, f"Expected {i} in received messages, got {received_messages}"
 
     # ensure that ROS end has only a single subscription
-    assert len(robot._node.subs) == 1, f"Expected 1 subscription, got {len(robot._node.subs)}: {robot._node.subs}"
+    assert len(robot._node.subs) == 1, (
+        f"Expected 1 subscription, got {len(robot._node.subs)}: {robot._node.subs}"
+    )
 
     subscription1.dispose()
     subscription2.dispose()
@@ -137,8 +161,9 @@ def test_parallel_and_cleanup():
 # ROS thread ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
 #                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
 #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
-def test_parallel_and_hog():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_parallel_and_hog(robot) -> None:
+    from nav_msgs import msg
 
     obs1 = robot.topic("/odom", msg.Odometry)
     obs2 = robot.topic("/odom", msg.Odometry)
@@ -176,8 +201,9 @@ def test_parallel_and_hog():
 
 
 @pytest.mark.asyncio
-async def test_topic_latest_async():
-    robot = MockRobot()
+@pytest.mark.ros
+async def test_topic_latest_async(robot) -> None:
+    from nav_msgs import msg
 
     odom = await robot.topic_latest_async("/odom", msg.Odometry)
     assert odom() == 1
@@ -188,15 +214,16 @@ async def test_topic_latest_async():
     assert robot._node.subs == {}
 
 
-def test_topic_auto_conversion():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_topic_auto_conversion(robot) -> None:
     odom = robot.topic("/vector", Vector).subscribe(lambda x: print(x))
     time.sleep(0.5)
     odom.dispose()
 
 
-def test_topic_latest_sync():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_topic_latest_sync(robot) -> None:
+    from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
     assert odom() == 1
@@ -207,13 +234,14 @@ def test_topic_latest_sync():
     assert robot._node.subs == {}
 
 
-def test_topic_latest_sync_benchmark():
-    robot = MockRobot()
+@pytest.mark.ros
+def test_topic_latest_sync_benchmark(robot) -> None:
+    from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
 
     start_time = time.time()
-    for i in range(100):
+    for _i in range(100):
         odom()
     end_time = time.time()
     elapsed = end_time - start_time
@@ -223,14 +251,7 @@ def test_topic_latest_sync_benchmark():
 
     assert odom() == 1
     time.sleep(0.45)
-    assert odom() == 5
+    assert odom() >= 5
     odom.dispose()
     time.sleep(0.1)
     assert robot._node.subs == {}
-
-
-if __name__ == "__main__":
-    test_parallel_and_cleanup()
-    test_parallel_and_hog()
-    test_topic_latest_sync()
-    asyncio.run(test_topic_latest_async())

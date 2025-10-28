@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
-from typing import Optional, List, Dict, Any
-import numpy as np
-import sounddevice as sd
-from reactivex import Observable
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from dimos.utils.logging_config import setup_logger
+from typing import Any
+
+import numpy as np
+from reactivex import Observable
+import sounddevice as sd
+
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
 )
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.audio.node_output")
 
@@ -23,12 +38,12 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
     def __init__(
         self,
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
         dtype: np.dtype = np.float32,
-    ):
+    ) -> None:
         """
         Initialize SounddeviceAudioOutput.
 
@@ -104,7 +119,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
         return self.audio_observable
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop audio output and clean up resources."""
         logger.info("Stopping audio output")
         self._running = False
@@ -118,7 +133,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.close()
             self._stream = None
 
-    def _play_audio_event(self, audio_event):
+    def _play_audio_event(self, audio_event) -> None:
         """Play audio from an AudioEvent."""
         if not self._running or not self._stream:
             return
@@ -136,11 +151,11 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         except Exception as e:
             logger.error(f"Error playing audio: {e}")
 
-    def _handle_error(self, error):
+    def _handle_error(self, error) -> None:
         """Handle errors from the observable."""
         logger.error(f"Error in audio observable: {error}")
 
-    def _handle_completion(self):
+    def _handle_completion(self) -> None:
         """Handle completion of the observable."""
         logger.info("Audio observable completed")
         self._running = False
@@ -149,7 +164,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.close()
             self._stream = None
 
-    def get_available_devices(self) -> List[Dict[str, Any]]:
+    def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio output devices."""
         return sd.query_devices()
 

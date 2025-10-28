@@ -1,8 +1,25 @@
-from __future__ import annotations
-from datetime import datetime, timedelta, timezone
-from typing import Iterable, TypeVar, Generic, Tuple, Union, TypedDict
-from abc import ABC, abstractmethod
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Generic, TypedDict, TypeVar, Union
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 PAYLOAD = TypeVar("PAYLOAD")
 
@@ -15,7 +32,7 @@ class RosStamp(TypedDict):
 EpochLike = Union[int, float, datetime, RosStamp]
 
 
-def from_ros_stamp(stamp: dict[str, int], tz: timezone = None) -> datetime:
+def from_ros_stamp(stamp: dict[str, int], tz: timezone | None = None) -> datetime:
     """Convert ROS-style timestamp {'sec': int, 'nanosec': int} to datetime."""
     return datetime.fromtimestamp(stamp["sec"] + stamp["nanosec"] / 1e9, tz=tz)
 
@@ -25,12 +42,12 @@ def to_human_readable(ts: EpochLike) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def to_datetime(ts: EpochLike, tz: timezone = None) -> datetime:
+def to_datetime(ts: EpochLike, tz: timezone | None = None) -> datetime:
     if isinstance(ts, datetime):
         # if ts.tzinfo is None:
         #    ts = ts.astimezone(tz)
         return ts
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         return datetime.fromtimestamp(ts, tz=tz)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return datetime.fromtimestamp(ts["sec"] + ts["nanosec"] / 1e9, tz=tz)
@@ -40,14 +57,16 @@ def to_datetime(ts: EpochLike, tz: timezone = None) -> datetime:
 class Timestamped(ABC):
     """Abstract class for an event with a timestamp."""
 
-    def __init__(self, timestamp: EpochLike):
-        self.ts = to_datetime(timestamp)
+    ts: datetime
+
+    def __init__(self, ts: EpochLike) -> None:
+        self.ts = to_datetime(ts)
 
 
 class TEvent(Timestamped, Generic[PAYLOAD]):
     """Concrete class for an event with a timestamp and data."""
 
-    def __init__(self, timestamp: EpochLike, data: PAYLOAD):
+    def __init__(self, timestamp: EpochLike, data: PAYLOAD) -> None:
         super().__init__(timestamp)
         self.data = data
 
@@ -84,7 +103,7 @@ class Timeseries(ABC, Generic[EVENT]):
         """Calculate the frequency of events in Hz."""
         return len(list(self)) / (self.duration().total_seconds() or 1)
 
-    def time_range(self) -> Tuple[datetime, datetime]:
+    def time_range(self) -> tuple[datetime, datetime]:
         """Return (earliest_ts, latest_ts).  Empty input ⇒ ValueError."""
         return self.start_time, self.end_time
 
@@ -103,7 +122,7 @@ class Timeseries(ABC, Generic[EVENT]):
         min_dist = float("inf")
 
         for event in self:
-            dist = abs(event.ts.timestamp() - target_ts)
+            dist = abs(event.ts - target_ts)
             if dist > min_dist:
                 break
 

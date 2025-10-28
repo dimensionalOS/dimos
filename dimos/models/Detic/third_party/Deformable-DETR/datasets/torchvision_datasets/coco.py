@@ -9,12 +9,14 @@
 """
 Copy-Paste from torchvision, but add utility of caching images on memory
 """
-from torchvision.datasets.vision import VisionDataset
-from PIL import Image
+
+from io import BytesIO
 import os
 import os.path
+
+from PIL import Image
+from torchvision.datasets.vision import VisionDataset
 import tqdm
-from io import BytesIO
 
 
 class CocoDetection(VisionDataset):
@@ -30,10 +32,20 @@ class CocoDetection(VisionDataset):
             and returns a transformed version.
     """
 
-    def __init__(self, root, annFile, transform=None, target_transform=None, transforms=None,
-                 cache_mode=False, local_rank=0, local_size=1):
-        super(CocoDetection, self).__init__(root, transforms, transform, target_transform)
+    def __init__(
+        self,
+        root,
+        annFile,
+        transform=None,
+        target_transform=None,
+        transforms=None,
+        cache_mode: bool=False,
+        local_rank: int=0,
+        local_size: int=1,
+    ) -> None:
+        super().__init__(root, transforms, transform, target_transform)
         from pycocotools.coco import COCO
+
         self.coco = COCO(annFile)
         self.ids = list(sorted(self.coco.imgs.keys()))
         self.cache_mode = cache_mode
@@ -43,22 +55,22 @@ class CocoDetection(VisionDataset):
             self.cache = {}
             self.cache_images()
 
-    def cache_images(self):
+    def cache_images(self) -> None:
         self.cache = {}
-        for index, img_id in zip(tqdm.trange(len(self.ids)), self.ids):
+        for index, img_id in zip(tqdm.trange(len(self.ids)), self.ids, strict=False):
             if index % self.local_size != self.local_rank:
                 continue
-            path = self.coco.loadImgs(img_id)[0]['file_name']
-            with open(os.path.join(self.root, path), 'rb') as f:
+            path = self.coco.loadImgs(img_id)[0]["file_name"]
+            with open(os.path.join(self.root, path), "rb") as f:
                 self.cache[path] = f.read()
 
     def get_image(self, path):
         if self.cache_mode:
             if path not in self.cache.keys():
-                with open(os.path.join(self.root, path), 'rb') as f:
+                with open(os.path.join(self.root, path), "rb") as f:
                     self.cache[path] = f.read()
-            return Image.open(BytesIO(self.cache[path])).convert('RGB')
-        return Image.open(os.path.join(self.root, path)).convert('RGB')
+            return Image.open(BytesIO(self.cache[path])).convert("RGB")
+        return Image.open(os.path.join(self.root, path)).convert("RGB")
 
     def __getitem__(self, index):
         """
@@ -72,7 +84,7 @@ class CocoDetection(VisionDataset):
         ann_ids = coco.getAnnIds(imgIds=img_id)
         target = coco.loadAnns(ann_ids)
 
-        path = coco.loadImgs(img_id)[0]['file_name']
+        path = coco.loadImgs(img_id)[0]["file_name"]
 
         img = self.get_image(path)
         if self.transforms is not None:
@@ -80,5 +92,5 @@ class CocoDetection(VisionDataset):
 
         return img, target
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.ids)

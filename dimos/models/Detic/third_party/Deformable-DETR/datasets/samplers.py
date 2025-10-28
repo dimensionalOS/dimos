@@ -6,11 +6,13 @@
 # Modified from codes in torch.utils.data.distributed
 # ------------------------------------------------------------------------
 
-import os
 import math
+import os
+
 import torch
 import torch.distributed as dist
 from torch.utils.data.sampler import Sampler
+from typing import Iterator, Optional
 
 
 class DistributedSampler(Sampler):
@@ -28,7 +30,9 @@ class DistributedSampler(Sampler):
         rank (optional): Rank of the current process within num_replicas.
     """
 
-    def __init__(self, dataset, num_replicas=None, rank=None, local_rank=None, local_size=None, shuffle=True):
+    def __init__(
+        self, dataset, num_replicas: Optional[int]=None, rank=None, local_rank=None, local_size: Optional[int]=None, shuffle: bool=True
+    ) -> None:
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -41,11 +45,11 @@ class DistributedSampler(Sampler):
         self.num_replicas = num_replicas
         self.rank = rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = math.ceil(len(self.dataset) * 1.0 / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
         self.shuffle = shuffle
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         if self.shuffle:
             # deterministically shuffle based on epoch
             g = torch.Generator()
@@ -65,10 +69,10 @@ class DistributedSampler(Sampler):
 
         return iter(indices)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
-    def set_epoch(self, epoch):
+    def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch
 
 
@@ -87,7 +91,9 @@ class NodeDistributedSampler(Sampler):
         rank (optional): Rank of the current process within num_replicas.
     """
 
-    def __init__(self, dataset, num_replicas=None, rank=None, local_rank=None, local_size=None, shuffle=True):
+    def __init__(
+        self, dataset, num_replicas: Optional[int]=None, rank=None, local_rank=None, local_size: Optional[int]=None, shuffle: bool=True
+    ) -> None:
         if num_replicas is None:
             if not dist.is_available():
                 raise RuntimeError("Requires distributed package to be available")
@@ -97,9 +103,9 @@ class NodeDistributedSampler(Sampler):
                 raise RuntimeError("Requires distributed package to be available")
             rank = dist.get_rank()
         if local_rank is None:
-            local_rank = int(os.environ.get('LOCAL_RANK', 0))
+            local_rank = int(os.environ.get("LOCAL_RANK", 0))
         if local_size is None:
-            local_size = int(os.environ.get('LOCAL_SIZE', 1))
+            local_size = int(os.environ.get("LOCAL_SIZE", 1))
         self.dataset = dataset
         self.shuffle = shuffle
         self.num_replicas = num_replicas
@@ -107,12 +113,12 @@ class NodeDistributedSampler(Sampler):
         self.rank = rank
         self.local_rank = local_rank
         self.epoch = 0
-        self.num_samples = int(math.ceil(len(self.dataset) * 1.0 / self.num_replicas))
+        self.num_samples = math.ceil(len(self.dataset) * 1.0 / self.num_replicas)
         self.total_size = self.num_samples * self.num_replicas
 
         self.total_size_parts = self.num_samples * self.num_replicas // self.num_parts
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         if self.shuffle:
             # deterministically shuffle based on epoch
             g = torch.Generator()
@@ -123,17 +129,20 @@ class NodeDistributedSampler(Sampler):
         indices = [i for i in indices if i % self.num_parts == self.local_rank]
 
         # add extra samples to make it evenly divisible
-        indices += indices[:(self.total_size_parts - len(indices))]
+        indices += indices[: (self.total_size_parts - len(indices))]
         assert len(indices) == self.total_size_parts
 
         # subsample
-        indices = indices[self.rank // self.num_parts:self.total_size_parts:self.num_replicas // self.num_parts]
+        indices = indices[
+            self.rank // self.num_parts : self.total_size_parts : self.num_replicas
+            // self.num_parts
+        ]
         assert len(indices) == self.num_samples
 
         return iter(indices)
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.num_samples
 
-    def set_epoch(self, epoch):
+    def set_epoch(self, epoch: int) -> None:
         self.epoch = epoch

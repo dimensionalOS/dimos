@@ -1,4 +1,18 @@
-from typing import TypedDict, List, Literal
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from typing import Literal, TypedDict
 
 raw_odom_msg_sample = {
     "type": "msg",
@@ -47,11 +61,11 @@ class MotorState(TypedDict):
     q: float
     temperature: int
     lost: int
-    reserve: List[int]
+    reserve: list[int]
 
 
 class ImuState(TypedDict):
-    rpy: List[float]
+    rpy: list[float]
 
 
 class BmsState(TypedDict):
@@ -60,15 +74,15 @@ class BmsState(TypedDict):
     soc: int
     current: int
     cycle: int
-    bq_ntc: List[int]
-    mcu_ntc: List[int]
+    bq_ntc: list[int]
+    mcu_ntc: list[int]
 
 
 class LowStateData(TypedDict):
     imu_state: ImuState
-    motor_state: List[MotorState]
+    motor_state: list[MotorState]
     bms_state: BmsState
-    foot_force: List[int]
+    foot_force: list[int]
     temperature_ntc1: int
     power_v: float
 

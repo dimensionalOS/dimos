@@ -130,6 +130,7 @@
         .query-form {
             display: flex;
             gap: 10px;
+            align-items: center;
         }
         
         .query-input {
@@ -153,6 +154,81 @@
         
         .query-button:hover {
             background-color: #218838;
+        }
+        
+        /* Voice button styles */
+        .voice-button {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background-color: #dc3545;
+            color: white;
+            border: none;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            transition: all 0.3s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            position: relative;
+        }
+        
+        .voice-button:hover {
+            transform: scale(1.1);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        .voice-button.recording {
+            background-color: #ff0000;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .voice-button.recording::after {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: -10px;
+            right: -10px;
+            bottom: -10px;
+            border: 3px solid rgba(255, 0, 0, 0.5);
+            border-radius: 50%;
+            animation: ripple 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        @keyframes ripple {
+            0% {
+                transform: scale(1);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(1.2);
+                opacity: 0;
+            }
+        }
+        
+        .voice-status {
+            position: absolute;
+            top: -25px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0,0,0,0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            display: none;
+        }
+        
+        .voice-button.recording .voice-status {
+            display: block;
         }
         
         .query-response {
@@ -218,6 +294,12 @@
         <form id="queryForm" class="query-form">
             <input type="text" id="queryInput" class="query-input" placeholder="Type your query here..." required>
             <button type="submit" class="query-button">Send</button>
+            {% if has_voice %}
+            <button type="button" id="voiceButton" class="voice-button">
+                <span class="voice-status">Recording...</span>
+                🎤
+            </button>
+            {% endif %}
         </form>
         <div id="queryResponse" class="query-response"></div>
     </div>
@@ -276,6 +358,72 @@
         function reloadPage() {
             window.location.reload(true);
         }
+
+        // Voice recording functionality
+        {% if has_voice %}
+        let mediaRecorder;
+        let chunks = [];
+        const voiceBtn = document.getElementById('voiceButton');
+        const queryResponse = document.getElementById('queryResponse');
+
+        voiceBtn.addEventListener('click', async () => {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                // Stop recording
+                mediaRecorder.stop();
+                voiceBtn.classList.remove('recording');
+            } else {
+                // Start recording
+                try {
+                    if (!mediaRecorder) {
+                        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                        mediaRecorder = new MediaRecorder(stream);
+                        
+                        mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                        
+                        mediaRecorder.onstop = async () => {
+                            const blob = new Blob(chunks, { type: 'audio/webm' });
+                            chunks = [];
+                            
+                            // Show uploading status
+                            queryResponse.textContent = 'Processing voice command...';
+                            queryResponse.className = 'query-response';
+                            queryResponse.style.display = 'block';
+                            
+                            const formData = new FormData();
+                            formData.append('file', blob, 'recording.webm');
+                            
+                            try {
+                                const res = await fetch('/upload_audio', { 
+                                    method: 'POST', 
+                                    body: formData 
+                                });
+                                const json = await res.json();
+                                
+                                if (json.success) {
+                                    queryResponse.textContent = 'Voice command received!';
+                                    queryResponse.className = 'query-response success';
+                                    setTimeout(() => {
+                                        queryResponse.style.display = 'none';
+                                    }, 3000);
+                                } else {
+                                    queryResponse.textContent = 'Error: ' + json.message;
+                                    queryResponse.className = 'query-response error';
+                                }
+                            } catch (err) {
+                                queryResponse.textContent = 'Upload failed: ' + err.message;
+                                queryResponse.className = 'query-response error';
+                            }
+                        };
+                    }
+                    
+                    mediaRecorder.start();
+                    voiceBtn.classList.add('recording');
+                } catch (err) {
+                    alert('Microphone access denied. Please allow microphone access to use voice commands.');
+                }
+            }
+        });
+        {% endif %}
 
         // Handle query form submission
         document.getElementById('queryForm').addEventListener('submit', async function(e) {

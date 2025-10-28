@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Any
+from typing import Any
+
 import numpy as np
 
+
 class SegmentationType:
-    def __init__(self, masks: List[np.ndarray], metadata: Any = None):
+    def __init__(self, masks: list[np.ndarray], metadata: Any = None) -> None:
         """
         Initializes a standardized segmentation type.
 
@@ -25,7 +27,7 @@ class SegmentationType:
             metadata (Any, optional): Additional metadata related to the segmentations.
         """
         self.masks = masks
-        self.metadata = metadata 
+        self.metadata = metadata
 
     def combine_masks(self):
         """Combine all masks into a single mask."""
@@ -34,9 +36,10 @@ class SegmentationType:
             combined_mask = np.logical_or(combined_mask, mask)
         return combined_mask
 
-    def save_masks(self, directory: str):
+    def save_masks(self, directory: str) -> None:
         """Save each mask to a separate file."""
         import os
+
         os.makedirs(directory, exist_ok=True)
         for i, mask in enumerate(self.masks):
-            np.save(os.path.join(directory, f"mask_{i}.npy"), mask) 
+            np.save(os.path.join(directory, f"mask_{i}.npy"), mask)

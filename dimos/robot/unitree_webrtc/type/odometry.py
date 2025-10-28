@@ -1,9 +1,23 @@
-from typing import TypedDict, Literal
-from datetime import datetime
-from dataclasses import dataclass
-from dimos.types.vector import Vector
-from dimos.types.position import Position
-from dimos.robot.unitree_webrtc.type.timeseries import Timestamped, to_human_readable
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+import time
+from typing import Literal, TypedDict
+
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.robot.unitree_webrtc.type.timeseries import (
+    Timestamped,
+)
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -41,14 +55,14 @@ class Orientation(TypedDict):
     w: float
 
 
-class Pose(TypedDict):
+class PoseData(TypedDict):
     position: RawPosition
     orientation: Orientation
 
 
 class OdometryData(TypedDict):
     header: Header
-    pose: Pose
+    pose: PoseData
 
 
 class RawOdometryMessage(TypedDict):
@@ -57,18 +71,35 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-@dataclass
-class Odometry(Timestamped, Position):
-    ts: datetime
+class Odometry(PoseStamped, Timestamped):
+    name = "geometry_msgs.PoseStamped"
+
+    def __init__(self, frame_id: str = "base_link", *args, **kwargs) -> None:
+        super().__init__(frame_id=frame_id, *args, **kwargs)
 
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":
         pose = msg["data"]["pose"]
-        orientation = pose["orientation"]
-        position = pose["position"]
-        pos = Vector(position.get("x"), position.get("y"), position.get("z"))
-        rot = Vector(orientation.get("x"), orientation.get("y"), orientation.get("z"))
-        return cls(pos=pos, rot=rot, ts=msg["data"]["header"]["stamp"])
+
+        # Extract position
+        pos = Vector3(
+            pose["position"].get("x"),
+            pose["position"].get("y"),
+            pose["position"].get("z"),
+        )
+
+        rot = Quaternion(
+            pose["orientation"].get("x"),
+            pose["orientation"].get("y"),
+            pose["orientation"].get("z"),
+            pose["orientation"].get("w"),
+        )
+
+        # ts = to_timestamp(msg["data"]["header"]["stamp"])
+        # lidar / video timestamps are not available from the robot
+        # so we are deferring to local time for everything
+        ts = time.time()
+        return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
 
     def __repr__(self) -> str:
-        return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot})"
+        return f"Odom pos({self.position}), rot({self.orientation})"

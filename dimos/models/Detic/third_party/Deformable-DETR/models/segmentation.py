@@ -10,16 +10,17 @@
 """
 This file provides the definition of the convolutional heads used to predict masks, as well as the losses
 """
-import io
-from collections import defaultdict
 
+from collections import defaultdict
+import io
+
+from PIL import Image
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from PIL import Image
-
 import util.box_ops as box_ops
 from util.misc import NestedTensor, interpolate, nested_tensor_from_tensor_list
+from typing import Optional, Sequence
 
 try:
     from panopticapi.utils import id2rgb, rgb2id
@@ -28,7 +29,7 @@ except ImportError:
 
 
 class DETRsegm(nn.Module):
-    def __init__(self, detr, freeze_detr=False):
+    def __init__(self, detr, freeze_detr: bool=False) -> None:
         super().__init__()
         self.detr = detr
 
@@ -56,14 +57,19 @@ class DETRsegm(nn.Module):
         out = {"pred_logits": outputs_class[-1], "pred_boxes": outputs_coord[-1]}
         if self.detr.aux_loss:
             out["aux_outputs"] = [
-                {"pred_logits": a, "pred_boxes": b} for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+                {"pred_logits": a, "pred_boxes": b}
+                for a, b in zip(outputs_class[:-1], outputs_coord[:-1], strict=False)
             ]
 
         # FIXME h_boxes takes the last one computed, keep this in mind
         bbox_mask = self.bbox_attention(hs[-1], memory, mask=mask)
 
-        seg_masks = self.mask_head(src_proj, bbox_mask, [features[2].tensors, features[1].tensors, features[0].tensors])
-        outputs_seg_masks = seg_masks.view(bs, self.detr.num_queries, seg_masks.shape[-2], seg_masks.shape[-1])
+        seg_masks = self.mask_head(
+            src_proj, bbox_mask, [features[2].tensors, features[1].tensors, features[0].tensors]
+        )
+        outputs_seg_masks = seg_masks.view(
+            bs, self.detr.num_queries, seg_masks.shape[-2], seg_masks.shape[-1]
+        )
 
         out["pred_masks"] = outputs_seg_masks
         return out
@@ -75,10 +81,17 @@ class MaskHeadSmallConv(nn.Module):
     Upsampling is done using a FPN approach
     """
 
-    def __init__(self, dim, fpn_dims, context_dim):
+    def __init__(self, dim: int, fpn_dims, context_dim) -> None:
         super().__init__()
 
-        inter_dims = [dim, context_dim // 2, context_dim // 4, context_dim // 8, context_dim // 16, context_dim // 64]
+        inter_dims = [
+            dim,
+            context_dim // 2,
+            context_dim // 4,
+            context_dim // 8,
+            context_dim // 16,
+            context_dim // 64,
+        ]
         self.lay1 = torch.nn.Conv2d(dim, dim, 3, padding=1)
         self.gn1 = torch.nn.GroupNorm(8, dim)
         self.lay2 = torch.nn.Conv2d(dim, inter_dims[1], 3, padding=1)
@@ -103,7 +116,7 @@ class MaskHeadSmallConv(nn.Module):
                 nn.init.constant_(m.bias, 0)
 
     def forward(self, x, bbox_mask, fpns):
-        def expand(tensor, length):
+        def expand(tensor, length: int):
             return tensor.unsqueeze(1).repeat(1, int(length), 1, 1, 1).flatten(0, 1)
 
         x = torch.cat([expand(x, bbox_mask.shape[1]), bbox_mask.flatten(0, 1)], 1)
@@ -146,7 +159,7 @@ class MaskHeadSmallConv(nn.Module):
 class MHAttentionMap(nn.Module):
     """This is a 2D attention module, which only returns the attention softmax (no multiplication by value)"""
 
-    def __init__(self, query_dim, hidden_dim, num_heads, dropout=0, bias=True):
+    def __init__(self, query_dim, hidden_dim, num_heads: int, dropout: int=0, bias: bool=True) -> None:
         super().__init__()
         self.num_heads = num_heads
         self.hidden_dim = hidden_dim
@@ -165,7 +178,9 @@ class MHAttentionMap(nn.Module):
         q = self.q_linear(q)
         k = F.conv2d(k, self.k_linear.weight.unsqueeze(-1).unsqueeze(-1), self.k_linear.bias)
         qh = q.view(q.shape[0], q.shape[1], self.num_heads, self.hidden_dim // self.num_heads)
-        kh = k.view(k.shape[0], self.num_heads, self.hidden_dim // self.num_heads, k.shape[-2], k.shape[-1])
+        kh = k.view(
+            k.shape[0], self.num_heads, self.hidden_dim // self.num_heads, k.shape[-2], k.shape[-1]
+        )
         weights = torch.einsum("bqnc,bnchw->bqnhw", qh * self.normalize_fact, kh)
 
         if mask is not None:
@@ -175,7 +190,7 @@ class MHAttentionMap(nn.Module):
         return weights
 
 
-def dice_loss(inputs, targets, num_boxes):
+def dice_loss(inputs, targets, num_boxes: int):
     """
     Compute the DICE loss, similar to generalized IOU for masks
     Args:
@@ -193,7 +208,7 @@ def dice_loss(inputs, targets, num_boxes):
     return loss.sum() / num_boxes
 
 
-def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: float = 2):
+def sigmoid_focal_loss(inputs, targets, num_boxes: int, alpha: float = 0.25, gamma: float = 2):
     """
     Loss used in RetinaNet for dense detection: https://arxiv.org/abs/1708.02002.
     Args:
@@ -222,19 +237,23 @@ def sigmoid_focal_loss(inputs, targets, num_boxes, alpha: float = 0.25, gamma: f
 
 
 class PostProcessSegm(nn.Module):
-    def __init__(self, threshold=0.5):
+    def __init__(self, threshold: float=0.5) -> None:
         super().__init__()
         self.threshold = threshold
 
     @torch.no_grad()
-    def forward(self, results, outputs, orig_target_sizes, max_target_sizes):
+    def forward(self, results, outputs, orig_target_sizes: Sequence[int], max_target_sizes: Sequence[int]):
         assert len(orig_target_sizes) == len(max_target_sizes)
         max_h, max_w = max_target_sizes.max(0)[0].tolist()
         outputs_masks = outputs["pred_masks"].squeeze(2)
-        outputs_masks = F.interpolate(outputs_masks, size=(max_h, max_w), mode="bilinear", align_corners=False)
+        outputs_masks = F.interpolate(
+            outputs_masks, size=(max_h, max_w), mode="bilinear", align_corners=False
+        )
         outputs_masks = (outputs_masks.sigmoid() > self.threshold).cpu()
 
-        for i, (cur_mask, t, tt) in enumerate(zip(outputs_masks, max_target_sizes, orig_target_sizes)):
+        for i, (cur_mask, t, tt) in enumerate(
+            zip(outputs_masks, max_target_sizes, orig_target_sizes, strict=False)
+        ):
             img_h, img_w = t[0], t[1]
             results[i]["masks"] = cur_mask[:, :img_h, :img_w].unsqueeze(1)
             results[i]["masks"] = F.interpolate(
@@ -246,9 +265,9 @@ class PostProcessSegm(nn.Module):
 
 class PostProcessPanoptic(nn.Module):
     """This class converts the output of the model to the final panoptic result, in the format expected by the
-    coco panoptic API """
+    coco panoptic API"""
 
-    def __init__(self, is_thing_map, threshold=0.85):
+    def __init__(self, is_thing_map: bool, threshold: float=0.85) -> None:
         """
         Parameters:
            is_thing_map: This is a whose keys are the class ids, and the values a boolean indicating whether
@@ -259,19 +278,23 @@ class PostProcessPanoptic(nn.Module):
         self.threshold = threshold
         self.is_thing_map = is_thing_map
 
-    def forward(self, outputs, processed_sizes, target_sizes=None):
-        """ This function computes the panoptic prediction from the model's predictions.
+    def forward(self, outputs, processed_sizes: Sequence[int], target_sizes: Optional[Sequence[int]]=None):
+        """This function computes the panoptic prediction from the model's predictions.
         Parameters:
             outputs: This is a dict coming directly from the model. See the model doc for the content.
             processed_sizes: This is a list of tuples (or torch tensors) of sizes of the images that were passed to the
                              model, ie the size after data augmentation but before batching.
             target_sizes: This is a list of tuples (or torch tensors) corresponding to the requested final size
                           of each prediction. If left to None, it will default to the processed_sizes
-            """
+        """
         if target_sizes is None:
             target_sizes = processed_sizes
         assert len(processed_sizes) == len(target_sizes)
-        out_logits, raw_masks, raw_boxes = outputs["pred_logits"], outputs["pred_masks"], outputs["pred_boxes"]
+        out_logits, raw_masks, raw_boxes = (
+            outputs["pred_logits"],
+            outputs["pred_masks"],
+            outputs["pred_boxes"],
+        )
         assert len(out_logits) == len(raw_masks) == len(target_sizes)
         preds = []
 
@@ -281,7 +304,7 @@ class PostProcessPanoptic(nn.Module):
             return tuple(tup.cpu().tolist())
 
         for cur_logits, cur_masks, cur_boxes, size, target_size in zip(
-            out_logits, raw_masks, raw_boxes, processed_sizes, target_sizes
+            out_logits, raw_masks, raw_boxes, processed_sizes, target_sizes, strict=False
         ):
             # we filter empty queries and detection below threshold
             scores, labels = cur_logits.softmax(-1).max(-1)
@@ -304,7 +327,7 @@ class PostProcessPanoptic(nn.Module):
                 if not self.is_thing_map[label.item()]:
                     stuff_equiv_classes[label.item()].append(k)
 
-            def get_ids_area(masks, scores, dedup=False):
+            def get_ids_area(masks, scores, dedup: bool=False):
                 # This helper function creates the final panoptic segmentation image
                 # It also returns the area of the masks that appears on the image
 
@@ -329,7 +352,9 @@ class PostProcessPanoptic(nn.Module):
                 seg_img = seg_img.resize(size=(final_w, final_h), resample=Image.NEAREST)
 
                 np_seg_img = (
-                    torch.ByteTensor(torch.ByteStorage.from_buffer(seg_img.tobytes())).view(final_h, final_w, 3).numpy()
+                    torch.ByteTensor(torch.ByteStorage.from_buffer(seg_img.tobytes()))
+                    .view(final_h, final_w, 3)
+                    .numpy()
                 )
                 m_id = torch.from_numpy(rgb2id(np_seg_img))
 
@@ -343,7 +368,9 @@ class PostProcessPanoptic(nn.Module):
                 # We know filter empty masks as long as we find some
                 while True:
                     filtered_small = torch.as_tensor(
-                        [area[i] <= 4 for i, c in enumerate(cur_classes)], dtype=torch.bool, device=keep.device
+                        [area[i] <= 4 for i, c in enumerate(cur_classes)],
+                        dtype=torch.bool,
+                        device=keep.device,
                     )
                     if filtered_small.any().item():
                         cur_scores = cur_scores[~filtered_small]
@@ -359,7 +386,9 @@ class PostProcessPanoptic(nn.Module):
             segments_info = []
             for i, a in enumerate(area):
                 cat = cur_classes[i].item()
-                segments_info.append({"id": i, "isthing": self.is_thing_map[cat], "category_id": cat, "area": a})
+                segments_info.append(
+                    {"id": i, "isthing": self.is_thing_map[cat], "category_id": cat, "area": a}
+                )
             del cur_classes
 
             with io.BytesIO() as out:
