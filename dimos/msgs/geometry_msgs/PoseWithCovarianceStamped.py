@@ -17,8 +17,8 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-import numpy as np
 from dimos_lcm.geometry_msgs import PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped
+import numpy as np
 from plum import dispatch
 
 try:
@@ -113,7 +113,7 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseWithCovarianceStamped) -> "PoseWithCovarianceStamped":
+    def from_ros_msg(cls, ros_msg: ROSPoseWithCovarianceStamped) -> PoseWithCovarianceStamped:
         """Create a PoseWithCovarianceStamped from a ROS geometry_msgs/PoseWithCovarianceStamped message.
 
         Args:

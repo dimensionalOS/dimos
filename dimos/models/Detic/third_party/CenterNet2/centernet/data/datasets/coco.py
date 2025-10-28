@@ -1,12 +1,12 @@
 import os
 
-from detectron2.data.datasets.register_coco import register_coco_instances
-from detectron2.data.datasets.coco import load_coco_json
-from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
 from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.data.datasets.builtin_meta import _get_builtin_metadata
+from detectron2.data.datasets.coco import load_coco_json
+from detectron2.data.datasets.register_coco import register_coco_instances
 
 
-def register_distill_coco_instances(name, metadata, json_file, image_root):
+def register_distill_coco_instances(name: str, metadata, json_file, image_root) -> None:
     """
     add extra_annotation_keys
     """

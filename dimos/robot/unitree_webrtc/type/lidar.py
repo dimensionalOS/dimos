@@ -13,8 +13,7 @@
 # limitations under the License.
 
 import time
-from copy import copy
-from typing import List, Optional, TypedDict
+from typing import TypedDict
 
 import numpy as np
 import open3d as o3d
@@ -32,11 +31,11 @@ class RawLidarData(TypedDict):
     """Data portion of the LIDAR message"""
 
     frame_id: str
-    origin: List[float]
+    origin: list[float]
     resolution: float
     src_size: int
     stamp: float
-    width: List[int]
+    width: list[int]
     data: RawLidarPoints
 
 
@@ -51,10 +50,10 @@ class RawLidarMsg(TypedDict):
 class LidarMessage(PointCloud2):
     resolution: float  # we lose resolution when encoding PointCloud2
     origin: Vector3
-    raw_msg: Optional[RawLidarMsg]
+    raw_msg: RawLidarMsg | None
     # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__(
             pointcloud=kwargs.get("pointcloud"),
             ts=kwargs.get("ts"),
@@ -87,7 +86,7 @@ class LidarMessage(PointCloud2):
         }
         return cls(**cls_data)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"
 
     def __iadd__(self, other: "LidarMessage") -> "LidarMessage":

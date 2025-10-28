@@ -16,13 +16,13 @@
 Visual memory storage for managing image data persistence and retrieval
 """
 
+import base64
 import os
 import pickle
-import base64
-import numpy as np
-import cv2
 
-from typing import Optional
+import cv2
+import numpy as np
+
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.memory.visual_memory")
@@ -37,7 +37,7 @@ class VisualMemory:
     load the image data from disk.
     """
 
-    def __init__(self, output_dir: str = None):
+    def __init__(self, output_dir: str | None = None) -> None:
         """
         Initialize the visual memory system.
 
@@ -74,7 +74,7 @@ class VisualMemory:
         self.images[image_id] = b64_encoded
         logger.debug(f"Added image {image_id} to visual memory")
 
-    def get(self, image_id: str) -> Optional[np.ndarray]:
+    def get(self, image_id: str) -> np.ndarray | None:
         """
         Retrieve an image from visual memory.
 
@@ -97,7 +97,7 @@ class VisualMemory:
             image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
             return image
         except Exception as e:
-            logger.warning(f"Failed to decode image for ID {image_id}: {str(e)}")
+            logger.warning(f"Failed to decode image for ID {image_id}: {e!s}")
             return None
 
     def contains(self, image_id: str) -> bool:
@@ -121,7 +121,7 @@ class VisualMemory:
         """
         return len(self.images)
 
-    def save(self, filename: Optional[str] = None) -> str:
+    def save(self, filename: str | None = None) -> str:
         """
         Save the visual memory to disk.
 
@@ -146,11 +146,11 @@ class VisualMemory:
             logger.info(f"Saved {len(self.images)} images to {output_path}")
             return output_path
         except Exception as e:
-            logger.error(f"Failed to save visual memory: {str(e)}")
+            logger.error(f"Failed to save visual memory: {e!s}")
             return ""
 
     @classmethod
-    def load(cls, path: str, output_dir: Optional[str] = None) -> "VisualMemory":
+    def load(cls, path: str, output_dir: str | None = None) -> "VisualMemory":
         """
         Load visual memory from disk.
 
@@ -173,7 +173,7 @@ class VisualMemory:
             logger.info(f"Loaded {len(instance.images)} images from {path}")
             return instance
         except Exception as e:
-            logger.error(f"Failed to load visual memory: {str(e)}")
+            logger.error(f"Failed to load visual memory: {e!s}")
             return instance
 
     def clear(self) -> None:

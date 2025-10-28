@@ -18,8 +18,8 @@ Run script for Unitree Go2 robot with agents2 framework.
 This is the migrated version using the new LangChain-based agent system.
 """
 
-import time
 from threading import Thread
+import time
 
 import reactivex as rx
 import reactivex.operators as ops
@@ -27,12 +27,11 @@ import reactivex.operators as ops
 from dimos.agents2 import Agent, Output, Reducer, Stream, skill
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
-from dimos.core import LCMTransport, Module, start, rpc
+from dimos.core import LCMTransport, Module, rpc, start
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
-
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.web.robot_web_interface import RobotWebInterface
@@ -47,13 +46,13 @@ class WebModule(Module):
 
     _human_messages_running = False
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.agent_response = rx.subject.Subject()
         self.human_query = rx.subject.Subject()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         text_streams = {
@@ -73,7 +72,7 @@ class WebModule(Module):
         self.thread.start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self.web_interface:
             self.web_interface.stop()
         if self.thread:
@@ -96,7 +95,7 @@ class WebModule(Module):
             yield message
 
 
-def main():
+def main() -> None:
     dimos = start(4)
     # Create agent
     agent = Agent(

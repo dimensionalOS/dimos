@@ -13,13 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Any
+from typing import Any
+
 from reactivex import Observable, create, disposable
 import whisper
 
 from dimos.stream.audio.base import (
-    AudioEvent,
     AbstractAudioConsumer,
+    AudioEvent,
 )
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
@@ -35,8 +36,10 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
     def __init__(
         self,
         model: str = "base",
-        modelopts: Dict[str, Any] = {"language": "en", "fp16": False},
-    ):
+        modelopts: dict[str, Any] | None = None,
+    ) -> None:
+        if modelopts is None:
+            modelopts = {"language": "en", "fp16": False}
         self.audio_observable = None
         self.modelopts = modelopts
         self.model = whisper.load_model(model)
@@ -68,7 +71,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
             logger.info("Starting Whisper transcription service")
 
             # Subscribe to the audio source
-            def on_audio_event(event: AudioEvent):
+            def on_audio_event(event: AudioEvent) -> None:
                 try:
                     result = self.model.transcribe(event.data.flatten(), **self.modelopts)
                     observer.on_next(result["text"].strip())
@@ -84,7 +87,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 subscription.dispose()
 
             return disposable.Disposable(dispose)
@@ -93,13 +96,13 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
 
 
 if __name__ == "__main__":
+    from dimos.stream.audio.node_key_recorder import KeyRecorder
     from dimos.stream.audio.node_microphone import (
         SounddeviceAudioSource,
     )
+    from dimos.stream.audio.node_normalizer import AudioNormalizer
     from dimos.stream.audio.node_output import SounddeviceAudioOutput
     from dimos.stream.audio.node_volume_monitor import monitor
-    from dimos.stream.audio.node_normalizer import AudioNormalizer
-    from dimos.stream.audio.node_key_recorder import KeyRecorder
     from dimos.stream.audio.text.node_stdout import TextPrinterNode
     from dimos.stream.audio.tts.node_openai import OpenAITTSNode
     from dimos.stream.audio.utils import keepalive

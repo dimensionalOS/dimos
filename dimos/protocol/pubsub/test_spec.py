@@ -15,10 +15,10 @@
 # limitations under the License.
 
 import asyncio
-import time
-import traceback
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable, List, Tuple
+import time
+from typing import Any
 
 import pytest
 
@@ -38,7 +38,7 @@ def memory_context():
 
 
 # Use Any for context manager type to accommodate both Memory and Redis
-testdata: List[Tuple[Callable[[], Any], Any, List[Any]]] = [
+testdata: list[tuple[Callable[[], Any], Any, list[Any]]] = [
     (memory_context, "topic", ["value1", "value2", "value3"]),
 ]
 
@@ -84,7 +84,7 @@ except (ConnectionError, ImportError):
     print("LCM not available")
 
 
-from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 
 
 @contextmanager
@@ -105,13 +105,13 @@ testdata.append(
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_store(pubsub_context, topic, values):
+def test_store(pubsub_context, topic, values) -> None:
     with pubsub_context() as x:
         # Create a list to capture received messages
         received_messages = []
 
         # Define callback function that stores received messages
-        def callback(message, _):
+        def callback(message, _) -> None:
             received_messages.append(message)
 
         # Subscribe to the topic with our callback
@@ -130,7 +130,7 @@ def test_store(pubsub_context, topic, values):
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_multiple_subscribers(pubsub_context, topic, values):
+def test_multiple_subscribers(pubsub_context, topic, values) -> None:
     """Test that multiple subscribers receive the same message."""
     with pubsub_context() as x:
         # Create lists to capture received messages for each subscriber
@@ -138,10 +138,10 @@ def test_multiple_subscribers(pubsub_context, topic, values):
         received_messages_2 = []
 
         # Define callback functions
-        def callback_1(message, topic):
+        def callback_1(message, topic) -> None:
             received_messages_1.append(message)
 
-        def callback_2(message, topic):
+        def callback_2(message, topic) -> None:
             received_messages_2.append(message)
 
         # Subscribe both callbacks to the same topic
@@ -162,14 +162,14 @@ def test_multiple_subscribers(pubsub_context, topic, values):
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_unsubscribe(pubsub_context, topic, values):
+def test_unsubscribe(pubsub_context, topic, values) -> None:
     """Test that unsubscribed callbacks don't receive messages."""
     with pubsub_context() as x:
         # Create a list to capture received messages
         received_messages = []
 
         # Define callback function
-        def callback(message, topic):
+        def callback(message, topic) -> None:
             received_messages.append(message)
 
         # Subscribe and get unsubscribe function
@@ -189,14 +189,14 @@ def test_unsubscribe(pubsub_context, topic, values):
 
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
-def test_multiple_messages(pubsub_context, topic, values):
+def test_multiple_messages(pubsub_context, topic, values) -> None:
     """Test that subscribers receive multiple messages in order."""
     with pubsub_context() as x:
         # Create a list to capture received messages
         received_messages = []
 
         # Define callback function
-        def callback(message, topic):
+        def callback(message, topic) -> None:
             received_messages.append(message)
 
         # Subscribe to the topic
@@ -217,7 +217,7 @@ def test_multiple_messages(pubsub_context, topic, values):
 
 @pytest.mark.parametrize("pubsub_context, topic, values", testdata)
 @pytest.mark.asyncio
-async def test_async_iterator(pubsub_context, topic, values):
+async def test_async_iterator(pubsub_context, topic, values) -> None:
     """Test that async iterator receives messages correctly."""
     with pubsub_context() as x:
         # Get the messages to send (using the rest of the values)
@@ -228,7 +228,7 @@ async def test_async_iterator(pubsub_context, topic, values):
         async_iter = x.aiter(topic)
 
         # Create a task to consume messages from the async iterator
-        async def consume_messages():
+        async def consume_messages() -> None:
             try:
                 async for message in async_iter:
                     received_messages.append(message)

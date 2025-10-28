@@ -14,16 +14,15 @@
 
 import os
 import time
-import sys
-from reactivex import operators as RxOps
-import tests.test_header
 
+from reactivex import operators as RxOps
+
+from dimos.models.qwen.video_query import query_single_frame_observable
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import logger
-from dimos.models.qwen.video_query import query_single_frame_observable
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def main():

@@ -16,8 +16,7 @@ import numpy as np
 import pytest
 
 try:
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Vector3 as ROSVector3
+    from geometry_msgs.msg import Twist as ROSTwist, Vector3 as ROSVector3
 except ImportError:
     ROSTwist = None
     ROSVector3 = None
@@ -27,7 +26,7 @@ from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
 
 
-def test_twist_initialization():
+def test_twist_initialization() -> None:
     # Test default initialization (zero twist)
     tw = Twist()
     assert tw.linear.x == 0.0
@@ -104,7 +103,7 @@ def test_twist_initialization():
     assert tw11.angular.is_zero()  # Identity quaternion -> zero euler angles
 
 
-def test_twist_zero():
+def test_twist_zero() -> None:
     # Test zero class method
     tw = Twist.zero()
     assert tw.linear.is_zero()
@@ -115,7 +114,7 @@ def test_twist_zero():
     assert tw == Twist()
 
 
-def test_twist_equality():
+def test_twist_equality() -> None:
     tw1 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.3))
     tw2 = Twist(Vector3(1, 2, 3), Vector3(0.1, 0.2, 0.3))
     tw3 = Twist(Vector3(1, 2, 4), Vector3(0.1, 0.2, 0.3))  # Different linear z
@@ -127,7 +126,7 @@ def test_twist_equality():
     assert tw1 != "not a twist"
 
 
-def test_twist_string_representations():
+def test_twist_string_representations() -> None:
     tw = Twist(Vector3(1.5, -2.0, 3.14), Vector3(0.1, -0.2, 0.3))
 
     # Test repr
@@ -145,7 +144,7 @@ def test_twist_string_representations():
     assert "Angular:" in str_str
 
 
-def test_twist_is_zero():
+def test_twist_is_zero() -> None:
     # Test zero twist
     tw1 = Twist()
     assert tw1.is_zero()
@@ -163,7 +162,7 @@ def test_twist_is_zero():
     assert not tw4.is_zero()
 
 
-def test_twist_bool():
+def test_twist_bool() -> None:
     # Test zero twist is False
     tw1 = Twist()
     assert not tw1
@@ -179,7 +178,7 @@ def test_twist_bool():
     assert tw4
 
 
-def test_twist_lcm_encoding():
+def test_twist_lcm_encoding() -> None:
     # Test encoding and decoding
     tw = Twist(Vector3(1.5, 2.5, 3.5), Vector3(0.1, 0.2, 0.3))
 
@@ -196,7 +195,7 @@ def test_twist_lcm_encoding():
     assert decoded == tw
 
 
-def test_twist_with_lists():
+def test_twist_with_lists() -> None:
     # Test initialization with lists instead of Vector3
     tw1 = Twist(linear=[1, 2, 3], angular=[0.1, 0.2, 0.3])
     assert tw1.linear == Vector3(1, 2, 3)
@@ -209,7 +208,7 @@ def test_twist_with_lists():
 
 
 @pytest.mark.ros
-def test_twist_from_ros_msg():
+def test_twist_from_ros_msg() -> None:
     """Test Twist.from_ros_msg conversion."""
     # Create ROS message
     ros_msg = ROSTwist()
@@ -229,7 +228,7 @@ def test_twist_from_ros_msg():
 
 
 @pytest.mark.ros
-def test_twist_to_ros_msg():
+def test_twist_to_ros_msg() -> None:
     """Test Twist.to_ros_msg conversion."""
     # Create LCM message
     lcm_msg = Twist(linear=Vector3(40.0, 50.0, 60.0), angular=Vector3(4.0, 5.0, 6.0))
@@ -247,7 +246,7 @@ def test_twist_to_ros_msg():
 
 
 @pytest.mark.ros
-def test_ros_zero_twist_conversion():
+def test_ros_zero_twist_conversion() -> None:
     """Test conversion of zero twist messages between ROS and LCM."""
     # Test ROS to LCM with zero twist
     ros_zero = ROSTwist()
@@ -266,7 +265,7 @@ def test_ros_zero_twist_conversion():
 
 
 @pytest.mark.ros
-def test_ros_negative_values_conversion():
+def test_ros_negative_values_conversion() -> None:
     """Test ROS conversion with negative values."""
     # Create ROS message with negative values
     ros_msg = ROSTwist()
@@ -286,7 +285,7 @@ def test_ros_negative_values_conversion():
 
 
 @pytest.mark.ros
-def test_ros_roundtrip_conversion():
+def test_ros_roundtrip_conversion() -> None:
     """Test round-trip conversion maintains data integrity."""
     # LCM -> ROS -> LCM
     original_lcm = Twist(linear=Vector3(1.234, 5.678, 9.012), angular=Vector3(0.111, 0.222, 0.333))

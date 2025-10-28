@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 import torch
 
 
@@ -6,7 +8,7 @@ def heatmap_focal_loss(
     inputs,
     targets,
     pos_inds,
-    labels,
+    labels: Sequence[str],
     alpha: float = -1,
     beta: float = 4,
     gamma: float = 2,

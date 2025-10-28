@@ -15,11 +15,11 @@
 from dataclasses import dataclass
 
 # Import for type checking only to avoid circular imports
-from typing import TYPE_CHECKING, List, Optional, Tuple
+from typing import TYPE_CHECKING
 
-import numpy as np
 from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation, TextAnnotation
 from dimos_lcm.foxglove_msgs.Point2 import Point2
+import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.sensor_msgs import Image
@@ -40,12 +40,12 @@ class Detection2DPerson(Detection2DBBox):
     keypoint_scores: np.ndarray  # [17] - confidence scores
 
     # Optional normalized coordinates
-    bbox_normalized: Optional[np.ndarray] = None  # [x1, y1, x2, y2] in 0-1 range
-    keypoints_normalized: Optional[np.ndarray] = None  # [17, 2] in 0-1 range
+    bbox_normalized: np.ndarray | None = None  # [x1, y1, x2, y2] in 0-1 range
+    keypoints_normalized: np.ndarray | None = None  # [17, 2] in 0-1 range
 
     # Image dimensions for context
-    image_width: Optional[int] = None
-    image_height: Optional[int] = None
+    image_width: int | None = None
+    image_height: int | None = None
 
     # Keypoint names (class attribute)
     KEYPOINT_NAMES = [
@@ -88,9 +88,9 @@ class Detection2DPerson(Detection2DBBox):
         # Validate that this is a pose detection result
         if not hasattr(result, "keypoints") or result.keypoints is None:
             raise ValueError(
-                f"Cannot create Detection2DPerson from result without keypoints. "
-                f"This appears to be a regular detection result, not a pose detection. "
-                f"Use Detection2DBBox.from_ultralytics_result() instead."
+                "Cannot create Detection2DPerson from result without keypoints. "
+                "This appears to be a regular detection result, not a pose detection. "
+                "Use Detection2DBBox.from_ultralytics_result() instead."
             )
 
         if not hasattr(result, "boxes") or result.boxes is None:
@@ -191,7 +191,7 @@ class Detection2DPerson(Detection2DBBox):
             "message format that includes pose keypoints."
         )
 
-    def get_keypoint(self, name: str) -> Tuple[np.ndarray, float]:
+    def get_keypoint(self, name: str) -> tuple[np.ndarray, float]:
         """Get specific keypoint by name.
         Returns:
             Tuple of (xy_coordinates, confidence_score)
@@ -202,13 +202,15 @@ class Detection2DPerson(Detection2DBBox):
         idx = self.KEYPOINT_NAMES.index(name)
         return self.keypoints[idx], self.keypoint_scores[idx]
 
-    def get_visible_keypoints(self, threshold: float = 0.5) -> List[Tuple[str, np.ndarray, float]]:
+    def get_visible_keypoints(self, threshold: float = 0.5) -> list[tuple[str, np.ndarray, float]]:
         """Get all keypoints above confidence threshold.
         Returns:
             List of tuples: (keypoint_name, xy_coordinates, confidence)
         """
         visible = []
-        for i, (name, score) in enumerate(zip(self.KEYPOINT_NAMES, self.keypoint_scores)):
+        for i, (name, score) in enumerate(
+            zip(self.KEYPOINT_NAMES, self.keypoint_scores, strict=False)
+        ):
             if score > threshold:
                 visible.append((name, self.keypoints[i], score))
         return visible
@@ -231,12 +233,12 @@ class Detection2DPerson(Detection2DBBox):
         return y2 - y1
 
     @property
-    def center(self) -> Tuple[float, float]:
+    def center(self) -> tuple[float, float]:
         """Get center point of bounding box."""
         x1, y1, x2, y2 = self.bbox
         return ((x1 + x2) / 2, (y1 + y2) / 2)
 
-    def to_points_annotation(self) -> List[PointsAnnotation]:
+    def to_points_annotation(self) -> list[PointsAnnotation]:
         """Override to include keypoint visualizations along with bounding box."""
         annotations = []
 
@@ -249,7 +251,7 @@ class Detection2DPerson(Detection2DBBox):
         # Create points for visible keypoints
         if visible_keypoints:
             keypoint_points = []
-            for name, xy, conf in visible_keypoints:
+            for _name, xy, _conf in visible_keypoints:
                 keypoint_points.append(Point2(float(xy[0]), float(xy[1])))
 
             # Add keypoints as circles
@@ -317,14 +319,14 @@ class Detection2DPerson(Detection2DBBox):
 
         return annotations
 
-    def to_text_annotation(self) -> List[TextAnnotation]:
+    def to_text_annotation(self) -> list[TextAnnotation]:
         """Override to include pose information in text annotations."""
         # Get base annotations from parent
         annotations = super().to_text_annotation()
 
         # Add pose-specific info
         visible_count = len(self.get_visible_keypoints(threshold=0.5))
-        x1, y1, x2, y2 = self.bbox
+        x1, _y1, _x2, y2 = self.bbox
 
         annotations.append(
             TextAnnotation(

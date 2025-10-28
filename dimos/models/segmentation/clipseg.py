@@ -16,7 +16,7 @@ from transformers import AutoProcessor, CLIPSegForImageSegmentation
 
 
 class CLIPSeg:
-    def __init__(self, model_name="CIDAS/clipseg-rd64-refined"):
+    def __init__(self, model_name: str="CIDAS/clipseg-rd64-refined") -> None:
         self.clipseg_processor = AutoProcessor.from_pretrained(model_name)
         self.clipseg_model = CLIPSegForImageSegmentation.from_pretrained(model_name)
 

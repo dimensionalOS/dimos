@@ -69,6 +69,7 @@ def calculate_peak_volume(audio_data: np.ndarray) -> float:
 if __name__ == "__main__":
     # Example usage
     import time
+
     from .node_simulated import SimulatedAudioSource
 
     # Create a simulated audio source
@@ -77,7 +78,7 @@ if __name__ == "__main__":
     # Create observable and subscribe to get a single frame
     audio_observable = audio_source.capture_audio_as_observable()
 
-    def process_frame(frame):
+    def process_frame(frame) -> None:
         # Calculate and print both RMS and peak volumes
         rms_vol = calculate_rms_volume(frame.data)
         peak_vol = calculate_peak_volume(frame.data)
@@ -89,7 +90,7 @@ if __name__ == "__main__":
     # Set a flag to track when processing is complete
     processed = {"done": False}
 
-    def process_frame_wrapper(frame):
+    def process_frame_wrapper(frame) -> None:
         # Process the frame
         process_frame(frame)
         # Mark as processed

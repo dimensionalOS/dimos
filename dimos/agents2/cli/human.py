@@ -36,8 +36,7 @@ class HumanInput(Module):
         msg_queue = queue.Queue()
         unsub = transport.subscribe(msg_queue.put)
         self._disposables.add(Disposable(unsub))
-        for message in iter(msg_queue.get, None):
-            yield message
+        yield from iter(msg_queue.get, None)
 
     @rpc
     def start(self) -> None:

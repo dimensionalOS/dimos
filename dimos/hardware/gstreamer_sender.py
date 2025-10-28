@@ -52,7 +52,7 @@ class GStreamerTCPSender:
         host: str = "0.0.0.0",
         port: int = 5000,
         single_camera: bool = False,
-    ):
+    ) -> None:
         """Initialize the GStreamer TCP sender.
 
         Args:
@@ -200,7 +200,7 @@ class GStreamerTCPSender:
             self.frame_count += 1
         return Gst.PadProbeReturn.OK
 
-    def _on_bus_message(self, bus, message):
+    def _on_bus_message(self, bus, message) -> None:
         t = message.type
 
         if t == Gst.MessageType.EOS:
@@ -215,7 +215,7 @@ class GStreamerTCPSender:
             logger.warning(f"Pipeline warning: {warn}, {debug}")
         elif t == Gst.MessageType.STATE_CHANGED:
             if message.src == self.pipeline:
-                old_state, new_state, pending_state = message.parse_state_changed()
+                old_state, new_state, _pending_state = message.parse_state_changed()
                 logger.debug(
                     f"Pipeline state changed: {old_state.value_nick} -> {new_state.value_nick}"
                 )
@@ -261,7 +261,7 @@ class GStreamerTCPSender:
         finally:
             self.stop()
 
-    def stop(self):
+    def stop(self) -> None:
         if not self.running:
             return
 
@@ -282,7 +282,7 @@ class GStreamerTCPSender:
         logger.info("TCP video sender stopped")
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(
         description="GStreamer TCP video sender with absolute timestamps"
     )
@@ -340,7 +340,7 @@ def main():
     )
 
     # Handle signals gracefully
-    def signal_handler(sig, frame):
+    def signal_handler(sig, frame) -> None:
         logger.info(f"Received signal {sig}, shutting down...")
         sender.stop()
         sys.exit(0)

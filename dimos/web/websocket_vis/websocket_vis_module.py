@@ -19,19 +19,17 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
-import base64
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
-import numpy as np
-import socketio
-import uvicorn
 from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
+import socketio
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse
 from starlette.routing import Route
+import uvicorn
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
@@ -77,7 +75,7 @@ class WebsocketVisModule(Module):
     cmd_vel: Out[Twist] = None
     movecmd_stamped: Out[TwistStamped] = None
 
-    def __init__(self, port: int = 7779, **kwargs):
+    def __init__(self, port: int = 7779, **kwargs) -> None:
         """Initialize the WebSocket visualization module.
 
         Args:
@@ -86,12 +84,12 @@ class WebsocketVisModule(Module):
         super().__init__(**kwargs)
 
         self.port = port
-        self._uvicorn_server_thread: Optional[threading.Thread] = None
-        self.sio: Optional[socketio.AsyncServer] = None
+        self._uvicorn_server_thread: threading.Thread | None = None
+        self.sio: socketio.AsyncServer | None = None
         self.app = None
         self._broadcast_loop = None
         self._broadcast_thread = None
-        self._uvicorn_server: Optional[uvicorn.Server] = None
+        self._uvicorn_server: uvicorn.Server | None = None
 
         self.vis_state = {}
         self.state_lock = threading.Lock()
@@ -115,7 +113,7 @@ class WebsocketVisModule(Module):
         self._broadcast_thread.start()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         self._create_server()
@@ -128,32 +126,32 @@ class WebsocketVisModule(Module):
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
             self._disposables.add(Disposable(unsub))
-        except Exception as e:
+        except Exception:
             ...
 
         try:
             unsub = self.gps_location.subscribe(self._on_gps_location)
             self._disposables.add(Disposable(unsub))
-        except Exception as e:
+        except Exception:
             ...
 
         try:
             unsub = self.path.subscribe(self._on_path)
             self._disposables.add(Disposable(unsub))
-        except Exception as e:
+        except Exception:
             ...
 
         unsub = self.global_costmap.subscribe(self._on_global_costmap)
         self._disposables.add(Disposable(unsub))
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self._uvicorn_server:
             self._uvicorn_server.should_exit = True
 
         if self.sio and self._broadcast_loop and not self._broadcast_loop.is_closed():
 
-            async def _disconnect_all():
+            async def _disconnect_all() -> None:
                 await self.sio.disconnect()
 
             asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
@@ -175,7 +173,7 @@ class WebsocketVisModule(Module):
         self.vis_state["gps_travel_goal_points"] = json_points
         self._emit("gps_travel_goal_points", json_points)
 
-    def _create_server(self):
+    def _create_server(self) -> None:
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -189,7 +187,7 @@ class WebsocketVisModule(Module):
 
         # Register SocketIO event handlers
         @self.sio.event
-        async def connect(sid, environ):
+        async def connect(sid, environ) -> None:
             with self.state_lock:
                 current_state = dict(self.vis_state)
 
@@ -199,7 +197,7 @@ class WebsocketVisModule(Module):
             await self.sio.emit("full_state", current_state, room=sid)
 
         @self.sio.event
-        async def click(sid, position):
+        async def click(sid, position) -> None:
             goal = PoseStamped(
                 position=(position[0], position[1], 0),
                 orientation=(0, 0, 0, 1),  # Default orientation
@@ -209,22 +207,22 @@ class WebsocketVisModule(Module):
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
         @self.sio.event
-        async def gps_goal(sid, goal):
+        async def gps_goal(sid, goal) -> None:
             logger.info(f"Set GPS goal: {goal}")
             self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))
 
         @self.sio.event
-        async def start_explore(sid):
+        async def start_explore(sid) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
         @self.sio.event
-        async def stop_explore(sid):
+        async def stop_explore(sid) -> None:
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
 
         @self.sio.event
-        async def move_command(sid, data):
+        async def move_command(sid, data) -> None:
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(
@@ -257,28 +255,28 @@ class WebsocketVisModule(Module):
         self._uvicorn_server = uvicorn.Server(config)
         self._uvicorn_server.run()
 
-    def _on_robot_pose(self, msg: PoseStamped):
+    def _on_robot_pose(self, msg: PoseStamped) -> None:
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}
         self.vis_state["robot_pose"] = pose_data
         self._emit("robot_pose", pose_data)
 
-    def _on_gps_location(self, msg: LatLon):
+    def _on_gps_location(self, msg: LatLon) -> None:
         pose_data = {"lat": msg.lat, "lon": msg.lon}
         self.vis_state["gps_location"] = pose_data
         self._emit("gps_location", pose_data)
 
-    def _on_path(self, msg: Path):
+    def _on_path(self, msg: Path) -> None:
         points = [[pose.position.x, pose.position.y] for pose in msg.poses]
         path_data = {"type": "path", "points": points}
         self.vis_state["path"] = path_data
         self._emit("path", path_data)
 
-    def _on_global_costmap(self, msg: OccupancyGrid):
+    def _on_global_costmap(self, msg: OccupancyGrid) -> None:
         costmap_data = self._process_costmap(msg)
         self.vis_state["costmap"] = costmap_data
         self._emit("costmap", costmap_data)
 
-    def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
+    def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
         costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
         grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
@@ -294,7 +292,7 @@ class WebsocketVisModule(Module):
             "origin_theta": 0,  # Assuming no rotation for now
         }
 
-    def _emit(self, event: str, data: Any):
+    def _emit(self, event: str, data: Any) -> None:
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
 

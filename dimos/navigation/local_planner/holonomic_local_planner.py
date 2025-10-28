@@ -18,13 +18,11 @@
 Gradient-Augmented Look-Ahead Pursuit (GLAP) holonomic local planner.
 """
 
-from typing import Optional, Tuple
-
 import numpy as np
 
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.navigation.local_planner import BaseLocalPlanner
-from dimos.utils.transform_utils import quaternion_to_euler, normalize_angle, get_distance
+from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
 
 class HolonomicLocalPlanner(BaseLocalPlanner):
@@ -54,7 +52,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         orientation_tolerance: float = 0.2,
         control_frequency: float = 10.0,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the GLAP planner with specified parameters."""
         super().__init__(
             goal_tolerance=goal_tolerance,
@@ -73,7 +71,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         # Previous velocity for filtering (vx, vy, vtheta)
         self.v_prev = np.array([0.0, 0.0, 0.0])
 
-    def compute_velocity(self) -> Optional[Twist]:
+    def compute_velocity(self) -> Twist | None:
         """
         Compute velocity commands using GLAP algorithm.
 
@@ -216,7 +214,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
 
     def _find_closest_point_on_path(
         self, pose: np.ndarray, path: np.ndarray
-    ) -> Tuple[int, np.ndarray]:
+    ) -> tuple[int, np.ndarray]:
         """
         Find the closest point on the path to current pose.
 

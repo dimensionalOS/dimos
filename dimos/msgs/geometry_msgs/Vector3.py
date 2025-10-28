@@ -14,13 +14,11 @@
 
 from __future__ import annotations
 
-import struct
 from collections.abc import Sequence
-from io import BytesIO
-from typing import BinaryIO, TypeAlias
+from typing import TypeAlias
 
-import numpy as np
 from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
+import numpy as np
 from plum import dispatch
 
 # Types that can be converted to/from Vector
@@ -92,7 +90,7 @@ class Vector3(LCMVector3):
         self.z = float(data[2])
 
     @dispatch
-    def __init__(self, vector: "Vector3") -> None:
+    def __init__(self, vector: Vector3) -> None:
         """Initialize from another Vector3 (copy constructor)."""
         self.x = vector.x
         self.y = vector.y
@@ -126,7 +124,7 @@ class Vector3(LCMVector3):
         """Get the underlying numpy array."""
         return np.array([self.x, self.y, self.z], dtype=float)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         if idx == 0:
             return self.x
         elif idx == 1:
@@ -386,7 +384,7 @@ class Vector3(LCMVector3):
 
 
 @dispatch
-def to_numpy(value: "Vector3") -> np.ndarray:
+def to_numpy(value: Vector3) -> np.ndarray:
     """Convert a Vector3 to a numpy array."""
     return value.to_numpy()
 
@@ -404,7 +402,7 @@ def to_numpy(value: Sequence[int | float]) -> np.ndarray:
 
 
 @dispatch
-def to_vector(value: "Vector3") -> Vector3:
+def to_vector(value: Vector3) -> Vector3:
     """Pass through Vector3 objects."""
     return value
 
