@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Iterator
+from __future__ import annotations
+
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -20,6 +21,9 @@ from openai import pydantic_function_tool
 from pydantic import BaseModel
 
 from dimos.types.constants import Colors
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 # Configure logging for the module
 logging.basicConfig(level=logging.INFO)

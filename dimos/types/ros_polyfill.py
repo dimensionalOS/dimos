@@ -15,7 +15,7 @@
 try:
     from geometry_msgs.msg import Vector3
 except ImportError:
-    pass  # type: ignore[import]
+    from dimos.msgs.geometry_msgs import Vector3  # type: ignore[import]
 
 try:
     from geometry_msgs.msg import Point, Pose, Quaternion, Twist

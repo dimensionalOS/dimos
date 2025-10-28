@@ -30,7 +30,7 @@ from langchain_core.messages import (
 
 from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
-from dimos.core import rpc
+from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import (
     SkillContainer,
     SkillCoordinator,
