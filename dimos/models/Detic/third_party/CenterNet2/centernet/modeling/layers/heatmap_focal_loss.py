@@ -1,5 +1,3 @@
-from collections.abc import Sequence
-
 import torch
 from typing import Sequence
 
