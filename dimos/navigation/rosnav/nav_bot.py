@@ -400,7 +400,7 @@ def main() -> None:
         orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
     )
 
-    logger.info("Sending navigation goal to: (1.0, 1.0, 0.0)")
+    logger.info("Sending navigation goal to: (2.0, 2.0, 0.0)")
 
     if nav_bot.navigation_module:
         success = nav_bot.navigation_module.navigate_to(test_pose, timeout=30.0)
