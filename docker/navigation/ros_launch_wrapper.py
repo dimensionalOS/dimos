@@ -19,9 +19,9 @@ This script ensures clean shutdown of all ROS nodes when receiving SIGINT.
 """
 
 import os
-import sys
 import signal
 import subprocess
+import sys
 import time
 
 

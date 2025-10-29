@@ -1,8 +1,8 @@
 services:
   dimos_autonomy_stack:
     build:
-      context: ..
-      dockerfile: ros_docker_integration/Dockerfile
+      context: ../..
+      dockerfile: docker/navigation/Dockerfile
     image: dimos_autonomy_stack:jazzy
     container_name: dimos_autonomy_container
 
@@ -41,7 +41,7 @@ services:
       - ./autonomy_stack_mecanum_wheel_platform/src:/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src:rw
 
       # Mount entire dimos directory for live development
-      - ..:/workspace/dimos:rw
+      - ../..:/workspace/dimos:rw
 
       # Mount bagfiles directory (optional)
       - ./bagfiles:/ros2_ws/bagfiles:rw

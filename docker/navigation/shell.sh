@@ -29,9 +29,9 @@ echo "  - source /opt/dimos-venv/bin/activate"
 echo "  - python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
 echo ""
 
-cd ..
+cd ../..
 
 # Enter interactive shell
-docker compose -f ros_docker_integration/docker-compose.yml run --rm dimos_autonomy_stack bash
+docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack bash
 
 xhost -local:docker 2>/dev/null || true

@@ -32,9 +32,9 @@ echo ""
 echo -e "${YELLOW}Command: $@${NC}"
 echo ""
 
-cd ..
+cd ../..
 
 # Run the command in the container
-docker compose -f ros_docker_integration/docker-compose.yml run --rm dimos_autonomy_stack bash -c "$@"
+docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack bash -c "$@"
 
 xhost -local:docker 2>/dev/null || true

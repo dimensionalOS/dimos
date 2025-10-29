@@ -54,7 +54,7 @@ RUN apt-get update && apt-get install -y \
 RUN mkdir -p ${WORKSPACE}/src
 
 # Copy the autonomy stack repository (should be cloned by build.sh)
-COPY ros_docker_integration/autonomy_stack_mecanum_wheel_platform ${WORKSPACE}/src/autonomy_stack_mecanum_wheel_platform
+COPY docker/navigation/autonomy_stack_mecanum_wheel_platform ${WORKSPACE}/src/autonomy_stack_mecanum_wheel_platform
 
 # Set working directory
 WORKDIR ${WORKSPACE}
@@ -91,8 +91,8 @@ RUN /bin/bash -c "source /opt/dimos-venv/bin/activate && \
     pip install -e .[cpu,dev] 'mmengine>=0.10.3' 'mmcv>=2.1.0'"
 
 # Copy helper scripts
-COPY ros_docker_integration/run_both.sh /usr/local/bin/run_both.sh
-COPY ros_docker_integration/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
+COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
+COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
 RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py
 
 # Set up entrypoint script

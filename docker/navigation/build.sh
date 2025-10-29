@@ -22,7 +22,7 @@ fi
 
 if [ ! -d "unity_models" ]; then
     echo -e "${YELLOW}Using office_building_1 as the Unity environment...${NC}"
-    tar -xf ../data/.lfs/office_building_1.tar.gz
+    tar -xf ../../data/.lfs/office_building_1.tar.gz
     mv office_building_1 unity_models
 fi
 
@@ -35,9 +35,9 @@ echo "  - Build the autonomy stack"
 echo "  - Install Python dependencies for DimOS"
 echo ""
 
-cd ..
+cd ../..
 
-docker compose -f ros_docker_integration/docker-compose.yml build
+docker compose -f docker/navigation/docker-compose.yml build
 
 echo ""
 echo -e "${GREEN}================================${NC}"

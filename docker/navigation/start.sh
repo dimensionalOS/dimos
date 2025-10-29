@@ -43,7 +43,7 @@ elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
     exit 0
 fi
 
-cd ..
+cd ../..
 
 case $MODE in
     "ros-planner")
@@ -70,7 +70,7 @@ case $MODE in
 esac
 
 # Run the container
-docker compose -f ros_docker_integration/docker-compose.yml run --rm dimos_autonomy_stack $CMD
+docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack $CMD
 
 xhost -local:docker 2>/dev/null || true
 
