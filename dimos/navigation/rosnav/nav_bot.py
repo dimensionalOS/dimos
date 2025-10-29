@@ -42,7 +42,7 @@ from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.navigation.rosnav import ROSNav
+from dimos.navigation.rosnav.rosnav import ROSNav
 from dimos.protocol import pubsub
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
