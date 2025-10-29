@@ -1,5 +1,4 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-from collections.abc import Sequence
 import math
 
 from detectron2.config import configurable

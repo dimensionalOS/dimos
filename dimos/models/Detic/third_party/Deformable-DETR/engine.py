@@ -11,10 +11,10 @@
 Train and eval functions used in main.py
 """
 
-from collections.abc import Iterable
 import math
 import os
 import sys
+from typing import Iterable
 
 from datasets.coco_eval import CocoEvaluator
 from datasets.data_prefetcher import data_prefetcher
