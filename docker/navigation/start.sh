@@ -23,6 +23,20 @@ if [ ! -d "unity_models" ] && [[ "$*" == *"--ros-planner"* || "$*" == *"--all"* 
     echo ""
 fi
 
+if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+    export DOCKER_RUNTIME=nvidia
+    export NVIDIA_VISIBLE_DEVICES=all
+    export NVIDIA_DRIVER_CAPABILITIES=all
+    echo -e "${GREEN}GPU mode enabled${NC} (using nvidia runtime)"
+    echo ""
+else
+    export DOCKER_RUNTIME=runc
+    export NVIDIA_VISIBLE_DEVICES=
+    export NVIDIA_DRIVER_CAPABILITIES=
+    echo -e "${YELLOW}CPU-only mode${NC} (no GPU detected)"
+    echo ""
+fi
+
 MODE="default"
 if [[ "$1" == "--ros-planner" ]]; then
     MODE="ros-planner"
@@ -39,7 +53,11 @@ elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
     echo "  --all           Start both ROS planner and DimOS"
     echo "  --help          Show this help message"
     echo ""
+    echo "GPU auto-detection: Automatically uses GPU if nvidia-smi is available"
     echo "Without options, starts an interactive bash shell"
+    echo ""
+    echo "Example:"
+    echo "  $0 --all"
     exit 0
 fi
 
@@ -69,7 +87,6 @@ case $MODE in
         ;;
 esac
 
-# Run the container
 docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack $CMD
 
 xhost -local:docker 2>/dev/null || true

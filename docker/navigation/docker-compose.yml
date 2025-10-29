@@ -16,15 +16,14 @@ services:
     # Privileged mode for hardware access (required for real robot and some devices)
     privileged: true
 
-    # GPU support (NVIDIA runtime)
-    runtime: nvidia
+    runtime: ${DOCKER_RUNTIME:-runc}
 
     # Environment variables for display and ROS
     environment:
       - DISPLAY=${DISPLAY}
       - QT_X11_NO_MITSHM=1
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=all
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-}
       - ROS_DOMAIN_ID=0
       - ROBOT_CONFIG_PATH=mechanum_drive
 
