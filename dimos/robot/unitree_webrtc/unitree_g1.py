@@ -340,7 +340,7 @@ class UnitreeG1(Robot, Resource):
         self.connection = self._dimos.deploy(G1ConnectionModule, self.ip)
 
         # Configure LCM transports
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)
         self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
 
