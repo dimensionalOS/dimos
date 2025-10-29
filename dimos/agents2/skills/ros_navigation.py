@@ -13,15 +13,14 @@
 # limitations under the License.
 
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
+
+from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
-from dimos.core.resource import Resource
-
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
@@ -33,7 +32,7 @@ class RosNavigation(SkillContainer, Resource):
     _robot: "UnitreeG1"
     _started: bool
 
-    def __init__(self, robot: "UnitreeG1"):
+    def __init__(self, robot: "UnitreeG1") -> None:
         self._robot = robot
         self._similarity_threshold = 0.23
         self._started = False
@@ -97,7 +96,7 @@ class RosNavigation(SkillContainer, Resource):
 
         return "Stopped"
 
-    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> Optional[PoseStamped]:
+    def _get_goal_pose_from_result(self, result: dict[str, Any]) -> PoseStamped | None:
         similarity = 1.0 - (result.get("distance") or 1)
         if similarity < self._similarity_threshold:
             logger.warning(

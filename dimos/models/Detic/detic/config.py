@@ -2,7 +2,7 @@
 from detectron2.config import CfgNode as CN
 
 
-def add_detic_config(cfg):
+def add_detic_config(cfg) -> None:
     _C = cfg
 
     _C.WITH_IMAGE_LABELS = False  # Turn on co-training with classification data

@@ -12,17 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+import builtins
+from collections.abc import Iterable
 from typing import (
-    Tuple,
-    List,
-    TypeVar,
-    Protocol,
-    runtime_checkable,
     Any,
-    Iterable,
+    Protocol,
+    TypeVar,
     Union,
+    runtime_checkable,
 )
+
+import numpy as np
 from numpy.typing import NDArray
 
 T = TypeVar("T", bound="Vector")
@@ -53,7 +53,7 @@ class Vector:
         return self.x
 
     @property
-    def tuple(self) -> Tuple[float, ...]:
+    def tuple(self) -> tuple[float, ...]:
         """Tuple representation of the vector."""
         return tuple(self._data)
 
@@ -269,11 +269,11 @@ class Vector:
             v[2] = 1.0
         return cls(v)
 
-    def to_list(self) -> List[float]:
+    def to_list(self) -> list[float]:
         """Convert the vector to a list."""
         return [float(x) for x in self._data]
 
-    def to_tuple(self) -> Tuple[float, ...]:
+    def to_tuple(self) -> builtins.tuple[float, ...]:
         """Convert the vector to a tuple."""
         return tuple(self._data)
 
@@ -324,7 +324,7 @@ def to_vector(value: VectorLike) -> Vector:
         return Vector(value)
 
 
-def to_tuple(value: VectorLike) -> Tuple[float, ...]:
+def to_tuple(value: VectorLike) -> tuple[float, ...]:
     """Convert a vector-compatible value to a tuple.
 
     Args:
@@ -345,7 +345,7 @@ def to_tuple(value: VectorLike) -> Tuple[float, ...]:
         return tuple(float(x) for x in data)
 
 
-def to_list(value: VectorLike) -> List[float]:
+def to_list(value: VectorLike) -> list[float]:
     """Convert a vector-compatible value to a list.
 
     Args:

@@ -1,20 +1,20 @@
 # Modified from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/efficientdet.py
 # The original file is under Apache-2.0 License
-import math
 from collections import OrderedDict
+import math
 
+from detectron2.layers import Conv2d, ShapeSpec
+from detectron2.layers.batch_norm import get_norm
+from detectron2.modeling.backbone import Backbone
+from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
+from detectron2.modeling.backbone.resnet import build_resnet_backbone
 import torch
 from torch import nn
 
-from detectron2.layers import ShapeSpec, Conv2d
-from detectron2.modeling.backbone.resnet import build_resnet_backbone
-from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from detectron2.layers.batch_norm import get_norm
-from detectron2.modeling.backbone import Backbone
 from .dlafpn import dla34
 
 
-def get_fpn_config(base_reduction=8):
+def get_fpn_config(base_reduction: int=8):
     """BiFPN config with sum."""
     p = {
         "nodes": [
@@ -38,8 +38,8 @@ def swish(x, inplace: bool = False):
 
 
 class Swish(nn.Module):
-    def __init__(self, inplace: bool = False):
-        super(Swish, self).__init__()
+    def __init__(self, inplace: bool = False) -> None:
+        super().__init__()
         self.inplace = inplace
 
     def forward(self, x):
@@ -47,8 +47,8 @@ class Swish(nn.Module):
 
 
 class SequentialAppend(nn.Sequential):
-    def __init__(self, *args):
-        super(SequentialAppend, self).__init__(*args)
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
 
     def forward(self, x):
         for module in self:
@@ -57,8 +57,8 @@ class SequentialAppend(nn.Sequential):
 
 
 class SequentialAppendLast(nn.Sequential):
-    def __init__(self, *args):
-        super(SequentialAppendLast, self).__init__(*args)
+    def __init__(self, *args) -> None:
+        super().__init__(*args)
 
     # def forward(self, x: List[torch.Tensor]):
     def forward(self, x):
@@ -72,15 +72,15 @@ class ConvBnAct2d(nn.Module):
         self,
         in_channels,
         out_channels,
-        kernel_size,
-        stride=1,
-        dilation=1,
-        padding="",
-        bias=False,
-        norm="",
+        kernel_size: int,
+        stride: int=1,
+        dilation: int=1,
+        padding: str="",
+        bias: bool=False,
+        norm: str="",
         act_layer=Swish,
-    ):
-        super(ConvBnAct2d, self).__init__()
+    ) -> None:
+        super().__init__()
         # self.conv = create_conv2d(
         #     in_channels, out_channels, kernel_size, stride=stride, dilation=dilation, padding=padding, bias=bias)
         self.conv = Conv2d(
@@ -110,17 +110,17 @@ class SeparableConv2d(nn.Module):
         self,
         in_channels,
         out_channels,
-        kernel_size=3,
-        stride=1,
-        dilation=1,
-        padding="",
-        bias=False,
-        channel_multiplier=1.0,
-        pw_kernel_size=1,
+        kernel_size: int=3,
+        stride: int=1,
+        dilation: int=1,
+        padding: str="",
+        bias: bool=False,
+        channel_multiplier: float=1.0,
+        pw_kernel_size: int=1,
         act_layer=Swish,
-        norm="",
-    ):
-        super(SeparableConv2d, self).__init__()
+        norm: str="",
+    ) -> None:
+        super().__init__()
 
         # self.conv_dw = create_conv2d(
         #     in_channels, int(in_channels * channel_multiplier), kernel_size,
@@ -166,15 +166,15 @@ class ResampleFeatureMap(nn.Sequential):
         self,
         in_channels,
         out_channels,
-        reduction_ratio=1.0,
-        pad_type="",
-        pooling_type="max",
-        norm="",
-        apply_bn=False,
-        conv_after_downsample=False,
-        redundant_bias=False,
-    ):
-        super(ResampleFeatureMap, self).__init__()
+        reduction_ratio: float=1.0,
+        pad_type: str="",
+        pooling_type: str="max",
+        norm: str="",
+        apply_bn: bool=False,
+        conv_after_downsample: bool=False,
+        redundant_bias: bool=False,
+    ) -> None:
+        super().__init__()
         pooling_type = pooling_type or "max"
         self.in_channels = in_channels
         self.out_channels = out_channels
@@ -222,20 +222,20 @@ class FpnCombine(nn.Module):
         fpn_channels,
         inputs_offsets,
         target_reduction,
-        pad_type="",
-        pooling_type="max",
-        norm="",
-        apply_bn_for_resampling=False,
-        conv_after_downsample=False,
-        redundant_bias=False,
-        weight_method="attn",
-    ):
-        super(FpnCombine, self).__init__()
+        pad_type: str="",
+        pooling_type: str="max",
+        norm: str="",
+        apply_bn_for_resampling: bool=False,
+        conv_after_downsample: bool=False,
+        redundant_bias: bool=False,
+        weight_method: str="attn",
+    ) -> None:
+        super().__init__()
         self.inputs_offsets = inputs_offsets
         self.weight_method = weight_method
 
         self.resample = nn.ModuleDict()
-        for idx, offset in enumerate(inputs_offsets):
+        for _idx, offset in enumerate(inputs_offsets):
             in_channels = fpn_channels
             if offset < len(feature_info):
                 in_channels = feature_info[offset]["num_chs"]
@@ -284,7 +284,7 @@ class FpnCombine(nn.Module):
         elif self.weight_method == "sum":
             x = torch.stack(nodes, dim=-1)
         else:
-            raise ValueError("unknown weight_method {}".format(self.weight_method))
+            raise ValueError(f"unknown weight_method {self.weight_method}")
         x = torch.sum(x, dim=-1)
         return x
 
@@ -295,18 +295,18 @@ class BiFpnLayer(nn.Module):
         feature_info,
         fpn_config,
         fpn_channels,
-        num_levels=5,
-        pad_type="",
-        pooling_type="max",
-        norm="",
+        num_levels: int=5,
+        pad_type: str="",
+        pooling_type: str="max",
+        norm: str="",
         act_layer=Swish,
-        apply_bn_for_resampling=False,
-        conv_after_downsample=True,
-        conv_bn_relu_pattern=False,
-        separable_conv=True,
-        redundant_bias=False,
-    ):
-        super(BiFpnLayer, self).__init__()
+        apply_bn_for_resampling: bool=False,
+        conv_after_downsample: bool=True,
+        conv_bn_relu_pattern: bool=False,
+        separable_conv: bool=True,
+        redundant_bias: bool=False,
+    ) -> None:
+        super().__init__()
         self.fpn_config = fpn_config
         self.num_levels = num_levels
         self.conv_bn_relu_pattern = False
@@ -375,12 +375,12 @@ class BiFPN(Backbone):
         bottom_up,
         in_features,
         out_channels,
-        norm="",
-        num_levels=5,
-        num_bifpn=4,
-        separable_conv=False,
-    ):
-        super(BiFPN, self).__init__()
+        norm: str="",
+        num_levels: int=5,
+        num_bifpn: int=4,
+        separable_conv: bool=False,
+    ) -> None:
+        super().__init__()
         assert isinstance(bottom_up, Backbone)
 
         # Feature map strides and channels from the bottom up network (e.g. ResNet)
@@ -394,11 +394,11 @@ class BiFPN(Backbone):
         self.in_features = in_features
         self._size_divisibility = 128
         levels = [int(math.log2(s)) for s in in_strides]
-        self._out_feature_strides = {"p{}".format(int(math.log2(s))): s for s in in_strides}
+        self._out_feature_strides = {f"p{int(math.log2(s))}": s for s in in_strides}
         if len(in_features) < num_levels:
             for l in range(num_levels - len(in_features)):
                 s = l + levels[-1]
-                self._out_feature_strides["p{}".format(s + 1)] = 2 ** (s + 1)
+                self._out_feature_strides[f"p{s + 1}"] = 2 ** (s + 1)
         self._out_features = list(sorted(self._out_feature_strides.keys()))
         self._out_feature_channels = {k: out_channels for k in self._out_features}
 
@@ -470,10 +470,10 @@ class BiFPN(Backbone):
         x = [bottom_up_features[f] for f in self.in_features]
         assert len(self.resample) == self.num_levels - len(x)
         x = self.resample(x)
-        shapes = [xx.shape for xx in x]
+        [xx.shape for xx in x]
         # print('resample shapes', shapes)
         x = self.cell(x)
-        out = {f: xx for f, xx in zip(self._out_features, x)}
+        out = {f: xx for f, xx in zip(self._out_features, x, strict=False)}
         # import pdb; pdb.set_trace()
         return out
 

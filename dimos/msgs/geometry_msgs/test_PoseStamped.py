@@ -25,7 +25,7 @@ except ImportError:
 from dimos.msgs.geometry_msgs import PoseStamped
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test encoding and decoding of Pose to/from binary LCM format."""
 
     pose_source = PoseStamped(
@@ -47,7 +47,7 @@ def test_lcm_encode_decode():
     assert pose_dest == pose_source
 
 
-def test_pickle_encode_decode():
+def test_pickle_encode_decode() -> None:
     """Test encoding and decoding of PoseStamped to/from binary LCM format."""
 
     pose_source = PoseStamped(
@@ -63,7 +63,7 @@ def test_pickle_encode_decode():
 
 
 @pytest.mark.ros
-def test_pose_stamped_from_ros_msg():
+def test_pose_stamped_from_ros_msg() -> None:
     """Test creating a PoseStamped from a ROS PoseStamped message."""
     ros_msg = ROSPoseStamped()
     ros_msg.header.frame_id = "world"
@@ -91,7 +91,7 @@ def test_pose_stamped_from_ros_msg():
 
 
 @pytest.mark.ros
-def test_pose_stamped_to_ros_msg():
+def test_pose_stamped_to_ros_msg() -> None:
     """Test converting a PoseStamped to a ROS PoseStamped message."""
     pose_stamped = PoseStamped(
         ts=123.456,
@@ -116,7 +116,7 @@ def test_pose_stamped_to_ros_msg():
 
 
 @pytest.mark.ros
-def test_pose_stamped_ros_roundtrip():
+def test_pose_stamped_ros_roundtrip() -> None:
     """Test round-trip conversion between PoseStamped and ROS PoseStamped."""
     original = PoseStamped(
         ts=123.789,

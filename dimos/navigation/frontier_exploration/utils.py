@@ -18,12 +18,9 @@ Utility functions for frontier exploration visualization and testing.
 
 import numpy as np
 from PIL import Image, ImageDraw
-from typing import List, Tuple
-from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
+
 from dimos.msgs.geometry_msgs import Vector3
-import os
-import pickle
-import cv2
+from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 
 
 def costmap_to_pil_image(costmap: OccupancyGrid, scale_factor: int = 2) -> Image.Image:
@@ -70,9 +67,9 @@ def costmap_to_pil_image(costmap: OccupancyGrid, scale_factor: int = 2) -> Image
 def draw_frontiers_on_image(
     image: Image.Image,
     costmap: OccupancyGrid,
-    frontiers: List[Vector3],
+    frontiers: list[Vector3],
     scale_factor: int = 2,
-    unfiltered_frontiers: List[Vector3] = None,
+    unfiltered_frontiers: list[Vector3] | None = None,
 ) -> Image.Image:
     """
     Draw frontier points on the costmap image.
@@ -90,7 +87,7 @@ def draw_frontiers_on_image(
     img_copy = image.copy()
     draw = ImageDraw.Draw(img_copy)
 
-    def world_to_image_coords(world_pos: Vector3) -> Tuple[int, int]:
+    def world_to_image_coords(world_pos: Vector3) -> tuple[int, int]:
         """Convert world coordinates to image pixel coordinates."""
         grid_pos = costmap.world_to_grid(world_pos)
         # Flip Y coordinate and apply scaling

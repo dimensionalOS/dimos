@@ -12,24 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import builtins
+from collections import OrderedDict
+from collections.abc import Sequence
+from enum import Enum
 import json
 import logging
-from collections import OrderedDict
-from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Sequence, Union, get_origin
+from typing import Annotated, Any, Literal, Union, get_origin
 
-import numpy as np
 from datasets import Dataset
 from gymnasium import spaces
 from jsonref import replace_refs
+from mbodied.data.utils import to_features
+from mbodied.utils.import_utils import smart_import
+import numpy as np
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import from_json
-from typing_extensions import Annotated
-
-from mbodied.data.utils import to_features
-from mbodied.utils.import_utils import smart_import
 
 Flattenable = Annotated[Literal["dict", "np", "pt", "list"], "Numpy, PyTorch, list, or dict"]
 
@@ -81,7 +81,7 @@ class Sample(BaseModel):
         arbitrary_types_allowed=True,
     )
 
-    def __init__(self, datum=None, **data):
+    def __init__(self, datum=None, **data) -> None:
         """Accepts an arbitrary datum as well as keyword arguments."""
         if datum is not None:
             if isinstance(datum, Sample):
@@ -100,7 +100,7 @@ class Sample(BaseModel):
         """Return a string representation of the Sample instance."""
         return f"{self.__class__.__name__}({', '.join([f'{k}={v}' for k, v in self.dict().items() if v is not None])})"
 
-    def dict(self, exclude_none=True, exclude: set[str] = None) -> Dict[str, Any]:
+    def dict(self, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
         """Return the Sample object as a dictionary with None values excluded.
 
         Args:
@@ -142,7 +142,7 @@ class Sample(BaseModel):
         else:
             flat_data = list(one_d_array_or_dict)
 
-        def unflatten_recursive(schema_part, index=0):
+        def unflatten_recursive(schema_part, index: int = 0):
             if schema_part["type"] == "object":
                 result = {}
                 for prop, prop_schema in schema_part["properties"].items():
@@ -165,10 +165,10 @@ class Sample(BaseModel):
         self,
         output_type: Flattenable = "dict",
         non_numerical: Literal["ignore", "forbid", "allow"] = "allow",
-    ) -> Dict[str, Any] | np.ndarray | "torch.Tensor" | List:
+    ) -> builtins.dict[str, Any] | np.ndarray | "torch.Tensor" | list:
         accumulator = {} if output_type == "dict" else []
 
-        def flatten_recursive(obj, path=""):
+        def flatten_recursive(obj, path: str = "") -> None:
             if isinstance(obj, Sample):
                 for k, v in obj.dict().items():
                     flatten_recursive(v, path + k + "/")
@@ -208,7 +208,7 @@ class Sample(BaseModel):
         return accumulator
 
     @staticmethod
-    def obj_to_schema(value: Any) -> Dict:
+    def obj_to_schema(value: Any) -> builtins.dict:
         """Generates a simplified JSON schema from a dictionary.
 
         Args:
@@ -236,7 +236,9 @@ class Sample(BaseModel):
             return {"type": "boolean"}
         return {}
 
-    def schema(self, resolve_refs: bool = True, include_descriptions=False) -> Dict:
+    def schema(
+        self, resolve_refs: bool = True, include_descriptions: bool = False
+    ) -> builtins.dict:
         """Returns a simplified json schema.
 
         Removing additionalProperties,
@@ -406,10 +408,10 @@ class Sample(BaseModel):
         raise ValueError(f"Unsupported object {value} of type: {type(value)} for space generation")
 
     @classmethod
-    def init_from(cls, d: Any, pack=False) -> "Sample":
+    def init_from(cls, d: Any, pack: bool = False) -> "Sample":
         if isinstance(d, spaces.Space):
             return cls.from_space(d)
-        if isinstance(d, Union[Sequence, np.ndarray]):  # noqa: UP007
+        if isinstance(d, Union[Sequence, np.ndarray]):
             if pack:
                 return cls.pack_from(d)
             return cls.unflatten(d)
@@ -427,7 +429,9 @@ class Sample(BaseModel):
         return cls(d)
 
     @classmethod
-    def from_flat_dict(cls, flat_dict: Dict[str, Any], schema: Dict = None) -> "Sample":
+    def from_flat_dict(
+        cls, flat_dict: builtins.dict[str, Any], schema: builtins.dict | None = None
+    ) -> "Sample":
         """Initialize a Sample instance from a flattened dictionary."""
         """
         Reconstructs the original JSON object from a flattened dictionary using the provided schema.
@@ -466,7 +470,7 @@ class Sample(BaseModel):
         return cls(sampled)
 
     @classmethod
-    def pack_from(cls, samples: List[Union["Sample", Dict]]) -> "Sample":
+    def pack_from(cls, samples: list[Union["Sample", builtins.dict]]) -> "Sample":
         """Pack a list of samples into a single sample with lists for attributes.
 
         Args:
@@ -496,7 +500,7 @@ class Sample(BaseModel):
                     aggregated[attr].append(getattr(sample, attr, None))
         return cls(**aggregated)
 
-    def unpack(self, to_dicts=False) -> List[Union["Sample", Dict]]:
+    def unpack(self, to_dicts: bool = False) -> list[Union["Sample", builtins.dict]]:
         """Unpack the packed Sample object into a list of Sample objects or dictionaries."""
         attributes = list(self.model_extra.keys()) + list(self.model_fields.keys())
         attributes = [attr for attr in attributes if getattr(self, attr) is not None]
@@ -525,7 +529,9 @@ class Sample(BaseModel):
         return cls().space()
 
     @classmethod
-    def default_sample(cls, output_type="Sample") -> Union["Sample", Dict[str, Any]]:
+    def default_sample(
+        cls, output_type: str = "Sample"
+    ) -> Union["Sample", builtins.dict[str, Any]]:
         """Generate a default Sample instance from its class attributes. Useful for padding.
 
         This is the "no-op" instance and should be overriden as needed.
@@ -554,7 +560,7 @@ class Sample(BaseModel):
         for key, value in self.dict().items():
             logging.debug("Generating space for key: '%s', value: %s", key, value)
             info = self.model_field_info(key)
-            value = getattr(self, key) if hasattr(self, key) else value  # noqa: PLW2901
+            value = getattr(self, key) if hasattr(self, key) else value
             space_dict[key] = (
                 value.space() if isinstance(value, Sample) else self.space_for(value, info=info)
             )

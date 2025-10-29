@@ -20,17 +20,18 @@ Properly handles the async nature of the agent.
 
 import asyncio
 import os
-import sys
 from pathlib import Path
+import sys
+
 from dotenv import load_dotenv
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.agents2 import Agent
 from dimos.agents2.spec import Model, Provider
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("run_unitree_async")
@@ -70,10 +71,10 @@ async def handle_query(agent, query_text):
         return "Query timeout"
     except Exception as e:
         logger.error(f"Error processing query: {e}")
-        return f"Error: {str(e)}"
+        return f"Error: {e!s}"
 
 
-async def interactive_loop(agent):
+async def interactive_loop(agent) -> None:
     """Run an interactive query loop."""
     print("\n" + "=" * 60)
     print("Interactive Agent Mode")
@@ -101,7 +102,7 @@ async def interactive_loop(agent):
             logger.error(f"Error in interactive loop: {e}")
 
 
-async def main():
+async def main() -> None:
     """Main async function."""
     print("\n" + "=" * 60)
     print("Unitree Go2 Robot with agents2 Framework (Async)")
@@ -115,7 +116,7 @@ async def main():
 
     # Load system prompt
     try:
-        with open(SYSTEM_PROMPT_PATH, "r") as f:
+        with open(SYSTEM_PROMPT_PATH) as f:
             system_prompt = f.read()
     except FileNotFoundError:
         system_prompt = """You are a helpful robot assistant controlling a Unitree Go2 robot.

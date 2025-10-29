@@ -1,15 +1,16 @@
-import torch
 import json
 
+import torch
 
-def load_class_freq(path="datasets/lvis/lvis_v1_train_cat_info.json", freq_weight=0.5):
-    cat_info = json.load(open(path, "r"))
+
+def load_class_freq(path: str="datasets/lvis/lvis_v1_train_cat_info.json", freq_weight: float=0.5):
+    cat_info = json.load(open(path))
     cat_info = torch.tensor([c["image_count"] for c in sorted(cat_info, key=lambda x: x["id"])])
     freq_weight = cat_info.float() ** freq_weight
     return freq_weight
 
 
-def get_fed_loss_inds(gt_classes, num_sample_cats=50, C=1203, weight=None, fed_cls_inds=-1):
+def get_fed_loss_inds(gt_classes, num_sample_cats: int=50, C: int=1203, weight=None, fed_cls_inds=-1):
     appeared = torch.unique(gt_classes)  # C'
     prob = appeared.new_ones(C + 1).float()
     prob[-1] = 0

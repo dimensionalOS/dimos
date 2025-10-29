@@ -13,20 +13,19 @@
 # limitations under the License.
 
 import os
-from typing import List, Optional, Tuple
+
 import googlemaps
 
-from dimos.mapping.utils.distance import distance_in_meters
-from dimos.mapping.types import LatLon
-from dimos.utils.logging_config import setup_logger
 from dimos.mapping.google_maps.types import (
-    Position,
-    PlacePosition,
+    Coordinates,
     LocationContext,
     NearbyPlace,
-    Coordinates,
+    PlacePosition,
+    Position,
 )
-
+from dimos.mapping.types import LatLon
+from dimos.mapping.utils.distance import distance_in_meters
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
 
@@ -35,16 +34,14 @@ class GoogleMaps:
     _client: googlemaps.Client
     _max_nearby_places: int
 
-    def __init__(self, api_key: Optional[str] = None) -> None:
+    def __init__(self, api_key: str | None = None) -> None:
         api_key = api_key or os.environ.get("GOOGLE_MAPS_API_KEY")
         if not api_key:
             raise ValueError("GOOGLE_MAPS_API_KEY environment variable not set")
         self._client = googlemaps.Client(key=api_key)
         self._max_nearby_places = 6
 
-    def get_position(
-        self, query: str, current_location: Optional[LatLon] = None
-    ) -> Optional[Position]:
+    def get_position(self, query: str, current_location: LatLon | None = None) -> Position | None:
         # Use location bias if current location is provided
         if current_location:
             geocode_results = self._client.geocode(
@@ -77,8 +74,8 @@ class GoogleMaps:
         )
 
     def get_position_with_places(
-        self, query: str, current_location: Optional[LatLon] = None
-    ) -> Optional[PlacePosition]:
+        self, query: str, current_location: LatLon | None = None
+    ) -> PlacePosition | None:
         # Use location bias if current location is provided
         if current_location:
             places_results = self._client.places(
@@ -110,7 +107,7 @@ class GoogleMaps:
 
     def get_location_context(
         self, latlon: LatLon, radius: int = 100, n_nearby_places: int = 6
-    ) -> Optional[LocationContext]:
+    ) -> LocationContext | None:
         reverse_geocode_results = self._client.reverse_geocode((latlon.lat, latlon.lon))
 
         if not reverse_geocode_results:
@@ -157,7 +154,7 @@ class GoogleMaps:
 
     def _get_nearby_places(
         self, latlon: LatLon, radius: int, n_nearby_places: int
-    ) -> Tuple[List[NearbyPlace], str]:
+    ) -> tuple[list[NearbyPlace], str]:
         nearby_places = []
         place_types_count: dict[str, int] = {}
 

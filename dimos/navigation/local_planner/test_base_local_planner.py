@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 
 from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion
-from dimos.msgs.nav_msgs import Path, OccupancyGrid
+from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 
 
@@ -55,7 +55,7 @@ class TestHolonomicLocalPlanner:
         costmap.origin.position.y = -5.0
         return costmap
 
-    def test_straight_path_no_obstacles(self, planner, empty_costmap):
+    def test_straight_path_no_obstacles(self, planner, empty_costmap) -> None:
         """Test that planner follows straight path with no obstacles."""
         # Set current position at origin
         planner.latest_odom = PoseStamped()
@@ -84,7 +84,7 @@ class TestHolonomicLocalPlanner:
         assert abs(vel.linear.y) < 0.1  # Near zero
         assert abs(vel.angular.z) < 0.1  # Small angular velocity when aligned with path
 
-    def test_obstacle_gradient_repulsion(self, planner):
+    def test_obstacle_gradient_repulsion(self, planner) -> None:
         """Test that obstacle gradients create repulsive forces."""
         # Set position at origin
         planner.latest_odom = PoseStamped()
@@ -116,7 +116,7 @@ class TestHolonomicLocalPlanner:
         assert vel is not None
         assert vel.linear.y > 0.1  # Repulsion pushes north
 
-    def test_lowpass_filter(self):
+    def test_lowpass_filter(self) -> None:
         """Test that low-pass filter smooths velocity commands."""
         # Create planner with alpha=0.5 for filtering
         planner = HolonomicLocalPlanner(
@@ -164,7 +164,7 @@ class TestHolonomicLocalPlanner:
         assert 0 < vel2.linear.x <= planner.v_max  # Should still be positive and within limits
         planner._close_module()
 
-    def test_no_path(self, planner, empty_costmap):
+    def test_no_path(self, planner, empty_costmap) -> None:
         """Test that planner returns None when no path is available."""
         planner.latest_odom = PoseStamped()
         planner.latest_costmap = empty_costmap
@@ -173,7 +173,7 @@ class TestHolonomicLocalPlanner:
         vel = planner.compute_velocity()
         assert vel is None
 
-    def test_no_odometry(self, planner, empty_costmap):
+    def test_no_odometry(self, planner, empty_costmap) -> None:
         """Test that planner returns None when no odometry is available."""
         planner.latest_odom = None
         planner.latest_costmap = empty_costmap
@@ -188,7 +188,7 @@ class TestHolonomicLocalPlanner:
         vel = planner.compute_velocity()
         assert vel is None
 
-    def test_no_costmap(self, planner):
+    def test_no_costmap(self, planner) -> None:
         """Test that planner returns None when no costmap is available."""
         planner.latest_odom = PoseStamped()
         planner.latest_costmap = None
@@ -203,7 +203,7 @@ class TestHolonomicLocalPlanner:
         vel = planner.compute_velocity()
         assert vel is None
 
-    def test_goal_reached(self, planner, empty_costmap):
+    def test_goal_reached(self, planner, empty_costmap) -> None:
         """Test velocity when robot is at goal."""
         # Set robot at goal position
         planner.latest_odom = PoseStamped()
@@ -229,7 +229,7 @@ class TestHolonomicLocalPlanner:
         assert abs(vel.linear.x) < 0.1
         assert abs(vel.linear.y) < 0.1
 
-    def test_velocity_saturation(self, planner, empty_costmap):
+    def test_velocity_saturation(self, planner, empty_costmap) -> None:
         """Test that velocities are capped at v_max."""
         # Set robot far from goal to maximize commanded velocity
         planner.latest_odom = PoseStamped()
@@ -256,7 +256,7 @@ class TestHolonomicLocalPlanner:
         assert abs(vel.linear.y) <= planner.v_max + 0.01
         assert abs(vel.angular.z) <= planner.v_max + 0.01
 
-    def test_lookahead_interpolation(self, planner, empty_costmap):
+    def test_lookahead_interpolation(self, planner, empty_costmap) -> None:
         """Test that lookahead point is correctly interpolated on path."""
         # Set robot at origin
         planner.latest_odom = PoseStamped()
@@ -283,7 +283,7 @@ class TestHolonomicLocalPlanner:
         assert vel.linear.x > 0.5  # Moving forward
         assert abs(vel.linear.y) < 0.1  # Staying on path
 
-    def test_curved_path_following(self, planner, empty_costmap):
+    def test_curved_path_following(self, planner, empty_costmap) -> None:
         """Test following a curved path."""
         # Set robot at origin
         planner.latest_odom = PoseStamped()
@@ -315,7 +315,7 @@ class TestHolonomicLocalPlanner:
         total_linear = np.sqrt(vel.linear.x**2 + vel.linear.y**2)
         assert total_linear > 0.1  # Some reasonable movement
 
-    def test_robot_frame_transformation(self, empty_costmap):
+    def test_robot_frame_transformation(self, empty_costmap) -> None:
         """Test that velocities are correctly transformed to robot frame."""
         # Create planner with no filtering for deterministic test
         planner = HolonomicLocalPlanner(
@@ -359,7 +359,7 @@ class TestHolonomicLocalPlanner:
         assert abs(vel.linear.x) < abs(vel.linear.y)  # Lateral movement dominates
         planner._close_module()
 
-    def test_angular_velocity_computation(self, empty_costmap):
+    def test_angular_velocity_computation(self, empty_costmap) -> None:
         """Test that angular velocity is computed to align with path."""
         planner = HolonomicLocalPlanner(
             lookahead_dist=2.0,

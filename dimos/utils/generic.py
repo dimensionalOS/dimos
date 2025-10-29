@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import json
-import uuid
-import string
 import hashlib
-from typing import Any, Optional
+import json
+import os
+import string
+from typing import Any
+import uuid
 
 
-def truncate_display_string(arg: Any, max: Optional[int] = None) -> str:
+def truncate_display_string(arg: Any, max: int | None = None) -> str:
     """
     If we print strings that are too long that potentially obscures more important logs.
 

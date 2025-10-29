@@ -12,11 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import time
+
 import numpy as np
-from reactivex import Observable
-from reactivex import operators as ops
+from reactivex import Observable, operators as ops
 
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 
@@ -27,19 +25,22 @@ try:
 except (ModuleNotFoundError, ImportError):
     DETIC_AVAILABLE = False
     Detic2DDetector = None
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
 from dimos.models.depth.metric3d import Metric3D
+from dimos.perception.common.utils import draw_object_detection_visualization
 from dimos.perception.detection2d.utils import (
     calculate_depth_from_bbox,
     calculate_object_size_from_bbox,
     calculate_position_rotation_from_bbox,
 )
-from dimos.perception.common.utils import draw_object_detection_visualization
 from dimos.types.vector import Vector
-from typing import Optional, Union, Callable
-from dimos.types.manipulation import ObjectData
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import transform_robot_to_map
 
-from dimos.utils.logging_config import setup_logger
+if TYPE_CHECKING:
+    from dimos.types.manipulation import ObjectData
 
 # Initialize logger for the ObjectDetectionStream
 logger = setup_logger("dimos.perception.object_detection_stream")
@@ -60,16 +61,16 @@ class ObjectDetectionStream:
     def __init__(
         self,
         camera_intrinsics=None,  # [fx, fy, cx, cy]
-        device="cuda",
-        gt_depth_scale=1000.0,
-        min_confidence=0.7,
+        device: str = "cuda",
+        gt_depth_scale: float = 1000.0,
+        min_confidence: float = 0.7,
         class_filter=None,  # Optional list of class names to filter (e.g., ["person", "car"])
-        get_pose: Callable = None,  # Optional function to transform coordinates to map frame
-        detector: Optional[Union[Detic2DDetector, Yolo2DDetector]] = None,
+        get_pose: Callable | None = None,  # Optional function to transform coordinates to map frame
+        detector: Detic2DDetector | Yolo2DDetector | None = None,
         video_stream: Observable = None,
         disable_depth: bool = False,  # Flag to disable monocular Metric3D depth estimation
         draw_masks: bool = False,  # Flag to enable drawing segmentation masks
-    ):
+    ) -> None:
         """
         Initialize the ObjectDetectionStream.
 
@@ -155,7 +156,8 @@ class ObjectDetectionStream:
         def process_frame(frame):
             # TODO: More modular detector output interface
             bboxes, track_ids, class_ids, confidences, names, *mask_data = (
-                self.detector.process_image(frame) + ([],)
+                *self.detector.process_image(frame),
+                [],
             )
 
             masks = (
@@ -311,6 +313,6 @@ class ObjectDetectionStream:
         # Return a new stream with the formatter applied
         return self.stream.pipe(ops.map(format_detection_data))
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         pass

@@ -16,8 +16,8 @@ from __future__ import annotations
 
 from typing import TypeAlias
 
-import numpy as np
 from dimos_lcm.geometry_msgs import TwistWithCovariance as LCMTwistWithCovariance
+import numpy as np
 from plum import dispatch
 
 try:
@@ -113,7 +113,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
             self.twist = Twist(twist[0], twist[1])
         self.covariance = np.array(twist_tuple[1], dtype=float).reshape(36)
 
-    def __getattribute__(self, name):
+    def __getattribute__(self, name: str):
         """Override to ensure covariance is always returned as numpy array."""
         if name == "covariance":
             cov = object.__getattribute__(self, "covariance")
@@ -122,7 +122,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
             return cov
         return super().__getattribute__(name)
 
-    def __setattr__(self, name, value):
+    def __setattr__(self, name: str, value) -> None:
         """Override to ensure covariance is stored as numpy array."""
         if name == "covariance":
             if not isinstance(value, np.ndarray):
@@ -185,7 +185,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
         return lcm_msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "TwistWithCovariance":
+    def lcm_decode(cls, data: bytes) -> TwistWithCovariance:
         """Decode from LCM binary format."""
         lcm_msg = LCMTwistWithCovariance.lcm_decode(data)
         twist = Twist(
@@ -195,7 +195,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
         return cls(twist, lcm_msg.covariance)
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistWithCovariance) -> "TwistWithCovariance":
+    def from_ros_msg(cls, ros_msg: ROSTwistWithCovariance) -> TwistWithCovariance:
         """Create a TwistWithCovariance from a ROS geometry_msgs/TwistWithCovariance message.
 
         Args:

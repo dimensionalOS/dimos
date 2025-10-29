@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
-import math
-import io
-from typing import Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
-import requests
+from dataclasses import dataclass
+import io
+import math
+
 import numpy as np
 from PIL import Image as PILImage
+import requests
 
 from dimos.mapping.types import ImageCoord, LatLon
 from dimos.msgs.sensor_msgs import Image, ImageFormat
@@ -96,7 +96,7 @@ class MapImage:
         return (pixel_x, pixel_y)
 
 
-def _lat_lon_to_tile(lat: float, lon: float, zoom: int) -> Tuple[float, float]:
+def _lat_lon_to_tile(lat: float, lon: float, zoom: int) -> tuple[float, float]:
     """Convert latitude/longitude to tile coordinates at given zoom level."""
     n = 2**zoom
     x_tile = (lon + 180.0) / 360.0 * n
@@ -106,8 +106,8 @@ def _lat_lon_to_tile(lat: float, lon: float, zoom: int) -> Tuple[float, float]:
 
 
 def _download_tile(
-    args: Tuple[int, int, int, int, int],
-) -> Tuple[int, int, Optional[PILImage.Image]]:
+    args: tuple[int, int, int, int, int],
+) -> tuple[int, int, PILImage.Image | None]:
     """Download a single tile.
 
     Args:

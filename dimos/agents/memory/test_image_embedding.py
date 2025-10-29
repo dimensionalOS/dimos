@@ -21,7 +21,6 @@ import time
 
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
@@ -33,7 +32,7 @@ class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 
     @pytest.mark.tofix
-    def test_clip_embedding_initialization(self):
+    def test_clip_embedding_initialization(self) -> None:
         """Test CLIP embedding provider initializes correctly."""
         try:
             # Initialize the embedding provider with CLIP model
@@ -46,7 +45,7 @@ class TestImageEmbedding:
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
     @pytest.mark.tofix
-    def test_clip_embedding_process_video(self):
+    def test_clip_embedding_process_video(self) -> None:
         """Test CLIP embedding provider can process video frames and return embeddings."""
         try:
             from dimos.utils.data import get_data
@@ -80,7 +79,7 @@ class TestImageEmbedding:
             frames_processed = 0
             target_frames = 10
 
-            def on_next(result):
+            def on_next(result) -> None:
                 nonlocal frames_processed, results
                 if not result:  # Skip None results
                     return
@@ -92,10 +91,10 @@ class TestImageEmbedding:
                 if frames_processed >= target_frames:
                     subscription.dispose()
 
-            def on_error(error):
+            def on_error(error) -> None:
                 pytest.fail(f"Error in embedding stream: {error}")
 
-            def on_completed():
+            def on_completed() -> None:
                 pass
 
             # Subscribe and wait for results
@@ -143,7 +142,7 @@ class TestImageEmbedding:
                     "embedding1": results[0]["embedding"],
                     "embedding2": results[1]["embedding"] if len(results) > 1 else None,
                 }
-                print(f"Saved embeddings for similarity testing")
+                print("Saved embeddings for similarity testing")
 
             print("CLIP embedding test passed successfully!")
 
@@ -151,7 +150,7 @@ class TestImageEmbedding:
             pytest.fail(f"Test failed with error: {e}")
 
     @pytest.mark.tofix
-    def test_clip_embedding_similarity(self):
+    def test_clip_embedding_similarity(self) -> None:
         """Test CLIP embedding similarity search and text-to-image queries."""
         try:
             # Skip if previous test didn't generate embeddings

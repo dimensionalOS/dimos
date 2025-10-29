@@ -8,11 +8,6 @@ Note: this script has an extra dependency of psutil.
 
 import itertools
 import logging
-import psutil
-import torch
-import tqdm
-from fvcore.common.timer import Timer
-from torch.nn.parallel import DistributedDataParallel
 
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import LazyConfig, get_cfg, instantiate
@@ -29,6 +24,11 @@ from detectron2.utils import comm
 from detectron2.utils.collect_env import collect_env_info
 from detectron2.utils.events import CommonMetricPrinter
 from detectron2.utils.logger import setup_logger
+from fvcore.common.timer import Timer
+import psutil
+import torch
+from torch.nn.parallel import DistributedDataParallel
+import tqdm
 
 logger = logging.getLogger("detectron2")
 
@@ -59,14 +59,12 @@ def create_data_benchmark(cfg, args):
         return instantiate(kwargs)
 
 
-def RAM_msg():
+def RAM_msg() -> str:
     vram = psutil.virtual_memory()
-    return "RAM Usage: {:.2f}/{:.2f} GB".format(
-        (vram.total - vram.available) / 1024**3, vram.total / 1024**3
-    )
+    return f"RAM Usage: {(vram.total - vram.available) / 1024**3:.2f}/{vram.total / 1024**3:.2f} GB"
 
 
-def benchmark_data(args):
+def benchmark_data(args) -> None:
     cfg = setup(args)
     logger.info("After spawning " + RAM_msg())
 
@@ -78,7 +76,7 @@ def benchmark_data(args):
         benchmark.benchmark_distributed(250, 1)
 
 
-def benchmark_data_advanced(args):
+def benchmark_data_advanced(args) -> None:
     # benchmark dataloader with more details to help analyze performance bottleneck
     cfg = setup(args)
     benchmark = create_data_benchmark(cfg, args)
@@ -94,10 +92,10 @@ def benchmark_data_advanced(args):
         benchmark.benchmark_distributed(100)
 
 
-def benchmark_train(args):
+def benchmark_train(args) -> None:
     cfg = setup(args)
     model = build_model(cfg)
-    logger.info("Model:\n{}".format(model))
+    logger.info(f"Model:\n{model}")
     if comm.get_world_size() > 1:
         model = DistributedDataParallel(
             model, device_ids=[comm.get_local_rank()], broadcast_buffers=False
@@ -131,7 +129,7 @@ def benchmark_train(args):
 
 
 @torch.no_grad()
-def benchmark_eval(args):
+def benchmark_eval(args) -> None:
     cfg = setup(args)
     if args.config_file.endswith(".yaml"):
         model = build_model(cfg)
@@ -149,7 +147,7 @@ def benchmark_eval(args):
         data_loader = instantiate(cfg.dataloader.test)
 
     model.eval()
-    logger.info("Model:\n{}".format(model))
+    logger.info(f"Model:\n{model}")
     dummy_data = DatasetFromList(list(itertools.islice(data_loader, 100)), copy=False)
 
     def f():
@@ -167,7 +165,7 @@ def benchmark_eval(args):
                 break
             model(d)
             pbar.update()
-    logger.info("{} iters in {} seconds.".format(max_iter, timer.seconds()))
+    logger.info(f"{max_iter} iters in {timer.seconds()} seconds.")
 
 
 if __name__ == "__main__":

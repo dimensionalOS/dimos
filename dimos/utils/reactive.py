@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import threading
-from typing import Any, Callable, Generic, Optional, TypeVar
+from typing import Any, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
@@ -32,7 +33,7 @@ T = TypeVar("T")
 #                           └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 def backpressure(
     observable: Observable[T],
-    scheduler: Optional[ThreadPoolScheduler] = None,
+    scheduler: ThreadPoolScheduler | None = None,
     drop_unprocessed: bool = True,
 ) -> Observable[T]:
     if scheduler is None:
@@ -65,7 +66,7 @@ def backpressure(
 class LatestReader(Generic[T]):
     """A callable object that returns the latest value from an observable."""
 
-    def __init__(self, initial_value: T, subscription, connection=None):
+    def __init__(self, initial_value: T, subscription, connection=None) -> None:
         self._value = initial_value
         self._subscription = subscription
         self._connection = connection
@@ -81,21 +82,21 @@ class LatestReader(Generic[T]):
             self._connection.dispose()
 
 
-def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
+def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> T:
     def getter():
         result = []
         error = []
         event = threading.Event()
 
-        def on_next(value):
+        def on_next(value) -> None:
             result.append(value)
             event.set()
 
-        def on_error(e):
+        def on_error(e) -> None:
             error.append(e)
             event.set()
 
-        def on_completed():
+        def on_completed() -> None:
             event.set()
 
         # Subscribe and wait for first value
@@ -128,7 +129,7 @@ T = TypeVar("T")
 
 def getter_streaming(
     source: Observable[T],
-    timeout: Optional[float] = 30.0,
+    timeout: float | None = 30.0,
     *,
     nonblocking: bool = False,
 ) -> LatestReader[T]:
@@ -182,7 +183,7 @@ def callback_to_observable(
     stop: Callable[[CB[T]], Any],
 ) -> Observable[T]:
     def _subscribe(observer, _scheduler=None):
-        def _on_msg(value: T):
+        def _on_msg(value: T) -> None:
             observer.on_next(value)
 
         start(_on_msg)

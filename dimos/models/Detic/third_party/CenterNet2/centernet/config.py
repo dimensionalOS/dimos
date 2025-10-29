@@ -1,7 +1,7 @@
 from detectron2.config import CfgNode as CN
 
 
-def add_centernet_config(cfg):
+def add_centernet_config(cfg) -> None:
     _C = cfg
 
     _C.MODEL.CENTERNET = CN()

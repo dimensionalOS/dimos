@@ -11,13 +11,13 @@
 Backbone modules.
 """
 
-import torch
-import torch.nn.functional as F
-import torchvision
-from torch import nn
-from torchvision.models._utils import IntermediateLayerGetter
 from typing import Dict, List
 
+import torch
+from torch import nn
+import torch.nn.functional as F
+import torchvision
+from torchvision.models._utils import IntermediateLayerGetter
 from util.misc import NestedTensor, is_main_process
 
 from .position_encoding import build_position_encoding
@@ -32,8 +32,8 @@ class FrozenBatchNorm2d(torch.nn.Module):
     produce nans.
     """
 
-    def __init__(self, n, eps=1e-5):
-        super(FrozenBatchNorm2d, self).__init__()
+    def __init__(self, n, eps: float=1e-5) -> None:
+        super().__init__()
         self.register_buffer("weight", torch.ones(n))
         self.register_buffer("bias", torch.zeros(n))
         self.register_buffer("running_mean", torch.zeros(n))
@@ -41,13 +41,13 @@ class FrozenBatchNorm2d(torch.nn.Module):
         self.eps = eps
 
     def _load_from_state_dict(
-        self, state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
-    ):
+        self, state_dict, prefix: str, local_metadata, strict: bool, missing_keys, unexpected_keys, error_msgs
+    ) -> None:
         num_batches_tracked_key = prefix + "num_batches_tracked"
         if num_batches_tracked_key in state_dict:
             del state_dict[num_batches_tracked_key]
 
-        super(FrozenBatchNorm2d, self)._load_from_state_dict(
+        super()._load_from_state_dict(
             state_dict, prefix, local_metadata, strict, missing_keys, unexpected_keys, error_msgs
         )
 
@@ -65,14 +65,14 @@ class FrozenBatchNorm2d(torch.nn.Module):
 
 
 class BackboneBase(nn.Module):
-    def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool):
+    def __init__(self, backbone: nn.Module, train_backbone: bool, return_interm_layers: bool) -> None:
         super().__init__()
         for name, parameter in backbone.named_parameters():
             if (
                 not train_backbone
-                or "layer2" not in name
+                or ("layer2" not in name
                 and "layer3" not in name
-                and "layer4" not in name
+                and "layer4" not in name)
             ):
                 parameter.requires_grad_(False)
         if return_interm_layers:
@@ -88,7 +88,7 @@ class BackboneBase(nn.Module):
 
     def forward(self, tensor_list: NestedTensor):
         xs = self.body(tensor_list.tensors)
-        out: Dict[str, NestedTensor] = {}
+        out: dict[str, NestedTensor] = {}
         for name, x in xs.items():
             m = tensor_list.mask
             assert m is not None
@@ -100,7 +100,7 @@ class BackboneBase(nn.Module):
 class Backbone(BackboneBase):
     """ResNet backbone with frozen BatchNorm."""
 
-    def __init__(self, name: str, train_backbone: bool, return_interm_layers: bool, dilation: bool):
+    def __init__(self, name: str, train_backbone: bool, return_interm_layers: bool, dilation: bool) -> None:
         norm_layer = FrozenBatchNorm2d
         backbone = getattr(torchvision.models, name)(
             replace_stride_with_dilation=[False, False, dilation],
@@ -114,16 +114,16 @@ class Backbone(BackboneBase):
 
 
 class Joiner(nn.Sequential):
-    def __init__(self, backbone, position_embedding):
+    def __init__(self, backbone, position_embedding) -> None:
         super().__init__(backbone, position_embedding)
         self.strides = backbone.strides
         self.num_channels = backbone.num_channels
 
     def forward(self, tensor_list: NestedTensor):
         xs = self[0](tensor_list)
-        out: List[NestedTensor] = []
+        out: list[NestedTensor] = []
         pos = []
-        for name, x in sorted(xs.items()):
+        for _name, x in sorted(xs.items()):
             out.append(x)
 
         # position encoding

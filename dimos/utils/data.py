@@ -12,11 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import subprocess
-import tarfile
 from functools import cache
 from pathlib import Path
-from typing import Optional, Union
+import subprocess
+import tarfile
 
 
 @cache
@@ -31,7 +30,7 @@ def _get_repo_root() -> Path:
 
 
 @cache
-def _get_data_dir(extra_path: Optional[str] = None) -> Path:
+def _get_data_dir(extra_path: str | None = None) -> Path:
     if extra_path:
         return _get_repo_root() / "data" / extra_path
     return _get_repo_root() / "data"
@@ -59,7 +58,7 @@ def _is_lfs_pointer_file(file_path: Path) -> bool:
         if file_path.stat().st_size > 1024:  # LFS pointers are much smaller
             return False
 
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             first_line = f.readline().strip()
             return first_line.startswith("version https://git-lfs.github.com/spec/")
 
@@ -83,7 +82,7 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
     return None
 
 
-def _decompress_archive(filename: Union[str, Path]) -> Path:
+def _decompress_archive(filename: str | Path) -> Path:
     target_dir = _get_data_dir()
     filename_path = Path(filename)
     with tarfile.open(filename_path, "r:gz") as tar:
@@ -91,7 +90,7 @@ def _decompress_archive(filename: Union[str, Path]) -> Path:
     return target_dir / filename_path.name.replace(".tar.gz", "")
 
 
-def _pull_lfs_archive(filename: Union[str, Path]) -> Path:
+def _pull_lfs_archive(filename: str | Path) -> Path:
     # Check Git LFS availability first
     _check_git_lfs_available()
 
@@ -121,7 +120,7 @@ def _pull_lfs_archive(filename: Union[str, Path]) -> Path:
     return file_path
 
 
-def get_data(filename: Union[str, Path]) -> Path:
+def get_data(filename: str | Path) -> Path:
     """
     Get the path to a test data, downloading from LFS if needed.
 

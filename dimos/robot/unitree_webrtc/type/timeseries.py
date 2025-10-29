@@ -16,7 +16,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from typing import Generic, Iterable, Tuple, TypedDict, TypeVar, Union
+from typing import TYPE_CHECKING, Generic, TypedDict, TypeVar, Union
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 PAYLOAD = TypeVar("PAYLOAD")
 
@@ -29,7 +32,7 @@ class RosStamp(TypedDict):
 EpochLike = Union[int, float, datetime, RosStamp]
 
 
-def from_ros_stamp(stamp: dict[str, int], tz: timezone = None) -> datetime:
+def from_ros_stamp(stamp: dict[str, int], tz: timezone | None = None) -> datetime:
     """Convert ROS-style timestamp {'sec': int, 'nanosec': int} to datetime."""
     return datetime.fromtimestamp(stamp["sec"] + stamp["nanosec"] / 1e9, tz=tz)
 
@@ -39,12 +42,12 @@ def to_human_readable(ts: EpochLike) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
-def to_datetime(ts: EpochLike, tz: timezone = None) -> datetime:
+def to_datetime(ts: EpochLike, tz: timezone | None = None) -> datetime:
     if isinstance(ts, datetime):
         # if ts.tzinfo is None:
         #    ts = ts.astimezone(tz)
         return ts
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         return datetime.fromtimestamp(ts, tz=tz)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return datetime.fromtimestamp(ts["sec"] + ts["nanosec"] / 1e9, tz=tz)
@@ -56,14 +59,14 @@ class Timestamped(ABC):
 
     ts: datetime
 
-    def __init__(self, ts: EpochLike):
+    def __init__(self, ts: EpochLike) -> None:
         self.ts = to_datetime(ts)
 
 
 class TEvent(Timestamped, Generic[PAYLOAD]):
     """Concrete class for an event with a timestamp and data."""
 
-    def __init__(self, timestamp: EpochLike, data: PAYLOAD):
+    def __init__(self, timestamp: EpochLike, data: PAYLOAD) -> None:
         super().__init__(timestamp)
         self.data = data
 
@@ -100,7 +103,7 @@ class Timeseries(ABC, Generic[EVENT]):
         """Calculate the frequency of events in Hz."""
         return len(list(self)) / (self.duration().total_seconds() or 1)
 
-    def time_range(self) -> Tuple[datetime, datetime]:
+    def time_range(self) -> tuple[datetime, datetime]:
         """Return (earliest_ts, latest_ts).  Empty input ⇒ ValueError."""
         return self.start_time, self.end_time
 

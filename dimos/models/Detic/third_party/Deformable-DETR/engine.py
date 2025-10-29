@@ -16,11 +16,11 @@ import os
 import sys
 from typing import Iterable
 
+from datasets.coco_eval import CocoEvaluator
+from datasets.data_prefetcher import data_prefetcher
+from datasets.panoptic_eval import PanopticEvaluator
 import torch
 import util.misc as utils
-from datasets.coco_eval import CocoEvaluator
-from datasets.panoptic_eval import PanopticEvaluator
-from datasets.data_prefetcher import data_prefetcher
 
 
 def train_one_epoch(
@@ -38,7 +38,7 @@ def train_one_epoch(
     metric_logger.add_meter("lr", utils.SmoothedValue(window_size=1, fmt="{value:.6f}"))
     metric_logger.add_meter("class_error", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
     metric_logger.add_meter("grad_norm", utils.SmoothedValue(window_size=1, fmt="{value:.2f}"))
-    header = "Epoch: [{}]".format(epoch)
+    header = f"Epoch: [{epoch}]"
     print_freq = 10
 
     prefetcher = data_prefetcher(data_loader, device, prefetch=True)
@@ -62,7 +62,7 @@ def train_one_epoch(
         loss_value = losses_reduced_scaled.item()
 
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+            print(f"Loss is {loss_value}, stopping training")
             print(loss_dict_reduced)
             sys.exit(1)
 
@@ -135,7 +135,7 @@ def evaluate(model, criterion, postprocessors, data_loader, base_ds, device, out
         if "segm" in postprocessors.keys():
             target_sizes = torch.stack([t["size"] for t in targets], dim=0)
             results = postprocessors["segm"](results, outputs, orig_target_sizes, target_sizes)
-        res = {target["image_id"].item(): output for target, output in zip(targets, results)}
+        res = {target["image_id"].item(): output for target, output in zip(targets, results, strict=False)}
         if coco_evaluator is not None:
             coco_evaluator.update(res)
 
