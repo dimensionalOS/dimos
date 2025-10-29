@@ -35,7 +35,7 @@ from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, Skill
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.protocol.agents2")
+logger = setup_logger(__file__)
 
 
 SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a System Overview message that provides situational awareness."

@@ -53,7 +53,6 @@ basic = (
         behavior_tree_navigator(),
         wavefront_frontier_explorer(),
         websocket_vis(),
-        unitree_skills(),
         foxglove_bridge(),
     )
     .global_config(n_dask_workers=4)
@@ -127,4 +126,5 @@ agentic = autoconnect(
     llm_agent(),
     human_input(),
     navigation_skill(),
+    unitree_skills(),
 )

@@ -21,6 +21,7 @@ from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillCont
 from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.agents2.system_prompt import get_system_prompt
+from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 
 system_prompt = get_system_prompt()
 
@@ -71,6 +72,16 @@ def google_maps_skill_container(mocker):
 
 
 @pytest.fixture
+def unitree_skills(mocker):
+    container = UnitreeSkillContainer()
+    container._move = mocker.Mock()
+    container._publish_request = mocker.Mock()
+    container.start()
+    yield container
+    container.stop()
+
+
+@pytest.fixture
 def create_navigation_agent(navigation_skill_container, create_fake_agent):
     return partial(
         create_fake_agent,
@@ -94,4 +105,13 @@ def create_google_maps_agent(
         create_fake_agent,
         system_prompt=system_prompt,
         skill_containers=[gps_nav_skill_container, google_maps_skill_container],
+    )
+
+
+@pytest.fixture
+def create_unitree_skills_agent(unitree_skills, create_fake_agent):
+    return partial(
+        create_fake_agent,
+        system_prompt=system_prompt,
+        skill_containers=[unitree_skills],
     )

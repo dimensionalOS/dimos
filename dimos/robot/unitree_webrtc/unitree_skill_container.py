@@ -12,14 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Unitree skill container for the new agents2 framework.
-Dynamically generates skills from UNITREE_WEBRTC_CONTROLS list.
-"""
-
 from __future__ import annotations
 
 import datetime
+import difflib
 import time
 from typing import TYPE_CHECKING
 
@@ -36,7 +32,14 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RpcCall
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
+logger = setup_logger(__file__)
+
+
+_UNITREE_COMMANDS = {
+    name: (id_, description)
+    for name, id_, description in UNITREE_WEBRTC_CONTROLS
+    if name not in ["Reverse", "Spin"]
+}
 
 
 class UnitreeSkillContainer(SkillModule):
@@ -44,12 +47,6 @@ class UnitreeSkillContainer(SkillModule):
 
     _move: RpcCall | None = None
     _publish_request: RpcCall | None = None
-
-    def __init__(self) -> None:
-        super().__init__()
-
-        # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
-        self._generate_unitree_skills()
 
     @rpc
     def start(self) -> None:
@@ -68,65 +65,6 @@ class UnitreeSkillContainer(SkillModule):
     def set_ConnectionModule_publish_request(self, callable: RpcCall) -> None:
         self._publish_request = callable
         self._publish_request.set_rpc(self.rpc)
-
-    def _generate_unitree_skills(self) -> None:
-        """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""
-        logger.info(f"Generating {len(UNITREE_WEBRTC_CONTROLS)} dynamic Unitree skills")
-
-        for name, api_id, description in UNITREE_WEBRTC_CONTROLS:
-            if name not in ["Reverse", "Spin"]:  # Exclude reverse and spin as in original
-                # Convert CamelCase to snake_case for method name
-                skill_name = self._convert_to_snake_case(name)
-                self._create_dynamic_skill(skill_name, api_id, description, name)
-
-    def _convert_to_snake_case(self, name: str) -> str:
-        """Convert CamelCase to snake_case.
-
-        Examples:
-            StandUp -> stand_up
-            RecoveryStand -> recovery_stand
-            FrontFlip -> front_flip
-        """
-        result = []
-        for i, char in enumerate(name):
-            if i > 0 and char.isupper():
-                result.append("_")
-            result.append(char.lower())
-        return "".join(result)
-
-    def _create_dynamic_skill(
-        self, skill_name: str, api_id: int, description: str, original_name: str
-    ) -> None:
-        """Create a dynamic skill method with the @skill decorator.
-
-        Args:
-            skill_name: Snake_case name for the method
-            api_id: The API command ID
-            description: Human-readable description
-            original_name: Original CamelCase name for display
-        """
-
-        # Define the skill function
-        def dynamic_skill_func(self) -> str:
-            """Dynamic skill function."""
-            return self._execute_sport_command(api_id, original_name)
-
-        # Set the function's metadata
-        dynamic_skill_func.__name__ = skill_name
-        dynamic_skill_func.__doc__ = description
-
-        # Apply the @skill decorator
-        decorated_skill = skill()(dynamic_skill_func)
-
-        # Bind the method to the instance
-        bound_method = decorated_skill.__get__(self, self.__class__)
-
-        # Add it as an attribute
-        setattr(self, skill_name, bound_method)
-
-        logger.debug(f"Generated skill: {skill_name} (API ID: {api_id})")
-
-    # ========== Explicit Skills ==========
 
     @skill()
     def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
@@ -172,27 +110,41 @@ class UnitreeSkillContainer(SkillModule):
         """Speak text out loud through the robot's speakers."""
         return f"This is being said aloud: {text}"
 
-    # ========== Helper Methods ==========
-
-    def _execute_sport_command(self, api_id: int, name: str) -> str:
-        """Execute a sport command through WebRTC interface.
-
-        Args:
-            api_id: The API command ID
-            name: Human-readable name of the command
-        """
+    @skill()
+    def execute_sport_command(self, command_name: str) -> str:
         if self._publish_request is None:
-            return f"Error: Robot not connected (cannot execute {name})"
+            return f"Error: Robot not connected (cannot execute {command_name})"
+
+        if command_name not in _UNITREE_COMMANDS:
+            suggestions = difflib.get_close_matches(
+                command_name, _UNITREE_COMMANDS.keys(), n=3, cutoff=0.6
+            )
+            return f"There's no '{command_name}' command. Did you mean: {suggestions}"
+
+        id_, _ = _UNITREE_COMMANDS[command_name]
 
         try:
-            self._publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": api_id})
-            message = f"{name} command executed successfully (id={api_id})"
-            logger.info(message)
-            return message
+            self._publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": id_})
+            return f"'{command_name}' command executed successfully."
         except Exception as e:
-            error_msg = f"Failed to execute {name}: {e}"
-            logger.error(error_msg)
-            return error_msg
+            logger.error(f"Failed to execute {command_name}: {e}")
+            return "Failed to execute the command."
+
+
+_commands = "\n".join(
+    [f'- "{name}": {description}' for name, (_, description) in _UNITREE_COMMANDS.items()]
+)
+
+UnitreeSkillContainer.execute_sport_command.__doc__ = f"""Execute a Unitree sport command.
+
+Example usage:
+
+    execute_sport_command("FrontPounce")
+
+Here are all the command names, and what they do.
+
+{_commands}
+"""
 
 
 unitree_skills = UnitreeSkillContainer.blueprint
