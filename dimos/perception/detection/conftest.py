@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Generator
 import functools
-from typing import Callable, Generator, Optional, TypedDict, Union
+from typing import TypedDict
 
-import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.foxglove_msgs.SceneUpdate import SceneUpdate
 from dimos_lcm.visualization_msgs.MarkerArray import MarkerArray
+import pytest
 
 from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
@@ -29,7 +30,6 @@ from dimos.perception.detection.module3D import Detection3DModule
 from dimos.perception.detection.moduleDB import ObjectDBModule
 from dimos.perception.detection.type import (
     Detection2D,
-    Detection3D,
     Detection3DPC,
     ImageDetections2D,
     ImageDetections3DPC,
@@ -49,10 +49,10 @@ class Moment(TypedDict, total=False):
     camera_info: CameraInfo
     transforms: list[Transform]
     tf: TF
-    annotations: Optional[ImageAnnotations]
-    detections: Optional[ImageDetections3DPC]
-    markers: Optional[MarkerArray]
-    scene_update: Optional[SceneUpdate]
+    annotations: ImageAnnotations | None
+    detections: ImageDetections3DPC | None
+    markers: MarkerArray | None
+    scene_update: SceneUpdate | None
 
 
 class Moment2D(Moment):
@@ -108,7 +108,7 @@ def get_moment(tf):
         # ConnectionModule._camera_info() returns Out[CameraInfo], extract the value
         from typing import cast
 
-        camera_info = cast(CameraInfo, camera_info_out)
+        camera_info = cast("CameraInfo", camera_info_out)
         return {
             "odom_frame": odom_frame,
             "lidar_frame": lidar_frame,
@@ -123,7 +123,7 @@ def get_moment(tf):
 
 @pytest.fixture(scope="session")
 def publish_moment():
-    def publisher(moment: Moment | Moment2D | Moment3D):
+    def publisher(moment: Moment | Moment2D | Moment3D) -> None:
         detections2d_val = moment.get("detections2d")
         if detections2d_val:
             # 2d annotations
@@ -227,7 +227,7 @@ def get_moment_2d(get_moment) -> Generator[Callable[[], Moment2D], None, None]:
 
 @pytest.fixture(scope="session")
 def get_moment_3dpc(get_moment_2d) -> Generator[Callable[[], Moment3D], None, None]:
-    module: Optional[Detection3DModule] = None
+    module: Detection3DModule | None = None
 
     @functools.lru_cache(maxsize=1)
     def moment_provider(**kwargs) -> Moment3D:

@@ -17,13 +17,11 @@ import time
 import pytest
 
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.service.lcmservice import autoconf
-from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy
-from dimos.utils.cli.lcmspy.lcmspy import Topic as TopicSpy
+from dimos.utils.cli.lcmspy.lcmspy import GraphLCMSpy, GraphTopic, LCMSpy, Topic as TopicSpy
 
 
 @pytest.mark.lcm
-def test_spy_basic():
+def test_spy_basic() -> None:
     lcm = PickleLCM(autoconf=True)
     lcm.start()
 
@@ -82,7 +80,7 @@ def test_spy_basic():
 
 
 @pytest.mark.lcm
-def test_topic_statistics_direct():
+def test_topic_statistics_direct() -> None:
     """Test Topic statistics directly without LCM"""
 
     topic = TopicSpy("/test")
@@ -90,7 +88,7 @@ def test_topic_statistics_direct():
     # Add some test messages
     test_data = [b"small", b"medium sized message", b"very long message for testing purposes"]
 
-    for i, data in enumerate(test_data):
+    for _i, data in enumerate(test_data):
         topic.msg(data)
         time.sleep(0.1)  # Simulate time passing
 
@@ -108,7 +106,7 @@ def test_topic_statistics_direct():
     print(f"Direct test - Avg size: {avg_size:.2f} bytes")
 
 
-def test_topic_cleanup():
+def test_topic_cleanup() -> None:
     """Test that old messages are properly cleaned up"""
 
     topic = TopicSpy("/test")
@@ -131,7 +129,7 @@ def test_topic_cleanup():
 
 
 @pytest.mark.lcm
-def test_graph_topic_basic():
+def test_graph_topic_basic() -> None:
     """Test GraphTopic basic functionality"""
     topic = GraphTopic("/test_graph")
 
@@ -147,7 +145,7 @@ def test_graph_topic_basic():
 
 
 @pytest.mark.lcm
-def test_graph_lcmspy_basic():
+def test_graph_lcmspy_basic() -> None:
     """Test GraphLCMSpy basic functionality"""
     spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
     spy.start()
@@ -167,7 +165,7 @@ def test_graph_lcmspy_basic():
 
 
 @pytest.mark.lcm
-def test_lcmspy_global_totals():
+def test_lcmspy_global_totals() -> None:
     """Test that LCMSpy tracks global totals as a Topic itself"""
     spy = LCMSpy(autoconf=True)
     spy.start()
@@ -197,7 +195,7 @@ def test_lcmspy_global_totals():
 
 
 @pytest.mark.lcm
-def test_graph_lcmspy_global_totals():
+def test_graph_lcmspy_global_totals() -> None:
     """Test that GraphLCMSpy tracks global totals with history"""
     spy = GraphLCMSpy(autoconf=True, graph_log_window=0.1)
     spy.start()

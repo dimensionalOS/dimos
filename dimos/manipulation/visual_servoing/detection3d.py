@@ -16,34 +16,32 @@
 Real-time 3D object detection processor that extracts object poses from RGB-D data.
 """
 
-from typing import List, Optional, Tuple
-import numpy as np
 import cv2
-
-from dimos.utils.logging_config import setup_logger
-from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
-from dimos.perception.pointcloud.utils import extract_centroids_from_masks
-from dimos.perception.detection2d.utils import calculate_object_size_from_bbox
-from dimos.perception.common.utils import bbox2d_to_corners
-
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos_lcm.vision_msgs import (
-    Detection3D,
-    BoundingBox3D,
-    ObjectHypothesisWithPose,
-    ObjectHypothesis,
-    Detection2D,
     BoundingBox2D,
-    Pose2D,
+    BoundingBox3D,
+    Detection2D,
+    Detection3D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
     Point2D,
+    Pose2D,
 )
+import numpy as np
+
 from dimos.manipulation.visual_servoing.utils import (
     estimate_object_depth,
-    visualize_detections_3d,
     transform_pose,
+    visualize_detections_3d,
 )
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.perception.common.utils import bbox2d_to_corners
+from dimos.perception.detection2d.utils import calculate_object_size_from_bbox
+from dimos.perception.pointcloud.utils import extract_centroids_from_masks
+from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.manipulation.visual_servoing.detection3d")
 
@@ -58,12 +56,12 @@ class Detection3DProcessor:
 
     def __init__(
         self,
-        camera_intrinsics: List[float],  # [fx, fy, cx, cy]
+        camera_intrinsics: list[float],  # [fx, fy, cx, cy]
         min_confidence: float = 0.6,
         min_points: int = 30,
         max_depth: float = 1.0,
         max_object_size: float = 0.15,
-    ):
+    ) -> None:
         """
         Initialize the real-time 3D detection processor.
 
@@ -93,8 +91,8 @@ class Detection3DProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: Optional[np.ndarray] = None
-    ) -> Tuple[Detection3DArray, Detection2DArray]:
+        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: np.ndarray | None = None
+    ) -> tuple[Detection3DArray, Detection2DArray]:
         """
         Process a single RGB-D frame to extract 3D object detections.
 
@@ -138,7 +136,9 @@ class Detection3DProcessor:
         detections_2d = []
         pose_dict = {p["mask_idx"]: p for p in poses if p["centroid"][2] < self.max_depth}
 
-        for i, (bbox, name, prob, track_id) in enumerate(zip(bboxes, names, probs, track_ids)):
+        for i, (bbox, name, prob, track_id) in enumerate(
+            zip(bboxes, names, probs, track_ids, strict=False)
+        ):
             if i not in pose_dict:
                 continue
 
@@ -234,8 +234,8 @@ class Detection3DProcessor:
     def visualize_detections(
         self,
         rgb_image: np.ndarray,
-        detections_3d: List[Detection3D],
-        detections_2d: List[Detection2D],
+        detections_3d: list[Detection3D],
+        detections_2d: list[Detection2D],
         show_coordinates: bool = True,
     ) -> np.ndarray:
         """
@@ -261,8 +261,8 @@ class Detection3DProcessor:
         return visualize_detections_3d(rgb_image, detections_3d, show_coordinates, bboxes_2d)
 
     def get_closest_detection(
-        self, detections: List[Detection3D], class_filter: Optional[str] = None
-    ) -> Optional[Detection3D]:
+        self, detections: list[Detection3D], class_filter: str | None = None
+    ) -> Detection3D | None:
         """
         Get the closest detection with valid 3D data.
 
@@ -292,7 +292,7 @@ class Detection3DProcessor:
 
         return min(valid_detections, key=get_z_coord)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()

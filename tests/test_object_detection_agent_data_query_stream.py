@@ -12,27 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import time
-import sys
 import argparse
+import os
+import sys
 import threading
-from typing import List, Dict, Any
-from reactivex import Subject, operators as ops
 
+from dotenv import load_dotenv
+from reactivex import operators as ops
+
+from dimos.agents.claude_agent import ClaudeAgent
+from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
+from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.utils.logging_config import logger
 from dimos.stream.video_provider import VideoProvider
-from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.types.vector import Vector
 from dimos.utils.reactive import backpressure
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-from dimos.agents.claude_agent import ClaudeAgent
-
-from dotenv import load_dotenv
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def parse_args():

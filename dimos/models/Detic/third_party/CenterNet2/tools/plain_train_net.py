@@ -19,13 +19,10 @@ Compared to "train_net.py", this script supports fewer default features.
 It also includes fewer abstraction, therefore is easier to add custom logic.
 """
 
+from collections import OrderedDict
 import logging
 import os
-from collections import OrderedDict
-import torch
-from torch.nn.parallel import DistributedDataParallel
 
-import detectron2.utils.comm as comm
 from detectron2.checkpoint import DetectionCheckpointer, PeriodicCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import (
@@ -48,12 +45,15 @@ from detectron2.evaluation import (
 )
 from detectron2.modeling import build_model
 from detectron2.solver import build_lr_scheduler, build_optimizer
+import detectron2.utils.comm as comm
 from detectron2.utils.events import EventStorage
+import torch
+from torch.nn.parallel import DistributedDataParallel
 
 logger = logging.getLogger("detectron2")
 
 
-def get_evaluator(cfg, dataset_name, output_folder=None):
+def get_evaluator(cfg, dataset_name: str, output_folder=None):
     """
     Create evaluator(s) for a given dataset.
     This uses the special metadata "evaluator_type" associated with each builtin dataset.
@@ -92,7 +92,7 @@ def get_evaluator(cfg, dataset_name, output_folder=None):
         return LVISEvaluator(dataset_name, cfg, True, output_folder)
     if len(evaluator_list) == 0:
         raise NotImplementedError(
-            "no Evaluator for the dataset {} with the type {}".format(dataset_name, evaluator_type)
+            f"no Evaluator for the dataset {dataset_name} with the type {evaluator_type}"
         )
     if len(evaluator_list) == 1:
         return evaluator_list[0]
@@ -109,14 +109,14 @@ def do_test(cfg, model):
         results_i = inference_on_dataset(model, data_loader, evaluator)
         results[dataset_name] = results_i
         if comm.is_main_process():
-            logger.info("Evaluation results for {} in csv format:".format(dataset_name))
+            logger.info(f"Evaluation results for {dataset_name} in csv format:")
             print_csv_format(results_i)
     if len(results) == 1:
-        results = list(results.values())[0]
+        results = next(iter(results.values()))
     return results
 
 
-def do_train(cfg, model, resume=False):
+def do_train(cfg, model, resume: bool=False) -> None:
     model.train()
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
@@ -138,9 +138,9 @@ def do_train(cfg, model, resume=False):
     # compared to "train_net.py", we do not support accurate timing and
     # precise BN here, because they are not trivial to implement in a small training loop
     data_loader = build_detection_train_loader(cfg)
-    logger.info("Starting training from iteration {}".format(start_iter))
+    logger.info(f"Starting training from iteration {start_iter}")
     with EventStorage(start_iter) as storage:
-        for data, iteration in zip(data_loader, range(start_iter, max_iter)):
+        for data, iteration in zip(data_loader, range(start_iter, max_iter), strict=False):
             storage.iter = iteration
 
             loss_dict = model(data)
@@ -193,7 +193,7 @@ def main(args):
     cfg = setup(args)
 
     model = build_model(cfg)
-    logger.info("Model:\n{}".format(model))
+    logger.info(f"Model:\n{model}")
     if args.eval_only:
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume

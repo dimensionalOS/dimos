@@ -14,14 +14,11 @@
 
 import pytest
 
-from dimos.perception.detection.module2D import Detection2DModule
-from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.moduleDB import Object3D, ObjectDBModule
+from dimos.perception.detection.moduleDB import Object3D
 from dimos.perception.detection.type.detection3d import ImageDetections3DPC
-from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 
 
-def test_first_object(first_object):
+def test_first_object(first_object) -> None:
     # def test_object3d_properties(first_object):
     """Test basic properties of an Object3D."""
     assert first_object.track_id is not None
@@ -46,7 +43,7 @@ def test_first_object(first_object):
     assert -10 < first_object.center.z < 10
 
 
-def test_object3d_repr_dict(first_object):
+def test_object3d_repr_dict(first_object) -> None:
     """Test to_repr_dict method."""
     repr_dict = first_object.to_repr_dict()
 
@@ -91,7 +88,7 @@ def test_object3d_repr_dict(first_object):
     assert first_object.get_image() is first_object.best_detection.image
 
 
-def test_all_objeects(all_objects):
+def test_all_objeects(all_objects) -> None:
     # def test_object3d_multiple_detections(all_objects):
     """Test objects that have been built from multiple detections."""
     # Find objects with multiple detections
@@ -121,7 +118,7 @@ def test_all_objeects(all_objects):
         assert obj.detections >= 1
 
 
-def test_objectdb_module(object_db_module):
+def test_objectdb_module(object_db_module) -> None:
     # def test_object_db_module_populated(object_db_module):
     """Test that ObjectDBModule is properly populated."""
     assert len(object_db_module.objects) > 0, "Database should contain objects"

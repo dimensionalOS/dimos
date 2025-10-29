@@ -3,11 +3,11 @@ from torch import nn
 
 
 class IOULoss(nn.Module):
-    def __init__(self, loc_loss_type="iou"):
-        super(IOULoss, self).__init__()
+    def __init__(self, loc_loss_type: str="iou") -> None:
+        super().__init__()
         self.loc_loss_type = loc_loss_type
 
-    def forward(self, pred, target, weight=None, reduction="sum"):
+    def forward(self, pred, target, weight=None, reduction: str="sum"):
         pred_left = pred[:, 0]
         pred_top = pred[:, 1]
         pred_right = pred[:, 2]

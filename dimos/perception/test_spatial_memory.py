@@ -17,13 +17,9 @@ import shutil
 import tempfile
 import time
 
-import cv2
 import numpy as np
 import pytest
-import reactivex as rx
-from reactivex import Observable
 from reactivex import operators as ops
-from reactivex.subject import Subject
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.perception.spatial_perception import SpatialMemory
@@ -57,14 +53,14 @@ class TestSpatialMemory:
         # Clean up
         memory.stop()
 
-    def test_spatial_memory_initialization(self, spatial_memory):
+    def test_spatial_memory_initialization(self, spatial_memory) -> None:
         """Test SpatialMemory initializes correctly with CLIP model."""
         # Use the shared spatial_memory fixture
         assert spatial_memory is not None
         assert spatial_memory.embedding_model == "clip"
         assert spatial_memory.embedding_provider is not None
 
-    def test_image_embedding(self, spatial_memory):
+    def test_image_embedding(self, spatial_memory) -> None:
         """Test generating image embeddings using CLIP."""
         # Use the shared spatial_memory fixture
         # Create a test image - use a simple colored square
@@ -89,7 +85,7 @@ class TestSpatialMemory:
         assert text_embedding.shape[0] == spatial_memory.embedding_dimensions
         assert np.isclose(np.linalg.norm(text_embedding), 1.0, atol=1e-5)
 
-    def test_spatial_memory_processing(self, spatial_memory, temp_dir):
+    def test_spatial_memory_processing(self, spatial_memory, temp_dir) -> None:
         """Test processing video frames and building spatial memory with CLIP embeddings."""
         try:
             # Use the shared spatial_memory fixture
@@ -136,7 +132,7 @@ class TestSpatialMemory:
             frames_processed = 0
             target_frames = 100  # Process more frames for thorough testing
 
-            def on_next(result):
+            def on_next(result) -> None:
                 nonlocal results, frames_processed
                 if not result:  # Skip None results
                     return
@@ -148,10 +144,10 @@ class TestSpatialMemory:
                 if frames_processed >= target_frames:
                     subscription.dispose()
 
-            def on_error(error):
+            def on_error(error) -> None:
                 pytest.fail(f"Error in spatial stream: {error}")
 
-            def on_completed():
+            def on_completed() -> None:
                 pass
 
             # Subscribe and wait for results

@@ -12,20 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import sys
-import os
-
 # -----
-
 import ast
 import inspect
-import types
 import sys
 
 
 def extract_function_info(filename):
-    with open(filename, "r") as f:
+    with open(filename) as f:
         source = f.read()
         tree = ast.parse(source, filename=filename)
 
@@ -38,7 +32,7 @@ def extract_function_info(filename):
     exec(source, module_globals)
 
     for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
             docstring = ast.get_docstring(node) or ""
 
             # Attempt to get the callable object from the globals
@@ -76,7 +70,7 @@ def extract_function_info(filename):
             docstring = ast.get_docstring(node) or ""
             methods = []
             for method in node.body:
-                if isinstance(method, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if isinstance(method, ast.FunctionDef | ast.AsyncFunctionDef):
                     method_docstring = ast.get_docstring(method) or ""
                     try:
                         if node.name in module_globals:

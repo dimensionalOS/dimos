@@ -12,11 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.rtsp_video_provider import RtspVideoProvider
-from dimos.web.robot_web_interface import RobotWebInterface
-import tests.test_header
-
-import logging
 import time
 
 import numpy as np
@@ -24,15 +19,16 @@ import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.stream.frame_processor import FrameProcessor
+from dimos.stream.rtsp_video_provider import RtspVideoProvider
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import get_scheduler
 from dimos.utils.logging_config import setup_logger
-
+from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger("tests.test_rtsp_video_provider")
 
-import sys
 import os
+import sys
 
 # Load environment variables from .env file
 from dotenv import load_dotenv
@@ -51,7 +47,7 @@ elif RTSP_URL == "":
     print("Example: python -m dimos.stream.rtsp_video_provider rtsp://...")
     sys.exit(1)
 
-logger.info(f"Attempting to connect to provided RTSP URL.")
+logger.info("Attempting to connect to provided RTSP URL.")
 provider = RtspVideoProvider(dev_name="TestRtspCam", rtsp_url=RTSP_URL)
 
 logger.info("Creating observable...")

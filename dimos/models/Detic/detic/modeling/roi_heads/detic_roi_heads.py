@@ -1,15 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import torch
-
 from detectron2.config import configurable
-from detectron2.structures import Boxes, Instances
-from detectron2.utils.events import get_event_storage
-
 from detectron2.modeling.box_regression import Box2BoxTransform
+from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads, _ScaleGradient
 from detectron2.modeling.roi_heads.fast_rcnn import fast_rcnn_inference
 from detectron2.modeling.roi_heads.roi_heads import ROI_HEADS_REGISTRY
-from detectron2.modeling.roi_heads.cascade_rcnn import CascadeROIHeads, _ScaleGradient
+from detectron2.structures import Boxes, Instances
+from detectron2.utils.events import get_event_storage
+import torch
+
 from .detic_fast_rcnn import DeticFastRCNNOutputLayers
+from typing import Sequence
 
 
 @ROI_HEADS_REGISTRY.register()
@@ -27,7 +27,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         mask_weight: float = 1.0,
         one_class_per_proposal: bool = False,
         **kwargs,
-    ):
+    ) -> None:
         super().__init__(**kwargs)
         self.mult_proposal_score = mult_proposal_score
         self.with_image_labels = with_image_labels
@@ -56,12 +56,12 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         return ret
 
     @classmethod
-    def _init_box_head(self, cfg, input_shape):
+    def _init_box_head(cls, cfg, input_shape):
         ret = super()._init_box_head(cfg, input_shape)
         del ret["box_predictors"]
         cascade_bbox_reg_weights = cfg.MODEL.ROI_BOX_CASCADE_HEAD.BBOX_REG_WEIGHTS
         box_predictors = []
-        for box_head, bbox_reg_weights in zip(ret["box_heads"], cascade_bbox_reg_weights):
+        for box_head, bbox_reg_weights in zip(ret["box_heads"], cascade_bbox_reg_weights, strict=False):
             box_predictors.append(
                 DeticFastRCNNOutputLayers(
                     cfg,
@@ -73,7 +73,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         return ret
 
     def _forward_box(
-        self, features, proposals, targets=None, ann_type="box", classifier_info=(None, None, None)
+        self, features, proposals, targets=None, ann_type: str="box", classifier_info=(None, None, None)
     ):
         """
         Add mult proposal scores at testing
@@ -107,7 +107,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
             losses = {}
             storage = get_event_storage()
             for stage, (predictor, predictions, proposals) in enumerate(head_outputs):
-                with storage.name_scope("stage{}".format(stage)):
+                with storage.name_scope(f"stage{stage}"):
                     if ann_type != "box":
                         stage_losses = {}
                         if ann_type in ["image", "caption", "captiontag"]:
@@ -128,17 +128,17 @@ class DeticCascadeROIHeads(CascadeROIHeads):
                         )
                         if self.with_image_labels:
                             stage_losses["image_loss"] = predictions[0].new_zeros([1])[0]
-                losses.update({k + "_stage{}".format(stage): v for k, v in stage_losses.items()})
+                losses.update({k + f"_stage{stage}": v for k, v in stage_losses.items()})
             return losses
         else:
             # Each is a list[Tensor] of length #image. Each tensor is Ri x (K+1)
             scores_per_stage = [h[0].predict_probs(h[1], h[2]) for h in head_outputs]
             scores = [
                 sum(list(scores_per_image)) * (1.0 / self.num_cascade_stages)
-                for scores_per_image in zip(*scores_per_stage)
+                for scores_per_image in zip(*scores_per_stage, strict=False)
             ]
             if self.mult_proposal_score:
-                scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)]
+                scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores, strict=False)]
             if self.one_class_per_proposal:
                 scores = [s * (s == s[:, :-1].max(dim=1)[0][:, None]).float() for s in scores]
             predictor, predictions, proposals = head_outputs[-1]
@@ -159,7 +159,7 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         features,
         proposals,
         targets=None,
-        ann_type="box",
+        ann_type: str="box",
         classifier_info=(None, None, None),
     ):
         """
@@ -225,13 +225,13 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         else:
             return {}
 
-    def _create_proposals_from_boxes(self, boxes, image_sizes, logits):
+    def _create_proposals_from_boxes(self, boxes, image_sizes: Sequence[int], logits):
         """
         Add objectness_logits
         """
         boxes = [Boxes(b.detach()) for b in boxes]
         proposals = []
-        for boxes_per_image, image_size, logit in zip(boxes, image_sizes, logits):
+        for boxes_per_image, image_size, logit in zip(boxes, image_sizes, logits, strict=False):
             boxes_per_image.clip(image_size)
             if self.training:
                 inds = boxes_per_image.nonempty()
@@ -253,6 +253,6 @@ class DeticCascadeROIHeads(CascadeROIHeads):
         box_features = self.box_head[stage](box_features)
         if self.add_feature_to_prop:
             feats_per_image = box_features.split([len(p) for p in proposals], dim=0)
-            for feat, p in zip(feats_per_image, proposals):
+            for feat, p in zip(feats_per_image, proposals, strict=False):
                 p.feat = feat
         return self.box_predictor[stage](box_features, classifier_info=classifier_info)

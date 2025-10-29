@@ -14,11 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
 import logging
-from typing import Optional, Any
+import threading
+from typing import TYPE_CHECKING, Any
+
 from reactivex import Observable
-from reactivex.disposable import Disposable
+
+if TYPE_CHECKING:
+    from reactivex.disposable import Disposable
 
 logger = logging.getLogger(__name__)
 
@@ -26,17 +29,17 @@ logger = logging.getLogger(__name__)
 class GenericSubscriber:
     """Subscribes to an RxPy Observable stream and stores the latest message."""
 
-    def __init__(self, stream: Observable):
+    def __init__(self, stream: Observable) -> None:
         """Initialize the subscriber and subscribe to the stream.
 
         Args:
             stream: The RxPy Observable stream to subscribe to.
         """
-        self.latest_message: Optional[Any] = None
+        self.latest_message: Any | None = None
         self._lock = threading.Lock()
-        self._subscription: Optional[Disposable] = None
+        self._subscription: Disposable | None = None
         self._stream_completed = threading.Event()
-        self._stream_error: Optional[Exception] = None
+        self._stream_error: Exception | None = None
 
         if stream is not None:
             try:
@@ -50,25 +53,25 @@ class GenericSubscriber:
         else:
             logger.warning("Initialized GenericSubscriber with a None stream.")
 
-    def _on_next(self, message: Any):
+    def _on_next(self, message: Any) -> None:
         """Callback for receiving a new message."""
         with self._lock:
             self.latest_message = message
             # logger.debug("Received new message") # Can be noisy
 
-    def _on_error(self, error: Exception):
+    def _on_error(self, error: Exception) -> None:
         """Callback for stream error."""
         logger.error(f"Stream error: {error}")
         with self._lock:
             self._stream_error = error
         self._stream_completed.set()  # Signal completion/error
 
-    def _on_completed(self):
+    def _on_completed(self) -> None:
         """Callback for stream completion."""
         logger.info("Stream completed.")
         self._stream_completed.set()
 
-    def get_data(self) -> Optional[Any]:
+    def get_data(self) -> Any | None:
         """Get the latest message received from the stream.
 
         Returns:
@@ -89,7 +92,7 @@ class GenericSubscriber:
         """Check if the stream has completed or encountered an error."""
         return self._stream_completed.is_set()
 
-    def dispose(self):
+    def dispose(self) -> None:
         """Dispose of the subscription to stop receiving messages."""
         if self._subscription is not None:
             try:
@@ -100,6 +103,6 @@ class GenericSubscriber:
                 logger.error(f"Error disposing subscription: {e}")
         self._stream_completed.set()  # Ensure completed flag is set on manual dispose
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Ensure cleanup on object deletion."""
         self.dispose()

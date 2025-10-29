@@ -15,6 +15,7 @@
 import time
 
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core import (
     In,
@@ -29,7 +30,6 @@ from dimos.core.testing import MockRobotClient, dimos
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
-from reactivex.disposable import Disposable
 
 assert dimos
 
@@ -46,12 +46,12 @@ class Navigation(Module):
     @rpc
     def navigate_to(self, target: Vector3) -> bool: ...
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @rpc
-    def start(self):
-        def _odom(msg):
+    def start(self) -> None:
+        def _odom(msg) -> None:
             self.odom_msg_count += 1
             print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
             self.mov.publish(msg.position)
@@ -59,7 +59,7 @@ class Navigation(Module):
         unsub = self.odometry.subscribe(_odom)
         self._disposables.add(Disposable(unsub))
 
-        def _lidar(msg):
+        def _lidar(msg) -> None:
             self.lidar_msg_count += 1
             if hasattr(msg, "pubtime"):
                 print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
@@ -70,7 +70,7 @@ class Navigation(Module):
         self._disposables.add(Disposable(unsub))
 
 
-def test_classmethods():
+def test_classmethods() -> None:
     # Test class property access
     class_rpcs = Navigation.rpcs
     print("Class rpcs:", class_rpcs)
@@ -103,7 +103,7 @@ def test_classmethods():
 
 
 @pytest.mark.module
-def test_basic_deployment(dimos):
+def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     print("\n")

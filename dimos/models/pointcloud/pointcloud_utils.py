@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-import open3d as o3d
 import random
 
+import numpy as np
+import open3d as o3d
 
-def save_pointcloud(pcd, file_path):
+
+def save_pointcloud(pcd, file_path) -> None:
     """
     Save a point cloud to a file using Open3D.
     """
@@ -52,7 +53,7 @@ def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):
     return pcd
 
 
-def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
+def canonicalize_point_cloud(pcd, canonicalize_threshold: float=0.3):
     # Segment the largest plane, assumed to be the floor
     plane_model, inliers = pcd.segment_plane(
         distance_threshold=0.01, ransac_n=3, num_iterations=1000
@@ -95,7 +96,7 @@ def canonicalize_point_cloud(pcd, canonicalize_threshold=0.3):
 
 
 # Distance calculations
-def human_like_distance(distance_meters):
+def human_like_distance(distance_meters) -> str:
     # Define the choices with units included, focusing on the 0.1 to 10 meters range
     if distance_meters < 1:  # For distances less than 1 meter
         choices = [

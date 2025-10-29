@@ -12,12 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
 import argparse
 from pathlib import Path
 
+import cv2
 
-def extract_frames(video_path, output_dir, frame_rate):
+
+def extract_frames(video_path, output_dir, frame_rate) -> None:
     """
     Extract frames from a video file at a specified frame rate.
 
@@ -40,7 +41,7 @@ def extract_frames(video_path, output_dir, frame_rate):
         return
 
     # Calculate the interval between frames to capture
-    frame_interval = int(round(original_frame_rate / frame_rate))
+    frame_interval = round(original_frame_rate / frame_rate)
     if frame_interval == 0:
         frame_interval = 1
 

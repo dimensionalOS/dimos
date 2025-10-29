@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from collections.abc import Generator
 import datetime
 import time
-from typing import Generator, Optional
 
 import pytest
 
@@ -28,11 +28,11 @@ from dimos.utils.data import get_data
 
 class SkillContainerTest(Module):
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
     @skill()
@@ -48,7 +48,7 @@ class SkillContainerTest(Module):
         return x + y
 
     @skill(stream=Stream.call_agent, reducer=Reducer.all)
-    def counter(self, count_to: int, delay: Optional[float] = 0.05) -> Generator[int, None, None]:
+    def counter(self, count_to: int, delay: float | None = 0.05) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
             if delay > 0:
@@ -57,7 +57,7 @@ class SkillContainerTest(Module):
 
     @skill(stream=Stream.passive, reducer=Reducer.sum)
     def counter_passive_sum(
-        self, count_to: int, delay: Optional[float] = 0.05
+        self, count_to: int, delay: float | None = 0.05
     ) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
@@ -66,14 +66,14 @@ class SkillContainerTest(Module):
             yield i
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
+    def current_time(self, frequency: float | None = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1 / frequency)
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def uptime_seconds(self, frequency: Optional[float] = 10) -> Generator[float, None, None]:
+    def uptime_seconds(self, frequency: float | None = 10) -> Generator[float, None, None]:
         """Provides current uptime."""
         start_time = datetime.datetime.now()
         while True:
@@ -81,7 +81,7 @@ class SkillContainerTest(Module):
             time.sleep(1 / frequency)
 
     @skill()
-    def current_date(self, frequency: Optional[float] = 10) -> str:
+    def current_date(self, frequency: float | None = 10) -> str:
         """Provides current date."""
         return datetime.datetime.now()
 
@@ -95,7 +95,7 @@ class SkillContainerTest(Module):
 
 
 @pytest.mark.asyncio
-async def test_coordinator_parallel_calls():
+async def test_coordinator_parallel_calls() -> None:
     skillCoordinator = SkillCoordinator()
     skillCoordinator.register_skills(SkillContainerTest())
 
@@ -133,7 +133,7 @@ async def test_coordinator_parallel_calls():
 
 
 @pytest.mark.asyncio
-async def test_coordinator_generator():
+async def test_coordinator_generator() -> None:
     container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()
     skillCoordinator.register_skills(container)

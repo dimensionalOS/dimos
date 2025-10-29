@@ -16,7 +16,7 @@
 from dimos.mapping.types import LatLon
 
 
-def test_set_gps_travel_points(fake_gps_robot, create_gps_nav_agent):
+def test_set_gps_travel_points(fake_gps_robot, create_gps_nav_agent) -> None:
     agent = create_gps_nav_agent(fixture="test_set_gps_travel_points.json")
 
     agent.query("go to lat: 37.782654, lon: -122.413273")
@@ -26,7 +26,7 @@ def test_set_gps_travel_points(fake_gps_robot, create_gps_nav_agent):
     )
 
 
-def test_set_gps_travel_points_multiple(fake_gps_robot, create_gps_nav_agent):
+def test_set_gps_travel_points_multiple(fake_gps_robot, create_gps_nav_agent) -> None:
     agent = create_gps_nav_agent(fixture="test_set_gps_travel_points_multiple.json")
 
     agent.query(

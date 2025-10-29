@@ -1,14 +1,13 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 import copy
 import logging
+
+from detectron2.config import configurable
+from detectron2.data import detection_utils as utils, transforms as T
+from detectron2.data.dataset_mapper import DatasetMapper
 import numpy as np
 import torch
 
-from detectron2.config import configurable
-
-from detectron2.data import detection_utils as utils
-from detectron2.data import transforms as T
-from detectron2.data.dataset_mapper import DatasetMapper
 from .custom_build_augmentation import build_custom_augmentation
 from .tar_dataset import DiskTarDataset
 
@@ -20,19 +19,23 @@ class CustomDatasetMapper(DatasetMapper):
     def __init__(
         self,
         is_train: bool,
-        with_ann_type=False,
-        dataset_ann=[],
-        use_diff_bs_size=False,
-        dataset_augs=[],
-        is_debug=False,
-        use_tar_dataset=False,
-        tarfile_path="",
-        tar_index_dir="",
+        with_ann_type: bool=False,
+        dataset_ann=None,
+        use_diff_bs_size: bool=False,
+        dataset_augs=None,
+        is_debug: bool=False,
+        use_tar_dataset: bool=False,
+        tarfile_path: str="",
+        tar_index_dir: str="",
         **kwargs,
-    ):
+    ) -> None:
         """
         add image labels
         """
+        if dataset_augs is None:
+            dataset_augs = []
+        if dataset_ann is None:
+            dataset_ann = []
         self.with_ann_type = with_ann_type
         self.dataset_ann = dataset_ann
         self.use_diff_bs_size = use_diff_bs_size
@@ -65,7 +68,7 @@ class CustomDatasetMapper(DatasetMapper):
                 dataset_sizes = cfg.DATALOADER.DATASET_INPUT_SIZE
                 ret["dataset_augs"] = [
                     build_custom_augmentation(cfg, True, scale, size)
-                    for scale, size in zip(dataset_scales, dataset_sizes)
+                    for scale, size in zip(dataset_scales, dataset_sizes, strict=False)
                 ]
             else:
                 assert cfg.INPUT.CUSTOM_AUG == "ResizeShortestEdge"
@@ -73,7 +76,7 @@ class CustomDatasetMapper(DatasetMapper):
                 max_sizes = cfg.DATALOADER.DATASET_MAX_SIZES
                 ret["dataset_augs"] = [
                     build_custom_augmentation(cfg, True, min_size=mi, max_size=ma)
-                    for mi, ma in zip(min_sizes, max_sizes)
+                    for mi, ma in zip(min_sizes, max_sizes, strict=False)
                 ]
         else:
             ret["dataset_augs"] = []
@@ -103,7 +106,7 @@ class CustomDatasetMapper(DatasetMapper):
         if self.is_debug:
             dataset_dict["dataset_source"] = 0
 
-        not_full_labeled = (
+        (
             "dataset_source" in dataset_dict
             and self.with_ann_type
             and self.dataset_ann[dataset_dict["dataset_source"]] != "box"
@@ -178,7 +181,7 @@ class CustomDatasetMapper(DatasetMapper):
 
 
 # DETR augmentation
-def build_transform_gen(cfg, is_train):
+def build_transform_gen(cfg, is_train: bool):
     """ """
     if is_train:
         min_size = cfg.INPUT.MIN_SIZE_TRAIN
@@ -189,9 +192,7 @@ def build_transform_gen(cfg, is_train):
         max_size = cfg.INPUT.MAX_SIZE_TEST
         sample_style = "choice"
     if sample_style == "range":
-        assert len(min_size) == 2, "more than 2 ({}) min_size(s) are provided for ranges".format(
-            len(min_size)
-        )
+        assert len(min_size) == 2, f"more than 2 ({len(min_size)}) min_size(s) are provided for ranges"
 
     logger = logging.getLogger(__name__)
     tfm_gens = []
@@ -214,7 +215,7 @@ class DetrDatasetMapper:
     4. Prepare image and annotation to Tensors
     """
 
-    def __init__(self, cfg, is_train=True):
+    def __init__(self, cfg, is_train: bool=True) -> None:
         if cfg.INPUT.CROP.ENABLED and is_train:
             self.crop_gen = [
                 T.ResizeShortestEdge([400, 500, 600], sample_style="choice"),
@@ -226,9 +227,7 @@ class DetrDatasetMapper:
         self.mask_on = cfg.MODEL.MASK_ON
         self.tfm_gens = build_transform_gen(cfg, is_train)
         logging.getLogger(__name__).info(
-            "Full TransformGens used in training: {}, crop: {}".format(
-                str(self.tfm_gens), str(self.crop_gen)
-            )
+            f"Full TransformGens used in training: {self.tfm_gens!s}, crop: {self.crop_gen!s}"
         )
 
         self.img_format = cfg.INPUT.FORMAT

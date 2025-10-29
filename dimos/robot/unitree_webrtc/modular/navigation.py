@@ -15,7 +15,7 @@
 from dimos_lcm.std_msgs import Bool, String
 
 from dimos.core import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer

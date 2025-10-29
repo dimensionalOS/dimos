@@ -36,7 +36,7 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
         model_path: Path | str | None = None,
         device: str | None = None,
         normalize: bool = False,
-    ):
+    ) -> None:
         """
         Initialize TorchReID model.
 

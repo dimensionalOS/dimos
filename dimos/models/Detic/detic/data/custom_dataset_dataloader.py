@@ -1,26 +1,30 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Part of the code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/data/multi_dataset_dataloader.py (Apache-2.0 License)
-import operator
-import torch
-import torch.utils.data
-from detectron2.utils.comm import get_world_size
-
-from detectron2.config import configurable
-from torch.utils.data.sampler import Sampler
-from detectron2.data.common import DatasetFromList, MapDataset
-from detectron2.data.dataset_mapper import DatasetMapper
-from detectron2.data.build import get_detection_dataset_dicts, build_batch_data_loader
-from detectron2.data.samplers import TrainingSampler, RepeatFactorTrainingSampler
-from detectron2.data.build import worker_init_reset_seed, print_instances_class_histogram
-from detectron2.data.build import filter_images_with_only_crowd_annotations
-from detectron2.data.build import filter_images_with_few_keypoints
-from detectron2.data.build import check_metadata_consistency
-from detectron2.data.catalog import MetadataCatalog, DatasetCatalog
-from detectron2.utils import comm
+from collections import defaultdict
 import itertools
 import math
-from collections import defaultdict
-from typing import Optional
+import operator
+from typing import Iterator, Sequence, Optional
+
+from detectron2.config import configurable
+from detectron2.data.build import (
+    build_batch_data_loader,
+    check_metadata_consistency,
+    filter_images_with_few_keypoints,
+    filter_images_with_only_crowd_annotations,
+    get_detection_dataset_dicts,
+    print_instances_class_histogram,
+    worker_init_reset_seed,
+)
+from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
+from detectron2.data.common import DatasetFromList, MapDataset
+from detectron2.data.dataset_mapper import DatasetMapper
+from detectron2.data.samplers import RepeatFactorTrainingSampler, TrainingSampler
+from detectron2.utils import comm
+from detectron2.utils.comm import get_world_size
+import torch
+import torch.utils.data
+from torch.utils.data.sampler import Sampler
 
 
 def _custom_train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
@@ -65,7 +69,7 @@ def _custom_train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=
         )
         sampler = RepeatFactorTrainingSampler(repeat_factors)
     else:
-        raise ValueError("Unknown training sampler: {}".format(sampler_name))
+        raise ValueError(f"Unknown training sampler: {sampler_name}")
 
     return {
         "dataset": dataset_dicts,
@@ -87,18 +91,20 @@ def build_custom_train_loader(
     *,
     mapper,
     sampler,
-    total_batch_size=16,
-    aspect_ratio_grouping=True,
-    num_workers=0,
-    num_datasets=1,
-    multi_dataset_grouping=False,
-    use_diff_bs_size=False,
-    dataset_bs=[],
+    total_batch_size: int=16,
+    aspect_ratio_grouping: bool=True,
+    num_workers: int=0,
+    num_datasets: int=1,
+    multi_dataset_grouping: bool=False,
+    use_diff_bs_size: bool=False,
+    dataset_bs=None,
 ):
     """
     Modified from detectron2.data.build.build_custom_train_loader, but supports
     different samplers
     """
+    if dataset_bs is None:
+        dataset_bs = []
     if isinstance(dataset, list):
         dataset = DatasetFromList(dataset, copy=False)
     if mapper is not None:
@@ -127,14 +133,12 @@ def build_custom_train_loader(
 
 
 def build_multi_dataset_batch_data_loader(
-    use_diff_bs_size, dataset_bs, dataset, sampler, total_batch_size, num_datasets, num_workers=0
+    use_diff_bs_size: int, dataset_bs, dataset, sampler, total_batch_size: int, num_datasets: int, num_workers: int=0
 ):
     """ """
     world_size = get_world_size()
     assert total_batch_size > 0 and total_batch_size % world_size == 0, (
-        "Total batch size ({}) must be divisible by the number of gpus ({}).".format(
-            total_batch_size, world_size
-        )
+        f"Total batch size ({total_batch_size}) must be divisible by the number of gpus ({world_size})."
     )
 
     batch_size = total_batch_size // world_size
@@ -153,15 +157,15 @@ def build_multi_dataset_batch_data_loader(
 
 
 def get_detection_dataset_dicts_with_source(
-    dataset_names, filter_empty=True, min_keypoints=0, proposal_files=None
+    dataset_names: Sequence[str], filter_empty: bool=True, min_keypoints: int=0, proposal_files=None
 ):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
-    for dataset_name, dicts in zip(dataset_names, dataset_dicts):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
+    for dataset_name, dicts in zip(dataset_names, dataset_dicts, strict=False):
+        assert len(dicts), f"Dataset '{dataset_name}' is empty!"
 
-    for source_id, (dataset_name, dicts) in enumerate(zip(dataset_names, dataset_dicts)):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
+    for source_id, (dataset_name, dicts) in enumerate(zip(dataset_names, dataset_dicts, strict=False)):
+        assert len(dicts), f"Dataset '{dataset_name}' is empty!"
         for d in dicts:
             d["dataset_source"] = source_id
 
@@ -193,9 +197,9 @@ class MultiDatasetSampler(Sampler):
         dataset_ratio,
         use_rfs,
         dataset_ann,
-        repeat_threshold=0.001,
-        seed: Optional[int] = None,
-    ):
+        repeat_threshold: float=0.001,
+        seed: int | None = None,
+    ) -> None:
         """ """
         sizes = [0 for _ in range(len(dataset_ratio))]
         for d in dataset_dicts:
@@ -203,9 +207,7 @@ class MultiDatasetSampler(Sampler):
         print("dataset sizes", sizes)
         self.sizes = sizes
         assert len(dataset_ratio) == len(sizes), (
-            "length of dataset ratio {} should be equal to number if dataset {}".format(
-                len(dataset_ratio), len(sizes)
-            )
+            f"length of dataset ratio {len(dataset_ratio)} should be equal to number if dataset {len(sizes)}"
         )
         if seed is None:
             seed = comm.shared_random_seed()
@@ -219,7 +221,7 @@ class MultiDatasetSampler(Sampler):
 
         dataset_weight = [
             torch.ones(s) * max(sizes) / s * r / sum(dataset_ratio)
-            for i, (r, s) in enumerate(zip(dataset_ratio, sizes))
+            for i, (r, s) in enumerate(zip(dataset_ratio, sizes, strict=False))
         ]
         dataset_weight = torch.cat(dataset_weight)
 
@@ -242,7 +244,7 @@ class MultiDatasetSampler(Sampler):
         self.weights = dataset_weight * rfs_factors
         self.sample_epoch_size = len(self.weights)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         start = self._rank
         yield from itertools.islice(self._infinite_indices(), start, None, self._world_size)
 
@@ -253,18 +255,18 @@ class MultiDatasetSampler(Sampler):
             ids = torch.multinomial(
                 self.weights, self.sample_epoch_size, generator=g, replacement=True
             )
-            nums = [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
+            [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
             yield from ids
 
 
 class MDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset, batch_size, num_datasets):
+    def __init__(self, dataset, batch_size: int, num_datasets: int) -> None:
         """ """
         self.dataset = dataset
         self.batch_size = batch_size
         self._buckets = [[] for _ in range(2 * num_datasets)]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         for d in self.dataset:
             w, h = d["width"], d["height"]
             aspect_ratio_bucket_id = 0 if w > h else 1
@@ -277,13 +279,13 @@ class MDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
 
 
 class DIFFMDAspectRatioGroupedDataset(torch.utils.data.IterableDataset):
-    def __init__(self, dataset, batch_sizes, num_datasets):
+    def __init__(self, dataset, batch_sizes: Sequence[int], num_datasets: int) -> None:
         """ """
         self.dataset = dataset
         self.batch_sizes = batch_sizes
         self._buckets = [[] for _ in range(2 * num_datasets)]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         for d in self.dataset:
             w, h = d["width"], d["height"]
             aspect_ratio_bucket_id = 0 if w > h else 1

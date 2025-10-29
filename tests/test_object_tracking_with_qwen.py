@@ -13,21 +13,14 @@
 # limitations under the License.
 
 import os
-import sys
-import time
-import cv2
-import numpy as np
 import queue
 import threading
-import json
-from reactivex import Subject, operators as RxOps
-from openai import OpenAI
-import tests.test_header
 
-from dimos.stream.video_provider import VideoProvider
-from dimos.perception.object_tracker import ObjectTrackingStream
+import cv2
+
 from dimos.models.qwen.video_query import get_bbox_from_qwen
-from dimos.utils.logging_config import logger
+from dimos.perception.object_tracker import ObjectTrackingStream
+from dimos.stream.video_provider import VideoProvider
 
 # Global variables for tracking control
 object_size = 0.30  # Hardcoded object size in meters (adjust based on your tracking target)

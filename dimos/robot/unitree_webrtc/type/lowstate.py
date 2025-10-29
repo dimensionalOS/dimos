@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import TypedDict, List, Literal
+from typing import Literal, TypedDict
 
 raw_odom_msg_sample = {
     "type": "msg",
@@ -61,11 +61,11 @@ class MotorState(TypedDict):
     q: float
     temperature: int
     lost: int
-    reserve: List[int]
+    reserve: list[int]
 
 
 class ImuState(TypedDict):
-    rpy: List[float]
+    rpy: list[float]
 
 
 class BmsState(TypedDict):
@@ -74,15 +74,15 @@ class BmsState(TypedDict):
     soc: int
     current: int
     cycle: int
-    bq_ntc: List[int]
-    mcu_ntc: List[int]
+    bq_ntc: list[int]
+    mcu_ntc: list[int]
 
 
 class LowStateData(TypedDict):
     imu_state: ImuState
-    motor_state: List[MotorState]
+    motor_state: list[MotorState]
     bms_state: BmsState
-    foot_force: List[int]
+    foot_force: list[int]
     temperature_ntc1: int
     power_v: float
 

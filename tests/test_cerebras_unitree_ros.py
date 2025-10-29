@@ -12,29 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
 import os
-from dimos.robot.robot import MockRobot
-import tests.test_header
 
-import time
 from dotenv import load_dotenv
+import reactivex as rx
+import reactivex.operators as ops
+
 from dimos.agents.cerebras_agent import CerebrasAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal
-from dimos.skills.visual_navigation_skills import FollowHuman
-import reactivex as rx
-import reactivex.operators as ops
-from dimos.stream.audio.pipelines import tts, stt
-from dimos.web.websocket_vis.server import WebsocketVis
-import threading
-from dimos.types.vector import Vector
+from dimos.skills.navigation import GetPose, NavigateToGoal, NavigateWithText
+from dimos.skills.observe_stream import ObserveStream
 from dimos.skills.speak import Speak
+from dimos.skills.visual_navigation_skills import FollowHuman
+from dimos.stream.audio.pipelines import stt, tts
+from dimos.web.robot_web_interface import RobotWebInterface
 
 # Load API key from environment
 load_dotenv()

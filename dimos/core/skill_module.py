@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dimos.core.module import Module
-from dimos.core.rpc_client import RPCClient, RpcCall
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.protocol.skill.skill import rpc
 
 
@@ -25,8 +25,8 @@ class SkillModule(Module):
         callable.set_rpc(self.rpc)
         callable(RPCClient(self, self.__class__))
 
-    def __getstate__(self):
+    def __getstate__(self) -> None:
         pass
 
-    def __setstate__(self, _state):
+    def __setstate__(self, _state) -> None:
         pass

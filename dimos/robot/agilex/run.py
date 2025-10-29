@@ -21,19 +21,18 @@ Provides manipulation capabilities with natural language interface.
 import asyncio
 import os
 import sys
-import time
-from dotenv import load_dotenv
 
+from dotenv import load_dotenv
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.agents.claude_agent import ClaudeAgent
-from dimos.skills.manipulation.pick_and_place import PickAndPlace
+from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.skills.kill_skill import KillSkill
-from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.skills.manipulation.pick_and_place import PickAndPlace
 from dimos.stream.audio.pipelines import stt, tts
 from dimos.utils.logging_config import setup_logger
+from dimos.web.robot_web_interface import RobotWebInterface
 
 logger = setup_logger("dimos.robot.agilex.run")
 
@@ -64,7 +63,7 @@ SYSTEM_PROMPT = """You are an intelligent robotic assistant controlling a Piper 
 - User: "Pick up the coffee mug"
   You: "I'll pick up the coffee mug for you." [Execute PickAndPlace with object_query="coffee mug"]
 
-- User: "Put the toy on the table" 
+- User: "Put the toy on the table"
   You: "I'll place the toy on the table." [Execute PickAndPlace with object_query="toy", target_query="on the table"]
 
 - User: "What do you see?"
@@ -161,7 +160,7 @@ def main():
 
         logger.info("=" * 60)
         logger.info("Piper Arm Agent Ready!")
-        logger.info(f"Web interface available at: http://localhost:5555")
+        logger.info("Web interface available at: http://localhost:5555")
         logger.info("Foxglove visualization available at: ws://localhost:8765")
         logger.info("You can:")
         logger.info("  - Type commands in the web interface")

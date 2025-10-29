@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+from typing import Any
+
+import numpy as np
+from reactivex import Observable, create, disposable
+import sounddevice as sd
+
 from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
-
-import numpy as np
-from typing import Optional, List, Dict, Any
-from reactivex import Observable, create, disposable
-import time
-import sounddevice as sd
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.audio.node_microphone")
@@ -34,12 +34,12 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
     def __init__(
         self,
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
         dtype: np.dtype = np.float32,
-    ):
+    ) -> None:
         """
         Initialize SounddeviceAudioSource.
 
@@ -69,7 +69,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
         def on_subscribe(observer, scheduler):
             # Callback function to process audio data
-            def audio_callback(indata, frames, time_info, status):
+            def audio_callback(indata, frames, time_info, status) -> None:
                 if status:
                     logger.warning(f"Audio callback status: {status}")
 
@@ -106,7 +106,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
                 observer.on_error(e)
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping audio capture")
                 self._running = False
                 if self._stream:
@@ -118,7 +118,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
         return create(on_subscribe)
 
-    def get_available_devices(self) -> List[Dict[str, Any]]:
+    def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio input devices."""
         return sd.query_devices()
 
