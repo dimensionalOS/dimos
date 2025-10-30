@@ -28,7 +28,11 @@ class Configurable(Generic[ConfigT]):
 
 class Service(Configurable[ConfigT], ABC):
     def start(self) -> None:
-        super().start()
+        # Only call super().start() if it exists
+        if hasattr(super(), "start"):
+            super().start()
 
     def stop(self) -> None:
-        super().stop()
+        # Only call super().stop() if it exists
+        if hasattr(super(), "stop"):
+            super().stop()
