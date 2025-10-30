@@ -100,7 +100,7 @@ class ROSLaunchWrapper:
         print("Starting ROS route planner and DimOS...")
 
         # Change to the ROS workspace directory
-        os.chdir("/ros2_ws/src/autonomy_stack_mecanum_wheel_platform")
+        os.chdir("/ros2_ws/src/ros-navigation-autonomy-stack")
 
         # Start ROS route planner
         print("Starting ROS route planner...")

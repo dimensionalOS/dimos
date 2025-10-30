@@ -14,9 +14,9 @@ echo ""
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-if [ ! -d "autonomy_stack_mecanum_wheel_platform" ]; then
-    echo -e "${YELLOW}Cloning autonomy_stack_mecanum_wheel_platform repository...${NC}"
-    git clone https://github.com/alexlin2/autonomy_stack_mecanum_wheel_platform.git
+if [ ! -d "ros-navigation-autonomy-stack" ]; then
+    echo -e "${YELLOW}Cloning ros-navigation-autonomy-stack repository...${NC}"
+    git clone -b jazzy git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
     echo -e "${GREEN}Repository cloned successfully!${NC}"
 fi
 

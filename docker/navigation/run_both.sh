@@ -89,7 +89,7 @@ trap cleanup EXIT INT TERM
 
 # Start ROS route planner in background (in new process group)
 echo "Starting ROS route planner..."
-cd /ros2_ws/src/autonomy_stack_mecanum_wheel_platform
+cd /ros2_ws/src/ros-navigation-autonomy-stack
 setsid bash -c './system_simulation_with_route_planner.sh' &
 ROS_PID=$!
 

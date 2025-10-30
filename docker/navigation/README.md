@@ -15,7 +15,7 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
    ./build.sh
    ```
    This will:
-   - Clone the autonomy_stack_mecanum_wheel_platform repository (jazzy branch)
+   - Clone the ros-navigation-autonomy-stack repository (jazzy branch)
    - Build a Docker image with both ROS and DimOS dependencies
    - Set up the environment for both systems
 
@@ -32,7 +32,7 @@ Once inside the container, you can manually run:
 
 ### ROS Autonomy Stack
 ```bash
-cd /ros2_ws/src/autonomy_stack_mecanum_wheel_platform
+cd /ros2_ws/src/ros-navigation-autonomy-stack
 ./system_simulation_with_route_planner.sh
 ```
 
@@ -75,7 +75,7 @@ Use the `run_command.sh` helper script to run custom commands:
 
 The docker-compose.yml mounts the following directories for live development:
 - DimOS source: `..` → `/workspace/dimos`
-- Autonomy stack source: `./autonomy_stack_mecanum_wheel_platform/src` → `/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src`
+- Autonomy stack source: `./ros-navigation-autonomy-stack/src` → `/ros2_ws/src/ros-navigation-autonomy-stack/src`
 
 Changes to these files will be reflected in the container without rebuilding.
 

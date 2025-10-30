@@ -34,10 +34,10 @@ services:
       - ${HOME}/.Xauthority:/root/.Xauthority:rw
 
       # Mount Unity environment models (if available)
-      - ./unity_models:/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src/base_autonomy/vehicle_simulator/mesh/unity:rw
+      - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
 
       # Mount the autonomy stack source for development (optional - comment out if not needed)
-      - ./autonomy_stack_mecanum_wheel_platform/src:/ros2_ws/src/autonomy_stack_mecanum_wheel_platform/src:rw
+      - ./ros-navigation-autonomy-stack/src:/ros2_ws/src/ros-navigation-autonomy-stack/src:rw
 
       # Mount entire dimos directory for live development
       - ../..:/workspace/dimos:rw

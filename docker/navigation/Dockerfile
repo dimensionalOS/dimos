@@ -54,7 +54,7 @@ RUN apt-get update && apt-get install -y \
 RUN mkdir -p ${WORKSPACE}/src
 
 # Copy the autonomy stack repository (should be cloned by build.sh)
-COPY docker/navigation/autonomy_stack_mecanum_wheel_platform ${WORKSPACE}/src/autonomy_stack_mecanum_wheel_platform
+COPY docker/navigation/ros-navigation-autonomy-stack ${WORKSPACE}/src/ros-navigation-autonomy-stack
 
 # Set working directory
 WORKDIR ${WORKSPACE}
@@ -73,7 +73,7 @@ RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
 RUN echo "source ${WORKSPACE}/install/setup.bash" >> ~/.bashrc
 
 # Create directory for Unity environment models
-RUN mkdir -p ${WORKSPACE}/src/autonomy_stack_mecanum_wheel_platform/src/base_autonomy/vehicle_simulator/mesh/unity
+RUN mkdir -p ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity
 
 # Copy the dimos repository
 RUN mkdir -p ${DIMOS_PATH}
