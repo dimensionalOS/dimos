@@ -24,7 +24,7 @@ services:
       - QT_X11_NO_MITSHM=1
       - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-}
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-}
-      - ROS_DOMAIN_ID=0
+      - ROS_DOMAIN_ID=42
       - ROBOT_CONFIG_PATH=mechanum_drive
 
     # Volume mounts
