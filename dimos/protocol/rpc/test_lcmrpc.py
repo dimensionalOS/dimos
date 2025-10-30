@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
 from collections.abc import Generator
+
+import pytest
+
 from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 

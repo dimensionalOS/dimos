@@ -12,61 +12,46 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import os
-
 # -----
 # # Milestone 1
-
-
 # from typing import List, Dict, Optional
 # import requests
 # import json
 # from pydantic import BaseModel, Field
 # from openai import OpenAI, pydantic_function_tool
-
 # # Environment setup
 # import dotenv
 # dotenv.load_dotenv()
-
 # # Constants and prompts
 # MODEL = "gpt-4o-2024-08-06"
 # GENERAL_PROMPT = '''
 #     Follow the instructions. Output a step by step solution, along with a final answer.
 #     Use the explanation field to detail the reasoning.
 # '''
-
 # # Initialize OpenAI client
 # client = OpenAI()
-
 # # Models and functions
 # class Step(BaseModel):
 #     explanation: str
 #     output: str
-
 # class MathReasoning(BaseModel):
 #     steps: List[Step]
 #     final_answer: str
-
 # class GetWeather(BaseModel):
 #     latitude: str = Field(..., description="Latitude e.g., Bogotá, Colombia")
 #     longitude: str = Field(..., description="Longitude e.g., Bogotá, Colombia")
-
 # def fetch_weather(latitude: str, longitude: str) -> Dict:
 #     url = f"https://api.open-meteo.com/v1/forecast?latitude={latitude}&longitude={longitude}&current=temperature_2m,wind_speed_10m&hourly=temperature_2m,relative_humidity_2m,wind_speed_10m&temperature_unit=fahrenheit"
 #     response = requests.get(url)
 #     return response.json().get('current', {})
-
 # # Tool management
 # def get_tools() -> List[BaseModel]:
 #     return [pydantic_function_tool(GetWeather)]
-
 # def handle_function_call(tool_call: Dict) -> Optional[str]:
 #     if tool_call['name'] == "get_weather":
 #         result = fetch_weather(**tool_call['args'])
 #         return f"Temperature is {result['temperature_2m']}°F"
 #     return None
-
 # # Communication and processing with OpenAI
 # def process_message_with_openai(question: str) -> MathReasoning:
 #     messages = [
@@ -80,11 +65,9 @@ import os
 #         tools=get_tools()
 #     )
 #     return response.choices[0].message
-
 # def get_math_solution(question: str) -> MathReasoning:
 #     solution = process_message_with_openai(question)
 #     return solution
-
 # # Example usage
 # def main():
 #     problems = [
@@ -93,32 +76,24 @@ import os
 #     ]
 #     problem = problems[1]
 #     print(f"Problem: {problem}")
-
 #     solution = get_math_solution(problem)
 #     if not solution:
 #         print("Failed to get a solution.")
 #         return
-
 #     if not solution.parsed:
 #         print("Failed to get a parsed solution.")
 #         print(f"Solution: {solution}")
 #         return
-
 #     print(f"Steps: {solution.parsed.steps}")
 #     print(f"Final Answer: {solution.parsed.final_answer}")
-
 # if __name__ == "__main__":
 #     main()
-
-
 # # Milestone 1
-
 # Milestone 2
 import json
-import os
-import requests
 
 from dotenv import load_dotenv
+import requests
 
 load_dotenv()
 

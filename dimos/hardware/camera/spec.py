@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from abc import ABC, abstractmethod, abstractproperty
-from typing import Generic, Optional, Protocol, TypeVar
+from typing import Generic, Protocol, TypeVar
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable
@@ -23,7 +23,7 @@ from dimos.protocol.service import Configurable
 
 
 class CameraConfig(Protocol):
-    frame_id_prefix: Optional[str]
+    frame_id_prefix: str | None
 
 
 CameraConfigT = TypeVar("CameraConfigT", bound=CameraConfig)

@@ -14,34 +14,32 @@
 
 # dimos/hardware/piper_arm.py
 
-from reactivex.disposable import Disposable
-from typing import Tuple
-from piper_sdk import *  # from the official Piper SDK
-import numpy as np
-import time
-import kinpy as kp
+import select
 import sys
 import termios
-import tty
-import select
-from scipy.spatial.transform import Rotation as R
-from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
-from dimos.utils.logging_config import setup_logger
-
 import threading
+import time
+import tty
 
+from dimos_lcm.geometry_msgs import Pose, Twist, Vector3
+import kinpy as kp
+import numpy as np
+from piper_sdk import *  # from the official Piper SDK
 import pytest
+from reactivex.disposable import Disposable
+from scipy.spatial.transform import Rotation as R
 
 import dimos.core as core
-import dimos.protocol.service.lcmservice as lcmservice
 from dimos.core import In, Module, rpc
-from dimos_lcm.geometry_msgs import Pose, Vector3, Twist
+import dimos.protocol.service.lcmservice as lcmservice
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 logger = setup_logger(__file__)
 
 
 class PiperArm:
-    def __init__(self, arm_name: str = "arm"):
+    def __init__(self, arm_name: str = "arm") -> None:
         self.arm = C_PiperInterface_V2()
         self.arm.ConnectPort()
         self.resetArm()
@@ -54,7 +52,7 @@ class PiperArm:
         time.sleep(1)
         self.init_vel_controller()
 
-    def enable(self):
+    def enable(self) -> None:
         while not self.arm.EnablePiper():
             pass
             time.sleep(0.01)
@@ -67,7 +65,7 @@ class PiperArm:
         # )
         self.arm.MotionCtrl_2(0x01, 0x01, 80, 0xAD)
 
-    def gotoZero(self):
+    def gotoZero(self) -> None:
         factor = 1000
         position = [57.0, 0.0, 215.0, 0, 90.0, 0, 0]
         X = round(position[0] * factor)
@@ -76,13 +74,13 @@ class PiperArm:
         RX = round(position[3] * factor)
         RY = round(position[4] * factor)
         RZ = round(position[5] * factor)
-        joint_6 = round(position[6] * factor)
+        round(position[6] * factor)
         logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
         self.arm.GripperCtrl(0, 1000, 0x01, 0)
 
-    def gotoObserve(self):
+    def gotoObserve(self) -> None:
         factor = 1000
         position = [57.0, 0.0, 280.0, 0, 120.0, 0, 0]
         X = round(position[0] * factor)
@@ -91,12 +89,12 @@ class PiperArm:
         RX = round(position[3] * factor)
         RY = round(position[4] * factor)
         RZ = round(position[5] * factor)
-        joint_6 = round(position[6] * factor)
+        round(position[6] * factor)
         logger.debug(f"Going to zero position: X={X}, Y={Y}, Z={Z}, RX={RX}, RY={RY}, RZ={RZ}")
         self.arm.MotionCtrl_2(0x01, 0x00, 100, 0x00)
         self.arm.EndPoseCtrl(X, Y, Z, RX, RY, RZ)
 
-    def softStop(self):
+    def softStop(self) -> None:
         self.gotoZero()
         time.sleep(1)
         self.arm.MotionCtrl_2(
@@ -107,7 +105,7 @@ class PiperArm:
         self.arm.MotionCtrl_1(0x01, 0, 0)
         time.sleep(3)
 
-    def cmd_ee_pose_values(self, x, y, z, r, p, y_, line_mode=False):
+    def cmd_ee_pose_values(self, x, y, z, r, p, y_, line_mode: bool = False) -> None:
         """Command end-effector to target pose in space (position + Euler angles)"""
         factor = 1000
         pose = [
@@ -123,7 +121,7 @@ class PiperArm:
             int(pose[0]), int(pose[1]), int(pose[2]), int(pose[3]), int(pose[4]), int(pose[5])
         )
 
-    def cmd_ee_pose(self, pose: Pose, line_mode=False):
+    def cmd_ee_pose(self, pose: Pose, line_mode: bool = False) -> None:
         """Command end-effector to target pose using Pose message"""
         # Convert quaternion to euler angles
         euler = quaternion_to_euler(pose.orientation, degrees=True)
@@ -160,7 +158,7 @@ class PiperArm:
 
         return Pose(position, orientation)
 
-    def cmd_gripper_ctrl(self, position, effort=0.25):
+    def cmd_gripper_ctrl(self, position, effort: float = 0.25) -> None:
         """Command end-effector gripper"""
         factor = 1000
         position = position * factor * factor  # meters
@@ -169,7 +167,7 @@ class PiperArm:
         self.arm.GripperCtrl(abs(round(position)), abs(round(effort)), 0x01, 0)
         logger.debug(f"Commanding gripper position: {position}mm")
 
-    def enable_gripper(self):
+    def enable_gripper(self) -> None:
         """Enable the gripper using the initialization sequence"""
         logger.info("Enabling gripper...")
         while not self.arm.EnablePiper():
@@ -178,12 +176,12 @@ class PiperArm:
         self.arm.GripperCtrl(0, 1000, 0x01, 0)
         logger.info("Gripper enabled")
 
-    def release_gripper(self):
+    def release_gripper(self) -> None:
         """Release gripper by opening to 100mm (10cm)"""
         logger.info("Releasing gripper (opening to 100mm)")
         self.cmd_gripper_ctrl(0.1)  # 0.1m = 100mm = 10cm
 
-    def get_gripper_feedback(self) -> Tuple[float, float]:
+    def get_gripper_feedback(self) -> tuple[float, float]:
         """
         Get current gripper feedback.
 
@@ -221,7 +219,7 @@ class PiperArm:
             True if object is detected in gripper, False otherwise
         """
         # Get gripper feedback
-        angle_degrees, actual_effort = self.get_gripper_feedback()
+        _angle_degrees, actual_effort = self.get_gripper_feedback()
 
         # Check if object is grasped (effort > 80% of commanded effort)
         effort_threshold = 0.8 * commanded_effort
@@ -234,12 +232,12 @@ class PiperArm:
 
         return object_present
 
-    def resetArm(self):
+    def resetArm(self) -> None:
         self.arm.MotionCtrl_1(0x02, 0, 0)
         self.arm.MotionCtrl_2(0, 0, 0, 0x00)
         logger.info("Resetting arm")
 
-    def init_vel_controller(self):
+    def init_vel_controller(self) -> None:
         self.chain = kp.build_serial_chain_from_urdf(
             open("dimos/hardware/piper_description.urdf"), "gripper_base"
         )
@@ -247,7 +245,7 @@ class PiperArm:
         self.J_pinv = np.linalg.pinv(self.J)
         self.dt = 0.01
 
-    def cmd_vel(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot):
+    def cmd_vel(self, x_dot, y_dot, z_dot, R_dot, P_dot, Y_dot) -> None:
         joint_state = self.arm.GetArmJointMsgs().joint_state
         # print(f"[PiperArm] Current Joints (direct): {joint_state}", type(joint_state))
         joint_angles = np.array(
@@ -283,17 +281,17 @@ class PiperArm:
 
         self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
         self.arm.JointCtrl(
-            int(round(newq[0])),
-            int(round(newq[1])),
-            int(round(newq[2])),
-            int(round(newq[3])),
-            int(round(newq[4])),
-            int(round(newq[5])),
+            round(newq[0]),
+            round(newq[1]),
+            round(newq[2]),
+            round(newq[3]),
+            round(newq[4]),
+            round(newq[5]),
         )
         time.sleep(self.dt)
         # print(f"[PiperArm] Moving to Joints to : {newq}")
 
-    def cmd_vel_ee(self, x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot):
+    def cmd_vel_ee(self, x_dot, y_dot, z_dot, RX_dot, PY_dot, YZ_dot) -> None:
         factor = 1000
         x_dot = x_dot * factor
         y_dot = y_dot * factor
@@ -341,7 +339,7 @@ class PiperArm:
         )
         time.sleep(self.dt)
 
-    def disable(self):
+    def disable(self) -> None:
         self.softStop()
 
         while self.arm.DisablePiper():
@@ -353,7 +351,7 @@ class PiperArm:
 class VelocityController(Module):
     cmd_vel: In[Twist] = None
 
-    def __init__(self, arm, period=0.01, *args, **kwargs):
+    def __init__(self, arm, period: float = 0.01, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.arm = arm
         self.period = period
@@ -362,13 +360,13 @@ class VelocityController(Module):
         self._thread = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         unsub = self.cmd_vel.subscribe(self.handle_cmd_vel)
         self._disposables.add(Disposable(unsub))
 
-        def control_loop():
+        def control_loop() -> None:
             while True:
                 # Check for timeout (1 second)
                 if self.last_cmd_time and (time.time() - self.last_cmd_time) > 1.0:
@@ -426,12 +424,12 @@ class VelocityController(Module):
 
                 self.arm.MotionCtrl_2(0x01, 0x01, 100, 0xAD)
                 self.arm.JointCtrl(
-                    int(round(newq[0])),
-                    int(round(newq[1])),
-                    int(round(newq[2])),
-                    int(round(newq[3])),
-                    int(round(newq[4])),
-                    int(round(newq[5])),
+                    round(newq[0]),
+                    round(newq[1]),
+                    round(newq[2]),
+                    round(newq[3]),
+                    round(newq[4]),
+                    round(newq[5]),
                 )
                 time.sleep(self.period)
 
@@ -445,13 +443,13 @@ class VelocityController(Module):
             self._thread.join(2)
         super().stop()
 
-    def handle_cmd_vel(self, cmd_vel: Twist):
+    def handle_cmd_vel(self, cmd_vel: Twist) -> None:
         self.latest_cmd = cmd_vel
         self.last_cmd_time = time.time()
 
 
 @pytest.mark.tool
-def run_velocity_controller():
+def run_velocity_controller() -> None:
     lcmservice.autoconf()
     dimos = core.start(2)
 
@@ -470,7 +468,7 @@ def run_velocity_controller():
 if __name__ == "__main__":
     arm = PiperArm()
 
-    def get_key(timeout=0.1):
+    def get_key(timeout: float = 0.1):
         """Non-blocking key reader for arrow keys."""
         fd = sys.stdin.fileno()
         old_settings = termios.tcgetattr(fd)
@@ -490,7 +488,7 @@ if __name__ == "__main__":
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    def teleop_linear_vel(arm):
+    def teleop_linear_vel(arm) -> None:
         print("Use arrow keys to control linear velocity (x/y/z). Press 'q' to quit.")
         print("Up/Down: +x/-x, Left/Right: +y/-y, 'w'/'s': +z/-z")
         x_dot, y_dot, z_dot = 0.0, 0.0, 0.0

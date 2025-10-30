@@ -18,13 +18,12 @@ This module provides a video frame provider that receives frames from ROS (Robot
 and makes them available as an Observable stream.
 """
 
-from reactivex import Subject, Observable
-from reactivex import operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
 import logging
 import time
-from typing import Optional
+
 import numpy as np
+from reactivex import Observable, Subject, operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.stream.video_provider import AbstractVideoProvider
 
@@ -44,8 +43,8 @@ class ROSVideoProvider(AbstractVideoProvider):
     """
 
     def __init__(
-        self, dev_name: str = "ros_video", pool_scheduler: Optional[ThreadPoolScheduler] = None
-    ):
+        self, dev_name: str = "ros_video", pool_scheduler: ThreadPoolScheduler | None = None
+    ) -> None:
         """Initialize the ROS video provider.
 
         Args:

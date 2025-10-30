@@ -12,19 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import asyncio
-import time
+from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Callable, List, Tuple
+import time
 
 import pytest
 
-from dimos.core import Module, rpc, start, stop
+from dimos.core import Module, rpc, start
 from dimos.protocol.rpc.lcmrpc import LCMRPC
-from dimos.protocol.rpc.spec import RPCClient, RPCServer
 from dimos.protocol.service.lcmservice import autoconf
 
-testgrid: List[Callable] = []
+testgrid: list[Callable] = []
 
 
 # test module we'll use for binding RPC methods
@@ -84,7 +82,7 @@ except (ConnectionError, ImportError):
 
 
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_basics(rpc_context):
+def test_basics(rpc_context) -> None:
     with rpc_context() as (server, client):
 
         def remote_function(a: int, b: int):
@@ -99,7 +97,7 @@ def test_basics(rpc_context):
 
         msgs = []
 
-        def receive_msg(response):
+        def receive_msg(response) -> None:
             msgs.append(response)
             print(f"Received response: {response}")
 
@@ -110,7 +108,7 @@ def test_basics(rpc_context):
 
 
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_module_autobind(rpc_context):
+def test_module_autobind(rpc_context) -> None:
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -132,7 +130,7 @@ def test_module_autobind(rpc_context):
 
         msgs = []
 
-        def receive_msg(msg):
+        def receive_msg(msg) -> None:
             msgs.append(msg)
 
         client.call("MyModule/add", ([1, 2], {}), receive_msg)
@@ -148,7 +146,7 @@ def test_module_autobind(rpc_context):
 #
 # can do blocking calls
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_sync(rpc_context):
+def test_sync(rpc_context) -> None:
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -162,7 +160,7 @@ def test_sync(rpc_context):
 #
 # can do blocking calls
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_kwargs(rpc_context):
+def test_kwargs(rpc_context) -> None:
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -175,7 +173,7 @@ def test_kwargs(rpc_context):
 # or async calls as well
 @pytest.mark.parametrize("rpc_context", testgrid)
 @pytest.mark.asyncio
-async def test_async(rpc_context):
+async def test_async(rpc_context) -> None:
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -185,14 +183,14 @@ async def test_async(rpc_context):
 
 # or async calls as well
 @pytest.mark.module
-def test_rpc_full_deploy():
+def test_rpc_full_deploy() -> None:
     autoconf()
 
     # test module we'll use for binding RPC methods
     class CallerModule(Module):
         remote: Callable[[int, int], int]
 
-        def __init__(self, remote: Callable[[int, int], int]):
+        def __init__(self, remote: Callable[[int, int], int]) -> None:
             self.remote = remote
             super().__init__()
 

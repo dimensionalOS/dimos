@@ -13,14 +13,13 @@
 # limitations under the License.
 
 from abc import ABC
-from reactivex import Subject, Observable
-from reactivex.subject import Subject
-from reactivex.scheduler import ThreadPoolScheduler
-import multiprocessing
 import logging
+import multiprocessing
 
 import reactivex as rx
-from reactivex import operators as ops
+from reactivex import Observable, Subject, operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
+from reactivex.subject import Subject
 
 logging.basicConfig(level=logging.INFO)
 
@@ -31,7 +30,7 @@ pool_scheduler = ThreadPoolScheduler(multiprocessing.cpu_count())
 class AbstractDataProvider(ABC):
     """Abstract base class for data providers using ReactiveX."""
 
-    def __init__(self, dev_name: str = "NA"):
+    def __init__(self, dev_name: str = "NA") -> None:
         self.dev_name = dev_name
         self._data_subject = Subject()  # Regular Subject, no initial None value
 
@@ -40,11 +39,11 @@ class AbstractDataProvider(ABC):
         """Get the data stream observable."""
         return self._data_subject
 
-    def push_data(self, data):
+    def push_data(self, data) -> None:
         """Push new data to the stream."""
         self._data_subject.on_next(data)
 
-    def dispose(self):
+    def dispose(self) -> None:
         """Cleanup resources."""
         self._data_subject.dispose()
 
@@ -52,17 +51,17 @@ class AbstractDataProvider(ABC):
 class ROSDataProvider(AbstractDataProvider):
     """ReactiveX data provider for ROS topics."""
 
-    def __init__(self, dev_name: str = "ros_provider"):
+    def __init__(self, dev_name: str = "ros_provider") -> None:
         super().__init__(dev_name)
         self.logger = logging.getLogger(dev_name)
 
-    def push_data(self, data):
+    def push_data(self, data) -> None:
         """Push new data to the stream."""
         print(f"ROSDataProvider pushing data of type: {type(data)}")
         super().push_data(data)
         print("Data pushed to subject")
 
-    def capture_data_as_observable(self, fps: int = None) -> Observable:
+    def capture_data_as_observable(self, fps: int | None = None) -> Observable:
         """Get the data stream as an observable.
 
         Args:
@@ -115,7 +114,7 @@ class QueryDataProvider(AbstractDataProvider):
         logger (logging.Logger): Logger instance for logging messages.
     """
 
-    def __init__(self, dev_name: str = "query_provider"):
+    def __init__(self, dev_name: str = "query_provider") -> None:
         """
         Initializes the QueryDataProvider.
 
@@ -127,7 +126,7 @@ class QueryDataProvider(AbstractDataProvider):
 
     def start_query_stream(
         self,
-        query_template: str = None,
+        query_template: str | None = None,
         frequency: float = 3.0,
         start_count: int = 0,
         end_count: int = 5000,

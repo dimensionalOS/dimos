@@ -2,21 +2,21 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import argparse
-import json
-import numpy as np
-import os
 from collections import defaultdict
-import cv2
-import tqdm
+import json
+import os
 
+import cv2
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.structures import Boxes, BoxMode, Instances
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
+import numpy as np
+import tqdm
 
 
-def create_instances(predictions, image_size):
+def create_instances(predictions, image_size: int):
     ret = Instances(image_size)
 
     score = np.asarray([x["score"] for x in predictions])
@@ -71,7 +71,7 @@ if __name__ == "__main__":
             return ds_id - 1
 
     else:
-        raise ValueError("Unsupported dataset: {}".format(args.dataset))
+        raise ValueError(f"Unsupported dataset: {args.dataset}")
 
     os.makedirs(args.output, exist_ok=True)
 

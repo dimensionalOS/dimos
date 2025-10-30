@@ -18,21 +18,20 @@
 import asyncio
 import threading
 import time
-from typing import Optional
-import numpy as np
+
 import cv2
+from dimos_lcm.geometry_msgs import PoseStamped
+
+# Import LCM message types
+from dimos_lcm.sensor_msgs import CameraInfo, Image as LCMImage
+import numpy as np
 
 from dimos import core
 from dimos.hardware.zed_camera import ZEDModule
-from dimos.protocol import pubsub
-from dimos.utils.logging_config import setup_logger
 from dimos.perception.common.utils import colorize_depth
-
-# Import LCM message types
-from dimos_lcm.sensor_msgs import Image as LCMImage
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.geometry_msgs import PoseStamped
+from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_zed_module")
 

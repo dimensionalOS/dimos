@@ -12,22 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import argparse
 import math
 import os
-import time
+import pickle
 import threading
+import time
+
+from reactivex import operators as ops
+
+from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.web.websocket_vis.server import WebsocketVis
-from dimos.web.websocket_vis.helpers import vector_stream
-from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector
-from reactivex import operators as ops
-import argparse
-import pickle
-import reactivex as rx
 from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.web.websocket_vis.helpers import vector_stream
+from dimos.web.websocket_vis.server import WebsocketVis
 
 
 def parse_args():

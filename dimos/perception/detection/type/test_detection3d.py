@@ -14,19 +14,17 @@
 
 import time
 
-from dimos.perception.detection.type.detection3d import Detection3D
 
-
-def test_guess_projection(get_moment_2d, publish_moment):
+def test_guess_projection(get_moment_2d, publish_moment) -> None:
     moment = get_moment_2d()
     for key, value in moment.items():
         print(key, "====================================")
         print(value)
 
-    camera_info = moment.get("camera_info")
+    moment.get("camera_info")
     detection2d = moment.get("detections2d")[0]
     tf = moment.get("tf")
-    transform = tf.get("camera_optical", "world", detection2d.ts, 5.0)
+    tf.get("camera_optical", "world", detection2d.ts, 5.0)
 
     # for stash
     # detection3d = Detection3D.from_2d(detection2d, 1.5, camera_info, transform)

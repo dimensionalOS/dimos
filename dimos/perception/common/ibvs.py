@@ -16,7 +16,7 @@ import numpy as np
 
 
 class PersonDistanceEstimator:
-    def __init__(self, K, camera_pitch, camera_height):
+    def __init__(self, K, camera_pitch, camera_height) -> None:
         """
         Initialize the distance estimator using ground plane constraint.
 
@@ -49,7 +49,7 @@ class PersonDistanceEstimator:
         self.fx = K[0, 0]
         self.cx = K[0, 2]
 
-    def estimate_distance_angle(self, bbox: tuple, robot_pitch: float = None):
+    def estimate_distance_angle(self, bbox: tuple, robot_pitch: float | None = None):
         """
         Estimate distance and angle to person using ground plane constraint.
 
@@ -123,7 +123,7 @@ class ObjectDistanceEstimator:
     camera's intrinsic parameters to estimate the distance to a detected object.
     """
 
-    def __init__(self, K, camera_pitch, camera_height):
+    def __init__(self, K, camera_pitch, camera_height) -> None:
         """
         Initialize the distance estimator using ground plane constraint.
 
@@ -170,7 +170,7 @@ class ObjectDistanceEstimator:
         Returns:
             estimated_size: Estimated physical height of the object (in meters)
         """
-        x_min, y_min, x_max, y_max = bbox
+        _x_min, y_min, _x_max, y_max = bbox
 
         # Calculate object height in pixels
         object_height_px = y_max - y_min
@@ -181,7 +181,7 @@ class ObjectDistanceEstimator:
 
         return estimated_size
 
-    def set_estimated_object_size(self, size: float):
+    def set_estimated_object_size(self, size: float) -> None:
         """
         Set the estimated object size for future distance calculations.
 

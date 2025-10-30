@@ -12,59 +12,64 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 import queue
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
+from dimos import spec
 from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, Out, rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.hardware.camera.spec import (
-    CameraHardware,
-)
-from dimos.hardware.camera.webcam import Webcam, WebcamConfig
+from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.hardware.camera.spec import CameraHardware
+from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 
-default_transform = lambda: Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-)
+
+def default_transform():
+    return Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        frame_id="base_link",
+        child_frame_id="camera_link",
+    )
 
 
 @dataclass
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Optional[Transform] = field(default_factory=default_transform)
+    transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
+    frequency: float = 5.0
 
 
-class CameraModule(Module):
+class CameraModule(Module, spec.Camera):
     image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
+    camera_info_stream: Out[CameraInfo] = None
 
-    hardware: CameraHardware = None
-    _module_subscription: Optional[Disposable] = None
-    _camera_info_subscription: Optional[Disposable] = None
-    _skill_stream: Optional[Observable[Image]] = None
+    hardware: Callable[[], CameraHardware] | CameraHardware = None
+    _module_subscription: Disposable | None = None
+    _camera_info_subscription: Disposable | None = None
+    _skill_stream: Observable[Image] | None = None
 
     default_config = CameraModuleConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
+    @property
+    def camera_info(self) -> CameraInfo:
+        return self.hardware.camera_info
+
     @rpc
-    def start(self):
+    def start(self) -> str:
         if callable(self.config.hardware):
             self.hardware = self.config.hardware()
         else:
@@ -73,11 +78,11 @@ class CameraModule(Module):
         if self._module_subscription:
             return "already started"
 
-        stream = self.hardware.image_stream().pipe(sharpness_barrier(5))
+        stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))
 
         # camera_info_stream = self.camera_info_stream(frequency=5.0)
 
-        def publish_info(camera_info: CameraInfo):
+        def publish_info(camera_info: CameraInfo) -> None:
             self.camera_info.publish(camera_info)
 
             if self.config.transform is None:
@@ -104,23 +109,23 @@ class CameraModule(Module):
         _queue = queue.Queue(maxsize=1)
         self.hardware.image_stream().subscribe(_queue.put)
 
-        for image in iter(_queue.get, None):
-            yield image
+        yield from iter(_queue.get, None)
 
-    def camera_info_stream(self, frequency: float = 5.0) -> Observable[CameraInfo]:
+    def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
         def camera_info(_) -> CameraInfo:
             self.hardware.camera_info.ts = time.time()
             return self.hardware.camera_info
 
         return rx.interval(1.0 / frequency).pipe(ops.map(camera_info))
 
-    def stop(self):
+    def stop(self) -> None:
         if self._module_subscription:
             self._module_subscription.dispose()
             self._module_subscription = None
         if self._camera_info_subscription:
             self._camera_info_subscription.dispose()
             self._camera_info_subscription = None
+
         # Also stop the hardware if it has a stop method
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()
