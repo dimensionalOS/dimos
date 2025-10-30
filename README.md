@@ -59,87 +59,52 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 Tested on Ubuntu 22.04/24.04
 
 ```bash
-sudo apt install python3-venv
-
-# Clone the repository
 git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
 cd dimos
-
-# Create and activate virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-sudo apt install portaudio19-dev python3-pyaudio
-
-# Install LFS
-sudo apt install git-lfs
-git lfs install
-
-# Install torch and torchvision if not already installed
-# Example CUDA 11.7, Pytorch 2.0.1 (replace with your required pytorch version if different)
-pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+./bootstrap-repo.sh
 ```
 
-#### Install dependencies
-```bash
-# CPU only (reccomended to attempt first)
-pip install -e .[cpu,dev]
+#### Configuration
 
-# CUDA install
-pip install -e .[cuda,dev]
+Open `.env` and customize the environment variables you need.
 
-# Copy and configure environment variables
-cp default.env .env
-```
+* Set `OPENAI_API_KEY` if you want to run agentic robots. Make sure you have access to `gpt-4o`.
+* Set `ALIBABA_API_KEY` for the Qwen VL uses
+* Set `ROBOT_IP` to control the robot.
 
 #### Test the install 
 ```bash 
-pytest -s dimos/
+pytest -s dimos
 ```
 
 #### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
-CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py 
+dimos-robot --replay run unitree-go2
 ```
 
-#### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
+#### Test Dimensional with a simulated UnitreeGo2 in a MuJoCo simulator (no robot required)
 ```bash
-pip install -e .[sim]
-export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py 
+dimos-robot --simulation run unitree-go2
 ```
 
 #### Test Dimensional with a real UnitreeGo2 over WebRTC
 ```bash
-export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/unitree_go2.py 
+dimos-robot --robot-ip=192.168.X.XXX run unitree-go2
 ```
+
+You can add `ROBOT_IP=192.168.X.XXX` in `.env` and omit `--robot-ip`.
 
 #### Test Dimensional with a real UnitreeGo2 running Agents
 *OpenAI / Alibaba keys required*
 ```bash
-export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/run_agents2.py
+dimos-robot --robot-ip=192.168.X.XXX run unitree-go2-agentic
 ```
+
+In a separate terminal run `human-cli` and instruct it to do something (e.g. "Do a pounce.")
+
 ---
 
-### Agent API keys
-
-Full functionality will require API keys for the following:
-
-Requirements: 
-- OpenAI API key (required for all LLMAgents due to OpenAIEmbeddings)
-- Claude API key (required for ClaudeAgent)
-- Alibaba API key (required for Navigation skills)
-
-These keys can be added to your .env file or exported as environment variables.
-```
-export OPENAI_API_KEY=<your private key>
-export CLAUDE_API_KEY=<your private key>
-export ALIBABA_API_KEY=<your private key>
-```
-
-### ROS2 Unitree Go2 SDK Installation 
+### ROS2 Unitree Go2 SDK Installation  (OUT OF DATE)
 
 #### System Requirements
 - Ubuntu 22.04 
