@@ -16,7 +16,10 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+import threading
 import time
+import traceback
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -26,6 +29,7 @@ from typing import (
 )
 
 from dimos.protocol.pubsub.spec import PubSub
+from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
@@ -48,12 +52,20 @@ class RPCReq(TypedDict):
     args: Args
 
 
-class RPCRes(TypedDict):
+class RPCRes(TypedDict, total=False):
     id: float
     res: Any
+    exception: dict[str, Any] | None  # Contains exception info: type, message, traceback
 
 
 class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Thread pool for RPC handler execution (prevents deadlock in nested calls)
+        self._call_thread_pool: ThreadPoolExecutor | None = None
+        self._call_thread_pool_lock = threading.RLock()
+        self._call_thread_pool_max_workers = 4
+
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
 
@@ -69,6 +81,46 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
 
+    def _get_call_thread_pool(self) -> ThreadPoolExecutor:
+        """Get or create the thread pool for RPC handler execution (lazy initialization)."""
+        with self._call_thread_pool_lock:
+            if self._call_thread_pool is None:
+                self._call_thread_pool = ThreadPoolExecutor(
+                    max_workers=self._call_thread_pool_max_workers
+                )
+            return self._call_thread_pool
+
+    def _shutdown_thread_pool(self) -> None:
+        """Safely shutdown the thread pool with deadlock prevention."""
+        with self._call_thread_pool_lock:
+            if self._call_thread_pool:
+                # Check if we're being called from within the thread pool
+                # to avoid "cannot join current thread" error
+                current_thread = threading.current_thread()
+                is_pool_thread = False
+
+                # Check if current thread is one of the pool's threads
+                if hasattr(self._call_thread_pool, "_threads"):
+                    is_pool_thread = current_thread in self._call_thread_pool._threads
+                elif "ThreadPoolExecutor" in current_thread.name:
+                    # Fallback: check thread name pattern
+                    is_pool_thread = True
+
+                # Don't wait if we're in a pool thread to avoid deadlock
+                self._call_thread_pool.shutdown(wait=not is_pool_thread)
+                self._call_thread_pool = None
+
+    def stop(self) -> None:
+        """Stop the RPC service and cleanup thread pool.
+
+        Subclasses that override this method should call super().stop()
+        to ensure the thread pool is properly shutdown.
+        """
+        self._shutdown_thread_pool()
+        # Call parent stop if it exists
+        if hasattr(super(), "stop"):
+            super().stop()
+
     def call(self, name: str, arguments: Args, cb: Callable | None):
         if cb is None:
             return self.call_nowait(name, arguments)
@@ -82,16 +134,30 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
 
+        # Use a mutable container to hold the unsubscribe function
+        unsub_holder = [None]
+
         def receive_response(msg: MsgT, _: TopicT) -> None:
             res = self._decodeRPCRes(msg)
             if res.get("id") != msg_id:
                 return
             time.sleep(0.01)
-            if unsub is not None:
-                unsub()
-            cb(res.get("res"))
+            if unsub_holder[0] is not None:
+                unsub_holder[0]()
+
+            # Check if response contains an exception
+            exc_data = res.get("exception")
+            if exc_data:
+                # Reconstruct the exception and pass it to the callback
+                exc = deserialize_exception(exc_data)
+                # Pass exception to callback - the callback should handle it appropriately
+                cb(exc)
+            else:
+                # Normal response - pass the result
+                cb(res.get("res"))
 
         unsub = self.subscribe(topic_res, receive_response)
+        unsub_holder[0] = unsub  # Store in the mutable container
 
         self.publish(topic_req, self._encodeRPCReq(req))
         return unsub
@@ -113,6 +179,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
             if req.get("name") != name:
                 return
+
             args = req.get("args")
             if args is None:
                 return
@@ -125,14 +192,19 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                     req_id = req.get("id")
                     if req_id is not None:
                         self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))
+
                 except Exception as e:
                     logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
+                    # Send exception data to client if this was a request with an ID
+                    req_id = req.get("id")
+                    if req_id is not None:
+                        exc_data = serialize_exception(e)
+                        self.publish(
+                            topic_res, self._encodeRPCRes({"id": req_id, "exception": exc_data})
+                        )
 
-            get_thread_pool = getattr(self, "_get_call_thread_pool", None)
-            if get_thread_pool:
-                get_thread_pool().submit(execute_and_respond)
-            else:
-                execute_and_respond()
+            # Always use thread pool to execute RPC handlers (prevents deadlock)
+            self._get_call_thread_pool().submit(execute_and_respond)
 
         return self.subscribe(topic_req, receive_call)
 
@@ -152,3 +224,39 @@ class PassThroughPubSubRPC(PubSubRPCMixin[TopicT, dict], Generic[TopicT]):
 
     def _decodeRPCReq(self, msg: dict) -> RPCReq:
         return msg  # type: ignore[return-value]
+
+
+from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+
+
+class LCMRPC(PassThroughPubSubRPC, PickleLCM):
+    def __init__(self, **kwargs):
+        # Need to ensure LCMPubSubBase gets initialized since it's not in the direct super() chain
+        # This is due to the diamond inheritance pattern with multiple base classes
+        PickleLCM.__init__(self, **kwargs)
+        # Initialize PubSubRPCMixin's thread pool
+        PubSubRPCMixin.__init__(self, **kwargs)
+
+    def topicgen(self, name: str, req_or_res: bool) -> Topic:
+        from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
+        from dimos.utils.generic import short_id
+
+        suffix = "res" if req_or_res else "req"
+        topic = f"/rpc/{name}/{suffix}"
+        if len(topic) > LCM_MAX_CHANNEL_NAME_LENGTH:
+            topic = f"/rpc/{short_id(name)}/{suffix}"
+        return Topic(topic=topic)
+
+
+class ShmRPC(PassThroughPubSubRPC, PickleSharedMemory):
+    def __init__(self, prefer: str = "cpu", **kwargs):
+        # Need to ensure SharedMemory gets initialized properly
+        # This is due to the diamond inheritance pattern with multiple base classes
+        PickleSharedMemory.__init__(self, prefer=prefer, **kwargs)
+        # Initialize PubSubRPCMixin's thread pool
+        PubSubRPCMixin.__init__(self, **kwargs)
+
+    def topicgen(self, name: str, req_or_res: bool) -> str:
+        suffix = "res" if req_or_res else "req"
+        return f"/rpc/{name}/{suffix}"
