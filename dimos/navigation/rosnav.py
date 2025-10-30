@@ -19,7 +19,7 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 """
 
 from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import threading
 import time
@@ -64,8 +64,8 @@ logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 class Config(ModuleConfig):
     local_pointcloud_freq: float = 2.0
     global_pointcloud_freq: float = 1.0
-    sensor_to_base_link_transform: Transform = Transform(
-        frame_id="sensor", child_frame_id="base_link"
+    sensor_to_base_link_transform: Transform = field(
+        default_factory=lambda: Transform(frame_id="sensor", child_frame_id="base_link")
     )
 
 

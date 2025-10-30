@@ -18,7 +18,7 @@ if [ $# -eq 0 ]; then
     echo "Examples:"
     echo "  $0 \"ros2 topic list\""
     echo "  $0 \"ros2 launch base_autonomy unity_simulation_bringup.launch.py\""
-    echo "  $0 \"python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py\""
+    echo "  $0 \"python /workspace/dimos/dimos/navigation/demo_ros_navigation.py\""
     echo "  $0 \"bash\" # For interactive shell"
     exit 1
 fi

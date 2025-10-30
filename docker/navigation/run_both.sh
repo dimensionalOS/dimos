@@ -101,12 +101,12 @@ sleep 5
 echo "Starting DimOS navigation bot..."
 
 # Check if the script exists
-if [ ! -f "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py" ]; then
-    echo "ERROR: nav_bot.py not found at /workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
+if [ ! -f "/workspace/dimos/dimos/navigation/demo_ros_navigation.py" ]; then
+    echo "ERROR: demo_ros_navigation.py not found at /workspace/dimos/dimos/navigation/demo_ros_navigation.py"
     echo "Available files in /workspace/dimos/dimos/navigation/:"
     ls -la /workspace/dimos/dimos/navigation/ 2>/dev/null || echo "Directory not found"
 else
-    echo "Found nav_bot.py, activating virtual environment..."
+    echo "Found demo_ros_navigation.py, activating virtual environment..."
     if [ -f "/opt/dimos-venv/bin/activate" ]; then
         source /opt/dimos-venv/bin/activate
         echo "Python path: $(which python)"
@@ -115,9 +115,9 @@ else
         echo "WARNING: Virtual environment not found at /opt/dimos-venv, using system Python"
     fi
 
-    echo "Starting nav_bot.py..."
+    echo "Starting demo_ros_navigation.py..."
     # Capture any startup errors
-    python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py 2>&1 &
+    python /workspace/dimos/dimos/navigation/demo_ros_navigation.py 2>&1 &
     DIMOS_PID=$!
 
     # Give it a moment to start and check if it's still running

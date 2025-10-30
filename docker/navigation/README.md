@@ -41,8 +41,8 @@ cd /ros2_ws/src/ros-navigation-autonomy-stack
 # Activate virtual environment
 source /opt/dimos-venv/bin/activate
 
-# Run navigation bot
-python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py
+# Run navigation demo
+python /workspace/dimos/dimos/navigation/demo_ros_navigation.py
 
 # Or run other DimOS scripts
 python /workspace/dimos/dimos/your_script.py
