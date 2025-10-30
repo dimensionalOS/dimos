@@ -114,11 +114,11 @@ class ROSLaunchWrapper:
 
         print("Starting DimOS navigation bot...")
 
-        nav_bot_path = "/workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
+        nav_bot_path = "/workspace/dimos/dimos/navigation/demo_ros_navigation.py"
         venv_python = "/opt/dimos-venv/bin/python"
 
         if not os.path.exists(nav_bot_path):
-            print(f"ERROR: nav_bot.py not found at {nav_bot_path}")
+            print(f"ERROR: demo_ros_navigation.py not found at {nav_bot_path}")
             nav_dir = "/workspace/dimos/dimos/navigation/"
             if os.path.exists(nav_dir):
                 print(f"Contents of {nav_dir}:")

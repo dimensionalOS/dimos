@@ -32,7 +32,7 @@ echo -e "${YELLOW}Useful commands:${NC}"
 echo "  - ros2 topic list"
 echo "  - ros2 launch base_autonomy unity_simulation_bringup.launch.py"
 echo "  - source /opt/dimos-venv/bin/activate"
-echo "  - python /workspace/dimos/dimos/navigation/rosnav/nav_bot.py"
+echo "  - python /workspace/dimos/dimos/navigation/demo_ros_navigation.py"
 echo ""
 
 cd ../..
