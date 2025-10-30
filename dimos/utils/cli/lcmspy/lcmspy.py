@@ -18,8 +18,9 @@ from enum import Enum
 import threading
 import time
 
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 import lcm
+
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 
 
 class BandwidthUnit(Enum):
