@@ -11,6 +11,12 @@ cd "$SCRIPT_DIR"
 
 xhost +local:docker 2>/dev/null || true
 
+cleanup() {
+    xhost -local:docker 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
 echo -e "${GREEN}=============================================${NC}"
 echo -e "${GREEN}Starting DimOS + ROS Autonomy Stack Container${NC}"
 echo -e "${GREEN}=============================================${NC}"
@@ -88,8 +94,6 @@ case $MODE in
 esac
 
 docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack $CMD
-
-xhost -local:docker 2>/dev/null || true
 
 echo ""
 echo -e "${GREEN}Container stopped.${NC}"

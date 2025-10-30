@@ -13,6 +13,12 @@ cd "$SCRIPT_DIR"
 
 xhost +local:docker 2>/dev/null || true
 
+cleanup() {
+    xhost -local:docker 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
 echo -e "${GREEN}====================================${NC}"
 echo -e "${GREEN}Entering DimOS + ROS Container Shell${NC}"
 echo -e "${GREEN}====================================${NC}"
@@ -33,5 +39,3 @@ cd ../..
 
 # Enter interactive shell
 docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack bash
-
-xhost -local:docker 2>/dev/null || true

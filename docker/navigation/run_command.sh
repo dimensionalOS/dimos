@@ -25,6 +25,12 @@ fi
 
 xhost +local:docker 2>/dev/null || true
 
+cleanup() {
+    xhost -local:docker 2>/dev/null || true
+}
+
+trap cleanup EXIT
+
 echo -e "${GREEN}========================================${NC}"
 echo -e "${GREEN}Running command in DimOS + ROS Container${NC}"
 echo -e "${GREEN}========================================${NC}"
@@ -36,5 +42,3 @@ cd ../..
 
 # Run the command in the container
 docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack bash -c "$@"
-
-xhost -local:docker 2>/dev/null || true
