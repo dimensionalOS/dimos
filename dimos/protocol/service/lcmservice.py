@@ -24,10 +24,9 @@ import threading
 import traceback
 from typing import Protocol, runtime_checkable
 
-import lcm
-
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
+import lcm
 
 logger = setup_logger("dimos.protocol.service.lcmservice")
 
@@ -264,13 +263,12 @@ class LCMService(Service[LCMConfig]):
         self._thread.start()
 
     def _lcm_loop(self) -> None:
-        """LCM message handling loop."""
         while not self._stop_event.is_set():
             try:
                 with self._l_lock:
                     if self.l is None:
                         break
-                    self.l.handle_timeout(50)
+                    self.l.handle_timeout(10)
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 print(f"Error in LCM handling: {e}\n{stack_trace}")

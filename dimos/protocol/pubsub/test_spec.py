@@ -263,3 +263,40 @@ async def test_async_iterator(pubsub_context, topic, values) -> None:
         # Verify all messages were received in order
         assert len(received_messages) == len(messages_to_send)
         assert received_messages == messages_to_send
+
+
+@pytest.mark.parametrize("pubsub_context, topic, values", testdata)
+def test_high_volume_messages(pubsub_context, topic, values) -> None:
+    """Test that all 5000 messages are received correctly."""
+    with pubsub_context() as x:
+        # Create a list to capture received messages
+        received_messages = []
+        last_message_time = [time.time()]  # Use list to allow modification in callback
+
+        # Define callback function
+        def callback(message, topic) -> None:
+            received_messages.append(message)
+            last_message_time[0] = time.time()
+
+        # Subscribe to the topic
+        x.subscribe(topic, callback)
+
+        # Publish 5000 messages
+        num_messages = 5000
+        for _ in range(num_messages):
+            x.publish(topic, values[0])
+
+        # Wait until no messages received for 0.5 seconds
+        timeout = 10.0  # Maximum time to wait
+        stable_duration = 0.3  # Time without new messages to consider done
+        start_time = time.time()
+
+        while time.time() - start_time < timeout:
+            if time.time() - last_message_time[0] >= stable_duration:
+                break
+            time.sleep(0.1)
+
+        # Capture count and clear list to avoid printing huge list on failure
+        received_len = len(received_messages)
+        received_messages.clear()
+        assert received_len == num_messages, f"Expected {num_messages} messages, got {received_len}"

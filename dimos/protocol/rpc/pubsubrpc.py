@@ -64,9 +64,16 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
         self._call_thread_pool: ThreadPoolExecutor | None = None
         self._call_thread_pool_lock = threading.RLock()
-        # Increased to handle more concurrent requests without timeout
-        # For 1000 concurrent calls, we need enough workers to process them within timeout
-        self._call_thread_pool_max_workers = 100
+        self._call_thread_pool_max_workers = 50
+
+        # Shared response subscriptions: one per RPC name instead of one per call
+        # Maps str(topic_res) -> (subscription, {msg_id -> callback})
+        self._response_subs: dict[str, tuple[Any, dict[float, Callable]]] = {}
+        self._response_subs_lock = threading.RLock()
+
+        # Message ID counter for unique IDs even with concurrent calls
+        self._msg_id_counter = 0
+        self._msg_id_lock = threading.Lock()
 
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
@@ -119,6 +126,13 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         to ensure the thread pool is properly shutdown.
         """
         self._shutdown_thread_pool()
+
+        # Cleanup shared response subscriptions
+        with self._response_subs_lock:
+            for unsub, _ in self._response_subs.values():
+                unsub()
+            self._response_subs.clear()
+
         # Call parent stop if it exists
         if hasattr(super(), "stop"):
             super().stop()
@@ -132,37 +146,63 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
-        msg_id = float(time.time())
+
+        # Generate unique msg_id: timestamp + counter for concurrent calls
+        with self._msg_id_lock:
+            self._msg_id_counter += 1
+            msg_id = time.time() + (self._msg_id_counter / 1_000_000)
 
         req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
 
-        # Use a mutable container to hold the unsubscribe function
-        unsub_holder = [None]
+        # Get or create shared subscription for this RPC's response topic
+        topic_res_key = str(topic_res)
+        with self._response_subs_lock:
+            if topic_res_key not in self._response_subs:
+                # Create shared handler that routes to callbacks by msg_id
+                callbacks_dict: dict[float, Callable] = {}
 
-        def receive_response(msg: MsgT, _: TopicT) -> None:
-            res = self._decodeRPCRes(msg)
-            if res.get("id") != msg_id:
-                return
-            # Remove sleep that was causing delays in concurrent response handling
-            if unsub_holder[0] is not None:
-                unsub_holder[0]()
+                def shared_response_handler(msg: MsgT, _: TopicT) -> None:
+                    res = self._decodeRPCRes(msg)
+                    res_id = res.get("id")
+                    if res_id is None:
+                        return
 
-            # Check if response contains an exception
-            exc_data = res.get("exception")
-            if exc_data:
-                # Reconstruct the exception and pass it to the callback
-                exc = deserialize_exception(exc_data)
-                # Pass exception to callback - the callback should handle it appropriately
-                cb(exc)
-            else:
-                # Normal response - pass the result
-                cb(res.get("res"))
+                    # Look up callback for this msg_id
+                    with self._response_subs_lock:
+                        callback = callbacks_dict.pop(res_id, None)
 
-        unsub = self.subscribe(topic_res, receive_response)
-        unsub_holder[0] = unsub  # Store in the mutable container
+                    if callback is None:
+                        return  # No callback registered (already handled or timed out)
 
+                    # Check if response contains an exception
+                    exc_data = res.get("exception")
+                    if exc_data:
+                        # Reconstruct the exception and pass it to the callback
+                        exc = deserialize_exception(exc_data)
+                        callback(exc)
+                    else:
+                        # Normal response - pass the result
+                        callback(res.get("res"))
+
+                # Create single shared subscription
+                unsub = self.subscribe(topic_res, shared_response_handler)
+                self._response_subs[topic_res_key] = (unsub, callbacks_dict)
+
+            # Register this call's callback
+            _, callbacks_dict = self._response_subs[topic_res_key]
+            callbacks_dict[msg_id] = cb
+
+        # Publish request
         self.publish(topic_req, self._encodeRPCReq(req))
-        return unsub
+
+        # Return unsubscribe function that removes this callback from the dict
+        def unsubscribe_callback():
+            with self._response_subs_lock:
+                if topic_res_key in self._response_subs:
+                    _, callbacks_dict = self._response_subs[topic_res_key]
+                    callbacks_dict.pop(msg_id, None)
+
+        return unsubscribe_callback
 
     def call_nowait(self, name: str, arguments: Args) -> None:
         topic_req = self.topicgen(name, False)
