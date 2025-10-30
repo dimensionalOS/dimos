@@ -281,14 +281,14 @@ def test_high_volume_messages(pubsub_context, topic, values) -> None:
         # Subscribe to the topic
         x.subscribe(topic, callback)
 
-        # Publish 5000 messages
-        num_messages = 5000
+        # Publish 10000 messages
+        num_messages = 10000
         for _ in range(num_messages):
             x.publish(topic, values[0])
 
         # Wait until no messages received for 0.5 seconds
-        timeout = 10.0  # Maximum time to wait
-        stable_duration = 0.3  # Time without new messages to consider done
+        timeout = 1.0  # Maximum time to wait
+        stable_duration = 0.1  # Time without new messages to consider done
         start_time = time.time()
 
         while time.time() - start_time < timeout:
