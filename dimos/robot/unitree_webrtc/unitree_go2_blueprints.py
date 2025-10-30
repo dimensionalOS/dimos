@@ -71,7 +71,7 @@ standard = autoconnect(
     spatial_memory(),
     object_tracking(frame_id="camera_link"),
     utilization(),
-).with_global_config(n_dask_workers=8)
+).global_config(n_dask_workers=8)
 
 standard_with_shm = autoconnect(
     standard.transports(
