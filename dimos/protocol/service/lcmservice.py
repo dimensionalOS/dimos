@@ -180,32 +180,48 @@ def check_multicast() -> list[str]:
 def check_buffers() -> tuple[list[str], int | None]:
     """Check if buffer configuration is needed and return required commands and current size.
 
+    Uses currently configured buffer values if they're larger than the minimum required.
+
     Returns:
         Tuple of (commands_needed, current_max_buffer_size)
     """
+    MINIMUM_RMEM_MAX = 67108864  # 64MB recommended for high-throughput LCM
+    MINIMUM_RMEM_DEFAULT = 16777216  # 16MB recommended default
     commands_needed = []
     current_max = None
 
     sudo = "" if check_root() else "sudo "
 
-    # Check current buffer settings
+    # Check current buffer settings and determine target size
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
-        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        if not current_max or current_max < 2097152:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
+        if result.returncode == 0:
+            current_max = int(result.stdout.split("=")[1].strip())
+            # Use the larger of current or minimum
+            target_max = max(current_max, MINIMUM_RMEM_MAX) if current_max else MINIMUM_RMEM_MAX
+            if current_max < MINIMUM_RMEM_MAX:
+                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max={target_max}")
+        else:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max={MINIMUM_RMEM_MAX}")
     except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max={MINIMUM_RMEM_MAX}")
 
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
-        current_default = (
-            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        )
-        if not current_default or current_default < 2097152:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
+        if result.returncode == 0:
+            current_default = int(result.stdout.split("=")[1].strip())
+            # Use the larger of current or minimum
+            target_default = (
+                max(current_default, MINIMUM_RMEM_DEFAULT)
+                if current_default
+                else MINIMUM_RMEM_DEFAULT
+            )
+            if current_default < MINIMUM_RMEM_DEFAULT:
+                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default={target_default}")
+        else:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default={MINIMUM_RMEM_DEFAULT}")
     except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default={MINIMUM_RMEM_DEFAULT}")
 
     return commands_needed, current_max
 
