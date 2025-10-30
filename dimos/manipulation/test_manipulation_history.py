@@ -27,20 +27,17 @@
 # limitations under the License.
 
 import os
-import time
 import tempfile
+import time
+
 import pytest
-from typing import Dict, List, Optional, Any, Tuple
 
 from dimos.manipulation.manipulation_history import ManipulationHistory, ManipulationHistoryEntry
 from dimos.types.manipulation import (
-    ManipulationTask,
-    AbstractConstraint,
-    TranslationConstraint,
-    RotationConstraint,
     ForceConstraint,
-    ManipulationTaskConstraint,
-    ManipulationMetadata,
+    ManipulationTask,
+    RotationConstraint,
+    TranslationConstraint,
 )
 from dimos.types.vector import Vector
 
@@ -159,7 +156,7 @@ def populated_history(sample_task, sample_task_with_constraints):
     return history
 
 
-def test_manipulation_history_init():
+def test_manipulation_history_init() -> None:
     """Test initialization of ManipulationHistory."""
     # Default initialization
     history = ManipulationHistory()
@@ -173,7 +170,7 @@ def test_manipulation_history_init():
         assert os.path.exists(temp_dir)
 
 
-def test_manipulation_history_add_entry(sample_task):
+def test_manipulation_history_add_entry(sample_task) -> None:
     """Test adding entries to ManipulationHistory."""
     history = ManipulationHistory()
 
@@ -187,7 +184,7 @@ def test_manipulation_history_add_entry(sample_task):
     assert history.get_entry_by_index(0) == entry
 
 
-def test_manipulation_history_create_task_entry(sample_task):
+def test_manipulation_history_create_task_entry(sample_task) -> None:
     """Test creating a task entry directly."""
     history = ManipulationHistory()
 
@@ -201,11 +198,11 @@ def test_manipulation_history_create_task_entry(sample_task):
     assert entry.manipulation_response == "Task completed"
 
 
-def test_manipulation_history_save_load(temp_output_dir, sample_task):
+def test_manipulation_history_save_load(temp_output_dir, sample_task) -> None:
     """Test saving and loading history from disk."""
     # Create history and add entry
     history = ManipulationHistory(output_dir=temp_output_dir)
-    entry = history.create_task_entry(
+    history.create_task_entry(
         task=sample_task, result={"status": "success"}, agent_response="Task completed"
     )
 
@@ -221,7 +218,7 @@ def test_manipulation_history_save_load(temp_output_dir, sample_task):
     assert loaded_history.get_entry_by_index(0).task.description == sample_task.description
 
 
-def test_manipulation_history_clear(populated_history):
+def test_manipulation_history_clear(populated_history) -> None:
     """Test clearing the history."""
     assert len(populated_history) > 0
 
@@ -230,7 +227,7 @@ def test_manipulation_history_clear(populated_history):
     assert str(populated_history) == "ManipulationHistory(empty)"
 
 
-def test_manipulation_history_get_methods(populated_history):
+def test_manipulation_history_get_methods(populated_history) -> None:
     """Test various getter methods of ManipulationHistory."""
     # get_all_entries
     entries = populated_history.get_all_entries()
@@ -259,7 +256,7 @@ def test_manipulation_history_get_methods(populated_history):
     assert bottle_entries[0].task.task_id == "task2"
 
 
-def test_manipulation_history_search_basic(populated_history):
+def test_manipulation_history_search_basic(populated_history) -> None:
     """Test basic search functionality."""
     # Search by exact match on top-level fields
     results = populated_history.search(timestamp=populated_history.get_entry_by_index(0).timestamp)
@@ -281,7 +278,7 @@ def test_manipulation_history_search_basic(populated_history):
     assert results[0].task.task_id == "task1"
 
 
-def test_manipulation_history_search_nested(populated_history):
+def test_manipulation_history_search_nested(populated_history) -> None:
     """Test search with nested field paths."""
     # Search by nested metadata fields
     results = populated_history.search(
@@ -304,7 +301,7 @@ def test_manipulation_history_search_nested(populated_history):
     assert results[0].task.task_id == "task1"
 
 
-def test_manipulation_history_search_wildcards(populated_history):
+def test_manipulation_history_search_wildcards(populated_history) -> None:
     """Test search with wildcard patterns."""
     # Search for any object with label "cup"
     results = populated_history.search(**{"task.metadata.objects.*.label": "cup"})
@@ -322,7 +319,7 @@ def test_manipulation_history_search_wildcards(populated_history):
     assert results[0].task.task_id == "task2"
 
 
-def test_manipulation_history_search_constraints(populated_history):
+def test_manipulation_history_search_constraints(populated_history) -> None:
     """Test search by constraint properties."""
     # Find entries with any TranslationConstraint with y-axis
     results = populated_history.search(**{"task.constraints.*.translation_axis": "y"})
@@ -335,7 +332,7 @@ def test_manipulation_history_search_constraints(populated_history):
     assert results[0].task.task_id == "task2"
 
 
-def test_manipulation_history_search_string_contains(populated_history):
+def test_manipulation_history_search_string_contains(populated_history) -> None:
     """Test string contains searching."""
     # Basic string contains
     results = populated_history.search(**{"task.description": "Pick"})
@@ -348,7 +345,7 @@ def test_manipulation_history_search_string_contains(populated_history):
     assert results[0].task.task_id == "task2"
 
 
-def test_manipulation_history_search_multiple_criteria(populated_history):
+def test_manipulation_history_search_multiple_criteria(populated_history) -> None:
     """Test search with multiple criteria."""
     # Multiple criteria - all must match
     results = populated_history.search(**{"task.target_object": "cup", "result.status": "success"})
@@ -367,7 +364,7 @@ def test_manipulation_history_search_multiple_criteria(populated_history):
     assert results[0].task.task_id == "task2"
 
 
-def test_manipulation_history_search_nonexistent_fields(populated_history):
+def test_manipulation_history_search_nonexistent_fields(populated_history) -> None:
     """Test search with fields that don't exist."""
     # Search by nonexistent field
     results = populated_history.search(nonexistent_field="value")
@@ -382,7 +379,7 @@ def test_manipulation_history_search_nonexistent_fields(populated_history):
     assert len(results) == 0
 
 
-def test_manipulation_history_search_timestamp_ranges(populated_history):
+def test_manipulation_history_search_timestamp_ranges(populated_history) -> None:
     """Test searching by timestamp ranges."""
     # Get reference timestamps
     entry1_time = populated_history.get_entry_by_index(0).task.metadata["timestamp"]
@@ -406,7 +403,7 @@ def test_manipulation_history_search_timestamp_ranges(populated_history):
     assert results[1].task.task_id == "task2"
 
 
-def test_manipulation_history_search_vector_fields(populated_history):
+def test_manipulation_history_search_vector_fields(populated_history) -> None:
     """Test searching by vector components in constraints."""
     # Search by reference point components
     results = populated_history.search(**{"task.constraints.*.reference_point.x": 2.5})
@@ -424,7 +421,7 @@ def test_manipulation_history_search_vector_fields(populated_history):
     assert results[0].task.task_id == "task2"
 
 
-def test_manipulation_history_search_execution_details(populated_history):
+def test_manipulation_history_search_execution_details(populated_history) -> None:
     """Test searching by execution time and error patterns."""
     # Search by execution time
     results = populated_history.search(**{"result.execution_time": 2.5})
@@ -442,7 +439,7 @@ def test_manipulation_history_search_execution_details(populated_history):
     assert results[0].task.task_id == "task1"
 
 
-def test_manipulation_history_search_multiple_criteria(populated_history):
+def test_manipulation_history_search_multiple_criteria(populated_history) -> None:
     """Test search with multiple criteria."""
     # Multiple criteria - all must match
     results = populated_history.search(**{"task.target_object": "cup", "result.status": "success"})

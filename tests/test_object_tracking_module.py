@@ -16,20 +16,21 @@
 """Test script for Object Tracking module with ZED camera."""
 
 import asyncio
+
 import cv2
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos import core
 from dimos.hardware.zed_camera import ZEDModule
-from dimos.perception.object_tracker import ObjectTracking
-from dimos.protocol import pubsub
-from dimos.utils.logging_config import setup_logger
-from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.msgs.geometry_msgs import PoseStamped
 
 # Import message types
 from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.perception.object_tracker import ObjectTracking
+from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_object_tracking_module")
 

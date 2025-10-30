@@ -10,10 +10,10 @@ if __name__ == "__main__":
     parser.add_argument("--cat_path", default="datasets/coco/annotations/instances_val2017.json")
     args = parser.parse_args()
     print("Loading", args.cat_path)
-    cat = json.load(open(args.cat_path, "r"))["categories"]
+    cat = json.load(open(args.cat_path))["categories"]
 
     print("Loading", args.data_path)
-    data = json.load(open(args.data_path, "r"))
+    data = json.load(open(args.data_path))
     data["categories"] = cat
     out_path = args.data_path[:-5] + "_oriorder.json"
     print("Saving to", out_path)

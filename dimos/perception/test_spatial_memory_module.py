@@ -14,26 +14,21 @@
 
 import asyncio
 import os
-import shutil
 import tempfile
 import time
-from typing import Dict, List
 
-import numpy as np
 import pytest
 from reactivex import operators as ops
 
 from dimos import core
-from dimos.core import Module, In, Out, rpc
+from dimos.core import Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
-from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.logging_config import setup_logger
-from unittest.mock import patch, MagicMock
-import warnings
+from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger("test_spatial_memory_module")
 
@@ -45,13 +40,13 @@ class VideoReplayModule(Module):
 
     video_out: Out[Image] = None
 
-    def __init__(self, video_path: str):
+    def __init__(self, video_path: str) -> None:
         super().__init__()
         self.video_path = video_path
         self._subscription = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying video data."""
         # Use TimedSensorReplay to replay video frames
         video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
@@ -69,7 +64,7 @@ class VideoReplayModule(Module):
         logger.info("VideoReplayModule started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop replaying video data."""
         if self._subscription:
             self._subscription.dispose()
@@ -82,13 +77,13 @@ class OdometryReplayModule(Module):
 
     odom_out: Out[Odometry] = None
 
-    def __init__(self, odom_path: str):
+    def __init__(self, odom_path: str) -> None:
         super().__init__()
         self.odom_path = odom_path
         self._subscription = None
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying odometry data."""
         # Use TimedSensorReplay to replay odometry
         odom_replay = TimedSensorReplay(self.odom_path, autocast=Odometry.from_msg)
@@ -106,7 +101,7 @@ class OdometryReplayModule(Module):
         logger.info("OdometryReplayModule started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop replaying odometry data."""
         if self._subscription:
             self._subscription.dispose()
@@ -189,7 +184,7 @@ class TestSpatialMemoryModule:
                 logger.error(
                     f"Timeout after {timeout}s - Frame count: {stats['frame_count']}, Stored: {stats['stored_frame_count']}"
                 )
-                assert False, f"No frames processed within {timeout} seconds"
+                raise AssertionError(f"No frames processed within {timeout} seconds")
 
             await asyncio.sleep(2)
 

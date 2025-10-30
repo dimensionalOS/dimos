@@ -12,20 +12,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import time
-import sys
 import argparse
+import os
 import threading
-from reactivex import Subject, operators as RxOps
+import time
+
+from reactivex import operators as RxOps
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.utils.logging_config import logger
 from dimos.skills.navigation import Navigate
-import tests.test_header
+from dimos.utils.logging_config import logger
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def parse_args():

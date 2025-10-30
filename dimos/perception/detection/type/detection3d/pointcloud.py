@@ -14,21 +14,18 @@
 
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+import functools
+from typing import TYPE_CHECKING, Any
 
-import numpy as np
-from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.builtin_interfaces import Duration
-from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
-from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
-from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
+from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, TextPrimitive
+from lcm_msgs.geometry_msgs import Point, Pose, Quaternion, Vector3 as LCMVector3
+import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.perception.detection.type.detection2d import Detection2DBBox
 from dimos.perception.detection.type.detection3d.base import Detection3D
 from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     PointCloudFilter,
@@ -37,6 +34,11 @@ from dimos.perception.detection.type.detection3d.pointcloud_filters import (
     statistical,
 )
 from dimos.types.timestamped import to_ros_stamp
+
+if TYPE_CHECKING:
+    from dimos_lcm.sensor_msgs import CameraInfo
+
+    from dimos.perception.detection.type.detection2d import Detection2DBBox
 
 
 @dataclass
@@ -73,11 +75,11 @@ class Detection3DPC(Detection3D):
         """Get dimensions (width, height, depth) of the detection's bounding box."""
         return self.pointcloud.get_bounding_box_dimensions()
 
-    def bounding_box_intersects(self, other: "Detection3DPC") -> bool:
+    def bounding_box_intersects(self, other: Detection3DPC) -> bool:
         """Check if this detection's bounding box intersects with another's."""
         return self.pointcloud.bounding_box_intersects(other.pointcloud)
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         # Calculate distance from camera
         # The pointcloud is in world frame, and transform gives camera position in world
         center_world = self.center
@@ -96,7 +98,7 @@ class Detection3DPC(Detection3D):
             "points": str(len(self.pointcloud)),
         }
 
-    def to_foxglove_scene_entity(self, entity_id: Optional[str] = None) -> "SceneEntity":
+    def to_foxglove_scene_entity(self, entity_id: str | None = None) -> SceneEntity:
         """Convert detection to a Foxglove SceneEntity with cube primitive and text label.
 
         Args:
@@ -204,8 +206,8 @@ class Detection3DPC(Detection3D):
         world_to_optical_transform: Transform,
         # filters are to be adjusted based on the sensor noise characteristics if feeding
         # sensor data directly
-        filters: Optional[list[PointCloudFilter]] = None,
-    ) -> Optional["Detection3DPC"]:
+        filters: list[PointCloudFilter] | None = None,
+    ) -> Detection3DPC | None:
         """Create a Detection3D from a 2D detection by projecting world pointcloud.
 
         This method handles:

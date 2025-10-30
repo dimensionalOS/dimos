@@ -18,12 +18,11 @@ import subprocess
 
 import pytest
 
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils import data
 
 
 @pytest.mark.heavy
-def test_pull_file():
+def test_pull_file() -> None:
     repo_root = data._get_repo_root()
     test_file_name = "cafe.jpg"
     test_file_compressed = data._get_lfs_dir() / (test_file_name + ".tar.gz")
@@ -79,7 +78,7 @@ def test_pull_file():
 
 
 @pytest.mark.heavy
-def test_pull_dir():
+def test_pull_dir() -> None:
     repo_root = data._get_repo_root()
     test_dir_name = "ab_lidar_frames"
     test_dir_compressed = data._get_lfs_dir() / (test_dir_name + ".tar.gz")
@@ -124,6 +123,7 @@ def test_pull_dir():
             "6c3aaa9a79853ea4a7453c7db22820980ceb55035777f7460d05a0fa77b3b1b3",
             "456cc2c23f4ffa713b4e0c0d97143c27e48bbe6ef44341197b31ce84b3650e74",
         ],
+        strict=False,
     ):
         with file.open("rb") as f:
             sha256 = hashlib.sha256(f.read()).hexdigest()

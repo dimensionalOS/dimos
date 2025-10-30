@@ -2,6 +2,7 @@ from dimos.perception.detection.type.detection2d import (
     Detection2D,
     Detection2DBBox,
     Detection2DPerson,
+    Filter2D,
     ImageDetections2D,
 )
 from dimos.perception.detection.type.detection3d import (
@@ -23,19 +24,20 @@ __all__ = [
     "Detection2D",
     "Detection2DBBox",
     "Detection2DPerson",
-    "ImageDetections2D",
     # 3D Detection types
     "Detection3D",
     "Detection3DBBox",
     "Detection3DPC",
+    "Filter2D",
+    # Base types
+    "ImageDetections",
+    "ImageDetections2D",
     "ImageDetections3DPC",
     # Point cloud filters
     "PointCloudFilter",
+    "TableStr",
     "height_filter",
     "radius_outlier",
     "raycast",
     "statistical",
-    # Base types
-    "ImageDetections",
-    "TableStr",
 ]

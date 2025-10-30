@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
 import os
 import time
 
@@ -48,7 +46,7 @@ if __name__ == "__main__":
     connection_method = getattr(WebRTCConnectionMethod, connection_method)
 
     print("Initializing UnitreeGo2...")
-    print(f"Configuration:")
+    print("Configuration:")
     print(f"  IP: {robot_ip}")
     print(f"  Connection Method: {connection_method}")
     print(f"  Serial Number: {serial_number if serial_number else 'Not provided'}")

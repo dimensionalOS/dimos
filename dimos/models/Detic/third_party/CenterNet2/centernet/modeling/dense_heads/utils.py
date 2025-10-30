@@ -1,9 +1,9 @@
-import torch
 from detectron2.utils.comm import get_world_size
+import torch
 
 # from .data import CenterNetCrop
 
-__all__ = ["reduce_sum", "_transpose"]
+__all__ = ["_transpose", "reduce_sum"]
 
 INF = 1000000000
 
@@ -18,7 +18,7 @@ def _transpose(training_targets, num_loc_list):
         training_targets[im_i] = torch.split(training_targets[im_i], num_loc_list, dim=0)
 
     targets_level_first = []
-    for targets_per_level in zip(*training_targets):
+    for targets_per_level in zip(*training_targets, strict=False):
         targets_level_first.append(torch.cat(targets_per_level, dim=0))
     return targets_level_first
 

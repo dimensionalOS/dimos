@@ -20,12 +20,11 @@ frame rate control, and thread safety.
 """
 
 # Standard library imports
+from abc import ABC, abstractmethod
 import logging
 import os
-import time
-from abc import ABC, abstractmethod
 from threading import Lock
-from typing import Optional
+import time
 
 # Third-party imports
 import cv2
@@ -60,7 +59,7 @@ class AbstractVideoProvider(ABC):
     """Abstract base class for video providers managing video capture resources."""
 
     def __init__(
-        self, dev_name: str = "NA", pool_scheduler: Optional[ThreadPoolScheduler] = None
+        self, dev_name: str = "NA", pool_scheduler: ThreadPoolScheduler | None = None
     ) -> None:
         """Initializes the video provider with a device name.
 
@@ -108,7 +107,7 @@ class VideoProvider(AbstractVideoProvider):
         self,
         dev_name: str,
         video_source: str = f"{os.getcwd()}/assets/video-f30-480p.mp4",
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
+        pool_scheduler: ThreadPoolScheduler | None = None,
     ) -> None:
         """Initializes the video provider with a device name and video source.
 
@@ -163,7 +162,7 @@ class VideoProvider(AbstractVideoProvider):
             VideoFrameError: If frames cannot be read properly.
         """
 
-        def emit_frames(observer, scheduler):
+        def emit_frames(observer, scheduler) -> None:
             try:
                 self._initialize_capture()
 

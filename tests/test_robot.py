@@ -13,13 +13,14 @@
 # limitations under the License.
 
 import os
-import time
 import threading
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-from dimos.robot.local_planner.local_planner import navigate_to_goal_local
-from dimos.web.robot_web_interface import RobotWebInterface
+import time
+
 from reactivex import operators as RxOps
-import tests.test_header
+
+from dimos.robot.local_planner.local_planner import navigate_to_goal_local
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def main():

@@ -14,14 +14,10 @@
 
 from __future__ import annotations
 
-import struct
 import time
-from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
 from plum import dispatch
 
 try:
@@ -30,7 +26,7 @@ except ImportError:
     ROSTwistStamped = None
 
 from dimos.msgs.geometry_msgs.Twist import Twist
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
+from dimos.msgs.geometry_msgs.Vector3 import VectorConvertable
 from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from TwistStamped
@@ -79,7 +75,7 @@ class TwistStamped(Twist, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> "TwistStamped":
+    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> TwistStamped:
         """Create a TwistStamped from a ROS geometry_msgs/TwistStamped message.
 
         Args:

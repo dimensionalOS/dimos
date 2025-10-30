@@ -14,14 +14,17 @@
 
 from dimos.core.blueprints import ModuleBlueprintSet
 
-
 # The blueprints are defined as import strings so as not to trigger unnecessary imports.
 all_blueprints = {
     "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard",
     "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:basic",
     "unitree-go2-shm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_shm",
+    "unitree-go2-jpegshm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpegshm",
+    "unitree-go2-jpeglcm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpeglcm",
     "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
+    "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
+    "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
 }
 
 

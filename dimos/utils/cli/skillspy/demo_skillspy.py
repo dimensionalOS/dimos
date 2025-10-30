@@ -15,8 +15,9 @@
 
 """Demo script that runs skills in the background while agentspy monitors them."""
 
-import time
 import threading
+import time
+
 from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import SkillContainer, skill
 
@@ -25,7 +26,7 @@ class DemoSkills(SkillContainer):
     @skill()
     def count_to(self, n: int) -> str:
         """Count to n with delays."""
-        for i in range(n):
+        for _i in range(n):
             time.sleep(0.5)
         return f"Counted to {n}"
 
@@ -53,7 +54,7 @@ class DemoSkills(SkillContainer):
         return f"Quick task '{name}' done!"
 
 
-def run_demo_skills():
+def run_demo_skills() -> None:
     """Run demo skills in background."""
     # Create and start agent interface
     agent_interface = SkillCoordinator()
@@ -64,7 +65,7 @@ def run_demo_skills():
     agent_interface.register_skills(demo_skills)
 
     # Run various skills periodically
-    def skill_runner():
+    def skill_runner() -> None:
         counter = 0
         while True:
             time.sleep(2)

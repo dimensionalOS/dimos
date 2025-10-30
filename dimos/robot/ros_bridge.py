@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 import logging
 import threading
-from typing import Dict, Any, Type, Optional
-from enum import Enum
+from typing import Any
 
 try:
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 except ImportError:
     rclpy = None
     SingleThreadedExecutor = None
@@ -48,7 +48,7 @@ class BridgeDirection(Enum):
 class ROSBridge(Resource):
     """Unidirectional bridge between ROS and DIMOS for message passing."""
 
-    def __init__(self, node_name: str = "dimos_ros_bridge"):
+    def __init__(self, node_name: str = "dimos_ros_bridge") -> None:
         """Initialize the ROS-DIMOS bridge.
 
         Args:
@@ -67,7 +67,7 @@ class ROSBridge(Resource):
         self._spin_thread = threading.Thread(target=self._ros_spin, daemon=True)
         self._spin_thread.start()  # TODO: don't forget to shut it down
 
-        self._bridges: Dict[str, Dict[str, Any]] = {}
+        self._bridges: dict[str, dict[str, Any]] = {}
 
         self._qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -91,7 +91,7 @@ class ROSBridge(Resource):
 
         logger.info("ROSBridge shutdown complete")
 
-    def _ros_spin(self):
+    def _ros_spin(self) -> None:
         """Background thread for spinning ROS executor."""
         try:
             self._executor.spin()
@@ -101,10 +101,10 @@ class ROSBridge(Resource):
     def add_topic(
         self,
         topic_name: str,
-        dimos_type: Type,
-        ros_type: Type,
+        dimos_type: type,
+        ros_type: type,
         direction: BridgeDirection,
-        remap_topic: Optional[str] = None,
+        remap_topic: str | None = None,
     ) -> None:
         """Add unidirectional bridging for a topic.
 
@@ -138,7 +138,7 @@ class ROSBridge(Resource):
 
         if direction == BridgeDirection.ROS_TO_DIMOS:
 
-            def ros_callback(msg):
+            def ros_callback(msg) -> None:
                 self._ros_to_dimos(msg, dimos_topic, dimos_type, topic_name)
 
             ros_subscription = self.node.create_subscription(
@@ -149,7 +149,7 @@ class ROSBridge(Resource):
         elif direction == BridgeDirection.DIMOS_TO_ROS:
             ros_publisher = self.node.create_publisher(ros_type, ros_topic_name, self._qos)
 
-            def dimos_callback(msg, _topic):
+            def dimos_callback(msg, _topic) -> None:
                 self._dimos_to_ros(msg, ros_publisher, topic_name)
 
             dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)
@@ -180,7 +180,7 @@ class ROSBridge(Resource):
         logger.info(f"  DIMOS type: {dimos_type.__name__}, ROS type: {ros_type.__name__}")
 
     def _ros_to_dimos(
-        self, ros_msg: Any, dimos_topic: Topic, dimos_type: Type, _topic_name: str
+        self, ros_msg: Any, dimos_topic: Topic, dimos_type: type, _topic_name: str
     ) -> None:
         """Convert ROS message to DIMOS and publish.
 

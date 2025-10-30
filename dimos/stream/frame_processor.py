@@ -12,17 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import cv2
 import numpy as np
-import os
-from reactivex import Observable
-from reactivex import operators as ops
-from typing import Tuple, Optional
+from reactivex import Observable, operators as ops
 
 
 # TODO: Reorganize, filenaming - Consider merger with VideoOperators class
 class FrameProcessor:
-    def __init__(self, output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=False):
+    def __init__(
+        self, output_dir: str = f"{os.getcwd()}/assets/output/frames", delete_on_init: bool = False
+    ) -> None:
         """Initializes the FrameProcessor.
 
         Sets up the output directory for frame storage and optionally cleans up
@@ -65,10 +66,10 @@ class FrameProcessor:
     def edge_detection(self, frame):
         return cv2.Canny(frame, 100, 200)
 
-    def resize(self, frame, scale=0.5):
+    def resize(self, frame, scale: float = 0.5):
         return cv2.resize(frame, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA)
 
-    def export_to_jpeg(self, frame, save_limit=100, loop=False, suffix=""):
+    def export_to_jpeg(self, frame, save_limit: int = 100, loop: bool = False, suffix: str = ""):
         if frame is None:
             print("Error: Attempted to save a None image.")
             return None
@@ -92,10 +93,10 @@ class FrameProcessor:
 
     def compute_optical_flow(
         self,
-        acc: Tuple[np.ndarray, np.ndarray, Optional[float]],
+        acc: tuple[np.ndarray, np.ndarray, float | None],
         current_frame: np.ndarray,
         compute_relevancy: bool = True,
-    ) -> Tuple[np.ndarray, np.ndarray, Optional[float]]:
+    ) -> tuple[np.ndarray, np.ndarray, float | None]:
         """Computes optical flow between consecutive frames.
 
         Uses the Farneback algorithm to compute dense optical flow between the
@@ -121,7 +122,7 @@ class FrameProcessor:
             ValueError: If input frames have invalid dimensions or types.
             TypeError: If acc is not a tuple of correct types.
         """
-        prev_frame, prev_flow, prev_relevancy = acc
+        prev_frame, _prev_flow, _prev_relevancy = acc
 
         if prev_frame is None:
             return (current_frame, None, None)

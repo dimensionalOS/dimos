@@ -17,24 +17,21 @@ This module initializes and manages the video processing pipeline integrated wit
 It handles video capture, frame processing, and exposes the processed video streams via HTTP endpoints.
 """
 
-import tests.test_header
-import os
-
 # -----
-
 # Standard library imports
 import multiprocessing
+import os
+
 from dotenv import load_dotenv
 
 # Third-party imports
 from flask import Flask
-from reactivex import operators as ops
-from reactivex import of, interval, zip
+from reactivex import interval, operators as ops, zip
 from reactivex.disposable import CompositeDisposable
-from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, ImmediateScheduler
+from reactivex.scheduler import ThreadPoolScheduler
 
 # Local application imports
-from dimos.agents.agent import PromptBuilder, OpenAIAgent
+from dimos.agents.agent import OpenAIAgent
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider
@@ -92,7 +89,7 @@ def main():
         # vops.with_jpeg_export(processor, suffix="raw_slowed"),
     )
 
-    edge_detection_stream_obs = processor.process_stream_edge_detection(video_stream_obs).pipe(
+    processor.process_stream_edge_detection(video_stream_obs).pipe(
         # vops.with_jpeg_export(processor, suffix="edge"),
     )
 

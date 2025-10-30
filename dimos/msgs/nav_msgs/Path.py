@@ -14,30 +14,28 @@
 
 from __future__ import annotations
 
-import struct
 import time
-from io import BytesIO
-from typing import BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, BinaryIO
 
-from dimos_lcm.geometry_msgs import Point as LCMPoint
-from dimos_lcm.geometry_msgs import Pose as LCMPose
-from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
+from dimos_lcm.geometry_msgs import (
+    Point as LCMPoint,
+    Pose as LCMPose,
+    PoseStamped as LCMPoseStamped,
+    Quaternion as LCMQuaternion,
+)
 from dimos_lcm.nav_msgs import Path as LCMPath
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 try:
     from nav_msgs.msg import Path as ROSPath
 except ImportError:
     ROSPath = None
 
-from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
-from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
-from dimos.msgs.geometry_msgs.Transform import Transform
-from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def sec_nsec(ts):
@@ -78,13 +76,13 @@ class Path(Timestamped):
         """Return the last pose in the path, or None if empty."""
         return self.poses[-1] if self.poses else None
 
-    def tail(self) -> "Path":
+    def tail(self) -> Path:
         """Return a new Path with all poses except the first."""
         return Path(ts=self.ts, frame_id=self.frame_id, poses=self.poses[1:] if self.poses else [])
 
-    def push(self, pose: PoseStamped) -> "Path":
+    def push(self, pose: PoseStamped) -> Path:
         """Return a new Path with the pose appended (immutable)."""
-        return Path(ts=self.ts, frame_id=self.frame_id, poses=self.poses + [pose])
+        return Path(ts=self.ts, frame_id=self.frame_id, poses=[*self.poses, pose])
 
     def push_mut(self, pose: PoseStamped) -> None:
         """Append a pose to this path (mutable)."""
@@ -130,7 +128,7 @@ class Path(Timestamped):
         return lcm_msg.lcm_encode()
 
     @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO) -> "Path":
+    def lcm_decode(cls, data: bytes | BinaryIO) -> Path:
         """Decode LCM bytes to Path."""
         lcm_msg = LCMPath.lcm_decode(data)
 
@@ -169,23 +167,23 @@ class Path(Timestamped):
         """Allow indexing and slicing of poses."""
         return self.poses[index]
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         """Allow iteration over poses."""
         return iter(self.poses)
 
-    def slice(self, start: int, end: int | None = None) -> "Path":
+    def slice(self, start: int, end: int | None = None) -> Path:
         """Return a new Path with a slice of poses."""
         return Path(ts=self.ts, frame_id=self.frame_id, poses=self.poses[start:end])
 
-    def extend(self, other: "Path") -> "Path":
+    def extend(self, other: Path) -> Path:
         """Return a new Path with poses from both paths (immutable)."""
         return Path(ts=self.ts, frame_id=self.frame_id, poses=self.poses + other.poses)
 
-    def extend_mut(self, other: "Path") -> None:
+    def extend_mut(self, other: Path) -> None:
         """Extend this path with poses from another path (mutable)."""
         self.poses.extend(other.poses)
 
-    def reverse(self) -> "Path":
+    def reverse(self) -> Path:
         """Return a new Path with poses in reverse order."""
         return Path(ts=self.ts, frame_id=self.frame_id, poses=list(reversed(self.poses)))
 
@@ -194,7 +192,7 @@ class Path(Timestamped):
         self.poses.clear()
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPath) -> "Path":
+    def from_ros_msg(cls, ros_msg: ROSPath) -> Path:
         """Create a Path from a ROS nav_msgs/Path message.
 
         Args:

@@ -14,11 +14,9 @@
 
 """Abstract base class for manipulation skills."""
 
-from typing import Optional
-
-from dimos.skills.skills import AbstractRobotSkill, Colors
-from dimos.robot.robot import Robot
 from dimos.manipulation.manipulation_interface import ManipulationInterface
+from dimos.robot.robot import Robot
+from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -28,7 +26,7 @@ class AbstractManipulationSkill(AbstractRobotSkill):
     This abstract class provides access to the robot's manipulation memory system.
     """
 
-    def __init__(self, *args, robot: Optional[Robot] = None, **kwargs):
+    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:
         """Initialize the manipulation skill.
 
         Args:
@@ -42,7 +40,7 @@ class AbstractManipulationSkill(AbstractRobotSkill):
             )
 
     @property
-    def manipulation_interface(self) -> Optional[ManipulationInterface]:
+    def manipulation_interface(self) -> ManipulationInterface | None:
         """Get the robot's manipulation interface.
 
         Returns:

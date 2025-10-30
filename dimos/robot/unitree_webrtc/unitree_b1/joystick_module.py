@@ -24,6 +24,7 @@ import threading
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
+
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs import Int32
@@ -39,14 +40,14 @@ class JoystickModule(Module):
     twist_out: Out[TwistStamped] = None  # Timestamped velocity commands
     mode_out: Out[Int32] = None  # Mode changes
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
         self.current_mode = 0  # Start in IDLE mode for safety
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Initialize pygame and start control loop."""
 
         super().start()
@@ -88,7 +89,7 @@ class JoystickModule(Module):
 
         super().stop()
 
-    def _pygame_loop(self):
+    def _pygame_loop(self) -> None:
         """Main pygame event loop - ALL pygame operations happen here."""
         import pygame
 
@@ -223,7 +224,7 @@ class JoystickModule(Module):
         pygame.quit()
         print("JoystickModule stopped")
 
-    def _update_display(self, twist):
+    def _update_display(self, twist) -> None:
         """Update pygame window with current status."""
         import pygame
 

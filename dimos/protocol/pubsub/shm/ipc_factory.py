@@ -14,15 +14,12 @@
 
 # frame_ipc.py
 # Python 3.9+
-import base64
-import time
 from abc import ABC, abstractmethod
+from multiprocessing.shared_memory import SharedMemory
 import os
-from typing import Optional, Tuple
+import time
 
 import numpy as np
-from multiprocessing.shared_memory import SharedMemory
-from multiprocessing.managers import SharedMemoryManager
 
 _UNLINK_ON_GC = os.getenv("DIMOS_IPC_UNLINK_ON_GC", "0").lower() not in ("0", "false", "no")
 
@@ -99,10 +96,11 @@ class FrameChannel(ABC):
 
 
 from multiprocessing.shared_memory import SharedMemory
-import weakref, os
+import os
+import weakref
 
 
-def _safe_unlink(name):
+def _safe_unlink(name: str) -> None:
     try:
         shm = SharedMemory(name=name)
         shm.unlink()
@@ -118,12 +116,19 @@ def _safe_unlink(name):
 
 
 class CpuShmChannel(FrameChannel):
-    def __init__(self, shape, dtype=np.uint8, *, data_name=None, ctrl_name=None):
+    def __init__(
+        self,
+        shape,
+        dtype=np.uint8,
+        *,
+        data_name: str | None = None,
+        ctrl_name: str | None = None,
+    ) -> None:
         self._shape = tuple(shape)
         self._dtype = np.dtype(dtype)
         self._nbytes = int(self._dtype.itemsize * np.prod(self._shape))
 
-        def _create_or_open(name, size):
+        def _create_or_open(name: str, size: int):
             try:
                 shm = SharedMemory(create=True, size=size, name=name)
                 owner = True
@@ -169,7 +174,7 @@ class CpuShmChannel(FrameChannel):
         }
 
     @property
-    def device(self):
+    def device(self) -> str:
         return "cpu"
 
     @property
@@ -180,7 +185,7 @@ class CpuShmChannel(FrameChannel):
     def dtype(self):
         return self._dtype
 
-    def publish(self, frame):
+    def publish(self, frame) -> None:
         assert isinstance(frame, np.ndarray)
         assert frame.shape == self._shape and frame.dtype == self._dtype
         active = int(self._ctrl[2])
@@ -198,7 +203,7 @@ class CpuShmChannel(FrameChannel):
         self._ctrl[2] = inactive
         self._ctrl[0] += 1
 
-    def read(self, last_seq: int = -1, require_new=True):
+    def read(self, last_seq: int = -1, require_new: bool = True):
         for _ in range(3):
             seq1 = int(self._ctrl[0])
             idx = int(self._ctrl[2])
@@ -223,7 +228,7 @@ class CpuShmChannel(FrameChannel):
         }
 
     @classmethod
-    def attach(cls, desc):
+    def attach(cls, desc: str):
         obj = object.__new__(cls)
         obj._shape = tuple(desc["shape"])
         obj._dtype = np.dtype(desc["dtype"])
@@ -244,7 +249,7 @@ class CpuShmChannel(FrameChannel):
         obj._finalizer_data = obj._finalizer_ctrl = None
         return obj
 
-    def close(self):
+    def close(self) -> None:
         if getattr(self, "_is_owner", False):
             try:
                 self._shm_ctrl.close()

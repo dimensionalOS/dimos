@@ -13,8 +13,8 @@
 # limitations under the License.
 import time
 
-import pytest
 from lcm_msgs.foxglove_msgs import SceneUpdate
+import pytest
 
 from dimos.core import LCMTransport
 from dimos.msgs.foxglove_msgs import ImageAnnotations
@@ -22,18 +22,16 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.moduleDB import ObjectDBModule
-from dimos.protocol.service import lcmservice as lcm
-from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
-from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
+from dimos.robot.unitree.connection import go2
 
 
 @pytest.mark.module
-def test_moduleDB(dimos_cluster):
-    connection = deploy_connection(dimos_cluster)
+def test_moduleDB(dimos_cluster) -> None:
+    connection = go2.deploy(dimos_cluster, "fake")
 
     moduleDB = dimos_cluster.deploy(
         ObjectDBModule,
-        camera_info=ConnectionModule._camera_info(),
+        camera_info=go2.camera_info,
         goto=lambda obj_id: print(f"Going to {obj_id}"),
     )
     moduleDB.image.connect(connection.video)
@@ -57,6 +55,5 @@ def test_moduleDB(dimos_cluster):
     moduleDB.start()
 
     time.sleep(4)
-    print("STARTING QUERY!!")
     print("VLM RES", moduleDB.navigate_to_object_in_view("white floor"))
     time.sleep(30)

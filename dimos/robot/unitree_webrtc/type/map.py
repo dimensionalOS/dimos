@@ -13,17 +13,17 @@
 # limitations under the License.
 
 import time
-from typing import Optional
 
 import numpy as np
 import open3d as o3d
 from reactivex import interval
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
@@ -39,12 +39,12 @@ class Map(Module):
         self,
         voxel_size: float = 0.05,
         cost_resolution: float = 0.05,
-        global_publish_interval: Optional[float] = None,
+        global_publish_interval: float | None = None,
         min_height: float = 0.15,
         max_height: float = 0.6,
         global_config: GlobalConfig | None = None,
         **kwargs,
-    ):
+    ) -> None:
         self.voxel_size = voxel_size
         self.cost_resolution = cost_resolution
         self.global_publish_interval = global_publish_interval
@@ -58,13 +58,13 @@ class Map(Module):
         super().__init__(**kwargs)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         unsub = self.lidar.subscribe(self.add_frame)
         self._disposables.add(Disposable(unsub))
 
-        def publish(_):
+        def publish(_) -> None:
             self.global_map.publish(self.to_lidar_message())
 
             # temporary, not sure if it belogs in mapper
@@ -169,6 +169,16 @@ def splice_cylinder(
 
 
 mapper = Map.blueprint
+
+
+def deploy(dimos: DimosCluster, connection: Go2ConnectionProtocol):
+    mapper = dimos.deploy(Map, global_publish_interval=1.0)
+    mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
+    mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
+    mapper.local_costmap.transport = LCMTransport("/local_costmap", OccupancyGrid)
+    mapper.lidar.connect(connection.pointcloud)
+    mapper.start()
+    return mapper
 
 
 __all__ = ["Map", "mapper"]

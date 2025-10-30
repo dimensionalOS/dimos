@@ -14,7 +14,7 @@
 import pytest
 
 
-def test_person_ros_confidence():
+def test_person_ros_confidence() -> None:
     """Test that Detection2DPerson preserves confidence when converting to ROS format."""
 
     from dimos.msgs.sensor_msgs import Image
@@ -58,7 +58,7 @@ def test_person_ros_confidence():
         print(f"  Visible keypoints: {len(person_det.get_visible_keypoints(threshold=0.3))}/17")
 
 
-def test_person_from_ros_raises():
+def test_person_from_ros_raises() -> None:
     """Test that Detection2DPerson.from_ros_detection2d() raises NotImplementedError."""
     from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 

@@ -1,17 +1,21 @@
 #!/usr/bin/env python
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
-import os
 from itertools import chain
-import cv2
-import tqdm
+import os
 
+import cv2
 from detectron2.config import get_cfg
-from detectron2.data import DatasetCatalog, MetadataCatalog, build_detection_train_loader
-from detectron2.data import detection_utils as utils
+from detectron2.data import (
+    DatasetCatalog,
+    MetadataCatalog,
+    build_detection_train_loader,
+    detection_utils as utils,
+)
 from detectron2.data.build import filter_images_with_few_keypoints
 from detectron2.utils.logger import setup_logger
 from detectron2.utils.visualizer import Visualizer
+import tqdm
 
 
 def setup(args):
@@ -54,14 +58,14 @@ if __name__ == "__main__":
     os.makedirs(dirname, exist_ok=True)
     metadata = MetadataCatalog.get(cfg.DATASETS.TRAIN[0])
 
-    def output(vis, fname):
+    def output(vis, fname) -> None:
         if args.show:
             print(fname)
             cv2.imshow("window", vis.get_image()[:, :, ::-1])
             cv2.waitKey()
         else:
             filepath = os.path.join(dirname, fname)
-            print("Saving to {} ...".format(filepath))
+            print(f"Saving to {filepath} ...")
             vis.save(filepath)
 
     scale = 1.0

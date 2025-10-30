@@ -13,16 +13,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import threading
 import time
+
 import pytest
-from dimos.utils.logging_config import setup_logger
+
 from dimos.types.vector import Vector
-import asyncio
+from dimos.utils.logging_config import setup_logger
 
 
 class MockROSNode:
-    def __init__(self):
+    def __init__(self) -> None:
         self.logger = setup_logger("ROS")
 
         self.sub_id_cnt = 0
@@ -33,7 +35,7 @@ class MockROSNode:
         self.sub_id_cnt += 1
         return sub_id
 
-    def create_subscription(self, msg_type, topic_name, callback, qos):
+    def create_subscription(self, msg_type, topic_name: str, callback, qos):
         # Mock implementation of ROS subscription
 
         sub_id = self._get_sub_id()
@@ -42,7 +44,7 @@ class MockROSNode:
         self.logger.info(f"Subscribed {topic_name} subid {sub_id}")
 
         # Create message simulation thread
-        def simulate_messages():
+        def simulate_messages() -> None:
             message_count = 0
             while not stop_event.is_set():
                 message_count += 1
@@ -58,7 +60,7 @@ class MockROSNode:
         thread.start()
         return sub_id
 
-    def destroy_subscription(self, subscription):
+    def destroy_subscription(self, subscription) -> None:
         if subscription in self.subs:
             self.subs[subscription].set()
             self.logger.info(f"Destroyed subscription: {subscription}")
@@ -72,7 +74,7 @@ def robot():
     from dimos.robot.ros_observable_topic import ROSObservableTopicAbility
 
     class MockRobot(ROSObservableTopicAbility):
-        def __init__(self):
+        def __init__(self) -> None:
             self.logger = setup_logger("ROBOT")
             # Initialize the mock ROS node
             self._node = MockROSNode()
@@ -88,7 +90,7 @@ def robot():
 # 4. that the system replays the last message to new observers,
 #    before the new ROS sub starts producing
 @pytest.mark.ros
-def test_parallel_and_cleanup(robot):
+def test_parallel_and_cleanup(robot) -> None:
     from nav_msgs import msg
 
     received_messages = []
@@ -160,7 +162,7 @@ def test_parallel_and_cleanup(robot):
 #                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
 #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 @pytest.mark.ros
-def test_parallel_and_hog(robot):
+def test_parallel_and_hog(robot) -> None:
     from nav_msgs import msg
 
     obs1 = robot.topic("/odom", msg.Odometry)
@@ -200,7 +202,7 @@ def test_parallel_and_hog(robot):
 
 @pytest.mark.asyncio
 @pytest.mark.ros
-async def test_topic_latest_async(robot):
+async def test_topic_latest_async(robot) -> None:
     from nav_msgs import msg
 
     odom = await robot.topic_latest_async("/odom", msg.Odometry)
@@ -213,14 +215,14 @@ async def test_topic_latest_async(robot):
 
 
 @pytest.mark.ros
-def test_topic_auto_conversion(robot):
+def test_topic_auto_conversion(robot) -> None:
     odom = robot.topic("/vector", Vector).subscribe(lambda x: print(x))
     time.sleep(0.5)
     odom.dispose()
 
 
 @pytest.mark.ros
-def test_topic_latest_sync(robot):
+def test_topic_latest_sync(robot) -> None:
     from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
@@ -233,13 +235,13 @@ def test_topic_latest_sync(robot):
 
 
 @pytest.mark.ros
-def test_topic_latest_sync_benchmark(robot):
+def test_topic_latest_sync_benchmark(robot) -> None:
     from nav_msgs import msg
 
     odom = robot.topic_latest("/odom", msg.Odometry)
 
     start_time = time.time()
-    for i in range(100):
+    for _i in range(100):
         odom()
     end_time = time.time()
     elapsed = end_time - start_time

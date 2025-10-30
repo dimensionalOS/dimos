@@ -19,9 +19,10 @@ This module extends the ChromaDB implementation to support storing images with
 their XY locations and querying by location or image similarity.
 """
 
-import numpy as np
-from typing import List, Dict, Optional, Tuple, Any
+from typing import Any
+
 import chromadb
+import numpy as np
 
 from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
@@ -44,7 +45,7 @@ class SpatialVectorDB:
         chroma_client=None,
         visual_memory=None,
         embedding_provider=None,
-    ):
+    ) -> None:
         """
         Initialize the spatial vector database.
 
@@ -104,11 +105,11 @@ class SpatialVectorDB:
                 logger.info(f"Created NEW {client_type} collection '{collection_name}'")
         except Exception as e:
             logger.info(
-                f"Initialized {client_type} collection '{collection_name}' (count error: {str(e)})"
+                f"Initialized {client_type} collection '{collection_name}' (count error: {e!s})"
             )
 
     def add_image_vector(
-        self, vector_id: str, image: np.ndarray, embedding: np.ndarray, metadata: Dict[str, Any]
+        self, vector_id: str, image: np.ndarray, embedding: np.ndarray, metadata: dict[str, Any]
     ) -> None:
         """
         Add an image with its embedding and metadata to the vector database.
@@ -129,7 +130,7 @@ class SpatialVectorDB:
 
         logger.info(f"Added image vector {vector_id} with metadata: {metadata}")
 
-    def query_by_embedding(self, embedding: np.ndarray, limit: int = 5) -> List[Dict]:
+    def query_by_embedding(self, embedding: np.ndarray, limit: int = 5) -> list[dict]:
         """
         Query the vector database for images similar to the provided embedding.
 
@@ -149,7 +150,7 @@ class SpatialVectorDB:
     # TODO: implement efficient nearest neighbor search
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """
         Query the vector database for images near the specified location.
 
@@ -192,7 +193,7 @@ class SpatialVectorDB:
 
         return self._process_query_results(filtered_results)
 
-    def _process_query_results(self, results) -> List[Dict]:
+    def _process_query_results(self, results) -> list[dict]:
         """Process query results to include decoded images."""
         if not results or not results["ids"]:
             return []
@@ -227,7 +228,7 @@ class SpatialVectorDB:
 
         return processed_results
 
-    def query_by_text(self, text: str, limit: int = 5) -> List[Dict]:
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:
         """
         Query the vector database for images matching the provided text description.
 
@@ -259,7 +260,7 @@ class SpatialVectorDB:
         )
         return self._process_query_results(results)
 
-    def get_all_locations(self) -> List[Tuple[float, float, float]]:
+    def get_all_locations(self) -> list[tuple[float, float, float]]:
         """Get all locations stored in the database."""
         # Get all items from the collection without embeddings
         results = self.image_collection.get(include=["metadatas"])
@@ -301,7 +302,7 @@ class SpatialVectorDB:
             ids=[location_id], documents=[location.name], metadatas=[metadata]
         )
 
-    def query_tagged_location(self, query: str) -> Tuple[Optional[RobotLocation], float]:
+    def query_tagged_location(self, query: str) -> tuple[RobotLocation | None, float]:
         """
         Query for a tagged location using semantic text search.
 

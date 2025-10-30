@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection.type.detection2d.base import Detection2D
+from dimos.perception.detection.type.detection2d.base import Detection2D, Filter2D
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
 from dimos.perception.detection.type.detection2d.person import Detection2DPerson
@@ -20,6 +20,6 @@ from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 __all__ = [
     "Detection2D",
     "Detection2DBBox",
-    "ImageDetections2D",
     "Detection2DPerson",
+    "ImageDetections2D",
 ]

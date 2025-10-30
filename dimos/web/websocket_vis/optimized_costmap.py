@@ -19,22 +19,23 @@
 import base64
 import hashlib
 import time
-from typing import Dict, Any, Optional, Tuple
-import numpy as np
+from typing import Any
 import zlib
+
+import numpy as np
 
 
 class OptimizedCostmapEncoder:
     """Handles optimized encoding of costmaps with delta compression."""
 
-    def __init__(self, chunk_size: int = 64):
+    def __init__(self, chunk_size: int = 64) -> None:
         self.chunk_size = chunk_size
-        self.last_full_grid: Optional[np.ndarray] = None
+        self.last_full_grid: np.ndarray | None = None
         self.last_full_sent_time: float = 0  # Track when last full update was sent
-        self.chunk_hashes: Dict[Tuple[int, int], str] = {}
+        self.chunk_hashes: dict[tuple[int, int], str] = {}
         self.full_update_interval = 3.0  # Send full update every 3 seconds
 
-    def encode_costmap(self, grid: np.ndarray, force_full: bool = False) -> Dict[str, Any]:
+    def encode_costmap(self, grid: np.ndarray, force_full: bool = False) -> dict[str, Any]:
         """Encode a costmap grid with optimizations.
 
         Args:
@@ -59,7 +60,7 @@ class OptimizedCostmapEncoder:
         else:
             return self._encode_delta(grid, current_time)
 
-    def _encode_full(self, grid: np.ndarray, current_time: float) -> Dict[str, Any]:
+    def _encode_full(self, grid: np.ndarray, current_time: float) -> dict[str, Any]:
         height, width = grid.shape
 
         # Convert to uint8 for better compression (costmap values are -1 to 100)
@@ -88,7 +89,7 @@ class OptimizedCostmapEncoder:
             "data": encoded,
         }
 
-    def _encode_delta(self, grid: np.ndarray, current_time: float) -> Dict[str, Any]:
+    def _encode_delta(self, grid: np.ndarray, current_time: float) -> dict[str, Any]:
         height, width = grid.shape
         changed_chunks = []
 
@@ -145,7 +146,7 @@ class OptimizedCostmapEncoder:
             "chunks": changed_chunks,
         }
 
-    def _update_chunk_hashes(self, grid: np.ndarray):
+    def _update_chunk_hashes(self, grid: np.ndarray) -> None:
         """Update all chunk hashes for the grid."""
         self.chunk_hashes.clear()
         height, width = grid.shape

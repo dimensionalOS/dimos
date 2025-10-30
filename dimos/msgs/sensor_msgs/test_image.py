@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
@@ -27,7 +27,7 @@ def img():
     return Image.from_file(str(image_file_path))
 
 
-def test_file_load(img: Image):
+def test_file_load(img: Image) -> None:
     assert isinstance(img.data, np.ndarray)
     assert img.width == 1024
     assert img.height == 771
@@ -41,7 +41,7 @@ def test_file_load(img: Image):
     assert img.data.flags["C_CONTIGUOUS"]
 
 
-def test_lcm_encode_decode(img: Image):
+def test_lcm_encode_decode(img: Image) -> None:
     binary_msg = img.lcm_encode()
     decoded_img = Image.lcm_decode(binary_msg)
 
@@ -50,13 +50,13 @@ def test_lcm_encode_decode(img: Image):
     assert decoded_img == img
 
 
-def test_rgb_bgr_conversion(img: Image):
+def test_rgb_bgr_conversion(img: Image) -> None:
     rgb = img.to_rgb()
     assert not rgb == img
     assert rgb.to_bgr() == img
 
 
-def test_opencv_conversion(img: Image):
+def test_opencv_conversion(img: Image) -> None:
     ocv = img.to_opencv()
     decoded_img = Image.from_opencv(ocv)
 
@@ -66,7 +66,7 @@ def test_opencv_conversion(img: Image):
 
 
 @pytest.mark.tool
-def test_sharpness_stream():
+def test_sharpness_stream() -> None:
     get_data("unitree_office_walk")  # Preload data for testing
     video_store = TimedSensorReplay(
         "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
@@ -80,7 +80,7 @@ def test_sharpness_stream():
             return
 
 
-def test_sharpness_barrier():
+def test_sharpness_barrier() -> None:
     import time
     from unittest.mock import MagicMock
 
@@ -110,15 +110,13 @@ def test_sharpness_barrier():
         window_contents.append((relative_time, img))
         return img
 
-    def track_output(img):
+    def track_output(img) -> None:
         """Track what sharpness_barrier emits"""
         emitted_images.append(img)
 
     # Use 20Hz frequency (0.05s windows) for faster test
     # Emit images at 100Hz to get ~5 per window
     from reactivex import from_iterable, interval
-
-    window_duration = 0.05  # 20Hz = 0.05s windows
 
     source = from_iterable(mock_images).pipe(
         ops.zip(interval(0.01)),  # 100Hz emission rate

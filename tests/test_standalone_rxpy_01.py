@@ -12,35 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import os
+import multiprocessing
+from threading import Event
 
 # -----
-
 import reactivex
 from reactivex import operators as ops
 from reactivex.scheduler import ThreadPoolScheduler
-import multiprocessing
-from threading import Event
 
 which_test = 2
 if which_test == 1:
     """
     Test 1: Periodic Emission Test
 
-    This test creates a ThreadPoolScheduler that leverages as many threads as there are CPU 
+    This test creates a ThreadPoolScheduler that leverages as many threads as there are CPU
     cores available, optimizing the execution across multiple threads. The core functionality
-    revolves around an observable, secondly_emission, which emits a value every second. 
-    Each emission is an incrementing integer, which is then mapped to a message indicating 
-    the number of seconds since the test began. The sequence is limited to 30 emissions, 
-    each logged as it occurs, and accompanied by an additional message via the 
-    emission_process function to indicate the value's emission. The test subscribes to the 
-    observable to print each emitted value, handle any potential errors, and confirm 
+    revolves around an observable, secondly_emission, which emits a value every second.
+    Each emission is an incrementing integer, which is then mapped to a message indicating
+    the number of seconds since the test began. The sequence is limited to 30 emissions,
+    each logged as it occurs, and accompanied by an additional message via the
+    emission_process function to indicate the value's emission. The test subscribes to the
+    observable to print each emitted value, handle any potential errors, and confirm
     completion of the emissions after 30 seconds.
 
     Key Components:
         •	ThreadPoolScheduler: Manages concurrency with multiple threads.
-        •	Observable Sequence: Emits every second, indicating progression with a specific 
+        •	Observable Sequence: Emits every second, indicating progression with a specific
             message format.
         •	Subscription: Monitors and logs emissions, errors, and the completion event.
     """
@@ -73,14 +70,14 @@ elif which_test == 2:
 
     In this test, a similar ThreadPoolScheduler setup is used to handle tasks across multiple
     CPU cores efficiently. This setup includes two observables. The first, secondly_emission,
-    emits an incrementing integer every second, indicating the passage of time. The second 
-    observable, immediate_emission, emits a predefined sequence of characters (['a', 'b', 
-    'c', 'd', 'e']) repeatedly and immediately. These two streams are combined using the zip 
-    operator, which synchronizes their emissions into pairs. Each combined pair is formatted 
-    and logged, indicating both the time elapsed and the immediate value emitted at that 
+    emits an incrementing integer every second, indicating the passage of time. The second
+    observable, immediate_emission, emits a predefined sequence of characters (['a', 'b',
+    'c', 'd', 'e']) repeatedly and immediately. These two streams are combined using the zip
+    operator, which synchronizes their emissions into pairs. Each combined pair is formatted
+    and logged, indicating both the time elapsed and the immediate value emitted at that
     second.
 
-    A synchronization mechanism via an Event (completed_event) ensures that the main program 
+    A synchronization mechanism via an Event (completed_event) ensures that the main program
     thread waits until all planned emissions are completed before exiting. This test not only
     checks the functionality of zipping different rhythmic emissions but also demonstrates
     handling of asynchronous task completion in Python using event-driven programming.
@@ -88,9 +85,9 @@ elif which_test == 2:
     Key Components:
         •	Combined Observable Emissions: Synchronizes periodic and immediate emissions into
             a single stream.
-        •	Event Synchronization: Uses a threading event to manage program lifecycle and 
+        •	Event Synchronization: Uses a threading event to manage program lifecycle and
             ensure that all emissions are processed before shutdown.
-        •	Complex Subscription Management: Handles errors and completion, including 
+        •	Complex Subscription Management: Handles errors and completion, including
             setting an event to signal the end of task processing.
     """
 

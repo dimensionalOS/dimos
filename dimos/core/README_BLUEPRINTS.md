@@ -93,12 +93,12 @@ If you don't like the name you can always override it like in the next section.
 
 By default `LCMTransport` is used if the object supports `lcm_encode`. If it doesn't `pLCMTransport` is used (meaning "pickled LCM").
 
-You can override transports with the `with_transports` method. It returns a new blueprint in which the override is set.
+You can override transports with the `transports` method. It returns a new blueprint in which the override is set.
 
 ```python
 blueprint = autoconnect(...)
 expanded_blueprint = autoconnect(blueprint, ...)
-blueprint = blueprint.with_transports({
+blueprint = blueprint.transports({
     ("image", Image): pSHMTransport(
         "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
@@ -107,6 +107,47 @@ blueprint = blueprint.with_transports({
 ```
 
 Note: `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `blueprint`, not the second.
+
+## Remapping connections
+
+Sometimes you need to rename a connection to match what other modules expect. You can use `remappings` to rename module connections:
+
+```python
+class ConnectionModule(Module):
+    color_image: Out[Image] = None  # Outputs on 'color_image'
+
+class ProcessingModule(Module):
+    rgb_image: In[Image] = None     # Expects input on 'rgb_image'
+
+# Without remapping, these wouldn't connect automatically
+# With remapping, color_image is renamed to rgb_image
+blueprint = (
+    autoconnect(
+        ConnectionModule.blueprint(),
+        ProcessingModule.blueprint(),
+    )
+    .remappings([
+        (ConnectionModule, 'color_image', 'rgb_image'),
+    ])
+)
+```
+
+After remapping:
+- The `color_image` output from `ConnectionModule` is treated as `rgb_image`
+- It automatically connects to any module with an `rgb_image` input of type `Image`
+- The topic name becomes `/rgb_image` instead of `/color_image`
+
+If you want to override the topic, you still have to do it manually:
+
+```python
+blueprint
+.remappings([
+    (ConnectionModule, 'color_image', 'rgb_image'),
+])
+.transports({
+    ("rgb_image", Image): LCMTransport("/custom/rgb/image", Image),
+})
+```
 
 ## Overriding global configuration.
 
@@ -122,7 +163,7 @@ class ModuleA(Module):
 The config is normally taken from .env or from environment variables. But you can specifically override the values for a specific blueprint:
 
 ```python
-blueprint = blueprint.with_global_config(n_dask_workers=8)
+blueprint = blueprint.global_config(n_dask_workers=8)
 ```
 
 ## Calling the methods of other modules
@@ -213,7 +254,7 @@ This returns a `ModuleCoordinator` instance that manages all deployed modules.
 You can block the thread until it exits with:
 
 ```python
-module_coordinator.wait_until_shutdown()
+module_coordinator.loop()
 ```
 
 This will wait for Ctrl+C and then automatically stop all modules and clean up resources.
