@@ -64,7 +64,6 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:
-        LCMService.__init__(self, **kwargs)
         super().__init__(**kwargs)
         self._callbacks = {}
 
