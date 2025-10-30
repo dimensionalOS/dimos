@@ -64,7 +64,9 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
         self._call_thread_pool: ThreadPoolExecutor | None = None
         self._call_thread_pool_lock = threading.RLock()
-        self._call_thread_pool_max_workers = 4
+        # Increased to handle more concurrent requests without timeout
+        # For 1000 concurrent calls, we need enough workers to process them within timeout
+        self._call_thread_pool_max_workers = 100
 
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
@@ -141,7 +143,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             res = self._decodeRPCRes(msg)
             if res.get("id") != msg_id:
                 return
-            time.sleep(0.01)
+            # Remove sleep that was causing delays in concurrent response handling
             if unsub_holder[0] is not None:
                 unsub_holder[0]()
 

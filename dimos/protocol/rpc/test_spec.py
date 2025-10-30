@@ -370,7 +370,7 @@ def test_concurrent_calls(rpc_context, impl_name) -> None:
                 results.append(result)
 
             # Start 10 concurrent calls
-            for i in range(10):
+            for i in range(1000):
                 t = threading.Thread(target=make_call, args=(i, i + 1))
                 threads.append(t)
                 t.start()
@@ -380,9 +380,9 @@ def test_concurrent_calls(rpc_context, impl_name) -> None:
                 t.join(timeout=3.0)
 
             # Verify all calls succeeded
-            assert len(results) == 10
+            assert len(results) == 1000
             # Results should be [1, 3, 5, 7, 9, 11, 13, 15, 17, 19] but may be in any order
-            expected = [i + (i + 1) for i in range(10)]
+            expected = [i + (i + 1) for i in range(1000)]
             assert sorted(results) == sorted(expected)
 
         finally:
