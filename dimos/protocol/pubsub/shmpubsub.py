@@ -192,12 +192,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         """Subscribe a callback(message: bytes, topic). Returns unsubscribe."""
         st = self._ensure_topic(topic)
         st.subs.append(callback)
-        # Start fanout thread if not running
-        if st.thread is None or not st.thread.is_alive():
-            # Clear any stopped thread reference
-            if st.thread and not st.thread.is_alive():
-                st.thread = None
-                st.stop.clear()
+        if st.thread is None:
             st.thread = threading.Thread(target=self._fanout_loop, args=(topic, st), daemon=True)
             st.thread.start()
 
@@ -207,15 +202,10 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             except ValueError:
                 pass
             if not st.subs and st.thread:
-                # Signal the thread to stop
                 st.stop.set()
-                # Only join if we're not the fanout thread itself
-                # (callbacks may unsubscribe from within the fanout thread)
-                if threading.current_thread() != st.thread:
-                    st.thread.join(timeout=0.5)
-                    st.thread = None
-                    st.stop.clear()
-                # If we are the fanout thread, cleanup will happen when the thread exits
+                st.thread.join(timeout=0.5)
+                st.thread = None
+                st.stop.clear()
 
         return _unsub
 
