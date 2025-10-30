@@ -2,6 +2,7 @@ from dimos.perception.detection.type.detection2d import (
     Detection2D,
     Detection2DBBox,
     Detection2DPerson,
+    Filter2D,
     ImageDetections2D,
 )
 from dimos.perception.detection.type.detection3d import (
@@ -27,6 +28,7 @@ __all__ = [
     "Detection3D",
     "Detection3DBBox",
     "Detection3DPC",
+    "Filter2D",
     # Base types
     "ImageDetections",
     "ImageDetections2D",

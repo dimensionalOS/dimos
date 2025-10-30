@@ -64,7 +64,7 @@ class LidarMessage(PointCloud2):
         self.resolution = kwargs.get("resolution", 0.05)
 
     @classmethod
-    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
+    def from_msg(cls: type["LidarMessage"], raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
         pointcloud = o3d.geometry.PointCloud()

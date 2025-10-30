@@ -28,10 +28,15 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.agents2.spec import AgentSpec
+from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
-from dimos.core import rpc
-from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
+from dimos.core import DimosCluster, rpc
+from dimos.protocol.skill.coordinator import (
+    SkillContainer,
+    SkillCoordinator,
+    SkillState,
+    SkillStateDict,
+)
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
@@ -284,8 +289,8 @@ class Agent(AgentSpec):
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
 
-                print(self)
-                print(self.coordinator)
+                # print(self)
+                # print(self.coordinator)
 
                 self._write_debug_history_file()
 
@@ -371,4 +376,38 @@ class LlmAgent(Agent):
 llm_agent = LlmAgent.blueprint
 
 
-__all__ = ["Agent", "llm_agent"]
+def deploy(
+    dimos: DimosCluster,
+    system_prompt: str = "You are a helpful assistant for controlling a Unitree Go2 robot.",
+    model: Model = Model.GPT_4O,
+    provider: Provider = Provider.OPENAI,
+    skill_containers: list[SkillContainer] | None = None,
+) -> Agent:
+    from dimos.agents2.cli.human import HumanInput
+
+    if skill_containers is None:
+        skill_containers = []
+    agent = dimos.deploy(
+        Agent,
+        system_prompt=system_prompt,
+        model=model,
+        provider=provider,
+    )
+
+    human_input = dimos.deploy(HumanInput)
+    human_input.start()
+
+    agent.register_skills(human_input)
+
+    for skill_container in skill_containers:
+        print("Registering skill container:", skill_container)
+        agent.register_skills(skill_container)
+
+    agent.run_implicit_skill("human")
+    agent.start()
+    agent.loop_thread()
+
+    return agent
+
+
+__all__ = ["Agent", "deploy", "llm_agent"]
