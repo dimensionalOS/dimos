@@ -12,14 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection.type.detection2d.base import Detection2D, Filter2D
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection2d.person import Detection2DPerson
+import logging
 
-__all__ = [
-    "Detection2D",
-    "Detection2DBBox",
-    "Detection2DPerson",
-    "ImageDetections2D",
-]
+from dimos.core import DimosCluster
+from dimos.robot import foxglove_bridge
+from dimos.robot.unitree.connection import go2
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger(__name__, level=logging.INFO)
+
+
+def deploy(dimos: DimosCluster, ip: str):
+    connection = go2.deploy(dimos, ip)
+    foxglove_bridge.deploy(dimos)
+
+    # detector = moduleDB.deploy(
+    #     dimos,
+    #     camera=connection,
+    #     lidar=connection,
+    # )
+
+    # agent = agents2.deploy(dimos)
+    # agent.register_skills(detector)
+    return connection
