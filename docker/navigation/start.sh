@@ -88,7 +88,6 @@ case $MODE in
         echo "You can manually run:"
         echo "  ROS planner: cd /ros2_ws/src/ros-navigation-autonomy-stack && ./system_simulation_with_route_planner.sh"
         echo "  DimOS: python /workspace/dimos/dimos/navigation/demo_ros_navigation.py"
-
         echo ""
         CMD="bash"
         ;;
