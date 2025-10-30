@@ -24,9 +24,10 @@ import threading
 import traceback
 from typing import Protocol, runtime_checkable
 
+import lcm
+
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
-import lcm
 
 logger = setup_logger("dimos.protocol.service.lcmservice")
 
