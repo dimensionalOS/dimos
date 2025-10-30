@@ -33,7 +33,7 @@ class GlobalConfig(BaseSettings):
     @cached_property
     def unitree_connection_type(self) -> str:
         if self.use_replay:
-            return "fake"
+            return "replay"
         if self.use_simulation:
             return "mujoco"
         return "webrtc"
