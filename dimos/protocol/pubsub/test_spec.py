@@ -23,6 +23,7 @@ from typing import Any
 import pytest
 
 from dimos.msgs.geometry_msgs import Vector3
+from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.memory import Memory
 
 
@@ -61,27 +62,38 @@ except (ConnectionError, ImportError):
     print("Redis not available")
 
 
-try:
-    from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+@contextmanager
+def lcm_context_shared():
+    lcm_pubsub = LCM(autoconf=True, use_shared_lcm=True)
+    lcm_pubsub.start()
+    yield lcm_pubsub
+    lcm_pubsub.stop()
 
-    @contextmanager
-    def lcm_context():
-        lcm_pubsub = LCM(autoconf=True)
-        lcm_pubsub.start()
-        yield lcm_pubsub
-        lcm_pubsub.stop()
 
-    testdata.append(
-        (
-            lcm_context,
-            Topic(topic="/test_topic", lcm_type=Vector3),
-            [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
-        )
+testdata.append(
+    (
+        lcm_context_shared,
+        Topic(topic="/test_topic", lcm_type=Vector3),
+        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
     )
+)
 
-except (ConnectionError, ImportError):
-    # either redis is not installed or the server is not running
-    print("LCM not available")
+
+@contextmanager
+def lcm_context_separate():
+    lcm_pubsub = LCM(autoconf=True, use_shared_lcm=False)
+    lcm_pubsub.start()
+    yield lcm_pubsub
+    lcm_pubsub.stop()
+
+
+testdata.append(
+    (
+        lcm_context_separate,
+        Topic(topic="/test_topic", lcm_type=Vector3),
+        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
+    )
+)
 
 
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
