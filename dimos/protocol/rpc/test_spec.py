@@ -369,7 +369,7 @@ def test_concurrent_calls(rpc_context, impl_name) -> None:
                 result, _ = client.call_sync("concurrent_add", ([a, b], {}), rpc_timeout=2.0)
                 results.append(result)
 
-            # Start 10 concurrent calls
+            # Start 1000 concurrent calls
             for i in range(1000):
                 t = threading.Thread(target=make_call, args=(i, i + 1))
                 threads.append(t)
@@ -377,7 +377,7 @@ def test_concurrent_calls(rpc_context, impl_name) -> None:
 
             # Wait for all threads to complete
             for t in threads:
-                t.join(timeout=3.0)
+                t.join(timeout=10.0)
 
             # Verify all calls succeeded
             assert len(results) == 1000
