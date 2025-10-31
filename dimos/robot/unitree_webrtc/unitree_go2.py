@@ -158,7 +158,7 @@ class ConnectionModule(Module):
         cfg = global_config or GlobalConfig()
         self.ip = ip if ip is not None else cfg.robot_ip
         self.connection_type = connection_type or cfg.unitree_connection_type
-        self.rectify_image = not cfg.use_simulation
+        self.rectify_image = not cfg.simulation
         self.tf = TF()
         self.connection = None
 
