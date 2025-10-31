@@ -28,7 +28,7 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("test_agent_image_message")
+logger = setup_logger(__file__)
 # Enable debug logging for base module
 logging.getLogger("dimos.agents.modules.base").setLevel(logging.DEBUG)
 

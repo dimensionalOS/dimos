@@ -63,7 +63,7 @@ class QOS(enum.Enum):
         raise ValueError(f"Unknown QoS enum value: {self}")
 
 
-logger = setup_logger("dimos.robot.ros_control.observable_topic")
+logger = setup_logger(__file__)
 
 
 class ROSObservableTopicAbility:

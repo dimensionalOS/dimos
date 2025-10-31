@@ -25,7 +25,7 @@ from dimos.utils.logging_config import setup_logger
 
 class MockROSNode:
     def __init__(self) -> None:
-        self.logger = setup_logger("ROS")
+        self.logger = setup_logger(__file__)
 
         self.sub_id_cnt = 0
         self.subs = {}
@@ -75,7 +75,7 @@ def robot():
 
     class MockRobot(ROSObservableTopicAbility):
         def __init__(self) -> None:
-            self.logger = setup_logger("ROBOT")
+            self.logger = setup_logger(__file__)
             # Initialize the mock ROS node
             self._node = MockROSNode()
 

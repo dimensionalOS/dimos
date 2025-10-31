@@ -32,7 +32,7 @@ from dimos.robot.unitree.connection import g1
 from dimos.robot.unitree.connection.g1 import G1Connection
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger(__file__)
 
 
 class G1ZedDeployResult(TypedDict):

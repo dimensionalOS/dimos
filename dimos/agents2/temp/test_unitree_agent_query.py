@@ -34,7 +34,7 @@ from dimos.agents2.spec import Model, Provider
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("test_agent_query")
+logger = setup_logger(__file__)
 
 # Load environment variables
 load_dotenv()

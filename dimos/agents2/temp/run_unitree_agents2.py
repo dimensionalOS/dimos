@@ -37,7 +37,7 @@ from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents2.run_unitree")
+logger = setup_logger(__file__)
 
 # Load environment variables
 load_dotenv()

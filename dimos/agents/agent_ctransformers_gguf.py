@@ -33,7 +33,7 @@ from dimos.utils.logging_config import setup_logger
 load_dotenv()
 
 # Initialize logger for the agent module
-logger = setup_logger("dimos.agents", level=logging.DEBUG)
+logger = setup_logger(__file__, level=logging.DEBUG)
 
 from ctransformers import AutoModelForCausalLM as CTransformersModel
 

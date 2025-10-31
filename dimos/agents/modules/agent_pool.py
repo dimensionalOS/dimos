@@ -24,7 +24,7 @@ from dimos.agents.modules.unified_agent import UnifiedAgentModule
 from dimos.core import In, Module, Out, rpc
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents.modules.agent_pool")
+logger = setup_logger(__file__)
 
 
 class AgentPoolModule(Module):
