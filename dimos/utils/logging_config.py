@@ -81,14 +81,12 @@ def _configure_structlog() -> Path:
     return _LOG_FILE_PATH
 
 
-def setup_logger(name: str, level: int | None = None, log_format: str | None = None) -> Any:
+def setup_logger(name: str, level: int | None = None) -> Any:
     """Set up a structured logger using structlog.
 
     Args:
         name: The name of the logger.
-        level: The logging level (kept for compatibility, but ignored).
-               Log level is controlled by DIMOS_LOG_LEVEL env var.
-        log_format: Kept for compatibility but ignored.
+        level: The logging level.
 
     Returns:
         A configured structlog logger instance.
@@ -169,11 +167,7 @@ def setup_logger(name: str, level: int | None = None, log_format: str | None = N
 
 
 def setup_exception_handler() -> None:
-    """Set up a global exception handler that logs uncaught exceptions to JSON."""
-
     def handle_exception(exc_type, exc_value, exc_traceback):
-        """Handle uncaught exceptions by logging them and then displaying them."""
-
         # Don't log KeyboardInterrupt
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
@@ -205,25 +199,3 @@ def setup_exception_handler() -> None:
 
     # Set our custom exception handler
     sys.excepthook = handle_exception
-
-
-def log_exception(logger: Any, exc_info: tuple | None = None) -> None:
-    """Helper function to log an exception with traceback to both console and JSON.
-
-    Args:
-        logger: The structlog logger instance to use
-        exc_info: Exception info tuple (type, value, traceback) or None to use sys.exc_info()
-    """
-    if exc_info is None:
-        exc_info = sys.exc_info()
-
-    exc_type, exc_value, exc_traceback = exc_info
-
-    # Log the exception with full traceback
-    logger.error(
-        "Exception occurred",
-        exc_info=exc_info,
-        exception_type=exc_type.__name__ if exc_type else "Unknown",
-        exception_message=str(exc_value),
-        traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
-    )

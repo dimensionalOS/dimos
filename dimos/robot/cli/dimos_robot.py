@@ -106,7 +106,6 @@ def run(
     ),
 ) -> None:
     """Run the robot with the specified configuration."""
-    # Set up exception handler to log to JSON and display on console
     setup_exception_handler()
 
     config: GlobalConfig = ctx.obj
@@ -131,6 +130,4 @@ def show_config(ctx: typer.Context) -> None:
 
 
 if __name__ == "__main__":
-    # Set up exception handler for the main entry point
-    setup_exception_handler()
     main()
