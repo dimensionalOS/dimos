@@ -259,8 +259,6 @@ class SpatialMemory(Module):
             # Get euler angles from quaternion orientation for metadata
             euler = tf.rotation.to_euler()
 
-            print(f"Storing frame {frame_id} at position {current_pose}...")
-
             # Create metadata dictionary with primitive types only
             metadata = {
                 "pos_x": float(current_pose.position.x),
