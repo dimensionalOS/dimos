@@ -28,11 +28,13 @@ from typing import (
     TypeVar,
 )
 
+from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import Args, RPCSpec
+from dimos.utils.generic import short_id
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
@@ -80,17 +82,17 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
 
-    @abstractmethod
-    def _decodeRPCRes(self, msg: MsgT) -> RPCRes: ...
+    def _encodeRPCReq(self, req: RPCReq) -> dict:
+        return dict(req)
 
-    @abstractmethod
-    def _decodeRPCReq(self, msg: MsgT) -> RPCReq: ...
+    def _decodeRPCRes(self, msg: dict) -> RPCRes:
+        return msg  # type: ignore[return-value]
 
-    @abstractmethod
-    def _encodeRPCReq(self, res: RPCReq) -> MsgT: ...
+    def _encodeRPCRes(self, res: RPCRes) -> dict:
+        return dict(res)
 
-    @abstractmethod
-    def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
+    def _decodeRPCReq(self, msg: dict) -> RPCReq:
+        return msg  # type: ignore[return-value]
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
         """Get or create the thread pool for RPC handler execution (lazy initialization)."""
@@ -253,35 +255,15 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         return self.subscribe(topic_req, receive_call)
 
 
-# simple PUBSUB RPC implementation that doesn't encode
-# special request/response messages, assumes pubsub implementation
-# supports generic dictionary pubsub
-class PassThroughPubSubRPC(PubSubRPCMixin[TopicT, dict], Generic[TopicT]):
-    def _encodeRPCReq(self, req: RPCReq) -> dict:
-        return dict(req)
-
-    def _decodeRPCRes(self, msg: dict) -> RPCRes:
-        return msg  # type: ignore[return-value]
-
-    def _encodeRPCRes(self, res: RPCRes) -> dict:
-        return dict(res)
-
-    def _decodeRPCReq(self, msg: dict) -> RPCReq:
-        return msg  # type: ignore[return-value]
-
-
-class LCMRPC(PassThroughPubSubRPC, PickleLCM):
+class LCMRPC(PubSubRPCMixin, PickleLCM):
     def __init__(self, **kwargs):
-        # Need to ensure LCMPubSubBase gets initialized since it's not in the direct super() chain
+        # Need to ensure PickleLCM gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleLCM.__init__(self, **kwargs)
         # Initialize PubSubRPCMixin's thread pool
         PubSubRPCMixin.__init__(self, **kwargs)
 
     def topicgen(self, name: str, req_or_res: bool) -> Topic:
-        from dimos.constants import LCM_MAX_CHANNEL_NAME_LENGTH
-        from dimos.utils.generic import short_id
-
         suffix = "res" if req_or_res else "req"
         topic = f"/rpc/{name}/{suffix}"
         if len(topic) > LCM_MAX_CHANNEL_NAME_LENGTH:
@@ -289,7 +271,7 @@ class LCMRPC(PassThroughPubSubRPC, PickleLCM):
         return Topic(topic=topic)
 
 
-class ShmRPC(PassThroughPubSubRPC, PickleSharedMemory):
+class ShmRPC(PubSubRPCMixin, PickleSharedMemory):
     def __init__(self, prefer: str = "cpu", **kwargs):
         # Need to ensure SharedMemory gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
