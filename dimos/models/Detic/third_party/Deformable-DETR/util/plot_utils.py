@@ -62,7 +62,7 @@ def plot_logs(
     # load log file(s) and plot
     dfs = [pd.read_json(Path(p) / log_name, lines=True) for p in logs]
 
-    _fig, axs = plt.subplots(ncols=len(fields), figsize=(16, 5))
+    fig, axs = plt.subplots(ncols=len(fields), figsize=(16, 5))
 
     for df, color in zip(dfs, sns.color_palette(n_colors=len(logs)), strict=False):
         for j, field in enumerate(fields):

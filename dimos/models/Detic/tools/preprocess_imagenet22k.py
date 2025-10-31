@@ -23,7 +23,7 @@ class _RawTarDataset:
 
         for l in open(indexname):
             ll = l.split()
-            _a, b, c = ll[:3]
+            a, b, c = ll[:3]
             offset = int(b[:-1])
             if l.endswith("** Block of NULs **\n"):
                 self.offsets.append(offset)
