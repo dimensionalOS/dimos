@@ -18,6 +18,7 @@ import logging.handlers
 import os
 from pathlib import Path
 import sys
+import traceback
 from typing import Any, Mapping
 
 import structlog
@@ -63,6 +64,7 @@ def _configure_structlog() -> Path:
                 CallsiteParameter.LINENO,
             ]
         ),
+        structlog.processors.format_exc_info,  # Add this to format exception info
     ]
 
     structlog.configure(
@@ -114,21 +116,30 @@ def setup_logger(name: str, level: int | None = None, log_format: str | None = N
     stdlib_logger.propagate = False
 
     # Create console handler with pretty formatting.
+    # We use exception_formatter=None because we handle exceptions
+    # separately with Rich in the global exception handler
     console_renderer = structlog.dev.ConsoleRenderer(
         colors=True,
         pad_event=60,
         force_colors=False,
         sort_keys=True,
-        exception_formatter=structlog.dev.plain_traceback,
+        exception_formatter=None,  # Don't format exceptions in console logs
     )
 
-    # Wrapper to remove callsite info before rendering to console.
+    # Wrapper to remove callsite info and exception details before rendering to console.
     def console_processor_without_callsite(
         logger: Any, method_name: str, event_dict: Mapping[str, Any]
     ) -> str:
         event_dict = dict(event_dict)
+        # Remove callsite info
         event_dict.pop("func_name", None)
         event_dict.pop("lineno", None)
+        # Remove exception fields since we handle them with Rich
+        event_dict.pop("exception", None)
+        event_dict.pop("exc_info", None)
+        event_dict.pop("exception_type", None)
+        event_dict.pop("exception_message", None)
+        event_dict.pop("traceback_lines", None)
         return console_renderer(logger, method_name, event_dict)
 
     console_handler = logging.StreamHandler(sys.stdout)
@@ -155,3 +166,64 @@ def setup_logger(name: str, level: int | None = None, log_format: str | None = N
     stdlib_logger.addHandler(file_handler)
 
     return structlog.get_logger(name)
+
+
+def setup_exception_handler() -> None:
+    """Set up a global exception handler that logs uncaught exceptions to JSON."""
+
+    def handle_exception(exc_type, exc_value, exc_traceback):
+        """Handle uncaught exceptions by logging them and then displaying them."""
+
+        # Don't log KeyboardInterrupt
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+            return
+
+        # Get a logger for uncaught exceptions
+        logger = setup_logger("uncaught_exception")
+
+        # Log the exception with full traceback to JSON
+        logger.error(
+            "Uncaught exception occurred",
+            exc_info=(exc_type, exc_value, exc_traceback),
+            exception_type=exc_type.__name__,
+            exception_message=str(exc_value),
+            traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
+        )
+
+        # Still display the exception nicely on console using Rich if available
+        try:
+            from rich.console import Console
+            from rich.traceback import Traceback
+
+            console = Console()
+            tb = Traceback.from_exception(exc_type, exc_value, exc_traceback)
+            console.print(tb)
+        except ImportError:
+            # Fall back to standard exception display if Rich is not available
+            sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+    # Set our custom exception handler
+    sys.excepthook = handle_exception
+
+
+def log_exception(logger: Any, exc_info: tuple | None = None) -> None:
+    """Helper function to log an exception with traceback to both console and JSON.
+
+    Args:
+        logger: The structlog logger instance to use
+        exc_info: Exception info tuple (type, value, traceback) or None to use sys.exc_info()
+    """
+    if exc_info is None:
+        exc_info = sys.exc_info()
+
+    exc_type, exc_value, exc_traceback = exc_info
+
+    # Log the exception with full traceback
+    logger.error(
+        "Exception occurred",
+        exc_info=exc_info,
+        exception_type=exc_type.__name__ if exc_type else "Unknown",
+        exception_message=str(exc_value),
+        traceback_lines=traceback.format_exception(exc_type, exc_value, exc_traceback),
+    )
