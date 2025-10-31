@@ -12,14 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection.type.detection2d.base import Detection2D, Filter2D
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection2d.person import Detection2DPerson
+from typing import Protocol
 
-__all__ = [
-    "Detection2D",
-    "Detection2DBBox",
-    "Detection2DPerson",
-    "ImageDetections2D",
-]
+from dimos.core import In, Out
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
+from dimos.msgs.nav_msgs import Path
+
+
+class Nav(Protocol):
+    goal_req: In[PoseStamped]
+    goal_active: Out[PoseStamped]
+    path_active: Out[Path]
+    ctrl: Out[Twist]
+
+    # identity quaternion (Quaternion(0,0,0,1)) represents "no rotation requested"
+    def navigate_to_target(self, target: PoseStamped) -> None: ...
+
+    def stop_navigating(self) -> None: ...

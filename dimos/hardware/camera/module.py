@@ -23,12 +23,10 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
+from dimos import spec
 from dimos.agents2 import Output, Reducer, Stream, skill
-from dimos.core import Module, Out, rpc
-from dimos.core.module import Module, ModuleConfig
-from dimos.hardware.camera.spec import (
-    CameraHardware,
-)
+from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.hardware.camera.spec import CameraHardware
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -49,13 +47,14 @@ class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
+    frequency: float = 5.0
 
 
-class CameraModule(Module):
+class CameraModule(Module, spec.Camera):
     image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
+    camera_info_stream: Out[CameraInfo] = None
 
-    hardware: CameraHardware = None
+    hardware: Callable[[], CameraHardware] | CameraHardware = None
     _module_subscription: Disposable | None = None
     _camera_info_subscription: Disposable | None = None
     _skill_stream: Observable[Image] | None = None
@@ -64,6 +63,10 @@ class CameraModule(Module):
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
+
+    @property
+    def camera_info(self) -> CameraInfo:
+        return self.hardware.camera_info
 
     @rpc
     def start(self) -> str:
@@ -75,7 +78,7 @@ class CameraModule(Module):
         if self._module_subscription:
             return "already started"
 
-        stream = self.hardware.image_stream().pipe(sharpness_barrier(5))
+        stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))
 
         # camera_info_stream = self.camera_info_stream(frequency=5.0)
 
@@ -108,7 +111,7 @@ class CameraModule(Module):
 
         yield from iter(_queue.get, None)
 
-    def camera_info_stream(self, frequency: float = 5.0) -> Observable[CameraInfo]:
+    def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
         def camera_info(_) -> CameraInfo:
             self.hardware.camera_info.ts = time.time()
             return self.hardware.camera_info
@@ -122,6 +125,7 @@ class CameraModule(Module):
         if self._camera_info_subscription:
             self._camera_info_subscription.dispose()
             self._camera_info_subscription = None
+
         # Also stop the hardware if it has a stop method
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()

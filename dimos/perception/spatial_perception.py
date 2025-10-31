@@ -19,7 +19,7 @@ Spatial Memory module for creating a semantic map of the environment.
 from datetime import datetime
 import os
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 import uuid
 
 import cv2
@@ -27,16 +27,18 @@ import numpy as np
 from reactivex import Observable, disposable, interval, operators as ops
 from reactivex.disposable import Disposable
 
+from dimos import spec
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core import In, Module, rpc
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
+from dimos.core import DimosCluster, In, Module, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.robot_location import RobotLocation
-from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"
@@ -59,8 +61,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None
-    odom: In[PoseStamped] = None
+    image: In[Image] = None
 
     def __init__(
         self,
@@ -180,7 +181,6 @@ class SpatialMemory(Module):
 
         # Track latest data for processing
         self._latest_video_frame: np.ndarray | None = None
-        self._latest_odom: PoseStamped | None = None
         self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
@@ -199,13 +199,7 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        def set_odom(odom_msg: PoseStamped) -> None:
-            self._latest_odom = odom_msg
-
-        unsub = self.color_image.subscribe(set_video)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.odom.subscribe(set_odom)
+        unsub = self.image.subscribe(set_video)
         self._disposables.add(Disposable(unsub))
 
         # Start periodic processing using interval
@@ -226,17 +220,13 @@ class SpatialMemory(Module):
 
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
-        if self._latest_video_frame is None or self._latest_odom is None:
+        tf = self.tf.get("map", "base_link")
+        if self._latest_video_frame is None or tf is None:
             return
 
-        # Extract position and rotation from odometry
-        position = self._latest_odom.position
-        orientation = self._latest_odom.orientation
-
+        # print("Processing frame for spatial memory...", tf)
         # Create Pose object with position and orientation
-        current_pose = Pose(
-            position=Vector3(position.x, position.y, position.z), orientation=orientation
-        )
+        current_pose = tf.to_pose()
 
         # Process the frame directly
         try:
@@ -272,9 +262,10 @@ class SpatialMemory(Module):
             frame_embedding = self.embedding_provider.get_embedding(self._latest_video_frame)
 
             frame_id = f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-
             # Get euler angles from quaternion orientation for metadata
-            euler = orientation.to_euler()
+            euler = tf.rotation.to_euler()
+
+            print(f"Storing frame {frame_id} at position {current_pose}...")
 
             # Create metadata dictionary with primitive types only
             metadata = {
@@ -583,24 +574,16 @@ class SpatialMemory(Module):
         Returns:
             True if successfully added, False otherwise
         """
-        # Use current position/rotation if not provided
-        if position is None and self._latest_odom is not None:
-            pos = self._latest_odom.position
-            position = [pos.x, pos.y, pos.z]
-
-        if rotation is None and self._latest_odom is not None:
-            euler = self._latest_odom.orientation.to_euler()
-            rotation = [euler.x, euler.y, euler.z]
-
-        if position is None:
+        tf = self.tf.get("map", "base_link")
+        if not tf:
             logger.error("No position available for robot location")
             return False
 
         # Create RobotLocation object
         location = RobotLocation(
             name=name,
-            position=Vector(position),
-            rotation=Vector(rotation) if rotation else Vector([0, 0, 0]),
+            position=tf.translation,
+            rotation=tf.rotation.to_euler(),
             description=description or f"Location: {name}",
             timestamp=time.time(),
         )
@@ -662,6 +645,16 @@ class SpatialMemory(Module):
         return None
 
 
+def deploy(
+    dimos: DimosCluster,
+    camera: spec.Camera,
+):
+    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")
+    spatial_memory.image.connect(camera.image)
+    spatial_memory.start()
+    return spatial_memory
+
+
 spatial_memory = SpatialMemory.blueprint
 
-__all__ = ["SpatialMemory", "spatial_memory"]
+__all__ = ["SpatialMemory", "deploy", "spatial_memory"]

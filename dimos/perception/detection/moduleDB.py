@@ -21,7 +21,8 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex.observable import Observable
 
-from dimos.core import In, Out, rpc
+from dimos import spec
+from dimos.core import DimosCluster, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -160,9 +161,27 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     remembered_locations: dict[str, PoseStamped]
 
-    def __init__(self, goto: Callable[[PoseStamped], Any], *args, **kwargs) -> None:
+    @rpc
+    def start(self) -> None:
+        Detection3DModule.start(self)
+
+        def update_objects(imageDetections: ImageDetections3DPC) -> None:
+            for detection in imageDetections.detections:
+                self.add_detection(detection)
+
+        def scene_thread() -> None:
+            while True:
+                scene_update = self.to_foxglove_scene_update()
+                self.scene_update.publish(scene_update)
+                time.sleep(1.0)
+
+        threading.Thread(target=scene_thread, daemon=True).start()
+
+        self.detection_stream_3d.subscribe(update_objects)
+
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.goto = goto
+        self.goto = None
         self.objects = {}
         self.remembered_locations = {}
 
@@ -209,65 +228,51 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            # if len(obj.detections) < 3:
-            #    continue
+            if len(obj.detections) < 4:
+                continue
             ret.append(str(obj.agent_encode()))
         if not ret:
             return "No objects detected yet."
         return "\n".join(ret)
 
-    def vlm_query(self, description: str) -> Object3D | None:  # type: ignore[override]
-        imageDetections2D = super().ask_vlm(description)
-        print("VLM query found", imageDetections2D, "detections")
-        time.sleep(3)
+    # @rpc
+    # def vlm_query(self, description: str) -> Object3D | None:  # type: ignore[override]
+    #     imageDetections2D = super().ask_vlm(description)
+    #     print("VLM query found", imageDetections2D, "detections")
+    #     time.sleep(3)
 
-        if not imageDetections2D.detections:
-            return None
+    #     if not imageDetections2D.detections:
+    #         return None
 
-        ret = []
-        for obj in self.objects.values():
-            if obj.ts != imageDetections2D.ts:
-                print(
-                    "Skipping",
-                    obj.track_id,
-                    "ts",
-                    obj.ts,
-                    "!=",
-                    imageDetections2D.ts,
-                )
-                continue
-            if obj.class_id != -100:
-                continue
-            if obj.name != imageDetections2D.detections[0].name:
-                print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
-                continue
-            ret.append(obj)
-        ret.sort(key=lambda x: x.ts)
+    #     ret = []
+    #     for obj in self.objects.values():
+    #         if obj.ts != imageDetections2D.ts:
+    #             print(
+    #                 "Skipping",
+    #                 obj.track_id,
+    #                 "ts",
+    #                 obj.ts,
+    #                 "!=",
+    #                 imageDetections2D.ts,
+    #             )
+    #             continue
+    #         if obj.class_id != -100:
+    #             continue
+    #         if obj.name != imageDetections2D.detections[0].name:
+    #             print("Skipping", obj.name, "!=", imageDetections2D.detections[0].name)
+    #             continue
+    #         ret.append(obj)
+    #     ret.sort(key=lambda x: x.ts)
 
-        return ret[0] if ret else None
+    #     return ret[0] if ret else None
 
     def lookup(self, label: str) -> list[Detection3DPC]:
         """Look up a detection by label."""
         return []
 
     @rpc
-    def start(self) -> None:
-        Detection3DModule.start(self)
-
-        def update_objects(imageDetections: ImageDetections3DPC):
-            for detection in imageDetections.detections:
-                # print(detection)
-                return self.add_detection(detection)
-
-        def scene_thread() -> None:
-            while True:
-                scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)
-                time.sleep(1.0)
-
-        threading.Thread(target=scene_thread, daemon=True).start()
-
-        self.detection_stream_3d.subscribe(update_objects)
+    def stop(self):
+        return super().stop()
 
     def goto_object(self, object_id: str) -> Object3D | None:
         """Go to object by id."""
@@ -286,25 +291,46 @@ class ObjectDBModule(Detection3DModule, TableStr):
         scene_update.deletions = []
         scene_update.entities = []
 
-        for obj in copy(self.objects).values():
-            # we need at least 3 detectieons to consider it a valid object
-            # for this to be serious we need a ratio of detections within the window of observations
-            # if obj.class_id != -100 and obj.detections < 2:
-            #    continue
-
-            # print(
-            #    f"Object {obj.track_id}: {len(obj.detections)} detections, confidence {obj.confidence}"
-            # )
-            # print(obj.to_pose())
-
-            scene_update.entities.append(
-                obj.to_foxglove_scene_entity(
-                    entity_id=f"object_{obj.name}_{obj.track_id}_{obj.detections}"
+        for obj in self.objects:
+            try:
+                scene_update.entities.append(
+                    obj.to_foxglove_scene_entity(entity_id=f"{obj.name}_{obj.track_id}")
                 )
-            )
+            except Exception:
+                pass
 
         scene_update.entities_length = len(scene_update.entities)
         return scene_update
 
     def __len__(self) -> int:
         return len(self.objects.values())
+
+
+def deploy(
+    dimos: DimosCluster,
+    lidar: spec.Pointcloud,
+    camera: spec.Camera,
+    prefix: str = "/detectorDB",
+    **kwargs,
+) -> Detection3DModule:
+    from dimos.core import LCMTransport
+
+    detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info, **kwargs)
+
+    detector.image.connect(camera.image)
+    detector.pointcloud.connect(lidar.pointcloud)
+
+    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
+    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.scene_update.transport = LCMTransport(f"{prefix}/scene_update", SceneUpdate)
+
+    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
+    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
+    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
+
+    detector.detected_pointcloud_0.transport = LCMTransport(f"{prefix}/pointcloud/0", PointCloud2)
+    detector.detected_pointcloud_1.transport = LCMTransport(f"{prefix}/pointcloud/1", PointCloud2)
+    detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
+
+    detector.start()
+    return detector

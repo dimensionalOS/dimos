@@ -19,10 +19,11 @@ import open3d as o3d
 from reactivex import interval
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
@@ -168,6 +169,16 @@ def splice_cylinder(
 
 
 mapper = Map.blueprint
+
+
+def deploy(dimos: DimosCluster, connection: Go2ConnectionProtocol):
+    mapper = dimos.deploy(Map, global_publish_interval=1.0)
+    mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
+    mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
+    mapper.local_costmap.transport = LCMTransport("/local_costmap", OccupancyGrid)
+    mapper.lidar.connect(connection.pointcloud)
+    mapper.start()
+    return mapper
 
 
 __all__ = ["Map", "mapper"]
