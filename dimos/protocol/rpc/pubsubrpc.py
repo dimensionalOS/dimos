@@ -28,6 +28,8 @@ from typing import (
     TypeVar,
 )
 
+from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.rpc_utils import deserialize_exception, serialize_exception
 from dimos.protocol.rpc.spec import Args, RPCSpec
@@ -266,10 +268,6 @@ class PassThroughPubSubRPC(PubSubRPCMixin[TopicT, dict], Generic[TopicT]):
 
     def _decodeRPCReq(self, msg: dict) -> RPCReq:
         return msg  # type: ignore[return-value]
-
-
-from dimos.protocol.pubsub.lcmpubsub import PickleLCM, Topic
-from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
 
 
 class LCMRPC(PassThroughPubSubRPC, PickleLCM):
