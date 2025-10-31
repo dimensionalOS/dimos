@@ -63,8 +63,8 @@ except (ConnectionError, ImportError):
 
 
 @contextmanager
-def lcm_context_shared():
-    lcm_pubsub = LCM(autoconf=True, use_shared_lcm=True)
+def lcm_context():
+    lcm_pubsub = LCM(autoconf=True)
     lcm_pubsub.start()
     yield lcm_pubsub
     lcm_pubsub.stop()
@@ -72,24 +72,7 @@ def lcm_context_shared():
 
 testdata.append(
     (
-        lcm_context_shared,
-        Topic(topic="/test_topic", lcm_type=Vector3),
-        [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
-    )
-)
-
-
-@contextmanager
-def lcm_context_separate():
-    lcm_pubsub = LCM(autoconf=True, use_shared_lcm=False)
-    lcm_pubsub.start()
-    yield lcm_pubsub
-    lcm_pubsub.stop()
-
-
-testdata.append(
-    (
-        lcm_context_separate,
+        lcm_context,
         Topic(topic="/test_topic", lcm_type=Vector3),
         [Vector3(1, 2, 3), Vector3(4, 5, 6), Vector3(7, 8, 9)],  # Using Vector3 as mock data,
     )
