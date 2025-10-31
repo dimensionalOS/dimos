@@ -24,121 +24,11 @@ import threading
 import traceback
 from typing import Protocol, runtime_checkable
 
-import lcm
-
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
+import lcm
 
 logger = setup_logger("dimos.protocol.service.lcmservice")
-
-# Module-level shared LCM state
-_shared_lcm_lock = threading.Lock()
-_shared_lcm_wrapper: SharedLCMWrapper | None = None
-
-
-class LCMWrapper:
-    """Base wrapper for LCM instances."""
-
-    def get_lcm(self) -> lcm.LCM:
-        """Get the LCM instance."""
-        raise NotImplementedError
-
-    def start_handling(self) -> None:
-        """Start the LCM message handling loop."""
-        raise NotImplementedError
-
-    def stop_handling(self) -> None:
-        """Stop the LCM message handling loop."""
-        raise NotImplementedError
-
-
-class DedicatedLCMWrapper(LCMWrapper):
-    """Wrapper for a dedicated LCM instance."""
-
-    def __init__(self, url: str | None = None):
-        self._lcm = lcm.LCM(url) if url else lcm.LCM()
-        self._stop_event = threading.Event()
-        self._thread: threading.Thread | None = None
-
-    def get_lcm(self) -> lcm.LCM:
-        return self._lcm
-
-    def start_handling(self) -> None:
-        self._stop_event.clear()
-        self._thread = threading.Thread(target=self._loop)
-        self._thread.daemon = True
-        self._thread.start()
-
-    def _loop(self) -> None:
-        while not self._stop_event.is_set():
-            try:
-                self._lcm.handle_timeout(10)
-            except Exception as e:
-                logger.error(f"Error in dedicated LCM handling: {e}")
-
-    def stop_handling(self) -> None:
-        self._stop_event.set()
-        if self._thread and threading.current_thread() != self._thread:
-            self._thread.join(timeout=1.0)
-        del self._lcm
-
-
-class SharedLCMWrapper(LCMWrapper):
-    """Wrapper for a shared LCM instance with refcounting."""
-
-    def __init__(self, url: str | None = None):
-        self._url = url
-        self._lcm: lcm.LCM | None = None
-        self._refcount = 0
-        self._stop_event: threading.Event | None = None
-        self._thread: threading.Thread | None = None
-
-    def get_lcm(self) -> lcm.LCM:
-        if self._lcm is None:
-            raise RuntimeError("LCM not initialized")
-        return self._lcm
-
-    def acquire(self) -> None:
-        """Increment refcount and initialize if needed."""
-        if self._refcount == 0:
-            self._lcm = lcm.LCM(self._url) if self._url else lcm.LCM()
-            logger.debug("Created shared LCM instance")
-        self._refcount += 1
-        logger.debug(f"Acquired shared LCM (refcount: {self._refcount})")
-
-    def release(self) -> None:
-        """Decrement refcount and cleanup if last reference."""
-        self._refcount -= 1
-        logger.debug(f"Released shared LCM (refcount: {self._refcount})")
-        if self._refcount <= 0:
-            self.stop_handling()
-            if self._lcm:
-                del self._lcm
-                self._lcm = None
-
-    def start_handling(self) -> None:
-        if self._thread is None or not self._thread.is_alive():
-            self._stop_event = threading.Event()
-            self._thread = threading.Thread(target=self._loop)
-            self._thread.daemon = True
-            self._thread.start()
-            logger.debug("Started shared LCM handling thread")
-
-    def _loop(self) -> None:
-        while self._stop_event and not self._stop_event.is_set():
-            try:
-                if self._lcm:
-                    self._lcm.handle_timeout(10)
-            except Exception as e:
-                logger.error(f"Error in shared LCM handling: {e}")
-
-    def stop_handling(self) -> None:
-        if self._stop_event:
-            self._stop_event.set()
-        if self._thread and threading.current_thread() != self._thread:
-            self._thread.join(timeout=2.0)
-        self._thread = None
-        self._stop_event = None
 
 
 @cache
@@ -181,48 +71,32 @@ def check_multicast() -> list[str]:
 def check_buffers() -> tuple[list[str], int | None]:
     """Check if buffer configuration is needed and return required commands and current size.
 
-    Uses currently configured buffer values if they're larger than the minimum required.
-
     Returns:
         Tuple of (commands_needed, current_max_buffer_size)
     """
-    MINIMUM_RMEM_MAX = 67108864  # 64MB recommended for high-throughput LCM
-    MINIMUM_RMEM_DEFAULT = 16777216  # 16MB recommended default
     commands_needed = []
     current_max = None
 
     sudo = "" if check_root() else "sudo "
 
-    # Check current buffer settings and determine target size
+    # Check current buffer settings
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
-        if result.returncode == 0:
-            current_max = int(result.stdout.split("=")[1].strip())
-            # Use the larger of current or minimum
-            target_max = max(current_max, MINIMUM_RMEM_MAX) if current_max else MINIMUM_RMEM_MAX
-            if current_max < MINIMUM_RMEM_MAX:
-                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max={target_max}")
-        else:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max={MINIMUM_RMEM_MAX}")
+        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        if not current_max or current_max < 67108864:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
     except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max={MINIMUM_RMEM_MAX}")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
 
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
-        if result.returncode == 0:
-            current_default = int(result.stdout.split("=")[1].strip())
-            # Use the larger of current or minimum
-            target_default = (
-                max(current_default, MINIMUM_RMEM_DEFAULT)
-                if current_default
-                else MINIMUM_RMEM_DEFAULT
-            )
-            if current_default < MINIMUM_RMEM_DEFAULT:
-                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default={target_default}")
-        else:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default={MINIMUM_RMEM_DEFAULT}")
+        current_default = (
+            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        )
+        if not current_default or current_default < 16777216:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
     except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default={MINIMUM_RMEM_DEFAULT}")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
 
     return commands_needed, current_max
 
@@ -318,7 +192,6 @@ class LCMConfig:
     url: str | None = None
     autoconf: bool = True
     lcm: lcm.LCM | None = None
-    use_shared_lcm: bool = True  # Share LCM instance across objects in same process
 
 
 @runtime_checkable
@@ -349,38 +222,57 @@ class Topic:
 class LCMService(Service[LCMConfig]):
     default_config = LCMConfig
     l: lcm.LCM | None
+    _stop_event: threading.Event
     _l_lock: threading.Lock
-    _wrapper: LCMWrapper | None
-    _stopped: bool
+    _thread: threading.Thread | None
+    _call_thread_pool: ThreadPoolExecutor | None = None
+    _call_thread_pool_lock: threading.RLock = threading.RLock()
 
     def __init__(self, **kwargs) -> None:
-        global _shared_lcm_wrapper
         super().__init__(**kwargs)
 
-        # Support passing an existing LCM instance
+        # we support passing an existing LCM instance
         if self.config.lcm:
+            # TODO: If we pass LCM in, it's unsafe to use in this thread and the _loop thread.
             self.l = self.config.lcm
-            self._wrapper = None
-        elif self.config.use_shared_lcm:
-            # Use shared wrapper
-            with _shared_lcm_lock:
-                if _shared_lcm_wrapper is None:
-                    _shared_lcm_wrapper = SharedLCMWrapper(self.config.url)
-                self._wrapper = _shared_lcm_wrapper
-                self._wrapper.acquire()
-                self.l = self._wrapper.get_lcm()
         else:
-            # Use dedicated wrapper
-            self._wrapper = DedicatedLCMWrapper(self.config.url)
-            self.l = self._wrapper.get_lcm()
+            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
         self._l_lock = threading.Lock()
-        self._stopped = False
+
+        self._stop_event = threading.Event()
+        self._thread = None
+
+    def __getstate__(self):
+        """Exclude unpicklable runtime attributes when serializing."""
+        state = self.__dict__.copy()
+        # Remove unpicklable attributes
+        state.pop("l", None)
+        state.pop("_stop_event", None)
+        state.pop("_thread", None)
+        state.pop("_l_lock", None)
+        state.pop("_call_thread_pool", None)
+        state.pop("_call_thread_pool_lock", None)
+        return state
+
+    def __setstate__(self, state) -> None:
+        """Restore object from pickled state."""
+        self.__dict__.update(state)
+        # Reinitialize runtime attributes
+        self.l = None
+        self._stop_event = threading.Event()
+        self._thread = None
+        self._l_lock = threading.Lock()
+        self._call_thread_pool = None
+        self._call_thread_pool_lock = threading.RLock()
 
     def start(self) -> None:
-        # Reinitialize LCM if needed (e.g., after unpickling)
-        if self.l is None and self._wrapper:
-            self.l = self._wrapper.get_lcm()
+        # Reinitialize LCM if it's None (e.g., after unpickling)
+        if self.l is None:
+            if self.config.lcm:
+                self.l = self.config.lcm
+            else:
+                self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
         if self.config.autoconf:
             autoconf()
@@ -390,27 +282,61 @@ class LCMService(Service[LCMConfig]):
             except Exception as e:
                 print(f"Error checking system configuration: {e}")
 
-        # Start the wrapper's handling loop
-        if self._wrapper:
-            self._wrapper.start_handling()
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._lcm_loop)
+        self._thread.daemon = True
+        self._thread.start()
+
+    def _lcm_loop(self) -> None:
+        """LCM message handling loop."""
+        while not self._stop_event.is_set():
+            try:
+                with self._l_lock:
+                    if self.l is None:
+                        break
+                    self.l.handle_timeout(50)
+            except Exception as e:
+                stack_trace = traceback.format_exc()
+                print(f"Error in LCM handling: {e}\n{stack_trace}")
 
     def stop(self) -> None:
         """Stop the LCM loop."""
-        if self._stopped:
-            return
-        self._stopped = True
+        self._stop_event.set()
+        if self._thread is not None:
+            # Only join if we're not the LCM thread (avoid "cannot join current thread")
+            if threading.current_thread() != self._thread:
+                self._thread.join(timeout=1.0)
+                if self._thread.is_alive():
+                    logger.warning("LCM thread did not stop cleanly within timeout")
 
-        if self._wrapper:
-            if isinstance(self._wrapper, SharedLCMWrapper):
-                with _shared_lcm_lock:
-                    self._wrapper.release()
-            else:
-                self._wrapper.stop_handling()
-            self.l = None
-        elif self.l and not self.config.lcm:
-            # Clean up externally provided LCM
+        # Clean up LCM instance if we created it
+        if not self.config.lcm:
             with self._l_lock:
-                del self.l
-                self.l = None
+                if self.l is not None:
+                    del self.l
+                    self.l = None
 
-        super().stop()
+        with self._call_thread_pool_lock:
+            if self._call_thread_pool:
+                # Check if we're being called from within the thread pool
+                # If so, we can't wait for shutdown (would cause "cannot join current thread")
+                current_thread = threading.current_thread()
+                is_pool_thread = False
+
+                # Check if current thread is one of the pool's threads
+                # ThreadPoolExecutor threads have names like "ThreadPoolExecutor-N_M"
+                if hasattr(self._call_thread_pool, "_threads"):
+                    is_pool_thread = current_thread in self._call_thread_pool._threads
+                elif "ThreadPoolExecutor" in current_thread.name:
+                    # Fallback: check thread name pattern
+                    is_pool_thread = True
+
+                # Don't wait if we're in a pool thread to avoid deadlock
+                self._call_thread_pool.shutdown(wait=not is_pool_thread)
+                self._call_thread_pool = None
+
+    def _get_call_thread_pool(self) -> ThreadPoolExecutor:
+        with self._call_thread_pool_lock:
+            if self._call_thread_pool is None:
+                self._call_thread_pool = ThreadPoolExecutor(max_workers=4)
+            return self._call_thread_pool
