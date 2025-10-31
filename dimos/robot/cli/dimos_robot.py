@@ -14,6 +14,7 @@
 
 from enum import Enum
 import inspect
+import sys
 from typing import Optional, get_args, get_origin
 
 import typer
@@ -22,6 +23,7 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
+from dimos.utils.logging_config import setup_exception_handler
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})
 
@@ -104,6 +106,9 @@ def run(
     ),
 ) -> None:
     """Run the robot with the specified configuration."""
+    # Set up exception handler to log to JSON and display on console
+    setup_exception_handler()
+
     config: GlobalConfig = ctx.obj
     pubsub.lcm.autoconf()
     blueprint = get_blueprint_by_name(robot_type.value)
@@ -126,4 +131,6 @@ def show_config(ctx: typer.Context) -> None:
 
 
 if __name__ == "__main__":
+    # Set up exception handler for the main entry point
+    setup_exception_handler()
     main()
