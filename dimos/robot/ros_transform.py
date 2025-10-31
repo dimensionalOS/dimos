@@ -24,7 +24,7 @@ from dimos.types.path import Path
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.ros_transform")
+logger = setup_logger(__file__)
 
 __all__ = ["ROSTransformAbility"]
 

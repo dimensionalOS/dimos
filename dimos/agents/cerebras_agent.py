@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 load_dotenv()
 
 # Initialize logger for the Cerebras agent
-logger = setup_logger("dimos.agents.cerebras")
+logger = setup_logger(__file__)
 
 
 # Response object compatible with LLMAgent

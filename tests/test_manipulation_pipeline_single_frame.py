@@ -45,7 +45,7 @@ from dimos.perception.pointcloud.utils import (
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("test_pipeline_viz")
+logger = setup_logger(__file__)
 
 
 def load_first_frame(data_dir: str):

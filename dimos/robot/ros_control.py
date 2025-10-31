@@ -45,7 +45,7 @@ from dimos.stream.ros_video_provider import ROSVideoProvider
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.ros_control")
+logger = setup_logger(__file__)
 
 __all__ = ["ROSControl", "RobotMode"]
 

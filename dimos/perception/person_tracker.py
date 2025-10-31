@@ -25,7 +25,7 @@ from dimos.perception.detection2d.utils import filter_detections
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.person_tracker")
+logger = setup_logger(__file__)
 
 
 class PersonTrackingStream(Module):

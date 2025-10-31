@@ -12,85 +12,146 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Logging configuration module with color support.
-
-This module sets up a logger with color output for different log levels.
-"""
-
+from datetime import datetime
 import logging
+import logging.handlers
 import os
+from pathlib import Path
+import sys
+from typing import Any, Mapping
 
-import colorlog
+import structlog
+from structlog.processors import CallsiteParameter, CallsiteParameterAdder
 
-logging.basicConfig(format="%(name)s - %(levelname)s - %(message)s")
+from dimos.constants import DIMOS_LOG_DIR, DIMOS_PROJECT_ROOT
 
+# Suppress noisy loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
 logging.getLogger("websockets.server").setLevel(logging.ERROR)
 logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 
+_LOG_FILE_PATH = None
 
-def setup_logger(
-    name: str, level: int | None = None, log_format: str | None = None
-) -> logging.Logger:
-    """Set up a logger with color output.
+
+def _get_log_file_path() -> Path:
+    DIMOS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    pid = os.getpid()
+    return DIMOS_LOG_DIR / f"dimos_{timestamp}_{pid}.jsonl"
+
+
+def _configure_structlog() -> Path:
+    global _LOG_FILE_PATH
+
+    if _LOG_FILE_PATH:
+        return _LOG_FILE_PATH
+
+    _LOG_FILE_PATH = _get_log_file_path()
+
+    shared_processors = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.stdlib.PositionalArgumentsFormatter(),
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.UnicodeDecoder(),
+        CallsiteParameterAdder(
+            parameters=[
+                CallsiteParameter.FUNC_NAME,
+                CallsiteParameter.LINENO,
+            ]
+        ),
+    ]
+
+    structlog.configure(
+        processors=[
+            structlog.stdlib.filter_by_level,
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    return _LOG_FILE_PATH
+
+
+def setup_logger(name: str, level: int | None = None, log_format: str | None = None) -> Any:
+    """Set up a structured logger using structlog.
 
     Args:
         name: The name of the logger.
-        level: The logging level (e.g., logging.INFO, logging.DEBUG).
-               If None, will use DIMOS_LOG_LEVEL env var or default to INFO.
-        log_format: Optional custom log format.
+        level: The logging level (kept for compatibility, but ignored).
+               Log level is controlled by DIMOS_LOG_LEVEL env var.
+        log_format: Kept for compatibility but ignored.
 
     Returns:
-        A configured logger instance.
+        A configured structlog logger instance.
     """
+
+    # Convert absolute path to relative path
+    try:
+        name = str(Path(name).relative_to(DIMOS_PROJECT_ROOT))
+    except (ValueError, TypeError):
+        pass
+
+    log_file_path = _configure_structlog()
+
     if level is None:
-        # Get level from environment variable or default to INFO
         level_name = os.getenv("DIMOS_LOG_LEVEL", "INFO")
         level = getattr(logging, level_name)
 
-    if log_format is None:
-        log_format = "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    stdlib_logger = logging.getLogger(name)
 
-    try:
-        # Get or create logger
-        logger = logging.getLogger(name)
+    # Remove any existing handlers.
+    if stdlib_logger.hasHandlers():
+        stdlib_logger.handlers.clear()
 
-        # Remove any existing handlers to avoid duplicates
-        if logger.hasHandlers():
-            logger.handlers.clear()
+    stdlib_logger.setLevel(level)
+    stdlib_logger.propagate = False
 
-        # Set logger level first
-        logger.setLevel(level)
+    # Create console handler with pretty formatting.
+    console_renderer = structlog.dev.ConsoleRenderer(
+        colors=True,
+        pad_event=60,
+        force_colors=False,
+        sort_keys=True,
+        exception_formatter=structlog.dev.plain_traceback,
+    )
 
-        # Ensure we're not blocked by parent loggers
-        logger.propagate = False
+    # Wrapper to remove callsite info before rendering to console.
+    def console_processor_without_callsite(
+        logger: Any, method_name: str, event_dict: Mapping[str, Any]
+    ) -> str:
+        event_dict = dict(event_dict)
+        event_dict.pop("func_name", None)
+        event_dict.pop("lineno", None)
+        return console_renderer(logger, method_name, event_dict)
 
-        # Create and configure handler
-        handler = colorlog.StreamHandler()
-        handler.setLevel(level)  # Explicitly set handler level
-        formatter = colorlog.ColoredFormatter(
-            log_format,
-            log_colors={
-                "DEBUG": "cyan",
-                "INFO": "green",
-                "WARNING": "yellow",
-                "ERROR": "red",
-                "CRITICAL": "bold_red",
-            },
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
+    console_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=console_processor_without_callsite,
+    )
+    console_handler.setFormatter(console_formatter)
+    stdlib_logger.addHandler(console_handler)
 
-        return logger
-    except Exception as e:
-        logging.error(f"Failed to set up logger: {e}")
-        raise
+    # Create rotating file handler with JSON formatting.
+    file_handler = logging.handlers.RotatingFileHandler(
+        log_file_path,
+        mode="a",
+        maxBytes=10 * 1024 * 1024,  # 10MiB
+        backupCount=20,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(level)
+    file_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+    )
+    file_handler.setFormatter(file_formatter)
+    stdlib_logger.addHandler(file_handler)
 
-
-# Initialize the logger for this module using environment variable
-logger = setup_logger(__name__)
-
-# Example usage:
-# logger.debug("This is a debug message")
+    return structlog.get_logger(name)

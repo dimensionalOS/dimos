@@ -38,11 +38,13 @@ from dimos.agents.agent import OpenAIAgent
 from dimos.agents.planning_agent import PlanningAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.utils.logging_config import logger
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import make_single_thread_scheduler
 
 # from dimos.web.fastapi_server import FastAPIServer
 from dimos.web.robot_web_interface import RobotWebInterface
+
+logger = setup_logger(__file__)
 
 
 def main():
