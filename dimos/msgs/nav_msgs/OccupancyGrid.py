@@ -24,6 +24,11 @@ import numpy as np
 from scipy import ndimage
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
+    AbstractImage,
+    ImageFormat,
+)
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
@@ -272,6 +277,28 @@ class OccupancyGrid(Timestamped):
             f"occupied={self.occupied_cells}, free={self.free_cells}, "
             f"unknown={self.unknown_cells})"
         )
+    
+    def grid_to_image(self) -> Image:
+        """Encode the occupancy grid as image."""
+        
+        # convert to grayscale image:
+        # - unknown (-1) -> black (0)
+        # - free (0) -> white (255)
+        # - obstacles (1..100) -> gradient to black (100 -> 0)
+        image_arr = np.full(self.grid.shape, 0, dtype=np.uint8)
+
+        known_mask = self.grid != CostValues.UNKNOWN
+        if np.any(known_mask):
+            # map from [0..100] to [255..0]
+            image_arr[known_mask] = (255 - (self.grid[known_mask] * 255 // 100)).astype(np.uint8)
+
+        image = Image(data=image_arr, format=ImageFormat.GRAY, frame_id=self.frame_id, ts=self.ts)
+   
+        return image
+
+    def agent_encode(self):
+        grid_image = self.grid_to_image()
+        return grid_image.agent_encode()
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""

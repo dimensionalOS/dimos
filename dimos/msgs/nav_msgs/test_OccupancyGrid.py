@@ -321,6 +321,21 @@ def test_filter_below() -> None:
     assert filtered.frame_id == grid.frame_id
 
 
+def test_grid_image_conversion() -> None:
+    data = np.zeros((20, 30), dtype=np.int8)
+    data[5:10, 10:20] = 100  # Add some obstacles
+    data[15:18, 5:8] = -1  # Add unknown area
+
+    origin = Pose(1.0, 2.0, 0.0)
+    grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
+    image = grid.grid_to_image()
+
+    assert image.data.shape == (20, 30)
+    # save image
+    # image.save("occupancy_grid_image_debug.png")
+
+    grid.agent_encode()
+
 def test_max() -> None:
     """Test setting all non-unknown cells to maximum."""
     # Create test grid with various values
