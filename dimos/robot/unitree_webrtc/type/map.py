@@ -52,7 +52,7 @@ class Map(Module):
         self.max_height = max_height
 
         if global_config:
-            if global_config.use_simulation:
+            if global_config.simulation:
                 self.min_height = 0.3
 
         super().__init__(**kwargs)
