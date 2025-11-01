@@ -14,7 +14,7 @@
 
 """Minimal robot interface for DIMOS robots."""
 
-from abc import ABC
+from abc import ABC, abstractmethod
 
 from dimos.types.robot_capabilities import RobotCapability
 
@@ -51,9 +51,10 @@ class Robot(ABC):
         """
         return self.skill_library
 
+    @abstractmethod
     def cleanup(self) -> None:
         """Clean up robot resources.
 
         Override this method to provide cleanup logic.
         """
-        pass
+        ...

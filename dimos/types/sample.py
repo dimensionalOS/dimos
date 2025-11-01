@@ -30,6 +30,7 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.fields import FieldInfo
 from pydantic_core import from_json
+import torch
 
 Flattenable = Annotated[Literal["dict", "np", "pt", "list"], "Numpy, PyTorch, list, or dict"]
 
@@ -165,7 +166,7 @@ class Sample(BaseModel):
         self,
         output_type: Flattenable = "dict",
         non_numerical: Literal["ignore", "forbid", "allow"] = "allow",
-    ) -> builtins.dict[str, Any] | np.ndarray | "torch.Tensor" | list:
+    ) -> builtins.dict[str, Any] | np.ndarray | torch.Tensor | list:
         accumulator = {} if output_type == "dict" else []
 
         def flatten_recursive(obj, path: str = "") -> None:
