@@ -23,6 +23,7 @@ all_blueprints = {
     "unitree-go2-jpeglcm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpeglcm",
     "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
+    "demo-skill": "dimos.agents2.skills.demo_skill:demo_skill",
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
 }
