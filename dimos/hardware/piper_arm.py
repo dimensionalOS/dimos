@@ -40,7 +40,7 @@ logger = setup_logger(__file__)
 
 class PiperArm:
     def __init__(self, arm_name: str = "arm") -> None:
-        self.arm = C_PiperInterface_V2()
+        self.arm = C_PiperInterface_V2()  # noqa: F405
         self.arm.ConnectPort()
         self.resetArm()
         time.sleep(0.5)
