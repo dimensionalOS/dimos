@@ -185,7 +185,7 @@ def test_build_happy_path() -> None:
         coordinator.stop()
 
 
-def test_remapping():
+def test_remapping() -> None:
     """Test that remapping connections works correctly."""
     pubsub.lcm.autoconf()
 

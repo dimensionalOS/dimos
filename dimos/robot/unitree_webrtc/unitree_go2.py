@@ -54,7 +54,6 @@ from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.robot import UnitreeRobot
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -328,7 +327,7 @@ class ConnectionModule(Module):
 connection = ConnectionModule.blueprint
 
 
-class UnitreeGo2(UnitreeRobot, Resource):
+class UnitreeGo2(Resource):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
 
     _dimos: ModuleCoordinator

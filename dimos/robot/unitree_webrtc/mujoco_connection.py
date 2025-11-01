@@ -233,4 +233,4 @@ class MujocoConnection:
             self.mujoco_thread.move(twist, duration)
 
     def publish_request(self, topic: str, data: dict) -> None:
-        pass
+        print(f"publishing request, topic={topic}, data={data}")

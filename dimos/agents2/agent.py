@@ -270,7 +270,6 @@ class Agent(AgentSpec):
                 # we are getting tools from the coordinator on each turn
                 # since this allows for skillcontainers to dynamically provide new skills
                 tools = self.get_tools()
-                print("Available tools:", [tool.name for tool in tools])
                 self._llm = self._llm.bind_tools(tools)
 
                 # publish to /agent topic for observability
