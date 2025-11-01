@@ -31,7 +31,7 @@ class FastImageGenerator:
     - High contrast boundaries (tests blocking artifacts)
     """
 
-    def __init__(self, width: int = 1280, height: int = 720):
+    def __init__(self, width: int = 1280, height: int = 720) -> None:
         """Initialize the generator with pre-computed elements."""
         self.width = width
         self.height = height
@@ -57,7 +57,7 @@ class FastImageGenerator:
         # Pre-allocate shape masks for reuse
         self._init_shape_masks()
 
-    def _init_gradients(self):
+    def _init_gradients(self) -> None:
         """Pre-compute gradient patterns."""
         # Diagonal gradient
         self.diag_gradient = (self.x_grid + self.y_grid) * 0.5
@@ -71,7 +71,7 @@ class FastImageGenerator:
         self.h_gradient = self.x_grid
         self.v_gradient = self.y_grid
 
-    def _init_moving_objects(self):
+    def _init_moving_objects(self) -> None:
         """Initialize properties of moving objects."""
         self.objects = [
             {
@@ -104,7 +104,7 @@ class FastImageGenerator:
             },
         ]
 
-    def _init_texture(self):
+    def _init_texture(self) -> None:
         """Pre-compute a texture pattern."""
         # Create a simple checkerboard pattern at lower resolution
         checker_size = 20
@@ -118,7 +118,7 @@ class FastImageGenerator:
         self.texture = np.repeat(np.repeat(checker, checker_size, axis=0), checker_size, axis=1)
         self.texture = self.texture[: self.height, : self.width].astype(np.float32) * 30
 
-    def _init_shape_masks(self):
+    def _init_shape_masks(self) -> None:
         """Pre-allocate reusable masks for shapes."""
         # Pre-allocate a mask array
         self.temp_mask = np.zeros((self.height, self.width), dtype=np.float32)
@@ -126,7 +126,7 @@ class FastImageGenerator:
         # Pre-compute indices for the entire image
         self.y_indices, self.x_indices = np.indices((self.height, self.width))
 
-    def _draw_circle_fast(self, cx: int, cy: int, radius: int, color: np.ndarray):
+    def _draw_circle_fast(self, cx: int, cy: int, radius: int, color: np.ndarray) -> None:
         """Draw a circle using vectorized operations - optimized version without anti-aliasing."""
         # Compute bounding box to minimize calculations
         y1 = max(0, cy - radius - 1)
@@ -141,7 +141,7 @@ class FastImageGenerator:
             mask = dist_sq <= radius**2
             self.canvas[y1:y2, x1:x2][mask] = color
 
-    def _draw_rect_fast(self, x: int, y: int, w: int, h: int, color: np.ndarray):
+    def _draw_rect_fast(self, x: int, y: int, w: int, h: int, color: np.ndarray) -> None:
         """Draw a rectangle using slicing."""
         # Clip to canvas boundaries
         x1 = max(0, x)
@@ -152,7 +152,7 @@ class FastImageGenerator:
         if x1 < x2 and y1 < y2:
             self.canvas[y1:y2, x1:x2] = color
 
-    def _update_objects(self):
+    def _update_objects(self) -> None:
         """Update positions of moving objects."""
         for obj in self.objects:
             # Update position
@@ -242,7 +242,7 @@ class FastImageGenerator:
         # Direct conversion to uint8 (already in valid range)
         return self.canvas.astype(np.uint8)
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset the generator to initial state."""
         self.frame_count = 0
         self._init_moving_objects()
