@@ -13,13 +13,10 @@
 # limitations under the License.
 
 from dimos.core.skill_module import SkillModule
-from dimos.core.stream import Out
 from dimos.protocol.skill.skill import skill
 
 
 class DemoCalculatorSkill(SkillModule):
-    output: Out[int] = None
-
     def start(self) -> None:
         super().start()
 
