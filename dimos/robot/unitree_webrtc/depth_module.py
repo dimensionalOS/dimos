@@ -79,7 +79,7 @@ class DepthModule(Module):
         self._stop_processing = threading.Event()
 
         if global_config:
-            if global_config.use_simulation:
+            if global_config.simulation:
                 self.gt_depth_scale = 1.0
 
     @rpc
