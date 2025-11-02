@@ -1,0 +1,8 @@
+isaacsim==4.2.0.2 --extra-index-url https://pypi.nvidia.com
+isaacsim-extscache-physics==4.2.0.2
+isaacsim-extscache-kit==4.2.0.2 
+isaacsim-extscache-kit-sdk==4.2.0.2 --extra-index-url https://pypi.nvidia.com
+av==10.0.0
+numpy>=1.21.0
+pillow>=9.0.0
+

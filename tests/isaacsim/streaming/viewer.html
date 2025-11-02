@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Isaac Sim Stream Viewer</title>
+    <style>
+        video {
+            width: 100%;
+            max-width: 1920px;
+            margin: 0 auto;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <video id="videoElement" autoplay playsinline></video>
+    <script>
+        const videoElement = document.getElementById('videoElement');
+        
+        async function startViewing() {
+            try {
+                const pc = new RTCPeerConnection();
+                
+                pc.ontrack = (event) => {
+                    if (event.track.kind === 'video') {
+                        videoElement.srcObject = event.streams[0];
+                    }
+                };
+                
+                // Connect to your WebRTC server here
+                const response = await fetch('http://your-webrtc-server:8080/watch', {
+                    method: 'POST'
+                });
+                const { sdp } = await response.json();
+                
+                await pc.setRemoteDescription(new RTCSessionDescription({
+                    type: 'offer',
+                    sdp
+                }));
+                
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                
+                await fetch('http://your-webrtc-server:8080/answer', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        sdp: answer.sdp
+                    })
+                });
+            } catch (e) {
+                console.error('Error:', e);
+            }
+        }
+        
+        startViewing();
+    </script>
+</body>
+</html> 
