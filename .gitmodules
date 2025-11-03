@@ -1,7 +1,3 @@
-[submodule "dimos/external/colmap"]
-	path = dimos/external/colmap
-	url = https://github.com/colmap/colmap
-
 [submodule "dimos/external/openMVS"]
 	path = dimos/external/openMVS
 	url = https://github.com/cdcseacave/openMVS.git
