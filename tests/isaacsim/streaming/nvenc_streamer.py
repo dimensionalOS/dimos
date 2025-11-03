@@ -64,9 +64,11 @@ class NVENCStreamer:
         
         # Rate limiting
         if current_time - self.last_frame_time < self.frame_interval:
+            print("[NVENCStreamer] Frame skipped due to rate limiting")
             return
             
         try:
+            print("[NVENCStreamer] Converting RGBA to BGR...")
             # Convert RGBA to BGR
             frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
             
@@ -74,19 +76,23 @@ class NVENCStreamer:
             if self.frame_queue.full():
                 try:
                     self.frame_queue.get_nowait()
+                    print("[NVENCStreamer] Queue full, dropped oldest frame")
                 except queue.Empty:
                     pass
                     
             self.frame_queue.put_nowait(frame_bgr)
             self.last_frame_time = current_time
+            print("[NVENCStreamer] Frame successfully queued")
             
         except Exception as e:
             print(f"[NVENCStreamer] Frame processing error: {str(e)}")
             
     def _encoder_loop(self):
+        print("[NVENCStreamer] Starting encoder loop")
         if self.start_time is None:
             self.start_time = time.time()
             
+        print(f"[NVENCStreamer] Starting FFmpeg with command: {' '.join(self.ffmpeg_command)}")
         process = subprocess.Popen(
             self.ffmpeg_command,
             stdin=subprocess.PIPE,
@@ -94,14 +100,14 @@ class NVENCStreamer:
             universal_newlines=False
         )
         
-        # Start a thread to read stderr but only print errors
+        # Start a thread to read stderr and print everything for debugging
         def log_stderr():
+            print("[FFmpeg] Starting stderr logging thread")
             while True:
                 line = process.stderr.readline()
                 if not line:
                     break
-                if b'error' in line.lower() or b'fatal' in line.lower():
-                    print(f"[FFmpeg Error] {line.decode().strip()}")
+                print(f"[FFmpeg] {line.decode().strip()}")
         
         stderr_thread = threading.Thread(target=log_stderr)
         stderr_thread.daemon = True
@@ -111,10 +117,13 @@ class NVENCStreamer:
         
         while self.running:
             try:
+                print("[NVENCStreamer] Waiting for frame from queue...")
                 frame = self.frame_queue.get(timeout=1.0)
+                print("[NVENCStreamer] Got frame from queue, writing to FFmpeg...")
                 process.stdin.write(frame.tobytes())
                 process.stdin.flush()
                 self.frames_processed += 1
+                print("[NVENCStreamer] Frame successfully written to FFmpeg")
                 
                 # Print FPS every 5 seconds
                 current_time = time.time()
@@ -125,6 +134,7 @@ class NVENCStreamer:
                     last_fps_print = current_time
                     
             except queue.Empty:
+                print("[NVENCStreamer] Queue empty, waiting for next frame...")
                 continue
             except BrokenPipeError:
                 print("[NVENCStreamer] Broken pipe error!")
@@ -133,5 +143,7 @@ class NVENCStreamer:
                 print(f"[NVENCStreamer] Error: {str(e)}")
                 break
                 
+        print("[NVENCStreamer] Encoder loop ending, cleaning up...")
         process.stdin.close()
-        process.wait() 
+        process.wait()
+        print("[NVENCStreamer] Encoder loop ended") 

@@ -4,8 +4,8 @@ rtc:
   port_range_start: 50000
   port_range_end: 60000
   use_external_ip: true
-  # Use your EC2's public IP here
-  rtc_ip: 18.189.249.222
+  ice_servers:
+    local_ip: 18.189.249.222
 
 redis:
   address: localhost:6379
