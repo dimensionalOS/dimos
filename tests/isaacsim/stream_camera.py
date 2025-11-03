@@ -17,9 +17,8 @@ USDA_FILE_PATH = "/dimos/assets/TestSim3.usda"
 streamer = NVENCStreamer(
     width=1920,
     height=1080,
-    fps=30,
-    whip_endpoint="http://localhost:8080/whip/simulator_room"
-)
+    fps=30
+    )
 
 # Open the specified USDA file
 omni.usd.get_context().open_stage(USDA_FILE_PATH)
