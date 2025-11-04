@@ -36,7 +36,7 @@ from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import apply_transform
 
-logger = setup_logger("dimos.navigation.bt_navigator")
+logger = setup_logger(__file__)
 
 
 class NavigatorState(Enum):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 import signal
-from typing import Optional
+import time
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
@@ -166,8 +166,6 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             return
         dask_client._closed = True
 
-        import time
-
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
         try:
@@ -223,15 +221,18 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     dask_client.check_worker_memory = check_worker_memory
     dask_client.stop = lambda: dask_client.close()
     dask_client.close_all = close_all
-    return dask_client
+    return dask_client  # type: ignore[return-value]
 
 
-def start(n: int | None = None, memory_limit: str = "auto") -> Client:
+def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     """Start a Dask LocalCluster with specified workers and memory limits.
 
     Args:
         n: Number of workers (defaults to CPU count)
         memory_limit: Memory limit per worker (e.g., '4GB', '2GiB', or 'auto' for Dask's default)
+
+    Returns:
+        DimosCluster: A patched Dask client with deploy(), check_worker_memory(), stop(), and close_all() methods
     """
 
     console = Console()
@@ -280,3 +281,11 @@ def start(n: int | None = None, memory_limit: str = "auto") -> Client:
     signal.signal(signal.SIGTERM, signal_handler)
 
     return patched_client
+
+
+def wait_exit() -> None:
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            print("exiting...")
