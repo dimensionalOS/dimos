@@ -2,13 +2,50 @@
 
 This directory contains Docker configuration files to run DimOS and the ROS autonomy stack in the same container, enabling communication between the two systems.
 
-## Prerequisites
+## New Ubuntu Installation
+
+**For fresh Ubuntu systems**, use the automated setup script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dimos-rosnav-docker/docker/navigation/setup.sh | bash
+```
+
+Or download and run locally:
+
+```bash
+wget https://raw.githubusercontent.com/dimensionalOS/dimos/dimos-rosnav-docker/docker/navigation/setup.sh
+chmod +x setup.sh
+./setup.sh
+```
+
+**Installation time:** Approximately 20-30 minutes depending on your internet connection.
+
+**After installation, start the demo:**
+```bash
+cd ~/dimos/docker/navigation
+./start.sh --all
+```
+
+**Options:**
+```bash
+./setup.sh --help                    # Show all options
+./setup.sh --install-dir /opt/dimos  # Custom installation directory
+./setup.sh --skip-build              # Skip Docker image build
+```
+
+If the automated script encounters issues, follow the manual setup below.
+
+---
+
+## Manual Setup
+
+### Prerequisites
 
 1. **Install Docker with `docker compose` support**. Follow the [official Docker installation guide](https://docs.docker.com/engine/install/).
 2. **Install NVIDIA GPU drivers**. See [NVIDIA driver installation](https://www.nvidia.com/download/index.aspx).
 3. **Install NVIDIA Container Toolkit**. Follow the [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
-## Quick Start
+### Quick Start
 
 1. **Build the Docker image:**
    ```bash
@@ -26,17 +63,17 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
    ./start.sh --all
    ```
 
-## Manual Commands
+### Manual Commands
 
 Once inside the container, you can manually run:
 
-### ROS Autonomy Stack
+#### ROS Autonomy Stack
 ```bash
 cd /ros2_ws/src/ros-navigation-autonomy-stack
 ./system_simulation_with_route_planner.sh
 ```
 
-### DimOS
+#### DimOS
 ```bash
 # Activate virtual environment
 source /opt/dimos-venv/bin/activate
@@ -48,7 +85,7 @@ python /workspace/dimos/dimos/navigation/demo_ros_navigation.py
 python /workspace/dimos/dimos/your_script.py
 ```
 
-### ROS Commands
+#### ROS Commands
 ```bash
 # List ROS topics
 ros2 topic list
@@ -63,7 +100,7 @@ ros2 topic pub /way_point geometry_msgs/msg/PointStamped "{
 ros2 topic echo /state_estimation
 ```
 
-## Custom Commands
+### Custom Commands
 
 Use the `run_command.sh` helper script to run custom commands:
 ```bash
@@ -71,7 +108,7 @@ Use the `run_command.sh` helper script to run custom commands:
 ./run_command.sh "python /workspace/dimos/dimos/your_script.py"
 ```
 
-## Development
+### Development
 
 The docker-compose.yml mounts the following directories for live development:
 - DimOS source: `..` → `/workspace/dimos`
