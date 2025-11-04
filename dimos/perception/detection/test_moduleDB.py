@@ -22,17 +22,16 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.moduleDB import ObjectDBModule
-from dimos.robot.unitree_webrtc.modular import deploy_connection
-from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
+from dimos.robot.unitree.connection import go2
 
 
 @pytest.mark.module
 def test_moduleDB(dimos_cluster) -> None:
-    connection = deploy_connection(dimos_cluster)
+    connection = go2.deploy(dimos_cluster, "fake")
 
     moduleDB = dimos_cluster.deploy(
         ObjectDBModule,
-        camera_info=ConnectionModule._camera_info(),
+        camera_info=go2.camera_info,
         goto=lambda obj_id: print(f"Going to {obj_id}"),
     )
     moduleDB.image.connect(connection.video)
@@ -56,6 +55,5 @@ def test_moduleDB(dimos_cluster) -> None:
     moduleDB.start()
 
     time.sleep(4)
-    print("STARTING QUERY!!")
     print("VLM RES", moduleDB.navigate_to_object_in_view("white floor"))
     time.sleep(30)

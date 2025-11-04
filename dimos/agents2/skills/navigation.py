@@ -21,7 +21,7 @@ from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
 from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.bt_navigator.navigator import NavigatorState
@@ -29,7 +29,6 @@ from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
 logger = setup_logger(__file__)
 
@@ -145,7 +144,7 @@ class NavigationSkillContainer(SkillModule):
         self._is_exploration_active.set_rpc(self.rpc)
 
     @skill()
-    def tag_location_in_spatial_memory(self, location_name: str) -> str:
+    def tag_location(self, location_name: str) -> str:
         """Tag this location in the spatial memory with a name.
 
         This associates the current location with the given name in the spatial memory, allowing you to navigate back to it.
@@ -159,15 +158,12 @@ class NavigationSkillContainer(SkillModule):
 
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
+        tf = self.tf.get("map", "base_link", time_tolerance=2.0)
+        if not tf:
+            return "Could not get the robot's current transform."
 
-        if not self._latest_odom:
-            return "Error: No odometry data available to tag the location."
-
-        if not self._tag_location:
-            return "Error: The SpatialMemory module is not connected."
-
-        position = self._latest_odom.position
-        rotation = quaternion_to_euler(self._latest_odom.orientation)
+        position = tf.translation
+        rotation = tf.rotation.to_euler()
 
         location = RobotLocation(
             name=location_name,
@@ -179,7 +175,15 @@ class NavigationSkillContainer(SkillModule):
             return f"Error: Failed to store '{location_name}' in the spatial memory"
 
         logger.info(f"Tagged {location}")
-        return f"The current location has been tagged as '{location_name}'."
+        return f"Tagged '{location_name}': ({position.x},{position.y})."
+
+    def _navigate_to_object(self, query: str) -> str | None:
+        position = self.detection_module.nav_vlm(query)
+        print("Object position from VLM:", position)
+        if not position:
+            return None
+        self.nav.navigate_to(position)
+        return f"Arrived to object matching '{query}' in view."
 
     @skill()
     def navigate_with_text(self, query: str) -> str:
@@ -196,7 +200,6 @@ class NavigationSkillContainer(SkillModule):
 
         if not self._skill_started:
             raise ValueError(f"{self} has not been started.")
-
         success_msg = self._navigate_by_tagged_location(query)
         if success_msg:
             return success_msg
@@ -225,10 +228,11 @@ class NavigationSkillContainer(SkillModule):
         if not robot_location:
             return None
 
+        print("Found tagged location:", robot_location)
         goal_pose = PoseStamped(
             position=make_vector3(*robot_location.position),
-            orientation=euler_to_quaternion(make_vector3(*robot_location.rotation)),
-            frame_id="world",
+            orientation=Quaternion.from_euler(Vector3(*robot_location.rotation)),
+            frame_id="map",
         )
 
         result = self._navigate_to(goal_pose)
@@ -336,6 +340,7 @@ class NavigationSkillContainer(SkillModule):
 
         goal_pose = self._get_goal_pose_from_result(best_match)
 
+        print("Goal pose for semantic nav:", goal_pose)
         if not goal_pose:
             return f"Found a result for '{query}' but it didn't have a valid position."
 
@@ -423,16 +428,17 @@ class NavigationSkillContainer(SkillModule):
         metadata = result.get("metadata")
         if not metadata:
             return None
-
+        print(metadata)
         first = metadata[0]
+        print(first)
         pos_x = first.get("pos_x", 0)
         pos_y = first.get("pos_y", 0)
         theta = first.get("rot_z", 0)
 
         return PoseStamped(
             position=make_vector3(pos_x, pos_y, 0),
-            orientation=euler_to_quaternion(make_vector3(0, 0, theta)),
-            frame_id="world",
+            orientation=Quaternion.from_euler(make_vector3(0, 0, theta)),
+            frame_id="map",
         )
 
 

@@ -12,14 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.perception.detection.type.detection2d.base import Detection2D, Filter2D
-from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
-from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
-from dimos.perception.detection.type.detection2d.person import Detection2DPerson
+from typing import Protocol
 
-__all__ = [
-    "Detection2D",
-    "Detection2DBBox",
-    "Detection2DPerson",
-    "ImageDetections2D",
-]
+from dimos.core import Out
+from dimos.msgs.sensor_msgs import CameraInfo, Image as ImageMsg, PointCloud2
+
+
+class Image(Protocol):
+    image: Out[ImageMsg]
+
+
+class Camera(Image):
+    camera_info: Out[CameraInfo]
+    _camera_info: CameraInfo
+
+
+class Pointcloud(Protocol):
+    pointcloud: Out[PointCloud2]

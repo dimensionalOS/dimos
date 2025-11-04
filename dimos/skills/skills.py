@@ -303,8 +303,6 @@ class AbstractSkill(BaseModel):
 
 # region Abstract Robot Skill
 
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from dimos.robot.robot import Robot
 else:
