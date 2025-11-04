@@ -399,4 +399,4 @@ def deploy(dimos: DimosCluster):
     return nav
 
 
-__all__ = ["ROSNav", "navigation_module", "deploy"]
+__all__ = ["ROSNav", "deploy", "navigation_module"]
