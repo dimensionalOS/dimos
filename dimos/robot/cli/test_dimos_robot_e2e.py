@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import signal
 import subprocess
 import time
@@ -141,6 +142,7 @@ def human_input():
     transport.lcm.stop()
 
 
+@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
 def test_dimos_robot_demo_e2e(lcm_spy, dimos_robot_call, human_input):
     lcm_spy.wait_for_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
     lcm_spy.wait_for_topic("/rpc/HumanInput/start/res")
