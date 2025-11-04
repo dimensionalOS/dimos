@@ -31,7 +31,7 @@ SCRIPT_START_TIME=$(date +%s)
 
 # Step tracking
 CURRENT_STEP=0
-TOTAL_STEPS=9
+TOTAL_STEPS=8
 
 ################################################################################
 # Utility Functions
@@ -511,30 +511,6 @@ clone_repository() {
     fi
 }
 
-checkout_branch() {
-    step "Checking out dimos-rosnav-docker branch"
-
-    local current_branch=$(git -C "${INSTALL_DIR}" branch --show-current 2>/dev/null || echo "")
-    if [[ "${current_branch}" == "dimos-rosnav-docker" ]]; then
-        success "Already on dimos-rosnav-docker branch"
-        return
-    fi
-
-    info "Switching to dimos-rosnav-docker branch..."
-    if git -C "${INSTALL_DIR}" checkout dimos-rosnav-docker >> "${LOG_FILE}" 2>&1; then
-        success "Branch checked out"
-    else
-        info "Fetching remote branches..."
-        git -C "${INSTALL_DIR}" fetch origin >> "${LOG_FILE}" 2>&1
-
-        if git -C "${INSTALL_DIR}" checkout dimos-rosnav-docker >> "${LOG_FILE}" 2>&1; then
-            success "Branch checked out"
-        else
-            fatal "Failed to checkout dimos-rosnav-docker branch"
-        fi
-    fi
-}
-
 ################################################################################
 # Build and Launch
 ################################################################################
@@ -719,7 +695,6 @@ main() {
     install_git_lfs
     setup_ssh_keys
     clone_repository
-    checkout_branch
     build_docker_images
 
     print_summary
