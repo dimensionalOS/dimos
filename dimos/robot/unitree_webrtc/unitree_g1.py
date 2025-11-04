@@ -64,6 +64,8 @@ from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import UnitreeG1SkillContainer
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import SkillLibrary
@@ -84,10 +86,10 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
-    movecmd: In[Twist] = None
+    cmd_vel: In[Twist] = None
     odom_in: In[Odometry] = None
-
-    odom_pose: Out[PoseStamped] = None
+    lidar: Out[LidarMessage] = None
+    odom: Out[PoseStamped] = None
     ip: str
     connection_type: str | None = None
     _global_config: GlobalConfig
@@ -124,18 +126,26 @@ class G1ConnectionModule(Module):
 
         self.connection.start()
 
-        unsub = self.movecmd.subscribe(self.move)
+        unsub = self.cmd_vel.subscribe(self.move)
         self._disposables.add(Disposable(unsub))
-        unsub = self.odom_in.subscribe(self._publish_odom_pose)
-        self._disposables.add(Disposable(unsub))
+
+        if self.connection_type == "mujoco":
+            unsub = self.connection.odom_stream().subscribe(self._publish_sim_odom)
+            self._disposables.add(unsub)
+
+            unsub = self.connection.lidar_stream().subscribe(self._on_lidar)
+            self._disposables.add(unsub)
+        else:
+            unsub = self.odom_in.subscribe(self._publish_odom)
+            self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:
         self.connection.stop()
         super().stop()
 
-    def _publish_odom_pose(self, msg: Odometry) -> None:
-        self.odom_pose.publish(
+    def _publish_odom(self, msg: Odometry) -> None:
+        self.odom.publish(
             PoseStamped(
                 ts=msg.ts,
                 frame_id=msg.frame_id,
@@ -143,6 +153,22 @@ class G1ConnectionModule(Module):
                 orientation=msg.pose.orientation,
             )
         )
+
+    def _publish_sim_odom(self, msg: SimOdometry) -> None:
+        if not self.odom.transport:
+            return
+        self.odom.publish(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.position,
+                orientation=msg.orientation,
+            )
+        )
+
+    def _on_lidar(self, msg: LidarMessage) -> None:
+        if self.lidar.transport:
+            self.lidar.publish(msg)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
@@ -155,7 +181,7 @@ class G1ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-connection = G1ConnectionModule.blueprint
+g1_connection = G1ConnectionModule.blueprint
 
 
 class UnitreeG1(Robot, Resource):
@@ -350,9 +376,9 @@ class UnitreeG1(Robot, Resource):
         self.connection = self._dimos.deploy(G1ConnectionModule, self.ip)
 
         # Configure LCM transports
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)
-        self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
+        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
     def _deploy_camera(self) -> None:
         """Deploy and configure a standard webcam module."""

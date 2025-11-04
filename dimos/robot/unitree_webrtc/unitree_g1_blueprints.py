@@ -28,7 +28,7 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import camera_module
+from dimos.hardware.camera.module import CameraModule, camera_module
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -58,7 +58,7 @@ from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree_webrtc.depth_module import depth_module
 from dimos.robot.unitree_webrtc.g1_joystick_module import g1_joystick
 from dimos.robot.unitree_webrtc.type.map import mapper
-from dimos.robot.unitree_webrtc.unitree_g1 import connection
+from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
@@ -67,7 +67,7 @@ from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 basic = (
     autoconnect(
         # Core connection module for G1
-        connection(),
+        g1_connection(),
         # Camera module
         camera_module(
             transform=Transform(
@@ -96,15 +96,19 @@ basic = (
         foxglove_bridge(),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_g1")
+    .remappings(
+        [
+            (CameraModule, "image", "color_image"),
+        ]
+    )
     .transports(
         {
             # G1 uses Twist for movement commands
             ("cmd_vel", Twist): LCMTransport("/cmd_vel", Twist),
-            ("movecmd", Twist): LCMTransport("/cmd_vel", Twist),
             # State estimation from ROS
             ("state_estimation", Odometry): LCMTransport("/state_estimation", Odometry),
             # Odometry output from ROSNavigationModule
-            ("odom_pose", PoseStamped): LCMTransport("/odom", PoseStamped),
+            ("odom", PoseStamped): LCMTransport("/odom", PoseStamped),
             # Navigation module topics from nav_bot
             ("goal_req", PoseStamped): LCMTransport("/goal_req", PoseStamped),
             ("goal_active", PoseStamped): LCMTransport("/goal_active", PoseStamped),
@@ -116,7 +120,6 @@ basic = (
             ("goal_reached", Bool): LCMTransport("/goal_reached", Bool),
             ("cancel_goal", Bool): LCMTransport("/cancel_goal", Bool),
             # Camera topics (if camera module is added)
-            ("image", Image): LCMTransport("/g1/color_image", Image),
             ("color_image", Image): LCMTransport("/g1/color_image", Image),
             ("camera_info", CameraInfo): LCMTransport("/g1/camera_info", CameraInfo),
         }
