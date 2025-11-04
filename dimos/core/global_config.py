@@ -19,8 +19,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
-    use_simulation: bool = False
-    use_replay: bool = False
+    simulation: bool = False
+    replay: bool = False
     n_dask_workers: int = 2
 
     model_config = SettingsConfigDict(
@@ -32,8 +32,8 @@ class GlobalConfig(BaseSettings):
 
     @cached_property
     def unitree_connection_type(self) -> str:
-        if self.use_replay:
-            return "fake"
-        if self.use_simulation:
+        if self.replay:
+            return "replay"
+        if self.simulation:
             return "mujoco"
         return "webrtc"
