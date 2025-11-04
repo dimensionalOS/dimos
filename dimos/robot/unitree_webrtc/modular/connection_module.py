@@ -30,6 +30,7 @@ from reactivex.observable import Observable
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, pSHMTransport, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
@@ -177,7 +178,7 @@ class ConnectionModule(Module):
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection(**self.connection_config)
+                self.connection = MujocoConnection(GlobalConfig())
                 self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")

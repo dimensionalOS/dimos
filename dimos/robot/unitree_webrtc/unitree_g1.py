@@ -89,31 +89,41 @@ class G1ConnectionModule(Module):
 
     odom_pose: Out[PoseStamped] = None
     ip: str
-    connection_type: str = "webrtc"
+    connection_type: str | None = None
+    _global_config: GlobalConfig
 
     def __init__(
         self,
         ip: str | None = None,
-        connection_type: str = "webrtc",
+        connection_type: str | None = None,
         global_config: GlobalConfig | None = None,
         *args,
         **kwargs,
     ) -> None:
-        cfg = global_config or GlobalConfig()
-        self.ip = ip if ip is not None else cfg.robot_ip
-        self.connection_type = connection_type or cfg.unitree_connection_type
+        self._global_config = global_config or GlobalConfig()
+        self.ip = ip if ip is not None else self._global_config.robot_ip
+        self.connection_type = connection_type or self._global_config.unitree_connection_type
         self.connection = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self) -> None:
-        """Start the connection and subscribe to sensor streams."""
-
         super().start()
 
-        # Use the exact same UnitreeWebRTCConnection as Go2
-        self.connection = UnitreeWebRTCConnection(self.ip)
+        match self.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.ip)
+            case "replay":
+                raise ValueError("Replay connection not implemented for G1 robot")
+            case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+                self.connection = MujocoConnection(self._global_config)
+            case _:
+                raise ValueError(f"Unknown connection type: {self.connection_type}")
+
         self.connection.start()
+
         unsub = self.movecmd.subscribe(self.move)
         self._disposables.add(Disposable(unsub))
         unsub = self.odom_in.subscribe(self._publish_odom_pose)
