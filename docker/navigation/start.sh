@@ -4,11 +4,121 @@ set -e
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m'
+
+# Parse command line arguments
+MODE="simulation"
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --hardware)
+            MODE="hardware"
+            shift
+            ;;
+        --simulation)
+            MODE="simulation"
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --simulation    Start simulation container (default)"
+            echo "  --hardware      Start hardware container for real robot"
+            echo "  --help, -h      Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0                # Start simulation container"
+            echo "  $0 --hardware     # Start hardware container"
+            echo ""
+            echo "Press Ctrl+C to stop the container"
+            exit 0
+            ;;
+        *)
+            echo -e "${RED}Unknown option: $1${NC}"
+            echo "Run '$0 --help' for usage information"
+            exit 1
+            ;;
+    esac
+done
 
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+echo -e "${GREEN}================================================${NC}"
+echo -e "${GREEN}Starting DimOS Docker Container${NC}"
+echo -e "${GREEN}Mode: ${MODE}${NC}"
+echo -e "${GREEN}================================================${NC}"
+echo ""
+
+# Hardware-specific checks
+if [ "$MODE" = "hardware" ]; then
+    # Check if .env file exists
+    if [ ! -f ".env" ]; then
+        if [ -f ".env.hardware" ]; then
+            echo -e "${YELLOW}Creating .env from .env.hardware template...${NC}"
+            cp .env.hardware .env
+            echo -e "${RED}Please edit .env file with your hardware configuration:${NC}"
+            echo "  - LIDAR_SERIAL: Last 2 digits of your Mid-360 serial number"
+            echo "  - LIDAR_INTERFACE: Network interface connected to lidar"
+            echo "  - MOTOR_SERIAL_DEVICE: Serial device for motor controller"
+            echo ""
+            echo "After editing, run this script again."
+            exit 1
+        fi
+    fi
+
+    # Source the environment file
+    if [ -f ".env" ]; then
+        set -a
+        source .env
+        set +a
+
+        # Check for required environment variables
+        if [ -z "$LIDAR_SERIAL" ] || [ "$LIDAR_SERIAL" = "00" ]; then
+            echo -e "${YELLOW}Warning: LIDAR_SERIAL not configured in .env${NC}"
+            echo "Set LIDAR_SERIAL to the last 2 digits of your Mid-360 serial"
+        fi
+
+        # Check for serial devices
+        echo -e "${GREEN}Checking for serial devices...${NC}"
+        if [ -e "${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}" ]; then
+            echo -e "  Found device at: ${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}"
+        else
+            echo -e "${YELLOW}  Warning: Device not found at ${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}${NC}"
+            echo -e "${YELLOW}  Available serial devices:${NC}"
+            ls /dev/ttyACM* /dev/ttyUSB* 2>/dev/null || echo "    None found"
+        fi
+
+        # Check network interface for lidar
+        if [ -n "$LIDAR_INTERFACE" ]; then
+            echo -e "${GREEN}Checking network interface for lidar...${NC}"
+            if ip link show "$LIDAR_INTERFACE" &>/dev/null; then
+                echo -e "  Network interface $LIDAR_INTERFACE found"
+            else
+                echo -e "${YELLOW}  Warning: Interface $LIDAR_INTERFACE not found${NC}"
+                echo -e "${YELLOW}  Available interfaces:${NC}"
+                ip link show | grep -E "^[0-9]+:" | awk '{print "    " $2}' | sed 's/:$//'
+            fi
+        fi
+    fi
+
+fi
+
+# Check if unified image exists
+if ! docker images | grep -q "dimos_autonomy_stack.*jazzy"; then
+    echo -e "${YELLOW}Docker image not found. Building...${NC}"
+    ./build.sh
+fi
+
+# Check for X11 display
+if [ -z "$DISPLAY" ]; then
+    echo -e "${YELLOW}Warning: DISPLAY not set. GUI applications may not work.${NC}"
+    export DISPLAY=:0
+fi
+
+# Allow X11 connections from Docker
+echo -e "${GREEN}Configuring X11 access...${NC}"
 xhost +local:docker 2>/dev/null || true
 
 cleanup() {
@@ -17,83 +127,48 @@ cleanup() {
 
 trap cleanup EXIT
 
-echo -e "${GREEN}=============================================${NC}"
-echo -e "${GREEN}Starting DimOS + ROS Autonomy Stack Container${NC}"
-echo -e "${GREEN}=============================================${NC}"
-echo ""
-
-if [ ! -d "unity_models" ] && [[ "$*" == *"--ros-planner"* || "$*" == *"--all"* ]]; then
-    echo -e "${YELLOW}WARNING: Unity models directory not found!${NC}"
-    echo "The Unity simulator may not work properly."
-    echo "Download from: https://drive.google.com/drive/folders/1G1JYkccvoSlxyySuTlPfvmrWoJUO8oSs"
-    echo ""
-fi
-
-if command -v nvidia-smi &> /dev/null && nvidia-smi &> /dev/null; then
+# Check for NVIDIA runtime
+if docker info 2>/dev/null | grep -q nvidia; then
+    echo -e "${GREEN}NVIDIA Docker runtime detected${NC}"
     export DOCKER_RUNTIME=nvidia
-    export NVIDIA_VISIBLE_DEVICES=all
-    export NVIDIA_DRIVER_CAPABILITIES=all
-    echo -e "${GREEN}GPU mode enabled${NC} (using nvidia runtime)"
-    echo ""
+    if [ "$MODE" = "hardware" ]; then
+        export NVIDIA_VISIBLE_DEVICES=all
+        export NVIDIA_DRIVER_CAPABILITIES=all
+    fi
 else
-    export DOCKER_RUNTIME=runc
-    export NVIDIA_VISIBLE_DEVICES=
-    export NVIDIA_DRIVER_CAPABILITIES=
-    echo -e "${YELLOW}CPU-only mode${NC} (no GPU detected)"
-    echo ""
+    echo -e "${RED}NVIDIA Docker runtime not found. GPU acceleration disabled.${NC}"
+    exit 1
 fi
 
-MODE="default"
-if [[ "$1" == "--ros-planner" ]]; then
-    MODE="ros-planner"
-elif [[ "$1" == "--dimos" ]]; then
-    MODE="dimos"
-elif [[ "$1" == "--all" ]]; then
-    MODE="all"
-elif [[ "$1" == "--help" || "$1" == "-h" ]]; then
-    echo "Usage: $0 [OPTIONS]"
-    echo ""
-    echo "Options:"
-    echo "  --ros-planner    Start with ROS route planner"
-    echo "  --dimos         Start with DimOS Unitree G1 controller"
-    echo "  --all           Start both ROS planner and DimOS"
-    echo "  --help          Show this help message"
-    echo ""
-    echo "GPU auto-detection: Automatically uses GPU if nvidia-smi is available"
-    echo "Without options, starts an interactive bash shell"
-    echo ""
-    echo "Example:"
-    echo "  $0 --all"
-    exit 0
+# Set container name for reference
+if [ "$MODE" = "hardware" ]; then
+    CONTAINER_NAME="dimos_hardware_container"
+else
+    CONTAINER_NAME="dimos_simulation_container"
 fi
 
-cd ../..
-
-case $MODE in
-    "ros-planner")
-        echo -e "${YELLOW}Starting with ROS route planner...${NC}"
-        CMD="bash -c 'cd /ros2_ws/src/ros-navigation-autonomy-stack && ./system_simulation_with_route_planner.sh'"
-        ;;
-    "dimos")
-        echo -e "${YELLOW}Starting with DimOS navigation bot...${NC}"
-        CMD="python /workspace/dimos/dimos/navigation/demo_ros_navigation.py"
-        ;;
-    "all")
-        echo -e "${YELLOW}Starting both ROS planner and DimOS...${NC}"
-        CMD="/usr/local/bin/run_both.sh"
-        ;;
-    "default")
-        echo -e "${YELLOW}Starting interactive bash shell...${NC}"
-        echo ""
-        echo "You can manually run:"
-        echo "  ROS planner: cd /ros2_ws/src/ros-navigation-autonomy-stack && ./system_simulation_with_route_planner.sh"
-        echo "  DimOS: python /workspace/dimos/dimos/navigation/demo_ros_navigation.py"
-        echo ""
-        CMD="bash"
-        ;;
-esac
-
-docker compose -f docker/navigation/docker-compose.yml run --rm dimos_autonomy_stack $CMD
-
+# Print helpful info before starting
 echo ""
-echo -e "${GREEN}Container stopped.${NC}"
+if [ "$MODE" = "hardware" ]; then
+    echo "Hardware mode - Interactive shell"
+    echo ""
+    echo -e "${GREEN}=================================================${NC}"
+    echo -e "${GREEN}The container is running. Exec in to run scripts:${NC}"
+    echo -e "    ${YELLOW}docker exec -it ${CONTAINER_NAME} bash${NC}"
+    echo -e "${GREEN}=================================================${NC}"
+else
+    echo "Simulation mode - Auto-starting ROS simulation and DimOS"
+    echo ""
+    echo "The container will automatically run:"
+    echo "  - ROS navigation stack with route planner"
+    echo "  - DimOS navigation demo"
+    echo ""
+    echo "To enter the container from another terminal:"
+    echo "  docker exec -it ${CONTAINER_NAME} bash"
+fi
+
+if [ "$MODE" = "hardware" ]; then
+    docker compose -f docker-compose.yml --profile hardware up
+else
+    docker compose -f docker-compose.yml up
+fi

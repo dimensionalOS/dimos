@@ -31,6 +31,12 @@ RUN apt-get update && apt-get install -y \
     iputils-ping \
     net-tools \
     iproute2 \
+    ethtool \
+    # USB and serial tools (for hardware support)
+    usbutils \
+    udev \
+    # Time synchronization (for multi-computer setup)
+    chrony \
     # Editor (optional but useful)
     nano \
     vim \
@@ -62,12 +68,30 @@ WORKDIR ${WORKSPACE}
 # Set up ROS environment
 RUN echo "source /opt/ros/${ROS_DISTRO}/setup.bash" >> ~/.bashrc
 
-# Build the autonomy stack workspace (simulation mode - skipping SLAM and Mid-360 driver)
+# Build all hardware dependencies
+RUN \
+    # Build Livox-SDK2 for Mid-360 lidar
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/Livox-SDK2 && \
+    mkdir -p build && cd build && \
+    cmake .. && make -j$(nproc) && make install && ldconfig && \
+    # Install Sophus
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/Sophus && \
+    mkdir -p build && cd build && \
+    cmake .. -DBUILD_TESTS=OFF && make -j$(nproc) && make install && \
+    # Install Ceres Solver
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/ceres-solver && \
+    mkdir -p build && cd build && \
+    cmake .. && make -j$(nproc) && make install && \
+    # Install GTSAM
+    cd ${WORKSPACE}/src/ros-navigation-autonomy-stack/src/slam/dependency/gtsam && \
+    mkdir -p build && cd build && \
+    cmake .. -DGTSAM_USE_SYSTEM_EIGEN=ON -DGTSAM_BUILD_WITH_MARCH_NATIVE=OFF && \
+    make -j$(nproc) && make install && ldconfig
+
+# Build the autonomy stack
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     cd ${WORKSPACE} && \
-    colcon build --symlink-install \
-    --cmake-args -DCMAKE_BUILD_TYPE=Release \
-    --packages-skip arise_slam_mid360 arise_slam_mid360_msgs livox_ros_driver2"
+    colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=Release"
 
 # Source the workspace setup
 RUN echo "source ${WORKSPACE}/install/setup.bash" >> ~/.bashrc
@@ -95,6 +119,10 @@ COPY docker/navigation/run_both.sh /usr/local/bin/run_both.sh
 COPY docker/navigation/ros_launch_wrapper.py /usr/local/bin/ros_launch_wrapper.py
 RUN chmod +x /usr/local/bin/run_both.sh /usr/local/bin/ros_launch_wrapper.py
 
+# Set up udev rules for USB devices (motor controller)
+RUN echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", MODE="0666", GROUP="dialout"' > /etc/udev/rules.d/99-motor-controller.rules && \
+    usermod -a -G dialout root || true
+
 # Set up entrypoint script
 RUN echo '#!/bin/bash\n\
 set -e\n\
@@ -107,7 +135,23 @@ source ${WORKSPACE}/install/setup.bash\n\
 source /opt/dimos-venv/bin/activate\n\
 \n\
 # Export ROBOT_CONFIG_PATH for autonomy stack\n\
-export ROBOT_CONFIG_PATH="mechanum_drive"\n\
+export ROBOT_CONFIG_PATH="${ROBOT_CONFIG_PATH:-mechanum_drive}"\n\
+\n\
+# Hardware-specific configurations\n\
+if [ "${HARDWARE_MODE}" = "true" ]; then\n\
+    # Set network buffer sizes for WiFi data transmission (if needed)\n\
+    if [ "${ENABLE_WIFI_BUFFER}" = "true" ]; then\n\
+        sysctl -w net.core.rmem_max=67108864 net.core.rmem_default=67108864 2>/dev/null || true\n\
+        sysctl -w net.core.wmem_max=67108864 net.core.wmem_default=67108864 2>/dev/null || true\n\
+    fi\n\
+    \n\
+    # Configure network interface for Mid-360 lidar if specified\n\
+    if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_IP}" ]; then\n\
+        ip addr add ${LIDAR_IP}/24 dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
+        ip link set ${LIDAR_INTERFACE} up 2>/dev/null || true\n\
+    fi\n\
+    \n\
+fi\n\
 \n\
 # Execute the command\n\
 exec "$@"' > /ros_entrypoint.sh && \
