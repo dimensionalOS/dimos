@@ -144,8 +144,33 @@ class G1ConnectionModule(Module):
         self.connection.stop()
         super().stop()
 
+    def _publish_tf(self, msg: PoseStamped) -> None:
+        if self.odom.transport:
+            self.odom.publish(msg)
+
+        self.tf.publish(Transform.from_pose("base_link", msg))
+
+        # Publish camera_link transform
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=time.time(),
+        )
+
+        map_to_world = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="map",
+            child_frame_id="world",
+            ts=time.time(),
+        )
+
+        self.tf.publish(camera_link, map_to_world)
+
     def _publish_odom(self, msg: Odometry) -> None:
-        self.odom.publish(
+        self._publish_tf(
             PoseStamped(
                 ts=msg.ts,
                 frame_id=msg.frame_id,
@@ -155,9 +180,7 @@ class G1ConnectionModule(Module):
         )
 
     def _publish_sim_odom(self, msg: SimOdometry) -> None:
-        if not self.odom.transport:
-            return
-        self.odom.publish(
+        self._publish_tf(
             PoseStamped(
                 ts=msg.ts,
                 frame_id=msg.frame_id,
