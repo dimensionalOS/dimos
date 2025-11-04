@@ -51,7 +51,7 @@ from dimos.navigation.global_planner import astar_planner
 from dimos.navigation.local_planner.holonomic_local_planner import (
     holonomic_local_planner,
 )
-from dimos.navigation.rosnav.nav_bot import navigation_module
+from dimos.navigation.rosnav import navigation_module
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
@@ -95,7 +95,7 @@ basic = (
         websocket_vis(),
         foxglove_bridge(),
     )
-    .global_config(n_dask_workers=4)
+    .global_config(n_dask_workers=4, robot_model="unitree_g1")
     .transports(
         {
             # G1 uses Twist for movement commands

@@ -145,6 +145,7 @@ class ConnectionModule(Module):
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
     _last_image: Image = None
+    _global_config: GlobalConfig
 
     def __init__(
         self,
@@ -155,10 +156,10 @@ class ConnectionModule(Module):
         *args,
         **kwargs,
     ) -> None:
-        cfg = global_config or GlobalConfig()
-        self.ip = ip if ip is not None else cfg.robot_ip
-        self.connection_type = connection_type or cfg.unitree_connection_type
-        self.rectify_image = not cfg.simulation
+        self._global_config = global_config or GlobalConfig()
+        self.ip = ip if ip is not None else self._global_config.robot_ip
+        self.connection_type = connection_type or self._global_config.unitree_connection_type
+        self.rectify_image = not self._global_config.simulation
         self.tf = TF()
         self.connection = None
 
@@ -198,7 +199,7 @@ class ConnectionModule(Module):
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection()
+                self.connection = MujocoConnection(self._global_config)
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
