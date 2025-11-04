@@ -125,5 +125,13 @@ def show_config(ctx: typer.Context) -> None:
         typer.echo(f"{field_name}: {value}")
 
 
+@main.command()
+def list() -> None:
+    """List all available blueprints."""
+    blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
+    for blueprint_name in sorted(blueprints):
+        typer.echo(blueprint_name)
+
+
 if __name__ == "__main__":
     main()
