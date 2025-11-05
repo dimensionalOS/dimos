@@ -62,6 +62,10 @@ class CameraModule(Module, spec.Camera):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
+    @property
+    def hardware_camera_info(self) -> CameraInfo:
+        return self.hardware.camera_info
+
     @rpc
     def start(self) -> str:
         if callable(self.config.hardware):
