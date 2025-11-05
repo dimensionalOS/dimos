@@ -229,6 +229,10 @@ class BehaviorTreeNavigator(Module):
         if not goal.frame_id:
             return goal
 
+        if not self.latest_odom:
+            logger.error("No odometry data available to transform goal")
+            return None
+
         odom_frame = self.latest_odom.frame_id
         if goal.frame_id == odom_frame:
             return goal

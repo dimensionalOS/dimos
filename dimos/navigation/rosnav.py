@@ -19,12 +19,11 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 """
 
 from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import threading
 import time
 
-# ROS2 message imports
 from geometry_msgs.msg import (
     PointStamped as ROSPointStamped,
     PoseStamped as ROSPoseStamped,
@@ -64,8 +63,8 @@ logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 class Config(ModuleConfig):
     local_pointcloud_freq: float = 2.0
     global_pointcloud_freq: float = 1.0
-    sensor_to_base_link_transform: Transform = Transform(
-        frame_id="sensor", child_frame_id="base_link"
+    sensor_to_base_link_transform: Transform = field(
+        default_factory=lambda: Transform(frame_id="sensor", child_frame_id="base_link")
     )
 
 
@@ -383,16 +382,21 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
             super().stop()
 
 
+navigation_module = ROSNav.blueprint
+
+
 def deploy(dimos: DimosCluster):
     nav = dimos.deploy(ROSNav)
 
     nav.pointcloud.transport = pSHMTransport("/lidar")
     nav.global_pointcloud.transport = pSHMTransport("/map")
-
-    nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_active.transport = LCMTransport("/goal_active", PoseStamped)
     nav.path_active.transport = LCMTransport("/path_active", Path)
     nav.cmd_vel.transport = LCMTransport("/cmd_vel", TwistStamped)
+
     nav.start()
     return nav
+
+
+__all__ = ["ROSNav", "deploy", "navigation_module"]
