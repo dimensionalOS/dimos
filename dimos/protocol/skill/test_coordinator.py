@@ -24,6 +24,9 @@ from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.utils.data import get_data
+from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.nav_msgs import OccupancyGrid
+import numpy as np
 
 
 class SkillContainerTest(Module):
@@ -92,6 +95,19 @@ class SkillContainerTest(Module):
         img = Image.from_file(get_data("cafe-smol.jpg"))
         print("Photo taken.")
         return img
+
+    @skill(stream=Stream.passive, output=Output.image)
+    def get_map(self):
+        """Provides current map in the form of an image along with metadata of the map."""
+
+        data = np.zeros((20, 30), dtype=np.int8)
+        data[5:10, 10:20] = 100  # Add some obstacles
+        data[15:18, 5:8] = -1  # Add unknown area
+        
+        origin = Pose(1.0, 2.0, 0.0)
+        grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
+
+        yield grid
 
 
 @pytest.mark.asyncio
