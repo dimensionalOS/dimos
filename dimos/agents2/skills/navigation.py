@@ -113,14 +113,6 @@ class NavigationSkillContainer(SkillModule):
         logger.info(f"Tagged {location}")
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
-    def _navigate_to_object(self, query: str) -> str | None:
-        position = self.detection_module.nav_vlm(query)
-        print("Object position from VLM:", position)
-        if not position:
-            return None
-        self.nav.navigate_to(position)
-        return f"Arrived to object matching '{query}' in view."
-
     @skill()
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map using natural language.
