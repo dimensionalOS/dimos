@@ -42,10 +42,10 @@ class NavigationSkillContainer(SkillModule):
         "SpatialMemory.tag_location",
         "SpatialMemory.query_tagged_location",
         "SpatialMemory.query_by_text",
-        "BehaviorTreeNavigator.set_goal",
-        "BehaviorTreeNavigator.get_state",
-        "BehaviorTreeNavigator.is_goal_reached",
-        "BehaviorTreeNavigator.cancel_goal",
+        "NavigationInterface.set_goal",
+        "NavigationInterface.get_state",
+        "NavigationInterface.is_goal_reached",
+        "NavigationInterface.cancel_goal",
         "ObjectTracking.track",
         "ObjectTracking.stop_track",
         "ObjectTracking.is_tracking",
@@ -176,12 +176,12 @@ class NavigationSkillContainer(SkillModule):
     def _navigate_to(self, pose: PoseStamped) -> bool:
         try:
             set_goal_rpc, get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
-                "BehaviorTreeNavigator.set_goal",
-                "BehaviorTreeNavigator.get_state",
-                "BehaviorTreeNavigator.is_goal_reached",
+                "NavigationInterface.set_goal",
+                "NavigationInterface.get_state",
+                "NavigationInterface.is_goal_reached",
             )
         except Exception:
-            logger.error("BehaviorTreeNavigator module not connected properly")
+            logger.error("Navigation module not connected properly")
             return False
 
         logger.info(
@@ -221,10 +221,10 @@ class NavigationSkillContainer(SkillModule):
 
         try:
             get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
-                "BehaviorTreeNavigator.get_state", "BehaviorTreeNavigator.is_goal_reached"
+                "NavigationInterface.get_state", "NavigationInterface.is_goal_reached"
             )
         except Exception:
-            logger.error("BehaviorTreeNavigator module not connected properly")
+            logger.error("Navigation module not connected properly")
             return None
 
         logger.info(f"Found {query} at {bbox}")
@@ -315,9 +315,9 @@ class NavigationSkillContainer(SkillModule):
 
     def _cancel_goal_and_stop(self) -> None:
         try:
-            cancel_goal_rpc = self.get_rpc_calls("BehaviorTreeNavigator.cancel_goal")
+            cancel_goal_rpc = self.get_rpc_calls("NavigationInterface.cancel_goal")
         except Exception:
-            logger.warning("BehaviorTreeNavigator module not connected, cannot cancel goal")
+            logger.warning("Navigation module not connected, cannot cancel goal")
             return
 
         try:
