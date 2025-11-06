@@ -23,7 +23,7 @@ from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.navigation.bt_navigator.navigator import NavigatorState
+from dimos.navigation.base import NavigationState
 from dimos.navigation.visual.query import get_object_bbox_from_image
 from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
@@ -190,7 +190,7 @@ class NavigationSkillContainer(SkillModule):
         set_goal_rpc(pose)
         time.sleep(1.0)
 
-        while get_state_rpc() == NavigatorState.FOLLOWING_PATH:
+        while get_state_rpc() == NavigationState.FOLLOWING_PATH:
             time.sleep(0.25)
 
         time.sleep(1.0)
@@ -238,7 +238,7 @@ class NavigationSkillContainer(SkillModule):
 
         while time.time() - start_time < timeout:
             # Check if navigator finished
-            if get_state_rpc() == NavigatorState.IDLE and goal_set:
+            if get_state_rpc() == NavigationState.IDLE and goal_set:
                 logger.info("Waiting for goal result")
                 time.sleep(1.0)
                 if not is_goal_reached_rpc():
