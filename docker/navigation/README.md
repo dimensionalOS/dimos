@@ -64,6 +64,14 @@ Note that the build will take over 10 minutes and build an image over 30GiB.
 
 ## On Real Hardware
 
+### Configure the WiFi
+
+[Read this](https://github.com/dimensionalOS/ros-navigation-autonomy-stack/tree/jazzy?tab=readme-ov-file#transmitting-data-over-wifi) to see how to configure the WiFi.
+
+### Configure the Livox Lidar
+
+Edit the `MID360_config.json` config if you need to customise the lidar. This file will be mounted in the container.
+
 ### Copy Environment Template
 ```bash
 cp .env.hardware .env
@@ -91,7 +99,7 @@ Start the container and leave it open.
 ./start.sh --hardware
 ```
 
-It doesn't do anything by default. You have to run commands on it by exec-ing:
+It doesn't do anything by default. You have to run commands on it by `exec`-ing:
 
 ```bash
 docker exec -it dimos_hardware_container bash
@@ -99,7 +107,7 @@ docker exec -it dimos_hardware_container bash
 
 ### In the container
 
-In the container you can run any of the ROS or python code.
+In the container you can run any of the ROS or Python code.
 
 #### ROS
 
@@ -110,7 +118,7 @@ cd /ros2_ws/src/ros-navigation-autonomy-stack
 
 ### Python
 
-Move 2 meters forward, and 2 meters left.
+Demo which moves the robot 2 meters forward and 2 meters left.
 
 ```bash
 source /opt/dimos-venv/bin/activate
