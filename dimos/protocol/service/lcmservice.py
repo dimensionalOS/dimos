@@ -73,18 +73,14 @@ def check_multicast() -> list[str]:
             commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}")
 
     elif system == "Darwin":  # macOS
-        # macOS commands
         loopback_interface = "lo0"
-        # Check if loopback interface has multicast enabled
+        # Check if multicast route exists
         try:
-            result = subprocess.run(["ifconfig", loopback_interface], capture_output=True, text=True)
-            if "MULTICAST" not in result.stdout:
-                commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+            result = subprocess.run(["netstat", "-nr"], capture_output=True, text=True)
+            if "224.0.0.0/4" not in result.stdout:
+                commands_needed.append(f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}")
         except Exception:
-            commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
-
-        # macOS typically doesn't need explicit multicast routes for loopback
-        # The interface multicast flag is usually sufficient
+            commands_needed.append(f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}")
 
     else:
         # For other systems, skip multicast configuration
@@ -103,25 +99,61 @@ def check_buffers() -> tuple[list[str], int | None]:
     current_max = None
 
     sudo = "" if check_root() else "sudo "
+    system = platform.system()
 
-    # Check current buffer settings
-    try:
-        result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
-        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        if not current_max or current_max < 2097152:
+    if system == "Linux":
+        # Linux buffer configuration
+        try:
+            result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
+            current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+            if not current_max or current_max < 2097152:
+                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
+        except:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
-    except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
 
-    try:
-        result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
-        current_default = (
-            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        )
-        if not current_default or current_default < 2097152:
+        try:
+            result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
+            current_default = (
+                int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+            )
+            if not current_default or current_default < 2097152:
+                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
+        except:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
-    except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
+
+    elif system == "Darwin":  # macOS
+        # macOS buffer configuration - check and set UDP buffer related sysctls
+        try:
+            result = subprocess.run(["sysctl", "kern.ipc.maxsockbuf"], capture_output=True, text=True)
+            current_max = int(result.stdout.split(":")[1].strip()) if result.returncode == 0 else None
+            if not current_max or current_max < 8388608:
+                commands_needed.append(f"{sudo}sysctl -w kern.ipc.maxsockbuf=8388608")
+        except:
+            commands_needed.append(f"{sudo}sysctl -w kern.ipc.maxsockbuf=8388608")
+
+        try:
+            result = subprocess.run(["sysctl", "net.inet.udp.recvspace"], capture_output=True, text=True)
+            current_recvspace = (
+                int(result.stdout.split(":")[1].strip()) if result.returncode == 0 else None
+            )
+            if not current_recvspace or current_recvspace < 2097152:
+                commands_needed.append(f"{sudo}sysctl -w net.inet.udp.recvspace=2097152")
+        except:
+            commands_needed.append(f"{sudo}sysctl -w net.inet.udp.recvspace=2097152")
+
+        try:
+            result = subprocess.run(["sysctl", "net.inet.udp.maxdgram"], capture_output=True, text=True)
+            current_maxdgram = (
+                int(result.stdout.split(":")[1].strip()) if result.returncode == 0 else None
+            )
+            if not current_maxdgram or current_maxdgram < 65535:
+                commands_needed.append(f"{sudo}sysctl -w net.inet.udp.maxdgram=65535")
+        except:
+            commands_needed.append(f"{sudo}sysctl -w net.inet.udp.maxdgram=65535")
+
+    else:
+        # For other systems, skip buffer configuration
+        logger.warning(f"Buffer configuration not supported on {system}")
 
     return commands_needed, current_max
 
