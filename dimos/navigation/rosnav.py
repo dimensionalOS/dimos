@@ -46,7 +46,7 @@ from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
     Transform,
-    TwistStamped,
+    Twist,
     Vector3,
 )
 from dimos.msgs.nav_msgs import Path
@@ -79,7 +79,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
     goal_active: Out[PoseStamped] = None  # type: ignore
     path_active: Out[Path] = None  # type: ignore
-    cmd_vel: Out[TwistStamped] = None  # type: ignore
+    cmd_vel: Out[Twist] = None  # type: ignore
 
     # Using RxPY Subjects for reactive data flow instead of storing state
     _local_pointcloud_subject: Subject
@@ -183,7 +183,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         self.goal_active.publish(dimos_pose)
 
     def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
-        self.cmd_vel.publish(TwistStamped.from_ros_msg(msg))
+        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))
 
     def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
@@ -393,7 +393,7 @@ def deploy(dimos: DimosCluster):
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_active.transport = LCMTransport("/goal_active", PoseStamped)
     nav.path_active.transport = LCMTransport("/path_active", Path)
-    nav.cmd_vel.transport = LCMTransport("/cmd_vel", TwistStamped)
+    nav.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
 
     nav.start()
     return nav
