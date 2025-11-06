@@ -88,8 +88,13 @@ class MujocoThread(threading.Thread):
             self._cleanup_resources()
 
     def run_simulation(self):
+        # Go2 isn't in the MuJoCo models yet, so use Go1 as a substitute
         robot_name = self.global_config.robot_model or "unitree_go1"
+        if robot_name == "unitree_go2":
+            robot_name = "unitree_go1"
+
         scene_name = self.global_config.mujoco_room or "office1"
+
         self.model, self.data = load_model(self, robot=robot_name, scene=scene_name)
 
         # Set initial robot position
