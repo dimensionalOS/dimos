@@ -63,7 +63,7 @@ class OnnxController(ABC):
             data.ctrl[:] = onnx_pred * self._action_scale + self._default_angles
             self._post_control_update()
 
-    def _post_control_update(self) -> None:
+    def _post_control_update(self) -> None:  # noqa: B027
         pass
 
 
