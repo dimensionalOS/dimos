@@ -30,6 +30,7 @@ from reactivex.disposable import CompositeDisposable
 from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.resource import Resource
+from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
@@ -78,6 +79,9 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
+    _bound_rpc_calls: dict[str, RpcCall] = {}
+
+    rpc_calls: list[str] = []
 
     default_config = ModuleConfig
 
@@ -244,6 +248,23 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         from dimos.core.blueprints import create_module_blueprint
 
         return partial(create_module_blueprint, self)
+
+    @rpc
+    def get_rpc_method_names(self) -> list[str]:
+        return self.rpc_calls
+
+    @rpc
+    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)
+        self._bound_rpc_calls[method] = callable
+
+    def get_rpc_calls(self, *methods: str) -> tuple[RpcCall]:
+        missing = [m for m in methods if m not in self._bound_rpc_calls]
+        if missing:
+            raise ValueError(
+                f"RPC methods not found. Class: {self.__class__.__name__}, RPC methods: {', '.join(missing)}"
+            )
+        return tuple(self._bound_rpc_calls[m] for m in methods)
 
 
 class DaskModule(ModuleBase):

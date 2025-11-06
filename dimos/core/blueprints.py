@@ -144,21 +144,30 @@ class ModuleBlueprintSet:
     def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
         rpc_methods = {}
+        rpc_methods_dot = {}
         for blueprint in self.blueprints:
             for method_name in blueprint.module.rpcs.keys():
                 method = getattr(module_coordinator.get_instance(blueprint.module), method_name)
                 rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method
+                rpc_methods_dot[f"{blueprint.module.__name__}.{method_name}"] = method
 
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
+            instance = module_coordinator.get_instance(blueprint.module)
+            print(f"--- SETTING UP RPCS FOR {blueprint.module.__name__} ---")
             for method_name in blueprint.module.rpcs.keys():
                 if not method_name.startswith("set_"):
                     continue
                 linked_name = method_name.removeprefix("set_")
                 if linked_name not in rpc_methods:
                     continue
-                instance = module_coordinator.get_instance(blueprint.module)
                 getattr(instance, method_name)(rpc_methods[linked_name])
+            for method_name in instance.get_rpc_method_names():
+                print("--" * 100)
+                print(f"Binding RPC method {method_name} for module {blueprint.module.__name__}")
+                if method_name not in rpc_methods_dot:
+                    continue
+                instance.set_rpc_method(method_name, rpc_methods_dot[method_name])
 
     def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
         if global_config is None:
