@@ -38,8 +38,9 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.navigation.base import NavigationState
 from dimos.navigation.bbox_navigation import BBoxNavigationModule
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
@@ -641,7 +642,7 @@ class UnitreeGo2(Resource):
         time.sleep(1.0)
 
         if blocking:
-            while self.navigator.get_state() == NavigatorState.FOLLOWING_PATH:
+            while self.navigator.get_state() == NavigationState.FOLLOWING_PATH:
                 time.sleep(0.25)
 
             time.sleep(1.0)
