@@ -39,6 +39,22 @@ class NavigationSkillContainer(SkillModule):
     _skill_started: bool = False
     _similarity_threshold: float = 0.23
 
+    rpc_calls: list[str] = [
+        "SpatialMemory.tag_location",
+        "SpatialMemory.query_tagged_location",
+        "SpatialMemory.query_by_text",
+        "BehaviorTreeNavigator.set_goal",
+        "BehaviorTreeNavigator.get_state",
+        "BehaviorTreeNavigator.is_goal_reached",
+        "BehaviorTreeNavigator.cancel_goal",
+        "ObjectTracking.track",
+        "ObjectTracking.stop_track",
+        "ObjectTracking.is_tracking",
+        "WavefrontFrontierExplorer.stop_exploration",
+        "WavefrontFrontierExplorer.explore",
+        "WavefrontFrontierExplorer.is_exploration_active",
+    ]
+
     _tag_location: RpcCall | None = None
     _query_tagged_location: RpcCall | None = None
     _query_by_text: RpcCall | None = None
