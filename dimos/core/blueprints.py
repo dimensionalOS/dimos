@@ -154,7 +154,6 @@ class ModuleBlueprintSet:
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
             instance = module_coordinator.get_instance(blueprint.module)
-            print(f"--- SETTING UP RPCS FOR {blueprint.module.__name__} ---")
             for method_name in blueprint.module.rpcs.keys():
                 if not method_name.startswith("set_"):
                     continue
@@ -163,8 +162,6 @@ class ModuleBlueprintSet:
                     continue
                 getattr(instance, method_name)(rpc_methods[linked_name])
             for method_name in instance.get_rpc_method_names():
-                print("--" * 100)
-                print(f"Binding RPC method {method_name} for module {blueprint.module.__name__}")
                 if method_name not in rpc_methods_dot:
                     continue
                 instance.set_rpc_method(method_name, rpc_methods_dot[method_name])
