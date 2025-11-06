@@ -19,7 +19,6 @@ Navigator module for coordinating global and local planning.
 """
 
 from collections.abc import Callable
-from enum import Enum
 import threading
 import time
 
@@ -30,6 +29,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
 from dimos.navigation.bt_navigator.recovery_server import RecoveryServer
 from dimos.protocol.tf import TF
@@ -39,15 +39,7 @@ from dimos.utils.transform_utils import apply_transform
 logger = setup_logger(__file__)
 
 
-class NavigatorState(Enum):
-    """Navigator state machine states."""
-
-    IDLE = "idle"
-    FOLLOWING_PATH = "following_path"
-    RECOVERY = "recovery"
-
-
-class BehaviorTreeNavigator(Module):
+class BehaviorTreeNavigator(Module, NavigationInterface):
     """
     Navigator module for coordinating navigation tasks.
 
@@ -91,7 +83,7 @@ class BehaviorTreeNavigator(Module):
         self.publishing_period = 1.0 / publishing_frequency
 
         # State machine
-        self.state = NavigatorState.IDLE
+        self.state = NavigationState.IDLE
         self.state_lock = threading.Lock()
 
         # Current goal
@@ -200,12 +192,12 @@ class BehaviorTreeNavigator(Module):
         self._goal_reached = False
 
         with self.state_lock:
-            self.state = NavigatorState.FOLLOWING_PATH
+            self.state = NavigationState.FOLLOWING_PATH
 
         return True
 
     @rpc
-    def get_state(self) -> NavigatorState:
+    def get_state(self) -> NavigationState:
         """Get the current state of the navigator."""
         return self.state
 
@@ -213,7 +205,7 @@ class BehaviorTreeNavigator(Module):
         """Handle incoming odometry messages."""
         self.latest_odom = msg
 
-        if self.state == NavigatorState.FOLLOWING_PATH:
+        if self.state == NavigationState.FOLLOWING_PATH:
             self.recovery_server.update_odom(msg)
 
     def _on_goal_request(self, msg: PoseStamped) -> None:
@@ -281,7 +273,7 @@ class BehaviorTreeNavigator(Module):
                 current_state = self.state
                 self.navigation_state.publish(String(data=current_state.value))
 
-            if current_state == NavigatorState.FOLLOWING_PATH:
+            if current_state == NavigationState.FOLLOWING_PATH:
                 with self.goal_lock:
                     goal = self.current_goal
                     original_goal = self.original_goal
@@ -328,9 +320,9 @@ class BehaviorTreeNavigator(Module):
                         self._goal_reached = True
                         logger.info("Goal reached, resetting local planner")
 
-            elif current_state == NavigatorState.RECOVERY:
+            elif current_state == NavigationState.RECOVERY:
                 with self.state_lock:
-                    self.state = NavigatorState.IDLE
+                    self.state = NavigationState.IDLE
 
             time.sleep(self.publishing_period)
 
@@ -351,7 +343,7 @@ class BehaviorTreeNavigator(Module):
         self._goal_reached = False
 
         with self.state_lock:
-            self.state = NavigatorState.IDLE
+            self.state = NavigationState.IDLE
 
         self.reset_local_planner()
         self.recovery_server.reset()  # Reset recovery server when stopping
