@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 logger = setup_logger(__file__)
 
 
+# TODO: Remove, deprecated
 class RosNavigation(SkillModule):
     _robot: "UnitreeG1"
     _started: bool

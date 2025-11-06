@@ -51,7 +51,7 @@ from dimos.navigation.global_planner import astar_planner
 from dimos.navigation.local_planner.holonomic_local_planner import (
     holonomic_local_planner,
 )
-from dimos.navigation.rosnav import navigation_module
+from dimos.navigation.rosnav import ros_nav
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
@@ -90,7 +90,7 @@ basic = (
         holonomic_local_planner(),
         behavior_tree_navigator(),
         wavefront_frontier_explorer(),
-        navigation_module(),  # G1-specific ROS navigation
+        ros_nav(),
         # Visualization
         websocket_vis(),
         foxglove_bridge(),
