@@ -70,7 +70,7 @@ Note that the build will take over 10 minutes and build an image over 30GiB.
 
 ### Configure the Livox Lidar
 
-Edit the `MID360_config.json` config if you need to customise the lidar. This file will be mounted in the container.
+The MID360_config.json file is automatically generated on container startup based on your environment variables (LIDAR_COMPUTER_IP and LIDAR_IP).
 
 ### Copy Environment Template
 ```bash
@@ -83,9 +83,9 @@ Key configuration parameters:
 
 ```bash
 # Lidar Configuration
-LIDAR_INTERFACE=eth0        # Your ethernet interface (find with: ip link show)
-LIDAR_IP=192.168.1.5        # Must be 192.168.1.5 for Mid-360
-LIDAR_SERIAL=42             # Last 2 digits of lidar serial number
+LIDAR_INTERFACE=eth0              # Your ethernet interface (find with: ip link show)
+LIDAR_COMPUTER_IP=192.168.1.5    # Computer IP on the lidar subnet
+LIDAR_IP=192.168.1.116           # Full IP address of your Mid-360 lidar
 
 # Motor Controller
 MOTOR_SERIAL_DEVICE=/dev/ttyACM0  # Serial device (check with: ls /dev/ttyACM*)
