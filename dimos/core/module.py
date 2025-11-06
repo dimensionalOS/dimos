@@ -258,13 +258,14 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         callable.set_rpc(self.rpc)
         self._bound_rpc_calls[method] = callable
 
-    def get_rpc_calls(self, *methods: str) -> tuple[RpcCall]:
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall]:
         missing = [m for m in methods if m not in self._bound_rpc_calls]
         if missing:
             raise ValueError(
                 f"RPC methods not found. Class: {self.__class__.__name__}, RPC methods: {', '.join(missing)}"
             )
-        return tuple(self._bound_rpc_calls[m] for m in methods)
+        result = tuple(self._bound_rpc_calls[m] for m in methods)
+        return result[0] if len(result) == 1 else result
 
 
 class DaskModule(ModuleBase):
