@@ -382,7 +382,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
             super().stop()
 
 
-navigation_module = ROSNav.blueprint
+ros_nav = ROSNav.blueprint
 
 
 def deploy(dimos: DimosCluster):
@@ -399,4 +399,4 @@ def deploy(dimos: DimosCluster):
     return nav
 
 
-__all__ = ["ROSNav", "deploy", "navigation_module"]
+__all__ = ["ROSNav", "deploy", "ros_nav"]

@@ -134,8 +134,3 @@ class NavigationModule(Module):
             return True
 
         return False
-
-
-ros_navigation_module = NavigationModule.blueprint
-
-__all__ = ["NavigationModule", "ros_navigation_module"]
