@@ -59,7 +59,8 @@ if [ "$MODE" = "hardware" ]; then
             echo -e "${YELLOW}Creating .env from .env.hardware template...${NC}"
             cp .env.hardware .env
             echo -e "${RED}Please edit .env file with your hardware configuration:${NC}"
-            echo "  - LIDAR_SERIAL: Last 2 digits of your Mid-360 serial number"
+            echo "  - LIDAR_IP: Full IP address of your Mid-360 lidar"
+            echo "  - LIDAR_COMPUTER_IP: IP address of this computer on the lidar subnet"
             echo "  - LIDAR_INTERFACE: Network interface connected to lidar"
             echo "  - MOTOR_SERIAL_DEVICE: Serial device for motor controller"
             echo ""
@@ -75,9 +76,9 @@ if [ "$MODE" = "hardware" ]; then
         set +a
 
         # Check for required environment variables
-        if [ -z "$LIDAR_SERIAL" ] || [ "$LIDAR_SERIAL" = "00" ]; then
-            echo -e "${YELLOW}Warning: LIDAR_SERIAL not configured in .env${NC}"
-            echo "Set LIDAR_SERIAL to the last 2 digits of your Mid-360 serial"
+        if [ -z "$LIDAR_IP" ] || [ "$LIDAR_IP" = "192.168.1.116" ]; then
+            echo -e "${YELLOW}Warning: LIDAR_IP still using default value in .env${NC}"
+            echo "Set LIDAR_IP to the actual IP address of your Mid-360 lidar"
         fi
 
         # Check for serial devices

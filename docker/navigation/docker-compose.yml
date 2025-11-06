@@ -93,8 +93,8 @@ services:
       - HARDWARE_MODE=true
       # Mid-360 Lidar configuration
       - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}
-      - LIDAR_IP=${LIDAR_IP:-192.168.1.5}
-      - LIDAR_SERIAL=${LIDAR_SERIAL:-}
+      - LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP:-192.168.1.5}
+      - LIDAR_IP=${LIDAR_IP:-192.168.1.116}
       # Motor controller
       - MOTOR_SERIAL_DEVICE=${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}
       # Network optimization
@@ -117,8 +117,6 @@ services:
       - ./config:/ros2_ws/config:rw
       # Hardware-specific volumes
       - ./logs:/ros2_ws/logs:rw
-      # Mount Livox MID360 config for easy customization
-      - ./MID360_config.json:/ros2_ws/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config/MID360_config.json:rw
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - /dev/bus/usb:/dev/bus/usb:rw
