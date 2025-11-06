@@ -98,7 +98,7 @@ services:
       # Motor controller
       - MOTOR_SERIAL_DEVICE=${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}
       # Network optimization
-      - ENABLE_WIFI_BUFFER=${ENABLE_WIFI_BUFFER:-false}
+      - ENABLE_WIFI_BUFFER=true
 
     # Volume mounts
     volumes:
@@ -117,6 +117,8 @@ services:
       - ./config:/ros2_ws/config:rw
       # Hardware-specific volumes
       - ./logs:/ros2_ws/logs:rw
+      # Mount Livox MID360 config for easy customization
+      - ./MID360_config.json:/ros2_ws/src/ros-navigation-autonomy-stack/src/utilities/livox_ros_driver2/config/MID360_config.json:rw
       - /etc/localtime:/etc/localtime:ro
       - /etc/timezone:/etc/timezone:ro
       - /dev/bus/usb:/dev/bus/usb:rw
