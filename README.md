@@ -69,7 +69,7 @@ cd dimos
 python3 -m venv venv
 source venv/bin/activate
 
-sudo apt install portaudio19-dev python3-pyaudio
+sudo apt install portaudio19-dev python3-pyaudio libturbojpeg0-dev
 
 # Install LFS
 sudo apt install git-lfs
@@ -113,6 +113,7 @@ dimos-robot --replay run unitree-go2
 #### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
 ```bash
 pip install -e .[sim]
+python -m mujoco_playground || true # Download the MuJoCo Menagerie.
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
 dimos-robot --simulation run unitree-go2
 ```
