@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     ros-jazzy-pcl-ros \
     # Development tools
     git \
+    git-lfs \
     cmake \
     build-essential \
     python3-colcon-common-extensions \
