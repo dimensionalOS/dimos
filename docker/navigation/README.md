@@ -41,11 +41,14 @@ If the automated script encounters issues, follow the manual setup below.
 2. **Install NVIDIA GPU drivers**. See [NVIDIA driver installation](https://www.nvidia.com/download/index.aspx).
 3. **Install NVIDIA Container Toolkit**. Follow the [installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html).
 
-## Quick Start
+## Automated Quick Start
+
+This is an optimistic overview. Use the commands below for an in depth version.
 
 **Build the Docker image:**
 
 ```bash
+cd docker/navigation
 ./build.sh
 ```
 
@@ -60,6 +63,31 @@ Note that the build will take over 10 minutes and build an image over 30GiB.
 
 ```bash
 ./start.sh --simulation
+```
+
+## Manual build
+
+Go to the docker dir and clone the ROS navigation stack.
+
+```bash
+cd docker/navigation
+git clone -b jazzy git@github.com:dimensionalOS/ros-navigation-autonomy-stack.git
+```
+
+Download a [Unity environment model for the Mecanum wheel platform](https://drive.google.com/drive/folders/1G1JYkccvoSlxyySuTlPfvmrWoJUO8oSs?usp=sharing) and unzip the files to `unity_models`.
+
+Alternativelly, extract `office_building_1` from LFS:
+
+```bash
+tar -xf ../../data/.lfs/office_building_1.tar.gz
+mv office_building_1 unity_models
+```
+
+Then, go back to the root and build the docker image:
+
+```bash
+cd ../..
+docker compose -f docker/navigation/docker-compose.yml build
 ```
 
 ## On Real Hardware
