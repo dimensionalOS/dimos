@@ -24,7 +24,7 @@ from dimos.agents.agent import OpenAIAgent
 from dimos.skills.skills import AbstractSkill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 # For response validation

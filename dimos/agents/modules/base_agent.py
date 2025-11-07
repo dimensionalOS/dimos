@@ -29,7 +29,7 @@ try:
 except ImportError:
     from dimos.agents.modules.base import BaseAgent
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class BaseAgentModule(BaseAgent, Module):

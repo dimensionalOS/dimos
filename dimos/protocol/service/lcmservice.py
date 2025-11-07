@@ -29,7 +29,7 @@ import lcm
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 @cache

@@ -46,7 +46,7 @@ if TYPE_CHECKING:
 load_dotenv()
 
 # Initialize logger for the Claude agent
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 # Response object compatible with LLMAgent

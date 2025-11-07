@@ -28,7 +28,7 @@ import soundfile as sf
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 # Audio API constants (from go2_webrtc_driver)
 AUDIO_API = {

@@ -31,7 +31,7 @@ from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.unitree_go2 import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 pubsub.lcm.autoconf()
 

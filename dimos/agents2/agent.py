@@ -40,7 +40,7 @@ from dimos.protocol.skill.coordinator import (
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a System Overview message that provides situational awareness."

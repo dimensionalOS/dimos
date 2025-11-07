@@ -37,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from reactivex.disposable import Disposable
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class ManipulationInterface:

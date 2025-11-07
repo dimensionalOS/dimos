@@ -25,7 +25,7 @@ from dimos.utils.transform_utils import euler_to_quaternion
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class RosNavigation(SkillContainer, Resource):
