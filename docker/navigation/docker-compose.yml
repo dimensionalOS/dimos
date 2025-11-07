@@ -80,7 +80,7 @@ services:
     privileged: true
 
     # Override runtime for GPU support
-    runtime: ${DOCKER_RUNTIME:-nvidia}
+    runtime: ${DOCKER_RUNTIME:-runc}
 
     # Hardware environment variables
     environment:
