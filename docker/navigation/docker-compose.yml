@@ -94,6 +94,7 @@ services:
       # Mid-360 Lidar configuration
       - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}
       - LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP:-192.168.1.5}
+      - LIDAR_GATEWAY=${LIDAR_GATEWAY:-192.168.1.1}
       - LIDAR_IP=${LIDAR_IP:-192.168.1.116}
       # Motor controller
       - MOTOR_SERIAL_DEVICE=${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}

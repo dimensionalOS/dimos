@@ -149,6 +149,9 @@ if [ "${HARDWARE_MODE}" = "true" ]; then\n\
     if [ -n "${LIDAR_INTERFACE}" ] && [ -n "${LIDAR_COMPUTER_IP}" ]; then\n\
         ip addr add ${LIDAR_COMPUTER_IP}/24 dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
         ip link set ${LIDAR_INTERFACE} up 2>/dev/null || true\n\
+        if [ -n "${LIDAR_GATEWAY}" ]; then\n\
+            ip route add default via ${LIDAR_GATEWAY} dev ${LIDAR_INTERFACE} 2>/dev/null || true\n\
+        fi\n\
     fi\n\
     \n\
     # Generate MID360_config.json if LIDAR_COMPUTER_IP and LIDAR_IP are set\n\
