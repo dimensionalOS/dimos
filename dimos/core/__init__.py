@@ -289,3 +289,4 @@ def wait_exit() -> None:
             time.sleep(1)
         except KeyboardInterrupt:
             print("exiting...")
+            return
