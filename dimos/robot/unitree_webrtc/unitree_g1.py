@@ -201,6 +201,7 @@ class G1ConnectionModule(Module):
     @rpc
     def publish_request(self, topic: str, data: dict):
         """Forward WebRTC publish requests to connection."""
+        logger.info(f"Publishing request to topic: {topic} with data: {data}")
         return self.connection.publish_request(topic, data)
 
 

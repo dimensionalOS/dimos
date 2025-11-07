@@ -62,7 +62,7 @@ from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 # Basic configuration with navigation and visualization
-basic = (
+_basic_no_nav = (
     autoconnect(
         # Core connection module for G1
         g1_connection(),
@@ -86,9 +86,7 @@ basic = (
         # Navigation stack
         astar_planner(),
         holonomic_local_planner(),
-        behavior_tree_navigator(),
         wavefront_frontier_explorer(),
-        ros_nav(),
         # Visualization
         websocket_vis(),
         foxglove_bridge(),
@@ -124,12 +122,30 @@ basic = (
     )
 )
 
-# Standard configuration with perception and memory
-standard = autoconnect(
-    basic,
+basic_ros = autoconnect(
+    _basic_no_nav,
+    ros_nav(),
+)
+
+basic_bt_nav = autoconnect(
+    _basic_no_nav,
+    behavior_tree_navigator(),
+)
+
+_perception_and_memory = autoconnect(
     spatial_memory(),
     object_tracking(frame_id="camera_link"),
     utilization(),
+)
+
+standard = autoconnect(
+    basic_ros,
+    _perception_and_memory,
+).global_config(n_dask_workers=8)
+
+standard_bt_nav = autoconnect(
+    basic_bt_nav,
+    _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
 # Optimized configuration using shared memory for images
@@ -148,27 +164,33 @@ standard_with_shm = autoconnect(
     ),
 )
 
-# Full agentic configuration with LLM and skills
-agentic = autoconnect(
-    standard,
+_agentic_skills = autoconnect(
     llm_agent(),
     human_input(),
     navigation_skill(),
-    g1_skills(),  # G1-specific arm and movement mode skills
+    g1_skills(),
+)
+
+# Full agentic configuration with LLM and skills
+agentic = autoconnect(
+    standard,
+    _agentic_skills,
+)
+
+agentic_bt_nav = autoconnect(
+    standard_bt_nav,
+    _agentic_skills,
 )
 
 # Configuration with joystick control for teleoperation
 with_joystick = autoconnect(
-    basic,
+    basic_ros,
     g1_joystick(),  # Pygame-based joystick control
 )
 
 # Full featured configuration with everything
 full_featured = autoconnect(
     standard_with_shm,
-    llm_agent(),
-    human_input(),
-    navigation_skill(),
-    g1_skills(),
+    _agentic_skills,
     g1_joystick(),
 )

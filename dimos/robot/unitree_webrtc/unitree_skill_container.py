@@ -141,7 +141,7 @@ Example usage:
 
     execute_sport_command("FrontPounce")
 
-Here are all the command names, and what they do.
+Here are all the command names and what they do.
 
 {_commands}
 """
