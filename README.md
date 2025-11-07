@@ -97,7 +97,7 @@ cp default.env .env
 Open `.env` and customize the environment variables you need.
 
 * Set `OPENAI_API_KEY` if you want to run agentic robots. Make sure you have access to `gpt-4o`.
-* Set `ALIBABA_API_KEY` for the Qwen VL uses
+* Set `ALIBABA_API_KEY` for Qwen VL (used by agents).
 * Set `ROBOT_IP` to control the robot.
 
 #### Test the install 
