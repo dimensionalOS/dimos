@@ -33,22 +33,23 @@ def get_sudo_prefix() -> str:
 
 def test_check_multicast_all_configured() -> None:
     """Test check_multicast when system is properly configured."""
-    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-        # Mock successful checks with realistic output format
-        mock_run.side_effect = [
-            type(
-                "MockResult",
-                (),
-                {
-                    "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
-                    "returncode": 0,
-                },
-            )(),
-            type("MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0})(),
-        ]
+    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
+        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+            # Mock successful checks with realistic output format
+            mock_run.side_effect = [
+                type(
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                        "returncode": 0,
+                    },
+                )(),
+                type("MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0})(),
+            ]
 
-        result = check_multicast()
-        assert result == []
+            result = check_multicast()
+            assert result == []
 
 
 def test_check_multicast_missing_multicast_flag() -> None:
@@ -138,11 +139,18 @@ def test_check_multicast_subprocess_exception() -> None:
 
 
 def test_check_multicast_macos() -> None:
-    """Test check_multicast on macOS - should skip configuration."""
+    """Test check_multicast on macOS when configuration is needed."""
     with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Darwin"):
-        # macOS should not attempt any multicast configuration
-        result = check_multicast()
-        assert result == []  # No commands needed on macOS
+        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+            # Mock netstat -nr to not contain the multicast route
+            mock_run.side_effect = [
+                type("MockResult", (), {"stdout": "default            192.168.1.1        UGScg         en0", "returncode": 0})(),
+            ]
+
+            result = check_multicast()
+            sudo = get_sudo_prefix()
+            expected = [f"{sudo}route add -net 224.0.0.0/4 -interface lo0"]
+            assert result == expected
 
 
 def test_check_buffers_all_configured() -> None:
