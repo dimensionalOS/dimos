@@ -103,6 +103,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
         # ROS2 Publishers
         self.goal_pose_pub = self._node.create_publisher(ROSPoseStamped, "/goal_pose", 10)
+        self.cancel_goal_pub = self._node.create_publisher(ROSBool, "/cancel_goal", 10)
         self.soft_stop_pub = self._node.create_publisher(ROSInt8, "/soft_stop", 10)
         self.joy_pub = self._node.create_publisher(ROSJoy, "/joy", 10)
 
@@ -353,6 +354,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
         cancel_msg = ROSBool()
         cancel_msg.data = True
+        self.cancel_goal_pub.publish(cancel_msg)
 
         soft_stop_msg = ROSInt8()
         soft_stop_msg.data = 2
