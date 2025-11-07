@@ -85,6 +85,7 @@ Key configuration parameters:
 # Lidar Configuration
 LIDAR_INTERFACE=eth0              # Your ethernet interface (find with: ip link show)
 LIDAR_COMPUTER_IP=192.168.1.5    # Computer IP on the lidar subnet
+LIDAR_GATEWAY=192.168.1.1        # Gateway IP address for the lidar subnet
 LIDAR_IP=192.168.1.116           # Full IP address of your Mid-360 lidar
 
 # Motor Controller

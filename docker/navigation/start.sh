@@ -81,6 +81,11 @@ if [ "$MODE" = "hardware" ]; then
             echo "Set LIDAR_IP to the actual IP address of your Mid-360 lidar"
         fi
 
+        if [ -z "$LIDAR_GATEWAY" ]; then
+            echo -e "${YELLOW}Warning: LIDAR_GATEWAY not configured in .env${NC}"
+            echo "Set LIDAR_GATEWAY to the gateway IP address for the lidar subnet"
+        fi
+
         # Check for serial devices
         echo -e "${GREEN}Checking for serial devices...${NC}"
         if [ -e "${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}" ]; then
