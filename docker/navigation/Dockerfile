@@ -53,6 +53,8 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     # For Open3D
     libgomp1 \
+    # For TurboJPEG
+    libturbojpeg0-dev \
     # Clean up
     && rm -rf /var/lib/apt/lists/*
 
