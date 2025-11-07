@@ -158,7 +158,7 @@ class ConnectionModule(Module):
         cfg = global_config or GlobalConfig()
         self.ip = ip if ip is not None else cfg.robot_ip
         self.connection_type = connection_type or cfg.unitree_connection_type
-        self.rectify_image = not cfg.use_simulation
+        self.rectify_image = not cfg.simulation
         self.tf = TF()
         self.connection = None
 
@@ -205,7 +205,7 @@ class ConnectionModule(Module):
         self.connection.start()
 
         # Connect sensor streams to outputs
-        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
+        unsub = self.connection.lidar_stream().subscribe(self._on_lidar)
         self._disposables.add(unsub)
 
         unsub = self.connection.odom_stream().subscribe(self._publish_tf)
@@ -227,16 +227,22 @@ class ConnectionModule(Module):
             self.connection.stop()
         super().stop()
 
+    def _on_lidar(self, msg: LidarMessage) -> None:
+        if self.lidar.transport:
+            self.lidar.publish(msg)
+
     def _on_video(self, msg: Image) -> None:
         """Handle incoming video frames and publish synchronized camera data."""
         # Apply rectification if enabled
         if self.rectify_image:
             rectified_msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
             self._last_image = rectified_msg
-            self.color_image.publish(rectified_msg)
+            if self.color_image.transport:
+                self.color_image.publish(rectified_msg)
         else:
             self._last_image = msg
-            self.color_image.publish(msg)
+            if self.color_image.transport:
+                self.color_image.publish(msg)
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
@@ -248,8 +254,11 @@ class ConnectionModule(Module):
 
     def _publish_tf(self, msg) -> None:
         self._odom = msg
-        self.odom.publish(msg)
+        if self.odom.transport:
+            self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
+
+        # Publish camera_link transform
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -257,12 +266,22 @@ class ConnectionModule(Module):
             child_frame_id="camera_link",
             ts=time.time(),
         )
-        self.tf.publish(camera_link)
+
+        map_to_world = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="map",
+            child_frame_id="world",
+            ts=time.time(),
+        )
+
+        self.tf.publish(camera_link, map_to_world)
 
     def _publish_camera_info(self, timestamp: float) -> None:
         header = Header(timestamp, "camera_link")
         self.lcm_camera_info.header = header
-        self.camera_info.publish(self.lcm_camera_info)
+        if self.camera_info.transport:
+            self.camera_info.publish(self.lcm_camera_info)
 
     def _publish_camera_pose(self, timestamp: float) -> None:
         """Publish camera pose from TF lookup."""
@@ -282,7 +301,8 @@ class ConnectionModule(Module):
                     position=transform.translation,
                     orientation=transform.rotation,
                 )
-                self.camera_pose.publish(pose_msg)
+                if self.camera_pose.transport:
+                    self.camera_pose.publish(pose_msg)
             else:
                 logger.debug("Could not find transform from world to camera_link")
 
@@ -534,9 +554,6 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
         self.spatial_memory_module.color_image.transport = core.pSHMTransport(
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-        )
-        self.spatial_memory_module.odom.transport = core.LCMTransport(
-            "/go2/camera_pose", PoseStamped
         )
 
         logger.info("Spatial memory module deployed and connected")
