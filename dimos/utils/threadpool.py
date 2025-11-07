@@ -25,7 +25,7 @@ from reactivex.scheduler import ThreadPoolScheduler
 
 from .logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 def get_max_workers() -> int:

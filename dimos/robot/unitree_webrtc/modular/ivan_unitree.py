@@ -30,7 +30,7 @@ from dimos.robot.unitree_webrtc.modular import deploy_connection
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 def detection_unitree() -> None:

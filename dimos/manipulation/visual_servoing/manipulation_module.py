@@ -51,7 +51,7 @@ from dimos.utils.transform_utils import (
     pose_to_matrix,
 )
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class GraspStage(Enum):

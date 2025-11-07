@@ -53,7 +53,7 @@ except ImportError:
     ROSTFMessage = None
     ROS_AVAILABLE = False
 
-logger = setup_logger(__file__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class UnitreeB1(Robot, Resource):

@@ -17,7 +17,7 @@ import os
 from dimos.core.resource import Resource
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class RobotDebugger(Resource):

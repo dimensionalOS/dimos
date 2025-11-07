@@ -31,7 +31,7 @@ from dimos.utils.logging_config import setup_logger
 # Assuming AbstractVideoProvider and exceptions are in the sibling file
 from .video_provider import AbstractVideoProvider, VideoFrameError, VideoSourceError
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class RtspVideoProvider(AbstractVideoProvider):

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from datetime import datetime
+import inspect
 import logging
 import logging.handlers
 import os
@@ -81,16 +82,19 @@ def _configure_structlog() -> Path:
     return _LOG_FILE_PATH
 
 
-def setup_logger(name: str, level: int | None = None) -> Any:
+def setup_logger(level: int | None = None) -> Any:
     """Set up a structured logger using structlog.
 
     Args:
-        name: The name of the logger.
         level: The logging level.
 
     Returns:
         A configured structlog logger instance.
     """
+
+    caller_frame = inspect.stack()[1]
+    name = caller_frame.filename
+    print("filename:", name)
 
     # Convert absolute path to relative path
     try:

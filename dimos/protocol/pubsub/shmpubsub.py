@@ -38,7 +38,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 # --------------------------------------------------------------------------------------

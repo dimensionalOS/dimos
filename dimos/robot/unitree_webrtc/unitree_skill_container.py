@@ -36,7 +36,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class UnitreeSkillContainer(Module):

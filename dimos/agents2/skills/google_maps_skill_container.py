@@ -26,7 +26,7 @@ from dimos.protocol.skill.skill import SkillContainer, skill
 from dimos.robot.robot import Robot
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class GoogleMapsSkillContainer(SkillContainer, Resource):

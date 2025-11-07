@@ -22,7 +22,7 @@ from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class NavigationModule(Module):

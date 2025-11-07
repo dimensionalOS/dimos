@@ -35,7 +35,7 @@ from dimos.skills.navigation import GetPose
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 # Load environment variables
 load_dotenv()

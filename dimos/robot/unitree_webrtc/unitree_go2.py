@@ -68,7 +68,7 @@ from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
-logger = setup_logger(__file__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)

@@ -41,7 +41,7 @@ if TYPE_CHECKING:
 load_dotenv()
 
 # Initialize logger for the agent module
-logger = setup_logger(__file__, level=logging.DEBUG)
+logger = setup_logger(level=logging.DEBUG)
 
 
 # HuggingFaceLLMAgent Class

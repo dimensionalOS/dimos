@@ -19,7 +19,7 @@ from dimos.mapping.types import LatLon
 from dimos.models.vl.base import VlModel
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class CurrentLocationMap:
