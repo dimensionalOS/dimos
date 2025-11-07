@@ -24,7 +24,7 @@ import uuid
 
 import cv2
 import numpy as np
-from reactivex import Observable, disposable, interval, operators as ops
+from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
 from dimos import spec

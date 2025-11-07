@@ -16,7 +16,6 @@
 
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 import mujoco
 import numpy as np
@@ -35,7 +34,7 @@ class OnnxController(ABC):
         input_controller: InputController,
         ctrl_dt: float | None = None,
         drift_compensation: list[float] | None = None,
-    ):
+    ) -> None:
         self._output_names = ["continuous_actions"]
         self._policy = rt.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
 
@@ -99,7 +98,7 @@ class G1OnnxController(OnnxController):
         action_scale: float,
         input_controller: InputController,
         drift_compensation: list[float] | None = None,
-    ):
+    ) -> None:
         super().__init__(
             policy_path,
             default_angles,

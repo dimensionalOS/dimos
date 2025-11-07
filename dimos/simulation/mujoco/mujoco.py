@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 
 class MujocoThread(threading.Thread):
-    def __init__(self, global_config: GlobalConfig):
+    def __init__(self, global_config: GlobalConfig) -> None:
         super().__init__(daemon=True)
         self.global_config = global_config
         self.shared_pixels = None
@@ -79,7 +79,7 @@ class MujocoThread(threading.Thread):
         # Register cleanup on exit
         atexit.register(self.cleanup)
 
-    def run(self):
+    def run(self) -> None:
         try:
             self.run_simulation()
         except Exception as e:
@@ -87,7 +87,7 @@ class MujocoThread(threading.Thread):
         finally:
             self._cleanup_resources()
 
-    def run_simulation(self):
+    def run_simulation(self) -> None:
         # Go2 isn't in the MuJoCo models yet, so use Go1 as a substitute
         robot_name = self.global_config.robot_model or "unitree_go1"
         if robot_name == "unitree_go2":
@@ -331,12 +331,12 @@ class MujocoThread(threading.Thread):
         )
         return odom_to_publish
 
-    def _stop_move(self):
+    def _stop_move(self) -> None:
         with self._command_lock:
             self._command = np.zeros(3, dtype=np.float32)
         self._stop_timer = None
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         if self._stop_timer:
             self._stop_timer.cancel()
 
@@ -356,7 +356,7 @@ class MujocoThread(threading.Thread):
         with self._command_lock:
             return self._command.copy()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the simulation thread gracefully."""
         self._is_running = False
 
@@ -371,7 +371,7 @@ class MujocoThread(threading.Thread):
             if self.is_alive():
                 logger.warning("MuJoCo thread did not stop gracefully within timeout")
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up all resources. Can be called multiple times safely."""
         if self._cleanup_registered:
             return
@@ -381,7 +381,7 @@ class MujocoThread(threading.Thread):
         self.stop()
         self._cleanup_resources()
 
-    def _cleanup_resources(self):
+    def _cleanup_resources(self) -> None:
         """Internal method to clean up MuJoCo-specific resources."""
         try:
             # Cancel any timers
@@ -454,7 +454,7 @@ class MujocoThread(threading.Thread):
         except Exception as e:
             logger.error(f"Error during resource cleanup: {e}")
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor to ensure cleanup on object deletion."""
         try:
             self.cleanup()
