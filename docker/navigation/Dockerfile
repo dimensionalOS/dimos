@@ -129,6 +129,8 @@ RUN echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0483", ATTRS{idProduct}=="5740", M
 RUN echo '#!/bin/bash\n\
 set -e\n\
 \n\
+git config --global --add safe.directory /workspace/dimos\n\
+\n\
 # Source ROS setup\n\
 source /opt/ros/${ROS_DISTRO}/setup.bash\n\
 source ${WORKSPACE}/install/setup.bash\n\
