@@ -54,7 +54,7 @@ basic = (
         websocket_vis(),
         foxglove_bridge(),
     )
-    .global_config(n_dask_workers=4)
+    .global_config(n_dask_workers=4, robot_model="unitree_go2")
     .transports(
         # These are kept the same so that we don't have to change foxglove configs.
         # Although we probably should.

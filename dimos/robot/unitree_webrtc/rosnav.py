@@ -25,6 +25,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
 
+# TODO: Remove, deprecated
 class NavigationModule(Module):
     goal_pose: Out[PoseStamped] = None
     goal_reached: In[Bool] = None
