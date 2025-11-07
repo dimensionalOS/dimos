@@ -293,21 +293,22 @@ class OccupancyGrid(Timestamped):
             image_arr[known_mask] = (255 - (self.grid[known_mask] * 255 // 100)).astype(np.uint8)
 
         image = Image(data=image_arr, format=ImageFormat.GRAY, frame_id=self.frame_id, ts=self.ts)
-   
+        image.save("./local_costmap.png")
         return image
 
     def agent_encode(self):
-        grid_image = self.grid_to_image()
+        grid_image = self.grid_to_image()   
+        grid_image.save("./occupancy_grid_image_debug_mujoco.png")
         image_msg = grid_image.agent_encode()
-        agent_msg = [{
-            "type": "text",
-            "text": f"""
-                    The image is the grayscale image of an occupancy map, black representing
-                    obstacles or unknown areas and white representing free space.
-                    """
-        }]
-        agent_msg.extend(image_msg)
-        return agent_msg
+        # agent_msg = [{
+        #     "type": "text",
+        #     "text": f"""
+        #             The image is the grayscale image of an occupancy map, black representing
+        #             obstacles or unknown areas and white representing free space.
+        #             """
+        # }]
+        # agent_msg.extend(image_msg)
+        return image_msg
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""

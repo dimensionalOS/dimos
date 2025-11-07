@@ -116,6 +116,8 @@ class Map(Module):
             min_height=0.15,
             max_height=0.6,
         ).gradient(max_distance=0.25)
+        #TODO-FIX:use_transport
+        local_costmap.grid_to_image()
         self.local_costmap.publish(local_costmap)
 
     @property

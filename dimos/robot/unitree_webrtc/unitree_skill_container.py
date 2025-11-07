@@ -29,9 +29,14 @@ from dimos.core import Module
 from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Reducer, Stream
+from dimos.protocol.skill.type import Reducer, Stream, Output
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
 from dimos.utils.logging_config import setup_logger
+
+import numpy as np
+from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.sensor_msgs import Image
 
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
@@ -51,12 +56,21 @@ class UnitreeSkillContainer(Module):
         super().__init__()
         self._robot = robot
 
+        # latest cached costmap and transport handles
+        self._latest_local_costmap = None
+        self._local_costmap_transport = None
+        self._costmap_unsub = None
+
         # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
         self._generate_unitree_skills()
 
     @rpc
     def start(self) -> None:
         super().start()
+        # subscribe to local costmap
+        self._local_costmap_transport = core.LCMTransport("/local_costmap", OccupancyGrid)
+        self._costmap_unsub = self._local_costmap_transport.subscribe(self._on_local_costmap)
+
 
     @rpc
     def stop(self) -> None:
@@ -120,6 +134,12 @@ class UnitreeSkillContainer(Module):
 
         logger.debug(f"Generated skill: {skill_name} (API ID: {api_id})")
 
+
+    def _on_local_costmap(self, grid: OccupancyGrid) -> None:
+        """Callback invoked by the LCM transport when a new OccupancyGrid arrives.
+        """
+        self._latest_local_costmap = grid
+
     # ========== Explicit Skills ==========
 
     @skill()
@@ -161,6 +181,20 @@ class UnitreeSkillContainer(Module):
             yield str(datetime.datetime.now())
             time.sleep(1)
 
+    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
+    def get_map(self):
+        """Provides current map in the form of an image."""
+
+        # grid_image = Image.from_file("./local_costmap.png")
+
+        if not self._latest_local_costmap:
+            logger.error("No local costmap available to provide")
+            return None
+        else:
+            logger.info("Providing latest local costmap")
+            return self._latest_local_costmap
+
+
     @skill()
     def speak(self, text: str) -> str:
         """Speak text out loud through the robot's speakers."""
@@ -187,3 +221,4 @@ class UnitreeSkillContainer(Module):
             error_msg = f"Failed to execute {name}: {e}"
             logger.error(error_msg)
             return error_msg
+
