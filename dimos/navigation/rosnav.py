@@ -19,12 +19,11 @@ Encapsulates ROS bridge and topic remapping for Unitree robots.
 """
 
 from collections.abc import Generator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import logging
 import threading
 import time
 
-# ROS2 message imports
 from geometry_msgs.msg import (
     PointStamped as ROSPointStamped,
     PoseStamped as ROSPoseStamped,
@@ -47,7 +46,7 @@ from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
     Transform,
-    TwistStamped,
+    Twist,
     Vector3,
 )
 from dimos.msgs.nav_msgs import Path
@@ -64,8 +63,8 @@ logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 class Config(ModuleConfig):
     local_pointcloud_freq: float = 2.0
     global_pointcloud_freq: float = 1.0
-    sensor_to_base_link_transform: Transform = Transform(
-        frame_id="sensor", child_frame_id="base_link"
+    sensor_to_base_link_transform: Transform = field(
+        default_factory=lambda: Transform(frame_id="sensor", child_frame_id="base_link")
     )
 
 
@@ -80,7 +79,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
     goal_active: Out[PoseStamped] = None  # type: ignore
     path_active: Out[Path] = None  # type: ignore
-    cmd_vel: Out[TwistStamped] = None  # type: ignore
+    cmd_vel: Out[Twist] = None  # type: ignore
 
     # Using RxPY Subjects for reactive data flow instead of storing state
     _local_pointcloud_subject: Subject
@@ -104,7 +103,8 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
         # ROS2 Publishers
         self.goal_pose_pub = self._node.create_publisher(ROSPoseStamped, "/goal_pose", 10)
-        self.soft_stop_pub = self._node.create_publisher(ROSInt8, "/soft_stop", 10)
+        self.cancel_goal_pub = self._node.create_publisher(ROSBool, "/cancel_goal", 10)
+        self.soft_stop_pub = self._node.create_publisher(ROSInt8, "/stop", 10)
         self.joy_pub = self._node.create_publisher(ROSJoy, "/joy", 10)
 
         # ROS2 Subscribers
@@ -184,7 +184,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         self.goal_active.publish(dimos_pose)
 
     def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
-        self.cmd_vel.publish(TwistStamped.from_ros_msg(msg))
+        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))
 
     def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
@@ -354,6 +354,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
         cancel_msg = ROSBool()
         cancel_msg.data = True
+        self.cancel_goal_pub.publish(cancel_msg)
 
         soft_stop_msg = ROSInt8()
         soft_stop_msg.data = 2
@@ -383,16 +384,21 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
             super().stop()
 
 
+navigation_module = ROSNav.blueprint
+
+
 def deploy(dimos: DimosCluster):
     nav = dimos.deploy(ROSNav)
 
     nav.pointcloud.transport = pSHMTransport("/lidar")
     nav.global_pointcloud.transport = pSHMTransport("/map")
-
-    nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_req.transport = LCMTransport("/goal_req", PoseStamped)
     nav.goal_active.transport = LCMTransport("/goal_active", PoseStamped)
     nav.path_active.transport = LCMTransport("/path_active", Path)
-    nav.cmd_vel.transport = LCMTransport("/cmd_vel", TwistStamped)
+    nav.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
+
     nav.start()
     return nav
+
+
+__all__ = ["ROSNav", "deploy", "navigation_module"]
