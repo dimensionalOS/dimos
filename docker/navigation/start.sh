@@ -142,8 +142,7 @@ if docker info 2>/dev/null | grep -q nvidia; then
         export NVIDIA_DRIVER_CAPABILITIES=all
     fi
 else
-    echo -e "${RED}NVIDIA Docker runtime not found. GPU acceleration disabled.${NC}"
-    exit 1
+    echo -e "${YELLOW}NVIDIA Docker runtime not found. GPU acceleration disabled.${NC}"
 fi
 
 # Set container name for reference
