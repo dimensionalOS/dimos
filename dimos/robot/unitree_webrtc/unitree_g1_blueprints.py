@@ -24,7 +24,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.navigation import navigation_skill
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.camera import zed
@@ -35,7 +35,6 @@ from dimos.msgs.geometry_msgs import (
     Quaternion,
     Transform,
     Twist,
-    TwistStamped,
     Vector3,
 )
 from dimos.msgs.nav_msgs import Odometry, Path
@@ -55,7 +54,6 @@ from dimos.navigation.rosnav import ros_nav
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree_webrtc.depth_module import depth_module
 from dimos.robot.unitree_webrtc.g1_joystick_module import g1_joystick
 from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
