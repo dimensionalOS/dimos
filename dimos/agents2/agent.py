@@ -32,11 +32,11 @@ from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import (
-    SkillContainer,
     SkillCoordinator,
     SkillState,
     SkillStateDict,
 )
+from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 

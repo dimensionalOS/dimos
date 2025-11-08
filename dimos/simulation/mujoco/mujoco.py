@@ -19,6 +19,7 @@ import atexit
 import logging
 import threading
 import time
+from typing import Any
 
 import mujoco
 from mujoco import viewer
@@ -48,28 +49,32 @@ class MujocoThread(threading.Thread):
         self.shared_pixels = None
         self.pixels_lock = threading.RLock()
         self.shared_depth_front = None
-        self.shared_depth_front_pose = None
+        self.shared_depth_front_pose: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = (
+            None
+        )
         self.depth_lock_front = threading.RLock()
         self.shared_depth_left = None
-        self.shared_depth_left_pose = None
+        self.shared_depth_left_pose: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = None
         self.depth_left_lock = threading.RLock()
         self.shared_depth_right = None
-        self.shared_depth_right_pose = None
+        self.shared_depth_right_pose: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = (
+            None
+        )
         self.depth_right_lock = threading.RLock()
-        self.odom_data = None
+        self.odom_data: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = None
         self.odom_lock = threading.RLock()
         self.lidar_lock = threading.RLock()
-        self.model = None
-        self.data = None
+        self.model: mujoco.MjModel | None = None
+        self.data: mujoco.MjData | None = None
         self._command = np.zeros(3, dtype=np.float32)
         self._command_lock = threading.RLock()
         self._is_running = True
         self._stop_timer: threading.Timer | None = None
         self._viewer = None
-        self._rgb_renderer = None
-        self._depth_renderer = None
-        self._depth_left_renderer = None
-        self._depth_right_renderer = None
+        self._rgb_renderer: mujoco.Renderer | None = None
+        self._depth_renderer: mujoco.Renderer | None = None
+        self._depth_left_renderer: mujoco.Renderer | None = None
+        self._depth_right_renderer: mujoco.Renderer | None = None
         self._cleanup_registered = False
 
         # Store initial reference pose for stable point cloud generation
@@ -96,6 +101,9 @@ class MujocoThread(threading.Thread):
         scene_name = self.global_config.mujoco_room or "office1"
 
         self.model, self.data = load_model(self, robot=robot_name, scene=scene_name)
+
+        if self.model is None or self.data is None:
+            raise ValueError("Model or data failed to load.")
 
         # Set initial robot position
         match robot_name:
@@ -153,8 +161,8 @@ class MujocoThread(threading.Thread):
             scene_option = mujoco.MjvOption()
 
             # Timing control variables
-            last_video_time = 0
-            last_lidar_time = 0
+            last_video_time = 0.0
+            last_lidar_time = 0.0
             video_interval = 1.0 / VIDEO_FPS
             lidar_interval = 1.0 / LIDAR_FPS
 
@@ -242,7 +250,12 @@ class MujocoThread(threading.Thread):
                 if time_until_next_step > 0:
                     time.sleep(time_until_next_step)
 
-    def _process_depth_camera(self, depth_data, depth_lock, pose_data) -> np.ndarray | None:
+    def _process_depth_camera(
+        self,
+        depth_data: np.ndarray[Any, Any] | None,
+        depth_lock: threading.RLock,
+        pose_data: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None,
+    ) -> np.ndarray[Any, Any] | None:
         """Process a single depth camera and return point cloud points."""
         with depth_lock:
             if depth_data is None or pose_data is None:

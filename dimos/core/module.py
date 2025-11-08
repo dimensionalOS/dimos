@@ -22,6 +22,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    overload,
 )
 
 from dask.distributed import Actor, get_worker
@@ -258,7 +259,13 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         callable.set_rpc(self.rpc)
         self._bound_rpc_calls[method] = callable
 
-    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall]:
+    @overload
+    def get_rpc_calls(self, method: str) -> RpcCall: ...
+
+    @overload
+    def get_rpc_calls(self, method1: str, method2: str, *methods: str) -> tuple[RpcCall, ...]: ...
+
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
         missing = [m for m in methods if m not in self._bound_rpc_calls]
         if missing:
             raise ValueError(

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import traceback
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import dimos.core.colors as colors
 
@@ -38,9 +38,9 @@ T = TypeVar("T")
 
 
 class PubSubTransport(Transport[T]):
-    topic: any
+    topic: Any
 
-    def __init__(self, topic: any) -> None:
+    def __init__(self, topic: Any) -> None:
         self.topic = topic
 
     def __str__(self) -> str:
