@@ -360,6 +360,7 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
         self.lcm = LCM()
+        self._transports = []
 
         # Initialize skill library
         if skill_library is None:
@@ -430,15 +431,17 @@ class UnitreeGo2(UnitreeRobot, Resource):
             ConnectionModule, self.ip, connection_type=self.connection_type
         )
 
-        self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-        self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
-        self.connection.color_image.transport = core.pSHMTransport(
+        self.connection.lidar.transport = lidar_transport = core.LCMTransport("/lidar", LidarMessage)
+        self.connection.odom.transport = odom_transport = core.LCMTransport("/odom", PoseStamped)
+        self.connection.gps_location.transport = gps_location_transport = core.pLCMTransport("/gps_location")
+        self.connection.color_image.transport = color_image_transport = core.pSHMTransport(
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
-        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
-        self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
+        self.connection.cmd_vel.transport = cmd_vel_transport = core.LCMTransport("/cmd_vel", Twist)
+        self.connection.camera_info.transport = camera_info_transport = core.LCMTransport("/go2/camera_info", CameraInfo)
+        self.connection.camera_pose.transport = camera_pose_transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
+        self._transports.extend([lidar_transport, odom_transport, gps_location_transport, color_image_transport, cmd_vel_transport, camera_info_transport, camera_pose_transport])
+
 
     def _deploy_mapping(self) -> None:
         """Deploy and configure the mapping module."""
@@ -447,9 +450,11 @@ class UnitreeGo2(UnitreeRobot, Resource):
             Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
         )
 
-        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
-        self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
-        self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)
+        self.mapper.global_map.transport = global_map_transport = core.LCMTransport("/global_map", LidarMessage)
+        self.mapper.global_costmap.transport = global_costmap_transport = core.LCMTransport("/global_costmap", OccupancyGrid)
+        self.mapper.local_costmap.transport = local_costmap_transport = core.LCMTransport("/local_costmap", OccupancyGrid)
+        self._transports.extend([global_map_transport, global_costmap_transport, local_costmap_transport])
+
 
         self.mapper.lidar.connect(self.connection.lidar)
 
@@ -464,23 +469,24 @@ class UnitreeGo2(UnitreeRobot, Resource):
         )
         self.frontier_explorer = self._dimos.deploy(WavefrontFrontierExplorer)
 
-        self.navigator.target.transport = core.LCMTransport("/navigation_goal", PoseStamped)
-        self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
-        self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)
-        self.navigator.global_costmap.transport = core.LCMTransport(
+        self.navigator.target.transport = nav_target_transport = core.LCMTransport("/navigation_goal", PoseStamped)
+        self.navigator.goal_request.transport = nav_goal_request_transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.navigator.goal_reached.transport = nav_goal_reached_transport = core.LCMTransport("/goal_reached", Bool)
+        self.navigator.navigation_state.transport = nav_state_transport = core.LCMTransport("/navigation_state", String)
+        self.navigator.global_costmap.transport = nav_global_costmap_transport = core.LCMTransport(
             "/global_costmap", OccupancyGrid
         )
-        self.global_planner.path.transport = core.LCMTransport("/global_path", Path)
-        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.frontier_explorer.goal_request.transport = core.LCMTransport(
+        self.global_planner.path.transport = global_path_transport = core.LCMTransport("/global_path", Path)
+        self.local_planner.cmd_vel.transport = local_cmd_vel_transport = core.LCMTransport("/cmd_vel", Twist)
+        self.frontier_explorer.goal_request.transport = fe_goal_request_transport = core.LCMTransport(
             "/goal_request", PoseStamped
         )
-        self.frontier_explorer.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.frontier_explorer.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
-        self.frontier_explorer.stop_explore_cmd.transport = core.LCMTransport(
+        self.frontier_explorer.goal_reached.transport = fe_goal_reached_transport = core.LCMTransport("/goal_reached", Bool)
+        self.frontier_explorer.explore_cmd.transport = fe_explore_cmd_transport = core.LCMTransport("/explore_cmd", Bool)
+        self.frontier_explorer.stop_explore_cmd.transport = fe_stop_explore_cmd_transport = core.LCMTransport(
             "/stop_explore_cmd", Bool
         )
+        self._transports.extend([nav_target_transport, nav_goal_request_transport, nav_goal_reached_transport, nav_state_transport, nav_global_costmap_transport, global_path_transport, local_cmd_vel_transport, fe_goal_request_transport, fe_goal_reached_transport, fe_explore_cmd_transport, fe_stop_explore_cmd_transport])
 
         self.global_planner.target.connect(self.navigator.target)
 
@@ -501,11 +507,13 @@ class UnitreeGo2(UnitreeRobot, Resource):
     def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
         self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
-        self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
-        self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
-        self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.websocket_vis.goal_request.transport = vis_goal_request_transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis.gps_goal.transport = vis_gps_goal_transport = core.pLCMTransport("/gps_goal")
+        self.websocket_vis.explore_cmd.transport = vis_explore_cmd_transport = core.LCMTransport("/explore_cmd", Bool)
+        self.websocket_vis.stop_explore_cmd.transport = vis_stop_explore_cmd_transport = core.LCMTransport("/stop_explore_cmd", Bool)
+        self.websocket_vis.cmd_vel.transport = vis_cmd_vel_transport = core.LCMTransport("/cmd_vel", Twist)
+        self._transports.extend([vis_goal_request_transport, vis_gps_goal_transport, vis_explore_cmd_transport, vis_stop_explore_cmd_transport, vis_cmd_vel_transport])
+
 
         self.websocket_vis.odom.connect(self.connection.odom)
         self.websocket_vis.gps_location.connect(self.connection.gps_location)
@@ -532,12 +540,14 @@ class UnitreeGo2(UnitreeRobot, Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.color_image.transport = core.pSHMTransport(
+        self.spatial_memory_module.color_image.transport = sm_color_image_transport = core.pSHMTransport(
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
-        self.spatial_memory_module.odom.transport = core.LCMTransport(
+        self.spatial_memory_module.odom.transport = sm_odom_transport = core.LCMTransport(
             "/go2/camera_pose", PoseStamped
         )
+        self._transports.extend([sm_color_image_transport, sm_odom_transport])
+
 
         logger.info("Spatial memory module deployed and connected")
 
@@ -553,15 +563,18 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.utilization_module = self._dimos.deploy(UtilizationModule)
 
         # Set up transports for object tracker
-        self.object_tracker.detection2darray.transport = core.LCMTransport(
+        self.object_tracker.detection2darray.transport = ot_detection_transport = core.LCMTransport(
             "/go2/detection2d", Detection2DArray
         )
-        self.object_tracker.tracked_overlay.transport = core.pSHMTransport(
+        self.object_tracker.tracked_overlay.transport = ot_overlay_transport = core.pSHMTransport(
             "/go2/tracked_overlay", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
+        self._transports.extend([ot_detection_transport, ot_overlay_transport])
+
 
         # Set up transports for bbox navigator
-        self.bbox_navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.bbox_navigator.goal_request.transport = bbox_goal_request_transport = core.LCMTransport("/goal_request", PoseStamped)
+        self._transports.append(bbox_goal_request_transport)
 
         logger.info("Object tracker and bbox navigator modules deployed")
 
@@ -681,10 +694,16 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
 def main() -> None:
     """Main entry point."""
+    # Clean up dask scratch space to avoid permission errors from previous runs
+    import shutil
+    import tempfile
+    dask_scratch = os.path.join(tempfile.gettempdir(), 'dask-scratch-space')
+    if os.path.exists(dask_scratch):
+        logger.info(f"Removing stale dask scratch space: {dask_scratch}")
+        shutil.rmtree(dask_scratch, ignore_errors=True)
+
     ip = os.getenv("ROBOT_IP")
     connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
-
-    pubsub.lcm.autoconf()
 
     robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
     robot.start()

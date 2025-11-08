@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import traceback
+import threading
 from typing import TypeVar
 
 import dimos.core.colors as colors
@@ -42,6 +43,7 @@ class PubSubTransport(Transport[T]):
 
     def __init__(self, topic: any) -> None:
         self.topic = topic
+        self._start_lock = threading.Lock()
 
     def __str__(self) -> str:
         return (
@@ -62,16 +64,18 @@ class pLCMTransport(PubSubTransport[T]):
         return (pLCMTransport, (self.topic,))
 
     def broadcast(self, _, msg) -> None:
-        if not self._started:
-            self.lcm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.lcm.start()
+                self._started = True
 
         self.lcm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
-        if not self._started:
-            self.lcm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.lcm.start()
+                self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
@@ -87,16 +91,18 @@ class LCMTransport(PubSubTransport[T]):
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
 
     def broadcast(self, _, msg) -> None:
-        if not self._started:
-            self.lcm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.lcm.start()
+                self._started = True
 
         self.lcm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
-        if not self._started:
-            self.lcm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.lcm.start()
+                self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
@@ -104,6 +110,7 @@ class JpegLcmTransport(LCMTransport):
     def __init__(self, topic: str, type: type, **kwargs):
         self.lcm = JpegLCM(**kwargs)
         super().__init__(topic, type)
+        self._start_lock = threading.Lock()
 
     def __reduce__(self):
         return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
@@ -120,16 +127,18 @@ class pSHMTransport(PubSubTransport[T]):
         return (pSHMTransport, (self.topic,))
 
     def broadcast(self, _, msg) -> None:
-        if not self._started:
-            self.shm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.shm.start()
+                self._started = True
 
         self.shm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
-        if not self._started:
-            self.shm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.shm.start()
+                self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
@@ -144,16 +153,18 @@ class SHMTransport(PubSubTransport[T]):
         return (SHMTransport, (self.topic,))
 
     def broadcast(self, _, msg) -> None:
-        if not self._started:
-            self.shm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.shm.start()
+                self._started = True
 
         self.shm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
-        if not self._started:
-            self.shm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.shm.start()
+                self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 
@@ -169,16 +180,18 @@ class JpegShmTransport(PubSubTransport[T]):
         return (JpegShmTransport, (self.topic, self.quality))
 
     def broadcast(self, _, msg):
-        if not self._started:
-            self.shm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.shm.start()
+                self._started = True
 
         self.shm.publish(self.topic, msg)
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:
-        if not self._started:
-            self.shm.start()
-            self._started = True
+        with self._start_lock:
+            if not self._started:
+                self.shm.start()
+                self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
 

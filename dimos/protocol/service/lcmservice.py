@@ -201,6 +201,11 @@ def autoconf() -> None:
         logger.info("CI environment detected: Skipping automatic system configuration.")
         return
 
+    system = platform.system()
+    if system == "Darwin":
+        logger.info("macOS detected: Skipping automatic system configuration.")
+        return
+
     commands_needed = []
 
     # Check multicast configuration
@@ -289,14 +294,9 @@ class LCMService(Service[LCMConfig]):
         super().__init__(**kwargs)
 
         # we support passing an existing LCM instance
-        if self.config.lcm:
-            # TODO: If we pass LCM in, it's unsafe to use in this thread and the _loop thread.
-            self.l = self.config.lcm
-        else:
-            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+        self.l = self.config.lcm
 
         self._l_lock = threading.Lock()
-
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -324,16 +324,16 @@ class LCMService(Service[LCMConfig]):
         self._call_thread_pool_lock = threading.RLock()
 
     def start(self) -> None:
-        # Reinitialize LCM if it's None (e.g., after unpickling)
-        if self.l is None:
-            if self.config.lcm:
-                self.l = self.config.lcm
-            else:
-                self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
-
-        if self.config.autoconf:
+        # Run autoconf before LCM initialization if not already initialized
+        if self.config.autoconf and self.l is None:
             autoconf()
-        else:
+
+        # Reinitialize LCM if it's None (e.g., after unpickling or deferred init)
+        if self.l is None:
+            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+
+        # Fallback to check_system if autoconf is disabled
+        if not self.config.autoconf:
             try:
                 check_system()
             except Exception as e:
