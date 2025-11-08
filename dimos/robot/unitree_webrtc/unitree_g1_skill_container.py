@@ -21,9 +21,9 @@ import difflib
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
+from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-from dimos.msgs.geometry_msgs import Twist, Vector3
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1_skill_container")
 
