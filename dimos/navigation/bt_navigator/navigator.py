@@ -36,7 +36,7 @@ from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import apply_transform
 
-logger = setup_logger("dimos.navigation.bt_navigator")
+logger = setup_logger(__file__)
 
 
 class NavigatorState(Enum):
@@ -228,6 +228,10 @@ class BehaviorTreeNavigator(Module):
         """Transform goal pose to the odometry frame."""
         if not goal.frame_id:
             return goal
+
+        if not self.latest_odom:
+            logger.error("No odometry data available to transform goal")
+            return None
 
         odom_frame = self.latest_odom.frame_id
         if goal.frame_id == odom_frame:

@@ -229,3 +229,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             error_msg = f"Failed to execute G1 mode {name}: {e}"
             logger.error(error_msg)
             return error_msg
+
+
+# Create blueprint function for easy instantiation
+g1_skills = UnitreeG1SkillContainer.blueprint

@@ -54,7 +54,7 @@ basic = (
         websocket_vis(),
         foxglove_bridge(),
     )
-    .global_config(n_dask_workers=4)
+    .global_config(n_dask_workers=4, robot_model="unitree_go2")
     .transports(
         # These are kept the same so that we don't have to change foxglove configs.
         # Although we probably should.
@@ -66,21 +66,12 @@ basic = (
     )
 )
 
-standard = (
-    autoconnect(
-        basic,
-        spatial_memory(),
-        object_tracking(frame_id="camera_link"),
-        depth_module(),
-        utilization(),
-    )
-    .global_config(n_dask_workers=8)
-    .transports(
-        {
-            ("depth_image", Image): LCMTransport("/go2/depth_image", Image),
-        }
-    )
-)
+standard = autoconnect(
+    basic,
+    spatial_memory(),
+    object_tracking(frame_id="camera_link"),
+    utilization(),
+).global_config(n_dask_workers=8)
 
 standard_with_shm = autoconnect(
     standard.transports(
@@ -88,15 +79,11 @@ standard_with_shm = autoconnect(
             ("color_image", Image): pSHMTransport(
                 "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
             ),
-            ("depth_image", Image): pSHMTransport(
-                "/go2/depth_image", default_capacity=DEFAULT_CAPACITY_DEPTH_IMAGE
-            ),
         }
     ),
     foxglove_bridge(
         shm_channels=[
             "/go2/color_image#sensor_msgs.Image",
-            "/go2/depth_image#sensor_msgs.Image",
         ]
     ),
 )

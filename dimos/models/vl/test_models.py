@@ -8,7 +8,6 @@ from dimos.core import LCMTransport
 from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type import ImageDetections2D
 from dimos.utils.data import get_data
 
