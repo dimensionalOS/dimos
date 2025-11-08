@@ -89,8 +89,6 @@ class UnitreeG1SkillContainer(SkillModule):
             yaw: Rotational velocity (rad/s)
             duration: How long to move (seconds)
         """
-        if self._move is None:
-            return "Error: Robot not connected"
 
         move_rpc = self.get_rpc_calls("G1ConnectionModule.move")
         twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
@@ -99,11 +97,11 @@ class UnitreeG1SkillContainer(SkillModule):
 
     @skill()
     def execute_arm_command(self, command_name: str) -> str:
-        self._execute_g1_command(_ARM_COMMANDS, 7106, command_name)
+        return self._execute_g1_command(_ARM_COMMANDS, 7106, command_name)
 
     @skill()
     def execute_mode_command(self, command_name: str) -> str:
-        self._execute_g1_command(_MODE_COMMANDS, 7101, command_name)
+        return self._execute_g1_command(_MODE_COMMANDS, 7101, command_name)
 
     def _execute_g1_command(
         self, command_dict: dict[str, tuple[int, str]], api_id: int, command_name: str

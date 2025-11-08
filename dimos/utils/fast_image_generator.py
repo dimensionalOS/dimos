@@ -14,7 +14,38 @@
 
 """Fast stateful image generator with visual features for encoding tests."""
 
+from typing import Literal, TypedDict, Union
+
 import numpy as np
+from numpy.typing import NDArray
+
+
+class CircleObject(TypedDict):
+    """Type definition for circle objects."""
+
+    type: Literal["circle"]
+    x: float
+    y: float
+    vx: float
+    vy: float
+    radius: int
+    color: NDArray[np.float32]
+
+
+class RectObject(TypedDict):
+    """Type definition for rectangle objects."""
+
+    type: Literal["rect"]
+    x: float
+    y: float
+    vx: float
+    vy: float
+    width: int
+    height: int
+    color: NDArray[np.float32]
+
+
+Object = Union[CircleObject, RectObject]
 
 
 class FastImageGenerator:
@@ -36,6 +67,7 @@ class FastImageGenerator:
         self.width = width
         self.height = height
         self.frame_count = 0
+        self.objects: list[Object] = []
 
         # Pre-allocate the main canvas
         self.canvas = np.zeros((height, width, 3), dtype=np.float32)
@@ -126,7 +158,7 @@ class FastImageGenerator:
         # Pre-compute indices for the entire image
         self.y_indices, self.x_indices = np.indices((self.height, self.width))
 
-    def _draw_circle_fast(self, cx: int, cy: int, radius: int, color: np.ndarray) -> None:
+    def _draw_circle_fast(self, cx: int, cy: int, radius: int, color: NDArray[np.float32]) -> None:
         """Draw a circle using vectorized operations - optimized version without anti-aliasing."""
         # Compute bounding box to minimize calculations
         y1 = max(0, cy - radius - 1)
@@ -141,7 +173,7 @@ class FastImageGenerator:
             mask = dist_sq <= radius**2
             self.canvas[y1:y2, x1:x2][mask] = color
 
-    def _draw_rect_fast(self, x: int, y: int, w: int, h: int, color: np.ndarray) -> None:
+    def _draw_rect_fast(self, x: int, y: int, w: int, h: int, color: NDArray[np.float32]) -> None:
         """Draw a rectangle using slicing."""
         # Clip to canvas boundaries
         x1 = max(0, x)
@@ -182,7 +214,7 @@ class FastImageGenerator:
                     obj["vy"] *= -1
                     obj["y"] = np.clip(obj["y"], 0, 1 - h)
 
-    def generate_frame(self) -> np.ndarray:
+    def generate_frame(self) -> NDArray[np.uint8]:
         """
         Generate a single frame with visual features - optimized for 30+ FPS.
 
@@ -249,10 +281,10 @@ class FastImageGenerator:
 
 
 # Convenience function for backward compatibility
-_generator = None
+_generator: FastImageGenerator | None = None
 
 
-def random_image(width: int, height: int) -> np.ndarray:
+def random_image(width: int, height: int) -> NDArray[np.uint8]:
     """
     Generate an image with visual features suitable for encoding tests.
     Maintains state for efficient stream generation.
