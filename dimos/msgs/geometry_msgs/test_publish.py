@@ -47,7 +47,7 @@ def test_receive() -> None:
                 lc.handle()
                 # loop 10000 times
                 for _ in range(10000000):
-                    3 + 3
+                    3 + 3  # noqa: B018
             except Exception as e:
                 print(f"Error in LCM handling: {e}")
 
