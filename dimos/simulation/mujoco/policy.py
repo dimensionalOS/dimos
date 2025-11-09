@@ -16,7 +16,7 @@
 
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Any
 
 import mujoco
 import numpy as np
@@ -29,13 +29,13 @@ class OnnxController(ABC):
     def __init__(
         self,
         policy_path: str,
-        default_angles: np.ndarray,
+        default_angles: np.ndarray[Any, Any],
         n_substeps: int,
         action_scale: float,
         input_controller: InputController,
         ctrl_dt: float | None = None,
         drift_compensation: list[float] | None = None,
-    ):
+    ) -> None:
         self._output_names = ["continuous_actions"]
         self._policy = rt.InferenceSession(policy_path, providers=["CPUExecutionProvider"])
 
@@ -50,7 +50,7 @@ class OnnxController(ABC):
         self._drift_compensation = np.array(drift_compensation or [0.0, 0.0, 0.0], dtype=np.float32)
 
     @abstractmethod
-    def get_obs(self, model, data) -> np.ndarray:
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
         pass
 
     def get_control(self, model: mujoco.MjModel, data: mujoco.MjData) -> None:
@@ -63,12 +63,12 @@ class OnnxController(ABC):
             data.ctrl[:] = onnx_pred * self._action_scale + self._default_angles
             self._post_control_update()
 
-    def _post_control_update(self) -> None:
+    def _post_control_update(self) -> None:  # noqa: B027
         pass
 
 
 class Go1OnnxController(OnnxController):
-    def get_obs(self, model, data) -> np.ndarray:
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
         linvel = data.sensor("local_linvel").data
         gyro = data.sensor("gyro").data
         imu_xmat = data.site_xmat[model.site("imu").id].reshape(3, 3)
@@ -93,13 +93,13 @@ class G1OnnxController(OnnxController):
     def __init__(
         self,
         policy_path: str,
-        default_angles: np.ndarray,
+        default_angles: np.ndarray[Any, Any],
         ctrl_dt: float,
         n_substeps: int,
         action_scale: float,
         input_controller: InputController,
         drift_compensation: list[float] | None = None,
-    ):
+    ) -> None:
         super().__init__(
             policy_path,
             default_angles,
@@ -114,7 +114,7 @@ class G1OnnxController(OnnxController):
         self._gait_freq = 1.5
         self._phase_dt = 2 * np.pi * self._gait_freq * ctrl_dt
 
-    def get_obs(self, model, data) -> np.ndarray:
+    def get_obs(self, model: mujoco.MjModel, data: mujoco.MjData) -> np.ndarray[Any, Any]:
         linvel = data.sensor("local_linvel_pelvis").data
         gyro = data.sensor("gyro_pelvis").data
         imu_xmat = data.site_xmat[model.site("imu_in_pelvis").id].reshape(3, 3)
