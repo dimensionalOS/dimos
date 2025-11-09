@@ -24,7 +24,7 @@ import uuid
 
 import cv2
 import numpy as np
-from reactivex import Observable, disposable, interval, operators as ops
+from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
 from dimos import spec
@@ -38,7 +38,7 @@ from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
-    from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+    from dimos.msgs.geometry_msgs import Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"

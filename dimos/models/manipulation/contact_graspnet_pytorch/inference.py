@@ -6,9 +6,7 @@ from contact_graspnet_pytorch import config_utils
 from contact_graspnet_pytorch.checkpoints import CheckpointIO
 from contact_graspnet_pytorch.contact_grasp_estimator import GraspEstimator
 from contact_graspnet_pytorch.data import load_available_input_data
-from contact_graspnet_pytorch.visualization_utils_o3d import show_image, visualize_grasps
 import numpy as np
-import torch
 
 from dimos.utils.data import get_data
 

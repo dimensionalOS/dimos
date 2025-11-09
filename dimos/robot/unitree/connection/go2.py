@@ -22,6 +22,7 @@ from reactivex.observable import Observable
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -54,7 +55,7 @@ class Go2ConnectionProtocol(Protocol):
     def publish_request(self, topic: str, data: dict) -> dict: ...
 
 
-def _camera_info() -> CameraInfo:
+def _camera_info_static() -> CameraInfo:
     fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
     width, height = (1280, 720)
 
@@ -84,9 +85,6 @@ def _camera_info() -> CameraInfo:
     }
 
     return CameraInfo(**base_msg, header=Header("camera_optical"))
-
-
-camera_info = _camera_info()
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
@@ -148,14 +146,14 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     cmd_vel: In[TwistStamped] = None  # type: ignore
     pointcloud: Out[PointCloud2] = None  # type: ignore
     image: Out[Image] = None  # type: ignore
-    camera_info_stream: Out[CameraInfo] = None  # type: ignore
+    camera_info: Out[CameraInfo] = None  # type: ignore
     connection_type: str = "webrtc"
 
     connection: Go2ConnectionProtocol
 
     ip: str | None
 
-    camera_info: CameraInfo = camera_info
+    camera_info_static: CameraInfo = _camera_info_static()
 
     def __init__(
         self,
@@ -169,7 +167,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection()
+                self.connection = MujocoConnection(GlobalConfig())
             case _:
                 self.connection = UnitreeWebRTCConnection(ip)
 
@@ -251,7 +249,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info_stream.publish(camera_info)
+            self.camera_info.publish(_camera_info_static())
             time.sleep(1.0)
 
     @rpc
@@ -295,7 +293,7 @@ def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
 
     connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
 
-    connection.camera_info_stream.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
+    connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
     return connection

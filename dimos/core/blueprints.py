@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from abc import ABC
 from collections import defaultdict
 from collections.abc import Mapping
 from dataclasses import dataclass, field
@@ -109,16 +110,9 @@ class ModuleBlueprintSet:
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
-    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
-        if global_config is None:
-            global_config = GlobalConfig()
-        global_config = global_config.model_copy(update=self.global_config_overrides)
-
-        module_coordinator = ModuleCoordinator(global_config=global_config)
-
-        module_coordinator.start()
-
-        # Deploy all modules.
+    def _deploy_all_modules(
+        self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
+    ) -> None:
         for blueprint in self.blueprints:
             kwargs = {**blueprint.kwargs}
             sig = inspect.signature(blueprint.module.__init__)
@@ -126,6 +120,7 @@ class ModuleBlueprintSet:
                 kwargs["global_config"] = global_config
             module_coordinator.deploy(blueprint.module, *blueprint.args, **kwargs)
 
+    def _connect_transports(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all the In/Out connections with remapping applied.
         connections = defaultdict(list)
         # Track original name -> remapped name for each module
@@ -145,26 +140,81 @@ class ModuleBlueprintSet:
             transport = self._get_transport_for(remapped_name, type)
             for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
-                # Use the remote method to set transport on Dask actors
                 instance.set_transport(original_name, transport)
 
+    def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
         rpc_methods = {}
+        rpc_methods_dot = {}
+        # Track interface methods to detect ambiguity
+        interface_methods = defaultdict(list)  # interface_name.method -> [(module_class, method)]
+
         for blueprint in self.blueprints:
             for method_name in blueprint.module.rpcs.keys():
                 method = getattr(module_coordinator.get_instance(blueprint.module), method_name)
+                # Register under concrete class name (backward compatibility)
                 rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method
+                rpc_methods_dot[f"{blueprint.module.__name__}.{method_name}"] = method
+
+                # Also register under any interface names
+                for base in blueprint.module.__bases__:
+                    # Check if this base is an abstract interface with the method
+                    if (
+                        base is not Module
+                        and issubclass(base, ABC)
+                        and hasattr(base, method_name)
+                        and getattr(base, method_name, None) is not None
+                    ):
+                        interface_key = f"{base.__name__}.{method_name}"
+                        interface_methods[interface_key].append((blueprint.module, method))
+
+        # Check for ambiguity in interface methods and add non-ambiguous ones
+        for interface_key, implementations in interface_methods.items():
+            if len(implementations) == 1:
+                rpc_methods_dot[interface_key] = implementations[0][1]
 
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
+            instance = module_coordinator.get_instance(blueprint.module)
             for method_name in blueprint.module.rpcs.keys():
                 if not method_name.startswith("set_"):
                     continue
                 linked_name = method_name.removeprefix("set_")
                 if linked_name not in rpc_methods:
                     continue
-                instance = module_coordinator.get_instance(blueprint.module)
                 getattr(instance, method_name)(rpc_methods[linked_name])
+            for requested_method_name in instance.get_rpc_method_names():
+                # Check if this is an ambiguous interface method
+                if (
+                    requested_method_name in interface_methods
+                    and len(interface_methods[requested_method_name]) > 1
+                ):
+                    modules_str = ", ".join(
+                        impl[0].__name__ for impl in interface_methods[requested_method_name]
+                    )
+                    raise ValueError(
+                        f"Ambiguous RPC method '{requested_method_name}' requested by "
+                        f"{blueprint.module.__name__}. Multiple implementations found: "
+                        f"{modules_str}. Please use a concrete class name instead."
+                    )
+
+                if requested_method_name not in rpc_methods_dot:
+                    continue
+                instance.set_rpc_method(
+                    requested_method_name, rpc_methods_dot[requested_method_name]
+                )
+
+    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+        if global_config is None:
+            global_config = GlobalConfig()
+        global_config = global_config.model_copy(update=self.global_config_overrides)
+
+        module_coordinator = ModuleCoordinator(global_config=global_config)
+        module_coordinator.start()
+
+        self._deploy_all_modules(module_coordinator, global_config)
+        self._connect_transports(module_coordinator)
+        self._connect_rpc_methods(module_coordinator)
 
         module_coordinator.start_all_modules()
 

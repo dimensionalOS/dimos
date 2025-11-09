@@ -32,11 +32,11 @@ from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import (
-    SkillContainer,
     SkillCoordinator,
     SkillState,
     SkillStateDict,
 )
+from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
@@ -270,7 +270,6 @@ class Agent(AgentSpec):
                 # we are getting tools from the coordinator on each turn
                 # since this allows for skillcontainers to dynamically provide new skills
                 tools = self.get_tools()
-                print("Available tools:", [tool.name for tool in tools])
                 self._llm = self._llm.bind_tools(tools)
 
                 # publish to /agent topic for observability

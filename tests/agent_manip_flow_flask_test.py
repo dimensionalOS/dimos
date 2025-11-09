@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 # Third-party imports
 from flask import Flask
-from reactivex import interval, operators as ops, zip
+from reactivex import interval, operators as ops, zip as rx_zip
 from reactivex.disposable import CompositeDisposable
 from reactivex.scheduler import ThreadPoolScheduler
 
@@ -157,14 +157,14 @@ def main():
 
     ai_2_repeat_obs = ai_2_obs.pipe(ops.repeat())
 
-    # Combine emissions using zip
-    ai_1_secondly_repeating_obs = zip(secondly_emission, ai_1_repeat_obs).pipe(
+    # Combine emissions using rx_zip
+    ai_1_secondly_repeating_obs = rx_zip(secondly_emission, ai_1_repeat_obs).pipe(
         # ops.do_action(lambda s: print(f"AI 1 - Emission Count: {s[0]}")),
         ops.map(lambda r: r[1]),
     )
 
-    # Combine emissions using zip
-    ai_2_secondly_repeating_obs = zip(secondly_emission, ai_2_repeat_obs).pipe(
+    # Combine emissions using rx_zip
+    ai_2_secondly_repeating_obs = rx_zip(secondly_emission, ai_2_repeat_obs).pipe(
         # ops.do_action(lambda s: print(f"AI 2 - Emission Count: {s[0]}")),
         ops.map(lambda r: r[1]),
     )
