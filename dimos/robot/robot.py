@@ -16,11 +16,6 @@
 
 from abc import ABC, abstractmethod
 
-from reactivex import Observable
-
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.perception.spatial_perception import SpatialMemory
 from dimos.types.robot_capabilities import RobotCapability
 
 
@@ -56,38 +51,10 @@ class Robot(ABC):
         """
         return self.skill_library
 
+    @abstractmethod
     def cleanup(self) -> None:
         """Clean up robot resources.
 
         Override this method to provide cleanup logic.
         """
-        pass
-
-
-# TODO: Delete
-class UnitreeRobot(Robot):
-    @abstractmethod
-    def get_odom(self) -> PoseStamped: ...
-
-    @abstractmethod
-    def explore(self) -> bool: ...
-
-    @abstractmethod
-    def stop_exploration(self) -> bool: ...
-
-    @abstractmethod
-    def is_exploration_active(self) -> bool: ...
-
-    @property
-    @abstractmethod
-    def spatial_memory(self) -> SpatialMemory | None: ...
-
-
-# TODO: Delete
-class GpsRobot(ABC):
-    @property
-    @abstractmethod
-    def gps_position_stream(self) -> Observable[LatLon]: ...
-
-    @abstractmethod
-    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None: ...
+        ...
