@@ -32,6 +32,7 @@ all_blueprints = {
     "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
     "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
+    "demo-skill": "dimos.agents2.skills.demo_skill:demo_skill",
     "demo-gps-nav": "dimos.agents2.skills.demo_gps_nav:demo_gps_nav_skill",
     "demo-google-maps-skill": "dimos.agents2.skills.demo_google_maps_skill:demo_google_maps_skill",
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
