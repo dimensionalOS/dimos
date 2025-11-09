@@ -119,7 +119,7 @@ lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
-human-cli = "dimos.utils.cli.human.humancli:main"
+humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos-robot = "dimos.robot.cli.dimos_robot:main"
 
 [project.optional-dependencies]
@@ -189,6 +189,7 @@ dev = [
     "pytest-timeout==2.4.0",
     "textual==3.7.1",
     "requests-mock==1.12.1",
+    "terminaltexteffects==0.12.2",
 
     # Types
     "lxml-stubs>=0.5.1,<1",
