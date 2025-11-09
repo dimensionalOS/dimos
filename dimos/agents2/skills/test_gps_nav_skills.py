@@ -16,24 +16,40 @@
 from dimos.mapping.types import LatLon
 
 
-def test_set_gps_travel_points(fake_gps_robot, create_gps_nav_agent) -> None:
+def test_set_gps_travel_points(create_gps_nav_agent, gps_nav_skill_container, mocker) -> None:
+    gps_nav_skill_container._latest_location = LatLon(lat=37.782654, lon=-122.413273)
+    gps_nav_skill_container._set_gps_travel_goal_points = mocker.Mock()
     agent = create_gps_nav_agent(fixture="test_set_gps_travel_points.json")
 
     agent.query("go to lat: 37.782654, lon: -122.413273")
 
-    fake_gps_robot.set_gps_travel_goal_points.assert_called_once_with(
+    gps_nav_skill_container._set_gps_travel_goal_points.assert_called_once_with(
+        [LatLon(lat=37.782654, lon=-122.413273)]
+    )
+    gps_nav_skill_container.gps_goal.publish.assert_called_once_with(
         [LatLon(lat=37.782654, lon=-122.413273)]
     )
 
 
-def test_set_gps_travel_points_multiple(fake_gps_robot, create_gps_nav_agent) -> None:
+def test_set_gps_travel_points_multiple(
+    create_gps_nav_agent, gps_nav_skill_container, mocker
+) -> None:
+    gps_nav_skill_container._latest_location = LatLon(lat=37.782654, lon=-122.413273)
+    gps_nav_skill_container._set_gps_travel_goal_points = mocker.Mock()
     agent = create_gps_nav_agent(fixture="test_set_gps_travel_points_multiple.json")
 
     agent.query(
         "go to lat: 37.782654, lon: -122.413273, then 37.782660,-122.413260, and then 37.782670,-122.413270"
     )
 
-    fake_gps_robot.set_gps_travel_goal_points.assert_called_once_with(
+    gps_nav_skill_container._set_gps_travel_goal_points.assert_called_once_with(
+        [
+            LatLon(lat=37.782654, lon=-122.413273),
+            LatLon(lat=37.782660, lon=-122.413260),
+            LatLon(lat=37.782670, lon=-122.413270),
+        ]
+    )
+    gps_nav_skill_container.gps_goal.publish.assert_called_once_with(
         [
             LatLon(lat=37.782654, lon=-122.413273),
             LatLon(lat=37.782660, lon=-122.413260),

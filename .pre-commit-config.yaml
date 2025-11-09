@@ -19,7 +19,7 @@ repos:
           - --use-current-year
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.1
+    rev: v0.14.3
     hooks:
       - id: ruff-format
         stages: [pre-commit]

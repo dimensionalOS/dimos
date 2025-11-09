@@ -19,6 +19,7 @@ import atexit
 import logging
 import threading
 import time
+from typing import Any
 
 import mujoco
 from mujoco import viewer
@@ -42,34 +43,38 @@ logger = logging.getLogger(__name__)
 
 
 class MujocoThread(threading.Thread):
-    def __init__(self, global_config: GlobalConfig):
+    def __init__(self, global_config: GlobalConfig) -> None:
         super().__init__(daemon=True)
         self.global_config = global_config
         self.shared_pixels = None
         self.pixels_lock = threading.RLock()
         self.shared_depth_front = None
-        self.shared_depth_front_pose = None
+        self.shared_depth_front_pose: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = (
+            None
+        )
         self.depth_lock_front = threading.RLock()
         self.shared_depth_left = None
-        self.shared_depth_left_pose = None
+        self.shared_depth_left_pose: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = None
         self.depth_left_lock = threading.RLock()
         self.shared_depth_right = None
-        self.shared_depth_right_pose = None
+        self.shared_depth_right_pose: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = (
+            None
+        )
         self.depth_right_lock = threading.RLock()
-        self.odom_data = None
+        self.odom_data: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None = None
         self.odom_lock = threading.RLock()
         self.lidar_lock = threading.RLock()
-        self.model = None
-        self.data = None
+        self.model: mujoco.MjModel | None = None
+        self.data: mujoco.MjData | None = None
         self._command = np.zeros(3, dtype=np.float32)
         self._command_lock = threading.RLock()
         self._is_running = True
         self._stop_timer: threading.Timer | None = None
         self._viewer = None
-        self._rgb_renderer = None
-        self._depth_renderer = None
-        self._depth_left_renderer = None
-        self._depth_right_renderer = None
+        self._rgb_renderer: mujoco.Renderer | None = None
+        self._depth_renderer: mujoco.Renderer | None = None
+        self._depth_left_renderer: mujoco.Renderer | None = None
+        self._depth_right_renderer: mujoco.Renderer | None = None
         self._cleanup_registered = False
 
         # Store initial reference pose for stable point cloud generation
@@ -79,7 +84,7 @@ class MujocoThread(threading.Thread):
         # Register cleanup on exit
         atexit.register(self.cleanup)
 
-    def run(self):
+    def run(self) -> None:
         try:
             self.run_simulation()
         except Exception as e:
@@ -87,7 +92,7 @@ class MujocoThread(threading.Thread):
         finally:
             self._cleanup_resources()
 
-    def run_simulation(self):
+    def run_simulation(self) -> None:
         # Go2 isn't in the MuJoCo models yet, so use Go1 as a substitute
         robot_name = self.global_config.robot_model or "unitree_go1"
         if robot_name == "unitree_go2":
@@ -96,6 +101,9 @@ class MujocoThread(threading.Thread):
         scene_name = self.global_config.mujoco_room or "office1"
 
         self.model, self.data = load_model(self, robot=robot_name, scene=scene_name)
+
+        if self.model is None or self.data is None:
+            raise ValueError("Model or data failed to load.")
 
         # Set initial robot position
         match robot_name:
@@ -153,8 +161,8 @@ class MujocoThread(threading.Thread):
             scene_option = mujoco.MjvOption()
 
             # Timing control variables
-            last_video_time = 0
-            last_lidar_time = 0
+            last_video_time = 0.0
+            last_lidar_time = 0.0
             video_interval = 1.0 / VIDEO_FPS
             lidar_interval = 1.0 / LIDAR_FPS
 
@@ -242,7 +250,12 @@ class MujocoThread(threading.Thread):
                 if time_until_next_step > 0:
                     time.sleep(time_until_next_step)
 
-    def _process_depth_camera(self, depth_data, depth_lock, pose_data) -> np.ndarray | None:
+    def _process_depth_camera(
+        self,
+        depth_data: np.ndarray[Any, Any] | None,
+        depth_lock: threading.RLock,
+        pose_data: tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]] | None,
+    ) -> np.ndarray[Any, Any] | None:
         """Process a single depth camera and return point cloud points."""
         with depth_lock:
             if depth_data is None or pose_data is None:
@@ -331,12 +344,12 @@ class MujocoThread(threading.Thread):
         )
         return odom_to_publish
 
-    def _stop_move(self):
+    def _stop_move(self) -> None:
         with self._command_lock:
             self._command = np.zeros(3, dtype=np.float32)
         self._stop_timer = None
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         if self._stop_timer:
             self._stop_timer.cancel()
 
@@ -356,7 +369,7 @@ class MujocoThread(threading.Thread):
         with self._command_lock:
             return self._command.copy()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the simulation thread gracefully."""
         self._is_running = False
 
@@ -371,7 +384,7 @@ class MujocoThread(threading.Thread):
             if self.is_alive():
                 logger.warning("MuJoCo thread did not stop gracefully within timeout")
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up all resources. Can be called multiple times safely."""
         if self._cleanup_registered:
             return
@@ -381,7 +394,7 @@ class MujocoThread(threading.Thread):
         self.stop()
         self._cleanup_resources()
 
-    def _cleanup_resources(self):
+    def _cleanup_resources(self) -> None:
         """Internal method to clean up MuJoCo-specific resources."""
         try:
             # Cancel any timers
@@ -454,7 +467,7 @@ class MujocoThread(threading.Thread):
         except Exception as e:
             logger.error(f"Error during resource cleanup: {e}")
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Destructor to ensure cleanup on object deletion."""
         try:
             self.cleanup()

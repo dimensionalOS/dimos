@@ -13,8 +13,6 @@
 # limitations under the License.
 
 import cv2
-import numpy as np
-from PIL import Image
 import torch
 
 # May need to add this back for import to work
