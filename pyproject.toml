@@ -14,12 +14,14 @@ include = ["dimos*"]
 
 [project]
 name = "dimos"
+version = "0.0.4"
+description = "Powering agentive generalist robotics"
 authors = [
     {name = "Dimensional Team", email = "build@dimensionalOS.com"},
 ]
-version = "0.0.4"
-description = "Powering agentive generalist robotics"
-requires-python = ">=3.10"
+requires-python = ">=3.10,<3.13"
+readme = "README.md"
+license = { file = "LICENSE" }
 
 dependencies = [
     # Core requirements
