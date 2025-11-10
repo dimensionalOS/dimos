@@ -90,6 +90,10 @@
 
           ### LCM (Lightweight Communications and Marshalling)
           lcm
+
+          ### Rust
+          cargo
+          maturin
         ];
 
         # ------------------------------------------------------------

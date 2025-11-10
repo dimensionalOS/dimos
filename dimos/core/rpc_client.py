@@ -17,6 +17,7 @@ from typing import Any
 
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
+import dimos_rs
 
 logger = setup_logger(__file__)
 

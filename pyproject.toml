@@ -110,6 +110,7 @@ dependencies = [
 
     # LCM / DimOS utilities
     "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@3aeb724863144a8ba6cf72c9f42761d1007deda4",
+    "dimos_rs @ file:///${PWD}/dimos_rs",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",

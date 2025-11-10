@@ -1,0 +1,12 @@
+[package]
+name = "dimos_rs"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "dimos_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.27.1", features = ["extension-module"] }
+zenoh = "1.6.2"

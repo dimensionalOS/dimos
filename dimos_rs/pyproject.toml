@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "dimos_rs"
+version = "0.1.0"
+description = "Rust extension built with PyO3"
+requires-python = ">=3.8"
+
+[tool.maturin]
+bindings = "pyo3"
