@@ -20,7 +20,6 @@ import time
 from dimos_lcm.sensor_msgs import CameraInfo
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
 from dimos import spec

@@ -53,6 +53,7 @@ from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
+from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
@@ -68,7 +69,9 @@ class Config(ModuleConfig):
     )
 
 
-class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlanner):
+class ROSNav(
+    Module, NavigationInterface, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlanner
+):
     config: Config
     default_config = Config
 
@@ -89,12 +92,24 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
     _spin_thread: threading.Thread | None = None
     _goal_reach: bool | None = None
 
+    # Navigation state tracking for NavigationInterface
+    _navigation_state: NavigationState = NavigationState.IDLE
+    _state_lock: threading.Lock
+    _navigation_thread: threading.Thread | None = None
+    _current_goal: PoseStamped | None = None
+    _goal_reached: bool = False
+
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
 
         # Initialize RxPY Subjects for streaming data
         self._local_pointcloud_subject = Subject()
         self._global_pointcloud_subject = Subject()
+
+        # Initialize state tracking
+        self._state_lock = threading.Lock()
+        self._navigation_state = NavigationState.IDLE
+        self._goal_reached = False
 
         if not rclpy.ok():
             rclpy.init()
@@ -173,6 +188,10 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
 
     def _on_ros_goal_reached(self, msg: ROSBool) -> None:
         self._goal_reach = msg.data
+        if msg.data:
+            with self._state_lock:
+                self._goal_reached = True
+                self._navigation_state = NavigationState.IDLE
 
     def _on_ros_goal_waypoint(self, msg: ROSPointStamped) -> None:
         dimos_pose = PoseStamped(
@@ -360,7 +379,73 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
         soft_stop_msg.data = 2
         self.soft_stop_pub.publish(soft_stop_msg)
 
+        with self._state_lock:
+            self._navigation_state = NavigationState.IDLE
+            self._current_goal = None
+            self._goal_reached = False
+
         return True
+
+    @rpc
+    def set_goal(self, goal: PoseStamped) -> bool:
+        """Set a new navigation goal (non-blocking)."""
+        with self._state_lock:
+            self._current_goal = goal
+            self._goal_reached = False
+            self._navigation_state = NavigationState.FOLLOWING_PATH
+
+        # Start navigation in a separate thread to make it non-blocking
+        if self._navigation_thread and self._navigation_thread.is_alive():
+            logger.warning("Previous navigation still running, cancelling")
+            self.stop_navigation()
+            self._navigation_thread.join(timeout=1.0)
+
+        self._navigation_thread = threading.Thread(
+            target=self._navigate_to_goal_async,
+            args=(goal,),
+            daemon=True,
+            name="ROSNavNavigationThread",
+        )
+        self._navigation_thread.start()
+
+        return True
+
+    def _navigate_to_goal_async(self, goal: PoseStamped) -> None:
+        """Internal method to handle navigation in a separate thread."""
+        try:
+            result = self.navigate_to(goal, timeout=60.0)
+            with self._state_lock:
+                self._goal_reached = result
+                self._navigation_state = NavigationState.IDLE
+        except Exception as e:
+            logger.error(f"Navigation failed: {e}")
+            with self._state_lock:
+                self._goal_reached = False
+                self._navigation_state = NavigationState.IDLE
+
+    @rpc
+    def get_state(self) -> NavigationState:
+        """Get the current state of the navigator."""
+        with self._state_lock:
+            return self._navigation_state
+
+    @rpc
+    def is_goal_reached(self) -> bool:
+        """Check if the current goal has been reached."""
+        with self._state_lock:
+            return self._goal_reached
+
+    @rpc
+    def cancel_goal(self) -> bool:
+        """Cancel the current navigation goal."""
+
+        with self._state_lock:
+            had_goal = self._current_goal is not None
+
+        if had_goal:
+            self.stop_navigation()
+
+        return had_goal
 
     @rpc
     def stop(self) -> None:
@@ -384,7 +469,7 @@ class ROSNav(Module, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlan
             super().stop()
 
 
-navigation_module = ROSNav.blueprint
+ros_nav = ROSNav.blueprint
 
 
 def deploy(dimos: DimosCluster):
@@ -401,4 +486,4 @@ def deploy(dimos: DimosCluster):
     return nav
 
 
-__all__ = ["ROSNav", "deploy", "navigation_module"]
+__all__ = ["ROSNav", "deploy", "ros_nav"]

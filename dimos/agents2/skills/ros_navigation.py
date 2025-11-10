@@ -15,10 +15,10 @@
 import time
 from typing import TYPE_CHECKING, Any
 
-from dimos.core.resource import Resource
+from dimos.core.skill_module import SkillModule
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
-from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
@@ -28,7 +28,8 @@ if TYPE_CHECKING:
 logger = setup_logger(__file__)
 
 
-class RosNavigation(SkillContainer, Resource):
+# TODO: Remove, deprecated
+class RosNavigation(SkillModule):
     _robot: "UnitreeG1"
     _started: bool
 
@@ -53,8 +54,6 @@ class RosNavigation(SkillContainer, Resource):
         Args:
             query: Text query to search for in the semantic map
         """
-
-        print("X" * 10000)
 
         if not self._started:
             raise ValueError(f"{self} has not been started.")
@@ -119,3 +118,8 @@ class RosNavigation(SkillContainer, Resource):
             orientation=euler_to_quaternion(make_vector3(0, 0, theta)),
             frame_id="map",
         )
+
+
+ros_navigation_skill = RosNavigation.blueprint
+
+__all__ = ["RosNavigation", "ros_navigation_skill"]

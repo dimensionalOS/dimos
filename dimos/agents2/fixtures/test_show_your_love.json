@@ -1,0 +1,38 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "execute_sport_command",
+          "args": {
+            "args": [
+              "FingerHeart"
+            ]
+          },
+          "id": "call_VFp6x9F00FBmiiUiemFWewop",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "speak",
+          "args": {
+            "args": [
+              "Here's a gesture to show you some love!"
+            ]
+          },
+          "id": "call_WUUmBJ95s9PtVx8YQsmlJ4EU",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "Just did a finger heart gesture to show my affection!",
+      "tool_calls": []
+    }
+  ]
+}

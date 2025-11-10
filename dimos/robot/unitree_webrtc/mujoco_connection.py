@@ -20,6 +20,7 @@ import functools
 import logging
 import threading
 import time
+from typing import Any
 
 from reactivex import Observable
 
@@ -233,5 +234,5 @@ class MujocoConnection:
         if not self._is_cleaned_up:
             self.mujoco_thread.move(twist, duration)
 
-    def publish_request(self, topic: str, data: dict) -> None:
-        pass
+    def publish_request(self, topic: str, data: dict[str, Any]) -> None:
+        print(f"publishing request, topic={topic}, data={data}")

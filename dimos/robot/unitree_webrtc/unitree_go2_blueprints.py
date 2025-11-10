@@ -19,7 +19,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.navigation import navigation_skill
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -37,9 +37,9 @@ from dimos.navigation.local_planner.holonomic_local_planner import (
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree_webrtc.depth_module import depth_module
 from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_go2 import connection
+from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
@@ -112,4 +112,5 @@ agentic = autoconnect(
     llm_agent(),
     human_input(),
     navigation_skill(),
+    unitree_skills(),
 )
