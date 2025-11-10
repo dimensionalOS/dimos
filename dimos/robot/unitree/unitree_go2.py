@@ -113,6 +113,22 @@ class UnitreeGo2(Robot):
          #   video_source="/dimos/assets/framecount.mp4"
         #)
 
+    def move(self, x: float, y: float, yaw: float, duration: float = 0.0) -> bool:
+        """Move the robot using velocity commands.
+        
+        Args:
+            x: Forward/backward velocity (m/s)
+            y: Left/right velocity (m/s)
+            yaw: Rotational velocity (rad/s)
+            duration: How long to move (seconds). If 0, command is continuous
+            
+        Returns:
+            bool: True if command was sent successfully
+        """
+        if self.ros_control is None:
+            raise RuntimeError("No ROS control interface available for movement")
+        return self.ros_control.move(x, y, yaw, duration)
+    
     def start_perception(self):
         print(f"Starting video stream with {self.api_call_interval} second intervals...")
         # Create video stream observable with desired FPS
