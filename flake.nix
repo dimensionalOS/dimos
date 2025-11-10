@@ -2,12 +2,19 @@
   description = "Project dev environment as Nix shell + DockerTools layered image";
 
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
-    flake-utils.url  = "github:numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+      ...
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = import nixpkgs { inherit system; };
 
@@ -16,35 +23,71 @@
         # ------------------------------------------------------------
         devPackages = with pkgs; [
           ### Core shell & utils
-          bashInteractive coreutils gh
-          stdenv.cc.cc.lib pcre2
+          bashInteractive
+          coreutils
+          gh
+          stdenv.cc.cc.lib
+          pcre2
 
           ### Python + static analysis
-          python312 python312Packages.pip python312Packages.setuptools
-          python312Packages.virtualenv pre-commit
+          python312
+          python312Packages.pip
+          python312Packages.setuptools
+          python312Packages.virtualenv
+          pre-commit
 
           ### Runtime deps
-          python312Packages.pyaudio portaudio ffmpeg_6 ffmpeg_6.dev
+          python312Packages.pyaudio
+          portaudio
+          ffmpeg_6
+          ffmpeg_6.dev
 
           ### Graphics / X11 stack
-          libGL libGLU mesa glfw
-          xorg.libX11 xorg.libXi xorg.libXext xorg.libXrandr xorg.libXinerama
-          xorg.libXcursor xorg.libXfixes xorg.libXrender xorg.libXdamage
-          xorg.libXcomposite xorg.libxcb xorg.libXScrnSaver xorg.libXxf86vm
+          libGL
+          libGLU
+          mesa
+          glfw
+          xorg.libX11
+          xorg.libXi
+          xorg.libXext
+          xorg.libXrandr
+          xorg.libXinerama
+          xorg.libXcursor
+          xorg.libXfixes
+          xorg.libXrender
+          xorg.libXdamage
+          xorg.libXcomposite
+          xorg.libxcb
+          xorg.libXScrnSaver
+          xorg.libXxf86vm
 
-          udev SDL2 SDL2.dev zlib
+          udev
+          SDL2
+          SDL2.dev
+          zlib
 
           ### GTK / OpenCV helpers
-          glib gtk3 gdk-pixbuf gobject-introspection
-          
+          glib
+          gtk3
+          gdk-pixbuf
+          gobject-introspection
+
           ### GStreamer
-          gst_all_1.gstreamer gst_all_1.gst-plugins-base gst_all_1.gst-plugins-good
-          gst_all_1.gst-plugins-bad gst_all_1.gst-plugins-ugly
+          gst_all_1.gstreamer
+          gst_all_1.gst-plugins-base
+          gst_all_1.gst-plugins-good
+          gst_all_1.gst-plugins-bad
+          gst_all_1.gst-plugins-ugly
           python312Packages.gst-python
 
           ### Open3D & build-time
-          eigen cmake ninja jsoncpp libjpeg libpng
-          
+          eigen
+          cmake
+          ninja
+          jsoncpp
+          libjpeg
+          libpng
+
           ### LCM (Lightweight Communications and Marshalling)
           lcm
         ];
@@ -55,15 +98,40 @@
         devShell = pkgs.mkShell {
           packages = devPackages;
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
-              pkgs.stdenv.cc.cc.lib pkgs.libGL pkgs.libGLU pkgs.mesa pkgs.glfw
-              pkgs.xorg.libX11 pkgs.xorg.libXi pkgs.xorg.libXext pkgs.xorg.libXrandr
-              pkgs.xorg.libXinerama pkgs.xorg.libXcursor pkgs.xorg.libXfixes
-              pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
-              pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
-              pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
-              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm pkgs.pcre2
-              pkgs.gst_all_1.gstreamer pkgs.gst_all_1.gst-plugins-base]}:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${
+              pkgs.lib.makeLibraryPath [
+                pkgs.stdenv.cc.cc.lib
+                pkgs.libGL
+                pkgs.libGLU
+                pkgs.mesa
+                pkgs.glfw
+                pkgs.xorg.libX11
+                pkgs.xorg.libXi
+                pkgs.xorg.libXext
+                pkgs.xorg.libXrandr
+                pkgs.xorg.libXinerama
+                pkgs.xorg.libXcursor
+                pkgs.xorg.libXfixes
+                pkgs.xorg.libXrender
+                pkgs.xorg.libXdamage
+                pkgs.xorg.libXcomposite
+                pkgs.xorg.libxcb
+                pkgs.xorg.libXScrnSaver
+                pkgs.xorg.libXxf86vm
+                pkgs.udev
+                pkgs.portaudio
+                pkgs.SDL2.dev
+                pkgs.zlib
+                pkgs.glib
+                pkgs.gtk3
+                pkgs.gdk-pixbuf
+                pkgs.gobject-introspection
+                pkgs.lcm
+                pkgs.pcre2
+                pkgs.gst_all_1.gstreamer
+                pkgs.gst_all_1.gst-plugins-base
+              ]
+            }:$LD_LIBRARY_PATH"
 
             export DISPLAY=:0
             export GI_TYPELIB_PATH="${pkgs.gst_all_1.gstreamer}/lib/girepository-1.0:${pkgs.gst_all_1.gst-plugins-base}/lib/girepository-1.0:$GI_TYPELIB_PATH"
@@ -87,19 +155,21 @@
           pathsToLink = [ "/bin" ];
         };
 
-      in {
+      in
+      {
         ## Local dev shell
         devShells.default = devShell;
 
         ## Layered docker image with DockerTools
         packages.devcontainer = pkgs.dockerTools.buildLayeredImage {
-          name      = "dimensionalos/dimos-dev";
-          tag       = "latest";
-          contents  = [ imageRoot ];
+          name = "dimensionalos/dimos-dev";
+          tag = "latest";
+          contents = [ imageRoot ];
           config = {
             WorkingDir = "/workspace";
-            Cmd        = [ "bash" ];
+            Cmd = [ "bash" ];
           };
         };
-      });
+      }
+    );
 }
