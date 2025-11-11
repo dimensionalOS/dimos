@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Mapping
 from datetime import datetime
 import inspect
 import logging
@@ -19,8 +20,9 @@ import logging.handlers
 import os
 from pathlib import Path
 import sys
+import tempfile
 import traceback
-from typing import Any, Mapping
+from typing import Any
 
 import structlog
 from structlog.processors import CallsiteParameter, CallsiteParameterAdder
@@ -37,11 +39,32 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 _LOG_FILE_PATH = None
 
 
+def _get_log_directory() -> Path:
+    # Check if running from a git repository
+    if (DIMOS_PROJECT_ROOT / ".git").exists():
+        log_dir = DIMOS_LOG_DIR
+    else:
+        # Running from an installed package - use XDG_STATE_HOME
+        xdg_state_home = os.getenv("XDG_STATE_HOME")
+        if xdg_state_home:
+            log_dir = Path(xdg_state_home) / "dimos" / "logs"
+        else:
+            log_dir = Path.home() / ".local" / "state" / "dimos" / "logs"
+
+    try:
+        log_dir.mkdir(parents=True, exist_ok=True)
+    except (PermissionError, OSError):
+        log_dir = Path(tempfile.gettempdir()) / "dimos" / "logs"
+        log_dir.mkdir(parents=True, exist_ok=True)
+
+    return log_dir
+
+
 def _get_log_file_path() -> Path:
-    DIMOS_LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_dir = _get_log_directory()
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     pid = os.getpid()
-    return DIMOS_LOG_DIR / f"dimos_{timestamp}_{pid}.jsonl"
+    return log_dir / f"dimos_{timestamp}_{pid}.jsonl"
 
 
 def _configure_structlog() -> Path:
@@ -94,7 +117,6 @@ def setup_logger(level: int | None = None) -> Any:
 
     caller_frame = inspect.stack()[1]
     name = caller_frame.filename
-    print("filename:", name)
 
     # Convert absolute path to relative path
     try:
