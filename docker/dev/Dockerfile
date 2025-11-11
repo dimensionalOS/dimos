@@ -30,7 +30,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
 # Install dependencies with UV
-RUN uv pip install .[dev]
+RUN uv pip install .[dev,docs]
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd

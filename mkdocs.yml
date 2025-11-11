@@ -1,0 +1,96 @@
+site_name: DimOS Documentation
+site_author: Dimensional Team
+site_description: The universal framework for AI-native generalist robotics
+repo_name: dimensionalOS/dimos
+repo_url: https://github.com/dimensionalOS/dimos
+site_url: https://dimensionalos.com/
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  icon:
+    repo: fontawesome/brands/github
+  features:
+    - navigation.tabs            # Moves top-level nav to header tabs
+    - navigation.tabs.sticky     # Keeps tabs visible when scrolling
+    - navigation.indexes         # Allows section index pages
+    - navigation.expand          # Expands navigation by default
+    - navigation.instant         # SPA-like navigation
+    - navigation.top             # Back to top button
+    - navigation.tracking        # URL updates with scroll
+    - search.highlight           # Highlight search terms
+    - search.share               # Share search results
+    - search.suggest             # Search suggestions
+    - toc.follow                 # TOC follows scroll position
+    - content.code.copy          # Copy button for code blocks
+    - content.code.select        # Select code blocks
+  palette:
+    - scheme: default
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+
+markdown_extensions:
+  - abbr
+  - admonition
+  - pymdownx.details
+  - attr_list
+  - def_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.tasklist:
+      custom_checkbox: true
+
+nav:
+  - Home: index.md
+  - Quickstart:
+    - quickstart/index.md
+    - Installation: quickstart/installation.md
+    - Basic Usage: quickstart/basic-usage.md
+  - Tutorials:
+    - tutorials/index.md
+    - Simple Agent: tutorials/simple-agent.md
+    - Agent Chaining: tutorials/agent-chaining.md
+    - Custom Skills: tutorials/custom-skills.md
+  - API Reference:
+    - api/index.md
+    - Agents: api/agents.md
+    - Robot: api/robot.md
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            members_order: alphabetical
+            allow_inspection: true
+            show_bases: true
+            show_source: true
+            signature_crossrefs: true
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/dimensionalOS/dimos
