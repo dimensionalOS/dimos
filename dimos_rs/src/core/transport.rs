@@ -1,35 +1,31 @@
-use crate::core::colors::{blue, green};
+use colored::Colorize;
 use pyo3::prelude::*;
-use std::fmt;
+use pyo3::types::PyAny;
 
 #[pyclass]
 pub struct PubSubTransport {
-    topic: String,
+    #[pyo3(get, set)]
+    topic: Py<PyAny>,
 }
 
 #[pymethods]
 impl PubSubTransport {
     #[new]
-    fn new(topic: String) -> Self {
+    fn new(topic: Py<PyAny>) -> Self {
         PubSubTransport { topic }
     }
 
-    fn __str__(&self) -> String {
-        format!(
+    fn __str__(&self, py: Python<'_>) -> PyResult<String> {
+        let topic_str = self.topic.bind(py).repr()?.to_string();
+        Ok(format!(
             "{}{}{}",
-            green("PubSubTransport("),
-            blue(&self.topic),
-            green(")")
-        )
+            "PubSubTransport(".green(),
+            topic_str.blue(),
+            ")".green()
+        ))
     }
 
-    fn __repr__(&self) -> String {
-        self.__str__()
-    }
-}
-
-impl fmt::Display for PubSubTransport {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.__str__())
+    fn __repr__(&self, py: Python<'_>) -> PyResult<String> {
+        self.__str__(py)
     }
 }
