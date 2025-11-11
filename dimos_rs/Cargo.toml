@@ -8,5 +8,6 @@ name = "dimos_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+colored = "3.0.0"
 pyo3 = { version = "0.27.1", features = ["extension-module"] }
 zenoh = "1.6.2"
