@@ -37,6 +37,7 @@ package-lock.json
 # Ignore build artifacts
 dist/
 build/
+site/
 
 # Ignore data directory but keep .lfs subdirectory
 data/*
