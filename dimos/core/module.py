@@ -22,6 +22,7 @@ from typing import (
     get_args,
     get_origin,
     get_type_hints,
+    overload,
 )
 
 from dask.distributed import Actor, get_worker
@@ -30,6 +31,7 @@ from reactivex.disposable import CompositeDisposable
 from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.resource import Resource
+from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
@@ -78,6 +80,9 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
+    _bound_rpc_calls: dict[str, RpcCall] = {}
+
+    rpc_calls: list[str] = []
 
     default_config = ModuleConfig
 
@@ -244,6 +249,30 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         from dimos.core.blueprints import create_module_blueprint
 
         return partial(create_module_blueprint, self)
+
+    @rpc
+    def get_rpc_method_names(self) -> list[str]:
+        return self.rpc_calls
+
+    @rpc
+    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)
+        self._bound_rpc_calls[method] = callable
+
+    @overload
+    def get_rpc_calls(self, method: str) -> RpcCall: ...
+
+    @overload
+    def get_rpc_calls(self, method1: str, method2: str, *methods: str) -> tuple[RpcCall, ...]: ...
+
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
+        missing = [m for m in methods if m not in self._bound_rpc_calls]
+        if missing:
+            raise ValueError(
+                f"RPC methods not found. Class: {self.__class__.__name__}, RPC methods: {', '.join(missing)}"
+            )
+        result = tuple(self._bound_rpc_calls[m] for m in methods)
+        return result[0] if len(result) == 1 else result
 
 
 class DaskModule(ModuleBase):

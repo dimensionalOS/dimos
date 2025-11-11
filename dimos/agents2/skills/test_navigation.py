@@ -19,25 +19,35 @@ from dimos.utils.transform_utils import euler_to_quaternion
 
 # @pytest.mark.skip
 def test_stop_movement(create_navigation_agent, navigation_skill_container, mocker) -> None:
-    navigation_skill_container._cancel_goal = mocker.Mock()
-    navigation_skill_container._stop_exploration = mocker.Mock()
+    cancel_goal_mock = mocker.Mock()
+    stop_exploration_mock = mocker.Mock()
+    navigation_skill_container._bound_rpc_calls["NavigationInterface.cancel_goal"] = (
+        cancel_goal_mock
+    )
+    navigation_skill_container._bound_rpc_calls["WavefrontFrontierExplorer.stop_exploration"] = (
+        stop_exploration_mock
+    )
     agent = create_navigation_agent(fixture="test_stop_movement.json")
 
     agent.query("stop")
 
-    navigation_skill_container._cancel_goal.assert_called_once_with()
-    navigation_skill_container._stop_exploration.assert_called_once_with()
+    cancel_goal_mock.assert_called_once_with()
+    stop_exploration_mock.assert_called_once_with()
 
 
 def test_take_a_look_around(create_navigation_agent, navigation_skill_container, mocker) -> None:
-    navigation_skill_container._explore = mocker.Mock()
-    navigation_skill_container._is_exploration_active = mocker.Mock()
+    explore_mock = mocker.Mock()
+    is_exploration_active_mock = mocker.Mock()
+    navigation_skill_container._bound_rpc_calls["WavefrontFrontierExplorer.explore"] = explore_mock
+    navigation_skill_container._bound_rpc_calls[
+        "WavefrontFrontierExplorer.is_exploration_active"
+    ] = is_exploration_active_mock
     mocker.patch("dimos.agents2.skills.navigation.time.sleep")
     agent = create_navigation_agent(fixture="test_take_a_look_around.json")
 
     agent.query("take a look around for 10 seconds")
 
-    navigation_skill_container._explore.assert_called_once_with()
+    explore_mock.assert_called_once_with()
 
 
 def test_go_to_semantic_location(
@@ -51,11 +61,11 @@ def test_go_to_semantic_location(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_to_object",
         return_value=None,
     )
-    mocker.patch(
+    navigate_to_mock = mocker.patch(
         "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_to",
         return_value=True,
     )
-    navigation_skill_container._query_by_text = mocker.Mock(
+    query_by_text_mock = mocker.Mock(
         return_value=[
             {
                 "distance": 0.5,
@@ -69,12 +79,13 @@ def test_go_to_semantic_location(
             }
         ]
     )
+    navigation_skill_container._bound_rpc_calls["SpatialMemory.query_by_text"] = query_by_text_mock
     agent = create_navigation_agent(fixture="test_go_to_semantic_location.json")
 
     agent.query("go to the bookshelf")
 
-    navigation_skill_container._query_by_text.assert_called_once_with("bookshelf")
-    navigation_skill_container._navigate_to.assert_called_once_with(
+    query_by_text_mock.assert_called_once_with("bookshelf")
+    navigate_to_mock.assert_called_once_with(
         PoseStamped(
             position=Vector3(1, 2, 0),
             orientation=euler_to_quaternion(Vector3(0, 0, 3)),
