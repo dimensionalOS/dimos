@@ -20,9 +20,11 @@ import functools
 import logging
 import threading
 import time
+from typing import Any
 
 from reactivex import Observable
 
+from dimos.core.global_config import GlobalConfig
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
@@ -36,13 +38,13 @@ logger = logging.getLogger(__name__)
 
 
 class MujocoConnection:
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, global_config: GlobalConfig) -> None:
         try:
             from dimos.simulation.mujoco.mujoco import MujocoThread
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
         get_data("mujoco_sim")
-        self.mujoco_thread = MujocoThread()
+        self.mujoco_thread = MujocoThread(global_config)
         self._stream_threads: list[threading.Thread] = []
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
@@ -232,5 +234,5 @@ class MujocoConnection:
         if not self._is_cleaned_up:
             self.mujoco_thread.move(twist, duration)
 
-    def publish_request(self, topic: str, data: dict) -> None:
-        pass
+    def publish_request(self, topic: str, data: dict[str, Any]) -> None:
+        print(f"publishing request, topic={topic}, data={data}")

@@ -121,7 +121,7 @@ class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
 
 
 class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
-    def __init__(self, quality: int = 75, **kwargs):
+    def __init__(self, quality: int = 75, **kwargs) -> None:
         super().__init__(**kwargs)
         self.jpeg = TurboJPEG()
         self.quality = quality
