@@ -89,6 +89,24 @@ plugins:
             show_bases: true
             show_source: true
             signature_crossrefs: true
+  # TODO: Consider Instructor's approach to llms.txt - they use the plugin but also maintain
+  # a comprehensive 927-line manually curated guide with detailed examples and tutorials.
+  # See: https://github.com/jxnl/instructor/blob/main/docs/llms.txt
+  # Current approach: auto-generate only (output to site/llms.txt, not checked into git)
+  # Future option: enhance auto-generated output and maintain manually for better LLM consumption
+  - llmstxt:
+      markdown_description: >
+        DimOS is the universal framework for AI-native generalist robotics.
+        It provides a comprehensive platform for building intelligent robotic systems
+        with seamless integration of perception, navigation, manipulation, and AI agents.
+      sections:
+        Getting Started:
+          - index.md: Introduction to DimOS
+          - quickstart/*.md
+        Tutorials:
+          - tutorials/*.md
+        API Reference:
+          - api/*.md
 
 extra:
   social:
