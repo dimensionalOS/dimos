@@ -225,6 +225,14 @@ sim = [
     "pygame>=2.6.1",
 ]
 
+docs = [
+    # Documentation
+    "mkdocs>=1.6.0",
+    "mkdocs-material>=9.5.0",
+    "mkdocstrings[python]>=0.26.0",
+    "mkdocs-literate-nav>=0.6.1",
+]
+
 jetson-jp6-cuda126 = [
     # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels
     # Note: Alternative torch wheel from docs: https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
