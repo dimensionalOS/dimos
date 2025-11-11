@@ -107,12 +107,6 @@ class Timestamped:
     def dt(self) -> datetime:
         return datetime.fromtimestamp(self.ts, tz=timezone.utc).astimezone()
 
-    def ros_timestamp(self) -> list[int]:
-        """Convert timestamp to ROS-style list [sec, nanosec]."""
-        sec = int(self.ts)
-        nanosec = int((self.ts - sec) * 1_000_000_000)
-        return [sec, nanosec]
-
 
 T = TypeVar("T", bound=Timestamped)
 

@@ -103,20 +103,6 @@ def fit_cuboid(
         return None
 
 
-def fit_cuboid_simple(points: np.ndarray | o3d.geometry.PointCloud) -> dict | None:
-    """
-    Simple wrapper for minimal oriented bounding box fitting.
-
-    Args:
-        points: Nx3 array of points or Open3D PointCloud
-
-    Returns:
-        Dictionary with center, dimensions, rotation, and bounding_box,
-        or None if insufficient points
-    """
-    return fit_cuboid(points, method="minimal")
-
-
 def _compute_fitting_error(
     points: np.ndarray, center: np.ndarray, dimensions: np.ndarray, rotation: np.ndarray
 ) -> float:
@@ -352,63 +338,3 @@ def compute_cuboid_surface_area(cuboid_params: dict) -> float:
 
     dims = cuboid_params["dimensions"]
     return 2.0 * (dims[0] * dims[1] + dims[1] * dims[2] + dims[2] * dims[0])
-
-
-def check_cuboid_quality(cuboid_params: dict, points: np.ndarray) -> dict:
-    """
-    Assess the quality of a cuboid fit.
-
-    Args:
-        cuboid_params: Dictionary containing cuboid parameters
-        points: Original points used for fitting
-
-    Returns:
-        Dictionary with quality metrics
-    """
-    if len(points) == 0:
-        return {"error": "No points provided"}
-
-    # Basic metrics
-    volume = compute_cuboid_volume(cuboid_params)
-    surface_area = compute_cuboid_surface_area(cuboid_params)
-    error = cuboid_params.get("error", 0.0)
-
-    # Aspect ratio analysis
-    dims = cuboid_params["dimensions"]
-    aspect_ratios = [
-        dims[0] / dims[1] if dims[1] > 0 else float("inf"),
-        dims[1] / dims[2] if dims[2] > 0 else float("inf"),
-        dims[2] / dims[0] if dims[0] > 0 else float("inf"),
-    ]
-    max_aspect_ratio = max(aspect_ratios)
-
-    # Volume ratio (cuboid volume vs convex hull volume)
-    try:
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        hull, _ = pcd.compute_convex_hull()
-        hull_volume = hull.get_volume()
-        volume_ratio = volume / hull_volume if hull_volume > 0 else float("inf")
-    except:
-        volume_ratio = None
-
-    return {
-        "fitting_error": error,
-        "volume": volume,
-        "surface_area": surface_area,
-        "max_aspect_ratio": max_aspect_ratio,
-        "volume_ratio": volume_ratio,
-        "num_points": len(points),
-        "method": cuboid_params.get("method", "unknown"),
-    }
-
-
-# Backward compatibility
-def visualize_fit(image, cuboid_params, camera_matrix, R=None, t=None):
-    """
-    Legacy function for backward compatibility.
-    Use visualize_cuboid_on_image instead.
-    """
-    return visualize_cuboid_on_image(
-        image, cuboid_params, camera_matrix, R, t, show_dimensions=True
-    )

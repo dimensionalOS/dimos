@@ -27,14 +27,6 @@ if TYPE_CHECKING:
     import open3d as o3d
 
 
-class ConstraintType(Enum):
-    """Types of manipulation constraints."""
-
-    TRANSLATION = "translation"
-    ROTATION = "rotation"
-    FORCE = "force"
-
-
 @dataclass
 class AbstractConstraint(ABC):
     """Base class for all manipulation constraints."""

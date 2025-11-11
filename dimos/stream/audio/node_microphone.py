@@ -118,10 +118,6 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
         return create(on_subscribe)
 
-    def get_available_devices(self) -> list[dict[str, Any]]:
-        """Get a list of available audio input devices."""
-        return sd.query_devices()
-
 
 if __name__ == "__main__":
     from dimos.stream.audio.node_volume_monitor import monitor

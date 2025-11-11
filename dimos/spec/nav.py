@@ -24,8 +24,3 @@ class Nav(Protocol):
     goal_active: Out[PoseStamped]
     path_active: Out[Path]
     ctrl: Out[Twist]
-
-    # identity quaternion (Quaternion(0,0,0,1)) represents "no rotation requested"
-    def navigate_to_target(self, target: PoseStamped) -> None: ...
-
-    def stop_navigating(self) -> None: ...

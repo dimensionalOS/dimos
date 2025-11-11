@@ -313,64 +313,6 @@ class ZEDCamera:
             logger.error(f"Error capturing frame: {e}")
             return None, None, None
 
-    def capture_pointcloud(self) -> o3d.geometry.PointCloud | None:
-        """
-        Capture point cloud from ZED camera.
-
-        Returns:
-            Open3D point cloud with XYZ coordinates and RGB colors
-        """
-        if not self.is_opened:
-            logger.error("ZED camera not opened")
-            return None
-
-        try:
-            if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
-                # Retrieve point cloud with RGBA data
-                self.zed.retrieve_measure(self.point_cloud, sl.MEASURE.XYZRGBA)
-                point_cloud_data = self.point_cloud.get_data()
-
-                # Convert to numpy array format
-                _height, _width = point_cloud_data.shape[:2]
-                points = point_cloud_data.reshape(-1, 4)
-
-                # Extract XYZ coordinates
-                xyz = points[:, :3]
-
-                # Extract and unpack RGBA color data from 4th channel
-                rgba_packed = points[:, 3].view(np.uint32)
-
-                # Unpack RGBA: each 32-bit value contains 4 bytes (R, G, B, A)
-                colors_rgba = np.zeros((len(rgba_packed), 4), dtype=np.uint8)
-                colors_rgba[:, 0] = rgba_packed & 0xFF  # R
-                colors_rgba[:, 1] = (rgba_packed >> 8) & 0xFF  # G
-                colors_rgba[:, 2] = (rgba_packed >> 16) & 0xFF  # B
-                colors_rgba[:, 3] = (rgba_packed >> 24) & 0xFF  # A
-
-                # Extract RGB (ignore alpha) and normalize to [0, 1]
-                colors_rgb = colors_rgba[:, :3].astype(np.float64) / 255.0
-
-                # Filter out invalid points (NaN or inf)
-                valid = np.isfinite(xyz).all(axis=1)
-                valid_xyz = xyz[valid]
-                valid_colors = colors_rgb[valid]
-
-                # Create Open3D point cloud
-                pcd = o3d.geometry.PointCloud()
-
-                if len(valid_xyz) > 0:
-                    pcd.points = o3d.utility.Vector3dVector(valid_xyz)
-                    pcd.colors = o3d.utility.Vector3dVector(valid_colors)
-
-                return pcd
-            else:
-                logger.warning("Failed to grab frame for point cloud")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error capturing point cloud: {e}")
-            return None
-
     def capture_frame_with_pose(
         self,
     ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:

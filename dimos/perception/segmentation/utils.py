@@ -57,10 +57,6 @@ class SimpleTracker:
         # Return IDs that appear often enough
         return [track_id for track_id, count in id_counts.items() if count >= self.min_count]
 
-    def get_total_counts(self):
-        """Returns the total count of each tracking ID seen over time, limited to history size."""
-        return self.total_counts
-
 
 def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):
     """

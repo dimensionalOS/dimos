@@ -18,13 +18,9 @@ Run script for Unitree Go2 robot with agents2 framework.
 This is the migrated version using the new LangChain-based agent system.
 """
 
-from threading import Thread
 import time
 
-import reactivex as rx
-import reactivex.operators as ops
-
-from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, Module, rpc, start
@@ -35,64 +31,6 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.web.robot_web_interface import RobotWebInterface
-
-
-class WebModule(Module):
-    web_interface: RobotWebInterface = None
-    human_query: rx.subject.Subject = None
-    agent_response: rx.subject.Subject = None
-
-    thread: Thread = None
-
-    _human_messages_running = False
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.agent_response = rx.subject.Subject()
-        self.human_query = rx.subject.Subject()
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-        text_streams = {
-            "agent_responses": self.agent_response,
-        }
-
-        self.web_interface = RobotWebInterface(
-            port=5555,
-            text_streams=text_streams,
-            audio_subject=rx.subject.Subject(),
-        )
-
-        unsub = self.web_interface.query_stream.subscribe(self.human_query.on_next)
-        self._disposables.add(unsub)
-
-        self.thread = Thread(target=self.web_interface.run, daemon=True)
-        self.thread.start()
-
-    @rpc
-    def stop(self) -> None:
-        if self.web_interface:
-            self.web_interface.stop()
-        if self.thread:
-            # TODO, you can't just wait for a server to close, you have to signal it to end.
-            self.thread.join(timeout=1.0)
-
-        super().stop()
-
-    @skill(stream=Stream.call_agent, reducer=Reducer.all, output=Output.human)
-    def human_messages(self):
-        """Provide human messages from web interface. Don't use this tool, it's running implicitly already"""
-        if self._human_messages_running:
-            print("human_messages already running, not starting another")
-            return "already running"
-        self._human_messages_running = True
-        while True:
-            print("Waiting for human message...")
-            message = self.human_query.pipe(ops.first()).run()
-            print(f"Got human message: {message}")
-            yield message
 
 
 def main() -> None:

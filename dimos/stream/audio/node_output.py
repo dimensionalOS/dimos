@@ -164,10 +164,6 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.close()
             self._stream = None
 
-    def get_available_devices(self) -> list[dict[str, Any]]:
-        """Get a list of available audio output devices."""
-        return sd.query_devices()
-
 
 if __name__ == "__main__":
     from dimos.stream.audio.node_microphone import (

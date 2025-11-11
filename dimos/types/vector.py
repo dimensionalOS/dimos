@@ -106,10 +106,6 @@ class Vector:
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
-    def serialize(self) -> builtins.tuple:
-        """Serialize the vector to a tuple."""
-        return {"type": "vector", "c": self._data.tolist()}
-
     def __eq__(self, other) -> bool:
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Vector):
@@ -368,45 +364,6 @@ def to_list(value: VectorLike) -> list[float]:
         return value
     else:
         return list(value)
-
-
-# Helper functions to check dimensionality
-def is_2d(value: VectorLike) -> bool:
-    """Check if a vector-compatible value is 2D.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        True if the value is 2D
-    """
-    if isinstance(value, Vector3):
-        return False
-    elif isinstance(value, Vector):
-        return len(value) == 2
-    elif isinstance(value, np.ndarray):
-        return value.shape[-1] == 2 or value.size == 2
-    else:
-        return len(value) == 2
-
-
-def is_3d(value: VectorLike) -> bool:
-    """Check if a vector-compatible value is 3D.
-
-    Args:
-        value: Any vector-like object (Vector, numpy array, tuple, list)
-
-    Returns:
-        True if the value is 3D
-    """
-    if isinstance(value, Vector):
-        return len(value) == 3
-    elif isinstance(value, Vector3):
-        return True
-    elif isinstance(value, np.ndarray):
-        return value.shape[-1] == 3 or value.size == 3
-    else:
-        return len(value) == 3
 
 
 # Extraction functions for XYZ components

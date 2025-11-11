@@ -488,38 +488,4 @@ if __name__ == "__main__":
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
-    def teleop_linear_vel(arm) -> None:
-        print("Use arrow keys to control linear velocity (x/y/z). Press 'q' to quit.")
-        print("Up/Down: +x/-x, Left/Right: +y/-y, 'w'/'s': +z/-z")
-        x_dot, y_dot, z_dot = 0.0, 0.0, 0.0
-        while True:
-            key = get_key(timeout=0.1)
-            if key == "\x1b[A":  # Up arrow
-                x_dot += 0.01
-            elif key == "\x1b[B":  # Down arrow
-                x_dot -= 0.01
-            elif key == "\x1b[C":  # Right arrow
-                y_dot += 0.01
-            elif key == "\x1b[D":  # Left arrow
-                y_dot -= 0.01
-            elif key == "w":
-                z_dot += 0.01
-            elif key == "s":
-                z_dot -= 0.01
-            elif key == "q":
-                logger.info("Exiting teleop")
-                arm.disable()
-                break
-
-            # Optionally, clamp velocities to reasonable limits
-            x_dot = max(min(x_dot, 0.5), -0.5)
-            y_dot = max(min(y_dot, 0.5), -0.5)
-            z_dot = max(min(z_dot, 0.5), -0.5)
-
-            # Only linear velocities, angular set to zero
-            arm.cmd_vel_ee(x_dot, y_dot, z_dot, 0, 0, 0)
-            logger.debug(
-                f"Current linear velocity: x={x_dot:.3f} m/s, y={y_dot:.3f} m/s, z={z_dot:.3f} m/s"
-            )
-
     run_velocity_controller()

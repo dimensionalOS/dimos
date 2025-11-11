@@ -25,31 +25,3 @@ class AgentConfig:
             agents (List[Agent], optional): List of Agent instances. Defaults to empty list.
         """
         self.agents = agents if agents is not None else []
-
-    def add_agent(self, agent: Agent) -> None:
-        """
-        Add an agent to the configuration.
-
-        Args:
-            agent (Agent): Agent instance to add
-        """
-        self.agents.append(agent)
-
-    def remove_agent(self, agent: Agent) -> None:
-        """
-        Remove an agent from the configuration.
-
-        Args:
-            agent (Agent): Agent instance to remove
-        """
-        if agent in self.agents:
-            self.agents.remove(agent)
-
-    def get_agents(self) -> list[Agent]:
-        """
-        Get the list of configured agents.
-
-        Returns:
-            List[Agent]: List of configured agents
-        """
-        return self.agents

@@ -161,16 +161,6 @@ class FrameProcessor:
             ops.map(self.edge_detection),
         )
 
-    def process_stream_resize(self, frame_stream):
-        return frame_stream.pipe(
-            ops.map(self.resize),
-        )
-
-    def process_stream_to_greyscale(self, frame_stream):
-        return frame_stream.pipe(
-            ops.map(self.to_grayscale),
-        )
-
     def process_stream_optical_flow(self, frame_stream: Observable) -> Observable:
         """Processes video stream to compute and visualize optical flow.
 
@@ -259,43 +249,4 @@ class FrameProcessor:
                 )
             ),
             ops.filter(lambda result: result[0] is not None),  # Ensure valid visualization
-        )
-
-    def process_stream_with_jpeg_export(
-        self, frame_stream: Observable, suffix: str = "", loop: bool = False
-    ) -> Observable:
-        """Processes stream by saving frames as JPEGs while passing them through.
-
-        Saves each frame from the stream as a JPEG file and passes the frame
-        downstream unmodified. Files are saved sequentially with optional suffix
-        in the configured output directory (self.output_dir). If loop is True,
-        it will cycle back and overwrite images starting from the first one
-        after reaching the save_limit.
-
-        Args:
-            frame_stream: An Observable emitting video frames as numpy arrays.
-                Each frame should be in BGR format with shape (height, width, 3).
-            suffix: Optional string to append to filename before index.
-                Defaults to empty string. Example: "optical" -> "optical_1.jpg"
-            loop: If True, reset the image counter to 1 after reaching
-                save_limit, effectively looping the saves. Defaults to False.
-
-        Returns:
-            An Observable emitting the same frames that were saved. Returns None
-            for frames that could not be saved due to format issues or save_limit
-            (unless loop is True).
-
-        Raises:
-            TypeError: If frame_stream is not an Observable.
-            ValueError: If frames have invalid format or output directory
-                is not writable.
-            OSError: If there are file system permission issues.
-
-        Note:
-            Frames are saved as '{suffix}_{index}.jpg' where index
-            increments for each saved frame. Saving stops after reaching
-            the configured save_limit (default: 100) unless loop is True.
-        """
-        return frame_stream.pipe(
-            ops.map(lambda frame: self.export_to_jpeg(frame, suffix=suffix, loop=loop)),
         )

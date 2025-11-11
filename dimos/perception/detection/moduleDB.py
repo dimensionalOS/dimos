@@ -266,17 +266,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     #     return ret[0] if ret else None
 
-    def lookup(self, label: str) -> list[Detection3DPC]:
-        """Look up a detection by label."""
-        return []
-
     @rpc
     def stop(self):
         return super().stop()
-
-    def goto_object(self, object_id: str) -> Object3D | None:
-        """Go to object by id."""
-        return self.objects.get(object_id, None)
 
     def to_foxglove_scene_update(self) -> "SceneUpdate":
         """Convert all detections to a Foxglove SceneUpdate message.

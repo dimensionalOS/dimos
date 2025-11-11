@@ -288,12 +288,6 @@ class UnitreeWebRTCConnection(Resource):
     def liedown(self):
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
 
-    async def handstand(self):
-        return self.publish_request(
-            RTC_TOPIC["SPORT_MOD"],
-            {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
-        )
-
     @rpc
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
         return self.publish_request(

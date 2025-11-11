@@ -168,11 +168,6 @@ class Detection2DPerson(Detection2DBBox):
         )
 
     @classmethod
-    def from_yolo(cls, result: "Results", idx: int, image: Image) -> "Detection2DPerson":
-        """Alias for from_ultralytics_result for backward compatibility."""
-        return cls.from_ultralytics_result(result, idx, image)
-
-    @classmethod
     def from_ros_detection2d(cls, *args, **kwargs) -> "Detection2DPerson":
         """Conversion from ROS Detection2D is not supported for Detection2DPerson.
 

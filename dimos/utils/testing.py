@@ -134,10 +134,6 @@ class SensorStorage(Generic[T]):
             # Create the directory
             self.root_dir.mkdir(parents=True, exist_ok=True)
 
-    def consume_stream(self, observable: Observable[T | Any]) -> None:
-        """Consume an observable stream of sensor data without saving."""
-        return observable.subscribe(self.save_one)
-
     def save_stream(self, observable: Observable[T | Any]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
         return observable.pipe(ops.map(lambda frame: self.save_one(frame)))

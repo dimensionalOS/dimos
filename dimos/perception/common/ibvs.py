@@ -181,15 +181,6 @@ class ObjectDistanceEstimator:
 
         return estimated_size
 
-    def set_estimated_object_size(self, size: float) -> None:
-        """
-        Set the estimated object size for future distance calculations.
-
-        Args:
-            size: Estimated physical size of the object (in meters)
-        """
-        self.estimated_object_size = size
-
     def estimate_distance_angle(self, bbox: tuple):
         """
         Estimate distance and angle to object using size-based estimation.

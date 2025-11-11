@@ -32,11 +32,6 @@ class RosStamp(TypedDict):
 EpochLike = Union[int, float, datetime, RosStamp]
 
 
-def from_ros_stamp(stamp: dict[str, int], tz: timezone | None = None) -> datetime:
-    """Convert ROS-style timestamp {'sec': int, 'nanosec': int} to datetime."""
-    return datetime.fromtimestamp(stamp["sec"] + stamp["nanosec"] / 1e9, tz=tz)
-
-
 def to_human_readable(ts: EpochLike) -> str:
     dt = to_datetime(ts)
     return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -110,27 +105,6 @@ class Timeseries(ABC, Generic[EVENT]):
     def duration(self) -> timedelta:
         """Total time spanned by the iterable (Δ = last - first)."""
         return self.end_time - self.start_time
-
-    def closest_to(self, timestamp: EpochLike) -> EVENT:
-        """Return the event closest to the given timestamp. Assumes timeseries is sorted."""
-        print("closest to", timestamp)
-        target = to_datetime(timestamp)
-        print("converted to", target)
-        target_ts = target.timestamp()
-
-        closest = None
-        min_dist = float("inf")
-
-        for event in self:
-            dist = abs(event.ts - target_ts)
-            if dist > min_dist:
-                break
-
-            min_dist = dist
-            closest = event
-
-        print(f"closest: {closest}")
-        return closest
 
     def __repr__(self) -> str:
         """Return a string representation of the Timeseries."""

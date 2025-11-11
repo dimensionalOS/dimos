@@ -860,22 +860,6 @@ def combine_object_data(
     return combined
 
 
-def point_in_bbox(point: tuple[int, int], bbox: list[float]) -> bool:
-    """
-    Check if a point is inside a bounding box.
-
-    Args:
-        point: (x, y) coordinates
-        bbox: Bounding box [x1, y1, x2, y2]
-
-    Returns:
-        True if point is inside bbox
-    """
-    x, y = point
-    x1, y1, x2, y2 = bbox
-    return x1 <= x <= x2 and y1 <= y <= y2
-
-
 def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> tuple[float, float, float, float]:
     """
     Convert BoundingBox2D from center format to corner format.
@@ -923,27 +907,3 @@ def find_clicked_detection(
                 return detections_3d[i]
 
     return None
-
-
-def extract_pose_from_detection3d(detection3d: Detection3D):
-    """Extract PoseStamped from Detection3D message.
-
-    Args:
-        detection3d: Detection3D message
-
-    Returns:
-        Pose or None if no valid detection
-    """
-    if not detection3d or not detection3d.bbox or not detection3d.bbox.center:
-        return None
-
-    # Extract position
-    pos = detection3d.bbox.center.position
-    position = Vector3(pos.x, pos.y, pos.z)
-
-    # Extract orientation
-    orient = detection3d.bbox.center.orientation
-    orientation = Quaternion(orient.x, orient.y, orient.z, orient.w)
-
-    pose = Pose(position=position, orientation=orientation)
-    return pose

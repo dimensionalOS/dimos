@@ -341,15 +341,6 @@ class Sample(BaseModel):
         raise ValueError(f"Unsupported container type: {container}")
 
     @classmethod
-    def default_value(cls) -> "Sample":
-        """Get the default value for the Sample instance.
-
-        Returns:
-            Sample: The default value for the Sample instance.
-        """
-        return cls()
-
-    @classmethod
     def space_for(
         cls,
         value: Any,
@@ -407,56 +398,6 @@ class Sample(BaseModel):
                     [cls.space_for(value[0], max_text_length, info) for value in value[:1]],
                 )
         raise ValueError(f"Unsupported object {value} of type: {type(value)} for space generation")
-
-    @classmethod
-    def init_from(cls, d: Any, pack: bool = False) -> "Sample":
-        if isinstance(d, spaces.Space):
-            return cls.from_space(d)
-        if isinstance(d, Union[Sequence, np.ndarray]):
-            if pack:
-                return cls.pack_from(d)
-            return cls.unflatten(d)
-        if isinstance(d, dict):
-            try:
-                return cls.model_validate(d)
-            except ValidationError as e:
-                logging.info(f" Unable to validate {d} as {cls} {e}. Attempting to unflatten.")
-
-                try:
-                    return cls.unflatten(d)
-                except Exception as e:
-                    logging.info(f" Unable to unflatten {d} as {cls} {e}. Attempting to read.")
-                    return cls.read(d)
-        return cls(d)
-
-    @classmethod
-    def from_flat_dict(
-        cls, flat_dict: builtins.dict[str, Any], schema: builtins.dict | None = None
-    ) -> "Sample":
-        """Initialize a Sample instance from a flattened dictionary."""
-        """
-        Reconstructs the original JSON object from a flattened dictionary using the provided schema.
-
-        Args:
-            flat_dict (dict): A flattened dictionary with keys like "key1.nestedkey1".
-            schema (dict): A dictionary representing the JSON schema.
-
-        Returns:
-            dict: The reconstructed JSON object.
-        """
-        schema = schema or replace_refs(cls.model_json_schema())
-        reconstructed = {}
-
-        for flat_key, value in flat_dict.items():
-            keys = flat_key.split(".")
-            current = reconstructed
-            for key in keys[:-1]:
-                if key not in current:
-                    current[key] = {}
-                current = current[key]
-            current[keys[-1]] = value
-
-        return reconstructed
 
     @classmethod
     def from_space(cls, space: spaces.Space) -> "Sample":
@@ -524,23 +465,6 @@ class Sample(BaseModel):
             for i in range(list_size)
         ]
 
-    @classmethod
-    def default_space(cls) -> spaces.Dict:
-        """Return the Gym space for the Sample class based on its class attributes."""
-        return cls().space()
-
-    @classmethod
-    def default_sample(
-        cls, output_type: str = "Sample"
-    ) -> Union["Sample", builtins.dict[str, Any]]:
-        """Generate a default Sample instance from its class attributes. Useful for padding.
-
-        This is the "no-op" instance and should be overriden as needed.
-        """
-        if output_type == "Sample":
-            return cls()
-        return cls().dict()
-
     def model_field_info(self, key: str) -> FieldInfo:
         """Get the FieldInfo for a given attribute key."""
         if self.model_extra and self.model_extra.get(key) is not None:
@@ -566,13 +490,6 @@ class Sample(BaseModel):
                 value.space() if isinstance(value, Sample) else self.space_for(value, info=info)
             )
         return spaces.Dict(space_dict)
-
-    def random_sample(self) -> "Sample":
-        """Generate a random Sample instance based on its instance attributes. Omits None values.
-
-        Override this method in subclasses to customize the sample generation.
-        """
-        return self.__class__.model_validate(self.space().sample())
 
 
 if __name__ == "__main__":

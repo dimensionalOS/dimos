@@ -319,14 +319,6 @@ class AbstractRobotSkill(AbstractSkill):
             f"{Colors.BLUE_PRINT_COLOR}Robot Skill Initialized with Robot: {robot}{Colors.RESET_COLOR}"
         )
 
-    def set_robot(self, robot: Robot) -> None:
-        """Set the robot reference for this skills instance.
-
-        Args:
-            robot: The robot instance to associate with these skills.
-        """
-        self._robot = robot
-
     def __call__(self):
         if self._robot is None:
             raise RuntimeError(

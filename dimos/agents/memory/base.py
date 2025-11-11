@@ -107,15 +107,6 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
             ConnectionError: If database connection fails during query.
         """
 
-    ## Update ##
-    @abstractmethod
-    def update_vector(self, vector_id, new_vector_data):
-        """Update an existing vector in the database.
-        Args:
-            vector_id (any): The identifier of the vector to update.
-            new_vector_data (any): The new data to replace the existing vector data.
-        """
-
     ## Delete ##
     @abstractmethod
     def delete_vector(self, vector_id):

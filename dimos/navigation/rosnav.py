@@ -236,10 +236,6 @@ class ROSNav(
     def _on_goal_pose(self, msg: PoseStamped) -> None:
         self.navigate_to(msg)
 
-    def _on_cancel_goal(self, msg: Bool) -> None:
-        if msg.data:
-            self.stop()
-
     def _set_autonomy_mode(self) -> None:
         joy_msg = ROSJoy()
         joy_msg.axes = [

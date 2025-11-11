@@ -148,13 +148,6 @@ class BaseAgentModule(BaseAgent, Module):
         super().stop()
 
     @rpc
-    def clear_history(self) -> None:
-        """Clear conversation history."""
-        with self._history_lock:
-            self.history = []
-        logger.info("Conversation history cleared")
-
-    @rpc
     def add_skill(self, skill: AbstractSkill) -> None:
         """Add a skill to the agent."""
         self.skills.add(skill)
@@ -166,12 +159,6 @@ class BaseAgentModule(BaseAgent, Module):
         self.system_prompt = prompt
         logger.info("System prompt updated")
 
-    @rpc
-    def get_conversation_history(self) -> list[dict[str, Any]]:
-        """Get current conversation history."""
-        with self._history_lock:
-            return self.history.copy()
-
     def _handle_agent_message(self, message: AgentMessage) -> None:
         """Handle AgentMessage from module input."""
         # Process through BaseAgent query method
@@ -182,30 +169,3 @@ class BaseAgentModule(BaseAgent, Module):
         except Exception as e:
             logger.error(f"Agent message processing error: {e}")
             self.response_subject.on_error(e)
-
-    def _handle_module_query(self, query: str) -> None:
-        """Handle legacy query from module input."""
-        # For simple text queries, just convert to AgentMessage
-        agent_msg = AgentMessage()
-        agent_msg.add_text(query)
-
-        # Process through unified handler
-        self._handle_agent_message(agent_msg)
-
-    def _update_latest_data(self, data: dict[str, Any]) -> None:
-        """Update latest data context."""
-        with self._data_lock:
-            self._latest_data = data
-
-    def _update_latest_image(self, img: Any) -> None:
-        """Update latest image."""
-        with self._image_lock:
-            self._latest_image = img
-
-    def _format_data_context(self, data: dict[str, Any]) -> str:
-        """Format data dictionary as context string."""
-        # Simple formatting - can be customized
-        parts = []
-        for key, value in data.items():
-            parts.append(f"{key}: {value}")
-        return "\n".join(parts)

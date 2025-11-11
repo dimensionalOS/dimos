@@ -75,19 +75,3 @@ class DataRetrievalError(AgentMemoryError):
         self, message: str = "Error in retrieving data during AgentMemory operation"
     ) -> None:
         super().__init__(message)
-
-
-class DataNotFoundError(DataRetrievalError):
-    """
-    Exception raised when the requested data is not found in the database.
-    This is used when a query completes successfully but returns no result for the specified identifier.
-
-    Args:
-        vector_id (int or str): The identifier for the vector that was not found.
-        message (str, optional): Human-readable message providing more detail. If not provided, a default message is generated.
-    """
-
-    def __init__(self, vector_id, message=None) -> None:
-        message = message or f"Requested data for vector ID {vector_id} was not found."
-        super().__init__(message)
-        self.vector_id = vector_id

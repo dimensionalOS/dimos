@@ -185,42 +185,6 @@ class ConversationHistory:
             )
             self._trim()
 
-    def add_raw_message(self, message: dict[str, Any]) -> None:
-        """Add a raw message dict to history.
-
-        Args:
-            message: Message dict with role and content
-        """
-        with self._lock:
-            # Extract fields from raw message
-            role = message.get("role", "user")
-            content = message.get("content", "")
-
-            # Handle tool calls if present
-            tool_calls = None
-            if "tool_calls" in message:
-                tool_calls = [
-                    ToolCall(
-                        id=tc["id"],
-                        name=tc["function"]["name"],
-                        arguments=json.loads(tc["function"]["arguments"])
-                        if isinstance(tc["function"]["arguments"], str)
-                        else tc["function"]["arguments"],
-                        status="completed",
-                    )
-                    for tc in message["tool_calls"]
-                ]
-
-            # Handle tool_call_id for tool responses
-            tool_call_id = message.get("tool_call_id")
-
-            self._messages.append(
-                ConversationMessage(
-                    role=role, content=content, tool_calls=tool_calls, tool_call_id=tool_call_id
-                )
-            )
-            self._trim()
-
     def to_openai_format(self) -> list[dict[str, Any]]:
         """Export history in OpenAI format.
 

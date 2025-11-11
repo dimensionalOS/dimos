@@ -148,13 +148,6 @@ class UnitreeSpeak(AbstractRobotSkill):
             logger.error(f"Error playing audio on robot: {e}")
             raise
 
-    def _stop_audio_playback(self) -> None:
-        try:
-            logger.debug("Stopping audio playback")
-            self._webrtc_request(AUDIO_API["PAUSE"], {})
-        except Exception as e:
-            logger.warning(f"Error stopping audio playback: {e}")
-
     def _upload_and_play_megaphone(self, audio_data: bytes, duration: float):
         try:
             logger.debug("Entering megaphone mode")

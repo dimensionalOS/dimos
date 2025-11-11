@@ -48,59 +48,6 @@ class AbstractDataProvider(ABC):
         self._data_subject.dispose()
 
 
-class ROSDataProvider(AbstractDataProvider):
-    """ReactiveX data provider for ROS topics."""
-
-    def __init__(self, dev_name: str = "ros_provider") -> None:
-        super().__init__(dev_name)
-        self.logger = logging.getLogger(dev_name)
-
-    def push_data(self, data) -> None:
-        """Push new data to the stream."""
-        print(f"ROSDataProvider pushing data of type: {type(data)}")
-        super().push_data(data)
-        print("Data pushed to subject")
-
-    def capture_data_as_observable(self, fps: int | None = None) -> Observable:
-        """Get the data stream as an observable.
-
-        Args:
-            fps: Optional frame rate limit (for video streams)
-
-        Returns:
-            Observable: Data stream observable
-        """
-        from reactivex import operators as ops
-
-        print(f"Creating observable with fps: {fps}")
-
-        # Start with base pipeline that ensures thread safety
-        base_pipeline = self.data_stream.pipe(
-            # Ensure emissions are handled on thread pool
-            ops.observe_on(pool_scheduler),
-            # Add debug logging to track data flow
-            ops.do_action(
-                on_next=lambda x: print(f"Got frame in pipeline: {type(x)}"),
-                on_error=lambda e: print(f"Pipeline error: {e}"),
-                on_completed=lambda: print("Pipeline completed"),
-            ),
-        )
-
-        # If fps is specified, add rate limiting
-        if fps and fps > 0:
-            print(f"Adding rate limiting at {fps} FPS")
-            return base_pipeline.pipe(
-                # Use scheduler for time-based operations
-                ops.sample(1.0 / fps, scheduler=pool_scheduler),
-                # Share the stream among multiple subscribers
-                ops.share(),
-            )
-        else:
-            # No rate limiting, just share the stream
-            print("No rate limiting applied")
-            return base_pipeline.pipe(ops.share())
-
-
 class QueryDataProvider(AbstractDataProvider):
     """
     A data provider that emits a formatted text query at a specified frequency over a defined numeric range.

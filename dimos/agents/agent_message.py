@@ -42,22 +42,6 @@ class AgentMessage:
         if text:  # Only add non-empty text
             self.messages.append(text)
 
-    def add_image(self, image: Image | AgentImage) -> None:
-        """Add an image. Converts Image to AgentImage if needed."""
-        if isinstance(image, Image):
-            # Convert to AgentImage
-            agent_image = AgentImage(
-                base64_jpeg=image.agent_encode(),
-                width=image.width,
-                height=image.height,
-                metadata={"format": image.format.value, "frame_id": image.frame_id},
-            )
-            self.images.append(agent_image)
-        elif isinstance(image, AgentImage):
-            self.images.append(image)
-        else:
-            raise TypeError(f"Expected Image or AgentImage, got {type(image)}")
-
     def has_text(self) -> bool:
         """Check if message contains text."""
         # Check if we have any non-empty messages
@@ -70,14 +54,6 @@ class AgentMessage:
     def is_multimodal(self) -> bool:
         """Check if message contains both text and images."""
         return self.has_text() and self.has_images()
-
-    def get_primary_text(self) -> str | None:
-        """Get the first text message, if any."""
-        return self.messages[0] if self.messages else None
-
-    def get_primary_image(self) -> AgentImage | None:
-        """Get the first image, if any."""
-        return self.images[0] if self.images else None
 
     def get_combined_text(self) -> str:
         """Get all text messages combined into a single string."""

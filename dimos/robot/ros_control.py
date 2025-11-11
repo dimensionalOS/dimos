@@ -265,24 +265,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         logger.info(f"{node_name} initialized with multi-threaded executor")
         print(f"{node_name} initialized with multi-threaded executor")
 
-    def get_global_costmap(self) -> OccupancyGrid | None:
-        """
-        Get current global_costmap data
-
-        Returns:
-            Optional[OccupancyGrid]: Current global_costmap data or None if not available
-        """
-        if not self._global_costmap_topic:
-            logger.warning(
-                "No global_costmap topic provided - global_costmap data tracking will be unavailable"
-            )
-            return None
-
-        if self._global_costmap_data:
-            return self._global_costmap_data
-        else:
-            return None
-
     def _global_costmap_callback(self, msg) -> None:
         """Callback for costmap data"""
         self._global_costmap_data = msg
@@ -347,21 +329,6 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return None
 
         return self._robot_state
-
-    def get_imu_state(self) -> Any | None:
-        """
-        Get current IMU state
-
-        Base implementation provides common state fields. Child classes should
-        extend this method to include their specific state information.
-
-        Returns:
-            ROS msg containing the IMU state information
-        """
-        if not self._imu_topic:
-            logger.warning("No IMU topic provided - IMU data tracking will be unavailable")
-            return None
-        return self._imu_state
 
     def get_odometry(self) -> Odometry | None:
         """

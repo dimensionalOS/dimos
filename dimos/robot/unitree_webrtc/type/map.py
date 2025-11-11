@@ -86,12 +86,6 @@ class Map(Module):
     def stop(self) -> None:
         super().stop()
 
-    def to_PointCloud2(self) -> PointCloud2:
-        return PointCloud2(
-            pointcloud=self.pointcloud,
-            ts=time.time(),
-        )
-
     def to_lidar_message(self) -> LidarMessage:
         return LidarMessage(
             pointcloud=self.pointcloud,

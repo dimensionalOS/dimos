@@ -71,10 +71,6 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
             documents = self.db_connection.similarity_search(query=query_texts, k=n_results)
             return [(doc, None) for doc in documents]
 
-    def update_vector(self, vector_id, new_vector_data):
-        # TODO
-        return super().connect()
-
     def delete_vector(self, vector_id):
         """Delete a vector from the ChromaDB using its identifier."""
         if not self.db_connection:
@@ -115,56 +111,6 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
             dimensions=self.dimensions,
             api_key=self.OPENAI_API_KEY,
         )
-
-        # Create the database
-        self.db_connection = Chroma(
-            collection_name=self.collection_name,
-            embedding_function=self.embeddings,
-            collection_metadata={"hnsw:space": "cosine"},
-        )
-
-
-class LocalSemanticMemory(ChromaAgentSemanticMemory):
-    """Semantic memory implementation using local models."""
-
-    def __init__(
-        self,
-        collection_name: str = "my_collection",
-        model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-    ) -> None:
-        """Initialize the local semantic memory using SentenceTransformer.
-
-        Args:
-            collection_name (str): Name of the Chroma collection
-            model_name (str): Embeddings model
-        """
-
-        self.model_name = model_name
-        super().__init__(collection_name=collection_name)
-
-    def create(self) -> None:
-        """Create local embedding model and initialize the ChromaDB client."""
-        # Load the sentence transformer model
-        # Use CUDA if available, otherwise fall back to CPU
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {device}")
-        self.model = SentenceTransformer(self.model_name, device=device)
-
-        # Create a custom embedding class that implements the embed_query method
-        class SentenceTransformerEmbeddings:
-            def __init__(self, model) -> None:
-                self.model = model
-
-            def embed_query(self, text: str):
-                """Embed a single query text."""
-                return self.model.encode(text, normalize_embeddings=True).tolist()
-
-            def embed_documents(self, texts: Sequence[str]):
-                """Embed multiple documents/texts."""
-                return self.model.encode(texts, normalize_embeddings=True).tolist()
-
-        # Create an instance of our custom embeddings class
-        self.embeddings = SentenceTransformerEmbeddings(self.model)
 
         # Create the database
         self.db_connection = Chroma(

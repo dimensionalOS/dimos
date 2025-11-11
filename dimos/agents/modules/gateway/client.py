@@ -61,26 +61,6 @@ class UnifiedGatewayClient:
             logger.error(f"Failed to initialize TensorZero: {e}")
             raise
 
-    def _get_client(self) -> httpx.Client:
-        """Get or create sync HTTP client."""
-        if self._client is None:
-            self._client = httpx.Client(
-                base_url=self.gateway_url,
-                timeout=self.timeout,
-                headers={"Content-Type": "application/json"},
-            )
-        return self._client
-
-    def _get_async_client(self) -> httpx.AsyncClient:
-        """Get or create async HTTP client."""
-        if self._async_client is None:
-            self._async_client = httpx.AsyncClient(
-                base_url=self.gateway_url,
-                timeout=self.timeout,
-                headers={"Content-Type": "application/json"},
-            )
-        return self._async_client
-
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=4, max=10))
     def inference(
         self,

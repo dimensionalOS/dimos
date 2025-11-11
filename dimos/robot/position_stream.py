@@ -145,15 +145,6 @@ class PositionStreamProvider:
             ops.share()  # Share the stream among multiple subscribers
         )
 
-    def get_current_position(self) -> tuple[float, float] | None:
-        """
-        Get the most recent position.
-
-        Returns:
-            Tuple of (x, y) coordinates, or None if no position has been received
-        """
-        return self.last_position
-
     def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self, "subscription") and self.subscription:

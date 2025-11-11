@@ -35,13 +35,6 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(__name__)
 
 
-class G1ZedDeployResult(TypedDict):
-    nav: ROSNav
-    connection: G1Connection
-    camera: CameraModule
-    camerainfo: CameraInfo
-
-
 def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     camera = cast(
         "CameraModule",

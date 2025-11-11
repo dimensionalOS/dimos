@@ -62,7 +62,6 @@ class ModuleA(Module):
     def get_name(self) -> str:
         return "A, Module A"
 
-
 class ModuleB(Module):
     data1: In[Data1] = None
     data2: In[Data2] = None
