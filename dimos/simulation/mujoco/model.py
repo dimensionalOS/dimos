@@ -24,17 +24,21 @@ import numpy as np
 
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 from dimos.simulation.mujoco.types import InputController
+from dimos.utils.data import get_data
 
-DATA_DIR = epath.Path(__file__).parent / "../../../data/mujoco_sim"
+
+def _get_data_dir() -> epath.Path:
+    return epath.Path(str(get_data("mujoco_sim")))
 
 
 def get_assets() -> dict[str, bytes]:
+    data_dir = _get_data_dir()
     # Assets used from https://sketchfab.com/3d-models/mersus-office-8714be387bcd406898b2615f7dae3a47
     # Created by Ryan Cassidy and Coleman Costello
     assets: dict[str, bytes] = {}
-    mjx_env.update_assets(assets, DATA_DIR, "*.xml")
-    mjx_env.update_assets(assets, DATA_DIR / "scene_office1/textures", "*.png")
-    mjx_env.update_assets(assets, DATA_DIR / "scene_office1/office_split", "*.obj")
+    mjx_env.update_assets(assets, data_dir, "*.xml")
+    mjx_env.update_assets(assets, data_dir / "scene_office1/textures", "*.png")
+    mjx_env.update_assets(assets, data_dir / "scene_office1/office_split", "*.obj")
     mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_go1" / "assets")
     mjx_env.update_assets(assets, mjx_env.MENAGERIE_PATH / "unitree_g1" / "assets")
     return assets
@@ -60,7 +64,7 @@ def load_model(input_device: InputController, robot: str, scene: str):
     model.opt.timestep = sim_dt
 
     params = {
-        "policy_path": (DATA_DIR / f"{robot}_policy.onnx").as_posix(),
+        "policy_path": (_get_data_dir() / f"{robot}_policy.onnx").as_posix(),
         "default_angles": np.array(model.keyframe("home").qpos[7:]),
         "n_substeps": n_substeps,
         "action_scale": 0.5,
@@ -82,7 +86,7 @@ def load_model(input_device: InputController, robot: str, scene: str):
 
 
 def get_model_xml(robot: str, scene: str):
-    xml_file = (DATA_DIR / f"scene_{scene}.xml").as_posix()
+    xml_file = (_get_data_dir() / f"scene_{scene}.xml").as_posix()
 
     tree = ET.parse(xml_file)
     root = tree.getroot()

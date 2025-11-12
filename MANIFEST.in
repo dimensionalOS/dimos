@@ -1,0 +1,20 @@
+global-exclude *.pyc
+global-exclude __pycache__
+global-exclude .DS_Store
+
+# Exclude test directories
+prune tests
+
+# Exclude web development directories
+recursive-exclude dimos/web/command-center-extension *
+recursive-exclude dimos/web/websocket_vis/node_modules *
+
+# Exclude development files
+exclude .gitignore
+exclude .gitattributes
+prune .git
+prune .github
+prune .mypy_cache
+prune .pytest_cache
+prune .ruff_cache
+prune .vscode
