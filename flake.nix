@@ -138,6 +138,8 @@
               ]
             }:$LD_LIBRARY_PATH"
 
+            export LIBRARY_PATH="${pkgs.lcm}/lib:$LIBRARY_PATH"
+
             export DISPLAY=:0
             export GI_TYPELIB_PATH="${pkgs.gst_all_1.gstreamer}/lib/girepository-1.0:${pkgs.gst_all_1.gst-plugins-base}/lib/girepository-1.0:$GI_TYPELIB_PATH"
 
