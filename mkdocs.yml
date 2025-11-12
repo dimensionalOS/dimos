@@ -76,6 +76,7 @@ nav:
     - Modules: concepts/modules.md
   - API Reference:
     - api/index.md
+    - Agents: api/agents.md
 
 plugins:
   - search
