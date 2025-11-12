@@ -8,4 +8,8 @@ LLM-based reasoning systems that orchestrate robot behavior by processing natura
 
 ## [Modules](modules.md)
 
-Every DimOS component - from hardware drivers to AI agents - is a Module: a distributed actor communicating through typed streams and RPC
+Every DimOS component -- from hardware drivers to AI agents -- is a Module: a distributed actor communicating through typed streams and RPC
+
+## [Skills](skills.md)
+
+The bridge between AI reasoning and robot capabilities -- tell robots what to do, not how to do it
