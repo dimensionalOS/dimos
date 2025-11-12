@@ -9,5 +9,9 @@ crate-type = ["cdylib"]
 
 [dependencies]
 colored = "3.0.0"
+lcm = "0.2.0"
 pyo3 = { version = "0.27.1", features = ["extension-module"] }
 zenoh = "1.6.2"
+
+[build-dependencies]
+pkg-config = "0.3"

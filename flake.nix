@@ -87,6 +87,7 @@
           jsoncpp
           libjpeg
           libpng
+          pkg-config
 
           ### LCM (Lightweight Communications and Marshalling)
           lcm
