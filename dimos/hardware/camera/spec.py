@@ -37,3 +37,19 @@ class CameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
     @abstractproperty
     def camera_info(self) -> CameraInfo:
         pass
+
+
+# This is an example, feel free to change spec for stereo cameras
+# e.g., separate camera_info or streams for left/right, etc.
+class StereoCameraHardware(ABC, Configurable[CameraConfigT], Generic[CameraConfigT]):
+    @abstractmethod
+    def image_stream(self) -> Observable[Image]:
+        pass
+
+    @abstractmethod
+    def depth_stream(self) -> Observable[Image]:
+        pass
+
+    @abstractproperty
+    def camera_info(self) -> CameraInfo:
+        pass
