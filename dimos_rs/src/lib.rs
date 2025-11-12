@@ -4,6 +4,8 @@
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyTuple, PyType};
 pub mod core;
+pub mod protocol;
+
 
 #[pymodule]
 fn dimos_rs(py: Python, m: &Bound<PyModule>) -> PyResult<()> {
@@ -30,5 +32,9 @@ fn dimos_rs(py: Python, m: &Bound<PyModule>) -> PyResult<()> {
     let new_class = type_func.call1((name, bases, namespace))?;
 
     m.add("PubSubTransport", new_class)?;
+
+    // Register LCMTransport
+    m.add_class::<core::transport::LCMTransport>()?;
+
     Ok(())
 }
