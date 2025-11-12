@@ -3,7 +3,6 @@
 * [Quickstart](quickstart/index.md)
     * [Installation](quickstart/installation.md)
     * [Basic Usage](quickstart/basic-usage.md)
-    * [Configuration](quickstart/configuration.md)
 
 * [Tutorials](tutorials/index.md)
     * [Simple Agent](tutorials/simple-agent.md)

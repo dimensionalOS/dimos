@@ -3,10 +3,9 @@
 !!! note "Content Placeholder"
     This section will provide step-by-step tutorials for building dimensional applications.
 
-## Tutorial Pathway
+TODO
 
-
-<div class="grid cards" markdown>
+<!-- <div class="grid cards" markdown>
 
 - :material-numeric-1-circle: **Simple Agent**
 
@@ -40,7 +39,7 @@
 
     [:octicons-arrow-right-24: Start tutorial](working-with-robots.md)
 
-</div>
+</div> -->
 
 <!--## Prerequisites
 
