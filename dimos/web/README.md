@@ -80,6 +80,46 @@ The frontend will be available at http://localhost:3000
    - `unitree start_stream` - Start the video stream
    - `unitree stop_stream` - Stop the video stream
 
+## Integrating DimOS with the DimOS-interface
+
+### Unitree Go2 Example
+
+```python
+from dimos.agents.agent import OpenAIAgent
+from dimos.robot.unitree.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.web.robot_web_interface import RobotWebInterface
+
+robot_ip = os.getenv("ROBOT_IP")
+
+# Initialize robot
+logger.info("Initializing Unitree Robot")        
+robot = UnitreeGo2(ip=robot_ip,
+                    connection_method=connection_method,
+                    output_dir=output_dir)
+
+# Set up video stream
+logger.info("Starting video stream")
+video_stream = robot.get_ros_video_stream()
+
+# Create FastAPI server with video stream
+logger.info("Initializing FastAPI server")
+streams = {"unitree_video": video_stream}
+web_interface = RobotWebInterface(port=5555, **streams)
+
+# Initialize agent with robot skills
+skills_instance = MyUnitreeSkills(robot=robot)
+
+agent = OpenAIAgent(
+    dev_name="UnitreeQueryPerceptionAgent",
+    input_query_stream=web_interface.query_stream,
+    output_dir=output_dir,
+    skills=skills_instance,
+)
+
+web_interface.run()
+```
+
 ## Architecture
 
 - **Backend**: FastAPI server runs on port 5555
