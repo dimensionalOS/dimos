@@ -1,4 +1,4 @@
-## Unitree Go2 ROS Control Setup 
+## Unitree Go2 ROS Control Setup
 
 Install unitree ros2 workspace as per instructions in https://github.com/dimensionalOS/go2_ros2_sdk/blob/master/README.md
 
@@ -21,5 +21,3 @@ Run the following command to start the agent:
 ```
 python3 dimos/robot/unitree/run_go2_ros.py
 ```
-
-

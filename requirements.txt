@@ -30,7 +30,7 @@ fastapi>=0.115.6
 sse-starlette>=2.2.1
 uvicorn>=0.34.0
 
-# Agent Memory 
+# Agent Memory
 langchain-chroma>=0.1.4
 langchain-openai>=0.2.14
 
@@ -64,7 +64,7 @@ Pillow
 mmengine>=0.10.3
 mmcv>=2.1.0
 timm>=1.0.15
-lap>=0.5.12 
+lap>=0.5.12
 xformers==0.0.20
 
 # Detic
@@ -91,6 +91,6 @@ onnx
 # Terminal colors
 rich==14.0.0
 
-# multiprocess 
+# multiprocess
 dask[complete]==2025.5.1
 git+https://github.com/dimensionalOS/python_lcm_msgs@main#egg=lcm_msgs
