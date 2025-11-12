@@ -71,6 +71,9 @@ nav:
     - quickstart/index.md
     - Installation: quickstart/installation.md
     - Basic Usage: quickstart/basic-usage.md
+  - Concepts:
+    - concepts/index.md
+    - Modules: concepts/modules.md
   - API Reference:
     - api/index.md
 
