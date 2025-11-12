@@ -25,6 +25,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 
 
 class Map(Module):
@@ -50,6 +51,7 @@ class Map(Module):
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height
         self.max_height = max_height
+        self.robot_pose = None
 
         if global_config:
             if global_config.simulation:
@@ -74,9 +76,10 @@ class Map(Module):
                 resolution=self.cost_resolution,
                 min_height=self.min_height,
                 max_height=self.max_height,
+                robot_pose=self.robot_pose,
             )
-
             self.global_costmap.publish(occupancygrid)
+            # occupancygrid.grid_to_ascii()
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(publish)
@@ -110,14 +113,17 @@ class Map(Module):
             return self
 
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+        center = frame.pointcloud.get_center()
+        self.robot_pose = Pose(Vector3(center[0], center[1], 0.0))
         local_costmap = OccupancyGrid.from_pointcloud(
             frame,
             resolution=self.cost_resolution,
+            robot_pose=self.robot_pose,
             min_height=0.15,
             max_height=0.6,
         ).gradient(max_distance=0.25)
         #TODO-FIX:use_transport
-        local_costmap.grid_to_image()
+        local_costmap.grid_to_ascii()
         self.local_costmap.publish(local_costmap)
 
     @property

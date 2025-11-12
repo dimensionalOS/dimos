@@ -181,18 +181,23 @@ class UnitreeSkillContainer(Module):
             yield str(datetime.datetime.now())
             time.sleep(1)
 
-    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
+    @skill()
     def get_map(self):
-        """Provides current map in the form of an image."""
+        """Provides current map in ASCII string.
+        
+            . represents free space
+            # represents obstacles
+            X represents robot position
+            ? represents unknown space
+        
+        """
 
-        # grid_image = Image.from_file("./local_costmap.png")
+        # send as a string
+        # return "\n".join(map_ascii)
+        with open("./occupancy_grid_ascii_debug.txt", "r") as f:
+            map_ascii = f.readlines()
 
-        if not self._latest_local_costmap:
-            logger.error("No local costmap available to provide")
-            return None
-        else:
-            logger.info("Providing latest local costmap")
-            return self._latest_local_costmap
+        return "\n".join(map_ascii)
 
 
     @skill()
