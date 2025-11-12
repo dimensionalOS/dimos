@@ -4,6 +4,9 @@
     * [Installation](quickstart/installation.md)
     * [Basic Usage](quickstart/basic-usage.md)
 
+* [Concepts](concepts/index.md)
+    * [Modules](concepts/modules.md)
+
 * [Tutorials](tutorials/index.md)
     * [Simple Agent](tutorials/simple-agent.md)
     * [Agent Chaining](tutorials/agent-chaining.md)
