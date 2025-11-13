@@ -14,4 +14,12 @@
 
      [:octicons-arrow-right-24: View agents API](agents.md)
 
- </div>
+- :material-function-variant: **Skills**
+
+    ---
+
+    Capabilities via which agents control and monitor the robot.
+
+    [:octicons-arrow-right-24: View Skills API](skills.md)
+
+</div>
