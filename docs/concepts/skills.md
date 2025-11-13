@@ -6,26 +6,71 @@ A Skill in DimOS is the **bridge between AI reasoning and robot capabilities** -
 
 Every Module in DimOS can expose skills - methods decorated with `@skill` that become callable by AI agents. Think of skills as the robot's vocabulary: a catalog of actions that agents can discover, reason about, and invoke.
 <!-- Citation: dimos/core/module.py:77 - ModuleBase inherits from SkillContainer -->
-<!-- Citation: notes/ARCHITECTURE.md:89 - "ANY module can expose skills via the @skill decorator" -->
 
 ```python
 from dimos.core import Module
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Return
+from dimos.protocol.skill.skill import skill, rpc
 
 class NavigationModule(Module):
-    @skill(ret=Return.call_agent)
+    """Navigation skills that abstract coordinate systems behind natural language."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Semantic map: human-friendly names → precise robot coordinates
+        self._locations = {
+            "kitchen": (3.5, -1.2, 1.57),      # x, y in meters; theta in radians
+            "living room": (0.0, 0.0, 0.0),
+            "bedroom": (-2.0, 3.5, 3.14),
+        }
+
+    @rpc
+    def start(self) -> None:
+        """Initialize module."""
+        super().start()
+
+    @skill()
     def navigate_to(self, location: str) -> str:
-        """Navigate to a named location like 'kitchen' or 'front door'."""
-        pose = self.get_rpc_calls("SpatialMemory.query")(location)
-        self.get_rpc_calls("Navigation.set_goal")(pose)
+        """Navigate to a named location like 'kitchen' or 'bedroom'."""
+        if location not in self._locations:
+            return f"Location '{location}' not found"
+
+        x, y, theta = self._locations[location]
+        self._set_navigation_goal(x, y, theta)
         return f"Navigating to {location}"
+
+    def _set_navigation_goal(self, x: float, y: float, theta: float) -> None:
+        """Set precise navigation goal coordinates."""
+        # In production: create PoseStamped, call navigation planner
+        pass
 ```
 
-<!-- Citation: dimos/protocol/skill/skill.py:65-113 - Full @skill decorator definition with all parameters -->
-<!-- Note: NavigationModule is illustrative pattern based on dimos/robot/unitree_webrtc/rosnav.py:29-100 -->
+<!-- Note: Simplified executable example. See dimos/agents2/skills/navigation.py for production implementation -->
 
-Instead of telling a robot "set wheel velocities to [0.5, 0, 0.3] for 2.5 seconds," you tell it "navigate to the kitchen." The skill encapsulates the implementation details while exposing semantic meaning that both humans and LLMs understand.
+Instead of telling a robot "move to coordinates (3.5, -1.2) with orientation 1.57 radians," you tell it "navigate to the kitchen." The skill abstracts away:
+
+- **Semantic map lookup**: Converting "kitchen" to precise coordinates (3.5, -1.2, 1.57)
+- **Pose construction**: Creating `PoseStamped` with `Vector3` for position and `Quaternion` for orientation
+- **Coordinate frames**: Handling transformations between "map", "odom", and "base_link" frames
+- **Navigation planner API**: Low-level calls to path planning and motion control
+
+**High-level (with skill)**:
+
+```python
+navigate_to("kitchen")
+```
+
+**Low-level (without skill)**:
+
+```python
+pose = PoseStamped(
+    position=Vector3(x=3.5, y=-1.2, z=0.0),
+    orientation=Quaternion.from_euler(Vector3(0, 0, 1.57)),
+    frame_id="map"
+)
+navigation_planner.set_goal(pose)
+```
+
+This is what we mean by "tell the robot what to do, not how to do it."
 
 ## Why Skills Matter
 
