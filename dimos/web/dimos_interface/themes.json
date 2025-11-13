@@ -1,5 +1,27 @@
 [
   {
+    "name": "EncomBoardroom",
+    "black": "#0b0f0f",
+    "red": "#ff0000",
+    "green": "#00eeee",
+    "yellow": "#ffcc00",
+    "blue": "#5c9ff0",
+    "purple": "#00eeee",
+    "cyan": "#00eeee",
+    "white": "#b5e4f4",
+    "brightBlack": "#404040",
+    "brightRed": "#ff0000",
+    "brightGreen": "#00eeee",
+    "brightYellow": "#f2ea8c",
+    "brightBlue": "#8cbdf2",
+    "brightPurple": "#00eeee",
+    "brightCyan": "#00eeee",
+    "brightWhite": "#ffffff",
+    "foreground": "#b5e4f4",
+    "background": "#0b0f0f",
+    "cursorColor": "#00eeee"
+  },
+  {
     "name": "3024Day",
     "black": "#090300",
     "red": "#db2d20",

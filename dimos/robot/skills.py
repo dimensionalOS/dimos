@@ -30,6 +30,7 @@ class AbstractSkill(BaseModel):
         print("Initializing AbstractSkill Class")
         super().__init__(*args, **kwargs)
         self._instances = {}
+        self._list_of_skills = []  # Initialize the list of skills
         print(f"Instances: {self._instances}")
     
     def create_instance(self, name, **kwargs):

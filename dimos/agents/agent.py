@@ -122,6 +122,8 @@ class LLMAgent(Agent):
         frame_processor (FrameProcessor): Processes video frames.
         output_dir (str): Directory for output files.
         response_subject (Subject): Subject that emits agent responses.
+        process_all_inputs (bool): Whether to process every input emission (True) or 
+            skip emissions when the agent is busy processing a previous input (False).
     """
     logging_file_memory_lock = threading.Lock()
 
@@ -129,7 +131,8 @@ class LLMAgent(Agent):
                  dev_name: str = "NA",
                  agent_type: str = "LLM",
                  agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None):
+                 pool_scheduler: Optional[ThreadPoolScheduler] = None, 
+                 process_all_inputs: bool = False):
         """
         Initializes a new instance of the LLMAgent.
 
@@ -139,6 +142,8 @@ class LLMAgent(Agent):
             agent_memory (AbstractAgentSemanticMemory): The memory system for the agent.
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
                 If None, the global scheduler from get_scheduler() will be used.
+            process_all_inputs (bool): Whether to process every input emission (True) or 
+                skip emissions when the agent is busy processing a previous input (False).
         """
         super().__init__(dev_name, agent_type, agent_memory or
                          AgentSemanticMemory(), pool_scheduler)
@@ -156,8 +161,9 @@ class LLMAgent(Agent):
         self.rag_similarity_threshold: float = 0.45
         self.frame_processor: Optional[FrameProcessor] = None
         self.output_dir: str = os.path.join(os.getcwd(), "assets", "agent")
+        self.process_all_inputs: bool = process_all_inputs
         os.makedirs(self.output_dir, exist_ok=True)
-
+        
         # Subject for emitting responses
         self.response_subject = Subject()
 
@@ -436,8 +442,8 @@ class LLMAgent(Agent):
         is_processing = [False]
 
         def process_if_free(frame):
-            if is_processing[0]:
-                # Drop frame if a request is in progress
+            if not self.process_all_inputs and is_processing[0]:
+                # Drop frame if a request is in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
@@ -506,8 +512,8 @@ class LLMAgent(Agent):
 
         def process_if_free(query):
             self.logger.info(f"Processing Query: {query}")
-            if is_processing[0]:
-                # Drop query if a request is already in progress.
+            if not self.process_all_inputs and is_processing[0]:
+                # Drop query if a request is already in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
@@ -546,8 +552,10 @@ class LLMAgent(Agent):
         Returns:
             Observable: An observable that emits string responses from the agent.
         """
-        return self.response_subject.pipe(RxOps.observe_on(
-            self.pool_scheduler))
+        return self.response_subject.pipe(
+            RxOps.observe_on(self.pool_scheduler), 
+            RxOps.subscribe_on(self.pool_scheduler),
+            RxOps.share())
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
@@ -590,7 +598,8 @@ class OpenAIAgent(LLMAgent):
                  response_model: Optional[BaseModel] = None,
                  frame_processor: Optional[FrameProcessor] = None,
                  image_detail: str = "low",
-                 pool_scheduler: Optional[ThreadPoolScheduler] = None):
+                 pool_scheduler: Optional[ThreadPoolScheduler] = None,
+                 process_all_inputs: Optional[bool] = None):
         """
         Initializes a new instance of the OpenAIAgent.
 
@@ -616,9 +625,24 @@ class OpenAIAgent(LLMAgent):
             image_detail (str): Detail level for images ("low", "high", "auto").
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
                 If None, the global scheduler from get_scheduler() will be used.
+            process_all_inputs (bool): Whether to process all inputs or skip when busy.
+                If None, defaults to True for text queries, False for video streams.
         """
-        super().__init__(dev_name, agent_type, agent_memory
-                         or AgentSemanticMemory(), pool_scheduler)
+        # Determine appropriate default for process_all_inputs if not provided
+        if process_all_inputs is None:
+            # Default to True for text queries, False for video streams
+            if input_query_stream is not None and input_video_stream is None:
+                process_all_inputs = True
+            else:
+                process_all_inputs = False
+                
+        super().__init__(
+            dev_name=dev_name,
+            agent_type=agent_type,
+            agent_memory=agent_memory,
+            pool_scheduler=pool_scheduler,
+            process_all_inputs=process_all_inputs
+        )
         self.client = OpenAI()
         self.query = query
         self.output_dir = output_dir
@@ -626,9 +650,7 @@ class OpenAIAgent(LLMAgent):
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Configure skills.
-        self.skills = skills if skills is not None else AbstractSkill()
-        if skills is None:
-            self.skills.set_tools(NOT_GIVEN)
+        self.skills = skills
 
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
@@ -711,8 +733,7 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     response_format=self.response_model,
-                    tools=(self.skills.get_tools()
-                           if self.skills is not None else NOT_GIVEN),
+                    tools=(self.skills.get_tools() if self.skills is not None else NOT_GIVEN),
                     max_tokens=self.max_output_tokens_per_request,
                 )
             else:
