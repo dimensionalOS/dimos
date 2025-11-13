@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 from go2_webrtc_driver.constants import RTC_TOPIC
 
 from dimos.core.core import rpc
+from dimos import core
 from dimos.core.skill_module import SkillModule
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
@@ -124,7 +125,7 @@ class UnitreeSkillContainer(SkillModule):
             ? represents unknown space
         
         """
-
+        logger.warning(f"Costmap recieved {self.latest_costmap_variable}")
         # send as a string
         # return "\n".join(map_ascii)
         with open("./occupancy_grid_ascii_debug.txt", "r") as f:
@@ -132,7 +133,10 @@ class UnitreeSkillContainer(SkillModule):
 
         return "\n".join(map_ascii)
 
-
+    def _on_local_costmap(self, costmap: OccupancyGrid) -> None:
+        """Call back to store latest OccupancyGrid"""
+        self.latest_costmap_variable = costmap
+        
     @skill()
     def speak(self, text: str) -> str:
         """Speak text out loud through the robot's speakers."""
