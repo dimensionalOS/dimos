@@ -74,9 +74,12 @@ nav:
   - Concepts:
     - concepts/index.md
     - Modules: concepts/modules.md
+    - Skills: concepts/skills.md
+    - Agent: concepts/agent.md
   - API Reference:
     - api/index.md
     - Agents: api/agents.md
+    - Skills: api/skills.md
 
 plugins:
   - search
