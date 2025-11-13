@@ -1,11 +1,11 @@
 """MkDocs hooks for DimOS documentation build process."""
 
+from pathlib import Path
 import subprocess
 import sys
-from pathlib import Path
 
 
-def on_post_build(config, **kwargs):
+def on_post_build(config):
     """
     Generate LLM-optimized context files after the main build completes.
 
@@ -24,12 +24,7 @@ def on_post_build(config, **kwargs):
     try:
         # Generate llms-ctx.txt (without optional sections)
         with open(site_dir / "llms-ctx.txt", "w") as f:
-            subprocess.run(
-                ["llms_txt2ctx", str(llms_txt)],
-                stdout=f,
-                check=True,
-                text=True
-            )
+            subprocess.run(["llms_txt2ctx", str(llms_txt)], stdout=f, check=True, text=True)
 
         # Generate llms-ctx-full.txt (with optional sections)
         with open(site_dir / "llms-ctx-full.txt", "w") as f:
@@ -37,7 +32,7 @@ def on_post_build(config, **kwargs):
                 ["llms_txt2ctx", str(llms_txt), "--optional", "true"],
                 stdout=f,
                 check=True,
-                text=True
+                text=True,
             )
 
         print(f"  ✓ Generated {site_dir}/llms-ctx.txt")
@@ -46,4 +41,7 @@ def on_post_build(config, **kwargs):
     except subprocess.CalledProcessError as e:
         print(f"Error generating llms-ctx files: {e}", file=sys.stderr)
     except FileNotFoundError:
-        print("Error: llms_txt2ctx command not found. Install with: pip install llm-ctx", file=sys.stderr)
+        print(
+            "Error: llms_txt2ctx command not found. Install with: pip install llm-ctx",
+            file=sys.stderr,
+        )
