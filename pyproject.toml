@@ -227,6 +227,7 @@ docs = [
     "mkdocstrings[python]>=0.26.0",
     "mkdocs-literate-nav>=0.6.1",
     "mkdocs-llmstxt>=0.1.0",
+    "llm-ctx>=0.0.1",
 ]
 
 jetson-jp6-cuda126 = [
