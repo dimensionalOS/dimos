@@ -113,3 +113,8 @@ class PersonTracker(Module):
         pose_in_world = tf_world_to_target.to_pose(ts=detections2D.ts)
 
         self.target.publish(pose_in_world)
+
+
+person_tracker_module = PersonTracker.blueprint
+
+__all__ = ["PersonTracker", "person_tracker_module"]
