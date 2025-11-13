@@ -27,6 +27,8 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
+from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
+import ollama
 
 from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
@@ -159,6 +161,14 @@ def snapshot_to_messages(
     }
 
 
+def _ensure_ollama_model(model_name: str) -> None:
+    available_models = ollama.list()
+    model_exists = any(model_name == m.model for m in available_models.models)
+    if not model_exists:
+        logger.info(f"Ollama model '{model_name}' not found. Pulling...")
+        ollama.pull(model_name)
+
+
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
@@ -192,9 +202,25 @@ class Agent(AgentSpec):
         if self.config.model_instance:
             self._llm = self.config.model_instance
         else:
-            self._llm = init_chat_model(
-                model_provider=self.config.provider, model=self.config.model
-            )
+            # For Ollama provider, ensure the model is available before initializing
+            if self.config.provider.value.lower() == "ollama":
+                _ensure_ollama_model(self.config.model)
+
+            # For HuggingFace, we need to create a pipeline and wrap it in ChatHuggingFace
+            if self.config.provider.value.lower() == "huggingface":
+                llm = HuggingFacePipeline.from_model_id(
+                    model_id=self.config.model,
+                    task="text-generation",
+                    pipeline_kwargs={
+                        "max_new_tokens": 512,
+                        "temperature": 0.7,
+                    },
+                )
+                self._llm = ChatHuggingFace(llm=llm, model_id=self.config.model)
+            else:
+                self._llm = init_chat_model(
+                    model_provider=self.config.provider, model=self.config.model
+                )
 
     @rpc
     def get_agent_id(self) -> str:
@@ -278,7 +304,19 @@ class Agent(AgentSpec):
 
                 # history() builds our message history dynamically
                 # ensures we include latest system state, but not old ones.
-                msg = self._llm.invoke(self.history())
+                messages = self.history()
+
+                # Some LLMs don't work without any human messages. Add an initial one.
+                if len(messages) == 1 and isinstance(messages[0], SystemMessage):
+                    messages.append(
+                        HumanMessage(
+                            "Everything is initialized. I'll let you know when you should act."
+                        )
+                    )
+                    self.append_history(messages[-1])
+
+                msg = self._llm.invoke(messages)
+
                 self.append_history(msg)
 
                 logger.info(f"Agent response: {msg.content}")

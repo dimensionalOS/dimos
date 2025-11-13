@@ -19,6 +19,7 @@ from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.navigation import navigation_skill
+from dimos.agents2.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
@@ -107,10 +108,32 @@ standard_with_jpegshm = autoconnect(
     ),
 )
 
-agentic = autoconnect(
-    standard,
-    llm_agent(),
+_common_agentic = autoconnect(
     human_input(),
     navigation_skill(),
     unitree_skills(),
+)
+
+agentic = autoconnect(
+    standard,
+    llm_agent(),
+    _common_agentic,
+)
+
+agentic_ollama = autoconnect(
+    standard,
+    llm_agent(
+        model="qwen3:8b",
+        provider=Provider.OLLAMA,
+    ),
+    _common_agentic,
+)
+
+agentic_huggingface = autoconnect(
+    standard,
+    llm_agent(
+        model="Qwen/Qwen2.5-1.5B-Instruct",
+        provider=Provider.HUGGINGFACE,
+    ),
+    _common_agentic,
 )
