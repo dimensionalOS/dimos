@@ -15,6 +15,8 @@ from reactivex import operators as ops
 from openai import OpenAI, NOT_GIVEN
 import time
 import logging
+from dimos.robot.skills import AbstractSkill
+
 
 from dimos.agents.agent import LLMAgent
 from dimos.utils.logging_config import setup_logger
@@ -37,7 +39,8 @@ class PlanningAgent(LLMAgent):
                  model_name: str = "gpt-4",
                  max_steps: int = 10,
                  input_query_stream: Optional[Observable] = None,
-                 use_terminal: bool = False):
+                 use_terminal: bool = False,
+                 skills: Optional[AbstractSkill] = None):
         """Initialize the planning agent.
         
         Args:
@@ -47,20 +50,30 @@ class PlanningAgent(LLMAgent):
             input_query_stream: Observable stream of user queries
             use_terminal: Whether to enable terminal input
         """
-        # System prompt for planning 
-        self.system_prompt = """You are a planning assistant that helps break down tasks into concrete, executable steps.
+
+        self.skills = skills
+        skills_list = []
+        if self.skills is not None:
+            print(type(self.skills.get_tools()))
+            skills_list = (self.skills.get_tools())
+            print(skills_list)
+        
+        
+        self.system_prompt = f"""You are a Robot planning assistant that helps break down tasks into concrete, executable steps.
 Your goal is to:
-1. Understand the user's task through dialogue
-2. Break it down into clear, sequential steps
-3. Refine the plan based on user feedback
-4. Only finalize the plan when the user explicitly confirms
+1. Break down the task into clear, sequential steps
+2. Refine the plan based on user feedback as needed
+3. Only finalize the plan when the user explicitly confirms
+
+You have the following skills at your disposal:
+{skills_list}
 
 IMPORTANT: You MUST ALWAYS respond with ONLY valid JSON in the following format, with no additional text or explanation:
-{
+{{
     "type": "dialogue" | "plan",
     "content": string | list[string],
     "needs_confirmation": boolean
-}
+}}
 
 Your goal is to:
 1. Understand the user's task through dialogue
@@ -69,18 +82,18 @@ Your goal is to:
 4. Only finalize the plan when the user explicitly confirms
 
 For dialogue responses, use:
-{
+{{
     "type": "dialogue",
     "content": "Your message to the user",
     "needs_confirmation": false
-}
+}}
 
 For plan proposals, use:
-{
+{{
     "type": "plan",
     "content": ["Execute", "Execute", ...],
     "needs_confirmation": true
-}
+}}
 
 Remember: ONLY output valid JSON, no other text."""
         
