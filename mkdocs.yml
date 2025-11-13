@@ -6,6 +6,9 @@ repo_url: https://github.com/dimensionalOS/dimos
 site_url: https://dimensionalos.com/
 edit_uri: edit/main/docs/
 
+hooks:
+  - docs/hooks.py
+
 theme:
   name: material
   icon:
@@ -101,6 +104,7 @@ plugins:
         DimOS is the universal framework for AI-native generalist robotics.
         It provides a comprehensive platform for building intelligent robotic systems
         with seamless integration of perception, navigation, manipulation, and AI agents.
+      full_output: llms-full.txt
       sections:
         Getting Started:
           - index.md: Introduction to DimOS
