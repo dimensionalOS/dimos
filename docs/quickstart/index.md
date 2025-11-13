@@ -1,8 +1,9 @@
 # Quickstart
 
-!!! note "Content Placeholder"
-
-TODO
+> [!NOTE]
+> **Content Placeholder**
+>
+> TODO
 
 ## Quick Navigation
 
@@ -24,19 +25,11 @@ TODO
 
     [:octicons-arrow-right-24: Basic examples](basic-usage.md)
 
-<!--- :material-cog: **Configuration**
-
-    ---
-
-    Environment variables, API keys, and project setup.
-
-    [:octicons-arrow-right-24: Configure](configuration.md)
--->
 </div>
 
 ## Next Steps
 
 After completing the quickstart:
 
-- Follow the [tutorials](../tutorials/index.md) for in-depth examples
+<!-- - Follow the [tutorials](../tutorials/index.md) for in-depth examples -->
 - Explore the [API reference](../api/index.md) for detailed documentation
