@@ -12,6 +12,8 @@ Environment Variables:
 import sys
 import os
 
+from dimos.web.robot_web_interface import RobotWebInterface
+
 # Add the parent directory of 'demos' to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -54,9 +56,7 @@ def main():
         logger.info("Initializing Unitree Robot")
         robot = UnitreeGo2(ip=robot_ip,
                            connection_method=connection_method,
-                           output_dir=output_dir,
-                           mock_connection=True,
-                           debug=False)
+                           output_dir=output_dir)
 
         # Set up video stream
         logger.info("Starting video stream")
@@ -82,7 +82,7 @@ def main():
             "executor_responses": executor_response_stream,
         }
         
-        web_interface = FastAPIServer(port=5555, text_streams=text_streams, **streams)
+        web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **streams)
 
         logger.info("Starting planning agent with web interface")
         planner = PlanningAgent(
@@ -112,9 +112,11 @@ def main():
         system_query=dedent(
             """
             You are a robot execution agent that can execute tasks on a virtual
-            robot. You are given a task to execute and a list of skills that 
-            you can use to execute the task. ONLY OUTPUT THE SKILLS TO EXECUTE,
-            NOTHING ELSE.
+            robot. You will be given a task (which may be the direct name 
+            of the function to execute) and a list of skills/tools/functions 
+            that you can use to execute the task. ONLY PERFORM THE FUNCTION 
+            EXECUTION. AFTER EXECUTION, OUTPUT THE FUNCTION YOU EXECUTED WITH 
+            THEIR ARGUMENTS IN NATURAL LANGUAGE, NOTHING ELSE.
             """
         )
         executor = OpenAIAgent(

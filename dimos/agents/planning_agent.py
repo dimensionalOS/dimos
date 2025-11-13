@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 # For response validation
 class PlanningAgentResponse(BaseModel):
     type: Literal["dialogue", "plan"]
-    content: Union[str, List[str]]
+    content: List[str]
     needs_confirmation: bool
 
 class PlanningAgent(OpenAIAgent):
@@ -102,7 +102,7 @@ class PlanningAgent(OpenAIAgent):
             agent_type="Planning",
             query="",  # Will be set by process_user_input
             model_name=model_name,
-            input_query_stream=input_query_stream,  # We'll handle query processing ourselves
+            input_query_stream=input_query_stream,
             system_query=system_query,
             max_output_tokens_per_request=1000,
             response_model=PlanningAgentResponse
@@ -116,11 +116,6 @@ class PlanningAgent(OpenAIAgent):
             self.logger.info("Starting terminal interface in a separate thread")
             terminal_thread = threading.Thread(target=self.start_terminal_interface, daemon=True)
             terminal_thread.start()
-        
-        # Set up query stream if provided
-        if input_query_stream:
-            self.logger.info("Setting up query stream subscription")
-            #self.disposables.add(self.subscribe_to_query_processing(input_query_stream))
             
     def _handle_response(self, response) -> None:
         """Handle the agent's response and update state.
@@ -275,3 +270,31 @@ class PlanningAgent(OpenAIAgent):
             except Exception as e:
                 print(f"\nError: {e}")
                 break
+    
+    def get_response_observable(self) -> Observable:
+        """Gets an observable that emits responses from this agent.
+
+        This method processes the response stream from the parent class,
+        extracting content from `PlanningAgentResponse` objects and flattening
+        any lists of plan steps for emission.
+        
+        Returns:
+            Observable: An observable that emits plan steps from the agent.
+        """
+        def extract_content(response) -> List[str]:
+            if isinstance(response, PlanningAgentResponse):
+                if response.type == "plan":
+                    return response.content  # List of steps to be emitted individually
+                else:  # dialogue type
+                    return [response.content]  # Wrap single dialogue message in a list
+            else:
+                return [str(response)]  # Wrap non-PlanningAgentResponse in a list
+
+        # Get base observable from parent class
+        base_observable = super().get_response_observable()
+
+        # Process the stream: extract content and flatten plan lists
+        return base_observable.pipe(
+            ops.map(extract_content),
+            ops.flat_map(lambda items: items)  # Flatten the list of items
+        )
