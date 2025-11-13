@@ -19,9 +19,9 @@ This module provides pre-configured blueprints for various G1 robot setups,
 from basic teleoperation to full autonomous agent configurations.
 """
 
+from dimos_lcm.foxglove_msgs import SceneUpdate
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.foxglove_msgs import SceneUpdate
 
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
@@ -204,22 +204,44 @@ detection = (
     .transports(
         {
             # Detection 3D module outputs
-            (Detection3DModule, "detections"): LCMTransport("/detector3d/detections", Detection2DArray),
-            (Detection3DModule, "annotations"): LCMTransport("/detector3d/annotations", ImageAnnotations),
-            (Detection3DModule, "scene_update"): LCMTransport("/detector3d/scene_update", SceneUpdate),
-            (Detection3DModule, "detected_pointcloud_0"): LCMTransport("/detector3d/pointcloud/0", PointCloud2),
-            (Detection3DModule, "detected_pointcloud_1"): LCMTransport("/detector3d/pointcloud/1", PointCloud2),
-            (Detection3DModule, "detected_pointcloud_2"): LCMTransport("/detector3d/pointcloud/2", PointCloud2),
+            (Detection3DModule, "detections"): LCMTransport(
+                "/detector3d/detections", Detection2DArray
+            ),
+            (Detection3DModule, "annotations"): LCMTransport(
+                "/detector3d/annotations", ImageAnnotations
+            ),
+            (Detection3DModule, "scene_update"): LCMTransport(
+                "/detector3d/scene_update", SceneUpdate
+            ),
+            (Detection3DModule, "detected_pointcloud_0"): LCMTransport(
+                "/detector3d/pointcloud/0", PointCloud2
+            ),
+            (Detection3DModule, "detected_pointcloud_1"): LCMTransport(
+                "/detector3d/pointcloud/1", PointCloud2
+            ),
+            (Detection3DModule, "detected_pointcloud_2"): LCMTransport(
+                "/detector3d/pointcloud/2", PointCloud2
+            ),
             (Detection3DModule, "detected_image_0"): LCMTransport("/detector3d/image/0", Image),
             (Detection3DModule, "detected_image_1"): LCMTransport("/detector3d/image/1", Image),
             (Detection3DModule, "detected_image_2"): LCMTransport("/detector3d/image/2", Image),
             # Detection DB module outputs
-            (ObjectDBModule, "detections"): LCMTransport("/detectorDB/detections", Detection2DArray),
-            (ObjectDBModule, "annotations"): LCMTransport("/detectorDB/annotations", ImageAnnotations),
+            (ObjectDBModule, "detections"): LCMTransport(
+                "/detectorDB/detections", Detection2DArray
+            ),
+            (ObjectDBModule, "annotations"): LCMTransport(
+                "/detectorDB/annotations", ImageAnnotations
+            ),
             (ObjectDBModule, "scene_update"): LCMTransport("/detectorDB/scene_update", SceneUpdate),
-            (ObjectDBModule, "detected_pointcloud_0"): LCMTransport("/detectorDB/pointcloud/0", PointCloud2),
-            (ObjectDBModule, "detected_pointcloud_1"): LCMTransport("/detectorDB/pointcloud/1", PointCloud2),
-            (ObjectDBModule, "detected_pointcloud_2"): LCMTransport("/detectorDB/pointcloud/2", PointCloud2),
+            (ObjectDBModule, "detected_pointcloud_0"): LCMTransport(
+                "/detectorDB/pointcloud/0", PointCloud2
+            ),
+            (ObjectDBModule, "detected_pointcloud_1"): LCMTransport(
+                "/detectorDB/pointcloud/1", PointCloud2
+            ),
+            (ObjectDBModule, "detected_pointcloud_2"): LCMTransport(
+                "/detectorDB/pointcloud/2", PointCloud2
+            ),
             (ObjectDBModule, "detected_image_0"): LCMTransport("/detectorDB/image/0", Image),
             (ObjectDBModule, "detected_image_1"): LCMTransport("/detectorDB/image/1", Image),
             (ObjectDBModule, "detected_image_2"): LCMTransport("/detectorDB/image/2", Image),
