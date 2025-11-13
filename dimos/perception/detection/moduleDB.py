@@ -334,3 +334,8 @@ def deploy(
 
     detector.start()
     return detector
+
+
+detectionDB_module = ObjectDBModule.blueprint
+
+__all__ = ["ObjectDBModule", "deploy", "detectionDB_module"]

@@ -28,6 +28,7 @@ all_blueprints = {
     "unitree-g1-agentic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:agentic",
     "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
     "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
+    "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:detection",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
