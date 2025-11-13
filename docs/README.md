@@ -14,11 +14,6 @@ docs/
 │   ├── index.md
 │   ├── installation.md
 │   └── basic-usage.md
-├── tutorials/              # Step-by-step tutorials
-│   ├── index.md
-│   ├── simple-agent.md
-│   ├── agent-chaining.md
-│   └── custom-skills.md
 └── api/                    # API reference (auto-generated)
     ├── index.md
     └── agents.md
@@ -53,7 +48,7 @@ Start a local server with hot reload:
 mkdocs serve
 ```
 
-Then open http://127.0.0.1:8000/ in your browser.
+Then open <http://127.0.0.1:8000/> in your browser.
 
 ### Build Static Site
 
@@ -81,7 +76,6 @@ Output will be in the `site/` directory.
 - Uses **mkdocstrings** to auto-generate API docs from Python docstrings
 - Uses `:::` syntax to include module documentation
 - Example: `::: dimos.agents` extracts all docstrings from the agents module
-
 
 ## Design Principles
 
