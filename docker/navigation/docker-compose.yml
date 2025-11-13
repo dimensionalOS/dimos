@@ -1,0 +1,150 @@
+services:
+  # Simulation profile
+  dimos_simulation:
+    build:
+      context: ../..
+      dockerfile: docker/navigation/Dockerfile
+    image: dimos_autonomy_stack:jazzy
+    container_name: dimos_simulation_container
+    profiles: ["", "simulation"]  # Active by default (empty profile) AND with --profile simulation
+
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Network configuration - required for ROS communication
+    network_mode: host
+
+    # Use nvidia runtime for GPU acceleration (falls back to runc if not available)
+    runtime: ${DOCKER_RUNTIME:-nvidia}
+
+    # Environment variables for display and ROS
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=${NVIDIA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
+      - HARDWARE_MODE=false
+
+    # Volume mounts
+    volumes:
+      # X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+
+      # Mount Unity environment models (if available)
+      - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
+
+      # Mount the autonomy stack source for development
+      - ./ros-navigation-autonomy-stack:/ros2_ws/src/ros-navigation-autonomy-stack:rw
+
+      # Mount entire dimos directory for live development
+      - ../..:/workspace/dimos:rw
+
+      # Mount bagfiles directory
+      - ./bagfiles:/ros2_ws/bagfiles:rw
+
+      # Mount config files for easy editing
+      - ./config:/ros2_ws/config:rw
+
+    # Device access (for joystick controllers)
+    devices:
+      - /dev/input:/dev/input
+      - /dev/dri:/dev/dri
+
+    # Working directory
+    working_dir: /workspace/dimos
+
+    # Command to run both ROS and DimOS
+    command: /usr/local/bin/run_both.sh
+
+  # Hardware profile - for real robot
+  dimos_hardware:
+    build:
+      context: ../..
+      dockerfile: docker/navigation/Dockerfile
+    image: dimos_autonomy_stack:jazzy
+    container_name: dimos_hardware_container
+    profiles: ["hardware"]
+
+    # Enable interactive terminal
+    stdin_open: true
+    tty: true
+
+    # Network configuration - MUST be host for hardware access
+    network_mode: host
+
+    # Privileged mode REQUIRED for hardware access
+    privileged: true
+
+    # Override runtime for GPU support
+    runtime: ${DOCKER_RUNTIME:-runc}
+
+    # Hardware environment variables
+    environment:
+      - DISPLAY=${DISPLAY}
+      - QT_X11_NO_MITSHM=1
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=all
+      - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
+      - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
+      - HARDWARE_MODE=true
+      # Mid-360 Lidar configuration
+      - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}
+      - LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP:-192.168.1.5}
+      - LIDAR_GATEWAY=${LIDAR_GATEWAY:-192.168.1.1}
+      - LIDAR_IP=${LIDAR_IP:-192.168.1.116}
+      # Motor controller
+      - MOTOR_SERIAL_DEVICE=${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}
+      # Network optimization
+      - ENABLE_WIFI_BUFFER=true
+
+    # Volume mounts
+    volumes:
+      # X11 socket for GUI
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ${HOME}/.Xauthority:/root/.Xauthority:rw
+      # Mount Unity environment models (optional for hardware)
+      - ./unity_models:/ros2_ws/src/ros-navigation-autonomy-stack/src/base_autonomy/vehicle_simulator/mesh/unity:rw
+      # Mount the autonomy stack source
+      - ./ros-navigation-autonomy-stack:/ros2_ws/src/ros-navigation-autonomy-stack:rw
+      # Mount entire dimos directory
+      - ../..:/workspace/dimos:rw
+      # Mount bagfiles directory
+      - ./bagfiles:/ros2_ws/bagfiles:rw
+      # Mount config files for easy editing
+      - ./config:/ros2_ws/config:rw
+      # Hardware-specific volumes
+      - ./logs:/ros2_ws/logs:rw
+      - /etc/localtime:/etc/localtime:ro
+      - /etc/timezone:/etc/timezone:ro
+      - /dev/bus/usb:/dev/bus/usb:rw
+      - /sys:/sys:ro
+
+    # Device access for hardware
+    devices:
+      # Joystick controllers
+      - /dev/input:/dev/input
+      # GPU access
+      - /dev/dri:/dev/dri
+      # Motor controller serial ports
+      - ${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}:${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}
+      # Additional serial ports (can be enabled via environment)
+      # - /dev/ttyUSB0:/dev/ttyUSB0
+      # - /dev/ttyUSB1:/dev/ttyUSB1
+      # Cameras (can be enabled via environment)
+      # - /dev/video0:/dev/video0
+
+    # Working directory
+    working_dir: /workspace/dimos
+
+    # Command - for hardware, we run bash as the user will launch specific scripts
+    command: bash
+
+    # Capabilities for hardware operations
+    cap_add:
+      - NET_ADMIN  # Network interface configuration
+      - SYS_ADMIN  # System operations
+      - SYS_TIME   # Time synchronization
