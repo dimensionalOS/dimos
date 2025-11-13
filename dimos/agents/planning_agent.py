@@ -107,24 +107,21 @@ class PlanningAgent(OpenAIAgent):
             max_output_tokens_per_request=1000,
             response_model=PlanningAgentResponse
         )
-        
+        self.logger.info("Planning agent initialized")
+
         # Set up terminal mode if requested
         self.use_terminal = use_terminal
         if use_terminal:
             # Start terminal interface in a separate thread
+            self.logger.info("Starting terminal interface in a separate thread")
             terminal_thread = threading.Thread(target=self.start_terminal_interface, daemon=True)
             terminal_thread.start()
-            self.logger.info("Terminal interface started in separate thread")
         
-        self.logger.info("Planning agent initialized")
-
         # Set up query stream if provided
         if input_query_stream:
             self.logger.info("Setting up query stream subscription")
             self.disposables.add(self.subscribe_to_query_processing(input_query_stream))
             
-        self.logger.info("Planning agent initialized")
-
     def _handle_response(self, response: dict) -> None:
         """Handle the agent's response and update state.
         
@@ -234,14 +231,19 @@ class PlanningAgent(OpenAIAgent):
 
     def start_terminal_interface(self):
         """Start the terminal interface for input/output."""
-        print("\nWelcome to the Planning Assistant!")
-        print("Describe your task and I'll help break it down into steps.")
+
+        time.sleep(5) # buffer time for clean terminal interface printing
+        print("=" * 50)
+        print("\nDimOS Action PlanningAgent\n")
+        print("I have access to your Robot() and Robot Skills()")
+        print("Describe your task and I'll break it down into steps using your skills as a reference.")
         print("Once you're happy with the plan, type 'yes' to execute it.")
         print("Type 'quit' to exit.\n")
         
         while True:
             try:
-                user_input = input("> ")
+                print("=" * 50)
+                user_input = input("USER > ")
                 if user_input.lower() in ['quit', 'exit']:
                     break
                     
