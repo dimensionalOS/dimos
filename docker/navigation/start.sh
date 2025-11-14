@@ -86,6 +86,14 @@ if [ "$MODE" = "hardware" ]; then
             echo "Set LIDAR_GATEWAY to the gateway IP address for the lidar subnet"
         fi
 
+        # Check for robot IP configuration
+        if [ -n "$ROBOT_IP" ]; then
+            echo -e "${GREEN}Robot IP configured: $ROBOT_IP${NC}"
+        else
+            echo -e "${YELLOW}Note: ROBOT_IP not configured in .env${NC}"
+            echo "Set ROBOT_IP if using network connection to robot"
+        fi
+
         # Check for serial devices
         echo -e "${GREEN}Checking for serial devices...${NC}"
         if [ -e "${MOTOR_SERIAL_DEVICE:-/dev/ttyACM0}" ]; then
@@ -143,6 +151,7 @@ if docker info 2>/dev/null | grep -q nvidia; then
     fi
 else
     echo -e "${YELLOW}NVIDIA Docker runtime not found. GPU acceleration disabled.${NC}"
+    export DOCKER_RUNTIME=runc
 fi
 
 # Set container name for reference
