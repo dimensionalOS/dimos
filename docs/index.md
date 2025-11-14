@@ -5,6 +5,7 @@
 ## What is Dimensional?
 
 Dimensional is an open-source framework for building agentive generalist robots. DimOS allows off-the-shelf Agents to call tools/functions and read sensor/state data directly from ROS.
+<!-- TODO: Stash will be writing the intro to DimOS -->
 
 The framework enables neurosymbolic orchestration of Agents as generalized spatial reasoners/planners and Robot state/action primitives as functions.
 
@@ -34,7 +35,7 @@ The result: cross-embodied *"Dimensional Applications"* exceptional at generaliz
 
     ---
 
-    Complete API documentation for all DimOS modules including agents, robot interfaces, skills, and perception.
+    API documentation for key DimOS modules, including agents, robot interfaces, and skills.
 
     [:octicons-arrow-right-24: Explore API](api/index.md)
 
@@ -44,18 +45,8 @@ The result: cross-embodied *"Dimensional Applications"* exceptional at generaliz
 
 TODO
 
-<!--## Supported Models
-
-Integrate with any off-the-shelf hosted or local model:
-
-- OpenAIAgent
-- ClaudeAgent
-- GeminiAgent
-- DeepSeekAgent
-- HuggingFaceRemoteAgent
-- HuggingFaceLocalAgent-->
-
 ## Community
 
 - [GitHub](https://github.com/dimensionalOS/dimos) - Source code and issues
+- [Discord](https://discord.gg/74U8guVj8q)
 - [Email](mailto:build@dimensionalOS.com) - Contact the team
