@@ -230,9 +230,11 @@ class MujocoConnection:
 
         return Observable(on_subscribe)
 
-    def move(self, twist: Twist, duration: float = 0.0) -> None:
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
         if not self._is_cleaned_up:
             self.mujoco_thread.move(twist, duration)
+        return True
 
-    def publish_request(self, topic: str, data: dict[str, Any]) -> None:
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         print(f"publishing request, topic={topic}, data={data}")
+        return {}

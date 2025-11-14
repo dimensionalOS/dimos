@@ -55,16 +55,14 @@ class TableStr:
 
         # Create a table for detections
         table = Table(
-            title=f"{self.__class__.__name__} [{len(self.detections)} detections @ {to_timestamp(self.image.ts):.3f}]",
+            title=f"{self.__class__.__name__} [{len(self.detections)} detections @ {to_timestamp(self.color_image.ts):.3f}]",
             show_header=True,
             show_edge=True,
         )
 
         # Dynamically build columns based on the first detection's dict keys
         if not self.detections:
-            return (
-                f"   {self.__class__.__name__} [0 detections @ {to_timestamp(self.image.ts):.3f}]"
-            )
+            return f"   {self.__class__.__name__} [0 detections @ {to_timestamp(self.color_image.ts):.3f}]"
 
         # Cache all repr_dicts to avoid double computation
         detection_dicts = [det.to_repr_dict() for det in self]

@@ -34,7 +34,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
-from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
