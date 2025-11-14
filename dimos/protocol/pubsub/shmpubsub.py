@@ -233,8 +233,9 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             cap = int(self.config.default_capacity)
 
             def _names_for_topic(topic: str, capacity: int) -> tuple[str, str]:
-                # Python’s SharedMemory requires names without a leading '/'
-                h = hashlib.blake2b(f"{topic}:{capacity}".encode(), digest_size=12).hexdigest()
+                # Python's SharedMemory requires names without a leading '/'
+                # Use shorter digest to avoid macOS shared memory name length limits
+                h = hashlib.blake2b(f"{topic}:{capacity}".encode(), digest_size=8).hexdigest()
                 return f"psm_{h}_data", f"psm_{h}_ctrl"
 
             data_name, ctrl_name = _names_for_topic(topic, cap)
