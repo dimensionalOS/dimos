@@ -120,7 +120,7 @@ foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
-dimos-robot = "dimos.robot.cli.dimos_robot:main"
+dimos = "dimos.robot.cli.dimos:main"
 
 [project.optional-dependencies]
 manipulation = [
