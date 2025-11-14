@@ -142,7 +142,7 @@ def lcmspy(ctx: typer.Context) -> None:
     """LCM spy tool for monitoring LCM messages."""
     from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
 
-    sys.argv = ["lcmspy"] + ctx.args
+    sys.argv = ["lcmspy", *ctx.args]
     lcmspy_main()
 
 
@@ -151,7 +151,7 @@ def skillspy(ctx: typer.Context) -> None:
     """Skills spy tool for monitoring skills."""
     from dimos.utils.cli.skillspy.skillspy import main as skillspy_main
 
-    sys.argv = ["skillspy"] + ctx.args
+    sys.argv = ["skillspy", *ctx.args]
     skillspy_main()
 
 
@@ -160,7 +160,7 @@ def agentspy(ctx: typer.Context) -> None:
     """Agent spy tool for monitoring agents."""
     from dimos.utils.cli.agentspy.agentspy import main as agentspy_main
 
-    sys.argv = ["agentspy"] + ctx.args
+    sys.argv = ["agentspy", *ctx.args]
     agentspy_main()
 
 
@@ -169,7 +169,7 @@ def humancli(ctx: typer.Context) -> None:
     """Interface interacting with agents."""
     from dimos.utils.cli.human.humanclianim import main as humancli_main
 
-    sys.argv = ["humancli"] + ctx.args
+    sys.argv = ["humancli", *ctx.args]
     humancli_main()
 
 
