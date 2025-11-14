@@ -50,7 +50,7 @@ class CameraModuleConfig(ModuleConfig):
 
 
 class CameraModule(Module, spec.Camera):
-    image: Out[Image] = None
+    color_image: Out[Image] = None
     camera_info: Out[CameraInfo] = None
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None
@@ -75,7 +75,7 @@ class CameraModule(Module, spec.Camera):
         self._disposables.add(self.camera_info_stream().subscribe(self.publish_info))
 
         stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))
-        self._disposables.add(stream.subscribe(self.image.publish))
+        self._disposables.add(stream.subscribe(self.color_image.publish))
 
     @rpc
     def stop(self) -> None:

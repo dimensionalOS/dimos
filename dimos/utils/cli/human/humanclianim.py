@@ -30,7 +30,7 @@ _import_complete = threading.Event()
 print(theme.ACCENT)
 
 
-def import_cli_in_background():
+def import_cli_in_background() -> None:
     """Import the heavy CLI modules in the background"""
     global _humancli_main
     try:
@@ -43,7 +43,7 @@ def import_cli_in_background():
         _import_complete.set()
 
 
-def get_effect_config(effect_name):
+def get_effect_config(effect_name: str):
     """Get hardcoded configuration for a specific effect"""
     # Hardcoded configs for each effect
     global_config = {
@@ -79,7 +79,7 @@ def get_effect_config(effect_name):
     return {**configs.get(effect_name, {}), **global_config}
 
 
-def run_banner_animation():
+def run_banner_animation() -> None:
     """Run the ASCII banner animation before launching Textual"""
 
     # Check if we should animate
@@ -90,7 +90,6 @@ def run_banner_animation():
         return  # Skip animation
     from terminaltexteffects.effects.effect_beams import Beams
     from terminaltexteffects.effects.effect_burn import Burn
-    from terminaltexteffects.effects.effect_colorshift import ColorShift
     from terminaltexteffects.effects.effect_decrypt import Decrypt
     from terminaltexteffects.effects.effect_expand import Expand
     from terminaltexteffects.effects.effect_highlight import Highlight
@@ -151,7 +150,7 @@ def run_banner_animation():
     print("\033[2J\033[H", end="")
 
 
-def main():
+def main() -> None:
     """Main entry point - run animation then launch the real CLI"""
 
     # Start importing CLI in background (this is slow)

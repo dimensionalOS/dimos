@@ -317,7 +317,7 @@ def deploy(
 
     detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info_stream, **kwargs)
 
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)

@@ -33,7 +33,7 @@ from reactivex.subject import Subject
 
 from dimos.core import rpc
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, TwistStamped
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -127,7 +127,7 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_disconnect() -> None:
             try:
-                self.move(TwistStamped())
+                self.move(Twist())
                 await self.conn.disconnect()
             except Exception:
                 pass
@@ -140,7 +140,7 @@ class UnitreeWebRTCConnection(Resource):
         if self.thread.is_alive():
             self.thread.join(timeout=2.0)
 
-    def move(self, twist: TwistStamped, duration: float = 0.0) -> bool:
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
 
         Args:
@@ -354,9 +354,7 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        print("Starting WebRTC video stream...")
-        stream = self.video_stream()
-        return stream
+        return self.video_stream()
 
     def stop(self) -> bool:
         """Stop the robot's movement.
@@ -395,18 +393,3 @@ class UnitreeWebRTCConnection(Resource):
 
         if hasattr(self, "thread") and self.thread.is_alive():
             self.thread.join(timeout=2.0)
-
-
-# def deploy(dimos: DimosCluster, ip: str) -> None:
-#     from dimos.robot.foxglove_bridge import FoxgloveBridge
-
-#     connection = dimos.deploy(UnitreeWebRTCConnection, ip=ip)
-
-#     bridge = FoxgloveBridge(
-#         shm_channels=[
-#             "/image#sensor_msgs.Image",
-#             "/lidar#sensor_msgs.PointCloud2",
-#         ]
-#     )
-#     bridge.start()
-#     connection.start()
