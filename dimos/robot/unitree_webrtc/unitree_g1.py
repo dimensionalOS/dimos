@@ -465,7 +465,7 @@ class UnitreeG1(Robot, Resource):
 
         logger.info("Deploying G1 joystick module...")
         self.joystick = self._dimos.deploy(G1JoystickModule)
-        self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.joystick.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         logger.info("Joystick module deployed - pygame window will open")
 
     def _deploy_ros_bridge(self) -> None:
