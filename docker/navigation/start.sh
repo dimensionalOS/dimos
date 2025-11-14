@@ -105,15 +105,61 @@ if [ "$MODE" = "hardware" ]; then
         fi
 
         # Check network interface for lidar
-        if [ -n "$LIDAR_INTERFACE" ]; then
-            echo -e "${GREEN}Checking network interface for lidar...${NC}"
-            if ip link show "$LIDAR_INTERFACE" &>/dev/null; then
-                echo -e "  Network interface $LIDAR_INTERFACE found"
-            else
-                echo -e "${YELLOW}  Warning: Interface $LIDAR_INTERFACE not found${NC}"
-                echo -e "${YELLOW}  Available interfaces:${NC}"
-                ip link show | grep -E "^[0-9]+:" | awk '{print "    " $2}' | sed 's/:$//'
+        echo -e "${GREEN}Checking network interface for lidar...${NC}"
+
+        # Get available ethernet interfaces
+        AVAILABLE_ETH=""
+        for i in /sys/class/net/*; do
+            if [ "$(cat $i/type 2>/dev/null)" = "1" ] && [ "$i" != "/sys/class/net/lo" ]; then
+                interface=$(basename $i)
+                if [ -z "$AVAILABLE_ETH" ]; then
+                    AVAILABLE_ETH="$interface"
+                else
+                    AVAILABLE_ETH="$AVAILABLE_ETH, $interface"
+                fi
             fi
+        done
+
+        if [ -z "$LIDAR_INTERFACE" ]; then
+            # No interface configured
+            echo -e "${RED}================================================================${NC}"
+            echo -e "${RED}    ERROR: ETHERNET INTERFACE NOT CONFIGURED!${NC}"
+            echo -e "${RED}================================================================${NC}"
+            echo -e "${YELLOW}  LIDAR_INTERFACE not set in .env file${NC}"
+            echo ""
+            echo -e "${YELLOW}  Your ethernet interfaces: ${GREEN}${AVAILABLE_ETH}${NC}"
+            echo ""
+            echo -e "${YELLOW}  ACTION REQUIRED:${NC}"
+            echo -e "  1. Edit the .env file and set:"
+            echo -e "     ${GREEN}LIDAR_INTERFACE=<your_ethernet_interface>${NC}"
+            echo -e "  2. Run this script again"
+            echo -e "${RED}================================================================${NC}"
+            exit 1
+        elif ! ip link show "$LIDAR_INTERFACE" &>/dev/null; then
+            # Interface configured but doesn't exist
+            echo -e "${RED}================================================================${NC}"
+            echo -e "${RED}    ERROR: ETHERNET INTERFACE '$LIDAR_INTERFACE' NOT FOUND!${NC}"
+            echo -e "${RED}================================================================${NC}"
+            echo -e "${YELLOW}  You configured: LIDAR_INTERFACE=$LIDAR_INTERFACE${NC}"
+            echo -e "${YELLOW}  But this interface doesn't exist on your system${NC}"
+            echo ""
+            echo -e "${YELLOW}  Your ethernet interfaces: ${GREEN}${AVAILABLE_ETH}${NC}"
+            echo ""
+            echo -e "${YELLOW}  ACTION REQUIRED:${NC}"
+            echo -e "  1. Edit the .env file and change to one of your interfaces:"
+            echo -e "     ${GREEN}LIDAR_INTERFACE=<your_actual_ethernet_interface>${NC}"
+            echo -e "  2. Run this script again"
+            echo -e "${RED}================================================================${NC}"
+            exit 1
+        else
+            # Interface exists and is configured correctly
+            echo -e "  ${GREEN}✓${NC} Network interface $LIDAR_INTERFACE found"
+            echo -e "  ${GREEN}✓${NC} Will configure static IP: ${LIDAR_COMPUTER_IP}/24"
+            echo -e "  ${GREEN}✓${NC} Will set gateway: ${LIDAR_GATEWAY}"
+            echo ""
+            echo -e "${YELLOW}  Network configuration mode: Static IP (Manual)${NC}"
+            echo -e "  This will temporarily replace DHCP with static IP assignment"
+            echo -e "  Configuration reverts when container stops"
         fi
     fi
 
