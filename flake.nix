@@ -2,7 +2,7 @@
   description = "Project dev environment as Nix shell + DockerTools layered image";
 
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url      = "github:NixOS/nixpkgs/25.05";
     flake-utils.url  = "github:numtide/flake-utils";
     lib.url          = "github:jeff-hykin/quick-nix-toolkits";
     lib.inputs.flakeUtils.follows = "flake-utils";
@@ -23,7 +23,8 @@
           { vals.pkg=pkgs.coreutils;          flags={}; }
           { vals.pkg=pkgs.gh;                 flags={}; }
           { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags.ldLibraryGroup=true; }
-          { vals.pkg=pkgs.pcre2;              flags.ldLibraryGroup=true; }
+          { vals.pkg=pkgs.pcre2;              flags={ ldLibraryGroup=true; flags.packageConfGroup=pkgs.stdenv.isDarwin; }; }
+          { vals.pkg=pkgs.libsysprof-capture; flags.packageConfGroup=true; onlyIf=pkgs.stdenv.isDarwin; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
           { vals.pkg=pkgs.unixtools.ifconfig; flags={}; }
 
@@ -86,7 +87,34 @@
           { vals.pkg=pkgs.libpng;  flags={}; }
           
           ### LCM (Lightweight Communications and Marshalling)
-          { vals.pkg=pkgs.lcm; flags.ldLibraryGroup=true; }
+          { vals.pkg=pkgs.lcm; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
+          # lcm works on darwin, but only after two fixes (1. pkg-config, 2. fsync)
+          {
+            onlyIf=pkgs.stdenv.isDarwin;
+            flags.ldLibraryGroup=true;
+            vals.pkg=pkgs.lcm.overrideAttrs (old: 
+                let 
+                    # 1. fix pkg-config on darwin
+                    pkgConfPackages = aggregation.getAll { hasAllFlags=[ "packageConfGroup" ]; attrPath=[ "pkg" ]; };
+                    packageConfPackagesString = lib.print { prefix="packageConfPackagesString"; } (aggregation.getAll {
+                        hasAllFlags=[ "packageConfGroup" ];
+                        attrPath=[ "pkg" ];
+                        strAppend="/lib/pkgconfig";
+                        strJoin=":"; 
+                    });
+                in
+                    {
+                        buildInputs = (old.buildInputs or []) ++ pkgConfPackages;
+                        nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
+                        # 1. fix pkg-config on darwin
+                        env.PKG_CONFIG_PATH = packageConfPackagesString;
+                        # 2. Fix fsync on darwin
+                        patches = [
+                            (pkgs.writeText "lcm-darwin-fsync.patch" "--- ./lcm-logger/lcm_logger.c     2025-11-14 09:46:01.000000000 -0600\n+++ ./lcm-logger/lcm_logger.c  2025-11-14 09:47:05.000000000 -0600\n@@ -428,9 +428,13 @@\n         if (needs_flushed) {\n             fflush(logger->log->f);\n #ifndef WIN32\n+#ifdef __APPLE__\n+            fsync(fileno(logger->log->f));\n+#else\n             // Perform a full fsync operation after flush\n             fdatasync(fileno(logger->log->f));\n #endif\n+#endif\n             logger->last_fflush_time = log_event->timestamp;\n         }\n")
+                        ];
+                    }
+            ); 
+          }
         ];
         
         # ------------------------------------------------------------
