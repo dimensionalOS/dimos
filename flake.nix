@@ -2,7 +2,7 @@
   description = "Project dev environment as Nix shell + DockerTools layered image";
 
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/25.05";
+    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url  = "github:numtide/flake-utils";
     lib.url          = "github:jeff-hykin/quick-nix-toolkits";
     lib.inputs.flakeUtils.follows = "flake-utils";
