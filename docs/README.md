@@ -2,39 +2,9 @@
 
 This directory contains the MkDocs documentation for DimOS.
 
-## Structure
+## Installation
 
-```
-docs/
-├── SUMMARY.md              # Navigation definition (literate-nav)
-├── index.md                # Homepage
-├── build_docs.sh           # Build static site
-├── serve_docs.sh           # Local dev server with hot reload
-├── quickstart/             # Getting started guides
-│   ├── index.md
-│   ├── installation.md
-│   └── basic-usage.md
-└── api/                    # API reference (auto-generated)
-    ├── index.md
-    └── agents.md
-```
-
-## Setup
-
-### 1. Create and activate virtual environment
-
-```bash
-uv venv
-source .venv/bin/activate
-```
-
-### 2. Install documentation dependencies
-
-```bash
-uv pip install -e '.[docs]'
-```
-
-Note: The quotes around `'.[docs]'` are required in zsh to prevent glob expansion.
+If you are using the devcontainer, you don't need to install anything else—the dependencies for the docs site are already included.
 
 ## Building Documentation
 
@@ -43,8 +13,6 @@ Note: The quotes around `'.[docs]'` are required in zsh to prevent glob expansio
 Start a local server with hot reload:
 
 ```bash
-./docs/serve_docs.sh
-# or
 mkdocs serve
 ```
 
@@ -55,12 +23,10 @@ Then open <http://127.0.0.1:8000/> in your browser.
 Build the static documentation site:
 
 ```bash
-./docs/build_docs.sh
-# or
 mkdocs build
 ```
 
-Output will be in the `site/` directory.
+Output (which includes the various `llm.tx`es) will be in the `site/` directory.
 
 ## Documentation Architecture
 
@@ -75,7 +41,6 @@ Output will be in the `site/` directory.
 
 - Uses **mkdocstrings** to auto-generate API docs from Python docstrings
 - Uses `:::` syntax to include module documentation
-- Example: `::: dimos.agents` extracts all docstrings from the agents module
 
 ## Design Principles
 
@@ -85,12 +50,4 @@ Output will be in the `site/` directory.
 4. **Auto-generated API docs** - Maintained through docstrings
 5. **Simple and scannable** - Easy to find information quickly
 
-## Deployment
-
-To deploy to GitHub Pages:
-
-```bash
-mkdocs gh-deploy
-```
-
-Or set up GitHub Actions for automatic deployment on push to main.
+<!-- TODO: Add deployment details later -->
