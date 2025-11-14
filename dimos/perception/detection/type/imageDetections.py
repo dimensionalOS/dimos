@@ -41,10 +41,10 @@ class ImageDetections(Generic[T], TableStr):
 
     @property
     def ts(self) -> float:
-        return self.image.ts
+        return self.color_image.ts
 
     def __init__(self, image: Image, detections: list[T] | None = None) -> None:
-        self.image = image
+        self.color_image = image
         self.detections = detections or []
         for det in self.detections:
             if not det.ts:
@@ -73,12 +73,12 @@ class ImageDetections(Generic[T], TableStr):
         filtered_detections = self.detections
         for predicate in predicates:
             filtered_detections = [det for det in filtered_detections if predicate(det)]
-        return ImageDetections(self.image, filtered_detections)
+        return ImageDetections(self.color_image, filtered_detections)
 
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
             detections_length=len(self.detections),
-            header=Header(self.image.ts, "camera_optical"),
+            header=Header(self.color_image.ts, "camera_optical"),
             detections=[det.to_ros_detection2d() for det in self.detections],
         )
 

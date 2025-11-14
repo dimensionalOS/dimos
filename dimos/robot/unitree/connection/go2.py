@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import logging
-from threading import Thread
+from pathlib import Path
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from dimos_lcm.sensor_msgs import CameraInfo
+from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
 from dimos import spec
@@ -27,18 +28,46 @@ from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
     Transform,
-    TwistStamped,
+    Twist,
     Vector3,
 )
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
+from dimos.perception.common.utils import (
+    load_camera_info,
+    load_camera_info_opencv,
+    rectify_image,
+)
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(__file__, level=logging.INFO)
+
+
+_PARAMS_DIR = Path(__file__).parent / "../../unitree_webrtc/params"
+
+
+def _get_lcm_camera_info(connection_type: str) -> tuple[CameraInfo, Any, Any]:
+    if connection_type == "mujoco":
+        camera_params_path = _PARAMS_DIR / "sim_camera.yaml"
+    else:
+        camera_params_path = _PARAMS_DIR / "front_camera_720.yaml"
+
+    lcm_camera_info = load_camera_info(str(camera_params_path), frame_id="camera_link")
+
+    if connection_type == "mujoco":
+        camera_matrix = None
+        dist_coeffs = None
+    else:
+        camera_matrix, dist_coeffs = load_camera_info_opencv(str(camera_params_path))
+        # zero out distortion coefficients for rectification
+        lcm_camera_info.D = [0.0] * len(lcm_camera_info.D)
+
+    return lcm_camera_info, camera_matrix, dist_coeffs
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -49,7 +78,7 @@ class Go2ConnectionProtocol(Protocol):
     def lidar_stream(self) -> Observable: ...
     def odom_stream(self) -> Observable: ...
     def video_stream(self) -> Observable: ...
-    def move(self, twist: TwistStamped, duration: float = 0.0) -> bool: ...
+    def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
     def standup(self) -> None: ...
     def liedown(self) -> None: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...
@@ -134,8 +163,8 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
         return video_store.stream(**self.replay_config)
 
-    def move(self, twist: TwistStamped, duration: float = 0.0) -> None:
-        pass
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+        return True
 
     def publish_request(self, topic: str, data: dict):
         """Fake publish request for testing."""
@@ -143,62 +172,59 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
 
 class GO2Connection(Module, spec.Camera, spec.Pointcloud):
-    cmd_vel: In[TwistStamped] = None  # type: ignore
+    cmd_vel: In[Twist] = None  # type: ignore
     pointcloud: Out[PointCloud2] = None  # type: ignore
-    image: Out[Image] = None  # type: ignore
+    odom: Out[PoseStamped] = None  # type: ignore
+    lidar: Out[LidarMessage] = None  # type: ignore
+    color_image: Out[Image] = None  # type: ignore
     camera_info: Out[CameraInfo] = None  # type: ignore
-    connection_type: str = "webrtc"
 
     connection: Go2ConnectionProtocol
-
-    ip: str | None
-
     camera_info_static: CameraInfo = _camera_info_static()
+    camera_matrix: Any
+    dist_coeffs: Any
+    rectify_image: bool
+    _global_config: GlobalConfig
 
     def __init__(
         self,
         ip: str | None = None,
+        global_config: GlobalConfig | None = None,
         *args,
         **kwargs,
     ) -> None:
-        match ip:
-            case None | "fake" | "mock" | "replay":
-                self.connection = ReplayConnection()
-            case "mujoco":
-                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+        self._global_config = global_config or GlobalConfig()
+        self.rectify_image = not self._global_config.simulation
+        self.camera_info_static, self.camera_matrix, self.dist_coeffs = _get_lcm_camera_info(
+            self._global_config.unitree_connection_type
+        )
+        self.rectify_image = not self._global_config.simulation
 
-                self.connection = MujocoConnection(GlobalConfig())
-            case _:
-                self.connection = UnitreeWebRTCConnection(ip)
+        ip = ip if ip is not None else self._global_config.robot_ip
+
+        connection_type = self._global_config.unitree_connection_type
+
+        if ip in ["fake", "mock", "replay"] or connection_type == "replay":
+            self.connection = ReplayConnection()
+        elif ip == "mujoco" or connection_type == "mujoco":
+            from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+            self.connection = MujocoConnection(self._global_config)
+        else:
+            self.connection = UnitreeWebRTCConnection(ip)
 
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self) -> None:
-        """Start the connection and subscribe to sensor streams."""
         super().start()
 
         self.connection.start()
 
-        self._disposables.add(
-            self.connection.lidar_stream().subscribe(self.pointcloud.publish),
-        )
-
-        self._disposables.add(
-            self.connection.odom_stream().subscribe(self._publish_tf),
-        )
-
-        self._disposables.add(
-            self.connection.video_stream().subscribe(self.image.publish),
-        )
-
-        self.cmd_vel.subscribe(self.move)
-
-        self._camera_info_thread = Thread(
-            target=self.publish_camera_info,
-            daemon=True,
-        )
-        self._camera_info_thread.start()
+        self._disposables.add(self.connection.lidar_stream().subscribe(self._on_lidar))
+        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
+        self._disposables.add(self.connection.video_stream().subscribe(self._on_video))
+        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self.standup()
 
@@ -207,8 +233,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self.liedown()
         if self.connection:
             self.connection.stop()
-        if hasattr(self, "_camera_info_thread"):
-            self._camera_info_thread.join(timeout=1.0)
         super().stop()
 
     @classmethod
@@ -244,31 +268,48 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             sensor,
         ]
 
-    def _publish_tf(self, msg) -> None:
+    def _publish_tf(self, msg: PoseStamped) -> None:
         self.tf.publish(*self._odom_to_tf(msg))
+        if self.odom.transport:
+            self.odom.publish(msg)
+
+    def _on_lidar(self, msg: LidarMessage) -> None:
+        if self.lidar.transport:
+            self.lidar.publish(msg)
+
+    def _on_video(self, msg: Image) -> None:
+        if self.rectify_image:
+            msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
+        if self.color_image.transport:
+            self.color_image.publish(msg)
+
+        header = Header(msg.ts if msg.ts else time.time(), "camera_link")
+        self.camera_info_static.header = header
+        if self.camera_info.transport:
+            self.camera_info.publish(self.camera_info_static)
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(_camera_info_static())
+            self.camera_info.publish(self.camera_info_static)
             time.sleep(1.0)
 
     @rpc
-    def move(self, twist: TwistStamped, duration: float = 0.0) -> None:
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to robot."""
-        self.connection.move(twist, duration)
+        return self.connection.move(twist, duration)
 
     @rpc
-    def standup(self):
+    def standup(self) -> None:
         """Make the robot stand up."""
-        return self.connection.standup()
+        self.connection.standup()
 
     @rpc
-    def liedown(self):
+    def liedown(self) -> None:
         """Make the robot lie down."""
-        return self.connection.liedown()
+        self.connection.liedown()
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict) -> dict:
         """Publish a request to the WebRTC connection.
         Args:
             topic: The RTC topic to publish to
@@ -279,6 +320,9 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         return self.connection.publish_request(topic, data)
 
 
+go2_connection = GO2Connection.blueprint
+
+
 def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
@@ -287,13 +331,16 @@ def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
     connection.pointcloud.transport = pSHMTransport(
         f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     )
-    connection.image.transport = pSHMTransport(
+    connection.color_image.transport = pSHMTransport(
         f"{prefix}/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     )
 
-    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", TwistStamped)
+    connection.cmd_vel.transport = LCMTransport(f"{prefix}/cmd_vel", Twist)
 
     connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
     return connection
+
+
+__all__ = ["GO2Connection", "deploy", "go2_connection"]

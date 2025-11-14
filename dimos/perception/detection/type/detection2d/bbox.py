@@ -135,7 +135,7 @@ class Detection2DBBox(Detection2D):
             Cropped Image containing only the detection area plus padding
         """
         x1, y1, x2, y2 = map(int, self.bbox)
-        return self.image.crop(
+        return self.color_image.crop(
             x1 - padding, y1 - padding, x2 - x1 + 2 * padding, y2 - y1 + 2 * padding
         )
 
@@ -193,8 +193,8 @@ class Detection2DBBox(Detection2D):
             return False
 
         # Check if within image bounds (if image has shape)
-        if self.image.shape:
-            h, w = self.image.shape[:2]
+        if self.color_image.shape:
+            h, w = self.color_image.shape[:2]
             if not (0 <= x1 <= w and 0 <= y1 <= h and 0 <= x2 <= w and 0 <= y2 <= h):
                 return False
 
@@ -275,7 +275,7 @@ class Detection2DBBox(Detection2D):
     def to_text_annotation(self) -> list[TextAnnotation]:
         x1, y1, _x2, y2 = self.bbox
 
-        font_size = self.image.width / 80
+        font_size = self.color_image.width / 80
 
         # Build label text - exclude class_id if it's -1 (VLM detection)
         if self.class_id == -1:

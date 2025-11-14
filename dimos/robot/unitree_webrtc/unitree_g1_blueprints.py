@@ -54,9 +54,9 @@ from dimos.navigation.rosnav import ros_nav
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.robot.unitree.connection.g1 import g1_connection
 from dimos.robot.unitree_webrtc.g1_joystick_module import g1_joystick
 from dimos.robot.unitree_webrtc.type.map import mapper
-from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
