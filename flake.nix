@@ -142,7 +142,9 @@
             if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
               . "$PROJECT_ROOT/env/bin/activate"
             fi
-
+            
+            # without this alias, the pytest uses the non-venv python and fails
+            alias pytest="python -m pytest"
             [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
             [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
           '';
