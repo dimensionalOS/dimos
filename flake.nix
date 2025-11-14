@@ -5,10 +5,11 @@
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url  = "github:numtide/flake-utils";
     lib.url          = "github:jeff-hykin/quick-nix-toolkits";
+    xome.url         = "github:jeff-hykin/xome";
+    xome.inputs.nixpkgs.follows = "nixpkgs";
     lib.inputs.flakeUtils.follows = "flake-utils";
   };
-
-  outputs = { self, nixpkgs, flake-utils, lib, ... }:
+  outputs = { self, nixpkgs, flake-utils, lib, xome, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -22,7 +23,7 @@
           { vals.pkg=pkgs.bashInteractive;    flags={}; }
           { vals.pkg=pkgs.coreutils;          flags={}; }
           { vals.pkg=pkgs.gh;                 flags={}; }
-          { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags={}; }
+          { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.pcre2;              flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
           { vals.pkg=pkgs.unixtools.ifconfig; flags={}; }
@@ -100,29 +101,60 @@
           strAppend="/lib/girepository-1.0";
           strJoin=":"; 
         };
-        ldGroupAndStdlib = [ pkgs.stdenv.cc.cc.lib ] ++ ldLibraryPackages;
 
         # ------------------------------------------------------------
         # 3. Host interactive shell  →  `nix develop`
         # ------------------------------------------------------------
-        devShell = pkgs.mkShell {
-          packages = devPackages;
-          shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldGroupAndStdlib}:$LD_LIBRARY_PATH"
-            export DISPLAY=:0
-            export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH" 
-            PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-            if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
-              . "$PROJECT_ROOT/env/bin/activate"
-            fi
+        devShell = xome.simpleMakeHomeFor {
+          inherit pkgs;
+          pure = true;
+          commandPassthrough = [ "sudo" "nvim" "code" "sysctl" ]; # e.g. use external nvim instead of nix's
+          # commonly needed for MacOS: [ "osascript" "otool" "hidutil" "logger" "codesign" ]
+          homeSubpathPassthrough = [ "cache/nix/" ]; # share nix cache between projects
+          homeModule = {
+            # for home-manager examples, see: 
+            # https://deepwiki.com/nix-community/home-manager/5-configuration-examples
+            # all home-manager options: 
+            # https://nix-community.github.io/home-manager/options.xhtml
+            home.homeDirectory = "/tmp/virtual_homes/dimos";
+            home.stateVersion = "25.11";
+            home.packages = devPackages;
+            
+            programs = {
+              home-manager = {
+                enable = true;
+              };
+              zsh = {
+                enable = true;
+                enableCompletion = true;
+                autosuggestion.enable = true;
+                syntaxHighlighting.enable = true;
+                shellAliases.ll = "ls -la";
+                history.size = 100000;
+                # this is kinda like .zshrc
+                initContent = ''
+                  export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
+                  export DISPLAY=:0
+                  export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH" 
+                  PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
+                  if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
+                    . "$PROJECT_ROOT/env/bin/activate"
+                  fi
 
-            [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
-            [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
-          '';
+                  [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
+                  [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
+                '';
+              };
+              starship = {
+                enable = true;
+                enableZshIntegration = true;
+              };
+            };
+          }; 
         };
 
         # ------------------------------------------------------------
-        # 3. Closure copied into the OCI image rootfs
+        # 4. Closure copied into the OCI image rootfs
         # ------------------------------------------------------------
         imageRoot = pkgs.buildEnv {
           name = "dimos-image-root";
