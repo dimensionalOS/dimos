@@ -71,7 +71,7 @@ class DimosRobotCall:
 
     def start(self):
         self.process = subprocess.Popen(
-            ["dimos-robot", "run", "demo-skill"],
+            ["dimos", "run", "demo-skill"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )

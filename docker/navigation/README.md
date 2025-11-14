@@ -143,8 +143,8 @@ In the container to run the full navigation stack you must run both the dimensio
 
 For the Unitree G1 
 ```bash
-dimos-robot run unitree-g1
-ROBOT_IP=XX.X.X.XXX dimos-robot run unitree-g1 # If ROBOT_IP env variable is not set in .env  
+dimos run unitree-g1
+ROBOT_IP=XX.X.X.XXX dimos run unitree-g1 # If ROBOT_IP env variable is not set in .env  
 ```
 
 #### Navigation Stack 
