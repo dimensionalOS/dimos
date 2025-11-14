@@ -22,7 +22,7 @@
           { vals.pkg=pkgs.bashInteractive;    flags={}; }
           { vals.pkg=pkgs.coreutils;          flags={}; }
           { vals.pkg=pkgs.gh;                 flags={}; }
-          { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags={}; }
+          { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.pcre2;              flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
           { vals.pkg=pkgs.unixtools.ifconfig; flags={}; }
@@ -100,7 +100,6 @@
           strAppend="/lib/girepository-1.0";
           strJoin=":"; 
         };
-        ldGroupAndStdlib = [ pkgs.stdenv.cc.cc.lib ] ++ ldLibraryPackages;
 
         # ------------------------------------------------------------
         # 3. Host interactive shell  →  `nix develop`
@@ -108,7 +107,7 @@
         devShell = pkgs.mkShell {
           packages = devPackages;
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldGroupAndStdlib}:$LD_LIBRARY_PATH"
+            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
             export DISPLAY=:0
             export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH" 
             PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
@@ -122,7 +121,7 @@
         };
 
         # ------------------------------------------------------------
-        # 3. Closure copied into the OCI image rootfs
+        # 4. Closure copied into the OCI image rootfs
         # ------------------------------------------------------------
         imageRoot = pkgs.buildEnv {
           name = "dimos-image-root";
