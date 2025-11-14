@@ -74,6 +74,7 @@ format json..............................................................Passed
 LFS data.................................................................Passed
 
 ```
+
 Given your editor uses ruff via devcontainers (which it should) actual auto-commit hook won't ever reformat your code - IDE will have already done this.
 
 ### Running hooks manually
@@ -94,7 +95,6 @@ pre-commit install          # install git hook
 pre-commit run --all-files
 ```
 
-
 ---
 
 ## Testing
@@ -112,7 +112,6 @@ Depending on which dir you are in, only tests from that dir will run, which is c
 
 Your vibe coding agent will know to use these tests via the devcontainer so it can validate it's work.
 
-
 #### Useful options
 
 | Purpose                    | Command                 |
@@ -120,7 +119,6 @@ Your vibe coding agent will know to use these tests via the devcontainer so it c
 | Show `print()` output      | `pytest -s`             |
 | Filter by name substring   | `pytest -k "<pattern>"` |
 | Run tests with a given tag | `pytest -m <tag>`       |
-
 
 We use tags for special tests, like `vis` or `tool` for things that aren't meant to be ran in CI and when casually developing, something that requires hardware or visual inspection (pointcloud merging vis etc)
 
@@ -165,6 +163,7 @@ Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.433739 0.097553 0.313479])
 Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.430924 0.09859  0.31322 ])), rot(↑ Vector Vector([ 1.84000000e-04 -9.68700000e-03  3.00945623e+00])) yaw(172.4°)
 ... etc
 ```
+
 ---
 
 ## Cheatsheet
@@ -178,3 +177,31 @@ Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.430924 0.09859  0.31322 ])
 | Filter tests by name        | `pytest -k "<pattern>"`      |
 | Enable stdout in tests      | `pytest -s`                  |
 | Run tagged tests            | `pytest -m <tag>`            |
+
+## Docs
+
+### Installation
+
+If you are using the devcontainer, you don't need to install anything else—the dependencies for the docs site are already included.
+
+### Local Development Server
+
+Start a local server with hot reload:
+
+```bash
+mkdocs serve
+```
+
+Then open <http://127.0.0.1:8000/> in your browser.
+
+### Build Static Site
+
+Build the static documentation site:
+
+```bash
+mkdocs build
+```
+
+The output (which includes the various `llm.tx`es) will be in the `site/` directory.
+
+<!-- TODO: Add deployment details later -->
