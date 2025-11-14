@@ -36,8 +36,7 @@ from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
-
-from .optimized_costmap import OptimizedCostmapEncoder
+from dimos.web.websocket_vis.websocket_vis_module.optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger("dimos.web.websocket_vis")
 

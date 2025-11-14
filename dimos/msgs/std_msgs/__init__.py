@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .Bool import Bool
-from .Header import Header
-from .Int8 import Int8
-from .Int32 import Int32
+from dimos.msgs.std_msgs.Bool import Bool
+from dimos.msgs.std_msgs.Header import Header
+from dimos.msgs.std_msgs.Int8 import Int8
+from dimos.msgs.std_msgs.Int32 import Int32
 
 __all__ = ["Bool", "Header", "Int8", "Int32"]

@@ -18,7 +18,7 @@ import time
 import cv2
 import numpy as np
 
-from ..base.stream_base import AnnotatorType, StreamBase, TransportType
+from dimos.simulation.genesis.base.stream_base import AnnotatorType, StreamBase, TransportType
 
 
 class GenesisStream(StreamBase):

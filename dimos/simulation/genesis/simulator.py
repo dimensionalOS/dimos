@@ -15,7 +15,7 @@
 
 import genesis as gs  # type: ignore
 
-from ..base.simulator_base import SimulatorBase
+from dimos.simulation.genesis.base.simulator_base import SimulatorBase
 
 
 class GenesisSimulator(SimulatorBase):

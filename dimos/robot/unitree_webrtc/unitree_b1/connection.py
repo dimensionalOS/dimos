@@ -28,9 +28,8 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
+from dimos.robot.unitree_webrtc.unitree_b1.connection.b1_command import B1Command
 from dimos.utils.logging_config import setup_logger
-
-from .b1_command import B1Command
 
 # Setup logger with DEBUG level for troubleshooting
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1.connection", level=logging.DEBUG)

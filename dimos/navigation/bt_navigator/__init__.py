@@ -1,1 +1,1 @@
-from .navigator import BehaviorTreeNavigator
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator

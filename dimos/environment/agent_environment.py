@@ -17,7 +17,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from .environment import Environment
+from dimos.environment.agent_environment.environment import Environment
 
 
 class AgentEnvironment(Environment):

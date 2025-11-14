@@ -15,7 +15,7 @@
 
 from isaacsim import SimulationApp
 
-from ..base.simulator_base import SimulatorBase
+from dimos.simulation.isaac.base.simulator_base import SimulatorBase
 
 
 class IsaacSimulator(SimulatorBase):

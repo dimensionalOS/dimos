@@ -29,7 +29,7 @@ from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 try:
-    from .gateway import UnifiedGatewayClient
+    from dimos.agents.modules.base.gateway import UnifiedGatewayClient
 except ImportError:
     from dimos.agents.modules.gateway import UnifiedGatewayClient
 

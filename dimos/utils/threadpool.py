@@ -23,7 +23,7 @@ import os
 
 from reactivex.scheduler import ThreadPoolScheduler
 
-from .logging_config import logger
+from dimos.utils.threadpool.logging_config import logger
 
 
 def get_max_workers() -> int:

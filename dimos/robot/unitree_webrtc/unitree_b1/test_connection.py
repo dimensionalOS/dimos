@@ -27,8 +27,7 @@ import time
 
 from dimos.msgs.geometry_msgs import TwistStamped, Vector3
 from dimos.msgs.std_msgs.Int32 import Int32
-
-from .connection import MockB1ConnectionModule
+from dimos.robot.unitree_webrtc.unitree_b1.test_connection.connection import MockB1ConnectionModule
 
 
 class TestB1Connection:

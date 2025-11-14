@@ -17,7 +17,7 @@ from functools import wraps
 import threading
 import time
 
-from .accumulators import Accumulator, LatestAccumulator
+from dimos.utils.decorators.decorators.accumulators import Accumulator, LatestAccumulator
 
 
 def limit(max_freq: float, accumulator: Accumulator | None = None):

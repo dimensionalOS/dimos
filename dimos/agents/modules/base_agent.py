@@ -25,7 +25,7 @@ from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 try:
-    from .base import BaseAgent
+    from dimos.agents.modules.base_agent.base import BaseAgent
 except ImportError:
     from dimos.agents.modules.base import BaseAgent
 

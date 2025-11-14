@@ -14,7 +14,10 @@
 
 """Gateway module for unified LLM access."""
 
-from .client import UnifiedGatewayClient
-from .utils import convert_tools_to_standard_format, parse_streaming_response
+from dimos.agents.modules.gateway.client import UnifiedGatewayClient
+from dimos.agents.modules.gateway.utils import (
+    convert_tools_to_standard_format,
+    parse_streaming_response,
+)
 
 __all__ = ["UnifiedGatewayClient", "convert_tools_to_standard_format", "parse_streaming_response"]

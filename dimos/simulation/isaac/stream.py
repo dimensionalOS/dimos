@@ -17,7 +17,7 @@ import time
 
 import cv2
 
-from ..base.stream_base import AnnotatorType, StreamBase, TransportType
+from dimos.simulation.isaac.base.stream_base import AnnotatorType, StreamBase, TransportType
 
 
 class IsaacStream(StreamBase):

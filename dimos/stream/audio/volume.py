@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # Example usage
     import time
 
-    from .node_simulated import SimulatedAudioSource
+    from dimos.stream.audio.volume.node_simulated import SimulatedAudioSource
 
     # Create a simulated audio source
     audio_source = SimulatedAudioSource()

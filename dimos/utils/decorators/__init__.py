@@ -1,7 +1,11 @@
 """Decorators and accumulators for rate limiting and other utilities."""
 
-from .accumulators import Accumulator, LatestAccumulator, RollingAverageAccumulator
-from .decorators import limit, retry
+from dimos.utils.decorators.accumulators import (
+    Accumulator,
+    LatestAccumulator,
+    RollingAverageAccumulator,
+)
+from dimos.utils.decorators.decorators import limit, retry
 
 __all__ = [
     "Accumulator",

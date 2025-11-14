@@ -1,1 +1,1 @@
-from .utils import *
+from dimos.perception.grasp_generation.utils import *

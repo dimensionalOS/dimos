@@ -26,10 +26,13 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.utils.logging_config import setup_logger
-
 # Assuming AbstractVideoProvider and exceptions are in the sibling file
-from .video_provider import AbstractVideoProvider, VideoFrameError, VideoSourceError
+from dimos.stream.rtsp_video_provider.video_provider import (
+    AbstractVideoProvider,
+    VideoFrameError,
+    VideoSourceError,
+)
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.stream.rtsp_video_provider")
 

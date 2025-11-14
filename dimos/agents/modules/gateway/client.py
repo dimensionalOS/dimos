@@ -24,7 +24,7 @@ from typing import Any
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from .tensorzero_embedded import TensorZeroEmbeddedGateway
+from dimos.agents.modules.gateway.client.tensorzero_embedded import TensorZeroEmbeddedGateway
 
 logger = logging.getLogger(__name__)
 
