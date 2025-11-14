@@ -413,6 +413,51 @@ def deploy(
     provider: Provider = Provider.OPENAI,  # type: ignore[attr-defined]
     skill_containers: list[SkillContainer] | None = None,
 ) -> Agent:
+    """Convenience helper: Deploy a standalone LLM agent with HumanInput skill.
+
+    Creates a fixed configuration: Agent + HumanInput.
+    Starts immediately and returns running instance.
+    Cannot be composed with other modules after creation.
+    If you need to compose modules in a more flexible way, use the blueprint pattern instead.
+
+    Args:
+        dimos: The DimosCluster instance for distributed deployment.
+        system_prompt: Initial instructions for the LLM agent's behavior.
+        model: The LLM model to use (e.g., GPT_4O, CLAUDE_35_SONNET).
+        provider: The model provider (e.g., OPENAI, ANTHROPIC).
+        skill_containers: Optional list of skill containers to register with the agent.
+
+    Returns:
+        Agent: The deployed and running agent instance.
+
+    Examples:
+
+        >>> from dimos import core
+        >>> from dimos.agents2.skills.demo_calculator_skill import DemoCalculatorSkill
+        >>> cluster = core.start()
+        >>> calculator = cluster.deploy(DemoCalculatorSkill)
+        >>> agent = deploy(
+        ...     cluster,
+        ...     system_prompt="You are a helpful calculator assistant.",
+        ...     skill_containers=[calculator]
+        ... )
+        >>> # Agent is now running with calculator skill available
+
+        By contrast, the blueprint pattern is more flexible:
+
+        >>> from dimos.core.blueprints import autoconnect
+        >>> from dimos.agents2.agent import llm_agent
+        >>> from dimos.agents2.cli.human import human_input
+        >>> from dimos.agents2.skills.demo_calculator_skill import demo_calculator_skill
+        >>>
+        >>> blueprint = autoconnect(
+        ...     demo_calculator_skill(),
+        ...     llm_agent(system_prompt="You are a helpful calculator assistant."),
+        ...     human_input()
+        ... )
+        >>> coordinator = blueprint.build()
+        >>> coordinator.start_all_modules()
+    """
     from dimos.agents2.cli.human import HumanInput
 
     if skill_containers is None:
