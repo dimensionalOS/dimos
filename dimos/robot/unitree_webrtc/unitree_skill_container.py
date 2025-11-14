@@ -57,10 +57,6 @@ class UnitreeSkillContainer(SkillModule):
     @rpc
     def start(self) -> None:
         super().start()
-        # subscribe to local costmap
-        self._local_costmap_transport = core.LCMTransport("/local_costmap", OccupancyGrid)
-        self._costmap_unsub = self._local_costmap_transport.subscribe(self._on_local_costmap)
-
 
     @rpc
     def stop(self) -> None:
@@ -115,28 +111,6 @@ class UnitreeSkillContainer(SkillModule):
             yield str(datetime.datetime.now())
             time.sleep(1)
 
-    @skill()
-    def get_map(self):
-        """Provides current map in ASCII string.
-        
-            . represents free space
-            # represents obstacles
-            X represents robot position
-            ? represents unknown space
-        
-        """
-        logger.warning(f"Costmap recieved {self.latest_costmap_variable}")
-        # send as a string
-        # return "\n".join(map_ascii)
-        with open("./occupancy_grid_ascii_debug.txt", "r") as f:
-            map_ascii = f.readlines()
-
-        return "\n".join(map_ascii)
-
-    def _on_local_costmap(self, costmap: OccupancyGrid) -> None:
-        """Call back to store latest OccupancyGrid"""
-        self.latest_costmap_variable = costmap
-        
     @skill()
     def speak(self, text: str) -> str:
         """Speak text out loud through the robot's speakers."""

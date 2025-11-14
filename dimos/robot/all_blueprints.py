@@ -66,6 +66,7 @@ all_modules = {
     "utilization": "dimos.utils.monitoring",
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
     "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
+    "interpret_map_skill": "dimos.agents2.skills.interpret_map",
 }
 
 

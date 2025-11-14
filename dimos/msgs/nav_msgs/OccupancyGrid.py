@@ -366,7 +366,8 @@ class OccupancyGrid(Timestamped):
     
     def agent_encode(self):
         # use either image or ascii representation, 
-        # depending on how well the agent can interpret
+        # depending on how well the agent can interpret, 
+        # preferably ascii as the model should be able to place goals/manipulate 
         
         # grid_image = self.grid_to_image()   
         # grid_image.save("./occupancy_grid_image_debug_.png")

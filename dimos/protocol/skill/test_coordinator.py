@@ -96,19 +96,6 @@ class SkillContainerTest(Module):
         print("Photo taken.")
         return img
 
-    @skill(stream=Stream.passive, output=Output.image)
-    def get_map(self):
-        """Provides current map in the form of an image along with metadata of the map."""
-
-        data = np.zeros((20, 30), dtype=np.int8)
-        data[5:10, 10:20] = 100  # Add some obstacles
-        data[15:18, 5:8] = -1  # Add unknown area
-        
-        origin = Pose(1.0, 2.0, 0.0)
-        grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
-
-        yield grid
-
 
 @pytest.mark.asyncio
 async def test_coordinator_parallel_calls() -> None:
