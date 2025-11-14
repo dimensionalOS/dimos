@@ -34,7 +34,6 @@ Output (which includes the various `llm.tx`es) will be in the `site/` directory.
 
 - Uses **Material for MkDocs** theme with navigation tabs
 - Top-level sections (Quickstart, Tutorials, API Reference) appear as horizontal tabs
-- Navigation structure defined in `SUMMARY.md` using literate-nav plugin
 - Flat hierarchy (max 2-3 levels) for easy scanning
 
 ### API Documentation

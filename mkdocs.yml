@@ -44,8 +44,7 @@ theme:
 markdown_extensions:
   - abbr
   - admonition
-  - callouts:
-    strip_period: false
+  - github-callouts
   - pymdownx.details
   - attr_list
   - def_list
@@ -94,12 +93,15 @@ plugins:
         It provides a comprehensive platform for building intelligent robotic systems
         with seamless integration of perception, navigation, manipulation, and AI agents.
       full_output: llms-full.txt
+      # TODO: Look into generating the sections from a literate-nav SUMMARY.md in the future
+      # to avoid having to manually synchronize with nav
       sections:
-        Quickstart:
+        Home:
           - index.md: Introduction to DimOS
+        Quickstart:
           - quickstart/*.md
-        Tutorials:
-          - tutorials/*.md
+        Concepts:
+          - concepts/*.md
         API Reference:
           - api/*.md
 
