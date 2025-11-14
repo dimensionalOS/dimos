@@ -50,6 +50,9 @@ def check_multicast() -> list[str]:
 
     # Check if loopback interface has multicast enabled
     try:
+        # Skip on macOS
+        if sys.platform == "darwin":
+            return []
         result = subprocess.run(["ip", "link", "show", "lo"], capture_output=True, text=True)
         if "MULTICAST" not in result.stdout:
             commands_needed.append(f"{sudo}ifconfig lo multicast")
@@ -82,6 +85,13 @@ def check_buffers() -> tuple[list[str], int | None]:
 
     # Check current buffer settings
     try:
+        # macOS
+        if sys.platform == "darwin":
+            result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
+            current_max = (
+                int(result.stdout.split(" ")[1].strip()) if result.returncode == 0 else None
+            )
+            return [], current_max
         result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
         current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
         if not current_max or current_max < 2097152:
