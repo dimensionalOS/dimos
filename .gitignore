@@ -1,0 +1,15 @@
+.venv/
+.vscode/
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+.venv*
+venv*
+.ssh/
+
+.env
+**/.DS_Store
+
+# Ignore default runtime output folder
+/assets/output/

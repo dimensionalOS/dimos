@@ -1,0 +1,4 @@
+[submodule "libs/aioice"]
+	path = libs/aioice
+	url = https://github.com/legion1581/aioice.git
+	branch = go2

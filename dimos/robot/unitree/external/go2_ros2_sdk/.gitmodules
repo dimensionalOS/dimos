@@ -1,0 +1,4 @@
+[submodule "go2_robot_sdk/external_lib/aioice"]
+	path = go2_robot_sdk/external_lib/aioice
+	url = https://github.com/legion1581/aioice.git
+	branch = go2

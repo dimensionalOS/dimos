@@ -1,0 +1,42 @@
+opencv-python
+python-dotenv
+openai
+numpy
+colorlog==6.9.0
+yapf==0.40.2
+
+# pycolmap
+
+ffmpeg-python
+pytest
+python-dotenv
+openai
+tiktoken>=0.8.0
+Flask>=2.2
+python-multipart==0.0.20
+reactivex
+
+# Web Extensions
+fastapi>=0.115.6
+sse-starlette>=2.2.1
+uvicorn>=0.34.0
+
+# Agent Memory 
+langchain-chroma>=0.1.4
+langchain-openai>=0.2.14
+
+# Class Extraction
+pydantic
+
+# Developer Specific
+ipykernel
+
+# Unitree webrtc streaming
+aiortc==1.9.0
+pycryptodome
+opencv-python
+sounddevice
+pyaudio
+requests
+wasmtime
+

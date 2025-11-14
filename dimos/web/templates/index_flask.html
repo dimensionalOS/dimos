@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Stream Example</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #f0f0f0;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+            color: #333;
+        }
+
+        .stream-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 20px;
+            padding: 20px;
+            max-width: 1800px;
+            margin: 0 auto;
+        }
+
+        .stream-container {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+
+        .stream-container h2 {
+            text-align: center;
+            margin: 0 0 15px 0;
+            color: #444;
+            font-size: 1.2em;
+        }
+
+        .stream-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+            border-radius: 4px;
+        }
+
+        #reload-button {
+            display: block;
+            width: 200px;
+            margin: 20px auto;
+            padding: 10px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #007BFF;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+
+        #reload-button:hover {
+            background-color: #0056b3;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 900px) {
+            .stream-grid {
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            }
+        }
+
+        @media (max-width: 600px) {
+            .stream-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>Live Video Streams</h1>
+    
+    <div class="stream-grid">
+        {% for key in stream_keys %}
+            <div class="stream-container">
+                <h2>{{ key.replace('_', ' ').title() }}</h2>
+                <img src="{{ url_for('video_feed_' + key) }}" alt="{{ key }} Feed">
+            </div>
+        {% endfor %}
+    </div>
+
+    <button id="reload-button" onclick="reloadPage()">Reload Page</button>
+    <script>
+        function reloadPage() {
+            window.location.reload(true);
+        }
+    </script>
+</body>
+</html>

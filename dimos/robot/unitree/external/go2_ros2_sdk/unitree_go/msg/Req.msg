@@ -1,0 +1,2 @@
+string uuid
+string body
