@@ -148,6 +148,12 @@
               starship = {
                 enable = true;
                 enableZshIntegration = true;
+                settings = {
+                  character = {
+                    success_symbol = "[▣](bold blue)";
+                    error_symbol = "[▣](bold red)";
+                  };
+                };
               };
             };
           }; 
