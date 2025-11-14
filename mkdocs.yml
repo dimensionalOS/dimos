@@ -6,9 +6,6 @@ repo_url: https://github.com/dimensionalOS/dimos
 site_url: https://dimensionalos.com/
 edit_uri: edit/main/docs/
 
-hooks:
-  - docs/hooks.py
-
 theme:
   name: material
   icon:
