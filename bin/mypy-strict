@@ -34,6 +34,7 @@ run_mypy() {
 main() {
   local user_email="none"
   local after_date=""
+  local in_this_branch=""
 
   # Parse arguments
   while [[ $# -gt 0 ]]; do
@@ -74,6 +75,10 @@ main() {
         esac
         shift 2
         ;;
+      --in-this-branch)
+        in_this_branch=true
+        shift 1
+        ;;
       *)
         echo "Error: Unknown argument '$1'" >&2
         exit 1
@@ -90,6 +95,10 @@ main() {
 
   if [[ "$user_email" != "none" ]]; then
     pipeline="$pipeline | ./bin/filter-errors-for-user '$user_email'"
+  fi
+
+  if [[ "$in_this_branch" ]]; then
+    pipeline="$pipeline | grep -Ff <(git diff --name-only dev..HEAD) -"
   fi
 
   eval "$pipeline"

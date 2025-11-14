@@ -1,6 +1,5 @@
 from functools import cached_property
 import os
-from typing import Optional
 
 import numpy as np
 from openai import OpenAI

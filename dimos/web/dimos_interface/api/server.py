@@ -306,7 +306,7 @@ class FastAPIServer(EdgeIO):
 
                 # Push to reactive stream
                 self.audio_subject.on_next(event)
-                print(f"Received audio – {event.data.shape[0] / sr:.2f} s, {sr} Hz")
+                print(f"Received audio - {event.data.shape[0] / sr:.2f} s, {sr} Hz")
                 return {"success": True}
             except Exception as e:
                 print(f"Failed to process uploaded audio: {e}")

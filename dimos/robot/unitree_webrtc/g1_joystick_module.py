@@ -179,3 +179,7 @@ class G1JoystickModule(Module):
             y_pos += 25
 
         pygame.display.flip()
+
+
+# Create blueprint function for easy instantiation
+g1_joystick = G1JoystickModule.blueprint
