@@ -15,43 +15,34 @@
 import json
 from typing import Any
 
-from reactivex import Observable
-from reactivex.disposable import CompositeDisposable
-
-from dimos.core.resource import Resource
+from dimos.core.core import rpc
+from dimos.core.skill_module import SkillModule
+from dimos.core.stream import In
 from dimos.mapping.google_maps.google_maps import GoogleMaps
-from dimos.mapping.osm.current_location_map import CurrentLocationMap
 from dimos.mapping.types import LatLon
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.robot.robot import Robot
+from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
 
 
-class GoogleMapsSkillContainer(SkillContainer, Resource):
-    _robot: Robot
-    _disposables: CompositeDisposable
-    _latest_location: LatLon | None
-    _position_stream: Observable[LatLon]
-    _current_location_map: CurrentLocationMap
-    _started: bool
+class GoogleMapsSkillContainer(SkillModule):
+    _latest_location: LatLon | None = None
+    _client: GoogleMaps
 
-    def __init__(self, robot: Robot, position_stream: Observable[LatLon]) -> None:
+    gps_location: In[LatLon] = None
+
+    def __init__(self) -> None:
         super().__init__()
-        self._robot = robot
-        self._disposables = CompositeDisposable()
-        self._latest_location = None
-        self._position_stream = position_stream
         self._client = GoogleMaps()
-        self._started = False
 
+    @rpc
     def start(self) -> None:
-        self._started = True
-        self._disposables.add(self._position_stream.subscribe(self._on_gps_location))
+        super().start()
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
 
+    @rpc
     def stop(self) -> None:
-        self._disposables.dispose()
         super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:
@@ -74,9 +65,6 @@ class GoogleMapsSkillContainer(SkillContainer, Resource):
         Args:
             context_radius (int): default 200, how many meters to look around
         """
-
-        if not self._started:
-            raise ValueError(f"{self} has not been started.")
 
         location = self._get_latest_location()
 
@@ -105,9 +93,6 @@ class GoogleMapsSkillContainer(SkillContainer, Resource):
             queries (list[str]): The places you want to look up.
         """
 
-        if not self._started:
-            raise ValueError(f"{self} has not been started.")
-
         location = self._get_latest_location()
 
         results: list[dict[str, Any] | str] = []
@@ -123,3 +108,8 @@ class GoogleMapsSkillContainer(SkillContainer, Resource):
                 results.append(f"no result for {query}")
 
         return json.dumps(results)
+
+
+google_maps_skill = GoogleMapsSkillContainer.blueprint
+
+__all__ = ["GoogleMapsSkillContainer", "google_maps_skill"]

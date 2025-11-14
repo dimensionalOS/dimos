@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import traceback
-from typing import TypeVar
+from typing import Any, TypeVar
 
 import dimos.core.colors as colors
 
@@ -38,9 +38,9 @@ T = TypeVar("T")
 
 
 class PubSubTransport(Transport[T]):
-    topic: any
+    topic: Any
 
-    def __init__(self, topic: any) -> None:
+    def __init__(self, topic: Any) -> None:
         self.topic = topic
 
     def __str__(self) -> str:
@@ -101,7 +101,7 @@ class LCMTransport(PubSubTransport[T]):
 
 
 class JpegLcmTransport(LCMTransport):
-    def __init__(self, topic: str, type: type, **kwargs):
+    def __init__(self, topic: str, type: type, **kwargs) -> None:
         self.lcm = JpegLCM(**kwargs)
         super().__init__(topic, type)
 
@@ -160,7 +160,7 @@ class SHMTransport(PubSubTransport[T]):
 class JpegShmTransport(PubSubTransport[T]):
     _started: bool = False
 
-    def __init__(self, topic: str, quality: int = 75, **kwargs):
+    def __init__(self, topic: str, quality: int = 75, **kwargs) -> None:
         super().__init__(topic)
         self.shm = JpegSharedMemory(quality=quality, **kwargs)
         self.quality = quality
@@ -168,7 +168,7 @@ class JpegShmTransport(PubSubTransport[T]):
     def __reduce__(self):
         return (JpegShmTransport, (self.topic, self.quality))
 
-    def broadcast(self, _, msg):
+    def broadcast(self, _, msg) -> None:
         if not self._started:
             self.shm.start()
             self._started = True

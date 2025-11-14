@@ -44,7 +44,7 @@ class RPCClient(Protocol):
     # we expect to crash if we don't get a return value after 10 seconds
     # but callers can override this timeout for extra long functions
     def call_sync(
-        self, name: str, arguments: Args, rpc_timeout: float | None = 30.0
+        self, name: str, arguments: Args, rpc_timeout: float | None = 120.0
     ) -> tuple[Any, Callable[[], None]]:
         event = threading.Event()
 
