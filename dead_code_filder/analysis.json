@@ -1,0 +1,1835 @@
+{
+  "total_files": 644,
+  "total_definitions": 1934,
+  "total_uses": 2449,
+  "unused_files": [
+    "convert_to_absolute_imports.py",
+    "dead_code_filder/code_scanner.py",
+    "dead_code_filder/scanner.py",
+    "dimos/agents/agent_config.py",
+    "dimos/agents/modules/agent_pool.py",
+    "dimos/agents/modules/gateway/tensorzero_embedded.py",
+    "dimos/agents/modules/simple_vision_agent.py",
+    "dimos/agents2/skills/demo_calculator_skill.py",
+    "dimos/agents2/skills/demo_robot.py",
+    "dimos/agents2/skills/osm.py",
+    "dimos/agents2/temp/run_unitree_agents2.py",
+    "dimos/agents2/temp/run_unitree_async.py",
+    "dimos/agents2/temp/webcam_agent.py",
+    "dimos/core/colors.py",
+    "dimos/environment/agent_environment.py",
+    "dimos/environment/colmap_environment.py",
+    "dimos/hardware/fake_zed_module.py",
+    "dimos/hardware/gstreamer_sender.py",
+    "dimos/hardware/sensor.py",
+    "dimos/hardware/ufactory.py",
+    "dimos/models/labels/llava-34b.py",
+    "dimos/models/pointcloud/pointcloud_utils.py",
+    "dimos/models/segmentation/clipseg.py",
+    "dimos/models/segmentation/sam.py",
+    "dimos/models/segmentation/segment_utils.py",
+    "dimos/navigation/demo_ros_navigation.py",
+    "dimos/perception/common/export_tensorrt.py",
+    "dimos/perception/detection/detectors/detic.py",
+    "dimos/perception/detection/person_tracker.py",
+    "dimos/perception/object_tracker_3d.py",
+    "dimos/protocol/encode/__init__.py",
+    "dimos/protocol/tf/tflcmcpp.py",
+    "dimos/robot/agilex/run.py",
+    "dimos/robot/cli/dimos.py",
+    "dimos/robot/recorder.py",
+    "dimos/robot/ros_control.py",
+    "dimos/robot/unitree/g1/g1agent.py",
+    "dimos/robot/unitree/g1/g1detector.py",
+    "dimos/robot/unitree/g1/g1zed.py",
+    "dimos/robot/unitree/go2/go2.py",
+    "dimos/robot/unitree/run.py",
+    "dimos/robot/unitree_webrtc/depth_module.py",
+    "dimos/robot/unitree_webrtc/g1_run.py",
+    "dimos/robot/unitree_webrtc/modular/detect.py",
+    "dimos/robot/unitree_webrtc/modular/ivan_unitree.py",
+    "dimos/robot/unitree_webrtc/type/vector.py",
+    "dimos/robot/unitree_webrtc/unitree_b1/b1_command.py",
+    "dimos/robot/utils/robot_debugger.py",
+    "dimos/simulation/base/simulator_base.py",
+    "dimos/simulation/base/stream_base.py",
+    "dimos/skills/manipulation/force_constraint_skill.py",
+    "dimos/stream/audio/tts/node_pytts.py",
+    "dimos/stream/video_providers/unitree.py",
+    "dimos/stream/videostream.py",
+    "dimos/types/label.py",
+    "dimos/types/sample.py",
+    "dimos/types/segmentation.py",
+    "dimos/utils/cli/agentspy/demo_agentspy.py",
+    "dimos/utils/cli/boxglove/boxglove.py",
+    "dimos/utils/cli/boxglove/connection.py",
+    "dimos/utils/cli/foxglove_bridge/run_foxglove_bridge.py",
+    "dimos/utils/cli/skillspy/demo_skillspy.py",
+    "dimos/utils/cli/theme.py",
+    "dimos/utils/demo_image_encoding.py",
+    "dimos/utils/deprecation.py",
+    "dimos/utils/extract_frames.py",
+    "dimos/utils/generic_subscriber.py",
+    "dimos/utils/s3_utils.py",
+    "dimos/utils/simple_controller.py",
+    "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+    "dimos/web/websocket_vis/costmap_viz.py",
+    "dimos/web/websocket_vis/optimized_costmap.py",
+    "dimos/web/websocket_vis/path_history.py",
+    "docker/navigation/ros_launch_wrapper.py"
+  ],
+  "unused_definitions": [
+    {
+      "file": "convert_to_absolute_imports.py",
+      "definition": "get_absolute_module_path"
+    },
+    {
+      "file": "convert_to_absolute_imports.py",
+      "definition": "resolve_relative_import"
+    },
+    {
+      "file": "convert_to_absolute_imports.py",
+      "definition": "convert_relative_to_absolute"
+    },
+    {
+      "file": "dead_code_filder/code_scanner.py",
+      "definition": "PythonFileAnalyzer"
+    },
+    {
+      "file": "dead_code_filder/code_scanner.py",
+      "definition": "DeadCodeScanner"
+    },
+    {
+      "file": "dead_code_filder/scanner.py",
+      "definition": "ImportVisitor"
+    },
+    {
+      "file": "dead_code_filder/scanner.py",
+      "definition": "DefinitionExtractor"
+    },
+    {
+      "file": "dead_code_filder/scanner.py",
+      "definition": "DependencyScanner"
+    },
+    {
+      "file": "dimos/agents/agent_config.py",
+      "definition": "AgentConfig"
+    },
+    {
+      "file": "dimos/agents/agent_ctransformers_gguf.py",
+      "definition": "CTransformersTokenizerAdapter"
+    },
+    {
+      "file": "dimos/agents/agent_types.py",
+      "definition": "ConversationMessage"
+    },
+    {
+      "file": "dimos/agents/cerebras_agent.py",
+      "definition": "CerebrasResponseMessage"
+    },
+    {
+      "file": "dimos/agents/claude_agent.py",
+      "definition": "ResponseMessage"
+    },
+    {
+      "file": "dimos/agents/memory/chroma_impl.py",
+      "definition": "ChromaAgentSemanticMemory"
+    },
+    {
+      "file": "dimos/agents/modules/agent_pool.py",
+      "definition": "AgentPoolModule"
+    },
+    {
+      "file": "dimos/agents/modules/gateway/tensorzero_embedded.py",
+      "definition": "TensorZeroEmbeddedGateway"
+    },
+    {
+      "file": "dimos/agents/modules/gateway/utils.py",
+      "definition": "create_tool_response"
+    },
+    {
+      "file": "dimos/agents/modules/gateway/utils.py",
+      "definition": "extract_image_from_message"
+    },
+    {
+      "file": "dimos/agents/modules/simple_vision_agent.py",
+      "definition": "SimpleVisionAgentModule"
+    },
+    {
+      "file": "dimos/agents/planning_agent.py",
+      "definition": "PlanningAgentResponse"
+    },
+    {
+      "file": "dimos/agents2/agent.py",
+      "definition": "toolmsg_from_state"
+    },
+    {
+      "file": "dimos/agents2/agent.py",
+      "definition": "SkillStateSummary"
+    },
+    {
+      "file": "dimos/agents2/agent.py",
+      "definition": "summary_from_state"
+    },
+    {
+      "file": "dimos/agents2/agent.py",
+      "definition": "_custom_json_serializers"
+    },
+    {
+      "file": "dimos/agents2/agent.py",
+      "definition": "snapshot_to_messages"
+    },
+    {
+      "file": "dimos/agents2/agent.py",
+      "definition": "LlmAgent"
+    },
+    {
+      "file": "dimos/agents2/skills/demo_calculator_skill.py",
+      "definition": "DemoCalculatorSkill"
+    },
+    {
+      "file": "dimos/agents2/skills/demo_robot.py",
+      "definition": "DemoRobot"
+    },
+    {
+      "file": "dimos/agents2/skills/osm.py",
+      "definition": "OsmSkill"
+    },
+    {
+      "file": "dimos/agents2/spec.py",
+      "definition": "AgentConfig"
+    },
+    {
+      "file": "dimos/agents2/temp/run_unitree_agents2.py",
+      "definition": "UnitreeAgentRunner"
+    },
+    {
+      "file": "dimos/agents2/temp/run_unitree_async.py",
+      "definition": "handle_query"
+    },
+    {
+      "file": "dimos/agents2/temp/run_unitree_async.py",
+      "definition": "interactive_loop"
+    },
+    {
+      "file": "dimos/agents2/temp/webcam_agent.py",
+      "definition": "WebModule"
+    },
+    {
+      "file": "dimos/core/__init__.py",
+      "definition": "CudaCleanupPlugin"
+    },
+    {
+      "file": "dimos/core/__init__.py",
+      "definition": "patch_actor"
+    },
+    {
+      "file": "dimos/core/__init__.py",
+      "definition": "patchdask"
+    },
+    {
+      "file": "dimos/core/blueprints.py",
+      "definition": "_eliminate_duplicates"
+    },
+    {
+      "file": "dimos/core/colors.py",
+      "definition": "green"
+    },
+    {
+      "file": "dimos/core/colors.py",
+      "definition": "blue"
+    },
+    {
+      "file": "dimos/core/colors.py",
+      "definition": "red"
+    },
+    {
+      "file": "dimos/core/colors.py",
+      "definition": "yellow"
+    },
+    {
+      "file": "dimos/core/colors.py",
+      "definition": "cyan"
+    },
+    {
+      "file": "dimos/core/colors.py",
+      "definition": "orange"
+    },
+    {
+      "file": "dimos/core/module.py",
+      "definition": "DaskModule"
+    },
+    {
+      "file": "dimos/core/o3dpickle.py",
+      "definition": "reduce_external"
+    },
+    {
+      "file": "dimos/core/o3dpickle.py",
+      "definition": "reconstruct_pointcloud"
+    },
+    {
+      "file": "dimos/core/stream.py",
+      "definition": "ObservableMixin"
+    },
+    {
+      "file": "dimos/core/stream.py",
+      "definition": "State"
+    },
+    {
+      "file": "dimos/core/stream.py",
+      "definition": "Stream"
+    },
+    {
+      "file": "dimos/core/stream.py",
+      "definition": "RemoteStream"
+    },
+    {
+      "file": "dimos/core/transport.py",
+      "definition": "PubSubTransport"
+    },
+    {
+      "file": "dimos/core/transport.py",
+      "definition": "DaskTransport"
+    },
+    {
+      "file": "dimos/environment/agent_environment.py",
+      "definition": "AgentEnvironment"
+    },
+    {
+      "file": "dimos/environment/colmap_environment.py",
+      "definition": "COLMAPEnvironment"
+    },
+    {
+      "file": "dimos/exceptions/agent_memory_exceptions.py",
+      "definition": "AgentMemoryError"
+    },
+    {
+      "file": "dimos/exceptions/agent_memory_exceptions.py",
+      "definition": "DataRetrievalError"
+    },
+    {
+      "file": "dimos/exceptions/agent_memory_exceptions.py",
+      "definition": "DataNotFoundError"
+    },
+    {
+      "file": "dimos/hardware/camera/module.py",
+      "definition": "default_transform"
+    },
+    {
+      "file": "dimos/hardware/camera/module.py",
+      "definition": "CameraModuleConfig"
+    },
+    {
+      "file": "dimos/hardware/camera/spec.py",
+      "definition": "StereoCameraHardware"
+    },
+    {
+      "file": "dimos/hardware/camera/webcam.py",
+      "definition": "WebcamConfig"
+    },
+    {
+      "file": "dimos/hardware/fake_zed_module.py",
+      "definition": "FakeZEDModule"
+    },
+    {
+      "file": "dimos/hardware/gstreamer_sender.py",
+      "definition": "GStreamerTCPSender"
+    },
+    {
+      "file": "dimos/hardware/piper_arm.py",
+      "definition": "VelocityController"
+    },
+    {
+      "file": "dimos/hardware/piper_arm.py",
+      "definition": "run_velocity_controller"
+    },
+    {
+      "file": "dimos/hardware/sensor.py",
+      "definition": "AbstractSensor"
+    },
+    {
+      "file": "dimos/hardware/ufactory.py",
+      "definition": "UFactoryEndEffector"
+    },
+    {
+      "file": "dimos/hardware/ufactory.py",
+      "definition": "UFactory7DOFArm"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/manipulation_module.py",
+      "definition": "GraspStage"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/manipulation_module.py",
+      "definition": "Feedback"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/pbvs.py",
+      "definition": "PBVSController"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/utils.py",
+      "definition": "match_detection_by_id"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/utils.py",
+      "definition": "ObjectMatchResult"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/utils.py",
+      "definition": "calculate_object_similarity"
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/utils.py",
+      "definition": "parse_zed_pose"
+    },
+    {
+      "file": "dimos/mapping/osm/osm.py",
+      "definition": "_lat_lon_to_tile"
+    },
+    {
+      "file": "dimos/mapping/osm/osm.py",
+      "definition": "_download_tile"
+    },
+    {
+      "file": "dimos/models/labels/llava-34b.py",
+      "definition": "Llava"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "save_pointcloud"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "restore_pointclouds"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "create_point_cloud_from_rgbd"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "canonicalize_point_cloud"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "human_like_distance"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "calculate_distances_between_point_clouds"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "calculate_centroid"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "calculate_relative_positions"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "get_bounding_box_height"
+    },
+    {
+      "file": "dimos/models/pointcloud/pointcloud_utils.py",
+      "definition": "compare_bounding_box_height"
+    },
+    {
+      "file": "dimos/models/qwen/video_query.py",
+      "definition": "get_bbox_from_qwen_frame"
+    },
+    {
+      "file": "dimos/models/segmentation/clipseg.py",
+      "definition": "CLIPSeg"
+    },
+    {
+      "file": "dimos/models/segmentation/sam.py",
+      "definition": "SAM"
+    },
+    {
+      "file": "dimos/models/segmentation/segment_utils.py",
+      "definition": "find_medoid_and_closest_points"
+    },
+    {
+      "file": "dimos/models/segmentation/segment_utils.py",
+      "definition": "sample_points_from_heatmap"
+    },
+    {
+      "file": "dimos/models/segmentation/segment_utils.py",
+      "definition": "apply_mask_to_image"
+    },
+    {
+      "file": "dimos/models/vl/base.py",
+      "definition": "vlm_detection_to_detection2d"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/PoseStamped.py",
+      "definition": "sec_nsec"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/TwistStamped.py",
+      "definition": "sec_nsec"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "_ensure_3d"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_numpy"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_numpy"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_numpy"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_vector"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_vector"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_tuple"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_tuple"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_tuple"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_list"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_list"
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "to_list"
+    },
+    {
+      "file": "dimos/msgs/nav_msgs/Odometry.py",
+      "definition": "sec_nsec"
+    },
+    {
+      "file": "dimos/msgs/nav_msgs/Path.py",
+      "definition": "sec_nsec"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/Image.py",
+      "definition": "AgentImageMessage"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/Image.py",
+      "definition": "sharpness_window"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/Image.py",
+      "definition": "_get_lcm_encoding"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/Image.py",
+      "definition": "_parse_lcm_encoding"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/Joy.py",
+      "definition": "sec_nsec"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/AbstractImage.py",
+      "definition": "_to_cu"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/AbstractImage.py",
+      "definition": "_encode_nvimgcodec_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_solve_pnp_cuda_kernel"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_bgr_to_rgb_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_rgb_to_bgr_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_bgra_to_rgba_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_rgba_to_bgra_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_gray_to_rgb_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_rgb_to_gray_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_resize_bilinear_hwc_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_rodrigues"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_undistort_points_cuda"
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/CudaImage.py",
+      "definition": "_CudaTemplateTracker"
+    },
+    {
+      "file": "dimos/navigation/bt_navigator/goal_validator.py",
+      "definition": "_find_safe_goal_bfs"
+    },
+    {
+      "file": "dimos/navigation/bt_navigator/goal_validator.py",
+      "definition": "_find_safe_goal_spiral"
+    },
+    {
+      "file": "dimos/navigation/bt_navigator/goal_validator.py",
+      "definition": "_find_safe_goal_voronoi"
+    },
+    {
+      "file": "dimos/navigation/bt_navigator/goal_validator.py",
+      "definition": "_find_safe_goal_gradient"
+    },
+    {
+      "file": "dimos/navigation/bt_navigator/goal_validator.py",
+      "definition": "_is_position_safe"
+    },
+    {
+      "file": "dimos/navigation/frontier_exploration/utils.py",
+      "definition": "draw_frontiers_on_image"
+    },
+    {
+      "file": "dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py",
+      "definition": "PointClassification"
+    },
+    {
+      "file": "dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py",
+      "definition": "GridPoint"
+    },
+    {
+      "file": "dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py",
+      "definition": "FrontierCache"
+    },
+    {
+      "file": "dimos/navigation/global_planner/planner.py",
+      "definition": "add_orientations_to_path"
+    },
+    {
+      "file": "dimos/navigation/global_planner/planner.py",
+      "definition": "resample_path"
+    },
+    {
+      "file": "dimos/navigation/rosnav.py",
+      "definition": "Config"
+    },
+    {
+      "file": "dimos/navigation/rosnav.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/perception/common/detection2d_tracker.py",
+      "definition": "compute_iou"
+    },
+    {
+      "file": "dimos/perception/common/detection2d_tracker.py",
+      "definition": "target2d"
+    },
+    {
+      "file": "dimos/perception/common/export_tensorrt.py",
+      "definition": "parse_args"
+    },
+    {
+      "file": "dimos/perception/detection/detectors/detic.py",
+      "definition": "SimpleTracker"
+    },
+    {
+      "file": "dimos/perception/detection/detectors/detic.py",
+      "definition": "Detic2DDetector"
+    },
+    {
+      "file": "dimos/perception/detection/module2D.py",
+      "definition": "Config"
+    },
+    {
+      "file": "dimos/perception/detection/module2D.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/perception/detection/module3D.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/perception/detection/moduleDB.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/perception/detection/person_tracker.py",
+      "definition": "PersonTracker"
+    },
+    {
+      "file": "dimos/perception/detection/type/detection2d/bbox.py",
+      "definition": "_hash_to_color"
+    },
+    {
+      "file": "dimos/perception/detection/type/utils.py",
+      "definition": "_hash_to_color"
+    },
+    {
+      "file": "dimos/perception/detection2d/utils.py",
+      "definition": "extract_detection_results"
+    },
+    {
+      "file": "dimos/perception/detection2d/utils.py",
+      "definition": "calculate_distance_angle_from_bbox"
+    },
+    {
+      "file": "dimos/perception/object_tracker_3d.py",
+      "definition": "ObjectTracker3D"
+    },
+    {
+      "file": "dimos/perception/spatial_perception.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/protocol/encode/__init__.py",
+      "definition": "LCMMessage"
+    },
+    {
+      "file": "dimos/protocol/encode/__init__.py",
+      "definition": "Encoder"
+    },
+    {
+      "file": "dimos/protocol/encode/__init__.py",
+      "definition": "JSON"
+    },
+    {
+      "file": "dimos/protocol/encode/__init__.py",
+      "definition": "LCM"
+    },
+    {
+      "file": "dimos/protocol/encode/__init__.py",
+      "definition": "LCMTypedEncoder"
+    },
+    {
+      "file": "dimos/protocol/encode/__init__.py",
+      "definition": "create_lcm_typed_encoder"
+    },
+    {
+      "file": "dimos/protocol/pubsub/lcmpubsub.py",
+      "definition": "LCMMsg"
+    },
+    {
+      "file": "dimos/protocol/pubsub/lcmpubsub.py",
+      "definition": "LCMEncoderMixin"
+    },
+    {
+      "file": "dimos/protocol/pubsub/lcmpubsub.py",
+      "definition": "JpegEncoderMixin"
+    },
+    {
+      "file": "dimos/protocol/pubsub/redispubsub.py",
+      "definition": "RedisConfig"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shm/ipc_factory.py",
+      "definition": "_open_shm_with_retry"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shm/ipc_factory.py",
+      "definition": "_sanitize_shm_name"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shm/ipc_factory.py",
+      "definition": "FrameChannel"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shm/ipc_factory.py",
+      "definition": "_safe_unlink"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shm/ipc_factory.py",
+      "definition": "CPU_IPC_Factory"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shm/ipc_factory.py",
+      "definition": "make_frame_channel"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shmpubsub.py",
+      "definition": "SharedMemoryConfig"
+    },
+    {
+      "file": "dimos/protocol/pubsub/shmpubsub.py",
+      "definition": "SharedMemoryBytesEncoderMixin"
+    },
+    {
+      "file": "dimos/protocol/rpc/pubsubrpc.py",
+      "definition": "RPCReq"
+    },
+    {
+      "file": "dimos/protocol/rpc/pubsubrpc.py",
+      "definition": "RPCRes"
+    },
+    {
+      "file": "dimos/protocol/rpc/pubsubrpc.py",
+      "definition": "PubSubRPCMixin"
+    },
+    {
+      "file": "dimos/protocol/rpc/spec.py",
+      "definition": "Empty"
+    },
+    {
+      "file": "dimos/protocol/rpc/spec.py",
+      "definition": "RPCInspectable"
+    },
+    {
+      "file": "dimos/protocol/service/lcmservice.py",
+      "definition": "check_system"
+    },
+    {
+      "file": "dimos/protocol/service/lcmservice.py",
+      "definition": "LCMMsg"
+    },
+    {
+      "file": "dimos/protocol/service/lcmservice.py",
+      "definition": "Topic"
+    },
+    {
+      "file": "dimos/protocol/skill/comms.py",
+      "definition": "PubSubCommsConfig"
+    },
+    {
+      "file": "dimos/protocol/skill/comms.py",
+      "definition": "PubSubComms"
+    },
+    {
+      "file": "dimos/protocol/skill/comms.py",
+      "definition": "LCMCommsConfig"
+    },
+    {
+      "file": "dimos/protocol/skill/coordinator.py",
+      "definition": "SkillCoordinatorConfig"
+    },
+    {
+      "file": "dimos/protocol/skill/schema.py",
+      "definition": "python_type_to_json_schema"
+    },
+    {
+      "file": "dimos/protocol/skill/skill.py",
+      "definition": "SkillContainerConfig"
+    },
+    {
+      "file": "dimos/protocol/skill/skill.py",
+      "definition": "threaded"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "maybe_encode"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "make_reducer"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "_make_skill_msg"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "sum_reducer"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "latest_reducer"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "all_reducer"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "accumulate_list"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "accumulate_dict"
+    },
+    {
+      "file": "dimos/protocol/skill/type.py",
+      "definition": "accumulate_string"
+    },
+    {
+      "file": "dimos/protocol/tf/tf.py",
+      "definition": "PubSubTFConfig"
+    },
+    {
+      "file": "dimos/protocol/tf/tf.py",
+      "definition": "LCMPubsubConfig"
+    },
+    {
+      "file": "dimos/protocol/tf/tflcmcpp.py",
+      "definition": "TFLCM"
+    },
+    {
+      "file": "dimos/robot/agilex/piper_arm.py",
+      "definition": "run_piper_arm"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "create_dynamic_callback"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "run"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "show_config"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "list"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "lcmspy"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "skillspy"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "agentspy"
+    },
+    {
+      "file": "dimos/robot/cli/dimos.py",
+      "definition": "humancli"
+    },
+    {
+      "file": "dimos/robot/foxglove_bridge.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/recorder.py",
+      "definition": "RobotRecorder"
+    },
+    {
+      "file": "dimos/robot/ros_command_queue.py",
+      "definition": "CommandType"
+    },
+    {
+      "file": "dimos/robot/ros_command_queue.py",
+      "definition": "WebRTCRequest"
+    },
+    {
+      "file": "dimos/robot/ros_command_queue.py",
+      "definition": "ROSCommand"
+    },
+    {
+      "file": "dimos/robot/ros_control.py",
+      "definition": "RobotMode"
+    },
+    {
+      "file": "dimos/robot/ros_control.py",
+      "definition": "ROSControl"
+    },
+    {
+      "file": "dimos/robot/ros_observable_topic.py",
+      "definition": "QOS"
+    },
+    {
+      "file": "dimos/robot/ros_transform.py",
+      "definition": "to_euler_rot"
+    },
+    {
+      "file": "dimos/robot/ros_transform.py",
+      "definition": "to_euler_pos"
+    },
+    {
+      "file": "dimos/robot/ros_transform.py",
+      "definition": "to_euler"
+    },
+    {
+      "file": "dimos/robot/unitree/connection/connection.py",
+      "definition": "SerializableVideoFrame"
+    },
+    {
+      "file": "dimos/robot/unitree/connection/g1.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree/connection/go2.py",
+      "definition": "_camera_info_static"
+    },
+    {
+      "file": "dimos/robot/unitree/connection/go2.py",
+      "definition": "ReplayConnection"
+    },
+    {
+      "file": "dimos/robot/unitree/connection/go2.py",
+      "definition": "GO2Connection"
+    },
+    {
+      "file": "dimos/robot/unitree/connection/go2.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree/g1/g1agent.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree/g1/g1detector.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree/g1/g1zed.py",
+      "definition": "G1ZedDeployResult"
+    },
+    {
+      "file": "dimos/robot/unitree/g1/g1zed.py",
+      "definition": "deploy_g1_monozed"
+    },
+    {
+      "file": "dimos/robot/unitree/g1/g1zed.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree/go2/go2.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/connection.py",
+      "definition": "SerializableVideoFrame"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/depth_module.py",
+      "definition": "DepthModule"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/connection_module.py",
+      "definition": "FakeRTC"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/connection_module.py",
+      "definition": "ConnectionModuleConfig"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/detect.py",
+      "definition": "camera_info"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/detect.py",
+      "definition": "transform_chain"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/detect.py",
+      "definition": "broadcast"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/detect.py",
+      "definition": "process_data"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/ivan_unitree.py",
+      "definition": "detection_unitree"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lidar.py",
+      "definition": "RawLidarPoints"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lidar.py",
+      "definition": "RawLidarData"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lowstate.py",
+      "definition": "MotorState"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lowstate.py",
+      "definition": "ImuState"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lowstate.py",
+      "definition": "BmsState"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lowstate.py",
+      "definition": "LowStateData"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/map.py",
+      "definition": "splice_cylinder"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/map.py",
+      "definition": "deploy"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "TimeStamp"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "Header"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "RawPosition"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "Orientation"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "PoseData"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "OdometryData"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/odometry.py",
+      "definition": "RawOdometryMessage"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/timeseries.py",
+      "definition": "RosStamp"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/timeseries.py",
+      "definition": "from_ros_stamp"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/timeseries.py",
+      "definition": "to_human_readable"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/timeseries.py",
+      "definition": "to_datetime"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "Vector"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "VectorLike"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "to_numpy"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "to_vector"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "to_tuple"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "to_list"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "is_2d"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "is_3d"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "x"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "y"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/vector.py",
+      "definition": "z"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_b1/b1_command.py",
+      "definition": "B1Command"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_b1/connection.py",
+      "definition": "RobotMode"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_g1.py",
+      "definition": "G1ConnectionModule"
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_go2.py",
+      "definition": "ReplayRTC"
+    },
+    {
+      "file": "dimos/robot/utils/robot_debugger.py",
+      "definition": "RobotDebugger"
+    },
+    {
+      "file": "dimos/simulation/base/simulator_base.py",
+      "definition": "SimulatorBase"
+    },
+    {
+      "file": "dimos/simulation/base/stream_base.py",
+      "definition": "StreamBase"
+    },
+    {
+      "file": "dimos/simulation/mujoco/model.py",
+      "definition": "get_assets"
+    },
+    {
+      "file": "dimos/simulation/mujoco/model.py",
+      "definition": "get_model_xml"
+    },
+    {
+      "file": "dimos/skills/manipulation/force_constraint_skill.py",
+      "definition": "ForceConstraintSkill"
+    },
+    {
+      "file": "dimos/skills/manipulation/pick_and_place.py",
+      "definition": "parse_qwen_points_response"
+    },
+    {
+      "file": "dimos/skills/manipulation/pick_and_place.py",
+      "definition": "save_debug_image_with_points"
+    },
+    {
+      "file": "dimos/skills/manipulation/pick_and_place.py",
+      "definition": "parse_qwen_single_point_response"
+    },
+    {
+      "file": "dimos/skills/speak.py",
+      "definition": "_process_audio_queue"
+    },
+    {
+      "file": "dimos/skills/speak.py",
+      "definition": "start_audio_queue_processor"
+    },
+    {
+      "file": "dimos/stream/audio/node_volume_monitor.py",
+      "definition": "VolumeMonitorNode"
+    },
+    {
+      "file": "dimos/stream/audio/text/base.py",
+      "definition": "AbstractTextTransform"
+    },
+    {
+      "file": "dimos/stream/audio/tts/node_pytts.py",
+      "definition": "PyTTSNode"
+    },
+    {
+      "file": "dimos/stream/data_provider.py",
+      "definition": "AbstractDataProvider"
+    },
+    {
+      "file": "dimos/stream/data_provider.py",
+      "definition": "ROSDataProvider"
+    },
+    {
+      "file": "dimos/stream/video_provider.py",
+      "definition": "VideoSourceError"
+    },
+    {
+      "file": "dimos/stream/video_provider.py",
+      "definition": "VideoFrameError"
+    },
+    {
+      "file": "dimos/stream/video_providers/unitree.py",
+      "definition": "UnitreeVideoProvider"
+    },
+    {
+      "file": "dimos/stream/videostream.py",
+      "definition": "VideoStream"
+    },
+    {
+      "file": "dimos/types/label.py",
+      "definition": "LabelType"
+    },
+    {
+      "file": "dimos/types/manipulation.py",
+      "definition": "ConstraintType"
+    },
+    {
+      "file": "dimos/types/sample.py",
+      "definition": "Sample"
+    },
+    {
+      "file": "dimos/types/segmentation.py",
+      "definition": "SegmentationType"
+    },
+    {
+      "file": "dimos/types/timestamped.py",
+      "definition": "MatchContainer"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "to_numpy"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "to_vector"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "to_tuple"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "to_list"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "is_2d"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "is_3d"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "x"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "y"
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "z"
+    },
+    {
+      "file": "dimos/utils/cli/agentspy/agentspy.py",
+      "definition": "MessageEntry"
+    },
+    {
+      "file": "dimos/utils/cli/agentspy/agentspy.py",
+      "definition": "AgentMessageMonitor"
+    },
+    {
+      "file": "dimos/utils/cli/agentspy/agentspy.py",
+      "definition": "format_timestamp"
+    },
+    {
+      "file": "dimos/utils/cli/agentspy/agentspy.py",
+      "definition": "get_message_type_and_style"
+    },
+    {
+      "file": "dimos/utils/cli/agentspy/agentspy.py",
+      "definition": "format_message_content"
+    },
+    {
+      "file": "dimos/utils/cli/agentspy/agentspy.py",
+      "definition": "AgentSpyApp"
+    },
+    {
+      "file": "dimos/utils/cli/boxglove/boxglove.py",
+      "definition": "OccupancyGridApp"
+    },
+    {
+      "file": "dimos/utils/cli/boxglove/connection.py",
+      "definition": "live_connection"
+    },
+    {
+      "file": "dimos/utils/cli/boxglove/connection.py",
+      "definition": "recorded_connection"
+    },
+    {
+      "file": "dimos/utils/cli/boxglove/connection.py",
+      "definition": "single_message"
+    },
+    {
+      "file": "dimos/utils/cli/foxglove_bridge/run_foxglove_bridge.py",
+      "definition": "run_bridge_example"
+    },
+    {
+      "file": "dimos/utils/cli/human/humancli.py",
+      "definition": "HumanCLIApp"
+    },
+    {
+      "file": "dimos/utils/cli/human/humanclianim.py",
+      "definition": "import_cli_in_background"
+    },
+    {
+      "file": "dimos/utils/cli/human/humanclianim.py",
+      "definition": "get_effect_config"
+    },
+    {
+      "file": "dimos/utils/cli/human/humanclianim.py",
+      "definition": "run_banner_animation"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/lcmspy.py",
+      "definition": "BandwidthUnit"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/lcmspy.py",
+      "definition": "human_readable_bytes"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/lcmspy.py",
+      "definition": "LCMSpyConfig"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/lcmspy.py",
+      "definition": "GraphLCMSpyConfig"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/run_lcmspy.py",
+      "definition": "gradient"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/run_lcmspy.py",
+      "definition": "topic_text"
+    },
+    {
+      "file": "dimos/utils/cli/lcmspy/run_lcmspy.py",
+      "definition": "LCMSpyApp"
+    },
+    {
+      "file": "dimos/utils/cli/skillspy/demo_skillspy.py",
+      "definition": "DemoSkills"
+    },
+    {
+      "file": "dimos/utils/cli/skillspy/demo_skillspy.py",
+      "definition": "run_demo_skills"
+    },
+    {
+      "file": "dimos/utils/cli/skillspy/skillspy.py",
+      "definition": "AgentSpy"
+    },
+    {
+      "file": "dimos/utils/cli/skillspy/skillspy.py",
+      "definition": "state_color"
+    },
+    {
+      "file": "dimos/utils/cli/skillspy/skillspy.py",
+      "definition": "format_duration"
+    },
+    {
+      "file": "dimos/utils/cli/skillspy/skillspy.py",
+      "definition": "AgentSpyApp"
+    },
+    {
+      "file": "dimos/utils/cli/theme.py",
+      "definition": "parse_tcss_colors"
+    },
+    {
+      "file": "dimos/utils/cli/theme.py",
+      "definition": "get"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_get_repo_root"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_get_lfs_dir"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_check_git_lfs_available"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_is_lfs_pointer_file"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_lfs_pull"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_decompress_archive"
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "_pull_lfs_archive"
+    },
+    {
+      "file": "dimos/utils/demo_image_encoding.py",
+      "definition": "EmitterModule"
+    },
+    {
+      "file": "dimos/utils/demo_image_encoding.py",
+      "definition": "ReceiverModule"
+    },
+    {
+      "file": "dimos/utils/deprecation.py",
+      "definition": "deprecated"
+    },
+    {
+      "file": "dimos/utils/extract_frames.py",
+      "definition": "extract_frames"
+    },
+    {
+      "file": "dimos/utils/fast_image_generator.py",
+      "definition": "CircleObject"
+    },
+    {
+      "file": "dimos/utils/fast_image_generator.py",
+      "definition": "RectObject"
+    },
+    {
+      "file": "dimos/utils/fast_image_generator.py",
+      "definition": "FastImageGenerator"
+    },
+    {
+      "file": "dimos/utils/generic_subscriber.py",
+      "definition": "GenericSubscriber"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "print_data_table"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "UtilizationThread"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "_can_use_py_spy"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "get_pid_by_port"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "get_worker_pids"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "GilMonitorThread"
+    },
+    {
+      "file": "dimos/utils/monitoring.py",
+      "definition": "_get_cpu_percent"
+    },
+    {
+      "file": "dimos/utils/reactive.py",
+      "definition": "LatestReader"
+    },
+    {
+      "file": "dimos/utils/reactive.py",
+      "definition": "spy"
+    },
+    {
+      "file": "dimos/utils/s3_utils.py",
+      "definition": "S3Utils"
+    },
+    {
+      "file": "dimos/utils/simple_controller.py",
+      "definition": "normalize_angle"
+    },
+    {
+      "file": "dimos/utils/simple_controller.py",
+      "definition": "PIDController"
+    },
+    {
+      "file": "dimos/utils/simple_controller.py",
+      "definition": "VisualServoingController"
+    },
+    {
+      "file": "dimos/utils/threadpool.py",
+      "definition": "get_max_workers"
+    },
+    {
+      "file": "dimos/utils/transform_utils.py",
+      "definition": "invert_transform"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_Known"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_String"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_array_keys"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_object_keys"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_is_array"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_is_object"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_is_string"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_index"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_loop"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_ref"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_relate"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_transform"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "_wrap"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "parse"
+    },
+    {
+      "file": "dimos/web/command-center-extension/node_modules/flatted/python/flatted.py",
+      "definition": "stringify"
+    },
+    {
+      "file": "dimos/web/websocket_vis/costmap_viz.py",
+      "definition": "CostmapViz"
+    },
+    {
+      "file": "dimos/web/websocket_vis/optimized_costmap.py",
+      "definition": "OptimizedCostmapEncoder"
+    },
+    {
+      "file": "dimos/web/websocket_vis/path_history.py",
+      "definition": "PathHistory"
+    },
+    {
+      "file": "docker/navigation/ros_launch_wrapper.py",
+      "definition": "ROSLaunchWrapper"
+    }
+  ],
+  "most_used": [
+    {
+      "file": "dimos/utils/logging_config.py",
+      "definition": "setup_logger",
+      "usage_count": 129
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Vector3.py",
+      "definition": "Vector3",
+      "usage_count": 83
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/Image.py",
+      "definition": "Image",
+      "usage_count": 80
+    },
+    {
+      "file": "dimos/core/core.py",
+      "definition": "rpc",
+      "usage_count": 70
+    },
+    {
+      "file": "dimos/core/stream.py",
+      "definition": "Out",
+      "usage_count": 56
+    },
+    {
+      "file": "dimos/core/stream.py",
+      "definition": "In",
+      "usage_count": 52
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Quaternion.py",
+      "definition": "Quaternion",
+      "usage_count": 51
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/PoseStamped.py",
+      "definition": "PoseStamped",
+      "usage_count": 46
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Transform.py",
+      "definition": "Transform",
+      "usage_count": 38
+    },
+    {
+      "file": "dimos/utils/data.py",
+      "definition": "get_data",
+      "usage_count": 36
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Twist.py",
+      "definition": "Twist",
+      "usage_count": 32
+    },
+    {
+      "file": "dimos/msgs/geometry_msgs/Pose.py",
+      "definition": "Pose",
+      "usage_count": 29
+    },
+    {
+      "file": "dimos/core/transport.py",
+      "definition": "LCMTransport",
+      "usage_count": 26
+    },
+    {
+      "file": "dimos/web/robot_web_interface.py",
+      "definition": "RobotWebInterface",
+      "usage_count": 25
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/type/lidar.py",
+      "definition": "LidarMessage",
+      "usage_count": 25
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/PointCloud2.py",
+      "definition": "PointCloud2",
+      "usage_count": 21
+    },
+    {
+      "file": "dimos/msgs/nav_msgs/OccupancyGrid.py",
+      "definition": "OccupancyGrid",
+      "usage_count": 21
+    },
+    {
+      "file": "dimos/types/vector.py",
+      "definition": "Vector",
+      "usage_count": 20
+    },
+    {
+      "file": "dimos/msgs/sensor_msgs/image_impls/AbstractImage.py",
+      "definition": "ImageFormat",
+      "usage_count": 18
+    },
+    {
+      "file": "dimos/protocol/skill/skill.py",
+      "definition": "skill",
+      "usage_count": 18
+    }
+  ],
+  "most_dependent": [
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_g1.py",
+      "dependency_count": 45
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_go2.py",
+      "dependency_count": 44
+    },
+    {
+      "file": "dimos/perception/pointcloud/__init__.py",
+      "dependency_count": 30
+    },
+    {
+      "file": "dimos/perception/common/__init__.py",
+      "dependency_count": 28
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/modular/connection_module.py",
+      "dependency_count": 25
+    },
+    {
+      "file": "dimos/manipulation/visual_servoing/manipulation_module.py",
+      "dependency_count": 23
+    },
+    {
+      "file": "dimos/navigation/rosnav.py",
+      "dependency_count": 22
+    },
+    {
+      "file": "dimos/core/__init__.py",
+      "dependency_count": 21
+    },
+    {
+      "file": "dimos/robot/unitree/connection/go2.py",
+      "dependency_count": 20
+    },
+    {
+      "file": "dimos/agents2/temp/webcam_agent.py",
+      "dependency_count": 19
+    },
+    {
+      "file": "dimos/perception/detection/module3D.py",
+      "dependency_count": 19
+    },
+    {
+      "file": "dimos/perception/object_tracker_3d.py",
+      "dependency_count": 19
+    },
+    {
+      "file": "dimos/perception/detection/conftest.py",
+      "dependency_count": 18
+    },
+    {
+      "file": "dimos/perception/object_tracker.py",
+      "dependency_count": 18
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/test_unitree_go2_integration.py",
+      "dependency_count": 17
+    },
+    {
+      "file": "dimos/core/module.py",
+      "dependency_count": 16
+    },
+    {
+      "file": "dimos/perception/detection/module2D.py",
+      "dependency_count": 16
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_b1/unitree_b1.py",
+      "dependency_count": 16
+    },
+    {
+      "file": "dimos/perception/detection/moduleDB.py",
+      "dependency_count": 15
+    },
+    {
+      "file": "dimos/robot/unitree_webrtc/unitree_g1_blueprints.py",
+      "dependency_count": 15
+    }
+  ]
+}

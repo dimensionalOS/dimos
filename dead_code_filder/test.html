@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>D3 Visualization Test</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <div id="test"></div>
+    <script>
+        // Test D3 is working
+        console.log('D3 version:', d3.version);
+
+        // Test fetching JSON
+        fetch('/import_structure.json')
+            .then(response => response.json())
+            .then(data => {
+                console.log('Data loaded successfully');
+                console.log('Number of files:', Object.keys(data).length);
+                document.getElementById('test').innerHTML = 'Data loaded: ' + Object.keys(data).length + ' files';
+            })
+            .catch(error => {
+                console.error('Error loading data:', error);
+                document.getElementById('test').innerHTML = 'Error loading data: ' + error;
+            });
+    </script>
+</body>
+</html>
