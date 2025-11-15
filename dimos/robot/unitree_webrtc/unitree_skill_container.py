@@ -22,18 +22,12 @@ from typing import TYPE_CHECKING
 from go2_webrtc_driver.constants import RTC_TOPIC
 
 from dimos.core.core import rpc
-from dimos import core
 from dimos.core.skill_module import SkillModule
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Reducer, Stream, Output
+from dimos.protocol.skill.type import Reducer, Stream
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
 from dimos.utils.logging_config import setup_logger
-
-import numpy as np
-from dimos.msgs.geometry_msgs import Pose
-from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import Image
 
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RpcCall

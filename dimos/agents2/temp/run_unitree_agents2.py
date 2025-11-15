@@ -89,7 +89,6 @@ class UnitreeAgentRunner:
             agent.register_skills(container)
 
         agent.run_implicit_skill("human")
-        agent.run_implicit_skill("get_map")
 
         agent.start()
 

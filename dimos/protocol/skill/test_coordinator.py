@@ -24,9 +24,6 @@ from dimos.protocol.skill.coordinator import SkillCoordinator
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.utils.data import get_data
-from dimos.msgs.geometry_msgs import Pose
-from dimos.msgs.nav_msgs import OccupancyGrid
-import numpy as np
 
 
 class SkillContainerTest(Module):

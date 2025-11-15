@@ -26,7 +26,6 @@ from scipy import ndimage
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
-    AbstractImage,
     ImageFormat,
 )
 from dimos.types.timestamped import Timestamped
@@ -317,7 +316,7 @@ class OccupancyGrid(Timestamped):
                         image_arr[y, x] = 0 
 
         image = Image(data=image_arr, format=ImageFormat.GRAY, frame_id=self.frame_id, ts=self.ts)
-        image.save("./local_costmap.png")
+        # image.save("./local_costmap.png")
         return image
 
     def grid_to_ascii(self, max_width: int = 50, max_height: int = 30, detections = None) -> str:

@@ -84,7 +84,6 @@ class Map(Module):
                 robot_pose=self.robot_pose,
             )
             self.global_costmap.publish(occupancygrid)
-            # occupancygrid.grid_to_ascii()
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(publish)
