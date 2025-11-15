@@ -37,7 +37,7 @@ class ModuleCoordinator(Resource):
     ) -> None:
         cfg = global_config or GlobalConfig()
         self._n = n if n is not None else cfg.n_dask_workers
-        self._memory_limit = memory_limit
+        self._memory_limit = cfg.memory_limit or memory_limit
 
     def start(self) -> None:
         self._client = core.start(self._n, self._memory_limit)

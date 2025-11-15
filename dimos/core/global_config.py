@@ -24,6 +24,7 @@ class GlobalConfig(BaseSettings):
     n_dask_workers: int = 2
     mujoco_room: str | None = None
     robot_model: str | None = None
+    memory_limit: str = "auto"
 
     model_config = SettingsConfigDict(
         env_file=".env",
