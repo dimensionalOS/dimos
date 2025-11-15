@@ -10,32 +10,38 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.semantic_seg import SemanticSegmentationStream
+from dimos.robot.unitree.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.web.fastapi_server import FastAPIServer
 
 def main():
     # Create a queue for thread communication (limit to prevent memory issues)
     frame_queue = queue.Queue(maxsize=5)
     stop_event = threading.Event()
     
-    # Logitech C920e camera parameters at 480p
+    # Unitree Go2 camera parameters at 1080p
     camera_params = {
-        'resolution': (640, 480),  # 480p resolution
-        'focal_length': 3.67,  # mm
+        'resolution': (1920, 1080),  # 1080p resolution
+        'focal_length': 3.2,  # mm
         'sensor_size': (4.8, 3.6)  # mm (1/4" sensor)
     }
     
     # Initialize video provider and segmentation stream
-    video_provider = VideoProvider("test_camera", video_source=0)
+    #video_provider = VideoProvider("test_camera", video_source=0)
+    robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
+                        ros_control=UnitreeROSControl(),)
+            
     seg_stream = SemanticSegmentationStream(enable_mono_depth=True, camera_params=camera_params, gt_depth_scale=512.0)
     
     # Create streams
-    video_stream = video_provider.capture_video_as_observable(realtime=False, fps=5)
+    video_stream = robot.get_ros_video_stream(fps=5)
     segmentation_stream = seg_stream.create_stream(video_stream)
     
     # Define callbacks for the segmentation stream
     def on_next(segmentation):
         if stop_event.is_set():
             return
-
         # Get the frame and visualize
         vis_frame = segmentation.metadata["viz_frame"]
         depth_viz = segmentation.metadata["depth_viz"]
@@ -83,7 +89,13 @@ def main():
         
         print("Semantic segmentation visualization started. Press 'q' to exit.")
         
-        # Main thread loop for displaying frames
+        # streams = {
+        #     "segmentation_stream": segmentation_stream,
+        # }
+        #fast_api_server = FastAPIServer(port=5555, **streams)
+        #fast_api_server.run()
+
+        #Main thread loop for displaying frame
         while not stop_event.is_set():
             try:
                 # Get frame with timeout (allows checking stop_event periodically)
@@ -113,7 +125,6 @@ def main():
         if subscription:
             subscription.dispose()
         
-        video_provider.dispose_all()
         seg_stream.cleanup()
         cv2.destroyAllWindows()
         print("Cleanup complete")
