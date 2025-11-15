@@ -44,6 +44,17 @@ class HierarchicalDependencyGraph {
   private links: LinkData[] = [];
   private nodeMap: Map<string, HierarchyNode> = new Map();
 
+  // ============================================================================
+  // ADJUST THIS VALUE TO CONTROL SPACING
+  // 1.0 = default spacing
+  // 1.5 = 50% more spacing
+  // 2.0 = double spacing (current setting - good for lower level directories)
+  // 2.5 = even more spacious
+  // 0.5 = half spacing (more compact)
+  // This affects padding between all directories and files at all levels
+  // ============================================================================
+  private SPACING_MULTIPLIER: number = 2.0;
+
   constructor(container: string) {
     // Create tooltip
     this.tooltip = d3.select('body').append('div')
@@ -81,10 +92,11 @@ class HierarchicalDependencyGraph {
     // Create main group for transformations
     this.g = this.svg.append('g');
 
-    // Initialize simulation
+    // Initialize simulation with gentler forces
     this.simulation = d3.forceSimulation<HierarchyNode>()
-      .force('charge', d3.forceManyBody().strength(-50))
-      .force('center', d3.forceCenter(this.width / 2, this.height / 2));
+      .force('charge', d3.forceManyBody().strength(-30).distanceMax(100))
+      .force('center', d3.forceCenter(this.width / 2, this.height / 2))
+      .alphaDecay(0.02);  // Slower decay for better settling
   }
 
   async loadData() {
@@ -173,14 +185,15 @@ class HierarchicalDependencyGraph {
       .sum((d: any) => d.size || 1)
       .sort((a, b) => (b.value || 0) - (a.value || 0));
 
-    // Use pack layout for initial positioning
+    // Use pack layout for initial positioning with more spacing
     const pack = d3.pack<HierarchyNode>()
-      .size([this.width - 100, this.height - 100])
+      .size([this.width - 50, this.height - 50])
       .padding((d) => {
-        if (d.depth === 0) return 50;
-        if (d.depth === 1) return 30;
-        if (d.depth === 2) return 10;
-        return 5;
+        // Base padding values multiplied by spacing multiplier
+        if (d.depth === 0) return 80 * this.SPACING_MULTIPLIER;  // Space around root
+        if (d.depth === 1) return 50 * this.SPACING_MULTIPLIER;  // Space between top-level directories
+        if (d.depth === 2) return 25 * this.SPACING_MULTIPLIER;  // Space between subdirectories
+        return 15 * this.SPACING_MULTIPLIER;  // Space between files
       });
 
     const packedRoot = pack(root) as any;
@@ -189,8 +202,8 @@ class HierarchicalDependencyGraph {
     const nodes: HierarchyNode[] = [];
     packedRoot.each((d: any) => {
       const node = d.data;
-      node.x = d.x + 50;  // Offset from edge
-      node.y = d.y + 50;
+      node.x = d.x + 25;  // Offset from edge
+      node.y = d.y + 25;
       node.r = d.r;
       node.depth = d.depth;
       node.parent = d.parent?.data;
@@ -225,7 +238,7 @@ class HierarchicalDependencyGraph {
         const colors = ['#202020', '#404040', '#606060', '#808080'];
         return colors[Math.min(d.depth || 0, colors.length - 1)];
       })
-      .style('stroke-width', d => Math.max(1, 3 - (d.depth || 0)))
+      .style('stroke-width', d => Math.max(1.5, 4 - (d.depth || 0)))
       .style('stroke-dasharray', d => d.depth === 0 ? 'none' : '5,5')
       .style('fill-opacity', 0.05);
 
@@ -333,7 +346,8 @@ class HierarchicalDependencyGraph {
     this.simulation
       .nodes(files)
       .force('collision', d3.forceCollide<HierarchyNode>()
-        .radius(d => (Math.max(8, Math.min(25, 8 + (d.definitions?.length || 0) * 1.5))) + 2))
+        .radius(d => (Math.max(8, Math.min(25, 8 + (d.definitions?.length || 0) * 1.5))) + (8 * this.SPACING_MULTIPLIER))  // Space between files
+        .strength(0.7))
       .on('tick', () => {
         // Constrain files to their parent directories
         files.forEach(node => {
@@ -349,7 +363,7 @@ class HierarchicalDependencyGraph {
 
             // If outside parent boundary, constrain it
             const nodeRadius = Math.max(8, Math.min(25, 8 + (node.definitions?.length || 0) * 1.5));
-            const maxDistance = parentR - nodeRadius - 5; // Keep some padding
+            const maxDistance = parentR - nodeRadius - (12 * this.SPACING_MULTIPLIER); // Padding from boundary
 
             if (distance > maxDistance && distance > 0) {
               const ratio = maxDistance / distance;
@@ -382,8 +396,8 @@ class HierarchicalDependencyGraph {
           });
       });
 
-    // Run simulation briefly to settle positions
-    this.simulation.alpha(0.5).restart();
+    // Run simulation to settle positions with good spacing
+    this.simulation.alpha(0.8).restart();
   }
 
   private createDragBehavior() {
