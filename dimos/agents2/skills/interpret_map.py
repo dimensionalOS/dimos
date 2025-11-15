@@ -17,8 +17,10 @@ from dimos.core.skill_module import SkillModule
 from dimos.core.rpc_client import RpcCall
 from dimos.protocol.skill.skill import rpc, skill
 from dimos.core.stream import In, Out
-
+from dimos.utils.logging_config import setup_logger
 from dimos.msgs.nav_msgs import OccupancyGrid
+
+logger = setup_logger("dimos.agents2.skills.interpret_map")
 
 class InterpretMapSkill(SkillModule):
     _latest_local_costmap: OccupancyGrid | None = None
@@ -47,13 +49,11 @@ class InterpretMapSkill(SkillModule):
             ? represents unknown space
         
         """
+        if self._latest_local_costmap is None:
+            logger.warning("No local costmap available.")
+            return "No map available."
 
-        # with open("./occupancy_grid_ascii_debug.txt", "r") as f:
-        #     map_ascii = f.readlines()
-
-        # return "\n".join(map_ascii)
-
-        return self._latest_local_costmap.agent_encode()
+        return self._latest_local_costmap
 
 interpret_map_skill = InterpretMapSkill.blueprint
 

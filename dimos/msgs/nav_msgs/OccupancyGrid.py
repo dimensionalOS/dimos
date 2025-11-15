@@ -30,6 +30,9 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     ImageFormat,
 )
 from dimos.types.timestamped import Timestamped
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.msgs.nav_msgs.occupancygrid")
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import PointCloud2
@@ -217,11 +220,11 @@ class OccupancyGrid(Timestamped):
             ts=self.ts,
         )
 
-    def world_to_grid(self, point: VectorLike) -> Vector3:
+    def world_to_grid(self, point: Vector3) -> Vector3:
         """Convert world coordinates to grid coordinates.
 
         Args:
-            point: A vector-like object containing X,Y coordinates
+            point: A vector-like object containing X,Y,Z coordinates
 
         Returns:
             Vector3 with grid coordinates
@@ -232,8 +235,8 @@ class OccupancyGrid(Timestamped):
         oy = self.origin.position.y
 
         # Convert to grid coordinates (simplified, assuming no rotation)
-        grid_x = (positionVector.x - ox) / self.resolution
-        grid_y = (positionVector.y - oy) / self.resolution
+        grid_x = (point.x - ox) / self.resolution
+        grid_y = (point.y - oy) / self.resolution
 
         return Vector3(grid_x, grid_y, 0.0)
 
@@ -317,7 +320,7 @@ class OccupancyGrid(Timestamped):
         image.save("./local_costmap.png")
         return image
 
-    def grid_to_ascii(self, max_width: int = 50, max_height: int = 30) -> str:
+    def grid_to_ascii(self, max_width: int = 50, max_height: int = 30, detections = None) -> str:
         """Convert the occupancy grid to an ASCII art representation.
 
         returns:
@@ -333,7 +336,6 @@ class OccupancyGrid(Timestamped):
         step_col = 2
         step_row = 4
 
-       
         # add robot postion
         robot_cell = None
         if self.robot_pose is not None:
@@ -360,8 +362,8 @@ class OccupancyGrid(Timestamped):
         
         ascii_str = '\n'.join(map_ascii)
 
-        with open("./occupancy_grid_ascii_debug.txt", "w") as f:
-            f.write(ascii_str)
+        # with open("./occupancy_grid_ascii_debug.txt", "w") as f:
+        #     f.write(ascii_str)
         return ascii_str
     
     def agent_encode(self):
@@ -369,17 +371,6 @@ class OccupancyGrid(Timestamped):
         # depending on how well the agent can interpret, 
         # preferably ascii as the model should be able to place goals/manipulate 
         
-        # grid_image = self.grid_to_image()   
-        # grid_image.save("./occupancy_grid_image_debug_.png")
-        # image_msg = grid_image.agent_encode()
-        # agent_msg = [{
-        #     "type": "text",
-        #     "text": f"""
-        #             The image is the grayscale image of an occupancy map, black representing
-        #             obstacles or unknown areas and white representing free space.
-        #             """
-        # }]
-        # agent_msg.extend(image_msg)
         return self.grid_to_ascii()
 
     def lcm_encode(self) -> bytes:
