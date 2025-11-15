@@ -91,11 +91,19 @@
         <div class="legend">
             <strong>Legend:</strong>
             <div class="legend-item">
-                <div class="legend-color" style="background: #404040;"></div>
+                <div class="legend-color" style="background: none; border: 2px solid #202020; border-radius: 50%;"></div>
+                <span>Top-level Directory</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: none; border: 2px dashed #606060; border-radius: 50%;"></div>
+                <span>Sub-directory</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-color" style="background: #505050; border-radius: 50%;"></div>
                 <span>Python File</span>
             </div>
             <div class="legend-item">
-                <div class="legend-color" style="background: #808080;"></div>
+                <div class="legend-color" style="background: #a0a0a0; border-radius: 50%;"></div>
                 <span>Function/Class</span>
             </div>
             <div class="legend-item">
@@ -110,6 +118,6 @@
         <div id="stats-content">Loading...</div>
     </div>
 
-    <script type="module" src="/src/visualization.ts"></script>
+    <script type="module" src="/src/hierarchical-visualization.ts"></script>
 </body>
 </html>

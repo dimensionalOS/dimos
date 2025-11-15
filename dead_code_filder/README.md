@@ -96,23 +96,36 @@ The project includes an interactive D3.js visualization built in TypeScript that
 
 ### Visualization Features
 
-- **File Circles**: Each Python file is represented as a circle
+The visualization now shows a **hierarchical directory structure**:
+
+- **Directory Circles**: Directories are shown as containing circles
+  - Top-level directories: Solid black border (#202020)
+  - Sub-directories: Dashed gray border with decreasing darkness by depth
+  - Directories contain their files and subdirectories
+  - Circle packing ensures no overlaps between directories
+- **File Circles**: Each Python file is represented as a filled circle
+  - Dark gray fill (#505050)
   - Circle size varies based on the number of definitions
   - File name shown at the bottom
 - **Definition Dots**: Each function/class is a gray dot inside the file circle
+  - Light gray dots (#a0a0a0)
   - Shows truncated names (hover for full name)
   - Arranged in circular pattern within the file
 - **Import Links**: Green lines show import relationships between files
+  - Hover over a file to highlight its connections
+  - Links become more prominent when file is hovered
 - **Interactive Controls**:
-  - Drag nodes to reposition them
+  - Drag files to reposition them
   - Drag background to pan
   - Scroll to zoom in/out
   - Hover over dots to see full function/class names
 
 ### Color Scheme
 
-- File circles: Dark gray (#404040)
-- Definition dots: Gray (#808080)
+- Top-level directories: Black border (#202020)
+- Sub-directories: Gray borders (#404040, #606060, #808080)
+- File circles: Dark gray fill (#505050)
+- Definition dots: Light gray (#a0a0a0)
 - Import links: Green (#00ff00)
 - Background: Light gray (#f5f5f5)
 
