@@ -37,7 +37,10 @@ Instead of `PoseStamped(position=Vector3(3.5, -1.2, 0.0), orientation=Quaternion
 
 ## How Skills Work
 
-**Every Module Can Have Skills** - Every Module can expose skills via `@skill`, because Modules inherit from SkillContainer. These are discovered and invoked by agents as tool calls.
+**Every Module Can Have Skills** - Every Module can expose skills via `@skill`, because Modules inherit from SkillContainer. 
+Skills automatically auto-register with agents when they inherit from `SkillModule`; they can then be invoked by agents as tool calls.
+<!-- Citation: dimos/core/README_BLUEPRINTS.md:208-240 - Registration patterns -->
+<!-- TODO: Add link to skills tutorial that explains this with examples -->
 <!-- Citation: dimos/core/module.py:77,278,351 - Module inheritance chain -->
 
 **The @skill Decorator** - Wraps methods with message protocol, state tracking (pending → started → completed), and automatic LLM schema generation.
