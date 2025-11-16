@@ -9,13 +9,11 @@ Environment Variables:
     ROS_OUTPUT_DIR: Optional. Directory for ROS output files.
 """
 
+import tests.test_header
 import os
 import sys
 import reactivex as rx
 import reactivex.operators as ops
-
-# Add project root to Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Local application imports
 from dimos.agents.agent import OpenAIAgent

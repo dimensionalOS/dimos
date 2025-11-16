@@ -1,6 +1,7 @@
+import tests.test_header
+
 import os
 import time
-import cv2
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2, WebRTCConnectionMethod
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
