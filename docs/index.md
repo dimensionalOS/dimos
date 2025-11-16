@@ -4,8 +4,7 @@
 
 ## What is Dimensional?
 
-Dimensional is an open-source framework for building agentive generalist robots. DimOS allows off-the-shelf Agents to call tools/functions and read sensor/state data directly from ROS.
-<!-- TODO: Stash will be writing the intro to DimOS -->
+**TODO:** Stash will be writing the intro to DimOS
 
 The framework enables neurosymbolic orchestration of Agents as generalized spatial reasoners/planners and Robot state/action primitives as functions.
 
