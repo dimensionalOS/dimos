@@ -78,7 +78,7 @@ def driver(dimos_cluster):
         joint_state_rate=100.0,
         report_type="dev",
         enable_on_start=False,
-        num_joints=6,
+        xarm_type="xarm6",
     )
 
     # Set up LCM transports for output topics BEFORE starting
@@ -141,9 +141,31 @@ def test_joint_state_reading(driver):
     logger.info("TEST 2: Joint State Reading via LCM Transport")
     logger.info("=" * 80)
 
-    # Get the already-configured transports from the driver fixture
-    joint_state_transport = driver.joint_state.transport
-    robot_state_transport = driver.robot_state.transport
+    ip_address = os.getenv("XARM_IP", "192.168.1.235")
+
+    # Start dimos
+    logger.info("Starting dimos...")
+    dimos = core.start(1)
+
+    # Deploy driver
+    logger.info("Deploying XArmDriver...")
+    driver = dimos.deploy(
+        XArmDriver,
+        ip_address=ip_address,
+        control_frequency=100.0,
+        joint_state_rate=100.0,
+        report_type="dev",
+        enable_on_start=False,
+    )
+
+    # Set up LCM transports for both joint states and robot state
+    joint_state_transport = core.LCMTransport("/xarm/joint_states", JointState)
+    robot_state_transport = core.LCMTransport("/xarm/robot_state", RobotState)
+
+    driver.joint_state.transport = joint_state_transport
+    driver.robot_state.transport = robot_state_transport
+    driver.ft_ext.transport = core.LCMTransport("/xarm/ft_ext", WrenchStamped)
+    driver.ft_raw.transport = core.LCMTransport("/xarm/ft_raw", WrenchStamped)
 
     # Subscribe to the LCM topics to receive messages
     joint_states_received = []
@@ -233,6 +255,30 @@ def test_command_sending(driver):
     logger.info("TEST 3: Command RPC Methods")
     logger.info("=" * 80)
 
+    ip_address = os.getenv("XARM_IP", "192.168.1.235")
+
+    # Start dimos
+    dimos = core.start(1)
+
+    # Deploy driver
+    driver = dimos.deploy(
+        XArmDriver,
+        ip_address=ip_address,
+        control_frequency=100.0,
+        joint_state_rate=100.0,
+        report_type="dev",
+        enable_on_start=False,
+    )
+
+    # Set up transports
+    driver.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
+    driver.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
+    driver.ft_ext.transport = core.LCMTransport("/xarm/ft_ext", WrenchStamped)
+    driver.ft_raw.transport = core.LCMTransport("/xarm/ft_raw", WrenchStamped)
+
+    driver.start()
+    time.sleep(2.0)
+
     # Test that command methods exist and are callable
     logger.info("Testing command RPC methods are available...")
 
@@ -276,6 +322,30 @@ def test_rpc_methods(driver):
     logger.info("=" * 80)
     logger.info("TEST 4: RPC Methods")
     logger.info("=" * 80)
+
+    ip_address = os.getenv("XARM_IP", "192.168.1.235")
+
+    # Start dimos
+    dimos = core.start(1)
+
+    # Deploy driver
+    driver = dimos.deploy(
+        XArmDriver,
+        ip_address=ip_address,
+        control_frequency=100.0,
+        joint_state_rate=100.0,
+        report_type="normal",  # Use normal for this test
+        enable_on_start=False,
+    )
+
+    # Set up transports
+    driver.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
+    driver.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
+    driver.ft_ext.transport = core.LCMTransport("/xarm/ft_ext", WrenchStamped)
+    driver.ft_raw.transport = core.LCMTransport("/xarm/ft_raw", WrenchStamped)
+
+    driver.start()
+    time.sleep(2.0)
 
     # Test get_version
     logger.info("Testing get_version() RPC...")
@@ -394,7 +464,6 @@ def run_driver():
         ip_address=ip_address,
         report_type="dev",
         enable_on_start=False,
-        num_joints=6,
     )
 
     # Set up LCM transports
