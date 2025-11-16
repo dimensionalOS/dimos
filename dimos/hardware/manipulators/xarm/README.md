@@ -6,6 +6,12 @@ Real-time driver for UFACTORY xArm5/6/7 manipulators integrated with the dimos f
 
 ### 1. Specify Robot IP
 
+**On boot** (Important)
+```bash
+sudo ifconfig lo multicast
+sudo route add -net 224.0.0.0 netmask 240.0.0.0 dev lo
+```
+
 **Option A: Command-line argument** (recommended)
 ```bash
 python test_xarm_driver.py --ip 192.168.1.235
