@@ -15,13 +15,13 @@
 # limitations under the License.
 
 
-from typing import Protocol
+from typing import Any, Protocol
 
-import numpy as np
+from numpy.typing import NDArray
 
 
 class InputController(Protocol):
     """A protocol for input devices to control the robot."""
 
-    def get_command(self) -> np.ndarray: ...
+    def get_command(self) -> NDArray[Any]: ...
     def stop(self) -> None: ...
