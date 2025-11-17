@@ -39,14 +39,19 @@ class Yolo2DDetector(Detector):
         if device:
             self.device = device
             return
-
-        if is_cuda_available():
+        
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
             self.device = "cuda"
             logger.debug("Using CUDA for YOLO 2d detector")
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            self.device = "mps"
+            logger.debug("Using Metal for YOLO 2d detector")
         else:
-            self.device = "cpu"
             logger.debug("Using CPU for YOLO 2d detector")
-
+            self.device = "cpu"
+            
     def process_image(self, image: Image) -> ImageDetections2D:
         """
         Process an image and return detection results.
