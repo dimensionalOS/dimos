@@ -106,7 +106,7 @@
                 in
                     {
                         buildInputs = (old.buildInputs or []) ++ pkgConfPackages;
-                        nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config ];
+                        nativeBuildInputs = (old.nativeBuildInputs or []) ++ [ pkgs.pkg-config pkgs.python312 ];
                         # 1. fix pkg-config on darwin
                         env.PKG_CONFIG_PATH = packageConfPackagesString;
                         # 2. Fix fsync on darwin
