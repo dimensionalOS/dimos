@@ -80,8 +80,10 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
+            # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
+            executable = sys.executable if sys.platform != 'darwin' else 'mjpython'
             self.process = subprocess.Popen(
-                [sys.executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
