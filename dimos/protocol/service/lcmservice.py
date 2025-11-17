@@ -312,7 +312,9 @@ class LCMService(Service[LCMConfig]):
 
         # we support passing an existing LCM instance
         self.l = self.config.lcm
-        if self.l is None and sys.platform == "darwin":
+        if self.config.lcm:
+            self.l = self.config.lcm
+        else:
             self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
         self._l_lock = threading.Lock()
