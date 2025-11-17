@@ -53,7 +53,7 @@ def sample_points_from_heatmap(heatmap, original_size: int, num_points: int=5, p
     )
 
     sampled_coords = np.array(np.unravel_index(sampled_indices, attn.shape)).T
-    medoid, sampled_coords = find_medoid_and_closest_points(sampled_coords)
+    _medoid, sampled_coords = find_medoid_and_closest_points(sampled_coords)
     pts = []
     for pt in sampled_coords.tolist():
         x, y = pt

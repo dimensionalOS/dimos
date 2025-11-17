@@ -430,7 +430,7 @@ class Image(Timestamped):
             )
         )
 
-    def lcm_jpeg_encode(self, quality: int = 75, frame_id: Optional[str] = None) -> bytes:
+    def lcm_jpeg_encode(self, quality: int = 75, frame_id: str | None = None) -> bytes:
         """Convert to LCM Image message with JPEG-compressed data.
 
         Args:

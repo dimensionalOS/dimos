@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,14 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
 
-from typing import Protocol
+from dimos.core import DimosCluster
+from dimos.robot import foxglove_bridge
+from dimos.robot.unitree.connection import go2
+from dimos.utils.logging_config import setup_logger
 
-import numpy as np
+logger = setup_logger(__name__, level=logging.INFO)
 
 
-class InputController(Protocol):
-    """A protocol for input devices to control the robot."""
+def deploy(dimos: DimosCluster, ip: str):
+    connection = go2.deploy(dimos, ip)
+    foxglove_bridge.deploy(dimos)
 
-    def get_command(self) -> np.ndarray: ...
-    def stop(self) -> None: ...
+    # detector = moduleDB.deploy(
+    #     dimos,
+    #     camera=connection,
+    #     lidar=connection,
+    # )
+
+    # agent = agents2.deploy(dimos)
+    # agent.register_skills(detector)
+    return connection
