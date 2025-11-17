@@ -95,11 +95,10 @@ class MujocoConnection:
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
 
         def get_stderr():
-            return (
-                "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
-                if self.process
-                else ""
-            )
+            text = ""
+            if self.process:
+                text = "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
+            return text
 
         # Wait for process to be ready
         ready_timeout = 10
@@ -127,6 +126,10 @@ class MujocoConnection:
             return
 
         self._is_cleaned_up = True
+        
+        # clean up open file descriptors
+        self.process.stderr.close()
+        self.process.stdout.close()
 
         # Cancel any pending timers
         if self._stop_timer:
