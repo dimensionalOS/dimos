@@ -26,6 +26,7 @@
           { vals.pkg=pkgs.pcre2;              flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
           { vals.pkg=pkgs.unixtools.ifconfig; flags={}; }
+          { vals.pkg=pkgs.unixtools.netstat;  flags={}; }
 
           ### Python + static analysis
           { vals.pkg=pkgs.python312;                    flags={}; }
@@ -114,7 +115,9 @@
             if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
               . "$PROJECT_ROOT/env/bin/activate"
             fi
-
+            
+            # without this alias, the pytest uses the non-venv python and fails
+            alias pytest="python -m pytest"
             [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
             [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
           '';
