@@ -224,9 +224,6 @@ def autoconf() -> None:
         return
 
     system = platform.system()
-    if system == "Darwin":
-        logger.info("macOS detected: Skipping automatic system configuration.")
-        return
 
     commands_needed = []
 
