@@ -343,16 +343,16 @@ class LCMService(Service[LCMConfig]):
         self._call_thread_pool_lock = threading.RLock()
 
     def start(self) -> None:
-        # Run autoconf before LCM initialization if not already initialized
-        if self.config.autoconf and self.l is None:
-            autoconf()
-
-        # Reinitialize LCM if it's None (e.g., after unpickling or deferred init)
+        # Reinitialize LCM if it's None (e.g., after unpickling)
         if self.l is None:
-            self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
+            if self.config.lcm:
+                self.l = self.config.lcm
+            else:
+                self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
-        # Fallback to check_system if autoconf is disabled
-        if not self.config.autoconf:
+        if self.config.autoconf:
+            autoconf()
+        else:
             try:
                 check_system()
             except Exception as e:
