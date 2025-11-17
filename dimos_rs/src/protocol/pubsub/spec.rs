@@ -1,21 +1,19 @@
-// use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
 
 // use pyo3::prelude::*;
 // use pyo3::types::PyBytes;
 
 pub type MsgT<T> = T;
 pub type TopicT<T> = T;
-pub type SubscriptionFn<TopicT, MsgT> = Box<dyn FnOnce(MsgT, TopicT) + Send>;
+pub type SubscriptionFn = Box<dyn FnOnce() + Send>;
+pub type CallbackFn<TopicT, MsgT> = Box<dyn Fn(MsgT, TopicT) + Send>;
 
 pub struct Subscription {
-    unsubscribe_fn: Option<Box<dyn FnOnce() + Send>>,
+    unsubscribe_fn: Option<SubscriptionFn>,
 }
 
 impl Subscription {
-    pub fn new<F>(f: F) -> Self
-    where
-        F: FnOnce() + Send + 'static,
-    {
+    pub fn new(f: SubscriptionFn) -> Self {
         Self {
             unsubscribe_fn: Some(Box::new(f)),
         }
@@ -42,12 +40,10 @@ pub trait PubSub<TopicT, MsgT> {
     fn publish(&self, topic: TopicT, message: MsgT);
 
     /// Subscribe to a topic with a callback. returns unsubscribe function
-    fn subscribe<F>(&self, topic: TopicT, callback: F) -> Subscription
-    where
-        F: Fn(MsgT, TopicT) + Send + 'static;
+    fn subscribe(&self, topic: TopicT, callback: CallbackFn<TopicT, MsgT>) -> Subscription;
 
     /// Unsubscribe from a topic.
-    fn sub(&self, topic: TopicT, callback: SubscriptionFn<TopicT, 'static, MsgT>) -> Subscription {
-        self.subscribe(topic, |msg, topic| callback(msg, topic))
+    fn sub(&self, topic: TopicT, callback: CallbackFn<TopicT, MsgT>) -> Subscription {
+        self.subscribe(topic, callback)
     }
 }

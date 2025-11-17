@@ -2,13 +2,26 @@
 name = "dimos_rs"
 version = "0.1.0"
 edition = "2024"
+publish = false
+
+[features]
+default = ["inproc"]
+# Placeholders for real backends. Wire in actual deps later.
+transport-lcm = []
+transport-shm = []
+cuda = []
+inproc = []
 
 [lib]
 name = "dimos_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
+async-trait = "0.1.89"
 colored = "3.0.0"
 lcm = "0.2.0"
-pyo3 = { version = "0.27.1", features = ["extension-module"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+tokio-stream = "0.1.17"
+pyo3-asyncio = { version = "0.20", features = ["attributes", "tokio-runtime"] }
+pyo3 = { version = "0.20", features = ["extension-module", "abi3-py38"] }
 zenoh = "1.6.2"

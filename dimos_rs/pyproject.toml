@@ -6,7 +6,13 @@ build-backend = "maturin"
 name = "dimos_rs"
 version = "0.1.0"
 description = "Rust extension built with PyO3"
+authors = [
+    {name = "Dimensional Team", email = "build@dimensionalOS.com"},
+]
 requires-python = ">=3.8"
+readme = "README.md"
+license = { text = "Proprietary" }
 
 [tool.maturin]
+features = ["inproc"]
 bindings = "pyo3"
