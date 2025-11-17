@@ -51,7 +51,15 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
                 "Install it with: pip install open-clip-torch"
             )
 
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
+            self.device = "cuda"
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            self.device = "mps"
+        else:
+            self.device = "cpu"
+        
         self.normalize = normalize
 
         # Load model
