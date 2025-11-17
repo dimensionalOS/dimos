@@ -22,6 +22,7 @@ using pre-trained models like CLIP, ResNet, etc.
 import base64
 import io
 import os
+import sys
 
 import cv2
 import numpy as np
