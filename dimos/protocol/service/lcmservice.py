@@ -18,7 +18,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
 import os
-import platform
 import subprocess
 import sys
 import threading
@@ -49,10 +48,7 @@ def check_multicast() -> list[str]:
 
     sudo = "" if check_root() else "sudo "
 
-    system = platform.system()
-
-    if system == "Linux":
-        # Linux commands
+    if sys.platform == "linux":
         loopback_interface = "lo"
         # Check if loopback interface has multicast enabled
         try:
@@ -78,7 +74,7 @@ def check_multicast() -> list[str]:
                 f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
             )
 
-    elif system == "Darwin":  # macOS
+    elif sys.platform == "darwin":  # macOS
         loopback_interface = "lo0"
         # Check if multicast route exists
         try:
@@ -109,9 +105,8 @@ def check_buffers() -> tuple[list[str], int | None]:
     current_max = None
 
     sudo = "" if check_root() else "sudo "
-    system = platform.system()
 
-    if system == "Linux":
+    if sys.platform == "linux":
         # Linux buffer configuration
         try:
             result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
@@ -135,7 +130,7 @@ def check_buffers() -> tuple[list[str], int | None]:
         except:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
 
-    elif system == "Darwin":  # macOS
+    elif sys.platform == "darwin":  # macOS
         # macOS buffer configuration - check and set UDP buffer related sysctls
         try:
             result = subprocess.run(
@@ -223,8 +218,6 @@ def autoconf() -> None:
         logger.info("CI environment detected: Skipping automatic system configuration.")
         return
 
-    system = platform.system()
-
     commands_needed = []
 
     # Check multicast configuration
@@ -275,7 +268,7 @@ class LCMConfig:
     lcm: lcm.LCM | None = None
 
     def __post_init__(self):
-        if self.url is None and platform.system() == "Darwin":
+        if self.url is None and sys.platform == "darwin":
             # On macOS, use multicast with TTL=0 to keep traffic local
             self.url = "udpm://239.255.76.67:7667?ttl=0"
 
