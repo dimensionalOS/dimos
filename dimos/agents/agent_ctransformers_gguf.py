@@ -133,7 +133,14 @@ class CTransformersGGUFAgent(LLMAgent):
         self.model_name = model_name
         self.device = device
         if self.device == "auto":
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            if torch.cuda.is_available():
+                self.device = "cuda"
+            # MacOS Metal performance shaders
+            elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+                self.device = "mps"
+            else:
+                self.device = "cpu"
+            
             if self.device == "cuda":
                 print(f"Using GPU: {torch.cuda.get_device_name(0)}")
             else:

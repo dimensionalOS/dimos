@@ -40,7 +40,14 @@ if __name__ == "__main__":
     if args.use_underscore:
         cat_names = [x.strip().replace("/ ", "/").replace(" ", "_") for x in cat_names]
     print("cat_names", cat_names)
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Use GPU if available, otherwise fall back to CPU
+    if torch.cuda.is_available():
+        device = "cuda"
+    # MacOS Metal performance shaders
+    elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+        device = "mps"
+    else:
+        device = "cpu"
 
     if args.prompt == "a":
         sentences = ["a " + x for x in cat_names]

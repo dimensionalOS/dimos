@@ -23,7 +23,15 @@ class MoondreamVlModel(VlModel):
         dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         self._model_name = model_name
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
+            self._device = "cuda"
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            self._device = "mps"
+        else:
+            self._device = "cpu"
+        
         self._dtype = dtype
 
     @cached_property

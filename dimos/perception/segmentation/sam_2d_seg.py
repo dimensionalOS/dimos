@@ -48,14 +48,21 @@ class Sam2DSegmenter:
         use_rich_labeling: bool = False,
         use_filtering: bool = True,
     ) -> None:
-        if is_cuda_available():
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
                 onnxruntime.preload_dlls(cuda=True, cudnn=True)
             self.device = "cuda"
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            logger.info("Using Metal for SAM 2d segmenter")
+            self.device = "mps"
         else:
             logger.info("Using CPU for SAM 2d segmenter")
             self.device = "cpu"
+            
+            
         # Core components
         self.model = FastSAM(get_data(model_path) / model_name)
         self.use_tracker = use_tracker
