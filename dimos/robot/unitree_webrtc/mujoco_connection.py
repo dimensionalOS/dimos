@@ -81,7 +81,7 @@ class MujocoConnection:
         # Launch the subprocess
         try:
             # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
-            executable = sys.executable if sys.platform != 'darwin' else 'mjpython'
+            executable = sys.executable if sys.platform != "darwin" else "mjpython"
             self.process = subprocess.Popen(
                 [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
                 stdout=subprocess.PIPE,
@@ -93,9 +93,14 @@ class MujocoConnection:
         except Exception as e:
             self.shm_data.cleanup()
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
-        
-        get_stderr = lambda: "\n" + self.process.stderr.read().replace('\n', '\n[mujoco_process.py] ') + "\n" if self.process else ""
-        
+
+        def get_stderr():
+            return (
+                "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
+                if self.process
+                else ""
+            )
+
         # Wait for process to be ready
         ready_timeout = 10
         start_time = time.time()
@@ -104,7 +109,9 @@ class MujocoConnection:
                 exit_code = self.process.returncode
                 stderr_string = get_stderr()
                 self.stop()
-                raise RuntimeError(f"{stderr_string}MuJoCo process failed to start (exit code {exit_code})")
+                raise RuntimeError(
+                    f"{stderr_string}MuJoCo process failed to start (exit code {exit_code})"
+                )
             if self.shm_data.is_ready():
                 logger.info("MuJoCo process started successfully")
                 return
