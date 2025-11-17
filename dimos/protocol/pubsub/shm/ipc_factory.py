@@ -17,7 +17,6 @@
 from abc import ABC, abstractmethod
 from multiprocessing.shared_memory import SharedMemory
 import os
-import sys
 import time
 
 import numpy as np
