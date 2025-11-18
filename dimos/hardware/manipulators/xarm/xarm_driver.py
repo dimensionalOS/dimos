@@ -190,7 +190,7 @@ class XArmDriver(
         self.arm = None
 
         # Subscription management
-        # self._disposables = CompositeDisposable()   # already exists in module 
+        # self._disposables = CompositeDisposable()   # already exists in module
 
         # Joint names based on configuration
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
@@ -534,7 +534,7 @@ class XArmDriver(
         if not self._xarm_is_ready_read():
             self._last_not_ready = True
             return False
-        
+
             # Initialize tracking variables if not present
         if not hasattr(self, "_last_state"):
             self._last_state = 0
