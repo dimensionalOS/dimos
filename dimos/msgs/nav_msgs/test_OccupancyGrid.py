@@ -20,7 +20,7 @@ import pickle
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
@@ -323,9 +323,7 @@ def test_filter_below() -> None:
 
 def test_grid_to_ascii_basic() -> None:
     """Verify that grid_to_ascii maps cell values to the expected characters."""
-    data = np.array(
-        [[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8
-    )
+    data = np.array([[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8)
 
     grid = OccupancyGrid(grid=data, resolution=1.0)
 
@@ -340,9 +338,7 @@ def test_grid_to_ascii_basic() -> None:
 
 def test_augment_ascii_robot_pose() -> None:
     """Verify that augment_ascii places an 'X' at the robot location in the ASCII grid."""
-    data = np.array(
-        [[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8
-    )
+    data = np.array([[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8)
 
     # direct mapping to ascii chars, resolution 1
     origin = Pose(Vector3(0.0, 0.0, 0.0))
@@ -361,8 +357,7 @@ def test_augment_ascii_robot_pose() -> None:
 
 
 def test_ascii_to_world() -> None:
-    """Check that ascii_to_world returns expected world coordinates for given ASCII cell.
-    """
+    """Check that ascii_to_world returns expected world coordinates for given ASCII cell."""
     data = np.zeros((15, 30), dtype=np.int8)
 
     origin = Pose(Vector3(10.0, 20.0, 0.0))
@@ -384,6 +379,7 @@ def test_ascii_to_world() -> None:
 
         assert abs(world.x - expected_x) < 1e-6
         assert abs(world.y - expected_y) < 1e-6
+
 
 def test_max() -> None:
     """Test setting all non-unknown cells to maximum."""

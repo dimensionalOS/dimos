@@ -21,17 +21,16 @@ from reactivex.disposable import Disposable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3, VectorLike
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike, Quaternion
-from dimos.msgs.vision_msgs import Detection2DArray
-
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.type.map")
+
 
 class Map(Module):
     lidar: In[LidarMessage] = None
@@ -83,6 +82,7 @@ class Map(Module):
                 max_height=self.max_height,
             )
             self.global_costmap.publish(occupancygrid)
+
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(publish)
             self._disposables.add(unsub)
@@ -124,6 +124,7 @@ class Map(Module):
             max_height=0.6,
         ).gradient(max_distance=0.25)
         self.local_costmap.publish(local_costmap)
+
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud

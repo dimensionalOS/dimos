@@ -37,8 +37,8 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import PointCloud2
 from dataclasses import dataclass
 from typing import Optional
-import numpy as np
 
+import numpy as np
 
 
 @dataclass
@@ -48,8 +48,9 @@ class AsciiGrid:
     ascii_grid_str: str = ""  # ASCII-art representation (rows separated by '\n')
     width: int = 0
     height: int = 0
-    step_row: int = 4 # sampling step from occupancy grid to ascii grid 
+    step_row: int = 4  # sampling step from occupancy grid to ascii grid
     step_col: int = 2
+
 
 class CostValues(IntEnum):
     """Standard cost values for occupancy grid cells.
@@ -87,7 +88,7 @@ class OccupancyGrid(Timestamped):
         height: int | None = None,
         resolution: float = 0.05,
         origin: Pose | None = None,
-        robot_pose: Pose | None =  None,
+        robot_pose: Pose | None = None,
         frame_id: str = "world",
         ts: float = 0.0,
     ) -> None:
@@ -133,7 +134,7 @@ class OccupancyGrid(Timestamped):
             # Initialize empty
             self.info = MapMetaData(map_load_time=self._to_lcm_time())
             self.grid = np.array([], dtype=np.int8)
-        
+
         self.robot_pose = robot_pose or self.info.origin
         self.ascii_grid = AsciiGrid()
 
@@ -297,8 +298,8 @@ class OccupancyGrid(Timestamped):
             f"resolution={self.resolution}, frame_id='{self.frame_id}', "
             f"occupied={self.occupied_cells}, free={self.free_cells}, "
             f"unknown={self.unknown_cells})"
-        )    
-    
+        )
+
     def augment_ascii(self, robot_pose: Pose = None):
         """Augment the ASCII grid with robot pose.
 
@@ -309,7 +310,7 @@ class OccupancyGrid(Timestamped):
         step_col = self.ascii_grid.step_col
         step_row = self.ascii_grid.step_row
 
-        ascii_lines = self.ascii_grid.ascii_grid_str.split('\n')
+        ascii_lines = self.ascii_grid.ascii_grid_str.split("\n")
         ascii_height = len(ascii_lines)
         ascii_width = len(ascii_lines[0]) if ascii_height > 0 else 0
 
@@ -317,15 +318,18 @@ class OccupancyGrid(Timestamped):
         robot_cell = None
         if robot_pose is not None:
             robot_grid_pos = self.world_to_grid(robot_pose.position)
-            robot_cell = (int(round(robot_grid_pos.x / step_col)), int(round(robot_grid_pos.y / step_row)))
-        
+            robot_cell = (
+                round(robot_grid_pos.x / step_col),
+                round(robot_grid_pos.y / step_row),
+            )
+
             rx, ry = robot_cell
             if 0 <= ry < ascii_height and 0 <= rx < ascii_width:
                 line = list(ascii_lines[ry])
-                line[rx] = 'X'
-                ascii_lines[ry] = ''.join(line)
+                line[rx] = "X"
+                ascii_lines[ry] = "".join(line)
 
-        self.ascii_grid.ascii_grid_str = '\n'.join(ascii_lines)
+        self.ascii_grid.ascii_grid_str = "\n".join(ascii_lines)
 
     def grid_to_ascii(self) -> str:
         """Convert the occupancy grid to an ASCII art representation.
@@ -341,10 +345,7 @@ class OccupancyGrid(Timestamped):
         step_col = self.ascii_grid.step_col
         step_row = self.ascii_grid.step_row
 
-        char_map = {
-            CostValues.FREE: '.',
-            CostValues.UNKNOWN: '?'
-        }
+        char_map = {CostValues.FREE: ".", CostValues.UNKNOWN: "?"}
 
         # create ascii art lines
         map_ascii = []
@@ -352,17 +353,17 @@ class OccupancyGrid(Timestamped):
             line = []
             for x in range(0, self.width, step_col):
                 cell_value = self.grid[y, x]
-                line.append(char_map.get(cell_value, '#'))
-            map_ascii.append(''.join(line))
-        
-        ascii_str = '\n'.join(map_ascii)
+                line.append(char_map.get(cell_value, "#"))
+            map_ascii.append("".join(line))
+
+        ascii_str = "\n".join(map_ascii)
 
         self.ascii_grid.ascii_grid_str = ascii_str
         self.ascii_grid.width = len(map_ascii[0]) if map_ascii else 0
         self.ascii_grid.height = len(map_ascii)
-        
+
         return ascii_str
-    
+
     def ascii_to_world(self, ascii_x: int, ascii_y: int) -> Vector3:
         """Convert ASCII grid coordinates to world coordinates.
 
@@ -376,11 +377,11 @@ class OccupancyGrid(Timestamped):
         step_col = self.ascii_grid.step_col
         step_row = self.ascii_grid.step_row
 
-        grid_x = ascii_x * step_col + step_col // 2 # center of extrapolated cell
+        grid_x = ascii_x * step_col + step_col // 2  # center of extrapolated cell
         grid_y = ascii_y * step_row + step_row // 2
 
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
-    
+
     def agent_encode(self):
         """Return ASCII string for agent."""
 
@@ -389,7 +390,7 @@ class OccupancyGrid(Timestamped):
             self.augment_ascii(robot_pose=self.robot_pose)
 
         return self.ascii_grid.ascii_grid_str
-      
+
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""
         # Create LCM message

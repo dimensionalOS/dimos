@@ -13,22 +13,22 @@
 # limitations under the License.
 
 from dimos.core.module import Module
-from dimos.core.skill_module import SkillModule
 from dimos.core.rpc_client import RpcCall
-from dimos.protocol.skill.skill import rpc, skill
+from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In, Out
-from dimos.utils.logging_config import setup_logger
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.protocol.skill.skill import rpc, skill
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents2.skills.interpret_map")
+
 
 class InterpretMapSkill(SkillModule):
     _latest_local_costmap: OccupancyGrid | None = None
     _robot_pose: Pose | None = None
 
-    
     local_costmap: In[OccupancyGrid] = None
     lidar: In[LidarMessage] = None
 
@@ -44,21 +44,20 @@ class InterpretMapSkill(SkillModule):
 
     def _on_local_costmap(self, costmap: OccupancyGrid) -> None:
         self._latest_local_costmap = costmap
-    
+
     def _on_lidar(self, lidar: LidarMessage) -> None:
         center = lidar.pointcloud.get_center()
         self._robot_pose = Pose(Vector3(center[0], center[1], 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
 
-
     @skill()
     def get_map(self):
         """Provides current map in ASCII string.
-        
-            . represents free space
-            # represents obstacles
-            X represents robot position
-            ? represents unknown space
-        
+
+        . represents free space
+        # represents obstacles
+        X represents robot position
+        ? represents unknown space
+
         """
         if self._latest_local_costmap is None:
             logger.warning("No local costmap available.")
@@ -69,6 +68,7 @@ class InterpretMapSkill(SkillModule):
             self._latest_local_costmap.robot_pose = self._robot_pose
 
         return self._latest_local_costmap
+
 
 interpret_map_skill = InterpretMapSkill.blueprint
 
