@@ -147,7 +147,9 @@ class LLMAgent(Agent):
                  agent_memory: Optional[AbstractAgentSemanticMemory] = None,
                  pool_scheduler: Optional[ThreadPoolScheduler] = None, 
                  process_all_inputs: bool = False,
-                 system_query: Optional[str] = None):
+                 system_query: Optional[str] = None,
+                 max_output_tokens_per_request: int = 16384,
+                 max_input_tokens_per_request: int = 128000):
         """
         Initializes a new instance of the LLMAgent.
 
@@ -168,8 +170,8 @@ class LLMAgent(Agent):
         self.skills: Optional[AbstractSkill] = None
         self.system_query: Optional[str] = system_query
         self.image_detail: str = "low"
-        self.max_input_tokens_per_request: int = 128000
-        self.max_output_tokens_per_request: int = 16384
+        self.max_input_tokens_per_request: int = max_input_tokens_per_request
+        self.max_output_tokens_per_request: int = max_output_tokens_per_request
         self.max_tokens_per_request: int = (self.max_input_tokens_per_request +
                                             self.max_output_tokens_per_request)
         self.rag_query_n: int = 4
@@ -345,12 +347,7 @@ class LLMAgent(Agent):
                 final_msg = (response_message.parsed
                              if hasattr(response_message, 'parsed') and
                              response_message.parsed else
-                             (response_message.content if hasattr(response_message, 'content') else None))
-                # HuggingFace Local returns a string, not a BaseModel
-                if final_msg is None:
-                    s_fixed = response_message.replace("'", '"')
-                    s = ast.literal_eval(s_fixed)
-                    final_msg = s[0]['content']
+                             (response_message.content if hasattr(response_message, 'content') else response_message))
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             else:

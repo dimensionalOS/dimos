@@ -1,15 +1,20 @@
 ---
 services:
-  dimos-unitree-agents-interface:
-    image: dimos-unitree-agents-interface:latest
+  dimos-unitree-ros-agents:
+    image: dimos-unitree-ros-agents:latest
     build: 
       context: ../../../
-      dockerfile: docker/unitree/agents_interface/Dockerfile
+      dockerfile: docker/unitree/ros_agents/Dockerfile
     env_file:
       - ../../../.env
     environment:
-      - PYTHONUNBUFFERED=1
-      - ROS_OUTPUT_DIR=/app/assets/output/ros  # Change output directory
+      PYTHONUNBUFFERED: 1
+      ROBOT_IP: ${ROBOT_IP} 
+      CONN_TYPE: ${CONN_TYPE:-webrtc}
+      WEBRTC_SERVER_HOST: 0.0.0.0  # Listen on all interfaces
+      WEBRTC_SERVER_PORT: ${WEBRTC_SERVER_PORT:-9991}
+      DISPLAY: ${DISPLAY:-}  # For GUI applications like rviz2
+      ROS_OUTPUT_DIR: /app/assets/output/ros  # Change output directory
       # DIMOS_MAX_WORKERS: ${DIMOS_MAX_WORKERS}
       # TODO: ipc: host
     volumes:
@@ -23,7 +28,7 @@ services:
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5555/unitree/status"]
       interval: 10s
-      timeout: 30s
+      timeout: 5s
       retries: 5
       start_period: 10s
   
@@ -37,10 +42,26 @@ services:
     volumes:
       - ../../../dimos/web/dimos_interface:/app
     depends_on:
-      dimos-unitree-agents-interface:
+      dimos-unitree-ros-agents:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000"]
       interval: 30s
       timeout: 10s
       retries: 3
+
+
+# ----
+# TO RUN:
+#   docker build -f ./Dockerfile -t dimos ../../ && docker compose up
+# GO TO:
+#   127.0.0.1:5555 (when flask server fixed)
+# ----
+
+#  video-service:
+#    build: ./video-service
+#    image: video-service:latest
+#    volumes:
+#      - ./../../assets:/app/dimos-env/assets
+#    ports:
+#      - "23001:23001"

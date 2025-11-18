@@ -65,7 +65,7 @@ class UnitreeGo2(Robot):
             use_webrtc: bool = False,
             disable_video_stream: bool = False,
             mock_connection: bool = False,
-            enable_visual_servoing: bool = True,
+            enable_visual_servoing: bool = False,
             skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None):
 
         """Initialize the UnitreeGo2 robot.

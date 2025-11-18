@@ -12,10 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional, Tuple, Type
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, List, Optional, Tuple, Type
 import time
 from pydantic import Field
-from dimos.robot.robot import Robot
+
+if TYPE_CHECKING:
+    from dimos.robot.robot import Robot
 from dimos.robot.skills import AbstractRobotSkill, AbstractSkill
 
 # Module-level constant for Unitree ROS control definitions

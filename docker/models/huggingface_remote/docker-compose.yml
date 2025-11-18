@@ -1,0 +1,27 @@
+---
+services:
+  dimos-model-huggingface-remote:
+    image: dimos-model-huggingface-remote:latest
+    build: 
+      context: ../../../
+      dockerfile: docker/models/huggingface_remote/Dockerfile
+    env_file:
+      - ../../../.env
+    mem_limit: 8048m
+    volumes:
+      - ../../../assets:/app/assets
+      # - ../../../assets/model-cache:/root/.cache/huggingface/hub
+    ports:
+      - "5555:5555"
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: [ "python", "-m", "tests.test_agent_huggingface_remote" ]
+    stdin_open: true
+    tty: true
+
+# ----
+# TO RUN:
+#   docker build -f ./Dockerfile -t dimos-models ../../ && docker compose up
+# GO TO:
+#   127.0.0.1:5555 (when flask server fixed)
+# ----

@@ -99,6 +99,7 @@ COPY requirements.txt /app/
 
 WORKDIR /app
 
+COPY ./dimos/perception/external ./dimos/perception/external
 # Install dimos requirements
 RUN pip install -r requirements.txt
 
