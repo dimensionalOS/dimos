@@ -20,7 +20,7 @@ import pickle
 import numpy as np
 import pytest
 
-from dimos.msgs.geometry_msgs import Pose
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
@@ -321,20 +321,69 @@ def test_filter_below() -> None:
     assert filtered.frame_id == grid.frame_id
 
 
-def test_grid_image_conversion() -> None:
-    data = np.zeros((20, 30), dtype=np.int8)
-    data[5:10, 10:20] = 100  # Add some obstacles
-    data[15:18, 5:8] = -1  # Add unknown area
+def test_grid_to_ascii_basic() -> None:
+    """Verify that grid_to_ascii maps cell values to the expected characters."""
+    data = np.array(
+        [[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8
+    )
 
-    origin = Pose(1.0, 2.0, 0.0)
-    grid = OccupancyGrid(grid=data, resolution=0.05, origin=origin, frame_id="odom")
-    image = grid.grid_to_image()
+    grid = OccupancyGrid(grid=data, resolution=1.0)
 
-    assert image.data.shape == (20, 30)
-    # save image
-    # image.save("occupancy_grid_image_debug.png")
+    grid.ascii_grid.step_col = 1
+    grid.ascii_grid.step_row = 1
 
-    grid.agent_encode()
+    ascii_str = grid.grid_to_ascii()
+
+    expected = ".#?.\n..#?\n#..."
+    assert ascii_str == expected
+
+
+def test_augment_ascii_robot_pose() -> None:
+    """Verify that augment_ascii places an 'X' at the robot location in the ASCII grid."""
+    data = np.array(
+        [[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8
+    )
+
+    # direct mapping to ascii chars, resolution 1
+    origin = Pose(Vector3(0.0, 0.0, 0.0))
+    grid = OccupancyGrid(grid=data, resolution=1.0, origin=origin)
+    grid.ascii_grid.step_col = 1
+    grid.ascii_grid.step_row = 1
+
+    grid.grid_to_ascii()
+
+    # place robot at (2,1) in world -> should map to ascii x=2,y=1
+    robot_pose = Pose(Vector3(2.0, 1.0, 0.0))
+    grid.augment_ascii(robot_pose=robot_pose)
+
+    ascii_lines = grid.ascii_grid.ascii_grid_str.split("\n")
+    assert ascii_lines[1][2] == "X"
+
+
+def test_ascii_to_world() -> None:
+    """Check that ascii_to_world returns expected world coordinates for given ASCII cell.
+    """
+    data = np.zeros((15, 30), dtype=np.int8)
+
+    origin = Pose(Vector3(10.0, 20.0, 0.0))
+    grid = OccupancyGrid(grid=data, resolution=0.5, origin=origin)
+
+    grid.ascii_grid.step_col = 2
+    grid.ascii_grid.step_row = 3
+
+    # verify roundtrip for few ascii coordinates
+    for ascii_x, ascii_y in [(0, 0), (3, 0), (12, 15)]:
+        world = grid.ascii_to_world(ascii_x, ascii_y)
+
+        # expected grid coords (center of the sampled block)
+        grid_x = ascii_x * grid.ascii_grid.step_col + grid.ascii_grid.step_col // 2
+        grid_y = ascii_y * grid.ascii_grid.step_row + grid.ascii_grid.step_row // 2
+
+        expected_x = origin.position.x + grid_x * grid.resolution
+        expected_y = origin.position.y + grid_y * grid.resolution
+
+        assert abs(world.x - expected_x) < 1e-6
+        assert abs(world.y - expected_y) < 1e-6
 
 def test_max() -> None:
     """Test setting all non-unknown cells to maximum."""
