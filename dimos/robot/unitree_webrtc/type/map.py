@@ -81,10 +81,8 @@ class Map(Module):
                 resolution=self.cost_resolution,
                 min_height=self.min_height,
                 max_height=self.max_height,
-                robot_pose=self.robot_pose,
             )
             self.global_costmap.publish(occupancygrid)
-
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(publish)
             self._disposables.add(unsub)
@@ -122,12 +120,10 @@ class Map(Module):
         local_costmap = OccupancyGrid.from_pointcloud(
             frame,
             resolution=self.cost_resolution,
-            robot_pose=self.robot_pose,
             min_height=0.15,
             max_height=0.6,
         ).gradient(max_distance=0.25)
         self.local_costmap.publish(local_costmap)
-
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self.pointcloud

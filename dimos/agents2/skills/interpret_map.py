@@ -19,18 +19,24 @@ from dimos.protocol.skill.skill import rpc, skill
 from dimos.core.stream import In, Out
 from dimos.utils.logging_config import setup_logger
 from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 logger = setup_logger("dimos.agents2.skills.interpret_map")
 
 class InterpretMapSkill(SkillModule):
     _latest_local_costmap: OccupancyGrid | None = None
+    _robot_pose: Pose | None = None
+
     
     local_costmap: In[OccupancyGrid] = None
+    lidar: In[LidarMessage] = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self._disposables.add(self.local_costmap.subscribe(self._on_local_costmap))
+        self._disposables.add(self.lidar.subscribe(self._on_lidar))
 
     @rpc
     def stop(self) -> None:
@@ -38,6 +44,11 @@ class InterpretMapSkill(SkillModule):
 
     def _on_local_costmap(self, costmap: OccupancyGrid) -> None:
         self._latest_local_costmap = costmap
+    
+    def _on_lidar(self, lidar: LidarMessage) -> None:
+        center = lidar.pointcloud.get_center()
+        self._robot_pose = Pose(Vector3(center[0], center[1], 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+
 
     @skill()
     def get_map(self):
@@ -52,6 +63,10 @@ class InterpretMapSkill(SkillModule):
         if self._latest_local_costmap is None:
             logger.warning("No local costmap available.")
             return "No map available."
+
+        # augment with robot position
+        if self._robot_pose:
+            self._latest_local_costmap.robot_pose = self._robot_pose
 
         return self._latest_local_costmap
 

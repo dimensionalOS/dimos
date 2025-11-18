@@ -229,12 +229,11 @@ class OccupancyGrid(Timestamped):
             grid=result_grid,
             resolution=self.resolution,
             origin=self.origin,
-            robot_pose=self.robot_pose,
             frame_id=self.frame_id,
             ts=self.ts,
         )
 
-    def world_to_grid(self, point: Vector3) -> Vector3:
+    def world_to_grid(self, point: VectorLike) -> Vector3:
         """Convert world coordinates to grid coordinates.
 
         Args:
@@ -249,8 +248,8 @@ class OccupancyGrid(Timestamped):
         oy = self.origin.position.y
 
         # Convert to grid coordinates (simplified, assuming no rotation)
-        grid_x = (point.x - ox) / self.resolution
-        grid_y = (point.y - oy) / self.resolution
+        grid_x = (positionVector.x - ox) / self.resolution
+        grid_y = (positionVector.y - oy) / self.resolution
 
         return Vector3(grid_x, grid_y, 0.0)
 
@@ -298,43 +297,37 @@ class OccupancyGrid(Timestamped):
             f"resolution={self.resolution}, frame_id='{self.frame_id}', "
             f"occupied={self.occupied_cells}, free={self.free_cells}, "
             f"unknown={self.unknown_cells})"
-        )
+        )    
     
-    def grid_to_image(self) -> Image:
-        """Encode the occupancy grid as image."""
-        # convert to grayscale image:
-        # - unknown (-1) -> black (0)
-        # - free (0) -> white (255)
-        # - obstacles (1..100) -> gradient to black (100 -> 0)
-        image_arr = np.full(self.grid.shape, 0, dtype=np.uint8)
+    def augment_ascii(self, robot_pose: Pose = None):
+        """Augment the ASCII grid with robot pose.
 
-        known_mask = self.grid != CostValues.UNKNOWN
-        if np.any(known_mask):
-            # map from [0..100] to [255..0]
-            image_arr[known_mask] = (255 - (self.grid[known_mask] * 255 // 100)).astype(np.uint8)
+        Args:
+            robot_pose: Optional Pose of the robot to mark on the grid
+            detections: Optional list of detection positions to mark on the grid
+        """
+        step_col = self.ascii_grid.step_col
+        step_row = self.ascii_grid.step_row
 
+        ascii_lines = self.ascii_grid.ascii_grid_str.split('\n')
+        ascii_height = len(ascii_lines)
+        ascii_width = len(ascii_lines[0]) if ascii_height > 0 else 0
 
-        # draw robot position as triangle on map
-        if self.robot_pose is not None:
-           
-            robot_grid_pos = self.world_to_grid(self.robot_pose.position)
-            rgx = int(round(robot_grid_pos.x))
-            rgy = int(round(robot_grid_pos.y))
-           
-            # show the robot as a black box
-            box_size = 3
-            for dx in range(-box_size, box_size + 1):
-                for dy in range(-box_size, box_size + 1):
-                    x = rgx + dx
-                    y = rgy + dy
-                    if 0 <= x < self.width and 0 <= y < self.height:
-                        image_arr[y, x] = 0 
+        # add robot position to ascii grid with 'X'
+        robot_cell = None
+        if robot_pose is not None:
+            robot_grid_pos = self.world_to_grid(robot_pose.position)
+            robot_cell = (int(round(robot_grid_pos.x / step_col)), int(round(robot_grid_pos.y / step_row)))
+        
+            rx, ry = robot_cell
+            if 0 <= ry < ascii_height and 0 <= rx < ascii_width:
+                line = list(ascii_lines[ry])
+                line[rx] = 'X'
+                ascii_lines[ry] = ''.join(line)
 
-        image = Image(data=image_arr, format=ImageFormat.GRAY, frame_id=self.frame_id, ts=self.ts)
-        # image.save("./local_costmap.png")
-        return image
+        self.ascii_grid.ascii_grid_str = '\n'.join(ascii_lines)
 
-    def grid_to_ascii(self, max_width: int = 50, max_height: int = 30, detections = None) -> str:
+    def grid_to_ascii(self) -> str:
         """Convert the occupancy grid to an ASCII art representation.
 
         returns:
@@ -348,12 +341,6 @@ class OccupancyGrid(Timestamped):
         step_col = self.ascii_grid.step_col
         step_row = self.ascii_grid.step_row
 
-        # add robot postion
-        robot_cell = None
-        if self.robot_pose is not None:
-            robot_grid_pos = self.world_to_grid(self.robot_pose.position)
-            robot_cell = (int(round(robot_grid_pos.x / step_col)), int(round(robot_grid_pos.y / step_row)))
-
         char_map = {
             CostValues.FREE: '.',
             CostValues.UNKNOWN: '?'
@@ -364,19 +351,11 @@ class OccupancyGrid(Timestamped):
         for y in range(0, self.height, step_row):
             line = []
             for x in range(0, self.width, step_col):
-                ascii_x = round(x / step_col)
-                ascii_y = round(y / step_row)
-                if robot_cell and (ascii_x, ascii_y) == robot_cell:
-                    line.append('X')
-                else:
-                    cell_value = self.grid[y, x]
-                    line.append(char_map.get(cell_value, '#'))
+                cell_value = self.grid[y, x]
+                line.append(char_map.get(cell_value, '#'))
             map_ascii.append(''.join(line))
         
         ascii_str = '\n'.join(map_ascii)
-
-        # with open("./occupancy_grid_ascii_debug.txt", "w") as f:
-        #     f.write(ascii_str)
 
         self.ascii_grid.ascii_grid_str = ascii_str
         self.ascii_grid.width = len(map_ascii[0]) if map_ascii else 0
@@ -403,12 +382,14 @@ class OccupancyGrid(Timestamped):
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
     
     def agent_encode(self):
-        # use either image or ascii representation, 
-        # depending on how well the agent can interpret, 
-        # preferably ascii as the model should be able to place goals/manipulate 
-        
-        return self.grid_to_ascii()
+        """Return ASCII string for agent."""
 
+        self.grid_to_ascii()
+        if self.robot_pose:
+            self.augment_ascii(robot_pose=self.robot_pose)
+
+        return self.ascii_grid.ascii_grid_str
+      
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""
         # Create LCM message
@@ -469,7 +450,6 @@ class OccupancyGrid(Timestamped):
         resolution: float = 0.05,
         min_height: float = 0.1,
         max_height: float = 2.0,
-        robot_pose: Pose | None = None,
         frame_id: str | None = None,
         mark_free_radius: float = 0.4,
     ) -> OccupancyGrid:
@@ -495,7 +475,7 @@ class OccupancyGrid(Timestamped):
         if len(points) == 0:
             # Return empty grid
             return cls(
-                width=1, height=1, resolution=resolution, robot_pose=robot_pose, frame_id=frame_id or cloud.frame_id
+                width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
             )
 
         # Filter points by height for obstacles
@@ -515,7 +495,7 @@ class OccupancyGrid(Timestamped):
         else:
             # Return empty grid if no points at all
             return cls(
-                width=1, height=1, resolution=resolution, robot_pose=robot_pose, frame_id=frame_id or cloud.frame_id
+                width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
             )
 
         # Add some padding around the bounds
@@ -592,7 +572,6 @@ class OccupancyGrid(Timestamped):
             grid=grid,
             resolution=resolution,
             origin=origin,
-            robot_pose=robot_pose,
             frame_id=frame_id or cloud.frame_id,
             ts=ts,
         )
@@ -653,7 +632,6 @@ class OccupancyGrid(Timestamped):
             grid=gradient_data,
             resolution=self.resolution,
             origin=self.origin,
-            robot_pose=self.robot_pose,
             frame_id=self.frame_id,
             ts=self.ts,
         )
@@ -685,7 +663,6 @@ class OccupancyGrid(Timestamped):
             new_grid,
             resolution=self.resolution,
             origin=self.origin,
-            robot_pose=self.robot_pose,
             frame_id=self.frame_id,
             ts=self.ts,
         )
@@ -717,7 +694,6 @@ class OccupancyGrid(Timestamped):
             new_grid,
             resolution=self.resolution,
             origin=self.origin,
-            robot_pose=self.robot_pose,
             frame_id=self.frame_id,
             ts=self.ts,
         )
@@ -742,7 +718,6 @@ class OccupancyGrid(Timestamped):
             new_grid,
             resolution=self.resolution,
             origin=self.origin,
-            robot_pose=self.robot_pose,
             frame_id=self.frame_id,
             ts=self.ts,
         )
