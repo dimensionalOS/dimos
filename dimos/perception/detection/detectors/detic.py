@@ -395,7 +395,7 @@ class Detic2DDetector(Detector):
             tracked_class_ids,
             tracked_scores,
             tracked_names,
-            # tracked_masks,
+            tracked_masks,
         )
 
     def visualize_results(

@@ -8,7 +8,7 @@ import depthai as dai
 import contextlib
 import numpy as np
 import sys
-from manipulation_pipeline import ManipulationPipeline
+from manip_aio_pipeline_depthai import ManipulationPipeline
 
 print(f"DepthAI version: {dai.__version__}")
 print("Testing ManipulationPipeline with Dual OAK-D S2\n")

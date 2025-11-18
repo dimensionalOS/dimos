@@ -1,181 +1,187 @@
-# test_pipeline_with_grasps.py
+#!/usr/bin/env python3
+"""
+test_manipulation_processor.py - Test the ManipulationProcessor with dual cameras
+"""
 
 import numpy as np
 import cv2
-import threading
-import time
-import reactivex as rx
-from manip_aio_pipeline import ManipulationPipeline
+import sys
 
-def test_pipeline_with_grasps():
-    print("Starting Pipeline Test WITH Grasp Generation...")
+
+from manip_aio_processer_new_depthai import ManipulationProcessor
+
+
+def create_dummy_rgbd_pair(width=640, height=480):
+    """Create dummy RGB-D data for testing."""
+    # Create a simple synthetic RGB image with colored rectangles
+    rgb = np.zeros((height, width, 3), dtype=np.uint8)
     
-    # Camera configurations
+    # Add some colored objects
+    cv2.rectangle(rgb, (100, 100), (200, 200), (255, 0, 0), -1)  # Blue rectangle
+    cv2.rectangle(rgb, (300, 150), (400, 250), (0, 255, 0), -1)  # Green rectangle
+    cv2.rectangle(rgb, (450, 200), (550, 300), (0, 0, 255), -1)  # Red rectangle
+    
+    # Create synthetic depth (everything at 1.0m with some variation)
+    depth = np.ones((height, width), dtype=np.float32) * 1.0
+    
+    # Add depth variation for "objects"
+    depth[100:200, 100:200] = 0.8  # Blue object closer
+    depth[150:250, 300:400] = 0.9  # Green object  
+    depth[200:300, 450:550] = 1.1  # Red object farther
+    
+    return rgb, depth
+
+
+def test_processor_basic():
+    """Test basic processor functionality with synthetic data."""
+    print("="*60)
+    print("TESTING MANIPULATION PROCESSOR")
+    print("="*60)
+    
+    # Camera configurations (using your ArUco calibration format)
+
+    cam1_to_robot = np.array([[-0.5676864072910737, 0.20246387231771812, -0.797960226692451, 0.7502531269058595], [0.5144743879160396, 0.8439489366835451, -0.15187592452107102, -0.1942131460591212], [-0.6426882970424852, 0.49674799715432, 0.5832608165887726, 0.6305214067250764], [0.0, 0.0, 0.0, 1.0]])
+
+    cam2_to_robot = np.array([[0.5697063789662457, 0.5775554768385595, -0.5846916391902254, 0.4934273137283139], [0.8040468878867589, -0.5389612872714936, 0.2510564337002188, 0.28780764457046215], [0.1701271402357255, 0.6131479446238394, 0.771431367108426, 0.33694074301593196], [0.0, 0.0, 0.0, 1.0]])
+
     camera_configs = [
-    {
-        "camera_id": 0,
-        "intrinsics": [600.0, 600.0, 320.0, 240.0],
-        "extrinsics": np.array([  # Camera 0's ArUco calibration
-            [0.999,   0.012, -0.034,  0.152],
-            [-0.011,  0.998,  0.045, -0.082],
-            [0.035,  -0.044,  0.997,  0.723],
-            [0,       0,      0,      1]
-        ])
-    },
-    {
-        "camera_id": 1,
-        "intrinsics": [600.0, 600.0, 320.0, 240.0],
-        "extrinsics": np.array([  # Camera 1's ArUco calibration
-            [0.997,  -0.023,  0.071,  0.453],
-            [0.025,   0.999, -0.018,  0.105],
-            [-0.070,  0.021,  0.997,  0.695],
-            [0,       0,      0,      1]
-        ])
-    }
-]
-    
-    # Initialize pipeline WITH grasp generation
-    pipeline = ManipulationPipeline(
+        {
+            "camera_id": 0,
+            'intrinsics': np.array([[401.05560302734375, 0.0, 319.18072509765625], [0.0, 401.05560302734375, 224.92999267578125], [0.0, 0.0, 1.0]]),
+            'distortion': np.array([-9.035920143127441, 73.58698272705078, 0.002187757520005107, 0.0005836759228259325, -44.24618911743164, -9.082674026489258, 73.32916259765625, -43.113433837890625, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            "extrinsics": cam1_to_robot
+        },
+        {
+            "camera_id": 1,
+            'intrinsics': np.array([[399.1941833496094, 0.0, 305.7402648925781], [0.0, 399.1941833496094, 238.6328582763672], [0.0, 0.0, 1.0]]),
+            'distortion': np.array([5.883155345916748, 5.506092071533203, 0.00180531432852149, 0.0003752215125132352, -24.15361213684082, 5.59039831161499, 6.560574531555176, -25.07012367248535, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            "extrinsics": cam2_to_robot
+        }
+    ]
+
+
+    # Initialize processor WITHOUT grasp generation for basic testing
+    print("\nInitializing ManipulationProcessor...")
+    processor = ManipulationProcessor(
         camera_configs=camera_configs,
         min_confidence=0.5,
-        enable_grasp_generation=True,  # ENABLED!
-        grasp_server_url="ws://localhost:8765",  # Make sure server is running
-        max_grasps_per_object=5
+        max_objects=20,
+        enable_grasp_generation=False,  # Disable for basic CV testing
+        enable_segmentation=True,
+    )
+    print("✓ Processor initialized")
+    
+    # Create synthetic RGB-D data for both cameras
+    print("\nCreating synthetic RGB-D data...")
+    rgb1, depth1 = create_dummy_rgbd_pair()
+    rgb2, depth2 = create_dummy_rgbd_pair()
+    
+    # Slightly vary camera 2 to simulate different viewpoint
+    rgb2 = cv2.flip(rgb2, 1)  # Horizontal flip
+    depth2 = cv2.flip(depth2, 1)
+    
+    print("✓ Synthetic data created")
+    print(f"  Camera 1: RGB {rgb1.shape}, Depth {depth1.shape}")
+    print(f"  Camera 2: RGB {rgb2.shape}, Depth {depth2.shape}")
+    
+    # Process frame
+    print("\nProcessing frame...")
+    results = processor.process_frame(
+        rgb_images=[rgb1, rgb2],
+        depth_images=[depth1, depth2],
+        generate_grasps=False
     )
     
-    print("Pipeline initialized with GRASP GENERATION enabled")
-    
-    # Create camera stream (same as before)
-    def create_camera_stream(cam_id):
-        def subscribe(observer):
-            cap = cv2.VideoCapture(cam_id)
-            
-            def emit_frames():
-                while True:
-                    ret, frame = cap.read()
-                    if not ret:
-                        break
-                    
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    h, w = rgb.shape[:2]
-                    
-                    # For testing: create fake depth
-                    # Replace with real depth camera!
-                    depth = np.ones((h, w), dtype=np.float32) * 1.0
-                    
-                    observer.on_next({"rgb": rgb, "depth": depth})
-                    time.sleep(0.033)
-            
-            thread = threading.Thread(target=emit_frames, daemon=True)
-            thread.start()
-            
-        return rx.create(subscribe)
-    
-    # Create streams
-    camera_streams = [create_camera_stream(0)]
-    output_streams = pipeline.create_streams(camera_streams)
-    
-    # Windows for visualization
-    cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
-    cv2.namedWindow("Grasp Overlay", cv2.WINDOW_NORMAL)
-    
-    # SUBSCRIBE TO OBJECTS WITH GRASPS!
-    def on_objects_with_grasps(objects):
-        print("\n" + "="*60)
-        print(f"OBJECTS WITH GRASPS: {len(objects)} objects")
-        print("="*60)
-        
-        for i, obj in enumerate(objects):
-            print(f"\nObject {i}: {obj.get('class_name', 'unknown')}")
-            print(f"  Object ID: {obj.get('temp_id', 'N/A')}")
-            
-            # SHOW GRASP INFORMATION!
-            if 'grasps' in obj and obj['grasps']:
-                print(f"  Number of grasps: {len(obj['grasps'])}")
-                
-                for j, grasp in enumerate(obj['grasps'][:3]):  # Show top 3 grasps
-                    print(f"\n  Grasp {j+1}:")
-                    print(f"    Score: {grasp['score']:.3f}")
-                    print(f"    Position: [{grasp['translation'][0]:.3f}, "
-                          f"{grasp['translation'][1]:.3f}, {grasp['translation'][2]:.3f}]")
-                    print(f"    Width: {grasp['width']*1000:.1f}mm")
-                    print(f"    Grasp ID: {grasp['id']}")
-            else:
-                print("  No grasps generated (insufficient points or failed)")
-    
-    # Subscribe to grasp overlay visualization
-    def on_grasp_overlay(overlay):
-        if overlay is not None:
-            viz_bgr = cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR)
-            cv2.imshow("Grasp Overlay", viz_bgr)
-            
-            # Save a snapshot
-            cv2.imwrite("grasp_overlay.png", viz_bgr)
-            print("Saved grasp visualization to grasp_overlay.png")
-    
-    # Subscribe to all outputs
-    subscriptions = []
-    
-    # Main outputs to watch
-    if "objects_with_grasps" in output_streams:
-        sub = output_streams["objects_with_grasps"].subscribe(on_objects_with_grasps)
-        subscriptions.append(sub)
-        print("✓ Subscribed to objects_with_grasps stream")
-    
-    if "grasp_overlay" in output_streams:
-        sub = output_streams["grasp_overlay"].subscribe(on_grasp_overlay)
-        subscriptions.append(sub)
-        print("✓ Subscribed to grasp_overlay stream")
-    
-    if "detection_viz" in output_streams:
-        sub = output_streams["detection_viz"].subscribe(
-            lambda viz: cv2.imshow("Detection", cv2.cvtColor(viz, cv2.COLOR_RGB2BGR)) if viz else None
-        )
-        subscriptions.append(sub)
-    
+    # Display results
     print("\n" + "="*60)
-    print("PIPELINE TEST WITH GRASPS RUNNING!")
+    print("RESULTS")
     print("="*60)
-    print("\nOUTPUTS YOU SHOULD SEE:")
-    print("1. Detection window - objects with bounding boxes")
-    print("2. Grasp Overlay window - objects with grasp poses visualized")
-    print("3. Console - detailed grasp information per object:")
-    print("   - Grasp scores (quality)")
-    print("   - 3D positions (end-effector targets)")
-    print("   - Gripper widths")
-    print("\nMAKE SURE:")
-    print("- Grasp server is running (ws://localhost:8765)")
-    print("- Objects are visible to camera")
-    print("- Using real depth camera for best results")
-    print("\nPress 'q' to quit")
-    print("="*60 + "\n")
     
-    # Main loop
-    try:
-        while True:
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    except KeyboardInterrupt:
-        print("\nStopping...")
+    if "error" in results:
+        print(f"❌ ERROR: {results['error']}")
+        return
+    
+    print(f"✓ Processing completed in {results['processing_time']:.3f}s")
+    print(f"\nTiming breakdown:")
+    for key, value in results['timing_breakdown'].items():
+        print(f"  {key}: {value:.3f}s")
+    
+    print(f"\nDetected objects: {len(results.get('detected_objects', []))}")
+    print(f"All objects (merged): {len(results.get('all_objects', []))}")
+    
+    if results.get('full_pointcloud'):
+        pcd = results['full_pointcloud']
+        print(f"Stitched point cloud: {len(pcd.points)} points")
+    
+    if results.get('misc_clusters'):
+        print(f"Background clusters: {len(results['misc_clusters'])}")
+    
+    # Display per-camera data
+    print(f"\nPer-camera breakdown:")
+    for cam_data in results.get('per_camera_data', []):
+        print(f"  Camera {cam_data['camera_id']}:")
+        print(f"    Detection objects: {len(cam_data['detection2d_objects'])}")
+        print(f"    Filtered objects: {len(cam_data['detected_objects'])}")
+    
+    # Save visualizations instead of showing
+    print("\nSaving visualizations to /tmp/...")
+    
+    # Save detection visualizations
+    for i, cam_data in enumerate(results.get('per_camera_data', [])):
+        if cam_data.get('detection_viz') is not None:
+            viz_bgr = cv2.cvtColor(cam_data['detection_viz'], cv2.COLOR_RGB2BGR)
+            filename = f"/tmp/camera_{i}_detection.png"
+            cv2.imwrite(filename, viz_bgr)
+            print(f"  ✓ Saved: {filename}")
+    
+    # Save pointcloud overlay
+    if results.get('pointcloud_viz') is not None:
+        viz_bgr = cv2.cvtColor(results['pointcloud_viz'], cv2.COLOR_RGB2BGR)
+        cv2.imwrite("/tmp/pointcloud_overlay.png", viz_bgr)
+        print(f"  ✓ Saved: /tmp/pointcloud_overlay.png")
+    
+    # Save misc clusters
+    if results.get('misc_pointcloud_viz') is not None:
+        viz_bgr = cv2.cvtColor(results['misc_pointcloud_viz'], cv2.COLOR_RGB2BGR)
+        cv2.imwrite("/tmp/background_clusters.png", viz_bgr)
+        print(f"  ✓ Saved: /tmp/background_clusters.png")
+    
+    print("\nVisualization images saved! Check /tmp/ directory")
     
     # Cleanup
-    for sub in subscriptions:
-        sub.dispose()
-    pipeline.cleanup()
-    cv2.destroyAllWindows()
+    processor.cleanup()
+    print("\n✓ Test completed successfully!")
+
+
+def test_processor_with_real_cameras():
+    """
+    Test with real OAK-D cameras.
+    Replace the dummy data creation with actual camera streams.
+    """
+    print("="*60)
+    print("TESTING WITH REAL CAMERAS")
+    print("="*60)
+    print("\nThis test requires:")
+    print("1. Two OAK-D cameras connected")
+    print("2. ArUco calibration matrices")
+    print("3. DepthAI library installed")
+    print("\nTo implement:")
+    print("- Use your dual_oak_camera.py to get RGB+Depth streams")
+    print("- Replace dummy data with real camera frames")
+    print("- Use your actual ArUco calibration matrices")
+    print("\nNot implemented yet - use test_processor_basic() first")
+
 
 if __name__ == "__main__":
-    test_pipeline_with_grasps()
-{
-  "object_id": "obj_0_timestamp",
-  "class_name": "mug",
-  "grasps": [
-    {
-      "id": "obj_0_grasp_0",
-      "score": 0.95,
-      "translation": [0.3, 0.1, 0.2],
-      "rotation_matrix": [[1,0,0], [0,1,0], [0,0,1]],
-      "width": 0.05
-    }
-  ]
-}
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Test ManipulationProcessor")
+    parser.add_argument('--mode', choices=['basic', 'real'], default='basic',
+                      help='Test mode: basic (synthetic data) or real (real cameras)')
+    
+    args = parser.parse_args()
+    
+    if args.mode == 'basic':
+        test_processor_basic()
+    else:
+        test_processor_with_real_cameras()

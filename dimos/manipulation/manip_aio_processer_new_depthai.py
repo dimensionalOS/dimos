@@ -24,7 +24,7 @@ import open3d as o3d
 import cv2
 import numpy as np
 import copy
-
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 import sys
 import os
 sys.path.insert(0, '/home/dimensional5/Documents/dimos')
@@ -34,7 +34,7 @@ from dimos.perception.common.utils import (
     combine_object_data,
     detection_results_to_object_data,
 )
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
+from dimos.perception.detection.detectors.detic import Detic2DDetector
 from dimos.perception.grasp_generation.grasp_generation import HostedGraspGenerator
 from dimos.perception.grasp_generation.utils import create_grasp_overlay
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
@@ -95,8 +95,8 @@ class ManipulationProcessor:
         if enable_grasp_generation and not grasp_server_url:
             raise ValueError("grasp_server_url is required when enable_grasp_generation=True")
 
-        # Initialize object detector
-        self.detector = Detic2DDetector(vocabulary=vocabulary, threshold=min_confidence)
+        #Initialize Object Detector
+        self.detector = Yolo2DDetector()
 
         # Initialize point cloud processor for EACH camera
         self.pointcloud_filters = []
@@ -443,12 +443,25 @@ class ManipulationProcessor:
         try:
             # Convert RGB to BGR for Detic detector
             bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
-
+            
+            # Convert numpy to dimos Image (CRITICAL!)
+            if isinstance(bgr_image, np.ndarray):
+                from dimos.msgs.sensor_msgs import Image, ImageFormat
+                import time
+                
+                dimos_bgr = Image.from_numpy(
+                    bgr_image,
+                    format=ImageFormat.BGR,
+                    timestamp=time.time()
+                )
+            else:
+                dimos_bgr = bgr_image
+            
             # Use process_image method from Detic detector
             bboxes, track_ids, class_ids, confidences, names, masks = self.detector.process_image(
-                bgr_image
+                dimos_bgr  # ← Now passing dimos Image object
             )
-
+            
             # Convert to ObjectData format using utility function
             objects = detection_results_to_object_data(
                 bboxes=bboxes,
@@ -459,18 +472,19 @@ class ManipulationProcessor:
                 masks=masks,
                 source="detection",
             )
-
+            
             # Create visualization using detector's built-in method
             viz_frame = self.detector.visualize_results(
                 rgb_image, bboxes, track_ids, class_ids, confidences, names
             )
-
+            
             return {"objects": objects, "viz_frame": viz_frame}
-
+        
         except Exception as e:
             logger.error(f"Object detection failed: {e}")
+            import traceback
+            traceback.print_exc()  # ← Add this for debugging
             return {"objects": [], "viz_frame": rgb_image.copy()}
-
     def run_pointcloud_filtering(
         self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: list[dict], cam_idx: int = 0
     ) -> list[dict]:

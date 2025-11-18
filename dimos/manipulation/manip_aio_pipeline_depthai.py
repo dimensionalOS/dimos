@@ -24,8 +24,7 @@ import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.subject import Subject
-
-from manipulation_processor_fixed import ManipulationProcessor
+from manip_aio_processer_new_depthai import ManipulationProcessor
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.manip_pipeline")
