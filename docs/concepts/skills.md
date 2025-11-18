@@ -26,8 +26,6 @@ Instead of `PoseStamped(position=Vector3(3.5, -1.2, 0.0), orientation=Quaternion
 
 **High-level semantic control** - Work with natural actions (`wave_hello()`) not motor commands (`set_joint_velocity(3, 0.5)`).
 
-**Safety through constrained actions** - Agents invoke only tested behaviors, never arbitrary commands.
-
 **Cross-platform portability** - Same skill interface (`pick_up()`) works across robots; implementations hide hardware differences.
 
 **Composability** - Skills chain naturally: `navigate_to("kitchen")` → `detect_objects()` → `grasp("coffee_pot")`.
