@@ -5,6 +5,7 @@ show_menu() {
   echo "🐳 DIMOS Runner 🐳"
   echo "=================================="
   echo "Available commands:"
+  echo "  0 | unitree     : Build and run dimOS agent & interface with unitree go2"
   echo "  1 | web         : Build and run web-os container"
   echo "  2 | hf-local    : Build and run huggingface local model"
   echo "  3 | hf-remote   : Build and run huggingface remote model"
@@ -40,13 +41,16 @@ fi
 
 # Process the option - support both numbers and text commands
 case $option in
+  0|unitree)
+    run_docker_compose "./docker/unitree/agents_interface/docker-compose.yml"
+    ;;
   1|web)
     run_docker_compose "./docker/interface/docker-compose.yml"
     ;;
-  2|huggingface-local)
+  2|hf-local)
     run_docker_compose "./docker/models/huggingface_local/docker-compose.yml"
     ;;
-  3|huggingface-remote)
+  3|hf-remote)
     run_docker_compose "./docker/models/huggingface_remote/docker-compose.yml"
     ;;
   4|gguf)
