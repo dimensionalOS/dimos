@@ -17,14 +17,17 @@ ManipulationPipeline: Streaming wrapper around ManipulationProcessor
 Works with DepthAI camera queues
 """
 
+from collections.abc import Callable
 import threading
 import time
-from typing import Any, Callable
+from typing import Any
+
+from manip_aio_processer_new_depthai import ManipulationProcessor
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from manip_aio_processer_new_depthai import ManipulationProcessor
+
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.manip_pipeline")
@@ -33,7 +36,7 @@ logger = setup_logger("dimos.perception.manip_pipeline")
 class ManipulationPipeline:
     """
     Streaming manipulation pipeline that wraps ManipulationProcessor.
-    
+
     Handles continuous processing of multi-camera RGB-D streams using RxPy.
     Designed to work with DepthAI camera queues.
     """
@@ -101,7 +104,7 @@ class ManipulationPipeline:
         self,
         color_queue: Any,  # dai.DataOutputQueue
         depth_queue: Any,  # dai.DataOutputQueue
-        camera_idx: int
+        camera_idx: int,
     ) -> rx.Observable:
         """
         Create an RxPy observable from DepthAI queues.
@@ -114,10 +117,11 @@ class ManipulationPipeline:
         Returns:
             Observable that emits {"rgb": np.ndarray, "depth": np.ndarray, "camera_idx": int}
         """
+
         def subscribe(observer, scheduler=None):
             def emit_frames():
                 logger.info(f"Camera {camera_idx} stream started")
-                
+
                 while self.running:
                     try:
                         # Try to get frames from DepthAI queues
@@ -134,11 +138,14 @@ class ManipulationPipeline:
                                 rgb = rgb[:, :, ::-1]  # BGR to RGB
 
                             # Emit frame
-                            observer.on_next({
-                                "rgb": rgb,
-                                "depth": depth.astype(np.float32) / 1000.0,  # Convert mm to meters
-                                "camera_idx": camera_idx
-                            })
+                            observer.on_next(
+                                {
+                                    "rgb": rgb,
+                                    "depth": depth.astype(np.float32)
+                                    / 1000.0,  # Convert mm to meters
+                                    "camera_idx": camera_idx,
+                                }
+                            )
                         else:
                             # No frames available, wait a bit
                             time.sleep(0.001)
@@ -156,7 +163,7 @@ class ManipulationPipeline:
 
         return rx.create(subscribe)
 
-    def process_frame_async(self, generate_grasps: bool = None):
+    def process_frame_async(self, generate_grasps: bool | None = None):
         """
         Process current buffered frames asynchronously.
         Called by the streaming pipeline when frames are ready.
@@ -183,7 +190,7 @@ class ManipulationPipeline:
                 results = self.processor.process_frame(
                     rgb_images=rgb_images,
                     depth_images=depth_images,
-                    generate_grasps=generate_grasps
+                    generate_grasps=generate_grasps,
                 )
 
                 # Emit results to all output streams
@@ -192,6 +199,7 @@ class ManipulationPipeline:
             except Exception as e:
                 logger.error(f"Frame processing error: {e}")
                 import traceback
+
                 traceback.print_exc()
             finally:
                 self.processing = False
@@ -249,7 +257,7 @@ class ManipulationPipeline:
 
     def create_pipeline(
         self,
-        camera_queues: list[tuple[Any, Any]]  # List of (color_queue, depth_queue) tuples
+        camera_queues: list[tuple[Any, Any]],  # List of (color_queue, depth_queue) tuples
     ) -> dict[str, rx.Observable]:
         """
         Create the complete streaming pipeline from DepthAI queues.
@@ -261,9 +269,7 @@ class ManipulationPipeline:
             Dictionary of output observables
         """
         if len(camera_queues) != self.num_cameras:
-            raise ValueError(
-                f"Expected {self.num_cameras} camera queues, got {len(camera_queues)}"
-            )
+            raise ValueError(f"Expected {self.num_cameras} camera queues, got {len(camera_queues)}")
 
         self.running = True
 
@@ -286,8 +292,7 @@ class ManipulationPipeline:
         # Subscribe to all camera streams
         for stream in camera_streams:
             stream.subscribe(
-                on_next=update_buffers,
-                on_error=lambda e: logger.error(f"Stream error: {e}")
+                on_next=update_buffers, on_error=lambda e: logger.error(f"Stream error: {e}")
             )
 
         # Return output observables
@@ -310,34 +315,32 @@ class ManipulationPipeline:
         self,
         rgb_images: list[np.ndarray],
         depth_images: list[np.ndarray],
-        generate_grasps: bool = None
+        generate_grasps: bool | None = None,
     ) -> dict:
         """
         Process a single frame directly (non-streaming mode).
-        
+
         Useful for testing or when you want synchronous processing.
-        
+
         Args:
             rgb_images: List of RGB images
             depth_images: List of depth images
             generate_grasps: Whether to generate grasps
-            
+
         Returns:
             Processing results dictionary
         """
         return self.processor.process_frame(
-            rgb_images=rgb_images,
-            depth_images=depth_images,
-            generate_grasps=generate_grasps
+            rgb_images=rgb_images, depth_images=depth_images, generate_grasps=generate_grasps
         )
-    
+
     def get_objects_with_grasps(self) -> list[dict]:
         """
         Get the latest detected objects with grasps attached (SYNCHRONOUS).
-        
+
         This is a pull-based API for on-demand queries (VLM task planning).
         Processes the current buffered frames immediately and returns results.
-        
+
         Returns:
             List of objects with 'grasps' field attached to each object
         """
@@ -349,79 +352,79 @@ class ManipulationPipeline:
             if any(img is None for img in self.latest_depth_images):
                 logger.warning("get_objects_with_grasps: Missing depth frames")
                 return []
-            
+
             # Copy current frames
             rgb_images = [img.copy() for img in self.latest_rgb_images]
             depth_images = [img.copy() for img in self.latest_depth_images]
-        
+
         # Process single frame synchronously
         results = self.processor.process_frame(
             rgb_images=rgb_images,
             depth_images=depth_images,
-            generate_grasps=True  # Always generate grasps for VLM queries
+            generate_grasps=True,  # Always generate grasps for VLM queries
         )
-        
-        return results.get('all_objects', [])
-    
-    def find_object_at_pixel(
-        self, 
-        pixel: tuple[int, int], 
-        camera_id: int = 0
-    ) -> dict | None:
+
+        return results.get("all_objects", [])
+
+    def find_object_at_pixel(self, pixel: tuple[int, int], camera_id: int = 0) -> dict | None:
         """
         Find the object at a given pixel location (SYNCHRONOUS).
-        
+
         Maps VLM's 2D click coordinates to an actual detected object.
-        
+
         Args:
             pixel: (x, y) pixel coordinates from VLM
             camera_id: Which camera's view to use (default: 0)
-            
+
         Returns:
             Object dictionary with grasps if found, None otherwise
         """
         objects = self.get_objects_with_grasps()
-        
+
         if not objects:
             logger.warning("find_object_at_pixel: No objects detected")
             return None
-        
+
         x, y = pixel
-        
+
         # First pass: Check for exact bbox containment
         for obj in objects:
-            bbox = obj.get('bbox')
+            bbox = obj.get("bbox")
             if bbox:
                 x1, y1, x2, y2 = bbox
                 if x1 <= x <= x2 and y1 <= y <= y2:
-                    logger.info(f"Found object '{obj.get('class_name', 'unknown')}' at pixel ({x}, {y})")
+                    logger.info(
+                        f"Found object '{obj.get('class_name', 'unknown')}' at pixel ({x}, {y})"
+                    )
                     return obj
-        
+
         # Second pass: Find closest object center (if no exact match)
-        min_distance = float('inf')
+        min_distance = float("inf")
         closest_obj = None
-        
+
         for obj in objects:
-            bbox = obj.get('bbox')
+            bbox = obj.get("bbox")
             if bbox:
                 x1, y1, x2, y2 = bbox
                 # Calculate bbox center
                 center_x = (x1 + x2) / 2
                 center_y = (y1 + y2) / 2
-                
+
                 # Distance from clicked pixel to object center
-                distance = np.sqrt((x - center_x)**2 + (y - center_y)**2)
-                
+                distance = np.sqrt((x - center_x) ** 2 + (y - center_y) ** 2)
+
                 if distance < min_distance:
                     min_distance = distance
                     closest_obj = obj
-        
+
         # Return closest if within reasonable distance (100 pixels threshold)
         if closest_obj and min_distance < 100:
-            logger.info(f"Found closest object '{closest_obj.get('class_name', 'unknown')}' "
-                       f"at distance {min_distance:.1f}px from pixel ({x}, {y})")
+            logger.info(
+                f"Found closest object '{closest_obj.get('class_name', 'unknown')}' "
+                f"at distance {min_distance:.1f}px from pixel ({x}, {y})"
+            )
             return closest_obj
-        
+
         logger.warning(f"No object found near pixel ({x}, {y})")
         return None
 

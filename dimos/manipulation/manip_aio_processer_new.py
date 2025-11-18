@@ -16,12 +16,13 @@
 Sequential manipulation processor for single-frame processing without reactive streams.
 """
 
+import copy
 import time
 from typing import Any
-import open3d as o3d
+
 import cv2
 import numpy as np
-import copy
+import open3d as o3d
 
 from dimos.perception.common.utils import (
     colorize_depth,
@@ -53,7 +54,7 @@ class ManipulationProcessor:
 
     def __init__(
         self,
-        camera_configs: list[dict], #Multiple Cameras
+        camera_configs: list[dict],  # Multiple Cameras
         min_confidence: float = 0.6,
         max_objects: int = 20,
         vocabulary: str | None = None,
@@ -98,8 +99,8 @@ class ManipulationProcessor:
         for config in camera_configs:
             self.pointcloud_filters.append(
                 PointcloudFiltering(
-                    color_intrinsics=config['intrinsics'],
-                    depth_intrinsics=config['intrinsics'],
+                    color_intrinsics=config["intrinsics"],
+                    depth_intrinsics=config["intrinsics"],
                     max_num_objects=max_objects,
                 )
             )
@@ -129,10 +130,10 @@ class ManipulationProcessor:
         )
 
     def process_frame(
-        self, 
-        rgb_images: list[np.ndarray], 
-        depth_images: list [np.ndarray], 
-        generate_grasps: bool | None = None
+        self,
+        rgb_images: list[np.ndarray],
+        depth_images: list[np.ndarray],
+        generate_grasps: bool | None = None,
     ) -> dict[str, Any]:
         """
         Process a single RGB-D frame through the complete pipeline.
@@ -162,33 +163,31 @@ class ManipulationProcessor:
         start_time = time.time()
         results = {}
 
-
-        try: 
+        try:
             detection_time = 0
             segmentation_time = 0
-        
+
             per_camera_detection_results = []
             per_camera_segmentation_results = []
-            
+
             for cam_idx in range(self.num_cameras):
-                    rgb = rgb_images[cam_idx]
+                rgb = rgb_images[cam_idx]
 
-                    # Step 1: Object Detection
+                # Step 1: Object Detection
 
-                    step_start = time.time()
-                    detection_results = self.run_object_detection(rgb)
-                    detection_time += time.time() - step_start
-                    per_camera_detection_results.append(detection_results)
-
+                step_start = time.time()
+                detection_results = self.run_object_detection(rgb)
+                detection_time += time.time() - step_start
+                per_camera_detection_results.append(detection_results)
 
                 # Step 2: Semantic Segmentation (if enabled)
-                    if self.enable_segmentation:
-                        step_start = time.time()
-                        segmentation_results = self.run_segmentation(rgb)
-                        segmentation_time += time.time() - step_start
-                    else:
-                        segmentation_results = {"objects": [], "viz_frame": rgb.copy()}
-                    per_camera_segmentation_results.append(segmentation_results)
+                if self.enable_segmentation:
+                    step_start = time.time()
+                    segmentation_results = self.run_segmentation(rgb)
+                    segmentation_time += time.time() - step_start
+                else:
+                    segmentation_results = {"objects": [], "viz_frame": rgb.copy()}
+                per_camera_segmentation_results.append(segmentation_results)
 
             # Step 3: Point Cloud Processing
             pointcloud_time = 0
@@ -199,7 +198,7 @@ class ManipulationProcessor:
             for cam_idx in range(self.num_cameras):
                 rgb = rgb_images[cam_idx]
                 depth = depth_images[cam_idx]
-                
+
                 detection2d_objects = per_camera_detection_results[cam_idx].get("objects", [])
                 segmentation2d_objects = per_camera_segmentation_results[cam_idx].get("objects", [])
 
@@ -224,78 +223,82 @@ class ManipulationProcessor:
                 # Combine all objects using intelligent duplicate removal
                 camera_all_objects = combine_object_data(
                     detected_objects, segmentation_filtered_objects, overlap_threshold=0.8
-                    )
+                )
 
                 # Get full point cloud
                 camera_full_pcd = self.pointcloud_filters[cam_idx].get_full_point_cloud()
 
                 # Store per-camera data
-                per_camera_data.append({
-                    'camera_id': self.camera_configs[cam_idx]['camera_id'],
-                    'camera_idx': cam_idx,
-                    'rgb': rgb,
-                    'depth': depth,
-                    'detection2d_objects': detection2d_objects,
-                    'segmentation2d_objects': segmentation2d_objects,
-                    'detected_objects': detected_objects,
-                    'segmentation_filtered_objects': segmentation_filtered_objects,
-                    'all_objects': camera_all_objects,
-                    'full_pointcloud': camera_full_pcd,
-                    'detection_viz': per_camera_detection_results[cam_idx].get("viz_frame"),
-                    'segmentation_viz': per_camera_segmentation_results[cam_idx].get("viz_frame"),
-                })
-            
+                per_camera_data.append(
+                    {
+                        "camera_id": self.camera_configs[cam_idx]["camera_id"],
+                        "camera_idx": cam_idx,
+                        "rgb": rgb,
+                        "depth": depth,
+                        "detection2d_objects": detection2d_objects,
+                        "segmentation2d_objects": segmentation2d_objects,
+                        "detected_objects": detected_objects,
+                        "segmentation_filtered_objects": segmentation_filtered_objects,
+                        "all_objects": camera_all_objects,
+                        "full_pointcloud": camera_full_pcd,
+                        "detection_viz": per_camera_detection_results[cam_idx].get("viz_frame"),
+                        "segmentation_viz": per_camera_segmentation_results[cam_idx].get(
+                            "viz_frame"
+                        ),
+                    }
+                )
+
                 per_camera_all_objects.append(camera_all_objects)
                 per_camera_full_pcds.append(camera_full_pcd)
 
             # Transform each camera's point cloud to world coordinates
             world_full_pcds = []
             world_all_objects = []
-        
+
             for cam_idx, cam_data in enumerate(per_camera_data):
-                extrinsics = self.camera_configs[cam_idx]['extrinsics']
-            
+                extrinsics = self.camera_configs[cam_idx]["extrinsics"]
+
                 # Transform full point cloud to world
                 world_full_pcd = self.transform_pointcloud_to_world(
-                    cam_data['full_pointcloud'], extrinsics
+                    cam_data["full_pointcloud"], extrinsics
                 )
                 world_full_pcds.append(world_full_pcd)
-            
+
                 # Transform each object's point cloud to world
                 world_objects = []
-                for obj in cam_data['all_objects']:
-                    if obj.get('point_cloud') is not None:
+                for obj in cam_data["all_objects"]:
+                    if obj.get("point_cloud") is not None:
                         obj_world = obj.copy()
-                        obj_world['point_cloud'] = self.transform_pointcloud_to_world(
-                            obj['point_cloud'], extrinsics
+                        obj_world["point_cloud"] = self.transform_pointcloud_to_world(
+                            obj["point_cloud"], extrinsics
                         )
-                        obj_world['camera_id'] = cam_data['camera_id']
+                        obj_world["camera_id"] = cam_data["camera_id"]
                         world_objects.append(obj_world)
                     else:
                         obj_world = obj.copy()
-                        obj_world['camera_id'] = cam_data['camera_id']
+                        obj_world["camera_id"] = cam_data["camera_id"]
                         world_objects.append(obj_world)
-            
+
                 world_all_objects.extend(world_objects)
-            
+
                 # Update camera data with world coordinates
-                cam_data['world_full_pointcloud'] = world_full_pcd
-                cam_data['world_objects'] = world_objects
-        
+                cam_data["world_full_pointcloud"] = world_full_pcd
+                cam_data["world_objects"] = world_objects
+
             # Stitch all world point clouds together
             full_pcd = self.stitch_pointclouds(world_full_pcds)
-        
+
             # Merge objects from all cameras (remove duplicates in 3D)
             all_objects = self.merge_multi_view_detections(world_all_objects)
 
             world_detected_only = []
             for cam_data in per_camera_data:
-                for obj in cam_data['detected_objects']:
-                    if obj.get('point_cloud') is not None:
+                for obj in cam_data["detected_objects"]:
+                    if obj.get("point_cloud") is not None:
                         obj_world = obj.copy()
-                        obj_world['point_cloud'] = self.transform_pointcloud_to_world(
-                            obj['point_cloud'], 
-                            self.camera_configs[cam_data['camera_idx']]['extrinsics']
+                        obj_world["point_cloud"] = self.transform_pointcloud_to_world(
+                            obj["point_cloud"],
+                            self.camera_configs[cam_data["camera_idx"]]["extrinsics"],
                         )
                         world_detected_only.append(obj_world)
             detected_objects = self.merge_multi_view_detections(world_detected_only)
@@ -315,12 +318,12 @@ class ManipulationProcessor:
             # Store results
             results.update(
                 {
-                 "detected_objects": detected_objects,  # Merged detected objects only
-                "all_objects": all_objects,            # All merged objects
-                "full_pointcloud": full_pcd,           # Stitched world point cloud
-                "misc_clusters": misc_clusters,
-                "misc_voxel_grid": misc_voxel_grid,
-                "per_camera_data": per_camera_data,    # Keep per-camera data
+                    "detected_objects": detected_objects,  # Merged detected objects only
+                    "all_objects": all_objects,  # All merged objects
+                    "full_pointcloud": full_pcd,  # Stitched world point cloud
+                    "misc_clusters": misc_clusters,
+                    "misc_voxel_grid": misc_voxel_grid,
+                    "per_camera_data": per_camera_data,  # Keep per-camera data
                 }
             )
 
@@ -332,7 +335,7 @@ class ManipulationProcessor:
                 create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=all_objects,
-                    intrinsics=self.camera_configs[0]['intrinsics'],
+                    intrinsics=self.camera_configs[0]["intrinsics"],
                 )
                 if all_objects
                 else base_image
@@ -342,7 +345,7 @@ class ManipulationProcessor:
                 create_point_cloud_overlay_visualization(
                     base_image=base_image,
                     objects=detected_objects,
-                    intrinsics=self.camera_configs[0]['intrinsics'],
+                    intrinsics=self.camera_configs[0]["intrinsics"],
                 )
                 if detected_objects
                 else base_image
@@ -357,7 +360,7 @@ class ManipulationProcessor:
                 results["misc_pointcloud_viz"] = overlay_point_clouds_on_image(
                     base_image=base_image,
                     point_clouds=misc_clusters,
-                    camera_intrinsics=self.camera_configs[0]['intrinsics'],
+                    camera_intrinsics=self.camera_configs[0]["intrinsics"],
                     colors=cluster_colors,
                     point_size=2,
                     alpha=0.6,
@@ -375,7 +378,7 @@ class ManipulationProcessor:
                 results["grasps"] = grasps
                 if grasps:
                     results["grasp_overlay"] = create_grasp_overlay(
-                        rgb_images[0], grasps, self.camera_configs[0]['intrinsics']
+                        rgb_images[0], grasps, self.camera_configs[0]["intrinsics"]
                     )
 
         except Exception as e:
@@ -500,113 +503,101 @@ class ManipulationProcessor:
         except Exception as e:
             logger.error(f"Grasp generation failed: {e}")
             return None
-        
+
     def transform_pointcloud_to_world(
-        self,
-        pointcloud: o3d.geometry.PointCloud,
-        extrinsics: np.ndarray
+        self, pointcloud: o3d.geometry.PointCloud, extrinsics: np.ndarray
     ) -> o3d.geometry.PointCloud:
         """Transform point cloud from camera frame to world frame."""
         if pointcloud is None or len(pointcloud.points) == 0:
             return o3d.geometry.PointCloud()
-        
+
         transformed_pcd = copy.deepcopy(pointcloud)
         transformed_pcd.transform(extrinsics)
-        return transformed_pcd 
-    
+        return transformed_pcd
+
     def stitch_pointclouds(
-        self,
-        pointclouds: list[o3d.geometry.PointCloud]
+        self, pointclouds: list[o3d.geometry.PointCloud]
     ) -> o3d.geometry.PointCloud:
         """
         Stitch multiple point clouds together with overlap removal.
         """
         if len(pointclouds) == 0:
             return o3d.geometry.PointCloud()
-        
+
         if len(pointclouds) == 1:
             return pointclouds[0]
-        
+
         # Combine all point clouds
         combined_pcd = o3d.geometry.PointCloud()
         for pcd in pointclouds:
             if pcd is not None and len(pcd.points) > 0:
                 combined_pcd += pcd
-        
+
         if len(combined_pcd.points) == 0:
             return combined_pcd
-        
+
         # Remove duplicate/overlapping points using voxel downsampling
         voxel_size = 0.005  # 5mm voxel size
         stitched_pcd = combined_pcd.voxel_down_sample(voxel_size)
-        
+
         # Optional: Statistical outlier removal
         if len(stitched_pcd.points) > 20:
             stitched_pcd, _ = stitched_pcd.remove_statistical_outlier(
-                nb_neighbors=20,
-                std_ratio=2.0
+                nb_neighbors=20, std_ratio=2.0
             )
-        
+
         return stitched_pcd
-    
-    def merge_multi_view_detections(
-        self,
-        all_objects: list[dict]
-    ) -> list[dict]:
+
+    def merge_multi_view_detections(self, all_objects: list[dict]) -> list[dict]:
         """
         Merge object detections from multiple cameras based on 3D proximity.
         Remove duplicates when objects are too close in 3D space.
         """
         if len(all_objects) <= 1:
             return all_objects
-        
+
         merged = []
         used_indices = set()
-        
+
         for i, obj1 in enumerate(all_objects):
             if i in used_indices:
                 continue
-            
+
             # Start with this object
             merged_obj = obj1.copy()
             used_indices.add(i)
-            
+
             # Check for duplicates
-            for j, obj2 in enumerate(all_objects[i+1:], start=i+1):
+            for j, obj2 in enumerate(all_objects[i + 1 :], start=i + 1):
                 if j in used_indices:
                     continue
-                
+
                 # Check 3D proximity using point cloud centroids
                 if self.objects_are_duplicate_3d(obj1, obj2, threshold=0.05):  # 5cm threshold
                     # Merge the objects (keep the one with higher confidence)
-                    if obj2.get('confidence', 0) > merged_obj.get('confidence', 0):
+                    if obj2.get("confidence", 0) > merged_obj.get("confidence", 0):
                         merged_obj = obj2.copy()
                     used_indices.add(j)
-            
+
             merged.append(merged_obj)
-        
+
         return merged
 
-    def objects_are_duplicate_3d(
-        self,
-        obj1: dict,
-        obj2: dict,
-        threshold: float = 0.05
-    ) -> bool:
+    def objects_are_duplicate_3d(self, obj1: dict, obj2: dict, threshold: float = 0.05) -> bool:
         """Check if two objects are duplicates based on 3D proximity."""
-        pcd1 = obj1.get('point_cloud')
-        pcd2 = obj2.get('point_cloud')
-        
+        pcd1 = obj1.get("point_cloud")
+        pcd2 = obj2.get("point_cloud")
+
         if pcd1 is None or pcd2 is None:
             return False
-        
+
         if len(pcd1.points) == 0 or len(pcd2.points) == 0:
             return False
-        
+
         # Compute centroids
         centroid1 = np.asarray(pcd1.points).mean(axis=0)
         centroid2 = np.asarray(pcd2.points).mean(axis=0)
-        
+
         # Check distance
         distance = np.linalg.norm(centroid1 - centroid2)
         return distance < threshold
@@ -618,7 +609,7 @@ class ManipulationProcessor:
         for pcf in self.pointcloud_filters:
             if hasattr(pcf, "cleanup"):
                 pcf.cleanup()
-    
+
         if self.segmenter and hasattr(self.segmenter, "cleanup"):
             self.segmenter.cleanup()
         if self.grasp_generator and hasattr(self.grasp_generator, "cleanup"):
