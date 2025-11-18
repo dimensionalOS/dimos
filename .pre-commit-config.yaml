@@ -39,6 +39,8 @@ repos:
       - id: check-json
       - id: check-toml
       - id: check-yaml
+        exclude: mkdocs\.yml$ # Because uses PyYAML tags
+                              # TODO: Consider adding this hook: https://github.com/RodrigoGonzalez/check-mkdocs
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
