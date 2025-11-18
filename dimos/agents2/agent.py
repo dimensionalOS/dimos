@@ -28,8 +28,8 @@ from langchain_core.messages import (
     ToolMessage,
 )
 from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
-import ollama
 
+from dimos.agents2.ollama_agent import ensure_ollama_model
 from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import DimosCluster, rpc
@@ -161,14 +161,6 @@ def snapshot_to_messages(
     }
 
 
-def _ensure_ollama_model(model_name: str) -> None:
-    available_models = ollama.list()
-    model_exists = any(model_name == m.model for m in available_models.models)
-    if not model_exists:
-        logger.info(f"Ollama model '{model_name}' not found. Pulling...")
-        ollama.pull(model_name)
-
-
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
@@ -204,7 +196,7 @@ class Agent(AgentSpec):
         else:
             # For Ollama provider, ensure the model is available before initializing
             if self.config.provider.value.lower() == "ollama":
-                _ensure_ollama_model(self.config.model)
+                ensure_ollama_model(self.config.model)
 
             # For HuggingFace, we need to create a pipeline and wrap it in ChatHuggingFace
             if self.config.provider.value.lower() == "huggingface":
