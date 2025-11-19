@@ -111,7 +111,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.color_image.get_next()
+        image = self.image.get_next()
         return model.query(image, question)
 
     # @skill  # type: ignore[arg-type]
@@ -128,7 +128,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.color_image.get_next()
+        image = self.image.get_next()
         result = model.query_detections(image, question)
 
         print("VLM result:", result, "for", image, "and question", question)
