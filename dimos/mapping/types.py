@@ -12,15 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 from dataclasses import dataclass
-from typing import Optional, TypeAlias
+from typing import TypeAlias
 
 
 @dataclass(frozen=True)
 class LatLon:
     lat: float
     lon: float
-    alt: Optional[float] = None
+    alt: float | None = None
 
 
 ImageCoord: TypeAlias = tuple[int, int]

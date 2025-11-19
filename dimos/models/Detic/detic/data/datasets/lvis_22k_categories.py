@@ -22380,4 +22380,4 @@ CATEGORIES = [
     {"id": 22045, "synset": "planking.n.01", "name": "planking"},
     {"id": 22046, "synset": "chipboard.n.01", "name": "chipboard"},
     {"id": 22047, "synset": "knothole.n.01", "name": "knothole"},
-]  # noqa
+]

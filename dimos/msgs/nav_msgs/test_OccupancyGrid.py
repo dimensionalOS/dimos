@@ -27,7 +27,7 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.testing import get_data
 
 
-def test_empty_grid():
+def test_empty_grid() -> None:
     """Test creating an empty grid."""
     grid = OccupancyGrid()
     assert grid.width == 0
@@ -37,7 +37,7 @@ def test_empty_grid():
     assert grid.frame_id == "world"
 
 
-def test_grid_with_dimensions():
+def test_grid_with_dimensions() -> None:
     """Test creating a grid with specified dimensions."""
     grid = OccupancyGrid(width=10, height=10, resolution=0.1, frame_id="map")
     assert grid.width == 10
@@ -50,7 +50,7 @@ def test_grid_with_dimensions():
     assert grid.unknown_percent == 100.0
 
 
-def test_grid_from_numpy_array():
+def test_grid_from_numpy_array() -> None:
     """Test creating a grid from a numpy array."""
     data = np.zeros((20, 30), dtype=np.int8)
     data[5:10, 10:20] = 100  # Add some obstacles
@@ -78,7 +78,7 @@ def test_grid_from_numpy_array():
     assert abs(grid.unknown_percent - 1.5) < 0.1
 
 
-def test_world_grid_coordinate_conversion():
+def test_world_grid_coordinate_conversion() -> None:
     """Test converting between world and grid coordinates."""
     data = np.zeros((20, 30), dtype=np.int8)
     origin = Pose(1.0, 2.0, 0.0)
@@ -95,7 +95,7 @@ def test_world_grid_coordinate_conversion():
     assert world_pos.y == 2.25
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test LCM encoding and decoding."""
     data = np.zeros((20, 30), dtype=np.int8)
     data[5:10, 10:20] = 100  # Add some obstacles
@@ -129,7 +129,7 @@ def test_lcm_encode_decode():
     assert decoded.grid[5, 10] == 50  # Value we set should be preserved in grid
 
 
-def test_string_representation():
+def test_string_representation() -> None:
     """Test string representations."""
     grid = OccupancyGrid(width=10, height=10, resolution=0.1, frame_id="map")
 
@@ -148,7 +148,7 @@ def test_string_representation():
     assert "resolution=0.1" in repr_str
 
 
-def test_grid_property_sync():
+def test_grid_property_sync() -> None:
     """Test that the grid property works correctly."""
     grid = OccupancyGrid(width=5, height=5, resolution=0.1, frame_id="map")
 
@@ -161,14 +161,14 @@ def test_grid_property_sync():
     assert grid.grid[0, 0] == 50
 
 
-def test_invalid_grid_dimensions():
+def test_invalid_grid_dimensions() -> None:
     """Test handling of invalid grid dimensions."""
     # Test with non-2D array
     with pytest.raises(ValueError, match="Grid must be a 2D array"):
         OccupancyGrid(grid=np.zeros(10), resolution=0.1)
 
 
-def test_from_pointcloud():
+def test_from_pointcloud() -> None:
     """Test creating OccupancyGrid from PointCloud2."""
     file_path = get_data("lcm_msgs") / "sensor_msgs/PointCloud2.pickle"
     with open(file_path, "rb") as f:
@@ -191,7 +191,7 @@ def test_from_pointcloud():
     assert occupancygrid.occupied_cells > 0  # Should have some occupied cells
 
 
-def test_gradient():
+def test_gradient() -> None:
     """Test converting occupancy grid to gradient field."""
     # Create a small test grid with an obstacle in the middle
     data = np.zeros((10, 10), dtype=np.int8)
@@ -241,7 +241,7 @@ def test_gradient():
     assert gradient_with_unknown.unknown_cells == 8  # All unknowns preserved
 
 
-def test_filter_above():
+def test_filter_above() -> None:
     """Test filtering cells above threshold."""
     # Create test grid with various values
     data = np.array(
@@ -280,7 +280,7 @@ def test_filter_above():
     assert filtered.frame_id == grid.frame_id
 
 
-def test_filter_below():
+def test_filter_below() -> None:
     """Test filtering cells below threshold."""
     # Create test grid with various values
     data = np.array(
@@ -321,7 +321,7 @@ def test_filter_below():
     assert filtered.frame_id == grid.frame_id
 
 
-def test_max():
+def test_max() -> None:
     """Test setting all non-unknown cells to maximum."""
     # Create test grid with various values
     data = np.array(
@@ -366,7 +366,7 @@ def test_max():
 
 
 @pytest.mark.lcm
-def test_lcm_broadcast():
+def test_lcm_broadcast() -> None:
     """Test broadcasting OccupancyGrid and gradient over LCM."""
     file_path = get_data("lcm_msgs") / "sensor_msgs/PointCloud2.pickle"
     with open(file_path, "rb") as f:
@@ -412,13 +412,13 @@ def test_lcm_broadcast():
         print("\nNo occupied cells found for sampling")
 
     # Check statistics
-    print(f"\nOriginal grid stats:")
+    print("\nOriginal grid stats:")
     print(f"  Occupied (100): {np.sum(occupancygrid.grid == 100)} cells")
     print(f"  Inflated (99): {np.sum(occupancygrid.grid == 99)} cells")
     print(f"  Free (0): {np.sum(occupancygrid.grid == 0)} cells")
     print(f"  Unknown (-1): {np.sum(occupancygrid.grid == -1)} cells")
 
-    print(f"\nGradient grid stats:")
+    print("\nGradient grid stats:")
     print(f"  Max gradient (100): {np.sum(gradient_grid.grid == 100)} cells")
     print(
         f"  High gradient (80-99): {np.sum((gradient_grid.grid >= 80) & (gradient_grid.grid < 100))} cells"
@@ -461,11 +461,11 @@ def test_lcm_broadcast():
     lcm.publish(Topic("/global_costmap", OccupancyGrid), occupancygrid)
     lcm.publish(Topic("/global_gradient", OccupancyGrid), gradient_grid)
 
-    print(f"\nPublished to LCM:")
+    print("\nPublished to LCM:")
     print(f"  /global_map: PointCloud2 with {len(pointcloud)} points")
     print(f"  /global_costmap: {occupancygrid}")
     print(f"  /global_gradient: {gradient_grid}")
-    print(f"\nGradient info:")
-    print(f"  Values: 0 (free far from obstacles) -> 100 (at obstacles)")
+    print("\nGradient info:")
+    print("  Values: 0 (free far from obstacles) -> 100 (at obstacles)")
     print(f"  Unknown cells: {gradient_grid.unknown_cells} (preserved as -1)")
-    print(f"  Max distance for gradient: 5.0 meters")
+    print("  Max distance for gradient: 5.0 meters")

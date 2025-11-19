@@ -50,7 +50,7 @@ def lcm_client():
     client.stop()
 
 
-def test_lcmrpc_timeout_no_reply(lcm_server, lcm_client):
+def test_lcmrpc_timeout_no_reply(lcm_server, lcm_client) -> None:
     """Test that RPC calls timeout when no reply is received"""
     server = lcm_server
     client = lcm_client
@@ -84,7 +84,7 @@ def test_lcmrpc_timeout_no_reply(lcm_server, lcm_client):
     assert function_called.wait(0.5), "Server function was never called"
 
 
-def test_lcmrpc_timeout_nonexistent_service(lcm_client):
+def test_lcmrpc_timeout_nonexistent_service(lcm_client) -> None:
     """Test that RPC calls timeout when calling a non-existent service"""
     client = lcm_client
 
@@ -103,7 +103,7 @@ def test_lcmrpc_timeout_nonexistent_service(lcm_client):
     assert elapsed < 0.3, f"Timeout took too long: {elapsed}s"
 
 
-def test_lcmrpc_callback_with_timeout(lcm_server, lcm_client):
+def test_lcmrpc_callback_with_timeout(lcm_server, lcm_client) -> None:
     """Test that callback-based RPC calls handle timeouts properly"""
     server = lcm_server
     client = lcm_client
@@ -121,7 +121,7 @@ def test_lcmrpc_callback_with_timeout(lcm_server, lcm_client):
     callback_called = threading.Event()
     received_value = []
 
-    def callback(value):
+    def callback(value) -> None:
         received_value.append(value)
         callback_called.set()
 
@@ -141,7 +141,7 @@ def test_lcmrpc_callback_with_timeout(lcm_server, lcm_client):
         unsub()
 
 
-def test_lcmrpc_normal_operation(lcm_server, lcm_client):
+def test_lcmrpc_normal_operation(lcm_server, lcm_client) -> None:
     """Sanity check that normal RPC calls still work"""
     server = lcm_server
     client = lcm_client

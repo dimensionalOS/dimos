@@ -1,21 +1,20 @@
+from collections import OrderedDict
+import datetime
 import logging
 import os
-from collections import OrderedDict
-import torch
-from torch.nn.parallel import DistributedDataParallel
 import time
-import datetime
 
-from fvcore.common.timer import Timer
-import detectron2.utils.comm as comm
+from centernet.config import add_centernet_config
+from centernet.data.custom_build_augmentation import build_custom_augmentation
 from detectron2.checkpoint import DetectionCheckpointer, PeriodicCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import (
     MetadataCatalog,
     build_detection_test_loader,
 )
+from detectron2.data.build import build_detection_train_loader
+from detectron2.data.dataset_mapper import DatasetMapper
 from detectron2.engine import default_argument_parser, default_setup, launch
-
 from detectron2.evaluation import (
     COCOEvaluator,
     LVISEvaluator,
@@ -23,19 +22,18 @@ from detectron2.evaluation import (
     print_csv_format,
 )
 from detectron2.modeling import build_model
+from detectron2.modeling.test_time_augmentation import GeneralizedRCNNWithTTA
 from detectron2.solver import build_lr_scheduler, build_optimizer
+import detectron2.utils.comm as comm
 from detectron2.utils.events import (
     CommonMetricPrinter,
     EventStorage,
     JSONWriter,
     TensorboardXWriter,
 )
-from detectron2.modeling.test_time_augmentation import GeneralizedRCNNWithTTA
-from detectron2.data.dataset_mapper import DatasetMapper
-from detectron2.data.build import build_detection_train_loader
-
-from centernet.config import add_centernet_config
-from centernet.data.custom_build_augmentation import build_custom_augmentation
+from fvcore.common.timer import Timer
+import torch
+from torch.nn.parallel import DistributedDataParallel
 
 logger = logging.getLogger("detectron2")
 
@@ -49,7 +47,7 @@ def do_test(cfg, model):
             else DatasetMapper(cfg, False, augmentations=build_custom_augmentation(cfg, False))
         )
         data_loader = build_detection_test_loader(cfg, dataset_name, mapper=mapper)
-        output_folder = os.path.join(cfg.OUTPUT_DIR, "inference_{}".format(dataset_name))
+        output_folder = os.path.join(cfg.OUTPUT_DIR, f"inference_{dataset_name}")
         evaluator_type = MetadataCatalog.get(dataset_name).evaluator_type
 
         if evaluator_type == "lvis":
@@ -61,14 +59,14 @@ def do_test(cfg, model):
 
         results[dataset_name] = inference_on_dataset(model, data_loader, evaluator)
         if comm.is_main_process():
-            logger.info("Evaluation results for {} in csv format:".format(dataset_name))
+            logger.info(f"Evaluation results for {dataset_name} in csv format:")
             print_csv_format(results[dataset_name])
     if len(results) == 1:
-        results = list(results.values())[0]
+        results = next(iter(results.values()))
     return results
 
 
-def do_train(cfg, model, resume=False):
+def do_train(cfg, model, resume: bool=False) -> None:
     model.train()
     optimizer = build_optimizer(cfg, model)
     scheduler = build_lr_scheduler(cfg, optimizer)
@@ -115,12 +113,12 @@ def do_train(cfg, model, resume=False):
 
         data_loader = build_custom_train_loader(cfg, mapper=mapper)
 
-    logger.info("Starting training from iteration {}".format(start_iter))
+    logger.info(f"Starting training from iteration {start_iter}")
     with EventStorage(start_iter) as storage:
         step_timer = Timer()
         data_timer = Timer()
         start_time = time.perf_counter()
-        for data, iteration in zip(data_loader, range(start_iter, max_iter)):
+        for data, iteration in zip(data_loader, range(start_iter, max_iter), strict=False):
             data_time = data_timer.seconds()
             storage.put_scalars(data_time=data_time)
             step_timer.reset()
@@ -162,7 +160,7 @@ def do_train(cfg, model, resume=False):
 
         total_time = time.perf_counter() - start_time
         logger.info(
-            "Total training time: {}".format(str(datetime.timedelta(seconds=int(total_time))))
+            f"Total training time: {datetime.timedelta(seconds=int(total_time))!s}"
         )
 
 
@@ -176,8 +174,8 @@ def setup(args):
     cfg.merge_from_list(args.opts)
     if "/auto" in cfg.OUTPUT_DIR:
         file_name = os.path.basename(args.config_file)[:-5]
-        cfg.OUTPUT_DIR = cfg.OUTPUT_DIR.replace("/auto", "/{}".format(file_name))
-        logger.info("OUTPUT_DIR: {}".format(cfg.OUTPUT_DIR))
+        cfg.OUTPUT_DIR = cfg.OUTPUT_DIR.replace("/auto", f"/{file_name}")
+        logger.info(f"OUTPUT_DIR: {cfg.OUTPUT_DIR}")
     cfg.freeze()
     default_setup(cfg, args)
     return cfg
@@ -187,7 +185,7 @@ def main(args):
     cfg = setup(args)
 
     model = build_model(cfg)
-    logger.info("Model:\n{}".format(model))
+    logger.info(f"Model:\n{model}")
     if args.eval_only:
         DetectionCheckpointer(model, save_dir=cfg.OUTPUT_DIR).resume_or_load(
             cfg.MODEL.WEIGHTS, resume=args.resume
@@ -217,7 +215,7 @@ if __name__ == "__main__":
     args = args.parse_args()
     if args.manual_device != "":
         os.environ["CUDA_VISIBLE_DEVICES"] = args.manual_device
-    args.dist_url = "tcp://127.0.0.1:{}".format(torch.randint(11111, 60000, (1,))[0].item())
+    args.dist_url = f"tcp://127.0.0.1:{torch.randint(11111, 60000, (1,))[0].item()}"
     print("Command Line Args:", args)
     launch(
         main,

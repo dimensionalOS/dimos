@@ -17,23 +17,19 @@ This module initializes and manages the video processing pipeline integrated wit
 It handles video capture, frame processing, and exposes the processed video streams via HTTP endpoints.
 """
 
-import tests.test_header
-import os
-
 # -----
-
 # Standard library imports
 import multiprocessing
+import os
+
 from dotenv import load_dotenv
 
 # Third-party imports
-from fastapi import FastAPI
 from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
-from reactivex.scheduler import ThreadPoolScheduler, CurrentThreadScheduler, ImmediateScheduler
+from reactivex.scheduler import ThreadPoolScheduler
 
 # Local application imports
-from dimos.agents.agent import OpenAIAgent
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.video_operators import VideoOperators as vops
 from dimos.stream.video_provider import VideoProvider
@@ -55,7 +51,7 @@ def main():
     Raises:
         RuntimeError: If video sources are unavailable or processing fails.
     """
-    disposables = CompositeDisposable()
+    CompositeDisposable()
 
     processor = FrameProcessor(
         output_dir=f"{os.getcwd()}/assets/output/frames", delete_on_init=True
@@ -112,7 +108,7 @@ def main():
     optical_flow_stream_obs = optical_flow_relevancy_stream_obs.pipe(
         ops.do_action(lambda result: print(f"Optical Flow Relevancy Score: {result[1]}")),
         vops.with_optical_flow_filtering(threshold=2.0),
-        ops.do_action(lambda _: print(f"Optical Flow Passed Threshold.")),
+        ops.do_action(lambda _: print("Optical Flow Passed Threshold.")),
         vops.with_jpeg_export(processor, suffix="optical"),
     )
 

@@ -22,7 +22,6 @@ using pre-trained models like CLIP, ResNet, etc.
 import base64
 import io
 import os
-from typing import Union
 
 import cv2
 import numpy as np
@@ -42,7 +41,7 @@ class ImageEmbeddingProvider:
     that can be stored in a vector database and used for similarity search.
     """
 
-    def __init__(self, model_name: str = "clip", dimensions: int = 512):
+    def __init__(self, model_name: str = "clip", dimensions: int = 512) -> None:
         """
         Initialize the image embedding provider.
 
@@ -94,7 +93,7 @@ class ImageEmbeddingProvider:
             self.processor = None
             raise
 
-    def get_embedding(self, image: Union[np.ndarray, str, bytes]) -> np.ndarray:
+    def get_embedding(self, image: np.ndarray | str | bytes) -> np.ndarray:
         """
         Generate an embedding vector for the provided image.
 
@@ -234,7 +233,7 @@ class ImageEmbeddingProvider:
             logger.error(f"Error generating text embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
 
-    def _prepare_image(self, image: Union[np.ndarray, str, bytes]) -> Image.Image:
+    def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:
         """
         Convert the input image to PIL format required by the models.
 

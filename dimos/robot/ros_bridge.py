@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 import logging
 import threading
-import time
-from typing import Dict, Any, Type, Literal, Optional
-from enum import Enum
+from typing import Any
 
 try:
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 except ImportError:
     rclpy = None
     SingleThreadedExecutor = None
@@ -32,6 +31,7 @@ except ImportError:
     QoSHistoryPolicy = None
     QoSDurabilityPolicy = None
 
+from dimos.core.resource import Resource
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
 
@@ -45,10 +45,10 @@ class BridgeDirection(Enum):
     DIMOS_TO_ROS = "dimos_to_ros"
 
 
-class ROSBridge:
+class ROSBridge(Resource):
     """Unidirectional bridge between ROS and DIMOS for message passing."""
 
-    def __init__(self, node_name: str = "dimos_ros_bridge"):
+    def __init__(self, node_name: str = "dimos_ros_bridge") -> None:
         """Initialize the ROS-DIMOS bridge.
 
         Args:
@@ -65,9 +65,9 @@ class ROSBridge:
         self._executor.add_node(self.node)
 
         self._spin_thread = threading.Thread(target=self._ros_spin, daemon=True)
-        self._spin_thread.start()
+        self._spin_thread.start()  # TODO: don't forget to shut it down
 
-        self._bridges: Dict[str, Dict[str, Any]] = {}
+        self._bridges: dict[str, dict[str, Any]] = {}
 
         self._qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -78,7 +78,20 @@ class ROSBridge:
 
         logger.info(f"ROSBridge initialized with node name: {node_name}")
 
-    def _ros_spin(self):
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        """Shutdown the bridge and clean up resources."""
+        self._executor.shutdown()
+        self.node.destroy_node()
+
+        if rclpy.ok():
+            rclpy.shutdown()
+
+        logger.info("ROSBridge shutdown complete")
+
+    def _ros_spin(self) -> None:
         """Background thread for spinning ROS executor."""
         try:
             self._executor.spin()
@@ -88,10 +101,10 @@ class ROSBridge:
     def add_topic(
         self,
         topic_name: str,
-        dimos_type: Type,
-        ros_type: Type,
+        dimos_type: type,
+        ros_type: type,
         direction: BridgeDirection,
-        remap_topic: Optional[str] = None,
+        remap_topic: str | None = None,
     ) -> None:
         """Add unidirectional bridging for a topic.
 
@@ -125,7 +138,7 @@ class ROSBridge:
 
         if direction == BridgeDirection.ROS_TO_DIMOS:
 
-            def ros_callback(msg):
+            def ros_callback(msg) -> None:
                 self._ros_to_dimos(msg, dimos_topic, dimos_type, topic_name)
 
             ros_subscription = self.node.create_subscription(
@@ -136,7 +149,7 @@ class ROSBridge:
         elif direction == BridgeDirection.DIMOS_TO_ROS:
             ros_publisher = self.node.create_publisher(ros_type, ros_topic_name, self._qos)
 
-            def dimos_callback(msg, _topic):
+            def dimos_callback(msg, _topic) -> None:
                 self._dimos_to_ros(msg, ros_publisher, topic_name)
 
             dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)
@@ -167,7 +180,7 @@ class ROSBridge:
         logger.info(f"  DIMOS type: {dimos_type.__name__}, ROS type: {ros_type.__name__}")
 
     def _ros_to_dimos(
-        self, ros_msg: Any, dimos_topic: Topic, dimos_type: Type, _topic_name: str
+        self, ros_msg: Any, dimos_topic: Topic, dimos_type: type, _topic_name: str
     ) -> None:
         """Convert ROS message to DIMOS and publish.
 
@@ -190,13 +203,3 @@ class ROSBridge:
         """
         ros_msg = dimos_msg.to_ros_msg()
         ros_publisher.publish(ros_msg)
-
-    def shutdown(self):
-        """Shutdown the bridge and clean up resources."""
-        self._executor.shutdown()
-        self.node.destroy_node()
-
-        if rclpy.ok():
-            rclpy.shutdown()
-
-        logger.info("ROSBridge shutdown complete")

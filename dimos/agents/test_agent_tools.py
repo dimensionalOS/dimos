@@ -14,20 +14,21 @@
 
 """Production test for BaseAgent tool handling functionality."""
 
-import pytest
 import asyncio
 import os
+
 from dotenv import load_dotenv
 from pydantic import Field
+import pytest
 
-from dimos.agents.modules.base import BaseAgent
-from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos import core
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-from dimos import core
-from dimos.core import Module, Out, In, rpc
+from dimos.agents.modules.base import BaseAgent
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
+from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_agent_tools")
@@ -45,7 +46,7 @@ class CalculateSkill(AbstractSkill):
             result = eval(self.expression)
             return f"The result is {result}"
         except Exception as e:
-            return f"Error calculating: {str(e)}"
+            return f"Error calculating: {e!s}"
 
 
 class WeatherSkill(AbstractSkill):
@@ -80,7 +81,7 @@ class ToolTestController(Module):
     message_out: Out[AgentMessage] = None
 
     @rpc
-    def send_query(self, query: str):
+    def send_query(self, query: str) -> None:
         msg = AgentMessage()
         msg.add_text(query)
         self.message_out.publish(msg)
@@ -91,17 +92,17 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         logger.info("ResponseCollector starting subscription")
         self.response_in.subscribe(self._on_response)
         logger.info("ResponseCollector subscription active")
 
-    def _on_response(self, response):
+    def _on_response(self, response) -> None:
         logger.info(f"ResponseCollector received response #{len(self.responses) + 1}: {response}")
         self.responses.append(response)
 
@@ -113,7 +114,7 @@ class ResponseCollector(Module):
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_module_with_tools():
+async def test_agent_module_with_tools() -> None:
     """Test BaseAgentModule with tool execution."""
     load_dotenv()
 
@@ -188,9 +189,9 @@ async def test_agent_module_with_tools():
 
         # Verify weather details
         assert isinstance(response, AgentResponse), "Expected AgentResponse object"
-        assert "new york" in response.content.lower(), f"Expected 'New York' in response"
-        assert "72" in response.content, f"Expected temperature '72' in response"
-        assert "sunny" in response.content.lower(), f"Expected 'sunny' in response"
+        assert "new york" in response.content.lower(), "Expected 'New York' in response"
+        assert "72" in response.content, "Expected temperature '72' in response"
+        assert "sunny" in response.content.lower(), "Expected 'sunny' in response"
 
         # Test 3: Navigation (potentially long-running)
         logger.info("\n=== Test 3: Navigation Tool ===")
@@ -240,7 +241,7 @@ async def test_agent_module_with_tools():
 
 
 @pytest.mark.tofix
-def test_base_agent_direct_tools():
+def test_base_agent_direct_tools() -> None:
     """Test BaseAgent direct usage with tools."""
     load_dotenv()
 
@@ -295,9 +296,9 @@ def test_base_agent_direct_tools():
     logger.info(f"Tool calls: {response2.tool_calls}")
 
     assert response2.content is not None
-    assert "london" in response2.content.lower(), f"Expected 'London' in response"
-    assert "72" in response2.content, f"Expected temperature '72' in response"
-    assert "sunny" in response2.content.lower(), f"Expected 'sunny' in response"
+    assert "london" in response2.content.lower(), "Expected 'London' in response"
+    assert "72" in response2.content, "Expected temperature '72' in response"
+    assert "sunny" in response2.content.lower(), "Expected 'sunny' in response"
 
     # Verify tool was called
     if response2.tool_calls is not None:
@@ -316,7 +317,7 @@ def test_base_agent_direct_tools():
 class MockToolAgent(BaseAgent):
     """Mock agent for CI testing without API calls."""
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Skip gateway initialization
         self.model = kwargs.get("model", "mock::test")
         self.system_prompt = kwargs.get("system_prompt", "Mock agent")
@@ -330,8 +331,8 @@ class MockToolAgent(BaseAgent):
 
     async def _process_query_async(self, agent_msg, base64_image=None, base64_images=None):
         """Mock tool execution."""
-        from dimos.agents.agent_types import AgentResponse, ToolCall
         from dimos.agents.agent_message import AgentMessage
+        from dimos.agents.agent_types import AgentResponse, ToolCall
 
         # Get text from AgentMessage
         if isinstance(agent_msg, AgentMessage):
@@ -362,12 +363,12 @@ class MockToolAgent(BaseAgent):
         # Default response
         return AgentResponse(content=f"Mock response to: {query}")
 
-    def dispose(self):
+    def dispose(self) -> None:
         pass
 
 
 @pytest.mark.tofix
-def test_mock_agent_tools():
+def test_mock_agent_tools() -> None:
     """Test mock agent with tools for CI."""
     # Create skill library
     skill_library = SkillLibrary()
@@ -384,7 +385,7 @@ def test_mock_agent_tools():
     logger.info(f"Mock tool calls: {response.tool_calls}")
 
     assert response.content is not None
-    assert "42" in response.content, f"Expected '42' in response"
+    assert "42" in response.content, "Expected '42' in response"
     assert response.tool_calls is not None, "Expected tool calls"
     assert len(response.tool_calls) == 1, "Expected exactly one tool call"
     assert response.tool_calls[0].name == "CalculateSkill", "Expected CalculateSkill"

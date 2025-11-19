@@ -1,13 +1,11 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
-import fvcore.nn.weight_init as weight_init
-import torch.nn.functional as F
-from torch import nn
-
 from detectron2.layers import ShapeSpec
-
-from detectron2.modeling.backbone.fpn import FPN
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
+from detectron2.modeling.backbone.fpn import FPN
 from detectron2.modeling.backbone.resnet import build_resnet_backbone
+import fvcore.nn.weight_init as weight_init
+from torch import nn
+import torch.nn.functional as F
 
 
 class LastLevelP6P7_P5(nn.Module):
@@ -16,7 +14,7 @@ class LastLevelP6P7_P5(nn.Module):
     C5 feature.
     """
 
-    def __init__(self, in_channels, out_channels):
+    def __init__(self, in_channels, out_channels) -> None:
         super().__init__()
         self.num_levels = 2
         self.in_feature = "p5"

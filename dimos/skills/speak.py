@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.skills.skills import AbstractSkill
+import queue
+import threading
+import time
+from typing import Any
+
 from pydantic import Field
 from reactivex import Subject
-from typing import Optional, Any, List
-import time
-import threading
-import queue
+
+from dimos.skills.skills import AbstractSkill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.skills.speak")
@@ -32,7 +34,7 @@ _queue_processor_thread = None
 _queue_running = False
 
 
-def _process_audio_queue():
+def _process_audio_queue() -> None:
     """Background thread to process audio requests sequentially"""
     global _queue_running
 
@@ -55,7 +57,7 @@ def _process_audio_queue():
             # Continue processing other tasks
 
 
-def start_audio_queue_processor():
+def start_audio_queue_processor() -> None:
     """Start the background thread for processing audio requests"""
     global _queue_processor_thread, _queue_running
 
@@ -77,12 +79,12 @@ class Speak(AbstractSkill):
 
     text: str = Field(..., description="Text to speak")
 
-    def __init__(self, tts_node: Optional[Any] = None, **data):
+    def __init__(self, tts_node: Any | None = None, **data) -> None:
         super().__init__(**data)
         self._tts_node = tts_node
         self._audio_complete = threading.Event()
         self._subscription = None
-        self._subscriptions: List = []  # Track all subscriptions
+        self._subscriptions: list = []  # Track all subscriptions
 
     def __call__(self):
         if not self._tts_node:
@@ -93,7 +95,7 @@ class Speak(AbstractSkill):
         result_queue = queue.Queue(1)
 
         # Define the speech task to run in the audio queue
-        def speak_task():
+        def speak_task() -> None:
             try:
                 # Using a lock to ensure exclusive access to audio device
                 with _audio_device_lock:
@@ -102,12 +104,12 @@ class Speak(AbstractSkill):
                     self._subscriptions = []
 
                     # This function will be called when audio processing is complete
-                    def on_complete():
+                    def on_complete() -> None:
                         logger.info(f"TTS audio playback completed for: {self.text}")
                         self._audio_complete.set()
 
                     # This function will be called if there's an error
-                    def on_error(error):
+                    def on_error(error) -> None:
                         logger.error(f"Error in TTS processing: {error}")
                         self._audio_complete.set()
 
@@ -147,7 +149,7 @@ class Speak(AbstractSkill):
                     result_queue.put(f"Spoke: {self.text} successfully")
             except Exception as e:
                 logger.error(f"Error in speak task: {e}")
-                result_queue.put(f"Error speaking text: {str(e)}")
+                result_queue.put(f"Error speaking text: {e!s}")
 
         # Add our speech task to the global queue for sequential processing
         display_text = self.text[:50] + "..." if len(self.text) > 50 else self.text

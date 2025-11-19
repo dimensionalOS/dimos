@@ -20,18 +20,16 @@ Usage:
   python test_spatial_memory_query.py --query "robot" --limit 3 --save-one
 """
 
-import os
-import sys
 import argparse
-import numpy as np
+from datetime import datetime
+import os
+
+import chromadb
 import cv2
 import matplotlib.pyplot as plt
-import chromadb
-from datetime import datetime
 
-import tests.test_header
-from dimos.perception.spatial_perception import SpatialMemory
 from dimos.agents.memory.visual_memory import VisualMemory
+from dimos.perception.spatial_perception import SpatialMemory
 
 
 def setup_persistent_chroma_db(db_path):
@@ -225,7 +223,7 @@ def visualize_spatial_memory_with_objects(
         x_coords = [loc[0] for loc in locations]
         y_coords = [loc[1] for loc in locations]
     else:
-        x_coords, y_coords = zip(*locations)
+        x_coords, y_coords = zip(*locations, strict=False)
 
     # Create figure
     plt.figure(figsize=(12, 10))

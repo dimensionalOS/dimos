@@ -1,0 +1,2 @@
+source env/bin/activate
+dotenv_if_exists

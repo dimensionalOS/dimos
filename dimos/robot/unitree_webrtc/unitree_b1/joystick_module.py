@@ -24,6 +24,7 @@ import threading
 os.environ["SDL_VIDEODRIVER"] = "x11"
 
 import time
+
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
 from dimos.msgs.std_msgs import Int32
@@ -39,15 +40,18 @@ class JoystickModule(Module):
     twist_out: Out[TwistStamped] = None  # Timestamped velocity commands
     mode_out: Out[Int32] = None  # Mode changes
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
         self.current_mode = 0  # Start in IDLE mode for safety
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Initialize pygame and start control loop."""
+
+        super().start()
+
         try:
             import pygame
         except ImportError:
@@ -64,7 +68,28 @@ class JoystickModule(Module):
 
         return True
 
-    def _pygame_loop(self):
+    @rpc
+    def stop(self) -> None:
+        """Stop the joystick module."""
+
+        self.running = False
+        self.pygame_ready = False
+
+        # Send stop command
+        stop_twist = Twist()
+        stop_twist_stamped = TwistStamped(
+            ts=time.time(),
+            frame_id="base_link",
+            linear=stop_twist.linear,
+            angular=stop_twist.angular,
+        )
+        self.twist_out.publish(stop_twist_stamped)
+
+        self._thread.join(2)
+
+        super().stop()
+
+    def _pygame_loop(self) -> None:
         """Main pygame event loop - ALL pygame operations happen here."""
         import pygame
 
@@ -199,7 +224,7 @@ class JoystickModule(Module):
         pygame.quit()
         print("JoystickModule stopped")
 
-    def _update_display(self, twist):
+    def _update_display(self, twist) -> None:
         """Update pygame window with current status."""
         import pygame
 
@@ -255,23 +280,3 @@ class JoystickModule(Module):
             y_pos += 25
 
         pygame.display.flip()
-
-    @rpc
-    def stop(self):
-        """Stop the joystick module."""
-        self.running = False
-        # Send stop command
-        stop_twist = Twist()
-        stop_twist_stamped = TwistStamped(
-            ts=time.time(),
-            frame_id="base_link",
-            linear=stop_twist.linear,
-            angular=stop_twist.angular,
-        )
-        self.twist_out.publish(stop_twist_stamped)
-        return True
-
-    def cleanup(self):
-        """Clean up pygame resources."""
-        self.running = False
-        self.pygame_ready = False

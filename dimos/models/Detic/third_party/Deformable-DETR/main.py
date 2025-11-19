@@ -11,19 +11,19 @@
 import argparse
 import datetime
 import json
+from pathlib import Path
 import random
 import time
-from pathlib import Path
 
+import datasets
+from datasets import build_dataset, get_coco_api_from_dataset
+import datasets.samplers as samplers
+from engine import evaluate, train_one_epoch
+from models import build_model
 import numpy as np
 import torch
 from torch.utils.data import DataLoader
-import datasets
 import util.misc as utils
-import datasets.samplers as samplers
-from datasets import build_dataset, get_coco_api_from_dataset
-from engine import evaluate, train_one_epoch
-from models import build_model
 
 
 def get_args_parser():
@@ -168,9 +168,9 @@ def get_args_parser():
     return parser
 
 
-def main(args):
+def main(args) -> None:
     utils.init_distributed_mode(args)
-    print("git:\n  {}\n".format(utils.get_sha()))
+    print(f"git:\n  {utils.get_sha()}\n")
 
     if args.frozen_weights is not None:
         assert args.masks, "Frozen training is meant for segmentation only"
@@ -235,7 +235,7 @@ def main(args):
                 break
         return out
 
-    for n, p in model_without_ddp.named_parameters():
+    for n, _p in model_without_ddp.named_parameters():
         print(n)
 
     param_dicts = [
@@ -306,9 +306,9 @@ def main(args):
             if not (k.endswith("total_params") or k.endswith("total_ops"))
         ]
         if len(missing_keys) > 0:
-            print("Missing Keys: {}".format(missing_keys))
+            print(f"Missing Keys: {missing_keys}")
         if len(unexpected_keys) > 0:
-            print("Unexpected Keys: {}".format(unexpected_keys))
+            print(f"Unexpected Keys: {unexpected_keys}")
         if (
             not args.eval
             and "optimizer" in checkpoint
@@ -319,7 +319,7 @@ def main(args):
 
             p_groups = copy.deepcopy(optimizer.param_groups)
             optimizer.load_state_dict(checkpoint["optimizer"])
-            for pg, pg_old in zip(optimizer.param_groups, p_groups):
+            for pg, pg_old in zip(optimizer.param_groups, p_groups, strict=False):
                 pg["lr"] = pg_old["lr"]
                 pg["initial_lr"] = pg_old["initial_lr"]
             print(optimizer.param_groups)
@@ -405,7 +405,7 @@ def main(args):
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print("Training time {}".format(total_time_str))
+    print(f"Training time {total_time_str}")
 
 
 if __name__ == "__main__":

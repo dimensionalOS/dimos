@@ -12,41 +12,34 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-import os
-
-import time
-from dotenv import load_dotenv
-from dimos.agents.cerebras_agent import CerebrasAgent
-from dimos.agents.claude_agent import ClaudeAgent
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-
-# from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.web.websocket_vis.server import WebsocketVis
-from dimos.skills.observe_stream import ObserveStream
-from dimos.skills.observe import Observe
-from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal, Explore
-from dimos.skills.visual_navigation_skills import FollowHuman
-import reactivex as rx
-import reactivex.operators as ops
-from dimos.stream.audio.pipelines import tts, stt
-import threading
-import json
-from dimos.types.vector import Vector
-from dimos.skills.unitree.unitree_speak import UnitreeSpeak
-
-from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-from dimos.utils.reactive import backpressure
 import asyncio
 import atexit
-import signal
-import sys
-import warnings
 import logging
+import os
+import signal
+import threading
+import time
+import warnings
+
+from dotenv import load_dotenv
+import reactivex as rx
+import reactivex.operators as ops
+
+from dimos.agents.claude_agent import ClaudeAgent
+from dimos.perception.object_detection_stream import ObjectDetectionStream
+
+# from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.skills.kill_skill import KillSkill
+from dimos.skills.navigation import Explore, GetPose, NavigateToGoal, NavigateWithText
+from dimos.skills.observe import Observe
+from dimos.skills.observe_stream import ObserveStream
+from dimos.skills.unitree.unitree_speak import UnitreeSpeak
+from dimos.stream.audio.pipelines import stt
+from dimos.types.vector import Vector
+from dimos.utils.reactive import backpressure
+from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.web.websocket_vis.server import WebsocketVis
 
 # Filter out known WebRTC warnings that don't affect functionality
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
@@ -289,9 +282,7 @@ stt_node = stt()
 stt_node.consume_audio(audio_subject.pipe(ops.share()))
 
 # Read system query from prompt.txt file
-with open(
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets/agent/prompt.txt"), "r"
-) as f:
+with open(os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets/agent/prompt.txt")) as f:
     system_query = f.read()
 
 # Create a ClaudeAgent instance

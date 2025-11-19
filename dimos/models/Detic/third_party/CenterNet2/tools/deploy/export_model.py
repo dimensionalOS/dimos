@@ -3,13 +3,11 @@
 import argparse
 import os
 from typing import Dict, List, Tuple
-import torch
-from torch import Tensor, nn
 
-import detectron2.data.transforms as T
 from detectron2.checkpoint import DetectionCheckpointer
 from detectron2.config import get_cfg
 from detectron2.data import build_detection_test_loader, detection_utils
+import detectron2.data.transforms as T
 from detectron2.evaluation import COCOEvaluator, inference_on_dataset, print_csv_format
 from detectron2.export import TracingAdapter, dump_torchscript_IR, scripting_with_instances
 from detectron2.modeling import GeneralizedRCNN, RetinaNet, build_model
@@ -19,6 +17,8 @@ from detectron2.structures import Boxes
 from detectron2.utils.env import TORCH_VERSION
 from detectron2.utils.file_io import PathManager
 from detectron2.utils.logger import setup_logger
+import torch
+from torch import Tensor, nn
 
 
 def setup_cfg(args):
@@ -72,7 +72,7 @@ def export_scripting(torch_model):
     class ScriptableAdapterBase(nn.Module):
         # Use this adapter to workaround https://github.com/pytorch/pytorch/issues/46944
         # by not retuning instances but dicts. Otherwise the exported model is not deployable
-        def __init__(self):
+        def __init__(self) -> None:
             super().__init__()
             self.model = torch_model
             self.eval()
@@ -80,14 +80,14 @@ def export_scripting(torch_model):
     if isinstance(torch_model, GeneralizedRCNN):
 
         class ScriptableAdapter(ScriptableAdapterBase):
-            def forward(self, inputs: Tuple[Dict[str, torch.Tensor]]) -> List[Dict[str, Tensor]]:
+            def forward(self, inputs: tuple[dict[str, torch.Tensor]]) -> list[dict[str, Tensor]]:
                 instances = self.model.inference(inputs, do_postprocess=False)
                 return [i.get_fields() for i in instances]
 
     else:
 
         class ScriptableAdapter(ScriptableAdapterBase):
-            def forward(self, inputs: Tuple[Dict[str, torch.Tensor]]) -> List[Dict[str, Tensor]]:
+            def forward(self, inputs: tuple[dict[str, torch.Tensor]]) -> list[dict[str, Tensor]]:
                 instances = self.model(inputs)
                 return [i.get_fields() for i in instances]
 
@@ -130,7 +130,7 @@ def export_tracing(torch_model, inputs):
 
     if args.format != "torchscript":
         return None
-    if not isinstance(torch_model, (GeneralizedRCNN, RetinaNet)):
+    if not isinstance(torch_model, GeneralizedRCNN | RetinaNet):
         return None
 
     def eval_wrapper(inputs):

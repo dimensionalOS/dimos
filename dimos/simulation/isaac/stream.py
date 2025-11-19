@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import time
-from typing import Optional, Union
 from pathlib import Path
-from ..base.stream_base import StreamBase, AnnotatorType, TransportType
+import time
+
+import cv2
+
+from ..base.stream_base import AnnotatorType, StreamBase, TransportType
 
 
 class IsaacStream(StreamBase):
@@ -32,8 +33,8 @@ class IsaacStream(StreamBase):
         annotator_type: AnnotatorType = "rgb",
         transport: TransportType = "tcp",
         rtsp_url: str = "rtsp://mediamtx:8554/stream",
-        usd_path: Optional[Union[str, Path]] = None,
-    ):
+        usd_path: str | Path | None = None,
+    ) -> None:
         """Initialize the Isaac Sim stream."""
         super().__init__(
             simulator=simulator,
@@ -59,7 +60,7 @@ class IsaacStream(StreamBase):
         self._setup_ffmpeg()
         self._setup_annotator()
 
-    def _load_stage(self, usd_path: Union[str, Path]):
+    def _load_stage(self, usd_path: str | Path):
         """Load USD stage from file."""
         import omni.usd
 
@@ -80,12 +81,12 @@ class IsaacStream(StreamBase):
             self.camera_path, resolution=(self.width, self.height)
         )
 
-    def _setup_annotator(self):
+    def _setup_annotator(self) -> None:
         """Setup the specified annotator."""
         self.annotator = self.rep.AnnotatorRegistry.get_annotator(self.annotator_type)
         self.annotator.attach(self.render_product)
 
-    def stream(self):
+    def stream(self) -> None:
         """Start the streaming loop."""
         try:
             print("[Stream] Starting camera stream loop...")
@@ -125,7 +126,7 @@ class IsaacStream(StreamBase):
         finally:
             self.cleanup()
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Cleanup resources."""
         print("[Cleanup] Stopping FFmpeg process...")
         if hasattr(self, "proc"):

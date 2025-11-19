@@ -19,18 +19,19 @@ Base Local Planner Module for robot navigation.
 Subscribes to local costmap, odometry, and path, publishes movement commands.
 """
 
+from abc import abstractmethod
 import threading
 import time
-from abc import abstractmethod
-from typing import Optional
 
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import Twist, Vector3, PoseStamped
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import get_distance, quaternion_to_euler, normalize_angle
+from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
-logger = setup_logger("dimos.robot.local_planner")
+logger = setup_logger(__file__)
 
 
 class BaseLocalPlanner(Module):
@@ -60,7 +61,7 @@ class BaseLocalPlanner(Module):
         orientation_tolerance: float = 0.2,
         control_frequency: float = 10.0,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the local planner module.
 
         Args:
@@ -77,47 +78,55 @@ class BaseLocalPlanner(Module):
         self.control_period = 1.0 / control_frequency
 
         # Latest data
-        self.latest_costmap: Optional[OccupancyGrid] = None
-        self.latest_odom: Optional[PoseStamped] = None
-        self.latest_path: Optional[Path] = None
+        self.latest_costmap: OccupancyGrid | None = None
+        self.latest_odom: PoseStamped | None = None
+        self.latest_path: Path | None = None
 
         # Control thread
-        self.planning_thread: Optional[threading.Thread] = None
+        self.planning_thread: threading.Thread | None = None
         self.stop_planning = threading.Event()
 
         logger.info("Local planner module initialized")
 
     @rpc
-    def start(self):
-        """Start the local planner module."""
-        # Subscribe to inputs
-        self.local_costmap.subscribe(self._on_costmap)
-        self.odom.subscribe(self._on_odom)
-        self.path.subscribe(self._on_path)
+    def start(self) -> None:
+        super().start()
 
-        logger.info("Local planner module started")
+        unsub = self.local_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
 
-    def _on_costmap(self, msg: OccupancyGrid):
+        unsub = self.odom.subscribe(self._on_odom)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.path.subscribe(self._on_path)
+        self._disposables.add(Disposable(unsub))
+
+    @rpc
+    def stop(self) -> None:
+        self.cancel_planning()
+        super().stop()
+
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         self.latest_costmap = msg
 
-    def _on_odom(self, msg: PoseStamped):
+    def _on_odom(self, msg: PoseStamped) -> None:
         self.latest_odom = msg
 
-    def _on_path(self, msg: Path):
+    def _on_path(self, msg: Path) -> None:
         self.latest_path = msg
 
         if msg and len(msg.poses) > 0:
             if self.planning_thread is None or not self.planning_thread.is_alive():
                 self._start_planning_thread()
 
-    def _start_planning_thread(self):
+    def _start_planning_thread(self) -> None:
         """Start the planning thread."""
         self.stop_planning.clear()
         self.planning_thread = threading.Thread(target=self._follow_path_loop, daemon=True)
         self.planning_thread.start()
         logger.debug("Started follow path thread")
 
-    def _follow_path_loop(self):
+    def _follow_path_loop(self) -> None:
         """Main planning loop that runs in a separate thread."""
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
@@ -131,7 +140,7 @@ class BaseLocalPlanner(Module):
 
             time.sleep(self.control_period)
 
-    def _plan(self):
+    def _plan(self) -> None:
         """Compute and publish velocity command."""
         cmd_vel = self.compute_velocity()
 
@@ -139,7 +148,7 @@ class BaseLocalPlanner(Module):
             self.cmd_vel.publish(cmd_vel)
 
     @abstractmethod
-    def compute_velocity(self) -> Optional[Twist]:
+    def compute_velocity(self) -> Twist | None:
         """
         Compute velocity commands based on current costmap, odometry, and path.
         Must be implemented by derived classes.
@@ -180,17 +189,17 @@ class BaseLocalPlanner(Module):
         return abs(yaw_error) < self.orientation_tolerance
 
     @rpc
-    def reset(self):
+    def reset(self) -> None:
         """Reset the local planner state, clearing the current path."""
         # Clear the latest path
         self.latest_path = None
         self.latest_odom = None
         self.latest_costmap = None
-        self.stop()
+        self.cancel_planning()
         logger.info("Local planner reset")
 
     @rpc
-    def stop(self):
+    def cancel_planning(self) -> None:
         """Stop the local planner and any running threads."""
         if self.planning_thread and self.planning_thread.is_alive():
             self.stop_planning.set()
@@ -198,6 +207,3 @@ class BaseLocalPlanner(Module):
             self.planning_thread = None
         stop_cmd = Twist()
         self.cmd_vel.publish(stop_cmd)
-        self._close_module()
-
-        logger.info("Local planner stopped")

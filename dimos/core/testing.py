@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from threading import Event, Thread
+import time
 
 import pytest
 
-from dimos.core import (
-    In,
-    LCMTransport,
-    Module,
-    Out,
-    RemoteOut,
-    rpc,
-    start,
-)
+from dimos.core import In, Module, Out, rpc, start
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -47,20 +39,31 @@ class MockRobotClient(Module):
 
     mov_msg_count = 0
 
-    def mov_callback(self, msg):
+    def mov_callback(self, msg) -> None:
         self.mov_msg_count += 1
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self._stop_event = Event()
         self._thread = None
 
-    def start(self):
+    @rpc
+    def start(self) -> None:
+        super().start()
+
         self._thread = Thread(target=self.odomloop)
         self._thread.start()
         self.mov.subscribe(self.mov_callback)
 
-    def odomloop(self):
+    @rpc
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+
+        super().stop()
+
+    def odomloop(self) -> None:
         odomdata = SensorReplay("raw_odometry_rotate_walk", autocast=Odometry.from_msg)
         lidardata = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
 
@@ -78,8 +81,3 @@ class MockRobotClient(Module):
                 lidarmsg.pubtime = time.perf_counter()
                 self.lidar.publish(lidarmsg)
                 time.sleep(0.1)
-
-    def stop(self):
-        self._stop_event.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=1.0)  # Wait up to 1 second for clean shutdown

@@ -15,6 +15,7 @@
 import time
 
 import pytest
+from reactivex.disposable import Disposable
 
 from dimos.core import (
     In,
@@ -45,29 +46,31 @@ class Navigation(Module):
     @rpc
     def navigate_to(self, target: Vector3) -> bool: ...
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
     @rpc
-    def start(self):
-        def _odom(msg):
+    def start(self) -> None:
+        def _odom(msg) -> None:
             self.odom_msg_count += 1
             print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
             self.mov.publish(msg.position)
 
-        self.odometry.subscribe(_odom)
+        unsub = self.odometry.subscribe(_odom)
+        self._disposables.add(Disposable(unsub))
 
-        def _lidar(msg):
+        def _lidar(msg) -> None:
             self.lidar_msg_count += 1
             if hasattr(msg, "pubtime"):
                 print("RCV:", (time.perf_counter() - msg.pubtime) * 1000, msg)
             else:
                 print("RCV: unknown time", msg)
 
-        self.lidar.subscribe(_lidar)
+        unsub = self.lidar.subscribe(_lidar)
+        self._disposables.add(Disposable(unsub))
 
 
-def test_classmethods():
+def test_classmethods() -> None:
     # Test class property access
     class_rpcs = Navigation.rpcs
     print("Class rpcs:", class_rpcs)
@@ -84,7 +87,7 @@ def test_classmethods():
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 5
+    assert len(class_rpcs) == 8
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
@@ -96,9 +99,11 @@ def test_classmethods():
     )
     assert hasattr(class_rpcs["start"], "__rpc__"), "start should have __rpc__ attribute"
 
+    nav._close_module()
+
 
 @pytest.mark.module
-def test_basic_deployment(dimos):
+def test_basic_deployment(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     print("\n")

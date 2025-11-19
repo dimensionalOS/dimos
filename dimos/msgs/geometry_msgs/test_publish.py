@@ -21,7 +21,7 @@ from dimos.msgs.geometry_msgs import Vector3
 
 
 @pytest.mark.tool
-def test_runpublish():
+def test_runpublish() -> None:
     for i in range(10):
         msg = Vector3(-5 + i, -5 + i, i)
         lc = lcm.LCM()
@@ -31,23 +31,23 @@ def test_runpublish():
 
 
 @pytest.mark.tool
-def test_receive():
+def test_receive() -> None:
     lc = lcm.LCM()
 
-    def receive(bla, msg):
+    def receive(bla, msg) -> None:
         # print("receive", bla, msg)
         print(Vector3.decode(msg))
 
     lc.subscribe("thing1_vector3#geometry_msgs.Vector3", receive)
 
-    def _loop():
+    def _loop() -> None:
         while True:
             """LCM message handling loop"""
             try:
                 lc.handle()
                 # loop 10000 times
                 for _ in range(10000000):
-                    3 + 3
+                    3 + 3  # noqa: B018
             except Exception as e:
                 print(f"Error in LCM handling: {e}")
 

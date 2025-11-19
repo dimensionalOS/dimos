@@ -12,14 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import threading
-from typing import Optional, TypeVar, Generic, Any, Callable
+from typing import Any, Generic, TypeVar
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.scheduler import ThreadPoolScheduler
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+from reactivex.scheduler import ThreadPoolScheduler
 from rxpy_backpressure import BackPressure
 
 from dimos.utils.threadpool import get_scheduler
@@ -32,7 +33,7 @@ T = TypeVar("T")
 #                           └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 def backpressure(
     observable: Observable[T],
-    scheduler: Optional[ThreadPoolScheduler] = None,
+    scheduler: ThreadPoolScheduler | None = None,
     drop_unprocessed: bool = True,
 ) -> Observable[T]:
     if scheduler is None:
@@ -65,7 +66,7 @@ def backpressure(
 class LatestReader(Generic[T]):
     """A callable object that returns the latest value from an observable."""
 
-    def __init__(self, initial_value: T, subscription, connection=None):
+    def __init__(self, initial_value: T, subscription, connection=None) -> None:
         self._value = initial_value
         self._subscription = subscription
         self._connection = connection
@@ -81,16 +82,44 @@ class LatestReader(Generic[T]):
             self._connection.dispose()
 
 
-def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) -> T:
+def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> T:
     def getter():
+        result = []
+        error = []
+        event = threading.Event()
+
+        def on_next(value) -> None:
+            result.append(value)
+            event.set()
+
+        def on_error(e) -> None:
+            error.append(e)
+            event.set()
+
+        def on_completed() -> None:
+            event.set()
+
+        # Subscribe and wait for first value
+        subscription = observable.pipe(ops.first()).subscribe(
+            on_next=on_next, on_error=on_error, on_completed=on_completed
+        )
+
         try:
-            # Wait for first value with optional timeout
-            value = observable.pipe(
-                ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
-            ).run()
-            return value
-        except Exception as e:
-            raise Exception(f"No value received after {timeout} seconds") from e
+            if timeout is not None:
+                if not event.wait(timeout):
+                    raise TimeoutError(f"No value received after {timeout} seconds")
+            else:
+                event.wait()
+
+            if error:
+                raise error[0]
+
+            if not result:
+                raise Exception("Observable completed without emitting a value")
+
+            return result[0]
+        finally:
+            subscription.dispose()
 
     return getter
 
@@ -100,7 +129,7 @@ T = TypeVar("T")
 
 def getter_streaming(
     source: Observable[T],
-    timeout: Optional[float] = 30.0,
+    timeout: float | None = 30.0,
     *,
     nonblocking: bool = False,
 ) -> LatestReader[T]:
@@ -154,7 +183,7 @@ def callback_to_observable(
     stop: Callable[[CB[T]], Any],
 ) -> Observable[T]:
     def _subscribe(observer, _scheduler=None):
-        def _on_msg(value: T):
+        def _on_msg(value: T) -> None:
             observer.on_next(value)
 
         start(_on_msg)
@@ -169,3 +198,33 @@ def spy(name: str):
         return x
 
     return ops.map(spyfun)
+
+
+def quality_barrier(quality_func: Callable[[T], float], target_frequency: float):
+    """
+    RxPY pipe operator that selects the highest quality item within each time window.
+
+    Args:
+        quality_func: Function to compute quality score for each item
+        target_frequency: Output frequency in Hz (e.g., 1.0 for 1 item per second)
+
+    Returns:
+        A pipe operator that can be used with .pipe()
+    """
+    window_duration = 1.0 / target_frequency  # Duration of each window in seconds
+
+    def _quality_barrier(source: Observable[T]) -> Observable[T]:
+        return source.pipe(
+            # Create non-overlapping time-based windows
+            ops.window_with_time(window_duration, window_duration),
+            # For each window, find the highest quality item
+            ops.flat_map(
+                lambda window: window.pipe(
+                    ops.to_list(),
+                    ops.map(lambda items: max(items, key=quality_func) if items else None),
+                    ops.filter(lambda x: x is not None),
+                )
+            ),
+        )
+
+    return _quality_barrier

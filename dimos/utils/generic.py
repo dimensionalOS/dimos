@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import hashlib
+import json
 import os
-from typing import Any, Optional
+import string
+from typing import Any
+import uuid
 
 
-def truncate_display_string(arg: Any, max: Optional[int] = None) -> str:
+def truncate_display_string(arg: Any, max: int | None = None) -> str:
     """
     If we print strings that are too long that potentially obscures more important logs.
 
@@ -33,3 +37,42 @@ def truncate_display_string(arg: Any, max: Optional[int] = None) -> str:
         return string
 
     return string[:max_chars] + "...(truncated)..."
+
+
+def extract_json_from_llm_response(response: str) -> Any:
+    start_idx = response.find("{")
+    end_idx = response.rfind("}") + 1
+
+    if start_idx >= 0 and end_idx > start_idx:
+        json_str = response[start_idx:end_idx]
+        try:
+            return json.loads(json_str)
+        except Exception:
+            pass
+
+    return None
+
+
+def short_id(from_string: str | None = None) -> str:
+    alphabet = string.digits + string.ascii_letters
+    base = len(alphabet)
+
+    if from_string is None:
+        num = uuid.uuid4().int
+    else:
+        hash_bytes = hashlib.sha1(from_string.encode()).digest()[:16]
+        num = int.from_bytes(hash_bytes, "big")
+
+    min_chars = 18
+
+    chars: list[str] = []
+    while num > 0 or len(chars) < min_chars:
+        num, rem = divmod(num, base)
+        chars.append(alphabet[rem])
+
+    return "".join(reversed(chars))[:min_chars]
+
+
+class classproperty(property):
+    def __get__(self, obj, cls):
+        return self.fget(cls)
