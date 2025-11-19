@@ -17,9 +17,9 @@ import time
 import pytest
 
 from dimos import core
-from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import CameraModule
-from dimos.hardware.camera.webcam import Webcam
+from dimos.hardware.sensors.camera import zed
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 

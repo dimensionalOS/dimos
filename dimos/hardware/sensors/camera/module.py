@@ -25,8 +25,8 @@ from reactivex.observable import Observable
 from dimos import spec
 from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import Module, ModuleConfig, Out, rpc
-from dimos.hardware.camera.spec import CameraHardware
-from dimos.hardware.camera.webcam import Webcam
+from dimos.hardware.sensors.camera.spec import CameraHardware
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
