@@ -46,7 +46,7 @@ from dimos.core.module import ModuleConfig
 from dimos.msgs.sensor_msgs import JointState, JointCommand, RobotState
 from dimos.msgs.geometry_msgs import WrenchStamped
 from dimos.utils.logging_config import setup_logger
-from reactivex.disposable import Disposable, CompositeDisposable
+from reactivex.disposable import Disposable
 
 from .components import (
     MotionControlComponent,
@@ -157,9 +157,6 @@ class XArmDriver(
         self._state_thread: Optional[threading.Thread] = None  # Joint state publishing
         self._control_thread: Optional[threading.Thread] = None  # Command sending
         self._stop_event = threading.Event()
-
-        # Subscription management
-        self._disposables = CompositeDisposable()
 
         # Joint names based on number of joints
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
