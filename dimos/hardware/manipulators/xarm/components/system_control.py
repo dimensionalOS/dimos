@@ -22,7 +22,6 @@ Provides RPC methods for system-level control operations including:
 - Emergency stop
 """
 
-from typing import Tuple, List, Optional
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -39,7 +38,7 @@ class SystemControlComponent:
     """
 
     @rpc
-    def enable_servo_mode(self) -> Tuple[int, str]:
+    def enable_servo_mode(self) -> tuple[int, str]:
         """
         Enable servo mode (mode 1).
         Required for set_servo_angle_j to work.
@@ -60,7 +59,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def disable_servo_mode(self) -> Tuple[int, str]:
+    def disable_servo_mode(self) -> tuple[int, str]:
         """
         Disable servo mode (set to position mode).
 
@@ -80,7 +79,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def enable_velocity_control_mode(self) -> Tuple[int, str]:
+    def enable_velocity_control_mode(self) -> tuple[int, str]:
         """
         Enable velocity control mode (mode 4).
         Required for vc_set_joint_velocity to work.
@@ -115,7 +114,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def disable_velocity_control_mode(self) -> Tuple[int, str]:
+    def disable_velocity_control_mode(self) -> tuple[int, str]:
         """
         Disable velocity control mode and return to position control (mode 1).
 
@@ -153,7 +152,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def motion_enable(self, enable: bool = True) -> Tuple[int, str]:
+    def motion_enable(self, enable: bool = True) -> tuple[int, str]:
         """Enable or disable arm motion."""
         try:
             code = self.arm.motion_enable(enable=enable)
@@ -163,7 +162,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_state(self, state: int) -> Tuple[int, str]:
+    def set_state(self, state: int) -> tuple[int, str]:
         """
         Set robot state.
 
@@ -177,7 +176,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def clean_error(self) -> Tuple[int, str]:
+    def clean_error(self) -> tuple[int, str]:
         """Clear error codes."""
         try:
             code = self.arm.clean_error()
@@ -186,7 +185,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def clean_warn(self) -> Tuple[int, str]:
+    def clean_warn(self) -> tuple[int, str]:
         """Clear warning codes."""
         try:
             code = self.arm.clean_warn()
@@ -195,7 +194,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def emergency_stop(self) -> Tuple[int, str]:
+    def emergency_stop(self) -> tuple[int, str]:
         """Emergency stop the arm."""
         try:
             code = self.arm.emergency_stop()
@@ -208,7 +207,7 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def clean_conf(self) -> Tuple[int, str]:
+    def clean_conf(self) -> tuple[int, str]:
         """Clean configuration."""
         try:
             code = self.arm.clean_conf()
@@ -217,7 +216,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def save_conf(self) -> Tuple[int, str]:
+    def save_conf(self) -> tuple[int, str]:
         """Save current configuration to robot."""
         try:
             code = self.arm.save_conf()
@@ -226,7 +225,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def reload_dynamics(self) -> Tuple[int, str]:
+    def reload_dynamics(self) -> tuple[int, str]:
         """Reload dynamics parameters."""
         try:
             code = self.arm.reload_dynamics()
@@ -239,7 +238,7 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def set_mode(self, mode: int) -> Tuple[int, str]:
+    def set_mode(self, mode: int) -> tuple[int, str]:
         """
         Set control mode.
 
@@ -257,7 +256,7 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def set_collision_sensitivity(self, sensitivity: int) -> Tuple[int, str]:
+    def set_collision_sensitivity(self, sensitivity: int) -> tuple[int, str]:
         """Set collision sensitivity (0-5, 0=least sensitive)."""
         try:
             code = self.arm.set_collision_sensitivity(sensitivity)
@@ -271,7 +270,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_teach_sensitivity(self, sensitivity: int) -> Tuple[int, str]:
+    def set_teach_sensitivity(self, sensitivity: int) -> tuple[int, str]:
         """Set teach sensitivity (1-5)."""
         try:
             code = self.arm.set_teach_sensitivity(sensitivity)
@@ -283,7 +282,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_collision_rebound(self, enable: int) -> Tuple[int, str]:
+    def set_collision_rebound(self, enable: int) -> tuple[int, str]:
         """Enable/disable collision rebound (0=disable, 1=enable)."""
         try:
             code = self.arm.set_collision_rebound(enable)
@@ -297,7 +296,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_self_collision_detection(self, enable: int) -> Tuple[int, str]:
+    def set_self_collision_detection(self, enable: int) -> tuple[int, str]:
         """Enable/disable self collision detection."""
         try:
             code = self.arm.set_self_collision_detection(enable)
@@ -315,7 +314,7 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def set_reduced_mode(self, enable: int) -> Tuple[int, str]:
+    def set_reduced_mode(self, enable: int) -> tuple[int, str]:
         """Enable/disable reduced mode."""
         try:
             code = self.arm.set_reduced_mode(enable)
@@ -329,7 +328,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_reduced_max_tcp_speed(self, speed: float) -> Tuple[int, str]:
+    def set_reduced_max_tcp_speed(self, speed: float) -> tuple[int, str]:
         """Set maximum TCP speed in reduced mode."""
         try:
             code = self.arm.set_reduced_max_tcp_speed(speed)
@@ -341,7 +340,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_reduced_max_joint_speed(self, speed: float) -> Tuple[int, str]:
+    def set_reduced_max_joint_speed(self, speed: float) -> tuple[int, str]:
         """Set maximum joint speed in reduced mode."""
         try:
             code = self.arm.set_reduced_max_joint_speed(speed)
@@ -353,7 +352,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_fence_mode(self, enable: int) -> Tuple[int, str]:
+    def set_fence_mode(self, enable: int) -> tuple[int, str]:
         """Enable/disable fence mode."""
         try:
             code = self.arm.set_fence_mode(enable)
@@ -371,7 +370,7 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def set_tcp_offset(self, offset: List[float]) -> Tuple[int, str]:
+    def set_tcp_offset(self, offset: list[float]) -> tuple[int, str]:
         """Set TCP offset [x, y, z, roll, pitch, yaw]."""
         try:
             code = self.arm.set_tcp_offset(offset)
@@ -380,7 +379,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_tcp_load(self, weight: float, center_of_gravity: List[float]) -> Tuple[int, str]:
+    def set_tcp_load(self, weight: float, center_of_gravity: list[float]) -> tuple[int, str]:
         """Set TCP load (payload)."""
         try:
             code = self.arm.set_tcp_load(weight, center_of_gravity)
@@ -389,7 +388,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_gravity_direction(self, direction: List[float]) -> Tuple[int, str]:
+    def set_gravity_direction(self, direction: list[float]) -> tuple[int, str]:
         """Set gravity direction vector."""
         try:
             code = self.arm.set_gravity_direction(direction)
@@ -398,7 +397,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_world_offset(self, offset: List[float]) -> Tuple[int, str]:
+    def set_world_offset(self, offset: list[float]) -> tuple[int, str]:
         """Set world coordinate offset."""
         try:
             code = self.arm.set_world_offset(offset)
@@ -411,7 +410,7 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def set_tcp_jerk(self, jerk: float) -> Tuple[int, str]:
+    def set_tcp_jerk(self, jerk: float) -> tuple[int, str]:
         """Set TCP jerk (mm/s³)."""
         try:
             code = self.arm.set_tcp_jerk(jerk)
@@ -420,7 +419,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_tcp_maxacc(self, acc: float) -> Tuple[int, str]:
+    def set_tcp_maxacc(self, acc: float) -> tuple[int, str]:
         """Set TCP maximum acceleration (mm/s²)."""
         try:
             code = self.arm.set_tcp_maxacc(acc)
@@ -432,7 +431,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_joint_jerk(self, jerk: float) -> Tuple[int, str]:
+    def set_joint_jerk(self, jerk: float) -> tuple[int, str]:
         """Set joint jerk (rad/s³ or °/s³)."""
         try:
             code = self.arm.set_joint_jerk(jerk, is_radian=self.config.is_radian)
@@ -441,7 +440,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_joint_maxacc(self, acc: float) -> Tuple[int, str]:
+    def set_joint_maxacc(self, acc: float) -> tuple[int, str]:
         """Set joint maximum acceleration (rad/s² or °/s²)."""
         try:
             code = self.arm.set_joint_maxacc(acc, is_radian=self.config.is_radian)
@@ -453,7 +452,7 @@ class SystemControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_pause_time(self, seconds: float) -> Tuple[int, str]:
+    def set_pause_time(self, seconds: float) -> tuple[int, str]:
         """Set pause time for motion commands."""
         try:
             code = self.arm.set_pause_time(seconds)
@@ -466,16 +465,16 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def get_tgpio_digital(self, io_num: int) -> Tuple[int, Optional[int]]:
+    def get_tgpio_digital(self, io_num: int) -> tuple[int, int | None]:
         """Get tool GPIO digital input value."""
         try:
             code, value = self.arm.get_tgpio_digital(io_num)
             return (code, value if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def set_tgpio_digital(self, io_num: int, value: int) -> Tuple[int, str]:
+    def set_tgpio_digital(self, io_num: int, value: int) -> tuple[int, str]:
         """Set tool GPIO digital output value (0 or 1)."""
         try:
             code = self.arm.set_tgpio_digital(io_num, value)
@@ -488,16 +487,16 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def get_cgpio_digital(self, io_num: int) -> Tuple[int, Optional[int]]:
+    def get_cgpio_digital(self, io_num: int) -> tuple[int, int | None]:
         """Get controller GPIO digital input value."""
         try:
             code, value = self.arm.get_cgpio_digital(io_num)
             return (code, value if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def set_cgpio_digital(self, io_num: int, value: int) -> Tuple[int, str]:
+    def set_cgpio_digital(self, io_num: int, value: int) -> tuple[int, str]:
         """Set controller GPIO digital output value (0 or 1)."""
         try:
             code = self.arm.set_cgpio_digital(io_num, value)
@@ -510,25 +509,25 @@ class SystemControlComponent:
     # =========================================================================
 
     @rpc
-    def get_tgpio_analog(self, io_num: int) -> Tuple[int, Optional[float]]:
+    def get_tgpio_analog(self, io_num: int) -> tuple[int, float | None]:
         """Get tool GPIO analog input value."""
         try:
             code, value = self.arm.get_tgpio_analog(io_num)
             return (code, value if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_cgpio_analog(self, io_num: int) -> Tuple[int, Optional[float]]:
+    def get_cgpio_analog(self, io_num: int) -> tuple[int, float | None]:
         """Get controller GPIO analog input value."""
         try:
             code, value = self.arm.get_cgpio_analog(io_num)
             return (code, value if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def set_cgpio_analog(self, io_num: int, value: float) -> Tuple[int, str]:
+    def set_cgpio_analog(self, io_num: int, value: float) -> tuple[int, str]:
         """Set controller GPIO analog output value."""
         try:
             code = self.arm.set_cgpio_analog(io_num, value)
