@@ -23,7 +23,7 @@ Provides RPC methods for motion control operations including:
 """
 
 import math
-from typing import List, Tuple
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -42,7 +42,7 @@ class MotionControlComponent:
     """
 
     @rpc
-    def set_joint_angles(self, angles: List[float]) -> Tuple[int, str]:
+    def set_joint_angles(self, angles: list[float]) -> tuple[int, str]:
         """
         Set joint angles (RPC method).
 
@@ -61,7 +61,7 @@ class MotionControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_joint_velocities(self, velocities: List[float]) -> Tuple[int, str]:
+    def set_joint_velocities(self, velocities: list[float]) -> tuple[int, str]:
         """
         Set joint velocities (RPC method).
         Note: Requires velocity control mode.
@@ -85,7 +85,7 @@ class MotionControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_position(self, position: List[float], wait: bool = False) -> Tuple[int, str]:
+    def set_position(self, position: list[float], wait: bool = False) -> tuple[int, str]:
         """
         Set TCP position [x, y, z, roll, pitch, yaw].
 
@@ -103,7 +103,7 @@ class MotionControlComponent:
             return (-1, str(e))
 
     @rpc
-    def move_gohome(self, wait: bool = False) -> Tuple[int, str]:
+    def move_gohome(self, wait: bool = False) -> tuple[int, str]:
         """Move to home position."""
         try:
             code = self.arm.move_gohome(wait=wait, is_radian=self.config.is_radian)
@@ -112,7 +112,7 @@ class MotionControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_joint_command(self, positions: List[float]) -> Tuple[int, str]:
+    def set_joint_command(self, positions: list[float]) -> tuple[int, str]:
         """
         Manually set the joint command (for testing).
         This updates the shared joint_cmd that the control loop reads.
@@ -131,6 +131,6 @@ class MotionControlComponent:
                 self._joint_cmd_ = list(positions)
 
             logger.info(f"✓ Joint command set: {[f'{math.degrees(p):.2f}°' for p in positions]}")
-            return (0, f"Joint command updated")
+            return (0, "Joint command updated")
         except Exception as e:
             return (-1, str(e))
