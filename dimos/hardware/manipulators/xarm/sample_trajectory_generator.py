@@ -39,14 +39,13 @@ Usage:
     traj_gen.start()
 """
 
-import time
-import threading
-import math
-from typing import List, Optional
 from dataclasses import dataclass
+import math
+import threading
+import time
 
-from dimos.core import Module, ModuleConfig, In, Out, rpc
-from dimos.msgs.sensor_msgs import JointState, RobotState, JointCommand
+from dimos.core import In, Module, ModuleConfig, Out, rpc
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
@@ -85,18 +84,18 @@ class SampleTrajectoryGenerator(Module):
     joint_position_command: Out[JointCommand] = None  # Position commands (radians)
     joint_velocity_command: Out[JointCommand] = None  # Velocity commands (rad/s)
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
         # State tracking
-        self._current_joint_state: Optional[JointState] = None
-        self._current_robot_state: Optional[RobotState] = None
+        self._current_joint_state: JointState | None = None
+        self._current_robot_state: RobotState | None = None
         self._state_lock = threading.Lock()
 
         # Control thread
         self._running = False
         self._stop_event = threading.Event()
-        self._control_thread: Optional[threading.Thread] = None
+        self._control_thread: threading.Thread | None = None
 
         # Publishing enabled flag
         self._publishing_enabled = self.config.enable_on_start
@@ -121,7 +120,7 @@ class SampleTrajectoryGenerator(Module):
         )
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the trajectory generator."""
         super().start()
 
@@ -144,7 +143,7 @@ class SampleTrajectoryGenerator(Module):
         logger.info("Trajectory generator started")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the trajectory generator."""
         logger.info("Stopping trajectory generator...")
 
@@ -159,19 +158,19 @@ class SampleTrajectoryGenerator(Module):
         logger.info("Trajectory generator stopped")
 
     @rpc
-    def enable_publishing(self):
+    def enable_publishing(self) -> None:
         """Enable command publishing."""
         self._publishing_enabled = True
         logger.info("Command publishing enabled")
 
     @rpc
-    def disable_publishing(self):
+    def disable_publishing(self) -> None:
         """Disable command publishing."""
         self._publishing_enabled = False
         logger.info("Command publishing disabled")
 
     @rpc
-    def set_velocity_mode(self, enabled: bool):
+    def set_velocity_mode(self, enabled: bool) -> None:
         """
         Set velocity mode flag.
 
@@ -313,7 +312,7 @@ class SampleTrajectoryGenerator(Module):
     # Private Methods: Callbacks
     # =========================================================================
 
-    def _on_joint_state(self, msg: JointState):
+    def _on_joint_state(self, msg: JointState) -> None:
         """Callback for receiving joint state updates."""
         with self._state_lock:
             # Log first message with all joints
@@ -329,7 +328,7 @@ class SampleTrajectoryGenerator(Module):
                 )
             self._current_joint_state = msg
 
-    def _on_robot_state(self, msg: RobotState):
+    def _on_robot_state(self, msg: RobotState) -> None:
         """Callback for receiving robot state updates."""
         with self._state_lock:
             # Log first message or when state/error changes
@@ -360,7 +359,7 @@ class SampleTrajectoryGenerator(Module):
     # Private Methods: Control Loop
     # =========================================================================
 
-    def _start_control_loop(self):
+    def _start_control_loop(self) -> None:
         """Start the control loop thread."""
         logger.info(f"Starting control loop at {self.config.publish_rate}Hz")
 
@@ -372,7 +371,7 @@ class SampleTrajectoryGenerator(Module):
         )
         self._control_thread.start()
 
-    def _control_loop(self):
+    def _control_loop(self) -> None:
         """
         Control loop for publishing commands.
 
@@ -436,7 +435,7 @@ class SampleTrajectoryGenerator(Module):
 
         logger.info("Control loop stopped")
 
-    def _generate_command(self) -> Optional[List[float]]:
+    def _generate_command(self) -> list[float] | None:
         """
         Generate command for the robot.
 
@@ -514,7 +513,7 @@ class SampleTrajectoryGenerator(Module):
                 # Position mode with no trajectory: hold current position (safe)
                 return list(self._current_joint_state.position)
 
-    def _publish_position_command(self, command: List[float]):
+    def _publish_position_command(self, command: list[float]) -> None:
         """Publish joint position command."""
         if self.joint_position_command._transport or (
             hasattr(self.joint_position_command, "connection")
@@ -539,7 +538,7 @@ class SampleTrajectoryGenerator(Module):
             if self._command_count == 0:
                 logger.warning("joint_position_command transport not configured!")
 
-    def _publish_velocity_command(self, command: List[float]):
+    def _publish_velocity_command(self, command: list[float]) -> None:
         """Publish joint velocity command."""
         if self.joint_velocity_command._transport or (
             hasattr(self.joint_velocity_command, "connection")
