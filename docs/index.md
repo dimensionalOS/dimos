@@ -22,13 +22,13 @@ The result: cross-embodied *"Dimensional Applications"* exceptional at generaliz
 
     [:octicons-arrow-right-24: Get started](quickstart/index.md)
 
-<!-- - :material-school: **Tutorials**
+- :material-school: **Tutorials**
 
     ---
 
-    Learn how to build dimensional applications with step-by-step tutorials covering agents, skills, and robot control.
+    [TODO: Add blurb]
 
-    [:octicons-arrow-right-24: View tutorials](tutorials/index.md) -->
+    [:octicons-arrow-right-24: View tutorials](tutorials/index.md)
 
 - :material-code-braces: **API Reference**
 
