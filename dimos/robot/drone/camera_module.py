@@ -17,19 +17,17 @@
 
 """Camera module for drone with depth estimation."""
 
-import time
 import threading
-from typing import List, Optional
+import time
 
-import numpy as np
+from dimos_lcm.sensor_msgs import CameraInfo
 
-from dimos.core import Module, In, Out, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.std_msgs import Header
-from dimos.utils.logging_config import setup_logger
 from dimos.perception.common.utils import colorize_depth
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -61,13 +59,13 @@ class DroneCameraModule(Module):
 
     def __init__(
         self,
-        camera_intrinsics: List[float],
+        camera_intrinsics: list[float],
         world_frame_id: str = "world",
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
         gt_depth_scale: float = 2.0,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize drone camera module.
 
         Args:
@@ -99,7 +97,7 @@ class DroneCameraModule(Module):
         logger.info(f"DroneCameraModule initialized with intrinsics: {camera_intrinsics}")
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Start the camera module."""
         if self._running:
             logger.warning("Camera module already running")
@@ -114,7 +112,7 @@ class DroneCameraModule(Module):
         logger.info("Camera module started")
         return True
 
-    def _on_video_frame(self, frame: Image):
+    def _on_video_frame(self, frame: Image) -> None:
         """Handle incoming video frame."""
         if not self._running:
             return
@@ -125,7 +123,7 @@ class DroneCameraModule(Module):
         # Store for depth processing
         self._latest_frame = frame
 
-    def _processing_loop(self):
+    def _processing_loop(self) -> None:
         """Process depth estimation in background."""
         # Initialize Metric3D in the background thread
         if self.metric3d is None:
@@ -208,7 +206,7 @@ class DroneCameraModule(Module):
 
         logger.info("Depth processing loop stopped")
 
-    def _publish_camera_info(self, header: Header, shape):
+    def _publish_camera_info(self, header: Header, shape) -> None:
         """Publish camera calibration info."""
         try:
             fx, fy, cx, cy = self.camera_intrinsics
@@ -245,7 +243,7 @@ class DroneCameraModule(Module):
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
 
-    def _publish_camera_pose(self, header: Header):
+    def _publish_camera_pose(self, header: Header) -> None:
         """Publish camera pose from TF."""
         try:
             transform = self.tf.get(
@@ -268,7 +266,7 @@ class DroneCameraModule(Module):
             logger.error(f"Error publishing camera pose: {e}")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the camera module."""
         if not self._running:
             return
@@ -287,6 +285,6 @@ class DroneCameraModule(Module):
         logger.info("Camera module stopped")
 
     @rpc
-    def get_camera_intrinsics(self) -> List[float]:
+    def get_camera_intrinsics(self) -> list[float]:
         """Get camera intrinsics."""
         return self.camera_intrinsics

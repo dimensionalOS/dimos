@@ -15,21 +15,23 @@
 
 """DimOS module wrapper for drone connection."""
 
+from collections.abc import Generator
+import json
 import threading
 import time
-import json
-from typing import Any, Generator, Optional
+from typing import Any
+
+from dimos_lcm.std_msgs import String
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3, Quaternion, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.std_msgs import String
-from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output, Reducer, Stream
-from dimos.utils.logging_config import setup_logger
+from dimos.protocol.skill.type import Output
 from dimos.robot.drone.dji_video_stream import DJIDroneVideoStream
+from dimos.robot.drone.mavlink_connection import MavlinkConnection
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -55,11 +57,11 @@ class DroneConnectionModule(Module):
     connection_string: str
 
     # Internal state
-    _odom: Optional[PoseStamped] = None
+    _odom: PoseStamped | None = None
     _status: dict = {}
-    _latest_video_frame: Optional[Image] = None
-    _latest_telemetry: Optional[dict[str, Any]] = None
-    _latest_status: Optional[dict[str, Any]] = None
+    _latest_video_frame: Image | None = None
+    _latest_telemetry: dict[str, Any] | None = None
+    _latest_status: dict[str, Any] | None = None
     _latest_status_lock: threading.RLock
 
     def __init__(
@@ -69,7 +71,7 @@ class DroneConnectionModule(Module):
         outdoor: bool = False,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize drone connection module.
 
         Args:
@@ -89,12 +91,12 @@ class DroneConnectionModule(Module):
         Module.__init__(self, *args, **kwargs)
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Start the connection and subscribe to sensor streams."""
         # Check for replay mode
         if self.connection_string == "replay":
-            from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection
             from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
+            from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection
 
             self.connection = FakeMavlinkConnection("replay")
             self.video_stream = FakeDJIVideoStream(port=self.video_port)
@@ -148,12 +150,12 @@ class DroneConnectionModule(Module):
         logger.info("Drone connection module started")
         return True
 
-    def _store_and_publish_frame(self, frame: Image):
+    def _store_and_publish_frame(self, frame: Image) -> None:
         """Store the latest video frame and publish it."""
         self._latest_video_frame = frame
         self.video.publish(frame)
 
-    def _publish_tf(self, msg: PoseStamped):
+    def _publish_tf(self, msg: PoseStamped) -> None:
         """Publish odometry and TF transforms."""
         self._odom = msg
 
@@ -180,14 +182,14 @@ class DroneConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
-    def _publish_status(self, status: dict):
+    def _publish_status(self, status: dict) -> None:
         """Publish drone status as JSON string."""
         self._status = status
 
         status_str = String(json.dumps(status))
         self.status.publish(status_str)
 
-    def _publish_telemetry(self, telemetry: dict):
+    def _publish_telemetry(self, telemetry: dict) -> None:
         """Publish full telemetry as JSON string."""
         telemetry_str = String(json.dumps(telemetry))
         self.telemetry.publish(telemetry_str)
@@ -197,7 +199,7 @@ class DroneConnectionModule(Module):
             tel = telemetry["GLOBAL_POSITION_INT"]
             self.gps_location.publish(LatLon(lat=tel["lat"], lon=tel["lon"]))
 
-    def _telemetry_loop(self):
+    def _telemetry_loop(self) -> None:
         """Continuously update telemetry at 30Hz."""
         frame_count = 0
         while self._running:
@@ -225,7 +227,7 @@ class DroneConnectionModule(Module):
                 time.sleep(0.1)
 
     @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
+    def get_odom(self) -> PoseStamped | None:
         """Get current odometry.
 
         Returns:
@@ -243,7 +245,7 @@ class DroneConnectionModule(Module):
         return self._status.copy()
 
     @skill()
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, vector: Vector3, duration: float = 0.0) -> None:
         """Send movement command to drone.
 
         Args:
@@ -402,7 +404,7 @@ class DroneConnectionModule(Module):
         else:
             yield f"Stopped tracking '{object_description}'"
 
-    def _on_move_twist(self, msg: Twist):
+    def _on_move_twist(self, msg: Twist) -> None:
         """Handle Twist movement commands from tracking/navigation.
 
         Args:
@@ -421,7 +423,7 @@ class DroneConnectionModule(Module):
             self._latest_status = json.loads(status.data)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the module."""
         self._running = False
         if self.video_stream:
@@ -431,7 +433,7 @@ class DroneConnectionModule(Module):
         logger.info("Drone connection module stopped")
 
     @skill(output=Output.image)
-    def observe(self) -> Optional[Image]:
+    def observe(self) -> Image | None:
         """Returns the latest video frame from the drone camera. Use this skill for any visual world queries.
 
         This skill provides the current camera view for perception tasks.

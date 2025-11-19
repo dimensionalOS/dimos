@@ -18,33 +18,31 @@
 """Main Drone robot class for DimOS."""
 
 import functools
+import logging
 import os
 import time
-import logging
-from typing import Optional
 
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import String
 from reactivex import Observable
 
 from dimos import core
+from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.agents2.skills.osm import OsmSkillContainer
 from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Twist
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos_lcm.std_msgs import String
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.protocol import pubsub
-from dimos_lcm.std_msgs import Bool
+from dimos.robot.drone.camera_module import DroneCameraModule
+from dimos.robot.drone.connection_module import DroneConnectionModule
+from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 
 # LCM not needed in orchestrator - modules handle communication
 from dimos.robot.robot import Robot
-from dimos.robot.drone.connection_module import DroneConnectionModule
-from dimos.robot.drone.camera_module import DroneCameraModule
-from dimos.robot.drone.drone_tracking_module import DroneTrackingModule
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
-from dimos.agents2.skills.osm import OsmSkillContainer
 
 logger = setup_logger(__name__)
 
@@ -56,10 +54,10 @@ class Drone(Robot):
         self,
         connection_string: str = "udp:0.0.0.0:14550",
         video_port: int = 5600,
-        camera_intrinsics: Optional[list] = None,
-        output_dir: str = None,
+        camera_intrinsics: list | None = None,
+        output_dir: str | None = None,
         outdoor: bool = False,
-    ):
+    ) -> None:
         """Initialize drone robot.
 
         Args:
@@ -95,12 +93,12 @@ class Drone(Robot):
 
         self._setup_directories()
 
-    def _setup_directories(self):
+    def _setup_directories(self) -> None:
         """Setup output directories."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Drone outputs will be saved to: {self.output_dir}")
 
-    def start(self):
+    def start(self) -> None:
         """Start the drone system with all modules."""
         logger.info("Starting Drone robot system...")
 
@@ -120,7 +118,7 @@ class Drone(Robot):
         logger.info("Drone system initialized and started")
         logger.info("Foxglove visualization available at http://localhost:8765")
 
-    def _deploy_connection(self):
+    def _deploy_connection(self) -> None:
         """Deploy and configure connection module."""
         logger.info("Deploying connection module...")
 
@@ -148,7 +146,7 @@ class Drone(Robot):
 
         logger.info("Connection module deployed")
 
-    def _deploy_camera(self):
+    def _deploy_camera(self) -> None:
         """Deploy and configure camera module."""
         logger.info("Deploying camera module...")
 
@@ -166,7 +164,7 @@ class Drone(Robot):
 
         logger.info("Camera module deployed")
 
-    def _deploy_tracking(self):
+    def _deploy_tracking(self) -> None:
         """Deploy and configure tracking module."""
         logger.info("Deploying tracking module...")
 
@@ -192,7 +190,7 @@ class Drone(Robot):
 
         logger.info("Tracking module deployed")
 
-    def _deploy_visualization(self):
+    def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
         self.websocket_vis = self.dimos.deploy(WebsocketVisModule)
         # self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
@@ -208,10 +206,10 @@ class Drone(Robot):
 
         self.foxglove_bridge = FoxgloveBridge()
 
-    def _deploy_navigation(self):
+    def _deploy_navigation(self) -> None:
         self.websocket_vis.gps_goal.connect(self.connection.gps_goal)
 
-    def _start_modules(self):
+    def _start_modules(self) -> None:
         """Start all deployed modules."""
         logger.info("Starting modules...")
 
@@ -240,7 +238,7 @@ class Drone(Robot):
 
     # Robot control methods
 
-    def get_odom(self) -> Optional[PoseStamped]:
+    def get_odom(self) -> PoseStamped | None:
         """Get current odometry.
 
         Returns:
@@ -260,7 +258,7 @@ class Drone(Robot):
         """
         return self.connection.get_status()
 
-    def move(self, vector: Vector3, duration: float = 0.0):
+    def move(self, vector: Vector3, duration: float = 0.0) -> None:
         """Send movement command.
 
         Args:
@@ -328,7 +326,7 @@ class Drone(Robot):
         """
         return self.connection.fly_to(lat, lon, alt)
 
-    def get_single_rgb_frame(self, timeout: float = 2.0) -> Optional[Image]:
+    def get_single_rgb_frame(self, timeout: float = 2.0) -> Image | None:
         """Get a single RGB frame from camera.
 
         Args:
@@ -341,7 +339,7 @@ class Drone(Robot):
             return self.connection.get_single_frame()
         return None
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop the drone system."""
         logger.info("Stopping drone system...")
 
@@ -360,7 +358,7 @@ class Drone(Robot):
         logger.info("Drone system stopped")
 
 
-def main():
+def main() -> None:
     """Main entry point for drone system."""
     import argparse
 
@@ -418,8 +416,8 @@ def main():
     print("  • /drone/tracking_status - Tracking status (String/JSON)")
 
     from dimos.agents2 import Agent
-    from dimos.agents2.spec import Model, Provider
     from dimos.agents2.cli.human import HumanInput
+    from dimos.agents2.spec import Model, Provider
 
     human_input = drone.dimos.deploy(HumanInput)
 
@@ -427,7 +425,7 @@ def main():
         system_prompt="""You are controlling a DJI drone with MAVLink interface.
         You have access to drone control skills you are already flying so only run move_twist, set_mode, and fly_to.
         When the user gives commands, use the appropriate skills to control the drone.
-        Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe. 
+        Always confirm actions and report results. Send fly_to commands only at above 200 meters altitude to be safe.
         Here are some GPS locations to remember
         6th and Natoma intersection: 37.78019978319006, -122.40770815020853,
         454 Natoma (Office): 37.780967465525244, -122.40688342010769

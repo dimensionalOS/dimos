@@ -20,7 +20,7 @@ from dimos.utils.simple_controller import PIDController
 class DroneVisualServoingController:
     """Minimal visual servoing for downward-facing drone camera using velocity-only control."""
 
-    def __init__(self, x_pid_params, y_pid_params, z_pid_params=None):
+    def __init__(self, x_pid_params, y_pid_params, z_pid_params=None) -> None:
         """
         Initialize drone visual servoing controller.
 
@@ -37,12 +37,12 @@ class DroneVisualServoingController:
         self,
         target_x,
         target_y,  # Target position in image (pixels or normalized)
-        center_x=0.0,
-        center_y=0.0,  # Desired position (usually image center)
+        center_x: float = 0.0,
+        center_y: float = 0.0,  # Desired position (usually image center)
         target_z=None,
         desired_z=None,  # Optional altitude control
-        dt=0.1,
-        lock_altitude=True,
+        dt: float = 0.1,
+        lock_altitude: bool = True,
     ):
         """
         Compute velocity commands to center target in camera view.
@@ -82,7 +82,7 @@ class DroneVisualServoingController:
 
         return vx, vy, vz
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset all PID controllers."""
         self.x_pid.integral = 0.0
         self.x_pid.prev_error = 0.0

@@ -244,7 +244,7 @@ class WebsocketVisModule(Module):
             self.stop_explore_cmd.publish(Bool(data=True))
 
         @self.sio.event
-        async def clear_gps_goals(sid):
+        async def clear_gps_goals(sid) -> None:
             logger.info("Clearing all GPS goal points")
             self.gps_goal_points.clear()
             await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)

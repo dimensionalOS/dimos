@@ -15,22 +15,21 @@
 
 """Drone tracking module with visual servoing for object following."""
 
-import time
-import threading
-import cv2
-import numpy as np
-from typing import Optional, Tuple, Dict, Any
 import json
+import threading
+import time
+from typing import Any
 
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.geometry_msgs import Twist, Vector3
+import cv2
 from dimos_lcm.std_msgs import String
+import numpy as np
+
+from dimos.core import In, Module, Out, rpc
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
-from dimos.protocol.skill import skill
+from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.robot.drone.drone_visual_servoing_controller import DroneVisualServoingController
 from dimos.utils.logging_config import setup_logger
-from dimos.protocol.skill.skill import SkillContainer, skill
 
 logger = setup_logger(__name__)
 
@@ -51,8 +50,8 @@ class DroneTrackingModule(Module):
         self,
         x_pid_params: tuple = (0.001, 0.0, 0.0001, (-1.0, 1.0), None, 30),
         y_pid_params: tuple = (0.001, 0.0, 0.0001, (-1.0, 1.0), None, 30),
-        z_pid_params: tuple = None,
-    ):
+        z_pid_params: tuple | None = None,
+    ) -> None:
         """Initialize the drone tracking module.
 
         Args:
@@ -76,7 +75,7 @@ class DroneTrackingModule(Module):
         # Subscribe to video input when transport is set
         # (will be done by connection module)
 
-    def _on_new_frame(self, frame: Image):
+    def _on_new_frame(self, frame: Image) -> None:
         """Handle new video frame."""
         with self._frame_lock:
             self._latest_frame = frame
@@ -85,7 +84,7 @@ class DroneTrackingModule(Module):
         msg = json.loads(cmd.data)
         self.track_object(msg["object_description"], msg["duration"])
 
-    def _get_latest_frame(self) -> Optional[np.ndarray]:
+    def _get_latest_frame(self) -> np.ndarray | None:
         """Get the latest video frame as numpy array."""
         with self._frame_lock:
             if self._latest_frame is None:
@@ -94,7 +93,7 @@ class DroneTrackingModule(Module):
             return self._latest_frame.data
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Start the tracking module and subscribe to video input."""
         if self.video_input.transport:
             self.video_input.subscribe(self._on_new_frame)
@@ -108,7 +107,7 @@ class DroneTrackingModule(Module):
         return True
 
     @rpc
-    def track_object(self, object_name: str = None, duration: float = 120.0) -> str:
+    def track_object(self, object_name: str | None = None, duration: float = 120.0) -> str:
         """Track and follow an object using visual servoing.
 
         Args:
@@ -179,9 +178,9 @@ class DroneTrackingModule(Module):
         except Exception as e:
             logger.error(f"Tracking error: {e}")
             self._stop_tracking()
-            return f"Tracking failed: {str(e)}"
+            return f"Tracking failed: {e!s}"
 
-    def _visual_servoing_loop(self, tracker, duration: float):
+    def _visual_servoing_loop(self, tracker, duration: float) -> None:
         """Main visual servoing control loop.
 
         Args:
@@ -286,7 +285,7 @@ class DroneTrackingModule(Module):
             logger.info(f"Visual servoing loop ended after {frame_count} frames")
 
     def _draw_tracking_overlay(
-        self, frame: np.ndarray, bbox: Tuple[int, int, int, int], center: Tuple[int, int]
+        self, frame: np.ndarray, bbox: tuple[int, int, int, int], center: tuple[int, int]
     ) -> np.ndarray:
         """Draw tracking visualization overlay.
 
@@ -329,7 +328,7 @@ class DroneTrackingModule(Module):
 
         return overlay
 
-    def _publish_status(self, status: Dict[str, Any]):
+    def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish tracking status as JSON.
 
         Args:
@@ -339,7 +338,7 @@ class DroneTrackingModule(Module):
             status_msg = String(json.dumps(status))
             self.tracking_status.publish(status_msg)
 
-    def _stop_tracking(self):
+    def _stop_tracking(self) -> None:
         """Stop tracking and clean up."""
         self._tracking_active = False
         if self._tracking_thread and self._tracking_thread.is_alive():
@@ -358,13 +357,13 @@ class DroneTrackingModule(Module):
         logger.info("Tracking stopped")
 
     @rpc
-    def stop_tracking(self):
+    def stop_tracking(self) -> str:
         """Stop current tracking operation."""
         self._stop_tracking()
         return "Tracking stopped"
 
     @rpc
-    def get_status(self) -> Dict[str, Any]:
+    def get_status(self) -> dict[str, Any]:
         """Get current tracking status.
 
         Returns:
