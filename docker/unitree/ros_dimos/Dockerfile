@@ -99,7 +99,7 @@ COPY requirements.txt /app/
 WORKDIR /app
 
 # Install dimos requirements
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Set PYTHONPATH permanently
 ENV PYTHONPATH=/app:${PYTHONPATH}

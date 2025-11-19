@@ -1,6 +1,6 @@
-from vector_perception.detection2d.yolo_2d_det import Yolo2DDetector
-from vector_perception.detection2d.utils import filter_detections
-from vector_perception.common.ibvs import PersonDistanceEstimator
+from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
+from dimos.perception.detection2d.utils import filter_detections
+from dimos.perception.common.ibvs import PersonDistanceEstimator
 from reactivex import Observable
 from reactivex import operators as ops
 import numpy as np

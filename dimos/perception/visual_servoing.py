@@ -48,7 +48,7 @@ class VisualServoing:
     appropriate velocity commands to track the target.
     """
     
-    def __init__(self, tracking_stream=None, max_linear_speed=0.5, max_angular_speed=1.5,
+    def __init__(self, tracking_stream=None, max_linear_speed=0.8, max_angular_speed=1.5,
                  desired_distance=1.5, max_lost_frames=10000, iou_threshold=0.6):
         """Initialize the visual servoing.
         
@@ -70,7 +70,7 @@ class VisualServoing:
         # Initialize the controller with PID parameters tuned for slow-moving robot
         # Distance PID: (kp, ki, kd, output_limits, integral_limit, deadband, output_deadband)
         distance_pid_params = (
-            0.8,    # kp: Moderate proportional gain for smooth approach
+            1.0,    # kp: Moderate proportional gain for smooth approach
             0.2,    # ki: Small integral gain to eliminate steady-state error
             0.1,    # kd: Some damping for smooth motion
             (-self.max_linear_speed, self.max_linear_speed),  # output_limits
@@ -81,7 +81,7 @@ class VisualServoing:
         
         # Angle PID: (kp, ki, kd, output_limits, integral_limit, deadband, output_deadband)
         angle_pid_params = (
-            1.2,    # kp: Higher proportional gain for responsive turning
+            1.4,    # kp: Higher proportional gain for responsive turning
             0.1,    # ki: Small integral gain
             0.05,   # kd: Light damping to prevent oscillation
             (-self.max_angular_speed, self.max_angular_speed),  # output_limits
@@ -102,6 +102,10 @@ class VisualServoing:
         self.running = False
         self.current_target = None  # (target_id, bbox)
         self.target_lost_frames = 0
+        
+        # Add variables to track current distance and angle
+        self.current_distance = None
+        self.current_angle = None
         
         # Stream subscription management
         self.subscription = None
@@ -225,6 +229,8 @@ class VisualServoing:
         """
         if not self.running or self.current_target is None:
             self.running = False
+            self.current_distance = None
+            self.current_angle = None
             return {"linear_vel": 0.0, "angular_vel": 0.0}
         
         # Get the latest tracking result
@@ -245,10 +251,12 @@ class VisualServoing:
                 self.target_lost_frames = 0
                 target_found = True
                 
+                # Store current distance and angle
+                self.current_distance = target.get("distance")
+                self.current_angle = target.get("angle")
+                
                 # Compute control
-                distance = target.get("distance")
-                angle = target.get("angle")
-                control = self._compute_control(distance, angle)
+                control = self._compute_control(self.current_distance, self.current_angle)
                 return control
         
         # If not found by ID, try to find by IOU
@@ -262,10 +270,12 @@ class VisualServoing:
                 self.target_lost_frames = 0
                 logger.info(f"Target ID updated: {current_target_id} -> {new_id}")
                 
+                # Store current distance and angle
+                self.current_distance = best_target.get("distance")
+                self.current_angle = best_target.get("angle")
+                
                 # Compute control
-                distance = best_target.get("distance")
-                angle = best_target.get("angle")
-                control = self._compute_control(distance, angle)
+                control = self._compute_control(self.current_distance, self.current_angle)
                 return control
         
         # Target not found, increment lost counter
@@ -437,11 +447,43 @@ class VisualServoing:
         self.running = False
         self.current_target = None
         self.target_lost_frames = 0
+        self.current_distance = None
+        self.current_angle = None
         return {"linear_vel": 0.0, "angular_vel": 0.0, "running": False}
     
+    def is_goal_reached(self, distance_threshold=0.2, angle_threshold=0.1) -> bool:
+        """
+        Check if the robot has reached the tracking goal (desired distance and angle).
+        
+        Args:
+            distance_threshold: Maximum allowed difference between current and desired distance (meters)
+            angle_threshold: Maximum allowed difference between current and desired angle (radians)
+            
+        Returns:
+            bool: True if both distance and angle are within threshold of desired values
+        """
+        if not self.running or self.current_target is None:
+            return False
+        
+        # Use the stored distance and angle values
+        if self.current_distance is None or self.current_angle is None:
+            return False
+        
+        # Check if within thresholds
+        distance_error = abs(self.current_distance - self.desired_distance)
+        angle_error = abs(self.current_angle)  # Desired angle is always 0 (centered)
+        
+        logger.debug(f"Goal check - Distance error: {distance_error:.2f}m, Angle error: {angle_error:.2f}rad")
+        
+        return (distance_error <= distance_threshold) and (angle_error <= angle_threshold)
+
     def cleanup(self):
         """Clean up all resources used by the visual servoing."""
         self.stop_event.set()
         if self.subscription:
             self.subscription.dispose()
             self.subscription = None
+
+    def __del__(self):
+        """Destructor to ensure cleanup on object deletion."""
+        self.cleanup()

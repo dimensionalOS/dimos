@@ -1,10 +1,8 @@
 import os
 import time
 import sys
-from reactivex import Subject, operators as RxOps
-
-# Add the parent directory to the Python path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from reactivex import operators as RxOps
+import tests.test_header
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
@@ -24,9 +22,8 @@ def main():
     # Initialize the robot with ROS control and skills
     robot = UnitreeGo2(
         ip=os.getenv('ROBOT_IP'),
-        ros_control=UnitreeROSControl(use_raw=False, use_compressed=True),
+        ros_control=UnitreeROSControl(),
         skills=MyUnitreeSkills(),
-        enable_visual_servoing=True,
     )
 
     tracking_stream = robot.person_tracking_stream
@@ -52,13 +49,27 @@ def main():
         
         # Wait for camera and tracking to initialize
         print("Waiting for camera and tracking to initialize...")
-        time.sleep(2)
         time.sleep(5)
         # Get initial point from Qwen
-        qwen_point = eval(query_single_frame(
-            video_stream,
-            "Look at this frame and point to the person in the gray jacket. Return ONLY their center coordinates as a tuple (x,y)."
-        ).pipe(RxOps.take(1)).run())  # Get first response and convert string tuple to actual tuple
+
+        max_retries = 5
+        delay = 3  
+        
+        for attempt in range(max_retries):
+            try:
+                qwen_point = eval(query_single_frame(
+                    video_stream,
+                    "Look at this frame and point to the person shirt. Return ONLY their center coordinates as a tuple (x,y)."
+                ).pipe(RxOps.take(1)).run())  # Get first response and convert string tuple to actual tuple
+                logger.info(f"Found person at coordinates {qwen_point}")
+                break  # If successful, break out of retry loop
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    logger.error(f"Person not found. Attempt {attempt + 1}/{max_retries} failed. Retrying in {delay}s... Error: {e}")
+                    time.sleep(delay)
+                else:
+                    logger.error(f"Person not found after {max_retries} attempts. Last error: {e}")
+                    return
         
         # Start following human in a separate thread
         import threading
