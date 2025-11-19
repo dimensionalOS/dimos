@@ -20,7 +20,6 @@ Provides RPC methods for kinematic calculations including:
 - Inverse kinematics
 """
 
-from typing import List, Tuple, Optional
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -37,7 +36,7 @@ class KinematicsComponent:
     """
 
     @rpc
-    def get_inverse_kinematics(self, pose: List[float]) -> Tuple[int, Optional[List[float]]]:
+    def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]:
         """
         Compute inverse kinematics.
 
@@ -52,11 +51,11 @@ class KinematicsComponent:
                 pose, input_is_radian=self.config.is_radian, return_is_radian=self.config.is_radian
             )
             return (code, list(angles) if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_forward_kinematics(self, angles: List[float]) -> Tuple[int, Optional[List[float]]]:
+    def get_forward_kinematics(self, angles: list[float]) -> tuple[int, list[float] | None]:
         """
         Compute forward kinematics.
 
@@ -73,5 +72,5 @@ class KinematicsComponent:
                 return_is_radian=self.config.is_radian,
             )
             return (code, list(pose) if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)

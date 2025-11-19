@@ -22,7 +22,6 @@ Provides RPC methods for controlling various grippers:
 - Robotiq gripper
 """
 
-from typing import Tuple, Optional
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -43,7 +42,7 @@ class GripperControlComponent:
     # =========================================================================
 
     @rpc
-    def set_gripper_enable(self, enable: int) -> Tuple[int, str]:
+    def set_gripper_enable(self, enable: int) -> tuple[int, str]:
         """Enable/disable gripper."""
         try:
             code = self.arm.set_gripper_enable(enable)
@@ -57,7 +56,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_gripper_mode(self, mode: int) -> Tuple[int, str]:
+    def set_gripper_mode(self, mode: int) -> tuple[int, str]:
         """Set gripper mode (0=location mode, 1=speed mode, 2=current mode)."""
         try:
             code = self.arm.set_gripper_mode(mode)
@@ -66,7 +65,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_gripper_speed(self, speed: float) -> Tuple[int, str]:
+    def set_gripper_speed(self, speed: float) -> tuple[int, str]:
         """Set gripper speed (r/min)."""
         try:
             code = self.arm.set_gripper_speed(speed)
@@ -79,9 +78,9 @@ class GripperControlComponent:
         self,
         position: float,
         wait: bool = False,
-        speed: Optional[float] = None,
-        timeout: Optional[float] = None,
-    ) -> Tuple[int, str]:
+        speed: float | None = None,
+        timeout: float | None = None,
+    ) -> tuple[int, str]:
         """
         Set gripper position.
 
@@ -101,25 +100,25 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def get_gripper_position(self) -> Tuple[int, Optional[float]]:
+    def get_gripper_position(self) -> tuple[int, float | None]:
         """Get current gripper position."""
         try:
             code, position = self.arm.get_gripper_position()
             return (code, position if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_gripper_err_code(self) -> Tuple[int, Optional[int]]:
+    def get_gripper_err_code(self) -> tuple[int, int | None]:
         """Get gripper error code."""
         try:
             code, err = self.arm.get_gripper_err_code()
             return (code, err if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def clean_gripper_error(self) -> Tuple[int, str]:
+    def clean_gripper_error(self) -> tuple[int, str]:
         """Clear gripper error."""
         try:
             code = self.arm.clean_gripper_error()
@@ -132,7 +131,7 @@ class GripperControlComponent:
     # =========================================================================
 
     @rpc
-    def set_bio_gripper_enable(self, enable: int, wait: bool = True) -> Tuple[int, str]:
+    def set_bio_gripper_enable(self, enable: int, wait: bool = True) -> tuple[int, str]:
         """Enable/disable bio gripper."""
         try:
             code = self.arm.set_bio_gripper_enable(enable, wait=wait)
@@ -146,7 +145,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def set_bio_gripper_speed(self, speed: int) -> Tuple[int, str]:
+    def set_bio_gripper_speed(self, speed: int) -> tuple[int, str]:
         """Set bio gripper speed (1-100)."""
         try:
             code = self.arm.set_bio_gripper_speed(speed)
@@ -160,7 +159,7 @@ class GripperControlComponent:
     @rpc
     def open_bio_gripper(
         self, speed: int = 0, wait: bool = True, timeout: float = 5
-    ) -> Tuple[int, str]:
+    ) -> tuple[int, str]:
         """Open bio gripper."""
         try:
             code = self.arm.open_bio_gripper(speed=speed, wait=wait, timeout=timeout)
@@ -171,7 +170,7 @@ class GripperControlComponent:
     @rpc
     def close_bio_gripper(
         self, speed: int = 0, wait: bool = True, timeout: float = 5
-    ) -> Tuple[int, str]:
+    ) -> tuple[int, str]:
         """Close bio gripper."""
         try:
             code = self.arm.close_bio_gripper(speed=speed, wait=wait, timeout=timeout)
@@ -180,25 +179,25 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def get_bio_gripper_status(self) -> Tuple[int, Optional[int]]:
+    def get_bio_gripper_status(self) -> tuple[int, int | None]:
         """Get bio gripper status."""
         try:
             code, status = self.arm.get_bio_gripper_status()
             return (code, status if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_bio_gripper_error(self) -> Tuple[int, Optional[int]]:
+    def get_bio_gripper_error(self) -> tuple[int, int | None]:
         """Get bio gripper error code."""
         try:
             code, error = self.arm.get_bio_gripper_error()
             return (code, error if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def clean_bio_gripper_error(self) -> Tuple[int, str]:
+    def clean_bio_gripper_error(self) -> tuple[int, str]:
         """Clear bio gripper error."""
         try:
             code = self.arm.clean_bio_gripper_error()
@@ -211,7 +210,7 @@ class GripperControlComponent:
     # =========================================================================
 
     @rpc
-    def set_vacuum_gripper(self, on: int) -> Tuple[int, str]:
+    def set_vacuum_gripper(self, on: int) -> tuple[int, str]:
         """Turn vacuum gripper on/off (0=off, 1=on)."""
         try:
             code = self.arm.set_vacuum_gripper(on)
@@ -223,12 +222,12 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def get_vacuum_gripper(self) -> Tuple[int, Optional[int]]:
+    def get_vacuum_gripper(self) -> tuple[int, int | None]:
         """Get vacuum gripper state."""
         try:
             code, state = self.arm.get_vacuum_gripper()
             return (code, state if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     # =========================================================================
@@ -236,7 +235,7 @@ class GripperControlComponent:
     # =========================================================================
 
     @rpc
-    def robotiq_reset(self) -> Tuple[int, str]:
+    def robotiq_reset(self) -> tuple[int, str]:
         """Reset Robotiq gripper."""
         try:
             code = self.arm.robotiq_reset()
@@ -245,7 +244,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def robotiq_set_activate(self, wait: bool = True, timeout: float = 3) -> Tuple[int, str]:
+    def robotiq_set_activate(self, wait: bool = True, timeout: float = 3) -> tuple[int, str]:
         """Activate Robotiq gripper."""
         try:
             code = self.arm.robotiq_set_activate(wait=wait, timeout=timeout)
@@ -261,7 +260,7 @@ class GripperControlComponent:
         force: int = 0xFF,
         wait: bool = True,
         timeout: float = 5,
-    ) -> Tuple[int, str]:
+    ) -> tuple[int, str]:
         """
         Set Robotiq gripper position.
 
@@ -286,7 +285,7 @@ class GripperControlComponent:
     @rpc
     def robotiq_open(
         self, speed: int = 0xFF, force: int = 0xFF, wait: bool = True, timeout: float = 5
-    ) -> Tuple[int, str]:
+    ) -> tuple[int, str]:
         """Open Robotiq gripper."""
         try:
             code = self.arm.robotiq_open(speed=speed, force=force, wait=wait, timeout=timeout)
@@ -297,7 +296,7 @@ class GripperControlComponent:
     @rpc
     def robotiq_close(
         self, speed: int = 0xFF, force: int = 0xFF, wait: bool = True, timeout: float = 5
-    ) -> Tuple[int, str]:
+    ) -> tuple[int, str]:
         """Close Robotiq gripper."""
         try:
             code = self.arm.robotiq_close(speed=speed, force=force, wait=wait, timeout=timeout)
@@ -306,7 +305,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def robotiq_get_status(self) -> Tuple[int, Optional[dict]]:
+    def robotiq_get_status(self) -> tuple[int, dict | None]:
         """Get Robotiq gripper status."""
         try:
             ret = self.arm.robotiq_get_status()
@@ -337,7 +336,7 @@ class GripperControlComponent:
     # =========================================================================
 
     @rpc
-    def open_lite6_gripper(self) -> Tuple[int, str]:
+    def open_lite6_gripper(self) -> tuple[int, str]:
         """Open Lite6 gripper."""
         try:
             code = self.arm.open_lite6_gripper()
@@ -346,7 +345,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def close_lite6_gripper(self) -> Tuple[int, str]:
+    def close_lite6_gripper(self) -> tuple[int, str]:
         """Close Lite6 gripper."""
         try:
             code = self.arm.close_lite6_gripper()
@@ -355,7 +354,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def stop_lite6_gripper(self) -> Tuple[int, str]:
+    def stop_lite6_gripper(self) -> tuple[int, str]:
         """Stop Lite6 gripper."""
         try:
             code = self.arm.stop_lite6_gripper()
