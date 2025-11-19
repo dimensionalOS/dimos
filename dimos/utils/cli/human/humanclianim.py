@@ -43,7 +43,7 @@ def import_cli_in_background() -> None:
         _import_complete.set()
 
 
-def get_effect_config(effect_name: str):  # type: ignore[no-untyped-def]
+def get_effect_config(effect_name: str):
     """Get hardcoded configuration for a specific effect"""
     # Hardcoded configs for each effect
     global_config = {
