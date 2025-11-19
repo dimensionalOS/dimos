@@ -127,7 +127,11 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_disconnect() -> None:
             try:
-                self.move(Twist())
+                # Send stop command directly since we're already in the event loop.
+                self.conn.datachannel.pub_sub.publish_without_callback(
+                    RTC_TOPIC["WIRELESS_CONTROLLER"],
+                    data={"lx": 0, "ly": 0, "rx": 0, "ry": 0},
+                )
                 await self.conn.disconnect()
             except Exception:
                 pass
