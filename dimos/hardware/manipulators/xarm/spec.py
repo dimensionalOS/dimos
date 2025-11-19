@@ -12,12 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Protocol, List, Tuple
+from typing import Protocol
 
 from dimos.core import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, WrenchStamped
-from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import JointState, RobotState, JointCommand
+from dimos.msgs.geometry_msgs import WrenchStamped
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 
 
 class ArmDriverSpec(Protocol):
@@ -37,14 +36,14 @@ class ArmDriverSpec(Protocol):
     ft_raw: Out[WrenchStamped]  # Raw force/torque sensor data
 
     # RPC Methods
-    def set_joint_angles(self, angles: List[float]) -> Tuple[int, str]: ...
+    def set_joint_angles(self, angles: list[float]) -> tuple[int, str]: ...
 
-    def set_joint_velocities(self, velocities: List[float]) -> Tuple[int, str]: ...
+    def set_joint_velocities(self, velocities: list[float]) -> tuple[int, str]: ...
 
     def get_joint_state(self) -> JointState: ...
 
     def get_robot_state(self) -> RobotState: ...
 
-    def enable_servo_mode(self) -> Tuple[int, str]: ...
+    def enable_servo_mode(self) -> tuple[int, str]: ...
 
-    def disable_servo_mode(self) -> Tuple[int, str]: ...
+    def disable_servo_mode(self) -> tuple[int, str]: ...
