@@ -22,6 +22,7 @@ import time
 from typing import Any
 
 from dimos_lcm.std_msgs import String
+from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
@@ -34,6 +35,13 @@ from dimos.robot.drone.mavlink_connection import MavlinkConnection
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
+
+
+def _add_disposable(composite, item):
+    if isinstance(item, Disposable):
+        composite.add(item)
+    elif callable(item):
+        composite.add(Disposable(item))
 
 
 class DroneConnectionModule(Module):
@@ -88,6 +96,8 @@ class DroneConnectionModule(Module):
         self._latest_telemetry = None
         self._latest_status = None
         self._latest_status_lock = threading.RLock()
+        self._running = False
+        self._telemetry_thread = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -114,8 +124,9 @@ class DroneConnectionModule(Module):
         if self.video_stream.start():
             logger.info("Video stream started")
             # Subscribe to video, store latest frame and publish it
-            self._video_subscription = self.video_stream.get_stream().subscribe(
-                self._store_and_publish_frame
+            _add_disposable(
+                self._disposables,
+                self.video_stream.get_stream().subscribe(self._store_and_publish_frame),
             )
             # # TEMPORARY - DELETE AFTER RECORDING
             # from dimos.utils.testing import TimedSensorStorage
@@ -126,19 +137,30 @@ class DroneConnectionModule(Module):
             logger.warning("Video stream failed to start")
 
         # Subscribe to drone streams
-        self.connection.odom_stream().subscribe(self._publish_tf)
-        self.connection.status_stream().subscribe(self._publish_status)
-        self.connection.telemetry_stream().subscribe(self._publish_telemetry)
+        _add_disposable(
+            self._disposables, self.connection.odom_stream().subscribe(self._publish_tf)
+        )
+        _add_disposable(
+            self._disposables, self.connection.status_stream().subscribe(self._publish_status)
+        )
+        _add_disposable(
+            self._disposables, self.connection.telemetry_stream().subscribe(self._publish_telemetry)
+        )
 
         # Subscribe to movement commands
-        self.movecmd.subscribe(self.move)
+        _add_disposable(self._disposables, self.movecmd.subscribe(self.move))
 
         # Subscribe to Twist movement commands
         if self.movecmd_twist.transport:
-            self.movecmd_twist.subscribe(self._on_move_twist)
+            _add_disposable(self._disposables, self.movecmd_twist.subscribe(self._on_move_twist))
 
-        self.gps_goal.subscribe(self._on_gps_goal)
-        self.tracking_status.subscribe(self._on_tracking_status)
+        if self.gps_goal.transport:
+            _add_disposable(self._disposables, self.gps_goal.subscribe(self._on_gps_goal))
+
+        if self.tracking_status.transport:
+            _add_disposable(
+                self._disposables, self.tracking_status.subscribe(self._on_tracking_status)
+            )
 
         # Start telemetry update thread
         import threading
@@ -425,12 +447,25 @@ class DroneConnectionModule(Module):
     @rpc
     def stop(self) -> None:
         """Stop the module."""
+        # Stop the telemetry loop
         self._running = False
+
+        # Wait for telemetry thread to finish
+        if self._telemetry_thread and self._telemetry_thread.is_alive():
+            self._telemetry_thread.join(timeout=2.0)
+
+        # Stop video stream
         if self.video_stream:
             self.video_stream.stop()
+
+        # Disconnect from drone
         if self.connection:
             self.connection.disconnect()
+
         logger.info("Drone connection module stopped")
+
+        # Call parent stop to clean up Module infrastructure (event loop, LCM, disposables, etc.)
+        super().stop()
 
     @skill(output=Output.image)
     def observe(self) -> Image | None:

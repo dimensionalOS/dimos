@@ -107,6 +107,11 @@ class DroneTrackingModule(Module):
         return True
 
     @rpc
+    def stop(self) -> None:
+        self._stop_tracking()
+        super().stop()
+
+    @rpc
     def track_object(self, object_name: str | None = None, duration: float = 120.0) -> str:
         """Track and follow an object using visual servoing.
 

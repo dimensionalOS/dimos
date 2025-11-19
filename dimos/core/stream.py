@@ -213,7 +213,7 @@ class In(Stream[T], ObservableMixin[T]):
 
     @property
     def transport(self) -> Transport[T]:
-        if not self._transport:
+        if not self._transport and self.connection:
             self._transport = self.connection.transport
         return self._transport
 
