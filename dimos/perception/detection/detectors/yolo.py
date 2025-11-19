@@ -16,58 +16,67 @@ from ultralytics import YOLO
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector
-from dimos.perception.detection.type import ImageDetections2D
+from dimos.perception.detection.type.detection2d import ImageDetections2D
 from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.detection.yolo_2d_det")
 
-
 class Yolo2DDetector(Detector):
     def __init__(
         self,
         model_path: str = "models_yolo",
-        model_name: str = "yolo11n.pt",
+        model_name: str = "yolo11n.pt",  # ⚠️ Check if this should be yolov8n.pt
         device: str | None = None,
     ) -> None:
         self.model = YOLO(
             get_data(model_path) / model_name,
             task="detect",
         )
-
-        if device:
-            self.device = device
-            return
-
-        if is_cuda_available():
-            self.device = "cuda"
-            logger.debug("Using CUDA for YOLO 2d detector")
-        else:
-            self.device = "cpu"
-            logger.debug("Using CPU for YOLO 2d detector")
-
+        
+        # CHANGE 1: Force CPU to avoid CUDA issues
+        self.device = "cpu"  # Force CPU for now
+        logger.info("FORCED CPU for YOLO 2d detector (CUDA compatibility issue)")
+        
+        # Comment out the old logic temporarily
+        # if device:
+        #     self.device = device
+        #     return
+        # if is_cuda_available():
+        #     self.device = "cuda"
+        #     logger.debug("Using CUDA for YOLO 2d detector")
+        # else:
+        #     self.device = "cpu"
+        #     logger.debug("Using CPU for YOLO 2d detector")
+    
     def process_image(self, image: Image) -> ImageDetections2D:
         """
         Process an image and return detection results.
-
         Args:
             image: Input image
-
         Returns:
             ImageDetections2D containing all detected objects
         """
+        # CHANGE 2: Lower confidence and add debugging
         results = self.model.track(
             source=image.to_opencv(),
             device=self.device,
-            conf=0.5,
+            conf=0.25,  # LOWERED from 0.5 to 0.25
             iou=0.6,
             persist=True,
-            verbose=False,
+            verbose=True,  # CHANGED to True for debugging
         )
-
+        
+        # CHANGE 3: Add debug logging
+        logger.info(f"YOLO detected {len(results)} frames")
+        if results and results[0].boxes is not None:
+            logger.info(f"Found {len(results[0].boxes)} objects in frame")
+        else:
+            logger.warning("No objects detected by YOLO")
+        
         return ImageDetections2D.from_ultralytics_result(image, results)
-
+    
     def stop(self) -> None:
         """
         Clean up resources used by the detector, including tracker threads.

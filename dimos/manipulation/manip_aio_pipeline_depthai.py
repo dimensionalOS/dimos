@@ -21,7 +21,7 @@ from collections.abc import Callable
 import threading
 import time
 from typing import Any
-
+import cv2
 from manip_aio_processer_new_depthai import ManipulationProcessor
 import numpy as np
 import reactivex as rx
@@ -98,26 +98,15 @@ class ManipulationPipeline:
             "processing_time": Subject(),
         }
 
+        self.last_grasp_time = 0
+        self.grasp_interval = 5.0  # Generate grasps every 5 seconds
+
         logger.info(f"Initialized ManipulationPipeline with {self.num_cameras} cameras")
 
-    def create_depthai_stream(
-        self,
-        color_queue: Any,  # dai.DataOutputQueue
-        depth_queue: Any,  # dai.DataOutputQueue
-        camera_idx: int,
-    ) -> rx.Observable:
+    def create_depthai_stream(self, color_queue: Any, depth_queue: Any, camera_idx: int) -> rx.Observable:
         """
         Create an RxPy observable from DepthAI queues.
-
-        Args:
-            color_queue: DepthAI color output queue
-            depth_queue: DepthAI depth output queue
-            camera_idx: Index of this camera
-
-        Returns:
-            Observable that emits {"rgb": np.ndarray, "depth": np.ndarray, "camera_idx": int}
         """
-
         def subscribe(observer, scheduler=None):
             def emit_frames():
                 logger.info(f"Camera {camera_idx} stream started")
@@ -137,15 +126,21 @@ class ManipulationPipeline:
                             if rgb.shape[-1] == 3:
                                 rgb = rgb[:, :, ::-1]  # BGR to RGB
 
+                            # Convert depth to meters
+                            depth = depth.astype(np.float32) / 1000.0
+
+                            # FIX: Ensure matching dimensions
+                            if rgb.shape[:2] != depth.shape[:2]:
+                                h, w = rgb.shape[:2]
+                                depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
+                                logger.debug(f"Camera {camera_idx}: Resized depth to match RGB {w}x{h}")
+
                             # Emit frame
-                            observer.on_next(
-                                {
-                                    "rgb": rgb,
-                                    "depth": depth.astype(np.float32)
-                                    / 1000.0,  # Convert mm to meters
-                                    "camera_idx": camera_idx,
-                                }
-                            )
+                            observer.on_next({
+                                "rgb": rgb,
+                                "depth": depth,
+                                "camera_idx": camera_idx,
+                            })
                         else:
                             # No frames available, wait a bit
                             time.sleep(0.001)
@@ -164,12 +159,9 @@ class ManipulationPipeline:
         return rx.create(subscribe)
 
     def process_frame_async(self, generate_grasps: bool | None = None):
-        """
-        Process current buffered frames asynchronously.
-        Called by the streaming pipeline when frames are ready.
-        """
+        """Process current buffered frames asynchronously."""
         if self.processing:
-            return  # Skip if already processing
+            return
 
         with self.lock:
             # Check if we have frames from all cameras
@@ -184,37 +176,41 @@ class ManipulationPipeline:
 
         self.processing = True
 
+        # Check if it's time to generate grasps
+        current_time = time.time()
+        should_generate_grasps = False
+        
+        if self.processor.enable_grasp_generation:
+            time_since_last = current_time - self.last_grasp_time
+            if generate_grasps or (time_since_last >= self.grasp_interval):
+                should_generate_grasps = True
+                self.last_grasp_time = current_time
+                logger.info(f"Generating grasps (periodic update after {time_since_last:.1f}s)")
+
         def process():
             try:
-                # Process frame using the core processor
                 results = self.processor.process_frame(
                     rgb_images=rgb_images,
                     depth_images=depth_images,
-                    generate_grasps=generate_grasps,
+                    generate_grasps=should_generate_grasps  # Only true every 5 seconds
                 )
-
-                # Emit results to all output streams
                 self._emit_results(results)
-
             except Exception as e:
                 logger.error(f"Frame processing error: {e}")
                 import traceback
-
                 traceback.print_exc()
             finally:
                 self.processing = False
 
-        # Process in separate thread to avoid blocking
         threading.Thread(target=process, daemon=True).start()
 
     def _emit_results(self, results: dict):
         """Emit processing results to output subjects."""
-        # Emit visualizations
-        if "detection_viz" in results:
-            per_camera_data = results.get("per_camera_data", [])
-            if per_camera_data and len(per_camera_data) > 0:
-                self.subjects["detection_viz"].on_next(per_camera_data[0]["detection_viz"])
+        # Emit detection visualization directly from results
+        if "detection_viz" in results and results["detection_viz"] is not None:
+            self.subjects["detection_viz"].on_next(results["detection_viz"])
 
+        # Emit other visualizations
         if "pointcloud_viz" in results:
             self.subjects["pointcloud_viz"].on_next(results["pointcloud_viz"])
 
@@ -224,11 +220,9 @@ class ManipulationPipeline:
         if "misc_pointcloud_viz" in results:
             self.subjects["misc_pointcloud_viz"].on_next(results["misc_pointcloud_viz"])
 
-        # Emit segmentation viz if available
-        per_camera_data = results.get("per_camera_data", [])
-        if per_camera_data and len(per_camera_data) > 0:
-            if "segmentation_viz" in per_camera_data[0]:
-                self.subjects["segmentation_viz"].on_next(per_camera_data[0]["segmentation_viz"])
+        # Emit segmentation viz if available from first camera
+        if "segmentation_viz" in results and results["segmentation_viz"] is not None:
+            self.subjects["segmentation_viz"].on_next(results["segmentation_viz"])
 
         # Emit object data (now with grasps attached)
         if "detected_objects" in results:

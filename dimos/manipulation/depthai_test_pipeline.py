@@ -30,7 +30,7 @@ print("Testing ManipulationPipeline with Dual OAK-D S2\n")
 
 
 def create_camera_pipeline():
-    """Create DepthAI pipeline for OAK-D S2 (same as your working code)"""
+    """Create DepthAI pipeline for OAK-D S2 with MATCHING RGB and depth sizes"""
     pipeline = dai.Pipeline()
 
     # Use ColorCamera nodes for both cameras
@@ -45,7 +45,7 @@ def create_camera_pipeline():
     cam_right.setResolution(dai.ColorCameraProperties.SensorResolution.THE_800_P)
 
     # Configure left camera for color preview
-    cam_left.setPreviewSize(640, 480)
+    cam_left.setPreviewSize(640, 480)  # RGB will be 640x480
     cam_left.setInterleaved(False)
     cam_left.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
 
@@ -61,6 +61,9 @@ def create_camera_pipeline():
     stereo.setLeftRightCheck(True)
     stereo.setExtendedDisparity(False)
     stereo.setSubpixel(False)
+    
+    # ⚠️ ADD THIS LINE TO MATCH RGB SIZE!
+    stereo.setOutputSize(640, 480)  # Match the RGB preview size
 
     # Link ISP outputs to stereo
     cam_left.isp.link(stereo.left)
@@ -80,52 +83,90 @@ def test_pipeline_streaming():
     print("TESTING MANIPULATION PIPELINE WITH STREAMING")
     print("=" * 60)
 
-    # Camera configurations (use your ArUco calibration results here!)
+    for i, device_info in enumerate(device_infos[:2]):
+        try:
+            pipeline = create_camera_pipeline()
+            device = stack.enter_context(dai.Device(pipeline, device_info, dai.UsbSpeed.SUPER))
+            
+            # GET CALIBRATION FROM DEVICE
+            calibData = device.readCalibration()
+            
+            # Get intrinsics for the RGB camera (CAM_B for left camera)
+            intrinsics_matrix = calibData.getCameraIntrinsics(
+                dai.CameraBoardSocket.CAM_B,  # RGB camera
+                640, 480  # Resolution you're using
+            )
+            
+            # Extract [fx, fy, cx, cy] from 3x3 matrix
+            fx = intrinsics_matrix[0][0]
+            fy = intrinsics_matrix[1][1]
+            cx = intrinsics_matrix[0][2]
+            cy = intrinsics_matrix[1][2]
+            
+            print(f"Camera {i} intrinsics: fx={fx:.2f}, fy={fy:.2f}, cx={cx:.2f}, cy={cy:.2f}")
+            
+            # Build camera config with actual calibration
+            if i == 0:
+                extrinsics = cam1_to_robot
+            else:
+                extrinsics = cam2_to_robot
+                
+            camera_configs.append({
+                "camera_id": i,
+                "intrinsics": [fx, fy, cx, cy],
+                "extrinsics": extrinsics
+            })
+            
+            # Get output queues
+            q_color = device.getOutputQueue(name="color", maxSize=4, blocking=False)
+            q_depth = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
+            camera_queues.append((q_color, q_depth))
+            
+            print(f"✓ Camera {i} connected: {device_info.getMxId()}")
+        except Exception as e:
+            print(f"✗ Camera {i} failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return
+
+    cam1_to_robot = np.array([
+        [-0.5676864072910737, 0.20246387231771812, -0.797960226692451, 0.7502531269058595],
+        [0.5144743879160396, 0.8439489366835451, -0.15187592452107102, -0.1942131460591212],
+        [-0.6426882970424852, 0.49674799715432, 0.5832608165887726, 0.6305214067250764],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+
+    cam2_to_robot = np.array([
+        [0.5697063789662457, 0.5775554768385595, -0.5846916391902254, 0.4934273137283139],
+        [0.8040468878867589, -0.5389612872714936, 0.2510564337002188, 0.28780764457046215],
+        [0.1701271402357255, 0.6131479446238394, 0.771431367108426, 0.33694074301593196],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+
+    # Convert intrinsics from 3x3 matrix to [fx, fy, cx, cy] format
     camera_configs = [
         {
             "camera_id": 0,
-            "intrinsics": [600.0, 600.0, 320.0, 240.0],  # [fx, fy, cx, cy]
-            "extrinsics": np.array(
-                [  # Camera 0 to world (from ArUco)
-                    [0.999, 0.012, -0.034, 0.152],
-                    [-0.011, 0.998, 0.045, -0.082],
-                    [0.035, -0.044, 0.997, 0.723],
-                    [0, 0, 0, 1],
-                ]
-            ),
+            "intrinsics": [401.05560302734375, 401.05560302734375, 319.18072509765625, 224.92999267578125],
+            "extrinsics": cam1_to_robot,
         },
         {
             "camera_id": 1,
-            "intrinsics": [600.0, 600.0, 320.0, 240.0],
-            "extrinsics": np.array(
-                [  # Camera 1 to world (from ArUco)
-                    [0.997, -0.023, 0.071, 0.453],
-                    [0.025, 0.999, -0.018, 0.105],
-                    [-0.070, 0.021, 0.997, 0.695],
-                    [0, 0, 0, 1],
-                ]
-            ),
+            "intrinsics": [399.1941833496094, 399.1941833496094, 305.7402648925781, 238.6328582763672],
+            "extrinsics": cam2_to_robot,
         },
     ]
-
+    
     # Initialize manipulation pipeline
     print("\nInitializing ManipulationPipeline...")
 
-    # Set this to True to enable grasp generation (requires grasp server running)
-    enable_grasps = False  # Change to True when grasp server is ready
-
     manip_pipeline = ManipulationPipeline(
         camera_configs=camera_configs,
-        min_confidence=0.5,
-        enable_grasp_generation=enable_grasps,
-        grasp_server_url="ws://localhost:8765" if enable_grasps else None,
-        enable_segmentation=True,
+        min_confidence=0.05,
+        enable_grasp_generation=True,
+        grasp_server_url="ws://13.59.77.54:8000/ws/grasp",
+        enable_segmentation=True,  # CHANGED: Disable to save memory
     )
-    print("✓ Pipeline initialized")
-    if enable_grasps:
-        print("  Grasp generation: ENABLED (make sure server is running!)")
-    else:
-        print("  Grasp generation: DISABLED (set enable_grasps=True to enable)")
 
     # Connect to DepthAI cameras
     with contextlib.ExitStack() as stack:
@@ -156,7 +197,6 @@ def test_pipeline_streaming():
             except Exception as e:
                 print(f"✗ Camera {i} failed: {e}")
                 import traceback
-
                 traceback.print_exc()
                 return
 
@@ -166,102 +206,176 @@ def test_pipeline_streaming():
         print("\nCreating streaming pipeline...")
         output_streams = manip_pipeline.create_pipeline(camera_queues)
         print("✓ Pipeline created")
+        
+        # CREATE WINDOWS BEFORE SUBSCRIBING - THIS IS CRITICAL!
+        print("\nCreating visualization windows...")
+        cv2.namedWindow("Detection", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("Point Cloud Overlay", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("Background Clusters", cv2.WINDOW_NORMAL)
+        cv2.namedWindow("Grasp Overlay", cv2.WINDOW_NORMAL)
+        
+        # Show placeholder images immediately
+        placeholder = np.zeros((480, 640, 3), dtype=np.uint8)
+        cv2.putText(placeholder, "Waiting for frames...", (150, 240),
+                   cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.imshow("Detection", placeholder)
+        cv2.imshow("Point Cloud Overlay", placeholder)
+        cv2.imshow("Background Clusters", placeholder)
+        cv2.imshow("Grasp Overlay", placeholder) 
+        cv2.waitKey(1)
+        print("✓ Windows created and initialized")
 
-        # Subscribe to output streams
-        print("\nSubscribing to output streams...\n")
+        # Subscribe to output streams...
+        print("\nSubscribing to output streams...")
 
-        # Detection visualization
-        output_streams["detection_viz"].subscribe(
-            on_next=lambda img: cv2.imshow("Detection", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-            if img is not None
-            else None
-        )
+        # Use queues to pass images to main thread
+        import queue
+        detection_queue = queue.Queue(maxsize=2)
+        pointcloud_queue = queue.Queue(maxsize=2)
+        background_queue = queue.Queue(maxsize=2)
+        grasp_queue = queue.Queue(maxsize=2) 
 
-        # Point cloud overlay
-        output_streams["pointcloud_viz"].subscribe(
-            on_next=lambda img: cv2.imshow(
-                "Point Cloud Overlay", cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            )
-            if img is not None
-            else None
-        )
+        first_frame_received = [False]
+        latest_objects = [None]
+        latest_time = [None]
+        frame_counter = [0] 
 
-        # Background clusters
-        output_streams["misc_pointcloud_viz"].subscribe(
-            on_next=lambda img: cv2.imshow(
-                "Background Clusters", cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-            )
-            if img is not None
-            else None
-        )
+        def update_detection(img):
+            if img is not None:
+                if detection_queue.full():
+                    try:
+                        detection_queue.get_nowait()
+                    except:
+                        pass
+                try:
+                    detection_queue.put_nowait(img)
+                    if not first_frame_received[0]:
+                        print("✓ First detection frame received")
+                        first_frame_received[0] = True
+                except:
+                    pass
 
-        # Grasp overlay (if grasp generation enabled)
-        output_streams["grasp_overlay"].subscribe(
-            on_next=lambda img: cv2.imshow("Grasp Overlay", cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
-            if img is not None
-            else None
-        )
+        def update_pointcloud(img):
+            if img is not None:
+                if pointcloud_queue.full():
+                    try:
+                        pointcloud_queue.get_nowait()
+                    except:
+                        pass
+                try:
+                    pointcloud_queue.put_nowait(img)
+                except:
+                    pass
 
-        # Object data (print to console with grasp info)
-        def on_objects(objects):
-            print(f"\n{'=' * 60}")
-            print(f"DETECTED {len(objects)} OBJECTS:")
-            print(f"{'=' * 60}")
-            for i, obj in enumerate(objects):
-                print(f"\nObject {i}: {obj.get('class_name', 'unknown')}")
-                print(f"  Confidence: {obj.get('confidence', 0):.2f}")
-                if obj.get("point_cloud"):
-                    print(f"  Points: {len(obj['point_cloud'].points)}")
+        def update_background(img):
+            if img is not None:
+                if background_queue.full():
+                    try:
+                        background_queue.get_nowait()
+                    except:
+                        pass
+                try:
+                    background_queue.put_nowait(img)
+                except:
+                    pass
 
-                # Show grasp information
-                if obj.get("grasps"):
-                    print(f"  Grasps: {len(obj['grasps'])}")
-                    # Show top 3 grasps
-                    for j, grasp in enumerate(obj["grasps"][:3]):
-                        print(f"    Grasp {j + 1}:")
-                        print(f"      Score: {grasp.get('score', 0):.3f}")
-                        print(f"      Position: {grasp.get('translation', [0, 0, 0])}")
-                        print(f"      Width: {grasp.get('width', 0) * 1000:.1f}mm")
-                else:
-                    print("  Grasps: None")
+        def update_grasps(img):
+            if img is not None:
+                if grasp_queue.full():
+                    try:
+                        grasp_queue.get_nowait()
+                    except:
+                        pass
+                try:
+                    grasp_queue.put_nowait(img)
+                except:
+                    pass
 
-        output_streams["all_objects"].subscribe(on_next=on_objects)
+        def update_objects(objects):
+            latest_objects[0] = objects
+            # Add grasp counting here
+            frame_counter[0] += 1
+            if frame_counter[0] % 30 == 0:
+                print(f"\nFrame {frame_counter[0]}: {len(objects)} objects detected")
+                grasp_count = sum(len(obj.get('grasps', [])) for obj in objects)
+                if grasp_count > 0:
+                    print(f"  → {grasp_count} total grasps available")
 
-        # Processing time
-        output_streams["processing_time"].subscribe(
-            on_next=lambda t: print(f"Processing time: {t:.3f}s")
-        )
+        def update_time(t):
+            latest_time[0] = t
 
-        print("=" * 60)
+        # Subscribe to streams
+        output_streams["detection_viz"].subscribe(on_next=update_detection)
+        output_streams["pointcloud_viz"].subscribe(on_next=update_pointcloud)
+        output_streams["misc_pointcloud_viz"].subscribe(on_next=update_background)
+        output_streams["grasp_overlay"].subscribe(on_next=update_grasps)  # ADD THIS
+        output_streams["all_objects"].subscribe(on_next=update_objects)
+        output_streams["processing_time"].subscribe(on_next=update_time)
+
+        print("\n" + "=" * 60)
         print("PIPELINE RUNNING")
         print("=" * 60)
-        print("\nVisualization windows:")
-        print("  - Detection: Object bounding boxes")
-        print("  - Point Cloud Overlay: 3D points on depth image")
-        print("  - Background Clusters: Scene background")
-        if enable_grasps:
-            print("  - Grasp Overlay: Grasp poses on objects")
-        print("\nConsole output:")
-        print("  - Object detections with confidence scores")
-        if enable_grasps:
-            print("  - Grasp poses per object (position, score, width)")
-        print("\nPress 'q' to quit\n")
+        print("\nVisualization windows should show live video")
+        print("Press 'q' to quit\n")
 
-        # Main loop
+        # Main loop - UPDATE WINDOWS FROM MAIN THREAD
+        loop_counter = 0
         try:
             while True:
+                # Check for new detection image
+                try:
+                    img = detection_queue.get_nowait()
+                    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    cv2.imshow("Detection", bgr)
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"Detection display error: {e}")
+                
+                # Check for new pointcloud image
+                try:
+                    img = pointcloud_queue.get_nowait()
+                    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    cv2.imshow("Point Cloud Overlay", bgr)
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"Pointcloud display error: {e}")
+                
+                # Check for new background image
+                try:
+                    img = background_queue.get_nowait()
+                    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    cv2.imshow("Background Clusters", bgr)
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"Background display error: {e}")
+
+                try:
+                    img = grasp_queue.get_nowait()
+                    bgr = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+                    cv2.imshow("Grasp Overlay", bgr)
+                except queue.Empty:
+                    pass
+                except Exception as e:
+                    print(f"Grasp display error: {e}")
+                
+                # Print status periodically
+                loop_counter += 1
+                if loop_counter % 300 == 0:  # Every ~10 seconds at 30fps
+                    if latest_objects[0] is not None:
+                        print(f"Objects: {len(latest_objects[0])}")
+                    if latest_time[0] is not None:
+                        print(f"Processing time: {latest_time[0]:.3f}s")
+                
+                # Check for quit
                 key = cv2.waitKey(1)
-                if key == ord("q") or key == 27:
+                if key == ord('q') or key == 27:
                     break
+                    
         except KeyboardInterrupt:
             print("\nStopping...")
-
-        # Cleanup
-        print("\nCleaning up...")
-        manip_pipeline.stop()
-        cv2.destroyAllWindows()
-        print("✓ Pipeline stopped")
-
 
 def test_pipeline_single_frame():
     """Test pipeline with single frame processing (no streaming)"""
@@ -271,30 +385,31 @@ def test_pipeline_single_frame():
     print("=" * 60)
 
     # Camera configurations
+    cam1_to_robot = np.array([
+        [-0.5676864072910737, 0.20246387231771812, -0.797960226692451, 0.7502531269058595],
+        [0.5144743879160396, 0.8439489366835451, -0.15187592452107102, -0.1942131460591212],
+        [-0.6426882970424852, 0.49674799715432, 0.5832608165887726, 0.6305214067250764],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+
+    cam2_to_robot = np.array([
+        [0.5697063789662457, 0.5775554768385595, -0.5846916391902254, 0.4934273137283139],
+        [0.8040468878867589, -0.5389612872714936, 0.2510564337002188, 0.28780764457046215],
+        [0.1701271402357255, 0.6131479446238394, 0.771431367108426, 0.33694074301593196],
+        [0.0, 0.0, 0.0, 1.0],
+    ])
+
+    # Convert intrinsics from 3x3 matrix to [fx, fy, cx, cy] format
     camera_configs = [
         {
             "camera_id": 0,
-            "intrinsics": [600.0, 600.0, 320.0, 240.0],
-            "extrinsics": np.array(
-                [
-                    [0.999, 0.012, -0.034, 0.152],
-                    [-0.011, 0.998, 0.045, -0.082],
-                    [0.035, -0.044, 0.997, 0.723],
-                    [0, 0, 0, 1],
-                ]
-            ),
+            "intrinsics": [401.05560302734375, 401.05560302734375, 319.18072509765625, 224.92999267578125],  # [fx, fy, cx, cy]
+            "extrinsics": cam1_to_robot,
         },
         {
             "camera_id": 1,
-            "intrinsics": [600.0, 600.0, 320.0, 240.0],
-            "extrinsics": np.array(
-                [
-                    [0.997, -0.023, 0.071, 0.453],
-                    [0.025, 0.999, -0.018, 0.105],
-                    [-0.070, 0.021, 0.997, 0.695],
-                    [0, 0, 0, 1],
-                ]
-            ),
+            "intrinsics": [399.1941833496094, 399.1941833496094, 305.7402648925781, 238.6328582763672],  # [fx, fy, cx, cy]
+            "extrinsics": cam2_to_robot,
         },
     ]
 
@@ -357,6 +472,20 @@ def test_pipeline_single_frame():
             depth_images.append(depth)
 
         print(f"✓ Captured {len(rgb_images)} RGB and {len(depth_images)} depth images")
+
+        #Ensure RGB and depth have matching dimensions
+        print("\nChecking image dimensions...")
+        for i in range(len(rgb_images)):
+            print(f"Camera {i}: RGB shape={rgb_images[i].shape}, Depth shape={depth_images[i].shape}")
+            if rgb_images[i].shape[:2] != depth_images[i].shape[:2]:
+                print(f"  ⚠️ Size mismatch! Resizing depth to match RGB...")
+                h, w = rgb_images[i].shape[:2]
+                depth_images[i] = cv2.resize(
+                    depth_images[i], 
+                    (w, h), 
+                    interpolation=cv2.INTER_NEAREST  # Important: use NEAREST for depth to preserve values
+                )
+                print(f"  ✓ Resized depth to {depth_images[i].shape}")
 
         # Process single frame
         print("\nProcessing frame...")

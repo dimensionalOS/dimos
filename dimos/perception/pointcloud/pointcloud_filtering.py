@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
 import cv2
 import numpy as np
 import open3d as o3d
@@ -25,6 +24,9 @@ from dimos.perception.pointcloud.utils import (
 )
 from dimos.types.manipulation import ObjectData
 from dimos.types.vector import Vector
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger("dimos.perception.pointcloud.filtering")
 
 
 class PointcloudFiltering:
@@ -107,11 +109,11 @@ class PointcloudFiltering:
         self.full_pcd = None
 
     def generate_color_from_id(self, object_id: int) -> np.ndarray:
-        """Generate a consistent color for a given object ID."""
-        np.random.seed(object_id)
-        color = np.random.randint(0, 255, 3, dtype=np.uint8)
-        np.random.seed(None)
-        return color
+        """Generate consistent RGB color from object ID."""
+        # Fix the seed range error
+        seed = abs(object_id) % (2**32 - 1)  # Ensure valid range
+        np.random.seed(seed)
+        return np.random.randint(0, 255, 3)
 
     def _validate_inputs(
         self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]
@@ -180,16 +182,36 @@ class PointcloudFiltering:
 
     def _apply_subsampling(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
         """Apply subsampling to limit point cloud size using Open3D's voxel downsampling."""
-        if self.enable_subsampling:
+        if self.enable_subsampling and pcd is not None and len(pcd.points) > 0:
             return pcd.voxel_down_sample(self.voxel_size)
         return pcd
 
-    def _extract_masks_from_objects(self, objects: list[ObjectData]) -> list[np.ndarray]:
-        """Extract segmentation masks from ObjectData objects."""
-        return [obj["segmentation_mask"] for obj in objects]
+    def _extract_masks_from_objects(self, objects: list[ObjectData], image_shape: tuple) -> list:
+        """Extract masks from ObjectData, handling None masks."""
+        masks = []
+        for obj in objects:
+            if obj.get("mask") is not None:
+                masks.append(obj["mask"])
+            elif obj.get("bbox") is not None:
+                # CREATE A MASK FROM BBOX if no mask exists
+                bbox = obj["bbox"]
+                # Create a rectangular mask from bbox
+                mask = np.zeros(image_shape[:2], dtype=np.uint8)
+                x1, y1, x2, y2 = [int(coord) for coord in bbox]
+                # Clamp to image bounds
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(image_shape[1], x2), min(image_shape[0], y2)
+                mask[y1:y2, x1:x2] = 255
+                masks.append(mask)
+            else:
+                # Empty mask if neither mask nor bbox
+                masks.append(np.zeros(image_shape[:2], dtype=np.uint8))
+        return masks
 
     def get_full_point_cloud(self) -> o3d.geometry.PointCloud:
         """Get the full point cloud."""
+        if self.full_pcd is None:
+            return o3d.geometry.PointCloud()
         return self._apply_subsampling(self.full_pcd)
 
     def process_images(
@@ -204,30 +226,43 @@ class PointcloudFiltering:
             objects: List of ObjectData from object detection stream
 
         Returns:
-            List of updated ObjectData with pointcloud and 3D information. Each ObjectData
-            dictionary is enhanced with the following new fields:
-
-            **3D Spatial Information** (added when sufficient points for cuboid fitting):
-            - "position": Vector(x, y, z) - 3D center position in world coordinates (meters)
-            - "rotation": Vector(roll, pitch, yaw) - 3D orientation as Euler angles (radians)
-            - "size": {"width": float, "height": float, "depth": float} - 3D bounding box dimensions (meters)
-
-            **Point Cloud Data**:
-            - "point_cloud": o3d.geometry.PointCloud - Filtered Open3D point cloud with colors
-            - "color": np.ndarray - Consistent RGB color [R,G,B] (0-255) generated from object_id
-
-            **Grasp Generation Arrays** (Dimensional grasp format):
-            - "point_cloud_numpy": np.ndarray - Nx3 XYZ coordinates as float32 (meters)
-            - "colors_numpy": np.ndarray - Nx3 RGB colors as float32 (0.0-1.0 range)
-
-        Raises:
-            ValueError: If inputs are invalid
-            RuntimeError: If processing fails
+            List of updated ObjectData with pointcloud and 3D information
         """
-        # Validate inputs
-        self._validate_inputs(color_img, depth_img, objects)
-
+        
+        # ADD THESE CHECKS FIRST - Before _validate_inputs
+        if color_img is None:
+            logger.error("Color image is None in process_images!")
+            return []
+        
+        if depth_img is None:
+            logger.error("Depth image is None in process_images!")
+            return []
+        
+        # Check dimensions match
+        if color_img.shape[:2] != depth_img.shape[:2]:
+            logger.error(f"Color and depth image dimensions don't match: "
+                        f"Color={color_img.shape}, Depth={depth_img.shape}")
+            return []  # Return empty list instead of raising error
+        
+        # Check depth is in correct format
+        if len(depth_img.shape) != 2:
+            logger.error(f"Depth image has wrong dimensions: {depth_img.shape}, expected 2D")
+            return []
+        
+        # Ensure depth is float32
+        if depth_img.dtype != np.float32:
+            logger.warning(f"Converting depth from {depth_img.dtype} to float32")
+            depth_img = depth_img.astype(np.float32)
+        
+        # NOW do the existing validation
+        try:
+            self._validate_inputs(color_img, depth_img, objects)
+        except Exception as e:
+            logger.error(f"Validation failed: {e}")
+            return []
+        
         if not objects:
+            logger.info("No objects to process")
             return []
 
         # Filter to top N objects by confidence
@@ -259,8 +294,8 @@ class PointcloudFiltering:
 
         objects = filtered_objects
 
-        # Extract masks from ObjectData
-        masks = self._extract_masks_from_objects(objects)
+        # Extract masks from ObjectData - PASS IMAGE SHAPE
+        masks = self._extract_masks_from_objects(objects, depth_img.shape)
 
         # Prepare masks
         processed_masks = self._prepare_masks(masks, depth_img.shape)
@@ -277,7 +312,7 @@ class PointcloudFiltering:
             zip(objects, processed_masks, masked_pcds, strict=False)
         ):
             # Skip empty point clouds
-            if len(np.asarray(pcd.points)) == 0:
+            if pcd is None or len(np.asarray(pcd.points)) == 0:
                 continue
 
             # Create a copy of the object data to avoid modifying the original
