@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import abstractmethod
-from dataclasses import dataclass
-from typing import Optional
+
+from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
@@ -23,9 +22,10 @@ from dimos.navigation.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
-logger = setup_logger("dimos.robot.unitree.global_planner")
+logger = setup_logger(__file__)
 
 import math
+
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 
@@ -140,16 +140,7 @@ def resample_path(path: Path, spacing: float) -> Path:
     return Path(frame_id=path.frame_id, poses=resampled)
 
 
-@dataclass
-class Planner(Module):
-    target: In[PoseStamped] = None
-    path: Out[Path] = None
-
-    def __init__(self):
-        Module.__init__(self)
-
-
-class AstarPlanner(Planner):
+class AstarPlanner(Module):
     # LCM inputs
     target: In[PoseStamped] = None
     global_costmap: In[OccupancyGrid] = None
@@ -158,31 +149,41 @@ class AstarPlanner(Planner):
     # LCM outputs
     path: Out[Path] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
 
         # Latest data
-        self.latest_costmap: Optional[OccupancyGrid] = None
-        self.latest_odom: Optional[PoseStamped] = None
+        self.latest_costmap: OccupancyGrid | None = None
+        self.latest_odom: PoseStamped | None = None
 
     @rpc
-    def start(self):
-        # Subscribe to inputs
-        self.target.subscribe(self._on_target)
-        self.global_costmap.subscribe(self._on_costmap)
-        self.odom.subscribe(self._on_odom)
+    def start(self) -> None:
+        super().start()
+
+        unsub = self.target.subscribe(self._on_target)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.global_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.odom.subscribe(self._on_odom)
+        self._disposables.add(Disposable(unsub))
 
         logger.info("A* planner started")
 
-    def _on_costmap(self, msg: OccupancyGrid):
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
-    def _on_odom(self, msg: PoseStamped):
+    def _on_odom(self, msg: PoseStamped) -> None:
         """Handle incoming odometry messages."""
         self.latest_odom = msg
 
-    def _on_target(self, msg: PoseStamped):
+    def _on_target(self, msg: PoseStamped) -> None:
         """Handle incoming target messages and trigger planning."""
         if self.latest_costmap is None or self.latest_odom is None:
             logger.warning("Cannot plan: missing costmap or odometry data")
@@ -194,7 +195,7 @@ class AstarPlanner(Planner):
             path = add_orientations_to_path(path, msg.orientation)
             self.path.publish(path)
 
-    def plan(self, goal: Pose) -> Optional[Path]:
+    def plan(self, goal: Pose) -> Path | None:
         """Plan a path from current position to goal."""
         if self.latest_costmap is None or self.latest_odom is None:
             logger.warning("Cannot plan: missing costmap or odometry data")
@@ -216,3 +217,8 @@ class AstarPlanner(Planner):
 
         logger.warning("No path found to the goal.")
         return None
+
+
+astar_planner = AstarPlanner.blueprint
+
+__all__ = ["AstarPlanner", "astar_planner"]

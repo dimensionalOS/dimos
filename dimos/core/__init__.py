@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import multiprocessing as mp
-from typing import Optional
+import signal
+import time
 
 from dask.distributed import Client, LocalCluster
 from rich.console import Console
@@ -9,6 +10,7 @@ from rich.console import Console
 import dimos.core.colors as colors
 from dimos.core.core import rpc
 from dimos.core.module import Module, ModuleBase, ModuleConfig
+from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
     LCMTransport,
@@ -20,83 +22,63 @@ from dimos.core.transport import (
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
+from dimos.utils.actor_registry import ActorRegistry
 
-__all__ = ["TF", "LCMTF", "PubSubTF", "TFSpec", "TFConfig"]
+__all__ = [
+    "LCMRPC",
+    "LCMTF",
+    "TF",
+    "DimosCluster",
+    "In",
+    "LCMTransport",
+    "Module",
+    "ModuleBase",
+    "ModuleConfig",
+    "Out",
+    "PubSubTF",
+    "RPCSpec",
+    "RemoteIn",
+    "RemoteOut",
+    "SHMTransport",
+    "TFConfig",
+    "TFSpec",
+    "Transport",
+    "ZenohTransport",
+    "pLCMTransport",
+    "pSHMTransport",
+    "rpc",
+    "start",
+]
 
 
-def patch_actor(actor, cls): ...
+class CudaCleanupPlugin:
+    """Dask worker plugin to cleanup CUDA resources on shutdown."""
+
+    def setup(self, worker) -> None:
+        """Called when worker starts."""
+        pass
+
+    def teardown(self, worker) -> None:
+        """Clean up CUDA resources when worker shuts down."""
+        try:
+            import sys
+
+            if "cupy" in sys.modules:
+                import cupy as cp
+
+                # Clear memory pools
+                mempool = cp.get_default_memory_pool()
+                pinned_mempool = cp.get_default_pinned_memory_pool()
+                mempool.free_all_blocks()
+                pinned_mempool.free_all_blocks()
+                cp.cuda.Stream.null.synchronize()
+                mempool.free_all_blocks()
+                pinned_mempool.free_all_blocks()
+        except Exception:
+            pass
 
 
-class RPCClient:
-    def __init__(self, actor_instance, actor_class):
-        self.rpc = LCMRPC()
-        self.actor_class = actor_class
-        self.remote_name = actor_class.__name__
-        self.actor_instance = actor_instance
-        self.rpcs = actor_class.rpcs.keys()
-        self.rpc.start()
-        self._unsub_fns = []
-
-    def stop_client(self):
-        for unsub in self._unsub_fns:
-            try:
-                unsub()
-            except Exception:
-                pass
-
-        self._unsub_fns = []
-
-        if self.rpc:
-            self.rpc.stop()
-            self.rpc = None
-
-    def __reduce__(self):
-        # Return the class and the arguments needed to reconstruct the object
-        return (
-            self.__class__,
-            (self.actor_instance, self.actor_class),
-        )
-
-    # passthrough
-    def __getattr__(self, name: str):
-        # Check if accessing a known safe attribute to avoid recursion
-        if name in {
-            "__class__",
-            "__init__",
-            "__dict__",
-            "__getattr__",
-            "rpcs",
-            "remote_name",
-            "remote_instance",
-            "actor_instance",
-        }:
-            raise AttributeError(f"{name} is not found.")
-
-        if name in self.rpcs:
-            # Get the original method to preserve its docstring
-            original_method = getattr(self.actor_class, name, None)
-
-            def rpc_call(*args, **kwargs):
-                result, unsub_fn = self.rpc.call_sync(f"{self.remote_name}/{name}", (args, kwargs))
-                self._unsub_fns.append(unsub_fn)
-
-                # TODO: This is ugly.
-                if name in ("stop", "close", "shutdown"):
-                    self.stop_client()
-
-                return result
-
-            # Copy docstring and other attributes from original method
-            if original_method:
-                rpc_call.__doc__ = original_method.__doc__
-                rpc_call.__name__ = original_method.__name__
-                rpc_call.__qualname__ = f"{self.__class__.__name__}.{original_method.__name__}"
-
-            return rpc_call
-
-        # return super().__getattr__(name)
-        # Try to avoid recursion by directly accessing attributes that are known
-        return self.actor_instance.__getattr__(name)
+def patch_actor(actor, cls) -> None: ...
 
 
 DimosCluster = Client
@@ -118,11 +100,14 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             ).result()
 
             worker = actor.set_ref(actor).result()
-            print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+            print(f"deployed: {colors.blue(actor)} @ {colors.orange('worker ' + str(worker))}")
+
+            # Register actor deployment in shared memory
+            ActorRegistry.update(str(actor), str(worker))
 
             return RPCClient(actor, actor_class)
 
-    def check_worker_memory():
+    def check_worker_memory() -> None:
         """Check memory usage of all workers."""
         info = dask_client.scheduler_info()
         console = Console()
@@ -144,7 +129,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             memory_used_gb = memory_used / 1e9
             memory_limit_gb = memory_limit / 1e9
             managed_gb = managed_bytes / 1e9
-            spilled_gb = spilled / 1e9
+            spilled / 1e9
 
             total_memory_used += memory_used
             total_memory_limit += memory_limit
@@ -175,24 +160,81 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
                 f"[bold]Total: {total_used_gb:.2f}/{total_limit_gb:.2f}GB ({total_percentage:.1f}%) across {total_workers} workers[/bold]"
             )
 
-    def close_all():
-        dask_client.shutdown()
-        local_cluster.close()
+    def close_all() -> None:
+        # Prevents multiple calls to close_all
+        if hasattr(dask_client, "_closed") and dask_client._closed:
+            return
+        dask_client._closed = True
+
+        # Stop all SharedMemory transports before closing Dask
+        # This prevents the "leaked shared_memory objects" warning and hangs
+        try:
+            import gc
+
+            from dimos.protocol.pubsub import shmpubsub
+
+            for obj in gc.get_objects():
+                if isinstance(obj, shmpubsub.SharedMemory | shmpubsub.PickleSharedMemory):
+                    try:
+                        obj.stop()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+        # Get the event loop before shutting down
+        loop = dask_client.loop
+
+        # Clear the actor registry
+        ActorRegistry.clear()
+
+        # Close cluster and client with reasonable timeout
+        # The CudaCleanupPlugin will handle CUDA cleanup on each worker
+        try:
+            local_cluster.close(timeout=5)
+        except Exception:
+            pass
+
+        try:
+            dask_client.close(timeout=5)
+        except Exception:
+            pass
+
+        if loop and hasattr(loop, "add_callback") and hasattr(loop, "stop"):
+            try:
+                loop.add_callback(loop.stop)
+            except Exception:
+                pass
+
+        # Note: We do NOT shutdown the _offload_executor here because it's a global
+        # module-level ThreadPoolExecutor shared across all Dask clients in the process.
+        # Shutting it down here would break subsequent Dask client usage (e.g., in tests).
+        # The executor will be cleaned up when the Python process exits.
+
+        # Give threads time to clean up
+        # Dask's IO loop and Profile threads are daemon threads
+        # that will be cleaned up when the process exits
+        # This is needed, solves race condition in CI thread check
+        time.sleep(0.1)
 
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
     dask_client.stop = lambda: dask_client.close()
     dask_client.close_all = close_all
-    return dask_client
+    return dask_client  # type: ignore[return-value]
 
 
-def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
+def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     """Start a Dask LocalCluster with specified workers and memory limits.
 
     Args:
         n: Number of workers (defaults to CPU count)
         memory_limit: Memory limit per worker (e.g., '4GB', '2GiB', or 'auto' for Dask's default)
+
+    Returns:
+        DimosCluster: A patched Dask client with deploy(), check_worker_memory(), stop(), and close_all() methods
     """
+
     console = Console()
     if not n:
         n = mp.cpu_count()
@@ -203,10 +245,48 @@ def start(n: Optional[int] = None, memory_limit: str = "auto") -> Client:
             n_workers=n,
             threads_per_worker=4,
             memory_limit=memory_limit,
+            plugins=[CudaCleanupPlugin()],  # Register CUDA cleanup plugin
         )
         client = Client(cluster)
 
     console.print(
         f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
     )
-    return patchdask(client, cluster)
+
+    patched_client = patchdask(client, cluster)
+    patched_client._shutting_down = False
+
+    # Signal handler with proper exit handling
+    def signal_handler(sig, frame) -> None:
+        # If already shutting down, force exit
+        if patched_client._shutting_down:
+            import os
+
+            console.print("[red]Force exit!")
+            os._exit(1)
+
+        patched_client._shutting_down = True
+        console.print(f"[yellow]Shutting down (signal {sig})...")
+
+        try:
+            patched_client.close_all()
+        except Exception:
+            pass
+
+        import sys
+
+        sys.exit(0)
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    return patched_client
+
+
+def wait_exit() -> None:
+    while True:
+        try:
+            time.sleep(1)
+        except KeyboardInterrupt:
+            print("exiting...")
+            return

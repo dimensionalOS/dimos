@@ -18,24 +18,22 @@ Asynchronous, reactive manipulation pipeline for realtime detection, filtering, 
 
 import asyncio
 import json
-import logging
 import threading
 import time
-import traceback
-import websockets
-from typing import Dict, List, Optional, Any
+
+import cv2
 import numpy as np
 import reactivex as rx
 import reactivex.operators as ops
-from dimos.utils.logging_config import setup_logger
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
-from dimos.perception.object_detection_stream import ObjectDetectionStream
-from dimos.perception.grasp_generation.utils import draw_grasps_on_image
-from dimos.perception.pointcloud.utils import create_point_cloud_overlay_visualization
+import websockets
+
 from dimos.perception.common.utils import colorize_depth
+from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
+from dimos.perception.grasp_generation.utils import draw_grasps_on_image
+from dimos.perception.object_detection_stream import ObjectDetectionStream
+from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
+from dimos.perception.pointcloud.utils import create_point_cloud_overlay_visualization
 from dimos.utils.logging_config import setup_logger
-import cv2
 
 logger = setup_logger("dimos.perception.manip_aio_pipeline")
 
@@ -51,13 +49,13 @@ class ManipulationPipeline:
 
     def __init__(
         self,
-        camera_intrinsics: List[float],  # [fx, fy, cx, cy]
+        camera_intrinsics: list[float],  # [fx, fy, cx, cy]
         min_confidence: float = 0.6,
         max_objects: int = 10,
-        vocabulary: Optional[str] = None,
-        grasp_server_url: Optional[str] = None,
+        vocabulary: str | None = None,
+        grasp_server_url: str | None = None,
         enable_grasp_generation: bool = False,
-    ):
+    ) -> None:
         """
         Initialize the manipulation pipeline.
 
@@ -81,14 +79,14 @@ class ManipulationPipeline:
         self.grasp_loop_thread = None
 
         # Storage for grasp results and filtered objects
-        self.latest_grasps: List[dict] = []  # Simplified: just a list of grasps
+        self.latest_grasps: list[dict] = []  # Simplified: just a list of grasps
         self.grasps_consumed = False
         self.latest_filtered_objects = []
         self.latest_rgb_for_grasps = None  # Store RGB image for grasp overlay
         self.grasp_lock = threading.Lock()
 
         # Track pending requests - simplified to single task
-        self.grasp_task: Optional[asyncio.Task] = None
+        self.grasp_task: asyncio.Task | None = None
 
         # Reactive subjects for streaming filtered objects and grasps
         self.filtered_objects_subject = rx.subject.Subject()
@@ -111,7 +109,7 @@ class ManipulationPipeline:
 
         logger.info(f"Initialized ManipulationPipeline with confidence={min_confidence}")
 
-    def create_streams(self, zed_stream: rx.Observable) -> Dict[str, rx.Observable]:
+    def create_streams(self, zed_stream: rx.Observable) -> dict[str, rx.Observable]:
         """
         Create streams using exact old main logic.
         """
@@ -140,7 +138,7 @@ class ManipulationPipeline:
         frame_lock = threading.Lock()
 
         # Subscribe to combined ZED frames (from old main)
-        def on_zed_frame(zed_data):
+        def on_zed_frame(zed_data) -> None:
             nonlocal latest_rgb, latest_depth
             if zed_data is not None:
                 with frame_lock:
@@ -167,9 +165,9 @@ class ManipulationPipeline:
         )
 
         # Process object detection results with point cloud filtering (from old main)
-        def on_detection_next(result):
+        def on_detection_next(result) -> None:
             nonlocal latest_point_cloud_overlay
-            if "objects" in result and result["objects"]:
+            if result.get("objects"):
                 # Get latest RGB and depth frames
                 with frame_lock:
                     rgb = latest_rgb
@@ -210,12 +208,12 @@ class ManipulationPipeline:
                                 task = self.request_scene_grasps(filtered_objects)
                                 if task:
                                     # Check for results after a delay
-                                    def check_grasps_later():
+                                    def check_grasps_later() -> None:
                                         time.sleep(2.0)  # Wait for grasp processing
                                         # Wait for task to complete
                                         if hasattr(self, "grasp_task") and self.grasp_task:
                                             try:
-                                                result = self.grasp_task.result(
+                                                self.grasp_task.result(
                                                     timeout=3.0
                                                 )  # Get result with timeout
                                             except Exception as e:
@@ -258,13 +256,13 @@ class ManipulationPipeline:
                         with frame_lock:
                             latest_point_cloud_overlay = None
 
-        def on_error(error):
+        def on_error(error) -> None:
             logger.error(f"Error in stream: {error}")
 
-        def on_completed():
+        def on_completed() -> None:
             logger.info("Stream completed")
 
-        def start_subscriptions():
+        def start_subscriptions() -> None:
             """Start subscriptions in background thread (from old main)"""
             # Subscribe to combined ZED frames
             zed_frame_stream.subscribe(on_next=on_zed_frame)
@@ -303,10 +301,10 @@ class ManipulationPipeline:
             "grasp_overlay": grasp_overlay_stream,
         }
 
-    def _start_grasp_loop(self):
+    def _start_grasp_loop(self) -> None:
         """Start asyncio event loop in a background thread for WebSocket communication."""
 
-        def run_loop():
+        def run_loop() -> None:
             self.grasp_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.grasp_loop)
             self.grasp_loop.run_forever()
@@ -319,8 +317,8 @@ class ManipulationPipeline:
             time.sleep(0.01)
 
     async def _send_grasp_request(
-        self, points: np.ndarray, colors: Optional[np.ndarray]
-    ) -> Optional[List[dict]]:
+        self, points: np.ndarray, colors: np.ndarray | None
+    ) -> list[dict] | None:
         """Send grasp request to Dimensional Grasp server."""
         try:
             # Comprehensive client-side validation to prevent server errors
@@ -389,7 +387,7 @@ class ManipulationPipeline:
                 if isinstance(grasps, dict) and "error" in grasps:
                     logger.error(f"Server returned error: {grasps['error']}")
                     return None
-                elif isinstance(grasps, (int, float)) and grasps == 0:
+                elif isinstance(grasps, int | float) and grasps == 0:
                     return None
                 elif not isinstance(grasps, list):
                     logger.error(
@@ -419,7 +417,7 @@ class ManipulationPipeline:
 
         return None
 
-    def request_scene_grasps(self, objects: List[dict]) -> Optional[asyncio.Task]:
+    def request_scene_grasps(self, objects: list[dict]) -> asyncio.Task | None:
         """Request grasps for entire scene by combining all object point clouds."""
         if not self.grasp_loop or not objects:
             return None
@@ -428,7 +426,7 @@ class ManipulationPipeline:
         all_colors = []
         valid_objects = 0
 
-        for i, obj in enumerate(objects):
+        for _i, obj in enumerate(objects):
             # Validate point cloud data
             if "point_cloud_numpy" not in obj or obj["point_cloud_numpy"] is None:
                 continue
@@ -494,11 +492,11 @@ class ManipulationPipeline:
 
             self.grasp_task = task
             return task
-        except Exception as e:
+        except Exception:
             logger.warning("Failed to create grasp task")
             return None
 
-    def get_latest_grasps(self, timeout: float = 5.0) -> Optional[List[dict]]:
+    def get_latest_grasps(self, timeout: float = 5.0) -> list[dict] | None:
         """Get latest grasp results, waiting for new ones if current ones have been consumed."""
         # Mark current grasps as consumed and get a reference
         with self.grasp_lock:
@@ -525,7 +523,7 @@ class ManipulationPipeline:
         with self.grasp_lock:
             self.latest_grasps = []
 
-    def _prepare_colors(self, colors: Optional[np.ndarray]) -> Optional[np.ndarray]:
+    def _prepare_colors(self, colors: np.ndarray | None) -> np.ndarray | None:
         """Prepare colors array, converting from various formats if needed."""
         if colors is None:
             return None
@@ -535,7 +533,7 @@ class ManipulationPipeline:
 
         return colors
 
-    def _convert_grasp_format(self, grasps: List[dict]) -> List[dict]:
+    def _convert_grasp_format(self, grasps: list[dict]) -> list[dict]:
         """Convert Grasp format to our visualization format."""
         converted = []
 
@@ -559,7 +557,7 @@ class ManipulationPipeline:
 
         return converted
 
-    def _rotation_matrix_to_euler(self, rotation_matrix: np.ndarray) -> Dict[str, float]:
+    def _rotation_matrix_to_euler(self, rotation_matrix: np.ndarray) -> dict[str, float]:
         """Convert rotation matrix to Euler angles (in radians)."""
         sy = np.sqrt(rotation_matrix[0, 0] ** 2 + rotation_matrix[1, 0] ** 2)
 
@@ -576,7 +574,7 @@ class ManipulationPipeline:
 
         return {"roll": x, "pitch": y, "yaw": z}
 
-    def cleanup(self):
+    def cleanup(self) -> None:
         """Clean up resources."""
         if hasattr(self.detector, "cleanup"):
             self.detector.cleanup()

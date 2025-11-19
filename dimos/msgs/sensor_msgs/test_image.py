@@ -14,8 +14,9 @@
 
 import numpy as np
 import pytest
+from reactivex import operators as ops
 
-from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat, sharpness_barrier
 from dimos.utils.data import get_data
 from dimos.utils.testing import TimedSensorReplay
 
@@ -26,7 +27,7 @@ def img():
     return Image.from_file(str(image_file_path))
 
 
-def test_file_load(img: Image):
+def test_file_load(img: Image) -> None:
     assert isinstance(img.data, np.ndarray)
     assert img.width == 1024
     assert img.height == 771
@@ -40,7 +41,7 @@ def test_file_load(img: Image):
     assert img.data.flags["C_CONTIGUOUS"]
 
 
-def test_lcm_encode_decode(img: Image):
+def test_lcm_encode_decode(img: Image) -> None:
     binary_msg = img.lcm_encode()
     decoded_img = Image.lcm_decode(binary_msg)
 
@@ -49,13 +50,13 @@ def test_lcm_encode_decode(img: Image):
     assert decoded_img == img
 
 
-def test_rgb_bgr_conversion(img: Image):
+def test_rgb_bgr_conversion(img: Image) -> None:
     rgb = img.to_rgb()
     assert not rgb == img
     assert rgb.to_bgr() == img
 
 
-def test_opencv_conversion(img: Image):
+def test_opencv_conversion(img: Image) -> None:
     ocv = img.to_opencv()
     decoded_img = Image.from_opencv(ocv)
 
@@ -65,7 +66,7 @@ def test_opencv_conversion(img: Image):
 
 
 @pytest.mark.tool
-def test_sharpness_detector():
+def test_sharpness_stream() -> None:
     get_data("unitree_office_walk")  # Preload data for testing
     video_store = TimedSensorReplay(
         "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
@@ -74,55 +75,74 @@ def test_sharpness_detector():
     cnt = 0
     for image in video_store.iterate():
         cnt = cnt + 1
-        print(image.sharpness())
+        print(image.sharpness)
         if cnt > 30:
             return
 
 
-@pytest.mark.tool
-def test_sharpness_sliding_window_foxglove():
+def test_sharpness_barrier() -> None:
     import time
+    from unittest.mock import MagicMock
 
-    from dimos.msgs.geometry_msgs import Vector3
-    from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+    # Create mock images with known sharpness values
+    # This avoids loading real data from disk
+    mock_images = []
+    sharpness_values = [0.3711, 0.3241, 0.3067, 0.2583, 0.3665]  # Just 5 images for 1 window
 
-    lcm = LCM()
-    lcm.start()
+    for i, sharp in enumerate(sharpness_values):
+        img = MagicMock()
+        img.sharpness = sharp
+        img.ts = 1758912038.208 + i * 0.01  # Simulate timestamps
+        mock_images.append(img)
 
-    ping = 0
-    sharp_topic = Topic("/sharp", Image)
-    all_topic = Topic("/all", Image)
-    sharpness_topic = Topic("/sharpness", Vector3)
+    # Track what goes into windows and what comes out
+    start_wall_time = None
+    window_contents = []  # List of (wall_time, image)
+    emitted_images = []
 
-    get_data("unitree_office_walk")  # Preload data for testing
-    video_stream = TimedSensorReplay(
-        "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
-    ).stream()
+    def track_input(img):
+        """Track all images going into sharpness_barrier with wall-clock time"""
+        nonlocal start_wall_time
+        wall_time = time.time()
+        if start_wall_time is None:
+            start_wall_time = wall_time
+        relative_time = wall_time - start_wall_time
+        window_contents.append((relative_time, img))
+        return img
 
-    # Publish all images to all_topic
-    video_stream.subscribe(lambda x: lcm.publish(all_topic, x))
+    def track_output(img) -> None:
+        """Track what sharpness_barrier emits"""
+        emitted_images.append(img)
 
-    def sharpness_vector(x: Image):
-        nonlocal ping
-        sharpness = x.sharpness()
-        if ping:
-            y = 1
-            ping = ping - 1
-        else:
-            y = 0
+    # Use 20Hz frequency (0.05s windows) for faster test
+    # Emit images at 100Hz to get ~5 per window
+    from reactivex import from_iterable, interval
 
-        return Vector3([sharpness, y, 0])
+    source = from_iterable(mock_images).pipe(
+        ops.zip(interval(0.01)),  # 100Hz emission rate
+        ops.map(lambda x: x[0]),  # Extract just the image
+    )
 
-    video_stream.subscribe(lambda x: lcm.publish(sharpness_topic, sharpness_vector(x)))
+    source.pipe(
+        ops.do_action(track_input),  # Track inputs
+        sharpness_barrier(20),  # 20Hz = 0.05s windows
+        ops.do_action(track_output),  # Track outputs
+    ).run()
 
-    def pub_sharp(x: Image):
-        nonlocal ping
-        ping = 3
-        lcm.publish(sharp_topic, x)
+    # Only need 0.08s for 1 full window at 20Hz plus buffer
+    time.sleep(0.08)
 
-    sharpness_window(
-        1,
-        source=video_stream,
-    ).subscribe(pub_sharp)
+    # Verify we got correct emissions (items span across 2 windows due to timing)
+    # Items 1-4 arrive in first window (0-50ms), item 5 arrives in second window (50-100ms)
+    assert len(emitted_images) == 2, (
+        f"Expected exactly 2 emissions (one per window), got {len(emitted_images)}"
+    )
 
-    time.sleep(120)
+    # Group inputs by wall-clock windows and verify we got the sharpest
+
+    # Verify each window emitted the sharpest image from that window
+    # First window (0-50ms): items 1-4
+    assert emitted_images[0].sharpness == 0.3711  # Highest among first 4 items
+
+    # Second window (50-100ms): only item 5
+    assert emitted_images[1].sharpness == 0.3665  # Only item in second window

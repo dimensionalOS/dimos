@@ -12,18 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import cv2
-import numpy as np
-import os
-import sys
 import queue
 import threading
-import tests.test_header
 
+import cv2
+import numpy as np
 
-from dimos.stream.video_provider import VideoProvider
 from dimos.perception.person_tracker import PersonTrackingStream
 from dimos.perception.visual_servoing import VisualServoing
+from dimos.stream.video_provider import VideoProvider
 
 
 def main():

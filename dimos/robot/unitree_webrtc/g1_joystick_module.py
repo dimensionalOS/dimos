@@ -34,14 +34,16 @@ class G1JoystickModule(Module):
 
     twist_out: Out[Twist] = None  # Standard velocity commands
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Initialize pygame and start control loop."""
+        super().start()
+
         try:
             import pygame
         except ImportError:
@@ -58,7 +60,22 @@ class G1JoystickModule(Module):
 
         return True
 
-    def _pygame_loop(self):
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+        self.running = False
+        self.pygame_ready = False
+
+        stop_twist = Twist()
+        stop_twist.linear = Vector3(0, 0, 0)
+        stop_twist.angular = Vector3(0, 0, 0)
+
+        self._thread.join(2)
+
+        self.twist_out.publish(stop_twist)
+
+    def _pygame_loop(self) -> None:
         """Main pygame event loop - ALL pygame operations happen here."""
         import pygame
 
@@ -125,7 +142,7 @@ class G1JoystickModule(Module):
         pygame.quit()
         print("G1 JoystickModule stopped")
 
-    def _update_display(self, twist):
+    def _update_display(self, twist) -> None:
         """Update pygame window with current status."""
         import pygame
 
@@ -163,17 +180,6 @@ class G1JoystickModule(Module):
 
         pygame.display.flip()
 
-    @rpc
-    def stop(self):
-        """Stop the joystick module."""
-        self.running = False
-        stop_twist = Twist()
-        stop_twist.linear = Vector3(0, 0, 0)
-        stop_twist.angular = Vector3(0, 0, 0)
-        self.twist_out.publish(stop_twist)
-        return True
 
-    def cleanup(self):
-        """Clean up pygame resources."""
-        self.running = False
-        self.pygame_ready = False
+# Create blueprint function for easy instantiation
+g1_joystick = G1JoystickModule.blueprint

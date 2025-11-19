@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
-import json
 import datetime
-import os
-import uuid
+import json
 from operator import itemgetter
-from typing import Any, Dict, List, Optional, Tuple, TypedDict, Union
+import os
+from typing import Any, TypedDict
+import uuid
 
 from langchain.chat_models import init_chat_model
 from langchain_core.messages import (
@@ -28,10 +28,15 @@ from langchain_core.messages import (
     ToolMessage,
 )
 
-from dimos.agents2.spec import AgentSpec
-from dimos.core import rpc
-from dimos.msgs.sensor_msgs import Image
-from dimos.protocol.skill.coordinator import SkillCoordinator, SkillState, SkillStateDict
+from dimos.agents2.spec import AgentSpec, Model, Provider
+from dimos.agents2.system_prompt import get_system_prompt
+from dimos.core import DimosCluster, rpc
+from dimos.protocol.skill.coordinator import (
+    SkillCoordinator,
+    SkillState,
+    SkillStateDict,
+)
+from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.skill.type import Output
 from dimos.utils.logging_config import setup_logger
 
@@ -82,7 +87,7 @@ def summary_from_state(state: SkillState, special_data: bool = False) -> SkillSt
 
 
 def _custom_json_serializers(obj):
-    if isinstance(obj, (datetime.date, datetime.datetime)):
+    if isinstance(obj, datetime.date | datetime.datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
 
@@ -91,8 +96,8 @@ def _custom_json_serializers(obj):
 # and builds messages to be sent to an agent
 def snapshot_to_messages(
     state: SkillStateDict,
-    tool_calls: List[ToolCall],
-) -> Tuple[List[ToolMessage], Optional[AIMessage]]:
+    tool_calls: list[ToolCall],
+) -> tuple[list[ToolMessage], AIMessage | None]:
     # builds a set of tool call ids from a previous agent request
     tool_call_ids = set(
         map(itemgetter("id"), tool_calls),
@@ -102,15 +107,15 @@ def snapshot_to_messages(
     tool_msgs: list[ToolMessage] = []
 
     # build a general skill state overview (for longer running skills)
-    state_overview: list[Dict[str, SkillStateSummary]] = []
+    state_overview: list[dict[str, SkillStateSummary]] = []
 
     # for special skills that want to return a separate message
     # (images for example, requires to be a HumanMessage)
-    special_msgs: List[HumanMessage] = []
+    special_msgs: list[HumanMessage] = []
 
     # for special skills that want to return a separate message that should
     # stay in history, like actual human messages, critical events
-    history_msgs: List[HumanMessage] = []
+    history_msgs: list[HumanMessage] = []
 
     # Initialize state_msg
     state_msg = None
@@ -157,13 +162,13 @@ def snapshot_to_messages(
 # Agent class job is to glue skill coordinator state to an agent, builds langchain messages
 class Agent(AgentSpec):
     system_message: SystemMessage
-    state_messages: List[Union[AIMessage, HumanMessage]]
+    state_messages: list[AIMessage | HumanMessage]
 
     def __init__(
         self,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         AgentSpec.__init__(self, *args, **kwargs)
 
         self.state_messages = []
@@ -178,6 +183,8 @@ class Agent(AgentSpec):
             else:
                 self.config.system_prompt.content += SYSTEM_MSG_APPEND
                 self.system_message = self.config.system_prompt
+        else:
+            self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
 
         self.publish(self.system_message)
 
@@ -189,42 +196,35 @@ class Agent(AgentSpec):
                 model_provider=self.config.provider, model=self.config.model
             )
 
-    def __enter__(self) -> "Agent":
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.stop()
-        return False
-
     @rpc
     def get_agent_id(self) -> str:
         return self._agent_id
 
     @rpc
-    def start(self):
+    def start(self) -> None:
+        super().start()
         self.coordinator.start()
 
     @rpc
-    def stop(self):
-        self._close_module()
+    def stop(self) -> None:
         self.coordinator.stop()
         self._agent_stopped = True
+        super().stop()
 
-    def clear_history(self):
+    def clear_history(self) -> None:
         self._history.clear()
 
-    def append_history(self, *msgs: List[Union[AIMessage, HumanMessage]]):
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
         for msg in msgs:
             self.publish(msg)
 
         self._history.extend(msgs)
 
     def history(self):
-        return [self.system_message] + self._history + self.state_messages
+        return [self.system_message, *self._history, *self.state_messages]
 
     # Used by agent to execute tool calls
-    def execute_tool_calls(self, tool_calls: List[ToolCall]) -> None:
+    def execute_tool_calls(self, tool_calls: list[ToolCall]) -> None:
         """Execute a list of tool calls from the agent."""
         if self._agent_stopped:
             logger.warning("Agent is stopped, cannot execute tool calls.")
@@ -288,8 +288,8 @@ class Agent(AgentSpec):
                 if msg.tool_calls:
                     self.execute_tool_calls(msg.tool_calls)
 
-                print(self)
-                print(self.coordinator)
+                # print(self)
+                # print(self.coordinator)
 
                 self._write_debug_history_file()
 
@@ -324,7 +324,7 @@ class Agent(AgentSpec):
             traceback.print_exc()
 
     @rpc
-    def loop_thread(self):
+    def loop_thread(self) -> bool:
         asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
         return True
 
@@ -338,13 +338,19 @@ class Agent(AgentSpec):
     async def query_async(self, query: str):
         return await self.agent_loop(query)
 
-    def register_skills(self, container):
-        return self.coordinator.register_skills(container)
+    @rpc
+    def register_skills(self, container, run_implicit_name: str | None = None):
+        ret = self.coordinator.register_skills(container)
+
+        if run_implicit_name:
+            self.run_implicit_skill(run_implicit_name)
+
+        return ret
 
     def get_tools(self):
         return self.coordinator.get_tools()
 
-    def _write_debug_history_file(self):
+    def _write_debug_history_file(self) -> None:
         file_path = os.getenv("DEBUG_AGENT_HISTORY_FILE")
         if not file_path:
             return
@@ -353,3 +359,54 @@ class Agent(AgentSpec):
 
         with open(file_path, "w") as f:
             json.dump(history, f, default=lambda x: repr(x), indent=2)
+
+
+class LlmAgent(Agent):
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.loop_thread()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
+
+llm_agent = LlmAgent.blueprint
+
+
+def deploy(
+    dimos: DimosCluster,
+    system_prompt: str = "You are a helpful assistant for controlling a Unitree Go2 robot.",
+    model: Model = Model.GPT_4O,
+    provider: Provider = Provider.OPENAI,
+    skill_containers: list[SkillContainer] | None = None,
+) -> Agent:
+    from dimos.agents2.cli.human import HumanInput
+
+    if skill_containers is None:
+        skill_containers = []
+    agent = dimos.deploy(
+        Agent,
+        system_prompt=system_prompt,
+        model=model,
+        provider=provider,
+    )
+
+    human_input = dimos.deploy(HumanInput)
+    human_input.start()
+
+    agent.register_skills(human_input)
+
+    for skill_container in skill_containers:
+        print("Registering skill container:", skill_container)
+        agent.register_skills(skill_container)
+
+    agent.run_implicit_skill("human")
+    agent.start()
+    agent.loop_thread()
+
+    return agent
+
+
+__all__ = ["Agent", "deploy", "llm_agent"]

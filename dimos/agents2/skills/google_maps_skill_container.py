@@ -13,52 +13,41 @@
 # limitations under the License.
 
 import json
-from typing import Any, Optional, Union
-from reactivex import Observable
+from typing import Any
 
+from reactivex.disposable import Disposable
+
+from dimos.core.core import rpc
+from dimos.core.skill_module import SkillModule
+from dimos.core.stream import In
 from dimos.mapping.google_maps.google_maps import GoogleMaps
-from dimos.mapping.osm.current_location_map import CurrentLocationMap
 from dimos.mapping.types import LatLon
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.robot.robot import Robot
+from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
-
-from reactivex.disposable import CompositeDisposable
 
 logger = setup_logger(__file__)
 
 
-class GoogleMapsSkillContainer(SkillContainer):
-    _robot: Robot
-    _disposables: CompositeDisposable
-    _latest_location: Optional[LatLon]
-    _position_stream: Observable[LatLon]
-    _current_location_map: CurrentLocationMap
-    _started: bool
+class GoogleMapsSkillContainer(SkillModule):
+    _latest_location: LatLon | None = None
+    _client: GoogleMaps
 
-    def __init__(self, robot: Robot, position_stream: Observable[LatLon]):
+    gps_location: In[LatLon] = None
+
+    def __init__(self) -> None:
         super().__init__()
-        self._robot = robot
-        self._disposables = CompositeDisposable()
-        self._latest_location = None
-        self._position_stream = position_stream
         self._client = GoogleMaps()
         self._started = True
         self._max_valid_distance = 20000  # meters
-        self._subscription = None
-        self._subscription = self._position_stream.subscribe(self._on_gps_location)
-        self._disposables.add(self._subscription)
 
-    def __enter__(self) -> "GoogleMapsSkillContainer":
-        self._started = True
-        if self._subscription is None:
-            self._subscription = self._position_stream.subscribe(self._on_gps_location)
-            self._disposables.add(self._subscription)
-        return self
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self._disposables.add(Disposable(self.gps_location.subscribe(self._on_gps_location)))
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self._disposables.dispose()
-        return False
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location
@@ -80,9 +69,6 @@ class GoogleMapsSkillContainer(SkillContainer):
         Args:
             context_radius (int): default 200, how many meters to look around
         """
-
-        if not self._started:
-            raise ValueError(f"{self} has not been started.")
 
         location = self._get_latest_location()
 
@@ -112,12 +98,9 @@ class GoogleMapsSkillContainer(SkillContainer):
             queries (list[str]): The places you want to look up.
         """
 
-        if not self._started:
-            raise ValueError(f"{self} has not been started.")
-
         location = self._get_latest_location()
 
-        results: list[Union[dict[str, Any], str]] = []
+        results: list[dict[str, Any] | str] = []
 
         for query in queries:
             try:
@@ -130,3 +113,8 @@ class GoogleMapsSkillContainer(SkillContainer):
                 results.append(f"no result for {query}")
 
         return json.dumps(results)
+
+
+google_maps_skill = GoogleMapsSkillContainer.blueprint
+
+__all__ = ["GoogleMapsSkillContainer", "google_maps_skill"]

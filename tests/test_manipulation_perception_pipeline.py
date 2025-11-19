@@ -26,17 +26,15 @@
 # limitations under the License.
 
 import sys
-import time
 import threading
-from reactivex import operators as ops
-
-import tests.test_header
+import time
 
 from pyzed import sl
+from reactivex import operators as ops
+
+from dimos.manipulation.manip_aio_pipeline import ManipulationPipeline
 from dimos.stream.stereo_camera_streams.zed import ZEDCameraStream
 from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.utils.logging_config import logger
-from dimos.manipulation.manip_aio_pipeline import ManipulationPipeline
 
 
 def monitor_grasps(pipeline):
@@ -138,10 +136,10 @@ def main():
         )
         grasp_monitor_thread.start()
 
-        print(f"\n Point Cloud + Grasp Generation Test Running:")
+        print("\n Point Cloud + Grasp Generation Test Running:")
         print(f"   Web Interface: http://localhost:{web_port}")
-        print(f"   Object Detection View: RGB with bounding boxes")
-        print(f"   Point Cloud View: Depth with colored point clouds and 3D bounding boxes")
+        print("   Object Detection View: RGB with bounding boxes")
+        print("   Point Cloud View: Depth with colored point clouds and 3D bounding boxes")
         print(f"   Confidence threshold: {min_confidence}")
         print(f"   Grasp server: {grasp_server_url}")
         print(f"   Available streams: {list(streams.keys())}")

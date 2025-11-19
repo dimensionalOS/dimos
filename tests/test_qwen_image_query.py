@@ -15,9 +15,11 @@
 """Test the Qwen image query functionality."""
 
 import os
+
 import cv2
 import numpy as np
 from PIL import Image
+
 from dimos.models.qwen.video_query import query_single_frame
 
 

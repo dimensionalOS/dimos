@@ -14,25 +14,23 @@
 
 """Test agent with FakeChatModel for unit testing."""
 
-import os
 import time
 
-import pytest
 from dimos_lcm.sensor_msgs import CameraInfo
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall
+from langchain_core.messages import AIMessage, HumanMessage
+import pytest
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.testing import MockModel
 from dimos.core import LCMTransport, start
-from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
-def test_tool_call():
+def test_tool_call() -> None:
     """Test agent initialization and tool call execution."""
     # Create a fake model that will respond with tool calls
     fake_model = MockModel(
@@ -76,7 +74,7 @@ def test_tool_call():
     agent.stop()
 
 
-def test_image_tool_call():
+def test_image_tool_call() -> None:
     """Test agent with image tool call execution."""
     dimos = start(2)
     # Create a fake model that will respond with image tool calls
@@ -128,10 +126,12 @@ def test_image_tool_call():
     ]
     assert len(human_messages_with_images) >= 0  # May have image messages
     agent.stop()
+    test_skill_module.stop()
+    dimos.close_all()
 
 
 @pytest.mark.tool
-def test_tool_call_implicit_detections():
+def test_tool_call_implicit_detections() -> None:
     """Test agent with image tool call execution."""
     dimos = start(2)
     # Create a fake model that will respond with image tool calls

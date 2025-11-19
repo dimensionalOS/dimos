@@ -11,31 +11,31 @@ import copy
 import math
 
 import torch
-import torch.nn.functional as F
 from torch import nn
-from torch.nn.init import xavier_uniform_, constant_, normal_
-
+import torch.nn.functional as F
+from torch.nn.init import constant_, normal_, xavier_uniform_
 from util.misc import inverse_sigmoid
+
 from models.ops.modules import MSDeformAttn
 
 
 class DeformableTransformer(nn.Module):
     def __init__(
         self,
-        d_model=256,
-        nhead=8,
-        num_encoder_layers=6,
-        num_decoder_layers=6,
-        dim_feedforward=1024,
-        dropout=0.1,
-        activation="relu",
-        return_intermediate_dec=False,
-        num_feature_levels=4,
-        dec_n_points=4,
-        enc_n_points=4,
-        two_stage=False,
-        two_stage_num_proposals=300,
-    ):
+        d_model: int=256,
+        nhead: int=8,
+        num_encoder_layers: int=6,
+        num_decoder_layers: int=6,
+        dim_feedforward: int=1024,
+        dropout: float=0.1,
+        activation: str="relu",
+        return_intermediate_dec: bool=False,
+        num_feature_levels: int=4,
+        dec_n_points: int=4,
+        enc_n_points: int=4,
+        two_stage: bool=False,
+        two_stage_num_proposals: int=300,
+    ) -> None:
         super().__init__()
 
         self.d_model = d_model
@@ -67,7 +67,7 @@ class DeformableTransformer(nn.Module):
 
         self._reset_parameters()
 
-    def _reset_parameters(self):
+    def _reset_parameters(self) -> None:
         for p in self.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
@@ -96,7 +96,6 @@ class DeformableTransformer(nn.Module):
 
     def gen_encoder_output_proposals(self, memory, memory_padding_mask, spatial_shapes):
         N_, S_, C_ = memory.shape
-        base_scale = 4.0
         proposals = []
         _cur = 0
         for lvl, (H_, W_) in enumerate(spatial_shapes):
@@ -149,7 +148,7 @@ class DeformableTransformer(nn.Module):
         mask_flatten = []
         lvl_pos_embed_flatten = []
         spatial_shapes = []
-        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds)):
+        for lvl, (src, mask, pos_embed) in enumerate(zip(srcs, masks, pos_embeds, strict=False)):
             bs, c, h, w = src.shape
             spatial_shape = (h, w)
             spatial_shapes.append(spatial_shape)
@@ -240,14 +239,14 @@ class DeformableTransformer(nn.Module):
 class DeformableTransformerEncoderLayer(nn.Module):
     def __init__(
         self,
-        d_model=256,
-        d_ffn=1024,
-        dropout=0.1,
-        activation="relu",
-        n_levels=4,
-        n_heads=8,
-        n_points=4,
-    ):
+        d_model: int=256,
+        d_ffn: int=1024,
+        dropout: float=0.1,
+        activation: str="relu",
+        n_levels: int=4,
+        n_heads: int=8,
+        n_points: int=4,
+    ) -> None:
         super().__init__()
 
         # self attention
@@ -295,7 +294,7 @@ class DeformableTransformerEncoderLayer(nn.Module):
 
 
 class DeformableTransformerEncoder(nn.Module):
-    def __init__(self, encoder_layer, num_layers):
+    def __init__(self, encoder_layer, num_layers: int) -> None:
         super().__init__()
         self.layers = _get_clones(encoder_layer, num_layers)
         self.num_layers = num_layers
@@ -334,14 +333,14 @@ class DeformableTransformerEncoder(nn.Module):
 class DeformableTransformerDecoderLayer(nn.Module):
     def __init__(
         self,
-        d_model=256,
-        d_ffn=1024,
-        dropout=0.1,
-        activation="relu",
-        n_levels=4,
-        n_heads=8,
-        n_points=4,
-    ):
+        d_model: int=256,
+        d_ffn: int=1024,
+        dropout: float=0.1,
+        activation: str="relu",
+        n_levels: int=4,
+        n_heads: int=8,
+        n_points: int=4,
+    ) -> None:
         super().__init__()
 
         # cross attention
@@ -409,7 +408,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
 
 
 class DeformableTransformerDecoder(nn.Module):
-    def __init__(self, decoder_layer, num_layers, return_intermediate=False):
+    def __init__(self, decoder_layer, num_layers: int, return_intermediate: bool=False) -> None:
         super().__init__()
         self.layers = _get_clones(decoder_layer, num_layers)
         self.num_layers = num_layers

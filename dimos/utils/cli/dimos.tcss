@@ -1,0 +1,91 @@
+/* DimOS Base Theme for Textual CLI Applications
+ * Based on colors.json - Official DimOS color palette
+ */
+
+/* Base Color Palette (from colors.json) */
+$black: #0b0f0f;
+$red: #ff0000;
+$green: #00eeee;
+$yellow: #ffcc00;
+$blue: #5c9ff0;
+$purple: #00eeee;
+$cyan: #00eeee;
+$white: #b5e4f4;
+
+/* Bright Colors */
+$bright-black: #404040;
+$bright-red: #ff0000;
+$bright-green: #00eeee;
+$bright-yellow: #f2ea8c;
+$bright-blue: #8cbdf2;
+$bright-purple: #00eeee;
+$bright-cyan: #00eeee;
+$bright-white: #ffffff;
+
+/* Core Theme Colors */
+$background: #0b0f0f;
+$foreground: #b5e4f4;
+$cursor: #00eeee;
+
+/* Semantic Aliases */
+$bg: $black;
+$border: $cyan;
+$accent: $white;
+$dim: $bright-black;
+$timestamp: $bright-white;
+
+/* Message Type Colors */
+$system: $red;
+$agent: #88ff88;
+$tool: $cyan;
+$tool-result: $yellow;
+$human: $bright-white;
+
+/* Status Colors */
+$success: $green;
+$error: $red;
+$warning: $yellow;
+$info: $cyan;
+
+/* Base Screen */
+Screen {
+    background: $bg;
+}
+
+/* Default Container */
+Container {
+    background: $bg;
+}
+
+/* Input Widget */
+Input {
+    background: $bg;
+    border: solid $border;
+    color: $accent;
+}
+
+Input:focus {
+    border: solid $border;
+}
+
+/* RichLog Widget */
+RichLog {
+    background: $bg;
+    border: solid $border;
+}
+
+/* Button Widget */
+Button {
+    background: $bg;
+    border: solid $border;
+    color: $accent;
+}
+
+Button:hover {
+    background: $dim;
+    border: solid $accent;
+}
+
+Button:focus {
+    border: double $accent;
+}

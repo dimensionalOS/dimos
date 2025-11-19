@@ -21,13 +21,15 @@ import logging
 import socket
 import threading
 import time
-from typing import Optional
 
-from dimos.core import In, Out, Module, rpc
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, PoseStamped
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
 from dimos.utils.logging_config import setup_logger
+
 from .b1_command import B1Command
 
 # Setup logger with DEBUG level for troubleshooting
@@ -58,7 +60,7 @@ class B1ConnectionModule(Module):
 
     def __init__(
         self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs
-    ):
+    ) -> None:
         """Initialize B1 connection module.
 
         Args:
@@ -86,8 +88,10 @@ class B1ConnectionModule(Module):
         self.timeout_active = False
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the connection and subscribe to command streams."""
+
+        super().start()
 
         # Setup UDP socket (unless in test mode)
         if not self.test_mode:
@@ -98,11 +102,14 @@ class B1ConnectionModule(Module):
 
         # Subscribe to input streams
         if self.cmd_vel:
-            self.cmd_vel.subscribe(self.handle_twist_stamped)
+            unsub = self.cmd_vel.subscribe(self.handle_twist_stamped)
+            self._disposables.add(Disposable(unsub))
         if self.mode_cmd:
-            self.mode_cmd.subscribe(self.handle_mode)
+            unsub = self.mode_cmd.subscribe(self.handle_mode)
+            self._disposables.add(Disposable(unsub))
         if self.odom_in:
-            self.odom_in.subscribe(self._publish_odom_pose)
+            unsub = self.odom_in.subscribe(self._publish_odom_pose)
+            self._disposables.add(Disposable(unsub))
 
         # Start threads
         self.running = True
@@ -116,11 +123,10 @@ class B1ConnectionModule(Module):
         self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
         self.watchdog_thread.start()
 
-        return True
-
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the connection and send stop commands."""
+
         self.set_mode(RobotMode.IDLE)  # IDLE
         with self.cmd_lock:
             self._current_cmd = B1Command(mode=RobotMode.IDLE)  # Zero all velocities
@@ -145,9 +151,9 @@ class B1ConnectionModule(Module):
             self.socket.close()
             self.socket = None
 
-        return True
+        super().stop()
 
-    def handle_twist_stamped(self, twist_stamped: TwistStamped):
+    def handle_twist_stamped(self, twist_stamped: TwistStamped) -> None:
         """Handle timestamped Twist message and convert to B1Command.
 
         This is called automatically when messages arrive on cmd_vel input.
@@ -192,7 +198,7 @@ class B1ConnectionModule(Module):
         self.last_command_time = time.time()
         self.timeout_active = False  # Reset timeout state since we got a new command
 
-    def handle_mode(self, mode_msg: Int32):
+    def handle_mode(self, mode_msg: Int32) -> None:
         """Handle mode change message.
 
         This is called automatically when messages arrive on mode_cmd input.
@@ -203,7 +209,7 @@ class B1ConnectionModule(Module):
         self.set_mode(mode_msg.data)
 
     @rpc
-    def set_mode(self, mode: int):
+    def set_mode(self, mode: int) -> bool:
         """Set robot mode (0=idle, 1=stand, 2=walk, 6=recovery)."""
         self.current_mode = mode
         with self.cmd_lock:
@@ -228,7 +234,7 @@ class B1ConnectionModule(Module):
 
         return True
 
-    def _send_loop(self):
+    def _send_loop(self) -> None:
         """Continuously send current command at 50Hz.
 
         The watchdog thread handles timeout and zeroing commands, so this loop
@@ -264,7 +270,7 @@ class B1ConnectionModule(Module):
                 if self.running:
                     logger.error(f"Send error: {e}")
 
-    def _publish_odom_pose(self, msg: Odometry):
+    def _publish_odom_pose(self, msg: Odometry) -> None:
         """Convert and publish odometry as PoseStamped.
 
         This matches G1's approach of receiving external odometry.
@@ -278,7 +284,7 @@ class B1ConnectionModule(Module):
             )
             self.odom_pose.publish(pose_stamped)
 
-    def _watchdog_loop(self):
+    def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""
         while self.watchdog_running:
             try:
@@ -315,31 +321,31 @@ class B1ConnectionModule(Module):
                     logger.error(f"Watchdog error: {e}")
 
     @rpc
-    def idle(self):
+    def idle(self) -> bool:
         """Set robot to idle mode."""
         self.set_mode(RobotMode.IDLE)
         return True
 
     @rpc
-    def pose(self):
+    def pose(self) -> bool:
         """Set robot to stand/pose mode for reaching ground objects with manipulator."""
         self.set_mode(RobotMode.STAND)
         return True
 
     @rpc
-    def walk(self):
+    def walk(self) -> bool:
         """Set robot to walk mode."""
         self.set_mode(RobotMode.WALK)
         return True
 
     @rpc
-    def recovery(self):
+    def recovery(self) -> bool:
         """Set robot to recovery mode."""
         self.set_mode(RobotMode.RECOVERY)
         return True
 
     @rpc
-    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> bool:
         """Direct RPC method for sending TwistStamped commands.
 
         Args:
@@ -349,19 +355,15 @@ class B1ConnectionModule(Module):
         self.handle_twist_stamped(twist_stamped)
         return True
 
-    def cleanup(self):
-        """Clean up resources when module is destroyed."""
-        self.stop()
 
-
-class TestB1ConnectionModule(B1ConnectionModule):
+class MockB1ConnectionModule(B1ConnectionModule):
     """Test connection module that prints commands instead of sending UDP."""
 
-    def __init__(self, ip: str = "127.0.0.1", port: int = 9090, *args, **kwargs):
+    def __init__(self, ip: str = "127.0.0.1", port: int = 9090, *args, **kwargs) -> None:
         """Initialize test connection without creating socket."""
         super().__init__(ip, port, test_mode=True, *args, **kwargs)
 
-    def _send_loop(self):
+    def _send_loop(self) -> None:
         """Override to provide better test output with timeout detection."""
         timeout_warned = False
 
@@ -388,3 +390,11 @@ class TestB1ConnectionModule(B1ConnectionModule):
 
             self.packet_count += 1
             time.sleep(0.020)
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()

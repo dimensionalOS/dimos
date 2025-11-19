@@ -13,10 +13,10 @@
 # limitations under the License.
 
 import asyncio
-import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 # from dimos.core.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
@@ -67,6 +67,7 @@ def skill(
     stream: Stream = Stream.none,
     ret: Return = Return.call_agent,
     output: Output = Output.standard,
+    hide_skill: bool = False,
 ) -> Callable:
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):
@@ -100,6 +101,7 @@ def skill(
             ret=ret.passive if stream == Stream.passive else ret,
             output=output,
             schema=function_to_schema(f),
+            hide_skill=hide_skill,
         )
 
         wrapper.__rpc__ = True  # type: ignore[attr-defined]
@@ -146,17 +148,18 @@ def threaded(f: Callable[..., Any]) -> Callable[..., None]:
 
 class SkillContainer:
     skill_transport_class: type[SkillCommsSpec] = LCMSkillComms
-    _skill_thread_pool: Optional[ThreadPoolExecutor] = None
-    _skill_transport: Optional[SkillCommsSpec] = None
+    _skill_thread_pool: ThreadPoolExecutor | None = None
+    _skill_transport: SkillCommsSpec | None = None
 
     @rpc
-    def dynamic_skills(self):
+    def dynamic_skills(self) -> bool:
         return False
 
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
 
-    def stop(self):
+    @rpc
+    def stop(self) -> None:
         if self._skill_transport:
             self._skill_transport.stop()
             self._skill_transport = None
@@ -165,8 +168,9 @@ class SkillContainer:
             self._skill_thread_pool.shutdown(wait=True)
             self._skill_thread_pool = None
 
-        if hasattr(self, "_close_rpc"):
-            self._close_rpc()
+        # Continue the MRO chain if there's a parent stop() method
+        if hasattr(super(), "stop"):
+            super().stop()
 
     # TODO: figure out standard args/kwargs passing format,
     # use same interface as skill coordinator call_skill method
@@ -225,11 +229,13 @@ class SkillContainer:
     @rpc
     def skills(self) -> dict[str, SkillConfig]:
         # Avoid recursion by excluding this property itself
+        # Also exclude known properties that shouldn't be accessed
+        excluded = {"skills", "tf", "rpc", "skill_transport"}
         return {
             name: getattr(self, name)._skill_config
             for name in dir(self)
             if not name.startswith("_")
-            and name != "skills"
+            and name not in excluded
             and hasattr(getattr(self, name), "_skill_config")
         }
 

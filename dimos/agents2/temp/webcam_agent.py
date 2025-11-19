@@ -18,33 +18,22 @@ Run script for Unitree Go2 robot with agents2 framework.
 This is the migrated version using the new LangChain-based agent system.
 """
 
-import asyncio  # Needed for event loop management in setup_agent
-import os
-import sys
-import time
-from pathlib import Path
-
-from dotenv import load_dotenv
-
-from dimos.agents2.cli.human import HumanInput
-
-# Add parent directories to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
-
 from threading import Thread
+import time
 
 import reactivex as rx
 import reactivex.operators as ops
 
 from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
-from dimos.core import LCMTransport, Module, pLCMTransport, start
-from dimos.hardware.webcam import ColorCameraModule, Webcam
-from dimos.msgs.sensor_msgs import Image
+from dimos.core import LCMTransport, Module, rpc, start
+from dimos.hardware.camera import zed
+from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.camera.webcam import Webcam
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
-from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
 
@@ -57,12 +46,15 @@ class WebModule(Module):
 
     _human_messages_running = False
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.agent_response = rx.subject.Subject()
         self.human_query = rx.subject.Subject()
 
-    def start(self):
+    @rpc
+    def start(self) -> None:
+        super().start()
+
         text_streams = {
             "agent_responses": self.agent_response,
         }
@@ -73,15 +65,18 @@ class WebModule(Module):
             audio_subject=rx.subject.Subject(),
         )
 
-        self.web_interface.query_stream.subscribe(self.human_query.on_next)
+        unsub = self.web_interface.query_stream.subscribe(self.human_query.on_next)
+        self._disposables.add(unsub)
 
         self.thread = Thread(target=self.web_interface.run, daemon=True)
         self.thread.start()
 
-    def stop(self):
+    @rpc
+    def stop(self) -> None:
         if self.web_interface:
             self.web_interface.stop()
         if self.thread:
+            # TODO, you can't just wait for a server to close, you have to signal it to end.
             self.thread.join(timeout=1.0)
 
         super().stop()
@@ -100,7 +95,7 @@ class WebModule(Module):
             yield message
 
 
-def main():
+def main() -> None:
     dimos = start(4)
     # Create agent
     agent = Agent(
@@ -110,7 +105,24 @@ def main():
     )
 
     testcontainer = dimos.deploy(SkillContainerTest)
-    webcam = dimos.deploy(ColorCameraModule, hardware=lambda: Webcam(camera_index=0))
+    webcam = dimos.deploy(
+        CameraModule,
+        transform=Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+        ),
+        hardware=lambda: Webcam(
+            camera_index=0,
+            frequency=15,
+            stereo_slice="left",
+            camera_info=zed.CameraInfo.SingleWebcam,
+        ),
+    )
+
+    webcam.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
+
     webcam.image.transport = LCMTransport("/image", Image)
 
     webcam.start()
@@ -131,6 +143,8 @@ def main():
 
     while True:
         time.sleep(1)
+
+    # webcam.stop()
 
 
 if __name__ == "__main__":

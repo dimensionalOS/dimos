@@ -17,16 +17,15 @@ Simple path history class for visualization purposes.
 This is a minimal implementation to support websocket visualization.
 """
 
-from typing import List, Optional, Union
 from dimos.msgs.geometry_msgs import Vector3
 
 
 class PathHistory:
     """A simple container for storing a history of positions for visualization."""
 
-    def __init__(self, points: Optional[List[Union[Vector3, tuple, list]]] = None):
+    def __init__(self, points: list[Vector3 | tuple | list] | None = None) -> None:
         """Initialize with optional list of points."""
-        self.points: List[Vector3] = []
+        self.points: list[Vector3] = []
         if points:
             for p in points:
                 if isinstance(p, Vector3):
@@ -34,7 +33,7 @@ class PathHistory:
                 else:
                     self.points.append(Vector3(*p))
 
-    def ipush(self, point: Union[Vector3, tuple, list]) -> "PathHistory":
+    def ipush(self, point: Vector3 | tuple | list) -> "PathHistory":
         """Add a point to the history (in-place) and return self."""
         if isinstance(point, Vector3):
             self.points.append(point)
@@ -48,7 +47,7 @@ class PathHistory:
             self.points = self.points[-max_length:]
         return self
 
-    def last(self) -> Optional[Vector3]:
+    def last(self) -> Vector3 | None:
         """Return the last point in the history, or None if empty."""
         return self.points[-1] if self.points else None
 

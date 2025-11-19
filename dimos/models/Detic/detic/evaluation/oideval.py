@@ -8,29 +8,27 @@
 # The code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/evaluation/oideval.py
 # The original code is under Apache-2.0 License
 # Copyright (c) Facebook, Inc. and its affiliates.
-import os
-import datetime
-import logging
-import itertools
-from collections import OrderedDict
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 import copy
+import datetime
+import itertools
 import json
-import numpy as np
-import torch
-from tabulate import tabulate
+import logging
+import os
 
+from detectron2.data import MetadataCatalog
+from detectron2.evaluation import DatasetEvaluator
+from detectron2.evaluation.coco_evaluation import instances_to_coco_json
+import detectron2.utils.comm as comm
+from detectron2.utils.logger import create_small_table
+from fvcore.common.file_io import PathManager
 from lvis.lvis import LVIS
 from lvis.results import LVISResults
-
+import numpy as np
 import pycocotools.mask as mask_utils
-
-from fvcore.common.file_io import PathManager
-import detectron2.utils.comm as comm
-from detectron2.data import MetadataCatalog
-from detectron2.evaluation.coco_evaluation import instances_to_coco_json
-from detectron2.utils.logger import create_small_table
-from detectron2.evaluation import DatasetEvaluator
+from tabulate import tabulate
+import torch
+from typing import Optional, Sequence
 
 
 def compute_average_precision(precision, recall):
@@ -81,10 +79,10 @@ class OIDEval:
         self,
         lvis_gt,
         lvis_dt,
-        iou_type="bbox",
-        expand_pred_label=False,
-        oid_hierarchy_path="./datasets/oid/annotations/challenge-2019-label500-hierarchy.json",
-    ):
+        iou_type: str="bbox",
+        expand_pred_label: bool=False,
+        oid_hierarchy_path: str="./datasets/oid/annotations/challenge-2019-label500-hierarchy.json",
+    ) -> None:
         """Constructor for OIDEval.
         Args:
             lvis_gt (LVIS class instance, or str containing path of annotation file)
@@ -95,35 +93,34 @@ class OIDEval:
         self.logger = logging.getLogger(__name__)
 
         if iou_type not in ["bbox", "segm"]:
-            raise ValueError("iou_type: {} is not supported.".format(iou_type))
+            raise ValueError(f"iou_type: {iou_type} is not supported.")
 
         if isinstance(lvis_gt, LVIS):
             self.lvis_gt = lvis_gt
         elif isinstance(lvis_gt, str):
             self.lvis_gt = LVIS(lvis_gt)
         else:
-            raise TypeError("Unsupported type {} of lvis_gt.".format(lvis_gt))
+            raise TypeError(f"Unsupported type {lvis_gt} of lvis_gt.")
 
         if isinstance(lvis_dt, LVISResults):
             self.lvis_dt = lvis_dt
-        elif isinstance(lvis_dt, (str, list)):
+        elif isinstance(lvis_dt, str | list):
             # self.lvis_dt = LVISResults(self.lvis_gt, lvis_dt, max_dets=-1)
             self.lvis_dt = LVISResults(self.lvis_gt, lvis_dt)
         else:
-            raise TypeError("Unsupported type {} of lvis_dt.".format(lvis_dt))
+            raise TypeError(f"Unsupported type {lvis_dt} of lvis_dt.")
 
         if expand_pred_label:
-            oid_hierarchy = json.load(open(oid_hierarchy_path, "r"))
+            oid_hierarchy = json.load(open(oid_hierarchy_path))
             cat_info = self.lvis_gt.dataset["categories"]
             freebase2id = {x["freebase_id"]: x["id"] for x in cat_info}
-            id2freebase = {x["id"]: x["freebase_id"] for x in cat_info}
-            id2name = {x["id"]: x["name"] for x in cat_info}
+            {x["id"]: x["freebase_id"] for x in cat_info}
+            {x["id"]: x["name"] for x in cat_info}
 
             fas = defaultdict(set)
 
             def dfs(hierarchy, cur_id):
                 all_childs = set()
-                all_keyed_child = {}
                 if "Subcategory" in hierarchy:
                     for x in hierarchy["Subcategory"]:
                         childs = dfs(x, freebase2id[x["LabelName"]])
@@ -168,12 +165,12 @@ class OIDEval:
         self.params.img_ids = sorted(self.lvis_gt.get_img_ids())
         self.params.cat_ids = sorted(self.lvis_gt.get_cat_ids())
 
-    def _to_mask(self, anns, lvis):
+    def _to_mask(self, anns, lvis) -> None:
         for ann in anns:
             rle = lvis.ann_to_rle(ann)
             ann["segmentation"] = rle
 
-    def _prepare(self):
+    def _prepare(self) -> None:
         """Prepare self._gts and self._dts for evaluation based on params."""
 
         cat_ids = self.params.cat_ids if self.params.cat_ids else None
@@ -214,13 +211,13 @@ class OIDEval:
                 continue
             self._dts[img_id, cat_id].append(dt)
 
-    def evaluate(self):
+    def evaluate(self) -> None:
         """
         Run per image evaluation on given images and store results
         (a list of dict) in self.eval_imgs.
         """
         self.logger.info("Running per image evaluation.")
-        self.logger.info("Evaluate annotation type *{}*".format(self.params.iou_type))
+        self.logger.info(f"Evaluate annotation type *{self.params.iou_type}*")
 
         self.params.img_ids = list(np.unique(self.params.img_ids))
 
@@ -322,7 +319,7 @@ class OIDEval:
         tp_fp_labels = np.zeros(num_detected_boxes, dtype=bool)
         is_matched_to_group_of = np.zeros(num_detected_boxes, dtype=bool)
 
-        def compute_match_iou(iou):
+        def compute_match_iou(iou) -> None:
             max_overlap_gt_ids = np.argmax(iou, axis=1)
             is_gt_detected = np.zeros(iou.shape[1], dtype=bool)
             for i in range(num_detected_boxes):
@@ -381,7 +378,7 @@ class OIDEval:
             "num_gt": len(gt),
         }
 
-    def accumulate(self):
+    def accumulate(self) -> None:
         """Accumulate per image evaluation results and store the result in
         self.eval.
         """
@@ -444,7 +441,7 @@ class OIDEval:
                     "fps": fps,
                 }
 
-                for iou_thr_idx, (tp, fp) in enumerate(zip(tp_sum, fp_sum)):
+                for iou_thr_idx, (tp, fp) in enumerate(zip(tp_sum, fp_sum, strict=False)):
                     tp = np.array(tp)
                     fp = np.array(fp)
                     num_tp = len(tp)
@@ -491,16 +488,15 @@ class OIDEval:
         if not self.eval:
             raise RuntimeError("Please run accumulate() first.")
 
-        max_dets = self.params.max_dets
         self.results["AP50"] = self._summarize("ap")
 
-    def run(self):
+    def run(self) -> None:
         """Wrapper function which calculates the results."""
         self.evaluate()
         self.accumulate()
         self.summarize()
 
-    def print_results(self):
+    def print_results(self) -> None:
         template = " {:<18} {} @[ IoU={:<9} | area={:>6s} | maxDets={:>3d} catIds={:>3s}] = {:0.3f}"
 
         for key, value in self.results.items():
@@ -514,9 +510,9 @@ class OIDEval:
 
             if len(key) > 2 and key[2].isdigit():
                 iou_thr = float(key[2:]) / 100
-                iou = "{:0.2f}".format(iou_thr)
+                iou = f"{iou_thr:0.2f}"
             else:
-                iou = "{:0.2f}:{:0.2f}".format(self.params.iou_thrs[0], self.params.iou_thrs[-1])
+                iou = f"{self.params.iou_thrs[0]:0.2f}:{self.params.iou_thrs[-1]:0.2f}"
 
             cat_group_name = "all"
             area_rng = "all"
@@ -530,7 +526,7 @@ class OIDEval:
 
 
 class Params:
-    def __init__(self, iou_type):
+    def __init__(self, iou_type) -> None:
         self.img_ids = []
         self.cat_ids = []
         # np.arange causes trouble.  the data point on arange is slightly
@@ -552,7 +548,7 @@ class Params:
 
 
 class OIDEvaluator(DatasetEvaluator):
-    def __init__(self, dataset_name, cfg, distributed, output_dir=None):
+    def __init__(self, dataset_name: str, cfg, distributed, output_dir=None) -> None:
         self._distributed = distributed
         self._output_dir = output_dir
 
@@ -567,12 +563,12 @@ class OIDEvaluator(DatasetEvaluator):
         self._do_evaluation = len(self._oid_api.get_ann_ids()) > 0
         self._mask_on = cfg.MODEL.MASK_ON
 
-    def reset(self):
+    def reset(self) -> None:
         self._predictions = []
         self._oid_results = []
 
-    def process(self, inputs, outputs):
-        for input, output in zip(inputs, outputs):
+    def process(self, inputs, outputs) -> None:
+        for input, output in zip(inputs, outputs, strict=False):
             prediction = {"image_id": input["image_id"]}
             instances = output["instances"].to(self._cpu_device)
             prediction["instances"] = instances_to_coco_json(instances, input["image_id"])
@@ -600,7 +596,7 @@ class OIDEvaluator(DatasetEvaluator):
 
         PathManager.mkdirs(self._output_dir)
         file_path = os.path.join(self._output_dir, "oid_instances_results.json")
-        self._logger.info("Saving results to {}".format(file_path))
+        self._logger.info(f"Saving results to {file_path}")
         with PathManager.open(file_path, "w") as f:
             f.write(json.dumps(self._oid_results))
             f.flush()
@@ -624,9 +620,8 @@ class OIDEvaluator(DatasetEvaluator):
         return copy.deepcopy(self._results)
 
 
-def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class_names=None):
+def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg: bool=False, class_names: Optional[Sequence[str]]=None):
     logger = logging.getLogger(__name__)
-    metrics = ["AP50", "AP50_expand"]
 
     results = {}
     oid_eval = OIDEval(oid_gt, oid_results_path, "bbox", expand_pred_label=False)
@@ -661,7 +656,7 @@ def _evaluate_predictions_on_oid(oid_gt, oid_results_path, eval_seg=False, class
                 (
                     "{} {}".format(
                         name.replace(" ", "_"),
-                        inst_num if inst_num < 1000 else "{:.1f}k".format(inst_num / 1000),
+                        inst_num if inst_num < 1000 else f"{inst_num / 1000:.1f}k",
                     ),
                     float(ap * 100),
                 )

@@ -19,20 +19,24 @@
 
 from __future__ import annotations
 
+from collections import defaultdict
+from dataclasses import dataclass
 import hashlib
 import os
 import struct
 import threading
 import time
-from collections import defaultdict
-from dataclasses import dataclass
-from typing import Any, Callable, Dict, Optional
+from typing import TYPE_CHECKING, Any
+import uuid
 
 import numpy as np
 
-from dimos.protocol.pubsub.spec import PubSub, PubSubEncoderMixin, PickleEncoderMixin
-from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel, CPU_IPC_Factory
+from dimos.protocol.pubsub.shm.ipc_factory import CpuShmChannel
+from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 logger = setup_logger("dimos.protocol.pubsub.sharedmemory")
 
@@ -71,32 +75,32 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     # TODO: implement "is_cuda" below capacity, above cp
     class _TopicState:
         __slots__ = (
+            "capacity",
             "channel",
-            "subs",
-            "stop",
-            "thread",
+            "cp",
+            "dtype",
+            "last_local_payload",
             "last_seq",
             "shape",
-            "dtype",
-            "capacity",
-            "cp",
-            "last_local_payload",
+            "stop",
+            "subs",
             "suppress_counts",
+            "thread",
         )
 
-        def __init__(self, channel, capacity: int, cp_mod):
+        def __init__(self, channel, capacity: int, cp_mod) -> None:
             self.channel = channel
             self.capacity = int(capacity)
-            self.shape = (self.capacity + 4,)  # +4 for uint32 length header
+            self.shape = (self.capacity + 20,)  # +20 for header: length(4) + uuid(16)
             self.dtype = np.uint8
             self.subs: list[Callable[[bytes, str], None]] = []
             self.stop = threading.Event()
-            self.thread: Optional[threading.Thread] = None
+            self.thread: threading.Thread | None = None
             self.last_seq = 0  # start at 0 to avoid b"" on first poll
             # TODO: implement an initializer variable for is_cuda once CUDA IPC is in
             self.cp = cp_mod
-            self.last_local_payload: Optional[bytes] = None
-            self.suppress_counts = defaultdict(int)
+            self.last_local_payload: bytes | None = None
+            self.suppress_counts: dict[bytes, int] = defaultdict(int)  # UUID bytes as key
 
     # ----- init / lifecycle -------------------------------------------------
 
@@ -114,7 +118,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             default_capacity=default_capacity,
             close_channels_on_stop=close_channels_on_stop,
         )
-        self._topics: Dict[str, SharedMemoryPubSubBase._TopicState] = {}
+        self._topics: dict[str, SharedMemoryPubSubBase._TopicState] = {}
         self._lock = threading.Lock()
 
     def start(self) -> None:
@@ -125,7 +129,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
     def stop(self) -> None:
         with self._lock:
-            for topic, st in list(self._topics.items()):
+            for _topic, st in list(self._topics.items()):
                 # stop fanout
                 try:
                     if st.thread:
@@ -146,7 +150,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
     # ----- PubSub API (bytes on the wire) ----------------------------------
 
     def publish(self, topic: str, message: bytes) -> None:
-        if not isinstance(message, (bytes, bytearray, memoryview)):
+        if not isinstance(message, bytes | bytearray | memoryview):
             raise TypeError(f"publish expects bytes-like, got {type(message)!r}")
 
         st = self._ensure_topic(topic)
@@ -158,8 +162,11 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             logger.error(f"Payload too large: {L} > capacity {st.capacity}")
             raise ValueError(f"Payload too large: {L} > capacity {st.capacity}")
 
-        # Mark this payload to suppress its single echo (handles back-to-back publishes)
-        st.suppress_counts[payload_bytes] += 1
+        # Create a unique identifier using UUID4
+        message_id = uuid.uuid4().bytes  # 16 bytes
+
+        # Mark this message to suppress its echo
+        st.suppress_counts[message_id] += 1
 
         # Synchronous local delivery first (zero extra copies)
         for cb in list(st.subs):
@@ -169,11 +176,15 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 logger.warn(f"Payload couldn't be pushed to topic: {topic}")
                 pass
 
-        # Build host frame [len:4] + payload and publish
+        # Build host frame [len:4] + [uuid:16] + payload and publish
+        # We embed the message UUID in the frame for echo suppression
         host = np.zeros(st.shape, dtype=st.dtype)
-        host[:4] = np.frombuffer(struct.pack("<I", L), dtype=np.uint8)
+        # Pack: length(4) + uuid(16) + payload
+        header = struct.pack("<I", L + 16)  # L+16 for uuid
+        host[:4] = np.frombuffer(header, dtype=np.uint8)
+        host[4:20] = np.frombuffer(message_id, dtype=np.uint8)
         if L:
-            host[4 : 4 + L] = np.frombuffer(memoryview(payload_bytes), dtype=np.uint8)
+            host[20 : 20 + L] = np.frombuffer(memoryview(payload_bytes), dtype=np.uint8)
 
         st.channel.publish(host)
 
@@ -185,7 +196,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             st.thread = threading.Thread(target=self._fanout_loop, args=(topic, st), daemon=True)
             st.thread.start()
 
-        def _unsub():
+        def _unsub() -> None:
             try:
                 st.subs.remove(callback)
             except ValueError:
@@ -198,39 +209,13 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
         return _unsub
 
-    # Optional utility like in LCMPubSubBase
-    def wait_for_message(self, topic: str, timeout: float = 1.0) -> Any:
-        """Wait once; if an encoder mixin is present, returned value is decoded."""
-        received: Any = None
-        evt = threading.Event()
-
-        def _handler(msg: bytes, _topic: str):
-            nonlocal received
-            try:
-                if hasattr(self, "decode"):  # provided by encoder mixin
-                    received = self.decode(msg, topic)  # type: ignore[misc]
-                else:
-                    received = msg
-            finally:
-                evt.set()
-
-        unsub = self.subscribe(topic, _handler)
-        try:
-            evt.wait(timeout)
-            return received
-        finally:
-            try:
-                unsub()
-            except Exception:
-                pass
-
     # ----- Capacity mgmt ----------------------------------------------------
 
     def reconfigure(self, topic: str, *, capacity: int) -> dict:
         """Change payload capacity (bytes) for a topic; returns new descriptor."""
         st = self._ensure_topic(topic)
         new_cap = int(capacity)
-        new_shape = (new_cap + 4,)
+        new_shape = (new_cap + 20,)  # +20 for header: length(4) + uuid(16)
         desc = st.channel.reconfigure(new_shape, np.uint8)
         st.capacity = new_cap
         st.shape = new_shape
@@ -253,14 +238,14 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
                 return f"psm_{h}_data", f"psm_{h}_ctrl"
 
             data_name, ctrl_name = _names_for_topic(topic, cap)
-            ch = CpuShmChannel((cap + 4,), np.uint8, data_name=data_name, ctrl_name=ctrl_name)
+            ch = CpuShmChannel((cap + 20,), np.uint8, data_name=data_name, ctrl_name=ctrl_name)
             st = SharedMemoryPubSubBase._TopicState(ch, cap, None)
             self._topics[topic] = st
             return st
 
     def _fanout_loop(self, topic: str, st: _TopicState) -> None:
         while not st.stop.is_set():
-            seq, ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
+            seq, _ts_ns, view = st.channel.read(last_seq=st.last_seq, require_new=True)
             if view is None:
                 time.sleep(0.001)
                 continue
@@ -269,19 +254,29 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             host = np.array(view, copy=True)
 
             try:
+                # Read header: length(4) + uuid(16)
                 L = struct.unpack("<I", host[:4].tobytes())[0]
-                if L == 0 or L < 0 or L > st.capacity:
+
+                if L < 16 or L > st.capacity + 16:
                     continue
 
-                payload = host[4 : 4 + L].tobytes()
+                # Extract UUID
+                message_id = host[4:20].tobytes()
+
+                # Extract actual payload (after removing the 16 bytes for uuid)
+                payload_len = L - 16
+                if payload_len > 0:
+                    payload = host[20 : 20 + payload_len].tobytes()
+                else:
+                    continue
 
                 # Drop exactly the number of local echoes we created
-                cnt = st.suppress_counts.get(payload, 0)
+                cnt = st.suppress_counts.get(message_id, 0)
                 if cnt > 0:
                     if cnt == 1:
-                        del st.suppress_counts[payload]
+                        del st.suppress_counts[message_id]
                     else:
-                        st.suppress_counts[payload] = cnt - 1
+                        st.suppress_counts[message_id] = cnt - 1
                     continue  # suppressed
 
             except Exception:
@@ -303,7 +298,7 @@ class SharedMemoryBytesEncoderMixin(PubSubEncoderMixin[str, bytes]):
     """Identity encoder for raw bytes."""
 
     def encode(self, msg: bytes, _: str) -> bytes:
-        if isinstance(msg, (bytes, bytearray, memoryview)):
+        if isinstance(msg, bytes | bytearray | memoryview):
             return bytes(msg)
         raise TypeError(f"SharedMemory expects bytes-like, got {type(msg)!r}")
 

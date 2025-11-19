@@ -25,7 +25,7 @@ from dimos.protocol.tf import MultiTBuffer, TBuffer
 
 
 # from https://foxglove.dev/blog/understanding-ros-transforms
-def test_tf_ros_example():
+def test_tf_ros_example() -> None:
     tf = TF()
 
     base_link_to_arm = Transform(
@@ -52,8 +52,10 @@ def test_tf_ros_example():
     assert end_effector_global_pose.translation.x == pytest.approx(1.366, abs=1e-3)
     assert end_effector_global_pose.translation.y == pytest.approx(0.366, abs=1e-3)
 
+    tf.stop()
 
-def test_tf_main():
+
+def test_tf_main() -> None:
     """Test TF broadcasting and querying between two TF instances.
     If you run foxglove-bridge this will show up in the UI"""
 
@@ -182,7 +184,7 @@ def test_tf_main():
 
 
 class TestTBuffer:
-    def test_add_transform(self):
+    def test_add_transform(self) -> None:
         buffer = TBuffer(buffer_size=10.0)
         transform = Transform(
             translation=Vector3(1.0, 2.0, 3.0),
@@ -196,7 +198,7 @@ class TestTBuffer:
         assert len(buffer) == 1
         assert buffer[0] == transform
 
-    def test_get(self):
+    def test_get(self) -> None:
         buffer = TBuffer()
         base_time = time.time()
 
@@ -224,7 +226,7 @@ class TestTBuffer:
         result = buffer.get(time_point=base_time + 10.0, time_tolerance=0.1)
         assert result is None  # Outside tolerance
 
-    def test_buffer_pruning(self):
+    def test_buffer_pruning(self) -> None:
         buffer = TBuffer(buffer_size=1.0)  # 1 second buffer
 
         # Add old transform
@@ -252,7 +254,7 @@ class TestTBuffer:
 
 
 class TestMultiTBuffer:
-    def test_multiple_frame_pairs(self):
+    def test_multiple_frame_pairs(self) -> None:
         ttbuffer = MultiTBuffer(buffer_size=10.0)
 
         # Add transforms for different frame pairs
@@ -277,7 +279,7 @@ class TestMultiTBuffer:
         assert ("world", "robot1") in ttbuffer.buffers
         assert ("world", "robot2") in ttbuffer.buffers
 
-    def test_graph(self):
+    def test_graph(self) -> None:
         ttbuffer = MultiTBuffer(buffer_size=10.0)
 
         # Add transforms for different frame pairs
@@ -299,7 +301,7 @@ class TestMultiTBuffer:
 
         print(ttbuffer.graph())
 
-    def test_get_latest_transform(self):
+    def test_get_latest_transform(self) -> None:
         ttbuffer = MultiTBuffer()
 
         # Add multiple transforms
@@ -318,7 +320,7 @@ class TestMultiTBuffer:
         assert latest is not None
         assert latest.translation.x == 2.0
 
-    def test_get_transform_at_time(self):
+    def test_get_transform_at_time(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -340,7 +342,7 @@ class TestMultiTBuffer:
         # The implementation picks the later one when equidistant
         assert result.translation.x == 3.0
 
-    def test_time_tolerance(self):
+    def test_time_tolerance(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -361,14 +363,14 @@ class TestMultiTBuffer:
         result = ttbuffer.get("world", "robot", time_point=base_time + 0.5, time_tolerance=0.1)
         assert result is None
 
-    def test_nonexistent_frame_pair(self):
+    def test_nonexistent_frame_pair(self) -> None:
         ttbuffer = MultiTBuffer()
 
         # Try to get transform for non-existent frame pair
         result = ttbuffer.get("foo", "bar")
         assert result is None
 
-    def test_get_transform_search_direct(self):
+    def test_get_transform_search_direct(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -387,7 +389,7 @@ class TestMultiTBuffer:
         assert len(result) == 1
         assert result[0].translation.x == 1.0
 
-    def test_get_transform_search_chain(self):
+    def test_get_transform_search_chain(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -413,7 +415,7 @@ class TestMultiTBuffer:
         assert result[0].translation.x == 1.0  # world -> robot
         assert result[1].translation.y == 2.0  # robot -> sensor
 
-    def test_get_transform_search_complex_chain(self):
+    def test_get_transform_search_complex_chain(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -464,7 +466,7 @@ class TestMultiTBuffer:
         assert result[1].child_frame_id == "arm"
         assert result[2].child_frame_id == "hand"
 
-    def test_get_transform_search_no_path(self):
+    def test_get_transform_search_no_path(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -477,7 +479,7 @@ class TestMultiTBuffer:
         result = ttbuffer.get_transform_search("world", "sensor")
         assert result is None
 
-    def test_get_transform_search_with_time(self):
+    def test_get_transform_search_with_time(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -507,7 +509,7 @@ class TestMultiTBuffer:
         )
         assert result is None  # Outside tolerance
 
-    def test_get_transform_search_shortest_path(self):
+    def test_get_transform_search_shortest_path(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -530,7 +532,7 @@ class TestMultiTBuffer:
         assert len(result) == 1  # Direct path, not the 3-hop path
         assert result[0].child_frame_id == "target"
 
-    def test_string_representations(self):
+    def test_string_representations(self) -> None:
         # Test empty buffers
         empty_buffer = TBuffer()
         assert str(empty_buffer) == "TBuffer(empty)"
@@ -575,7 +577,7 @@ class TestMultiTBuffer:
         assert "TBuffer(world -> robot2, 1 msgs" in ttbuffer_str
         assert "TBuffer(robot1 -> sensor, 1 msgs" in ttbuffer_str
 
-    def test_get_with_transform_chain_composition(self):
+    def test_get_with_transform_chain_composition(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 
@@ -625,7 +627,7 @@ class TestMultiTBuffer:
         assert result.frame_id == "world"
         assert result.child_frame_id == "sensor"
 
-    def test_get_with_longer_transform_chain(self):
+    def test_get_with_longer_transform_chain(self) -> None:
         ttbuffer = MultiTBuffer()
         base_time = time.time()
 

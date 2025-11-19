@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from transformers import SamModel, SamProcessor
 import torch
+from transformers import SamModel, SamProcessor
 
 
 class SAM:
-    def __init__(self, model_name="facebook/sam-vit-huge", device="cuda"):
+    def __init__(self, model_name: str="facebook/sam-vit-huge", device: str="cuda") -> None:
         self.device = device
         self.sam_model = SamModel.from_pretrained(model_name).to(self.device)
         self.sam_processor = SamProcessor.from_pretrained(model_name)

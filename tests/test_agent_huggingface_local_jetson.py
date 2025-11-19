@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.data_provider import QueryDataProvider
-import tests.test_header
-
 import os
-from dimos.stream.video_provider import VideoProvider
-from dimos.utils.threadpool import get_scheduler
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
+
 from dimos.agents.agent_huggingface_local import HuggingFaceLocalAgent
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
+from dimos.stream.data_provider import QueryDataProvider
+from dimos.stream.video_provider import VideoProvider
+from dimos.utils.threadpool import get_scheduler
 
 # Initialize video stream
 video_stream = VideoProvider(
