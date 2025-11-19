@@ -76,6 +76,10 @@ nav:
     - quickstart/index.md
     - Installation: quickstart/installation.md
     - Basic Usage: quickstart/basic-usage.md
+  - Tutorials:
+    - tutorials/index.md
+    - Build your first skill: tutorials/skill_basics/tutorial.md
+    - Wire a skill to an agent: tutorials/skill_with_agent/tutorial.md
   - Concepts:
     - concepts/index.md
     - Modules: concepts/modules.md
@@ -115,6 +119,8 @@ plugins:
           - index.md: Introduction to DimOS
         Quickstart:
           - quickstart/*.md
+        Tutorials:
+          - tutorials/*.md
         Concepts:
           - concepts/*.md
         API Reference:
