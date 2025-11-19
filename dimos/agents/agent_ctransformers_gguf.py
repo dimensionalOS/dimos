@@ -17,18 +17,15 @@ from __future__ import annotations
 # Standard library imports
 import logging
 import os
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any
 
 # Third-party imports
 from dotenv import load_dotenv
 from reactivex import Observable, create
-from reactivex.scheduler import ThreadPoolScheduler
-from reactivex.subject import Subject
 import torch
 
 # Local imports
 from dimos.agents.agent import LLMAgent
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.utils.logging_config import setup_logger
 
@@ -40,30 +37,38 @@ logger = setup_logger("dimos.agents", level=logging.DEBUG)
 
 from ctransformers import AutoModelForCausalLM as CTransformersModel
 
+if TYPE_CHECKING:
+    from reactivex.scheduler import ThreadPoolScheduler
+    from reactivex.subject import Subject
+
+    from dimos.agents.memory.base import AbstractAgentSemanticMemory
+
 
 class CTransformersTokenizerAdapter:
-    def __init__(self, model):
+    def __init__(self, model) -> None:
         self.model = model
 
-    def encode(self, text, **kwargs):
+    def encode(self, text: str, **kwargs):
         return self.model.tokenize(text)
 
     def decode(self, token_ids, **kwargs):
         return self.model.detokenize(token_ids)
 
-    def token_count(self, text):
+    def token_count(self, text: str):
         return len(self.tokenize_text(text)) if text else 0
 
-    def tokenize_text(self, text):
+    def tokenize_text(self, text: str):
         return self.model.tokenize(text)
 
     def detokenize_text(self, tokenized_text):
         try:
             return self.model.detokenize(tokenized_text)
         except Exception as e:
-            raise ValueError(f"Failed to detokenize text. Error: {str(e)}")
+            raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
-    def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=True):
+    def apply_chat_template(
+        self, conversation, tokenize: bool = False, add_generation_prompt: bool = True
+    ):
         prompt = ""
         for message in conversation:
             role = message["role"]
@@ -91,17 +96,17 @@ class CTransformersGGUFAgent(LLMAgent):
         gpu_layers: int = 50,
         device: str = "auto",
         query: str = "How many r's are in the word 'strawberry'?",
-        input_query_stream: Optional[Observable] = None,
-        input_video_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
+        input_video_stream: Observable | None = None,
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
-        agent_memory: Optional[AbstractAgentSemanticMemory] = None,
-        system_query: Optional[str] = "You are a helpful assistant.",
+        agent_memory: AbstractAgentSemanticMemory | None = None,
+        system_query: str | None = "You are a helpful assistant.",
         max_output_tokens_per_request: int = 10,
         max_input_tokens_per_request: int = 250,
-        prompt_builder: Optional[PromptBuilder] = None,
-        pool_scheduler: Optional[ThreadPoolScheduler] = None,
-        process_all_inputs: Optional[bool] = None,
-    ):
+        prompt_builder: PromptBuilder | None = None,
+        pool_scheduler: ThreadPoolScheduler | None = None,
+        process_all_inputs: bool | None = None,
+    ) -> None:
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
             # Default to True for text queries, False for video streams

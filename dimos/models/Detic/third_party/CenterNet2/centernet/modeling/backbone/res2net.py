@@ -1,12 +1,6 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # This file is modified from https://github.com/Res2Net/Res2Net-detectron2/blob/master/detectron2/modeling/backbone/resnet.py
 # The original file is under Apache-2.0 License
-import numpy as np
-import fvcore.nn.weight_init as weight_init
-import torch
-import torch.nn.functional as F
-from torch import nn
-
 from detectron2.layers import (
     CNNBlockBase,
     Conv2d,
@@ -15,22 +9,28 @@ from detectron2.layers import (
     ShapeSpec,
     get_norm,
 )
-
 from detectron2.modeling.backbone import Backbone
-from detectron2.modeling.backbone.fpn import FPN
 from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from .fpn_p5 import LastLevelP6P7_P5
+from detectron2.modeling.backbone.fpn import FPN
+import fvcore.nn.weight_init as weight_init
+import numpy as np
+import torch
+from torch import nn
+import torch.nn.functional as F
+
 from .bifpn import BiFPN
+from .fpn_p5 import LastLevelP6P7_P5
+from typing import Optional
 
 __all__ = [
-    "ResNetBlockBase",
     "BasicBlock",
+    "BasicStem",
     "BottleneckBlock",
     "DeformBottleneckBlock",
-    "BasicStem",
     "ResNet",
-    "make_stage",
+    "ResNetBlockBase",
     "build_res2net_backbone",
+    "make_stage",
 ]
 
 
@@ -46,7 +46,7 @@ class BasicBlock(CNNBlockBase):
     and a projection shortcut if needed.
     """
 
-    def __init__(self, in_channels, out_channels, *, stride=1, norm="BN"):
+    def __init__(self, in_channels, out_channels, *, stride: int=1, norm: str="BN") -> None:
         """
         Args:
             in_channels (int): Number of input channels.
@@ -119,14 +119,14 @@ class BottleneckBlock(CNNBlockBase):
         out_channels,
         *,
         bottleneck_channels,
-        stride=1,
-        num_groups=1,
-        norm="BN",
-        stride_in_1x1=False,
-        dilation=1,
-        basewidth=26,
-        scale=4,
-    ):
+        stride: int=1,
+        num_groups: int=1,
+        norm: str="BN",
+        stride_in_1x1: bool=False,
+        dilation: int=1,
+        basewidth: int=26,
+        scale: int=4,
+    ) -> None:
         """
         Args:
             bottleneck_channels (int): number of output channels for the 3x3
@@ -180,7 +180,7 @@ class BottleneckBlock(CNNBlockBase):
 
         convs = []
         bns = []
-        for i in range(self.nums):
+        for _i in range(self.nums):
             convs.append(
                 nn.Conv2d(
                     width,
@@ -278,16 +278,16 @@ class DeformBottleneckBlock(ResNetBlockBase):
         out_channels,
         *,
         bottleneck_channels,
-        stride=1,
-        num_groups=1,
-        norm="BN",
-        stride_in_1x1=False,
-        dilation=1,
-        deform_modulated=False,
-        deform_num_groups=1,
-        basewidth=26,
-        scale=4,
-    ):
+        stride: int=1,
+        num_groups: int=1,
+        norm: str="BN",
+        stride_in_1x1: bool=False,
+        dilation: int=1,
+        deform_modulated: bool=False,
+        deform_num_groups: int=1,
+        basewidth: int=26,
+        scale: int=4,
+    ) -> None:
         super().__init__(in_channels, out_channels, stride)
         self.deform_modulated = deform_modulated
 
@@ -367,7 +367,7 @@ class DeformBottleneckBlock(ResNetBlockBase):
         conv2_offsets = []
         convs = []
         bns = []
-        for i in range(self.nums):
+        for _i in range(self.nums):
             conv2_offsets.append(
                 Conv2d(
                     width,
@@ -488,7 +488,7 @@ class DeformBottleneckBlock(ResNetBlockBase):
         return out
 
 
-def make_stage(block_class, num_blocks, first_stride, *, in_channels, out_channels, **kwargs):
+def make_stage(block_class, num_blocks: int, first_stride, *, in_channels, out_channels, **kwargs):
     """
     Create a list of blocks just like those in a ResNet stage.
     Args:
@@ -521,7 +521,7 @@ class BasicStem(CNNBlockBase):
     The standard ResNet stem (layers before the first residual block).
     """
 
-    def __init__(self, in_channels=3, out_channels=64, norm="BN"):
+    def __init__(self, in_channels: int=3, out_channels: int=64, norm: str="BN") -> None:
         """
         Args:
             norm (str or callable): norm after the first conv layer.
@@ -574,7 +574,7 @@ class BasicStem(CNNBlockBase):
 
 
 class ResNet(Backbone):
-    def __init__(self, stem, stages, num_classes=None, out_features=None):
+    def __init__(self, stem, stages, num_classes: Optional[int]=None, out_features=None) -> None:
         """
         Args:
             stem (nn.Module): a stem module
@@ -586,7 +586,7 @@ class ResNet(Backbone):
                 be returned in forward. Can be anything in "stem", "linear", or "res2" ...
                 If None, will return the output of the last layer.
         """
-        super(ResNet, self).__init__()
+        super().__init__()
         self.stem = stem
         self.num_classes = num_classes
 
@@ -654,7 +654,7 @@ class ResNet(Backbone):
             for name in self._out_features
         }
 
-    def freeze(self, freeze_at=0):
+    def freeze(self, freeze_at: int=0):
         """
         Freeze the first several stages of the ResNet. Commonly used in
         fine-tuning.
@@ -705,7 +705,7 @@ def build_res2net_backbone(cfg, input_shape):
     deform_modulated    = cfg.MODEL.RESNETS.DEFORM_MODULATED
     deform_num_groups   = cfg.MODEL.RESNETS.DEFORM_NUM_GROUPS
     # fmt: on
-    assert res5_dilation in {1, 2}, "res5_dilation cannot be {}.".format(res5_dilation)
+    assert res5_dilation in {1, 2}, f"res5_dilation cannot be {res5_dilation}."
 
     num_blocks_per_stage = {
         18: [2, 2, 2, 2],

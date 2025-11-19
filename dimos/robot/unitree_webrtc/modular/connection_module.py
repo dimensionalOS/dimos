@@ -15,30 +15,29 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass
 import functools
 import logging
 import os
-import time
+import queue
 import warnings
-from dataclasses import dataclass
-from typing import List, Optional
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.core import In, LCMTransport, Module, ModuleConfig, Out, rpc, DimosCluster
-from dimos.msgs.foxglove_msgs import ImageAnnotations
+from dimos.agents2 import Output, Reducer, Stream, skill
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
+from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, pSHMTransport, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
-from dimos.msgs.sensor_msgs.Image import Image, sharpness_window
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.reactive import backpressure
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
@@ -67,7 +66,7 @@ class FakeRTC(UnitreeWebRTCConnection):
     def __init__(
         self,
         **kwargs,
-    ):
+    ) -> None:
         get_data(self.dir_name)
         self.replay_config = {
             "loop": kwargs.get("loop"),
@@ -75,16 +74,16 @@ class FakeRTC(UnitreeWebRTCConnection):
             "duration": kwargs.get("duration"),
         }
 
-    def connect(self):
+    def connect(self) -> None:
         pass
 
-    def start(self):
+    def start(self) -> None:
         pass
 
-    def standup(self):
+    def standup(self) -> None:
         print("standup suppressed")
 
-    def liedown(self):
+    def liedown(self) -> None:
         print("liedown suppressed")
 
     @functools.cache
@@ -103,13 +102,11 @@ class FakeRTC(UnitreeWebRTCConnection):
     @functools.cache
     def video_stream(self):
         print("video stream start")
-        video_store = TimedSensorReplay(
-            f"{self.dir_name}/video",
-        )
+        video_store = TimedSensorReplay(f"{self.dir_name}/video")
 
         return video_store.stream(**self.replay_config)
 
-    def move(self, vector: Twist, duration: float = 0.0):
+    def move(self, vector: Twist, duration: float = 0.0) -> None:
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -119,7 +116,7 @@ class FakeRTC(UnitreeWebRTCConnection):
 
 @dataclass
 class ConnectionModuleConfig(ModuleConfig):
-    ip: Optional[str] = None
+    ip: str | None = None
     connection_type: str = "fake"  # or "fake" or "mujoco"
     loop: bool = False  # For fake connection
     speed: float = 1.0  # For fake connection
@@ -136,13 +133,28 @@ class ConnectionModule(Module):
 
     default_config = ConnectionModuleConfig
 
-    def __init__(self, connection_type: str = "webrtc", *args, **kwargs):
+    # mega temporary, skill should have a limit decorator for number of
+    # parallel calls
+    video_running: bool = False
+
+    def __init__(self, connection_type: str = "webrtc", *args, **kwargs) -> None:
         self.connection_config = kwargs
         self.connection_type = connection_type
         Module.__init__(self, *args, **kwargs)
 
+    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
+    def video_stream_tool(self) -> Image:
+        """implicit video stream skill, don't call this directly"""
+        if self.video_running:
+            return "video stream already running"
+        self.video_running = True
+        _queue = queue.Queue(maxsize=1)
+        self.connection.video_stream().subscribe(_queue.put)
+
+        yield from iter(_queue.get, None)
+
     @rpc
-    def record(self, recording_name: str):
+    def record(self, recording_name: str) -> None:
         lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")
         lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)
 
@@ -155,24 +167,30 @@ class ConnectionModule(Module):
     @rpc
     def start(self):
         """Start the connection and subscribe to sensor streams."""
+
+        super().start()
+
         match self.connection_type:
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(**self.connection_config)
             case "fake":
-                self.connection = FakeRTC(**self.connection_config)
+                self.connection = FakeRTC(**self.connection_config, seek=12.0)
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection(**self.connection_config)
+                self.connection = MujocoConnection(GlobalConfig())
                 self.connection.start()
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
-        self.connection.odom_stream().subscribe(
+
+        unsub = self.connection.odom_stream().subscribe(
             lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
         )
+        self._disposables.add(unsub)
 
         # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
+        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
+        self._disposables.add(unsub)
 
         # self.connection.lidar_stream().subscribe(lambda lidar: print("LIDAR", lidar.ts))
         # self.connection.video_stream().subscribe(lambda video: print("IMAGE", video.ts))
@@ -183,16 +201,22 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        sharpness = sharpness_window(10, self.connection.video_stream())
-        sharpness.subscribe(self.video.publish)
-        # self.connection.video_stream().subscribe(self.video.publish)
+        unsub = self.connection.video_stream().subscribe(self.video.publish)
+        self._disposables.add(unsub)
+        unsub = self.camera_info_stream().subscribe(self.camera_info.publish)
+        self._disposables.add(unsub)
+        unsub = self.movecmd.subscribe(self.connection.move)
+        self._disposables.add(unsub)
 
-        # self.connection.video_stream().pipe(ops.map(resize)).subscribe(self.video.publish)
-        self.camera_info_stream().subscribe(self.camera_info.publish)
-        self.movecmd.subscribe(self.connection.move)
+    @rpc
+    def stop(self) -> None:
+        if self.connection:
+            self.connection.stop()
+
+        super().stop()
 
     @classmethod
-    def _odom_to_tf(self, odom: PoseStamped) -> List[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -209,13 +233,22 @@ class ConnectionModule(Module):
             ts=odom.ts,
         )
 
+        sensor = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="world",
+            child_frame_id="sensor",
+            ts=odom.ts,
+        )
+
         return [
             Transform.from_pose("base_link", odom),
             camera_link,
             camera_optical,
+            sensor,
         ]
 
-    def _publish_tf(self, msg):
+    def _publish_tf(self, msg) -> None:
         self.odom.publish(msg)
         self.tf.publish(*self._odom_to_tf(msg))
 
@@ -231,7 +264,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
     @classmethod
-    def _camera_info(self) -> Out[CameraInfo]:
+    def _camera_info(cls) -> Out[CameraInfo]:
         fx, fy, cx, cy = list(
             map(
                 lambda x: int(x / image_resize_factor),
@@ -278,8 +311,8 @@ class ConnectionModule(Module):
 
 
 def deploy_connection(dimos: DimosCluster, **kwargs):
-    # foxglove_bridge = dimos.deploy(FoxgloveBridge)
-    # foxglove_bridge.start()
+    foxglove_bridge = dimos.deploy(FoxgloveBridge)
+    foxglove_bridge.start()
 
     connection = dimos.deploy(
         ConnectionModule,
@@ -288,10 +321,19 @@ def deploy_connection(dimos: DimosCluster, **kwargs):
         **kwargs,
     )
 
-    connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
     connection.odom.transport = LCMTransport("/odom", PoseStamped)
+
+    connection.video.transport = pSHMTransport(
+        "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    )
+
+    connection.lidar.transport = pSHMTransport(
+        "/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    )
+
     connection.video.transport = LCMTransport("/image", Image)
-    connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
+    connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
+    connection.movecmd.transport = LCMTransport("/cmd_vel", Twist)
     connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
 
     return connection

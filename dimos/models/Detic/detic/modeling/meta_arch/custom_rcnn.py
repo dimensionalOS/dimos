@@ -1,17 +1,17 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 from typing import Dict, List, Optional, Tuple
-import torch
-from detectron2.utils.events import get_event_storage
-from detectron2.config import configurable
-from detectron2.structures import Instances
-import detectron2.utils.comm as comm
 
+from detectron2.config import configurable
 from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
 from detectron2.modeling.meta_arch.rcnn import GeneralizedRCNN
-
+from detectron2.structures import Instances
+import detectron2.utils.comm as comm
+from detectron2.utils.events import get_event_storage
+import torch
 from torch.cuda.amp import autocast
+
 from ..text.text_encoder import build_text_encoder
-from ..utils import load_class_freq, get_fed_loss_inds
+from ..utils import get_fed_loss_inds, load_class_freq
 
 
 @META_ARCH_REGISTRY.register()
@@ -23,17 +23,19 @@ class CustomRCNN(GeneralizedRCNN):
     @configurable
     def __init__(
         self,
-        with_image_labels=False,
-        dataset_loss_weight=[],
-        fp16=False,
-        sync_caption_batch=False,
-        roi_head_name="",
-        cap_batch_ratio=4,
-        with_caption=False,
-        dynamic_classifier=False,
+        with_image_labels: bool=False,
+        dataset_loss_weight=None,
+        fp16: bool=False,
+        sync_caption_batch: bool=False,
+        roi_head_name: str="",
+        cap_batch_ratio: int=4,
+        with_caption: bool=False,
+        dynamic_classifier: bool=False,
         **kwargs,
-    ):
+    ) -> None:
         """ """
+        if dataset_loss_weight is None:
+            dataset_loss_weight = []
         self.with_image_labels = with_image_labels
         self.dataset_loss_weight = dataset_loss_weight
         self.fp16 = fp16
@@ -80,8 +82,8 @@ class CustomRCNN(GeneralizedRCNN):
 
     def inference(
         self,
-        batched_inputs: Tuple[Dict[str, torch.Tensor]],
-        detected_instances: Optional[List[Instances]] = None,
+        batched_inputs: tuple[dict[str, torch.Tensor]],
+        detected_instances: list[Instances] | None = None,
         do_postprocess: bool = True,
     ):
         assert not self.training
@@ -97,7 +99,7 @@ class CustomRCNN(GeneralizedRCNN):
         else:
             return results
 
-    def forward(self, batched_inputs: List[Dict[str, torch.Tensor]]):
+    def forward(self, batched_inputs: list[dict[str, torch.Tensor]]):
         """
         Add ann_type
         Ignore proposal loss when training with image labels
@@ -110,7 +112,7 @@ class CustomRCNN(GeneralizedRCNN):
         ann_type = "box"
         gt_instances = [x["instances"].to(self.device) for x in batched_inputs]
         if self.with_image_labels:
-            for inst, x in zip(gt_instances, batched_inputs):
+            for inst, x in zip(gt_instances, batched_inputs, strict=False):
                 inst._ann_type = x["ann_type"]
                 inst._pos_category_ids = x["pos_category_ids"]
             ann_types = [x["ann_type"] for x in batched_inputs]
@@ -131,7 +133,7 @@ class CustomRCNN(GeneralizedRCNN):
 
         if self.with_caption and "caption" in ann_type:
             inds = [torch.randint(len(x["captions"]), (1,))[0].item() for x in batched_inputs]
-            caps = [x["captions"][ind] for ind, x in zip(inds, batched_inputs)]
+            caps = [x["captions"][ind] for ind, x in zip(inds, batched_inputs, strict=False)]
             caption_features = self.text_encoder(caps).float()
         if self.sync_caption_batch:
             caption_features = self._sync_caption_features(
@@ -140,7 +142,7 @@ class CustomRCNN(GeneralizedRCNN):
 
         if self.dynamic_classifier and ann_type != "caption":
             cls_inds = self._sample_cls_inds(gt_instances, ann_type)  # inds, inv_inds
-            ind_with_bg = cls_inds[0].tolist() + [-1]
+            ind_with_bg = [*cls_inds[0].tolist(), -1]
             cls_features = (
                 self.roi_heads.box_predictor[0]
                 .cls_score.zs_weight[:, ind_with_bg]
@@ -204,7 +206,7 @@ class CustomRCNN(GeneralizedRCNN):
         )  # (NB) x (D + 1)
         return caption_features
 
-    def _sample_cls_inds(self, gt_instances, ann_type="box"):
+    def _sample_cls_inds(self, gt_instances, ann_type: str="box"):
         if ann_type == "box":
             gt_classes = torch.cat([x.gt_classes for x in gt_instances])
             C = len(self.freq_weight)
@@ -218,7 +220,7 @@ class CustomRCNN(GeneralizedRCNN):
             )
             C = self.num_classes
             freq_weight = None
-        assert gt_classes.max() < C, "{} {}".format(gt_classes.max(), C)
+        assert gt_classes.max() < C, f"{gt_classes.max()} {C}"
         inds = get_fed_loss_inds(gt_classes, self.num_sample_cats, C, weight=freq_weight)
         cls_id_map = gt_classes.new_full((self.num_classes + 1,), len(inds))
         cls_id_map[inds] = torch.arange(len(inds), device=cls_id_map.device)

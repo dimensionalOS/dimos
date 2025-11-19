@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import rclpy
-from typing import Optional
+
 from geometry_msgs.msg import TransformStamped
-from tf2_ros import Buffer
-import tf2_ros
-from tf2_geometry_msgs import PointStamped
-from dimos.utils.logging_config import setup_logger
-from dimos.types.vector import Vector
-from dimos.types.path import Path
+import rclpy
 from scipy.spatial.transform import Rotation as R
+from tf2_geometry_msgs import PointStamped
+import tf2_ros
+from tf2_ros import Buffer
+
+from dimos.types.path import Path
+from dimos.types.vector import Vector
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.ros_transform")
 
@@ -70,7 +71,7 @@ class ROSTransformAbility:
 
     def transform(
         self, source_frame: str, target_frame: str = "map", timeout: float = 1.0
-    ) -> Optional[TransformStamped]:
+    ) -> TransformStamped | None:
         try:
             transform = self.tf_buffer.lookup_transform(
                 target_frame,

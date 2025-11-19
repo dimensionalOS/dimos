@@ -12,45 +12,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.skills.skills import SkillLibrary
-import tests.test_header
+import datetime
 import os
 
-import time
+import cv2
 from dotenv import load_dotenv
-from dimos.agents.claude_agent import ClaudeAgent
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.web.robot_web_interface import RobotWebInterface
-from dimos.skills.observe_stream import ObserveStream
-from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import NavigateWithText, GetPose, NavigateToGoal
-from dimos.skills.visual_navigation_skills import FollowHuman
+from openai import OpenAI
 import reactivex as rx
 import reactivex.operators as ops
-from dimos.stream.audio.pipelines import tts, stt
-import threading
-import json
-import cv2
-import numpy as np
-import os
-import datetime
-from dimos.types.vector import Vector
-from dimos.skills.speak import Speak
-from dimos.perception.object_detection_stream import ObjectDetectionStream
+from reactivex.subject import BehaviorSubject
+
+from dimos.agents.claude_agent import ClaudeAgent
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
-from dimos.agents.agent import OpenAIAgent
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
-from openai import OpenAI
-from dimos.utils.reactive import backpressure
-from dimos.stream.video_provider import VideoProvider
-from reactivex.subject import Subject, BehaviorSubject
-from dimos.utils.logging_config import setup_logger
-from dimos.skills.manipulation.translation_constraint_skill import TranslationConstraintSkill
-from dimos.skills.manipulation.rotation_constraint_skill import RotationConstraintSkill
-from dimos.skills.manipulation.manipulate_skill import Manipulate
+from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.robot.robot import MockManipulationRobot
+from dimos.skills.manipulation.manipulate_skill import Manipulate
+from dimos.skills.manipulation.rotation_constraint_skill import RotationConstraintSkill
+from dimos.skills.manipulation.translation_constraint_skill import TranslationConstraintSkill
+from dimos.skills.skills import SkillLibrary
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.reactive import backpressure
+from dimos.web.robot_web_interface import RobotWebInterface
 
 # Initialize logger for the agent module
 logger = setup_logger("dimos.tests.test_manipulation_agent")
@@ -207,7 +189,7 @@ web_interface = RobotWebInterface(port=5555, text_streams=text_streams, **stream
 
 # Read system query from prompt.txt file
 with open(
-    os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "agent", "prompt.txt"), "r"
+    os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets", "agent", "prompt.txt")
 ) as f:
     system_query = f.read()
 

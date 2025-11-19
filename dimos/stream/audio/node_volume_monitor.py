@@ -13,10 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Callable
+from collections.abc import Callable
+
 from reactivex import Observable, create, disposable
 
-from dimos.stream.audio.base import AudioEvent, AbstractAudioConsumer
+from dimos.stream.audio.base import AbstractAudioConsumer, AudioEvent
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.stream.audio.text.node_stdout import TextPrinterNode
 from dimos.stream.audio.volume import calculate_peak_volume
@@ -35,7 +36,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
         threshold: float = 0.01,
         bar_length: int = 50,
         volume_func: Callable = calculate_peak_volume,
-    ):
+    ) -> None:
         """
         Initialize VolumeMonitorNode.
 
@@ -101,7 +102,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
             logger.info(f"Starting volume monitor (method: {self.func_name})")
 
             # Subscribe to the audio source
-            def on_audio_event(event: AudioEvent):
+            def on_audio_event(event: AudioEvent) -> None:
                 try:
                     # Calculate volume
                     volume = self.volume_func(event.data)
@@ -123,7 +124,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
             )
 
             # Return a disposable to clean up resources
-            def dispose():
+            def dispose() -> None:
                 logger.info("Stopping volume monitor")
                 subscription.dispose()
 
@@ -167,8 +168,8 @@ def monitor(
 
 
 if __name__ == "__main__":
-    from utils import keepalive
     from audio.node_simulated import SimulatedAudioSource
+    from utils import keepalive
 
     # Use the monitor function to create and connect the nodes
     volume_monitor = monitor(SimulatedAudioSource().emit_audio())

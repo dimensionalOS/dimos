@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
-import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Any, Deque, Dict, List, Optional, Union
+import time
+from typing import Any, Union
 
 from langchain_core.messages import (
     AIMessage,
@@ -25,18 +25,12 @@ from langchain_core.messages import (
     SystemMessage,
     ToolMessage,
 )
-from rich.console import Console
-from rich.table import Table
-from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
-from textual.containers import Container, ScrollableContainer
-from textual.reactive import reactive
 from textual.widgets import Footer, RichLog
 
-from dimos.protocol.pubsub import lcm
 from dimos.protocol.pubsub.lcmpubsub import PickleLCM
-from dimos.utils.logging_config import setup_logger
+from dimos.utils.cli import theme
 
 # Type alias for all message types we might receive
 AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
@@ -49,7 +43,7 @@ class MessageEntry:
     timestamp: float
     message: AnyMessage
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Initialize timestamp if not provided."""
         if self.timestamp is None:
             self.timestamp = time.time()
@@ -58,28 +52,28 @@ class MessageEntry:
 class AgentMessageMonitor:
     """Monitor agent messages published via LCM."""
 
-    def __init__(self, topic: str = "/agent", max_messages: int = 1000):
+    def __init__(self, topic: str = "/agent", max_messages: int = 1000) -> None:
         self.topic = topic
         self.max_messages = max_messages
-        self.messages: Deque[MessageEntry] = deque(maxlen=max_messages)
+        self.messages: deque[MessageEntry] = deque(maxlen=max_messages)
         self.transport = PickleLCM()
         self.transport.start()
-        self.callbacks: List[callable] = []
+        self.callbacks: list[callable] = []
         pass
 
-    def start(self):
+    def start(self) -> None:
         """Start monitoring messages."""
         self.transport.subscribe(self.topic, self._handle_message)
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop monitoring."""
         # PickleLCM doesn't have explicit stop method
         pass
 
-    def _handle_message(self, msg: Any, topic: str):
+    def _handle_message(self, msg: Any, topic: str) -> None:
         """Handle incoming messages."""
         # Check if it's one of the message types we care about
-        if isinstance(msg, (SystemMessage, ToolMessage, AIMessage, HumanMessage)):
+        if isinstance(msg, SystemMessage | ToolMessage | AIMessage | HumanMessage):
             entry = MessageEntry(timestamp=time.time(), message=msg)
             self.messages.append(entry)
 
@@ -89,11 +83,11 @@ class AgentMessageMonitor:
         else:
             pass
 
-    def subscribe(self, callback: callable):
+    def subscribe(self, callback: callable) -> None:
         """Subscribe to new messages."""
         self.callbacks.append(callback)
 
-    def get_messages(self) -> List[MessageEntry]:
+    def get_messages(self) -> list[MessageEntry]:
         """Get all stored messages."""
         return list(self.messages)
 
@@ -144,23 +138,25 @@ def format_message_content(msg: AnyMessage) -> str:
 class AgentSpyApp(App):
     """TUI application for monitoring agent messages."""
 
-    CSS = """
-    Screen {
-        layout: vertical;
-        background: black;
-    }
+    CSS_PATH = theme.CSS_PATH
 
-    RichLog {
+    CSS = f"""
+    Screen {{
+        layout: vertical;
+        background: {theme.BACKGROUND};
+    }}
+
+    RichLog {{
         height: 1fr;
         border: none;
-        background: black;
+        background: {theme.BACKGROUND};
         padding: 0 1;
-    }
+    }}
 
-    Footer {
+    Footer {{
         dock: bottom;
         height: 1;
-    }
+    }}
     """
 
     BINDINGS = [
@@ -169,10 +165,10 @@ class AgentSpyApp(App):
         Binding("ctrl+c", "quit", show=False),
     ]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.monitor = AgentMessageMonitor()
-        self.message_log: Optional[RichLog] = None
+        self.message_log: RichLog | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the UI."""
@@ -180,7 +176,7 @@ class AgentSpyApp(App):
         yield self.message_log
         yield Footer()
 
-    def on_mount(self):
+    def on_mount(self) -> None:
         """Start monitoring when app mounts."""
         self.theme = "flexoki"
 
@@ -192,11 +188,11 @@ class AgentSpyApp(App):
         for entry in self.monitor.get_messages():
             self.on_new_message(entry)
 
-    def on_unmount(self):
+    def on_unmount(self) -> None:
         """Stop monitoring when app unmounts."""
         self.monitor.stop()
 
-    def on_new_message(self, entry: MessageEntry):
+    def on_new_message(self, entry: MessageEntry) -> None:
         """Handle new messages."""
         if self.message_log:
             msg = entry.message
@@ -211,18 +207,18 @@ class AgentSpyApp(App):
                 f"[{style}]{content}[/{style}]"
             )
 
-    def refresh_display(self):
+    def refresh_display(self) -> None:
         """Refresh the message display."""
         # Not needed anymore as messages are written directly to the log
 
-    def action_clear(self):
+    def action_clear(self) -> None:
         """Clear message history."""
         self.monitor.messages.clear()
         if self.message_log:
             self.message_log.clear()
 
 
-def main():
+def main() -> None:
     """Main entry point for agentspy."""
     import sys
 

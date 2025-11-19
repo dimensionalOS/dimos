@@ -21,22 +21,23 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 import asyncio
 import threading
 import time
-from typing import Any, Dict, Optional
-import base64
-import numpy as np
+from typing import Any
 
+from dimos_lcm.std_msgs import Bool
+from reactivex.disposable import Disposable
 import socketio
-import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse
 from starlette.routing import Route
+import uvicorn
 
-from dimos.core import Module, In, Out, rpc
-from dimos_lcm.std_msgs import Bool
+from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
+
+from .optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger("dimos.web.websocket_vis")
 
@@ -61,20 +62,20 @@ class WebsocketVisModule(Module):
     """
 
     # LCM inputs
-    robot_pose: In[PoseStamped] = None
+    odom: In[PoseStamped] = None
     gps_location: In[LatLon] = None
     path: In[Path] = None
     global_costmap: In[OccupancyGrid] = None
 
     # LCM outputs
-    click_goal: Out[PoseStamped] = None
+    goal_request: Out[PoseStamped] = None
     gps_goal: Out[LatLon] = None
     explore_cmd: Out[Bool] = None
     stop_explore_cmd: Out[Bool] = None
-    movecmd: Out[Twist] = None
+    cmd_vel: Out[Twist] = None
     movecmd_stamped: Out[TwistStamped] = None
 
-    def __init__(self, port: int = 7779, **kwargs):
+    def __init__(self, port: int = 7779, **kwargs) -> None:
         """Initialize the WebSocket visualization module.
 
         Args:
@@ -83,14 +84,16 @@ class WebsocketVisModule(Module):
         super().__init__(**kwargs)
 
         self.port = port
-        self.server_thread: Optional[threading.Thread] = None
-        self.sio: Optional[socketio.AsyncServer] = None
+        self._uvicorn_server_thread: threading.Thread | None = None
+        self.sio: socketio.AsyncServer | None = None
         self.app = None
         self._broadcast_loop = None
         self._broadcast_thread = None
+        self._uvicorn_server: uvicorn.Server | None = None
 
         self.vis_state = {}
         self.state_lock = threading.Lock()
+        self.costmap_encoder = OptimizedCostmapEncoder(chunk_size=64)
 
         # Track GPS goal points for visualization
         self.gps_goal_points = []
@@ -98,8 +101,8 @@ class WebsocketVisModule(Module):
             f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled"
         )
 
-    def _start_broadcast_loop(self):
-        def run_loop():
+    def _start_broadcast_loop(self) -> None:
+        def websocket_vis_loop() -> None:
             self._broadcast_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._broadcast_loop)
             try:
@@ -109,37 +112,63 @@ class WebsocketVisModule(Module):
             finally:
                 self._broadcast_loop.close()
 
-        self._broadcast_thread = threading.Thread(target=run_loop, daemon=True)
+        self._broadcast_thread = threading.Thread(target=websocket_vis_loop, daemon=True)
         self._broadcast_thread.start()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
+        super().start()
+
         self._create_server()
+
         self._start_broadcast_loop()
 
-        self.server_thread = threading.Thread(target=self._run_server, daemon=True)
-        self.server_thread.start()
+        self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
+        self._uvicorn_server_thread.start()
 
-        # Only subscribe to connected topics
-        if self.robot_pose.connection is not None:
-            self.robot_pose.subscribe(self._on_robot_pose)
-        if self.gps_location.connection is not None:
-            self.gps_location.subscribe(self._on_gps_location)
-        if self.path.connection is not None:
-            self.path.subscribe(self._on_path)
-        if self.global_costmap.connection is not None:
-            self.global_costmap.subscribe(self._on_global_costmap)
+        try:
+            unsub = self.odom.subscribe(self._on_robot_pose)
+            self._disposables.add(Disposable(unsub))
+        except Exception:
+            ...
 
-        logger.info(f"WebSocket server started on http://localhost:{self.port}")
+        try:
+            unsub = self.gps_location.subscribe(self._on_gps_location)
+            self._disposables.add(Disposable(unsub))
+        except Exception:
+            ...
+
+        try:
+            unsub = self.path.subscribe(self._on_path)
+            self._disposables.add(Disposable(unsub))
+        except Exception:
+            ...
+
+        unsub = self.global_costmap.subscribe(self._on_global_costmap)
+        self._disposables.add(Disposable(unsub))
 
     @rpc
-    def stop(self):
-        """Stop the WebSocket server."""
+    def stop(self) -> None:
+        if self._uvicorn_server:
+            self._uvicorn_server.should_exit = True
+
+        if self.sio and self._broadcast_loop and not self._broadcast_loop.is_closed():
+
+            async def _disconnect_all() -> None:
+                await self.sio.disconnect()
+
+            asyncio.run_coroutine_threadsafe(_disconnect_all(), self._broadcast_loop)
+
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             self._broadcast_loop.call_soon_threadsafe(self._broadcast_loop.stop)
+
         if self._broadcast_thread and self._broadcast_thread.is_alive():
             self._broadcast_thread.join(timeout=1.0)
-        logger.info("WebSocket visualization module stopped")
+
+        if self._uvicorn_server_thread and self._uvicorn_server_thread.is_alive():
+            self._uvicorn_server_thread.join(timeout=2.0)
+
+        super().stop()
 
     @rpc
     def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
@@ -147,7 +176,7 @@ class WebsocketVisModule(Module):
         self.vis_state["gps_travel_goal_points"] = json_points
         self._emit("gps_travel_goal_points", json_points)
 
-    def _create_server(self):
+    def _create_server(self) -> None:
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -161,7 +190,7 @@ class WebsocketVisModule(Module):
 
         # Register SocketIO event handlers
         @self.sio.event
-        async def connect(sid, environ):
+        async def connect(sid, environ) -> None:
             with self.state_lock:
                 current_state = dict(self.vis_state)
 
@@ -169,23 +198,26 @@ class WebsocketVisModule(Module):
             if self.gps_goal_points:
                 current_state["gps_travel_goal_points"] = self.gps_goal_points
 
+            # Force full costmap update on new connection
+            self.costmap_encoder.last_full_grid = None
+
             await self.sio.emit("full_state", current_state, room=sid)
             logger.info(
                 f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points"
             )
 
         @self.sio.event
-        async def click(sid, position):
+        async def click(sid, position) -> None:
             goal = PoseStamped(
                 position=(position[0], position[1], 0),
                 orientation=(0, 0, 0, 1),  # Default orientation
                 frame_id="world",
             )
-            self.click_goal.publish(goal)
+            self.goal_request.publish(goal)
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
         @self.sio.event
-        async def gps_goal(sid, goal):
+        async def gps_goal(sid, goal) -> None:
             logger.info(f"Received GPS goal: {goal}")
 
             # Publish the goal to LCM
@@ -202,12 +234,12 @@ class WebsocketVisModule(Module):
             )
 
         @self.sio.event
-        async def start_explore(sid):
+        async def start_explore(sid) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
         @self.sio.event
-        async def stop_explore(sid):
+        async def stop_explore(sid) -> None:
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
 
@@ -219,16 +251,16 @@ class WebsocketVisModule(Module):
             logger.info("GPS goal points cleared and updated clients")
 
         @self.sio.event
-        async def move_command(sid, data):
+        async def move_command(sid, data) -> None:
             # Publish Twist if transport is configured
-            if self.movecmd and self.movecmd.transport:
+            if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(
                     linear=Vector3(data["linear"]["x"], data["linear"]["y"], data["linear"]["z"]),
                     angular=Vector3(
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.movecmd.publish(twist)
+                self.cmd_vel.publish(twist)
 
             # Publish TwistStamped if transport is configured
             if self.movecmd_stamped and self.movecmd_stamped.transport:
@@ -242,52 +274,45 @@ class WebsocketVisModule(Module):
                 )
                 self.movecmd_stamped.publish(twist_stamped)
 
-    def _run_server(self):
-        uvicorn.run(
+    def _run_uvicorn_server(self) -> None:
+        config = uvicorn.Config(
             self.app,
             host="0.0.0.0",
             port=self.port,
             log_level="error",  # Reduce verbosity
         )
+        self._uvicorn_server = uvicorn.Server(config)
+        self._uvicorn_server.run()
 
-    def _on_robot_pose(self, msg: PoseStamped):
+    def _on_robot_pose(self, msg: PoseStamped) -> None:
         pose_data = {"type": "vector", "c": [msg.position.x, msg.position.y, msg.position.z]}
         self.vis_state["robot_pose"] = pose_data
         self._emit("robot_pose", pose_data)
 
-    def _on_gps_location(self, msg: LatLon):
+    def _on_gps_location(self, msg: LatLon) -> None:
         pose_data = {"lat": msg.lat, "lon": msg.lon}
         self.vis_state["gps_location"] = pose_data
         self._emit("gps_location", pose_data)
 
-    def _on_path(self, msg: Path):
+    def _on_path(self, msg: Path) -> None:
         points = [[pose.position.x, pose.position.y] for pose in msg.poses]
         path_data = {"type": "path", "points": points}
         self.vis_state["path"] = path_data
         self._emit("path", path_data)
 
-    def _on_global_costmap(self, msg: OccupancyGrid):
+    def _on_global_costmap(self, msg: OccupancyGrid) -> None:
         costmap_data = self._process_costmap(msg)
         self.vis_state["costmap"] = costmap_data
         self._emit("costmap", costmap_data)
 
-    def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
+    def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
         costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
-
-        # Convert grid data to base64 encoded string
-        grid_bytes = costmap.grid.astype(np.float32).tobytes()
-        grid_base64 = base64.b64encode(grid_bytes).decode("ascii")
+        grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
 
         return {
             "type": "costmap",
-            "grid": {
-                "type": "grid",
-                "shape": [costmap.height, costmap.width],
-                "dtype": "f32",
-                "compressed": False,
-                "data": grid_base64,
-            },
+            "grid": grid_data,
             "origin": {
                 "type": "vector",
                 "c": [costmap.origin.position.x, costmap.origin.position.y, 0],
@@ -296,6 +321,11 @@ class WebsocketVisModule(Module):
             "origin_theta": 0,  # Assuming no rotation for now
         }
 
-    def _emit(self, event: str, data: Any):
+    def _emit(self, event: str, data: Any) -> None:
         if self._broadcast_loop and not self._broadcast_loop.is_closed():
             asyncio.run_coroutine_threadsafe(self.sio.emit(event, data), self._broadcast_loop)
+
+
+websocket_vis = WebsocketVisModule.blueprint
+
+__all__ = ["WebsocketVisModule", "websocket_vis"]

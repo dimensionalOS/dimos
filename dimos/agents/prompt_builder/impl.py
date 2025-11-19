@@ -14,7 +14,7 @@
 
 
 from textwrap import dedent
-from typing import Optional
+
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 
@@ -24,9 +24,9 @@ from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 
 class PromptBuilder:
     DEFAULT_SYSTEM_PROMPT = dedent("""
-    You are an AI assistant capable of understanding and analyzing both visual and textual information. 
-    Your task is to provide accurate and insightful responses based on the data provided to you. 
-    Use the following information to assist the user with their query. Do not rely on any internal 
+    You are an AI assistant capable of understanding and analyzing both visual and textual information.
+    Your task is to provide accurate and insightful responses based on the data provided to you.
+    Use the following information to assist the user with their query. Do not rely on any internal
     knowledge or make assumptions beyond the provided data.
 
     Visual Context: You may have been given an image to analyze. Use the visual details to enhance your response.
@@ -39,8 +39,11 @@ class PromptBuilder:
     """)
 
     def __init__(
-        self, model_name="gpt-4o", max_tokens=128000, tokenizer: Optional[AbstractTokenizer] = None
-    ):
+        self,
+        model_name: str = "gpt-4o",
+        max_tokens: int = 128000,
+        tokenizer: AbstractTokenizer | None = None,
+    ) -> None:
         """
         Initialize the prompt builder.
         Args:
@@ -52,7 +55,7 @@ class PromptBuilder:
         self.max_tokens = max_tokens
         self.tokenizer: AbstractTokenizer = tokenizer or OpenAITokenizer(model_name=self.model_name)
 
-    def truncate_tokens(self, text, max_tokens, strategy):
+    def truncate_tokens(self, text: str, max_tokens, strategy):
         """
         Truncate text to fit within max_tokens using a specified strategy.
         Args:
@@ -88,11 +91,11 @@ class PromptBuilder:
         base64_image=None,
         image_width=None,
         image_height=None,
-        image_detail="low",
+        image_detail: str = "low",
         rag_context=None,
         budgets=None,
         policies=None,
-        override_token_limit=False,
+        override_token_limit: bool = False,
     ):
         """
         Builds a dynamic prompt tailored to token limits, respecting budgets and policies.

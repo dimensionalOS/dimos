@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Union, List, Dict
 from abc import ABC, abstractmethod
 
 
@@ -23,9 +22,9 @@ class SimulatorBase(ABC):
     def __init__(
         self,
         headless: bool = True,
-        open_usd: Optional[str] = None,  # Keep for Isaac compatibility
-        entities: Optional[List[Dict[str, Union[str, dict]]]] = None,  # Add for Genesis
-    ):
+        open_usd: str | None = None,  # Keep for Isaac compatibility
+        entities: list[dict[str, str | dict]] | None = None,  # Add for Genesis
+    ) -> None:
         """Initialize the simulator.
 
         Args:

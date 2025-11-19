@@ -20,54 +20,55 @@ import logging
 import os
 import time
 import warnings
-from typing import List, Optional
 
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import Bool, String
 from reactivex import Observable
+from reactivex.disposable import CompositeDisposable
 
 from dimos import core
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import In, Module, Out, rpc
+from dimos.core.global_config import GlobalConfig
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.resource import Resource
 from dimos.mapping.types import LatLon
-from dimos.msgs.std_msgs import Header
-from dimos.msgs.geometry_msgs import PoseStamped, Transform, Twist, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
-from dimos_lcm.std_msgs import String
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos.perception.spatial_perception import SpatialMemory
+from dimos.msgs.std_msgs import Header
+from dimos.msgs.vision_msgs import Detection2DArray
+from dimos.navigation.base import NavigationState
+from dimos.navigation.bbox_navigation import BBoxNavigationModule
+from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator
+from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
+from dimos.navigation.global_planner import AstarPlanner
+from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
 from dimos.perception.common.utils import (
-    extract_pose_from_detection3d,
     load_camera_info,
     load_camera_info_opencv,
     rectify_image,
 )
+from dimos.perception.object_tracker_2d import ObjectTracker2D
+from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
+from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.navigation.global_planner import AstarPlanner
-from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
-from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree_webrtc.depth_module import DepthModule
 from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
+from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
-from dimos.utils.transform_utils import offset_distance
-from dimos.perception.object_tracker import ObjectTracking
-from dimos_lcm.std_msgs import Bool
-from dimos.robot.robot import UnitreeRobot
-from dimos.types.robot_capabilities import RobotCapability
+from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
-
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(__file__, level=logging.INFO)
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
@@ -81,32 +82,23 @@ logging.getLogger("root").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", message="coroutine.*was never awaited")
 warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 
-"""
-Constants for shared memory
-Usually, auto-detection for size would be preferred. Sadly, though, channels are made
-and frozen *before* the first frame is received.
-Therefore, a maximum capacity for color image and depth image transfer should be defined
-ahead of time.
-"""
-# Default color image size: 1920x1080 frame x 3 (RGB) x uint8
-DEFAULT_CAPACITY_COLOR_IMAGE = 1920 * 1080 * 3
-# Default depth image size: 1280x720 frame * 4 (float32 size)
-DEFAULT_CAPACITY_DEPTH_IMAGE = 1280 * 720 * 4
 
+class ReplayRTC(Resource):
+    """Replay WebRTC connection for testing with recorded data."""
 
-class FakeRTC:
-    """Fake WebRTC connection for testing with recorded data."""
-
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         get_data("unitree_office_walk")  # Preload data for testing
 
-    def connect(self):
+    def start(self) -> None:
         pass
 
-    def standup(self):
+    def stop(self) -> None:
+        pass
+
+    def standup(self) -> None:
         print("standup suppressed")
 
-    def liedown(self):
+    def liedown(self) -> None:
         print("liedown suppressed")
 
     @functools.cache
@@ -129,7 +121,7 @@ class FakeRTC:
         )
         return video_store.stream()
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         pass
 
     def publish_request(self, topic: str, data: dict):
@@ -140,11 +132,11 @@ class FakeRTC:
 class ConnectionModule(Module):
     """Module that handles robot sensor data, movement commands, and camera information."""
 
-    movecmd: In[Twist] = None
+    cmd_vel: In[Twist] = None
     odom: Out[PoseStamped] = None
     gps_location: Out[LatLon] = None
     lidar: Out[LidarMessage] = None
-    video: Out[Image] = None
+    color_image: Out[Image] = None
     camera_info: Out[CameraInfo] = None
     camera_pose: Out[PoseStamped] = None
     ip: str
@@ -153,18 +145,21 @@ class ConnectionModule(Module):
     _odom: PoseStamped = None
     _lidar: LidarMessage = None
     _last_image: Image = None
+    _global_config: GlobalConfig
 
     def __init__(
         self,
-        ip: str = None,
-        connection_type: str = "webrtc",
+        ip: str | None = None,
+        connection_type: str | None = None,
         rectify_image: bool = True,
+        global_config: GlobalConfig | None = None,
         *args,
         **kwargs,
-    ):
-        self.ip = ip
-        self.connection_type = connection_type
-        self.rectify_image = rectify_image
+    ) -> None:
+        self._global_config = global_config or GlobalConfig()
+        self.ip = ip if ip is not None else self._global_config.robot_ip
+        self.connection_type = connection_type or self._global_config.unitree_connection_type
+        self.rectify_image = not self._global_config.simulation
         self.tf = TF()
         self.connection = None
 
@@ -192,52 +187,79 @@ class ConnectionModule(Module):
         Module.__init__(self, *args, **kwargs)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start the connection and subscribe to sensor streams."""
+        super().start()
+
         match self.connection_type:
             case "webrtc":
                 self.connection = UnitreeWebRTCConnection(self.ip)
-            case "fake":
-                self.connection = FakeRTC(self.ip)
+            case "replay":
+                self.connection = ReplayRTC(self.ip)
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection()
-                self.connection.start()
+                self.connection = MujocoConnection(self._global_config)
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
-        # Connect sensor streams to outputs
-        self.connection.lidar_stream().subscribe(self.lidar.publish)
-        self.connection.odom_stream().subscribe(self._publish_tf)
-        if self.connection_type == "mujoco":
-            self.connection.gps_stream().subscribe(self._publish_gps_location)
-        self.connection.video_stream().subscribe(self._on_video)
-        self.movecmd.subscribe(self.move)
+        self.connection.start()
 
-    def _on_video(self, msg: Image):
+        # Connect sensor streams to outputs
+        unsub = self.connection.lidar_stream().subscribe(self._on_lidar)
+        self._disposables.add(unsub)
+
+        unsub = self.connection.odom_stream().subscribe(self._publish_tf)
+        self._disposables.add(unsub)
+
+        if self.connection_type == "mujoco":
+            unsub = self.connection.gps_stream().subscribe(self._publish_gps_location)
+            self._disposables.add(unsub)
+
+        unsub = self.connection.video_stream().subscribe(self._on_video)
+        self._disposables.add(unsub)
+
+        unsub = self.cmd_vel.subscribe(self.move)
+        self._disposables.add(unsub)
+
+    @rpc
+    def stop(self) -> None:
+        if self.connection:
+            self.connection.stop()
+        super().stop()
+
+    def _on_lidar(self, msg: LidarMessage) -> None:
+        if self.lidar.transport:
+            self.lidar.publish(msg)
+
+    def _on_video(self, msg: Image) -> None:
         """Handle incoming video frames and publish synchronized camera data."""
         # Apply rectification if enabled
         if self.rectify_image:
             rectified_msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
             self._last_image = rectified_msg
-            self.video.publish(rectified_msg)
+            if self.color_image.transport:
+                self.color_image.publish(rectified_msg)
         else:
             self._last_image = msg
-            self.video.publish(msg)
+            if self.color_image.transport:
+                self.color_image.publish(msg)
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
         self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
 
-    def _publish_gps_location(self, msg: LatLon):
+    def _publish_gps_location(self, msg: LatLon) -> None:
         self.gps_location.publish(msg)
 
-    def _publish_tf(self, msg):
+    def _publish_tf(self, msg) -> None:
         self._odom = msg
-        self.odom.publish(msg)
+        if self.odom.transport:
+            self.odom.publish(msg)
         self.tf.publish(Transform.from_pose("base_link", msg))
+
+        # Publish camera_link transform
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -245,14 +267,24 @@ class ConnectionModule(Module):
             child_frame_id="camera_link",
             ts=time.time(),
         )
-        self.tf.publish(camera_link)
 
-    def _publish_camera_info(self, timestamp: float):
+        map_to_world = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="map",
+            child_frame_id="world",
+            ts=time.time(),
+        )
+
+        self.tf.publish(camera_link, map_to_world)
+
+    def _publish_camera_info(self, timestamp: float) -> None:
         header = Header(timestamp, "camera_link")
         self.lcm_camera_info.header = header
-        self.camera_info.publish(self.lcm_camera_info)
+        if self.camera_info.transport:
+            self.camera_info.publish(self.lcm_camera_info)
 
-    def _publish_camera_pose(self, timestamp: float):
+    def _publish_camera_pose(self, timestamp: float) -> None:
         """Publish camera pose from TF lookup."""
         try:
             # Look up transform from world to camera_link
@@ -270,7 +302,8 @@ class ConnectionModule(Module):
                     position=transform.translation,
                     orientation=transform.rotation,
                 )
-                self.camera_pose.publish(pose_msg)
+                if self.camera_pose.transport:
+                    self.camera_pose.publish(pose_msg)
             else:
                 logger.debug("Could not find transform from world to camera_link")
 
@@ -278,7 +311,7 @@ class ConnectionModule(Module):
             logger.error(f"Error publishing camera pose: {e}")
 
     @rpc
-    def get_odom(self) -> Optional[PoseStamped]:
+    def get_odom(self) -> PoseStamped | None:
         """Get the robot's odometry.
 
         Returns:
@@ -287,7 +320,7 @@ class ConnectionModule(Module):
         return self._odom
 
     @rpc
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         """Send movement command to robot."""
         self.connection.move(twist, duration)
 
@@ -313,31 +346,38 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
 
-class UnitreeGo2(UnitreeRobot):
+connection = ConnectionModule.blueprint
+
+
+class UnitreeGo2(Resource):
     """Full Unitree Go2 robot with navigation and perception capabilities."""
+
+    _dimos: ModuleCoordinator
+    _disposables: CompositeDisposable = CompositeDisposable()
 
     def __init__(
         self,
-        ip: Optional[str],
-        output_dir: str = None,
+        ip: str | None,
+        output_dir: str | None = None,
         websocket_port: int = 7779,
-        skill_library: Optional[SkillLibrary] = None,
-        connection_type: Optional[str] = "webrtc",
-    ):
+        skill_library: SkillLibrary | None = None,
+        connection_type: str | None = "webrtc",
+    ) -> None:
         """Initialize the robot system.
 
         Args:
-            ip: Robot IP address (or None for fake connection)
+            ip: Robot IP address (or None for replay connection)
             output_dir: Directory for saving outputs (default: assets/output)
             websocket_port: Port for web visualization
             skill_library: Skill library instance
-            connection_type: webrtc, fake, or mujoco
+            connection_type: webrtc, replay, or mujoco
         """
         super().__init__()
+        self._dimos = ModuleCoordinator(n=8, memory_limit="8GiB")
         self.ip = ip
         self.connection_type = connection_type or "webrtc"
         if ip is None and self.connection_type == "webrtc":
-            self.connection_type = "fake"  # Auto-enable playback if no IP provided
+            self.connection_type = "replay"  # Auto-enable playback if no IP provided
         self.output_dir = output_dir or os.path.join(os.getcwd(), "assets", "output")
         self.websocket_port = websocket_port
         self.lcm = LCM()
@@ -350,7 +390,6 @@ class UnitreeGo2(UnitreeRobot):
         # Set capabilities
         self.capabilities = [RobotCapability.LOCOMOTION, RobotCapability.VISION]
 
-        self.dimos = None
         self.connection = None
         self.mapper = None
         self.global_planner = None
@@ -360,20 +399,12 @@ class UnitreeGo2(UnitreeRobot):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.depth_module = None
         self.object_tracker = None
+        self.utilization_module = None
 
         self._setup_directories()
 
-    def __enter__(self) -> "UnitreeGo2":
-        self.start()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        # self.stop()
-        return False
-
-    def _setup_directories(self):
+    def _setup_directories(self) -> None:
         """Setup directories for spatial memory storage."""
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
@@ -392,42 +423,48 @@ class UnitreeGo2(UnitreeRobot):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
 
-    def start(self):
-        """Start the robot system with all modules."""
-        self.dimos = core.start(8)
+    def start(self) -> None:
+        self.lcm.start()
+        self._dimos.start()
 
         self._deploy_connection()
         self._deploy_mapping()
         self._deploy_navigation()
         self._deploy_visualization()
+        self._deploy_foxglove_bridge()
         self._deploy_perception()
         self._deploy_camera()
 
         self._start_modules()
-
-        self.lcm.start()
-
         logger.info("UnitreeGo2 initialized and started")
-        logger.info(f"WebSocket visualization available at http://localhost:{self.websocket_port}")
 
-    def _deploy_connection(self):
+    def stop(self) -> None:
+        if self.foxglove_bridge:
+            self.foxglove_bridge.stop()
+        self._disposables.dispose()
+        self._dimos.stop()
+        self.lcm.stop()
+
+    def _deploy_connection(self) -> None:
         """Deploy and configure the connection module."""
-        self.connection = self.dimos.deploy(
+        self.connection = self._dimos.deploy(
             ConnectionModule, self.ip, connection_type=self.connection_type
         )
 
         self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
         self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
         self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
-        self.connection.video.transport = core.LCMTransport("/go2/color_image", Image)
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.connection.color_image.transport = core.pSHMTransport(
+            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
+        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
         self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
 
-    def _deploy_mapping(self):
+    def _deploy_mapping(self) -> None:
         """Deploy and configure the mapping module."""
         min_height = 0.3 if self.connection_type == "mujoco" else 0.15
-        self.mapper = self.dimos.deploy(
+        self.mapper = self._dimos.deploy(
             Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
         )
 
@@ -437,18 +474,18 @@ class UnitreeGo2(UnitreeRobot):
 
         self.mapper.lidar.connect(self.connection.lidar)
 
-    def _deploy_navigation(self):
+    def _deploy_navigation(self) -> None:
         """Deploy and configure navigation modules."""
-        self.global_planner = self.dimos.deploy(AstarPlanner)
-        self.local_planner = self.dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self.dimos.deploy(
+        self.global_planner = self._dimos.deploy(AstarPlanner)
+        self.local_planner = self._dimos.deploy(HolonomicLocalPlanner)
+        self.navigator = self._dimos.deploy(
             BehaviorTreeNavigator,
             reset_local_planner=self.local_planner.reset,
             check_goal_reached=self.local_planner.is_goal_reached,
         )
-        self.frontier_explorer = self.dimos.deploy(WavefrontFrontierExplorer)
+        self.frontier_explorer = self._dimos.deploy(WavefrontFrontierExplorer)
 
-        self.navigator.goal.transport = core.LCMTransport("/navigation_goal", PoseStamped)
+        self.navigator.target.transport = core.LCMTransport("/navigation_goal", PoseStamped)
         self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)
@@ -466,7 +503,7 @@ class UnitreeGo2(UnitreeRobot):
             "/stop_explore_cmd", Bool
         )
 
-        self.global_planner.target.connect(self.navigator.goal)
+        self.global_planner.target.connect(self.navigator.target)
 
         self.global_planner.global_costmap.connect(self.mapper.global_costmap)
         self.global_planner.odom.connect(self.connection.odom)
@@ -475,39 +512,40 @@ class UnitreeGo2(UnitreeRobot):
         self.local_planner.local_costmap.connect(self.mapper.local_costmap)
         self.local_planner.odom.connect(self.connection.odom)
 
-        self.connection.movecmd.connect(self.local_planner.cmd_vel)
+        self.connection.cmd_vel.connect(self.local_planner.cmd_vel)
 
         self.navigator.odom.connect(self.connection.odom)
 
-        self.frontier_explorer.costmap.connect(self.mapper.global_costmap)
-        self.frontier_explorer.odometry.connect(self.connection.odom)
+        self.frontier_explorer.global_costmap.connect(self.mapper.global_costmap)
+        self.frontier_explorer.odom.connect(self.connection.odom)
 
-    def _deploy_visualization(self):
+    def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
-        self.websocket_vis = self.dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
+        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        self.websocket_vis.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
         self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
         self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-        self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
 
-        self.websocket_vis.robot_pose.connect(self.connection.odom)
+        self.websocket_vis.odom.connect(self.connection.odom)
         self.websocket_vis.gps_location.connect(self.connection.gps_location)
         self.websocket_vis.path.connect(self.global_planner.path)
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
 
-        self.foxglove_bridge = FoxgloveBridge()
+    def _deploy_foxglove_bridge(self) -> None:
+        self.foxglove_bridge = FoxgloveBridge(
+            shm_channels=[
+                "/go2/color_image#sensor_msgs.Image",
+                "/go2/tracked_overlay#sensor_msgs.Image",
+            ]
+        )
+        self.foxglove_bridge.start()
 
-        # TODO: This should be moved.
-        def _set_goal(goal: LatLon):
-            self.set_gps_travel_goal_points([goal])
-
-        unsub = self.websocket_vis.gps_goal.transport.pure_observable().subscribe(_set_goal)
-
-    def _deploy_perception(self):
+    def _deploy_perception(self) -> None:
         """Deploy and configure perception modules."""
         # Deploy spatial memory
-        self.spatial_memory_module = self.dimos.deploy(
+        self.spatial_memory_module = self._dimos.deploy(
             SpatialMemory,
             collection_name=self.spatial_memory_collection,
             db_path=self.db_path,
@@ -515,64 +553,53 @@ class UnitreeGo2(UnitreeRobot):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.video.transport = core.LCMTransport("/go2/color_image", Image)
-        self.spatial_memory_module.odom.transport = core.LCMTransport(
-            "/go2/camera_pose", PoseStamped
+        self.spatial_memory_module.color_image.transport = core.pSHMTransport(
+            "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
 
         logger.info("Spatial memory module deployed and connected")
 
-        # Deploy object tracker
-        self.object_tracker = self.dimos.deploy(
-            ObjectTracking,
+        # Deploy 2D object tracker
+        self.object_tracker = self._dimos.deploy(
+            ObjectTracker2D,
             frame_id="camera_link",
         )
 
-        # Set up transports
+        # Deploy bbox navigation module
+        self.bbox_navigator = self._dimos.deploy(BBoxNavigationModule, goal_distance=1.0)
+
+        self.utilization_module = self._dimos.deploy(UtilizationModule)
+
+        # Set up transports for object tracker
         self.object_tracker.detection2darray.transport = core.LCMTransport(
             "/go2/detection2d", Detection2DArray
         )
-        self.object_tracker.detection3darray.transport = core.LCMTransport(
-            "/go2/detection3d", Detection3DArray
-        )
-        self.object_tracker.tracked_overlay.transport = core.LCMTransport(
-            "/go2/tracked_overlay", Image
+        self.object_tracker.tracked_overlay.transport = core.pSHMTransport(
+            "/go2/tracked_overlay", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
 
-        logger.info("Object tracker module deployed")
+        # Set up transports for bbox navigator
+        self.bbox_navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
 
-    def _deploy_camera(self):
+        logger.info("Object tracker and bbox navigator modules deployed")
+
+    def _deploy_camera(self) -> None:
         """Deploy and configure the camera module."""
-        gt_depth_scale = 1.0 if self.connection_type == "mujoco" else 0.5
-        self.depth_module = self.dimos.deploy(DepthModule, gt_depth_scale=gt_depth_scale)
-
-        # Set up transports
-        self.depth_module.color_image.transport = core.LCMTransport("/go2/color_image", Image)
-        self.depth_module.depth_image.transport = core.LCMTransport("/go2/depth_image", Image)
-        self.depth_module.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
-
-        logger.info("Camera module deployed and connected")
-
-        # Connect object tracker inputs after camera module is deployed
+        # Connect object tracker inputs
         if self.object_tracker:
-            self.object_tracker.color_image.connect(self.connection.video)
-            self.object_tracker.depth.connect(self.depth_module.depth_image)
-            self.object_tracker.camera_info.connect(self.connection.camera_info)
-            logger.info("Object tracker connected to camera module")
+            self.object_tracker.color_image.connect(self.connection.color_image)
+            logger.info("Object tracker connected to camera")
 
-    def _start_modules(self):
+        # Connect bbox navigator inputs
+        if self.bbox_navigator:
+            self.bbox_navigator.detection2d.connect(self.object_tracker.detection2darray)
+            self.bbox_navigator.camera_info.connect(self.connection.camera_info)
+            self.bbox_navigator.goal_request.connect(self.navigator.goal_request)
+            logger.info("BBox navigator connected")
+
+    def _start_modules(self) -> None:
         """Start all deployed modules in the correct order."""
-        self.connection.start()
-        self.mapper.start()
-        self.global_planner.start()
-        self.local_planner.start()
-        self.navigator.start()
-        self.frontier_explorer.start()
-        self.websocket_vis.start()
-        self.foxglove_bridge.start()
-        self.spatial_memory_module.start()
-        self.depth_module.start()
-        self.object_tracker.start()
+        self._dimos.start_all_modules()
 
         # Initialize skills after connection is established
         if self.skill_library is not None:
@@ -584,11 +611,7 @@ class UnitreeGo2(UnitreeRobot):
                 self.skill_library.init()
                 self.skill_library.initialize_skills()
 
-    def get_single_rgb_frame(self, timeout: float = 2.0) -> Image:
-        topic = Topic("/go2/color_image", Image)
-        return self.lcm.wait_for_message(topic, timeout=timeout)
-
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         """Send movement command to robot."""
         self.connection.move(twist, duration)
 
@@ -600,7 +623,7 @@ class UnitreeGo2(UnitreeRobot):
         """
         return self.frontier_explorer.explore()
 
-    def navigate_to(self, pose: PoseStamped, blocking: bool = True):
+    def navigate_to(self, pose: PoseStamped, blocking: bool = True) -> bool:
         """Navigate to a target pose.
 
         Args:
@@ -619,7 +642,7 @@ class UnitreeGo2(UnitreeRobot):
         time.sleep(1.0)
 
         if blocking:
-            while self.navigator.get_state() == NavigatorState.FOLLOWING_PATH:
+            while self.navigator.get_state() == NavigationState.FOLLOWING_PATH:
                 time.sleep(0.25)
 
             time.sleep(1.0)
@@ -653,7 +676,7 @@ class UnitreeGo2(UnitreeRobot):
         return self.navigator.cancel_goal()
 
     @property
-    def spatial_memory(self) -> Optional[SpatialMemory]:
+    def spatial_memory(self) -> SpatialMemory | None:
         """Get the robot's spatial memory module.
 
         Returns:
@@ -665,12 +688,6 @@ class UnitreeGo2(UnitreeRobot):
     def gps_position_stream(self) -> Observable[LatLon]:
         return self.connection.gps_location.transport.pure_observable()
 
-    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None:
-        logger.info(f"Travelling to: {points}")
-        # self.connection.... (actually set the goal)
-        print("websocketvis", self.websocket_vis)
-        self.websocket_vis.set_gps_travel_goal_points(points)
-
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.
 
@@ -679,66 +696,8 @@ class UnitreeGo2(UnitreeRobot):
         """
         return self.connection.get_odom()
 
-    def navigate_to_object(self, bbox: List[float], distance: float = 0.5, timeout: float = 30.0):
-        """Navigate to an object by tracking it and maintaining a specified distance.
 
-        Args:
-            bbox: Bounding box of the object to track [x1, y1, x2, y2]
-            distance: Distance to maintain from the object (meters)
-            timeout: Total timeout for the navigation (seconds)
-
-        Returns:
-            True if navigation completed successfully, False otherwise
-        """
-        if not self.object_tracker:
-            logger.error("Object tracker not initialized")
-            return False
-
-        logger.info(f"Starting object tracking with bbox: {bbox}")
-        self.object_tracker.track(bbox)
-
-        start_time = time.time()
-        goal_set = False
-
-        while time.time() - start_time < timeout:
-            if self.navigator.get_state() == NavigatorState.IDLE and goal_set:
-                logger.info("Waiting for goal result")
-                time.sleep(1.0)
-                if not self.navigator.is_goal_reached():
-                    logger.info("Goal cancelled, object tracking failed")
-                    return False
-                else:
-                    logger.info("Object tracking goal reached")
-                    return True
-
-            if goal_set and not self.object_tracker.is_tracking():
-                continue
-
-            detection_topic = Topic("/go2/detection3d", Detection3DArray)
-            detection_msg = self.lcm.wait_for_message(detection_topic, timeout=1.0)
-
-            if detection_msg and len(detection_msg.detections) > 0:
-                target_pose = extract_pose_from_detection3d(detection_msg.detections[0])
-
-                retracted_pose = offset_distance(
-                    target_pose, distance, approach_vector=Vector3(-1, 0, 0)
-                )
-
-                goal_pose = PoseStamped(
-                    frame_id=detection_msg.header.frame_id,
-                    position=retracted_pose.position,
-                    orientation=retracted_pose.orientation,
-                )
-                self.navigator.set_goal(goal_pose)
-                goal_set = True
-
-            time.sleep(0.25)
-
-        logger.info("Object tracking timed out")
-        return False
-
-
-def main():
+def main() -> None:
     """Main entry point."""
     ip = os.getenv("ROBOT_IP")
     connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
@@ -750,10 +709,15 @@ def main():
 
     try:
         while True:
-            time.sleep(1)
+            time.sleep(0.1)
     except KeyboardInterrupt:
-        logger.info("Shutting down...")
+        pass
+    finally:
+        robot.stop()
 
 
 if __name__ == "__main__":
     main()
+
+
+__all__ = ["ConnectionModule", "ReplayRTC", "UnitreeGo2", "connection"]

@@ -17,23 +17,22 @@
 
 import asyncio
 import os
-import time
-from dotenv import load_dotenv
-import pytest
 import pickle
 
+from dotenv import load_dotenv
+import pytest
 from reactivex import operators as ops
 
 from dimos import core
-from dimos.core import Module, In, Out, rpc
-from dimos.agents.modules.base_agent import BaseAgentModule
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger("test_agent_message_streams")
 
@@ -43,14 +42,14 @@ class VideoMessageSender(Module):
 
     message_out: Out[AgentMessage] = None
 
-    def __init__(self, video_path: str):
+    def __init__(self, video_path: str) -> None:
         super().__init__()
         self.video_path = video_path
         self._subscription = None
         self._frame_count = 0
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start sending video messages."""
         # Use TimedSensorReplay to replay video frames
         video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
@@ -83,12 +82,12 @@ class VideoMessageSender(Module):
         logger.info(f"Created message with frame {self._frame_count}")
         return msg
 
-    def _send_message(self, msg: AgentMessage):
+    def _send_message(self, msg: AgentMessage) -> None:
         """Send the message and test pickling."""
         # Test that message can be pickled (for module communication)
         try:
             pickled = pickle.dumps(msg)
-            unpickled = pickle.loads(pickled)
+            pickle.loads(pickled)
             logger.info(f"Message pickling test passed - size: {len(pickled)} bytes")
         except Exception as e:
             logger.error(f"Message pickling failed: {e}")
@@ -96,7 +95,7 @@ class VideoMessageSender(Module):
         self.message_out.publish(msg)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop streaming."""
         if self._subscription:
             self._subscription.dispose()
@@ -108,13 +107,13 @@ class MultiImageMessageSender(Module):
 
     message_out: Out[AgentMessage] = None
 
-    def __init__(self, video_path: str):
+    def __init__(self, video_path: str) -> None:
         super().__init__()
         self.video_path = video_path
         self.frames = []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Collect some frames."""
         video_replay = TimedSensorReplay(self.video_path, autocast=Image.from_numpy)
 
@@ -124,13 +123,13 @@ class MultiImageMessageSender(Module):
             on_completed=self._send_multi_image_query,
         )
 
-    def _send_multi_image_query(self):
+    def _send_multi_image_query(self) -> None:
         """Send query with multiple images."""
         if len(self.frames) >= 2:
             msg = AgentMessage()
             msg.add_text("Compare these images and describe what changed between them.")
 
-            for i, frame in enumerate(self.frames[:2]):
+            for _i, frame in enumerate(self.frames[:2]):
                 msg.add_image(frame)
 
             logger.info(f"Sending multi-image message with {len(msg.images)} images")
@@ -150,15 +149,15 @@ class ResponseCollector(Module):
 
     response_in: In[AgentResponse] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         super().__init__()
         self.responses = []
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         self.response_in.subscribe(self._on_response)
 
-    def _on_response(self, resp: AgentResponse):
+    def _on_response(self, resp: AgentResponse) -> None:
         logger.info(f"Collected response: {resp.content[:100] if resp.content else 'None'}...")
         self.responses.append(resp)
 
@@ -170,7 +169,7 @@ class ResponseCollector(Module):
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_message_video_stream():
+async def test_agent_message_video_stream() -> None:
     """Test BaseAgentModule with AgentMessage containing video frames."""
     load_dotenv()
 
@@ -254,7 +253,7 @@ async def test_agent_message_video_stream():
 @pytest.mark.tofix
 @pytest.mark.module
 @pytest.mark.asyncio
-async def test_agent_message_multi_image():
+async def test_agent_message_multi_image() -> None:
     """Test BaseAgentModule with AgentMessage containing multiple images."""
     load_dotenv()
 
@@ -330,7 +329,7 @@ async def test_agent_message_multi_image():
 
 
 @pytest.mark.tofix
-def test_agent_message_text_only():
+def test_agent_message_text_only() -> None:
     """Test BaseAgent with text-only AgentMessage."""
     load_dotenv()
 
@@ -354,7 +353,7 @@ def test_agent_message_text_only():
     msg.add_text("of France?")
 
     response = agent.query(msg)
-    assert "Paris" in response.content, f"Expected 'Paris' in response"
+    assert "Paris" in response.content, "Expected 'Paris' in response"
 
     # Test pickling of AgentMessage
     pickled = pickle.dumps(msg)

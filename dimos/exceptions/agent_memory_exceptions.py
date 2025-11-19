@@ -24,7 +24,7 @@ class AgentMemoryError(Exception):
         message (str): Human-readable message describing the error.
     """
 
-    def __init__(self, message="Error in AgentMemory operation"):
+    def __init__(self, message: str = "Error in AgentMemory operation") -> None:
         super().__init__(message)
 
 
@@ -38,14 +38,14 @@ class AgentMemoryConnectionError(AgentMemoryError):
         cause (Exception, optional): Original exception, if any, that led to this error.
     """
 
-    def __init__(self, message="Failed to connect to the database", cause=None):
+    def __init__(self, message: str = "Failed to connect to the database", cause=None) -> None:
         super().__init__(message)
         if cause:
             self.cause = cause
         self.traceback = traceback.format_exc() if cause else None
 
-    def __str__(self):
-        return f"{self.message}\nCaused by: {repr(self.cause)}" if self.cause else self.message
+    def __str__(self) -> str:
+        return f"{self.message}\nCaused by: {self.cause!r}" if self.cause else self.message
 
 
 class UnknownConnectionTypeError(AgentMemoryConnectionError):
@@ -56,7 +56,9 @@ class UnknownConnectionTypeError(AgentMemoryConnectionError):
         message (str): Human-readable message explaining that an unknown connection type was used.
     """
 
-    def __init__(self, message="Unknown connection type used in AgentMemory connection"):
+    def __init__(
+        self, message: str = "Unknown connection type used in AgentMemory connection"
+    ) -> None:
         super().__init__(message)
 
 
@@ -69,7 +71,9 @@ class DataRetrievalError(AgentMemoryError):
         message (str): Human-readable message describing the data retrieval error.
     """
 
-    def __init__(self, message="Error in retrieving data during AgentMemory operation"):
+    def __init__(
+        self, message: str = "Error in retrieving data during AgentMemory operation"
+    ) -> None:
         super().__init__(message)
 
 
@@ -83,7 +87,7 @@ class DataNotFoundError(DataRetrievalError):
         message (str, optional): Human-readable message providing more detail. If not provided, a default message is generated.
     """
 
-    def __init__(self, vector_id, message=None):
+    def __init__(self, vector_id, message=None) -> None:
         message = message or f"Requested data for vector ID {vector_id} was not found."
         super().__init__(message)
         self.vector_id = vector_id

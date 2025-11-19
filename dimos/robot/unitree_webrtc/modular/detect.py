@@ -107,7 +107,7 @@ def broadcast(
     odom_frame: Odometry,
     detections,
     annotations,
-):
+) -> None:
     from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 
     from dimos.core import LCMTransport
@@ -135,7 +135,7 @@ def broadcast(
 
 def process_data():
     from dimos.msgs.sensor_msgs import Image
-    from dimos.perception.detection2d.module import Detect2DModule, build_imageannotations
+    from dimos.perception.detection.module2D import Detection2DModule, build_imageannotations
     from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
     from dimos.robot.unitree_webrtc.type.odometry import Odometry
     from dimos.utils.data import get_data
@@ -155,7 +155,7 @@ def process_data():
     video_frame = attach_frame_id(video_store.find_closest(target, tolerance=1))
     odom_frame = odom_store.find_closest(target, tolerance=1)
 
-    detector = Detect2DModule()
+    detector = Detection2DModule()
     detections = detector.detect(video_frame)
     annotations = build_imageannotations(detections)
 
@@ -167,7 +167,7 @@ def process_data():
     return data
 
 
-def main():
+def main() -> None:
     try:
         with open("filename.pkl", "rb") as file:
             data = pickle.load(file)

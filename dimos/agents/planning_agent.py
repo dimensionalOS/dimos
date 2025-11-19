@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-from typing import List, Optional, Literal
-from reactivex import Observable
-from reactivex import operators as ops
-import time
-from dimos.skills.skills import AbstractSkill
-from dimos.agents.agent import OpenAIAgent
-from dimos.utils.logging_config import setup_logger
 from textwrap import dedent
+import threading
+import time
+from typing import Literal
+
 from pydantic import BaseModel
+from reactivex import Observable, operators as ops
+
+from dimos.agents.agent import OpenAIAgent
+from dimos.skills.skills import AbstractSkill
+from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents.planning_agent")
 
@@ -29,7 +30,7 @@ logger = setup_logger("dimos.agents.planning_agent")
 # For response validation
 class PlanningAgentResponse(BaseModel):
     type: Literal["dialogue", "plan"]
-    content: List[str]
+    content: list[str]
     needs_confirmation: bool
 
 
@@ -50,10 +51,10 @@ class PlanningAgent(OpenAIAgent):
         self,
         dev_name: str = "PlanningAgent",
         model_name: str = "gpt-4",
-        input_query_stream: Optional[Observable] = None,
+        input_query_stream: Observable | None = None,
         use_terminal: bool = False,
-        skills: Optional[AbstractSkill] = None,
-    ):
+        skills: AbstractSkill | None = None,
+    ) -> None:
         """Initialize the planning agent.
 
         Args:
@@ -192,9 +193,9 @@ class PlanningAgent(OpenAIAgent):
         try:
             return super()._send_query(messages)
         except Exception as e:
-            logger.error(f"Caught exception in _send_query: {str(e)}")
+            logger.error(f"Caught exception in _send_query: {e!s}")
             return PlanningAgentResponse(
-                type="dialogue", content=f"Error: {str(e)}", needs_confirmation=False
+                type="dialogue", content=f"Error: {e!s}", needs_confirmation=False
             )
 
     def process_user_input(self, user_input: str) -> None:
@@ -244,7 +245,7 @@ class PlanningAgent(OpenAIAgent):
         response = self._send_query(messages)
         self._handle_response(response)
 
-    def start_terminal_interface(self):
+    def start_terminal_interface(self) -> None:
         """Start the terminal interface for input/output."""
 
         time.sleep(5)  # buffer time for clean terminal interface printing
@@ -298,7 +299,7 @@ class PlanningAgent(OpenAIAgent):
             Observable: An observable that emits plan steps from the agent.
         """
 
-        def extract_content(response) -> List[str]:
+        def extract_content(response) -> list[str]:
             if isinstance(response, PlanningAgentResponse):
                 if response.type == "plan":
                     return response.content  # List of steps to be emitted individually

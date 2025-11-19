@@ -2,19 +2,21 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 
 import os
-import numpy as np
 import sys
+
+import numpy as np
 
 sys.path.insert(0, "third_party/CenterNet2/")
 sys.path.insert(0, "third_party/Deformable-DETR")
-from detic.data.tar_dataset import _TarDataset
-import io
 import gzip
+import io
 import time
 
+from detic.data.tar_dataset import _TarDataset
 
-class _RawTarDataset(object):
-    def __init__(self, filename, indexname, preload=False):
+
+class _RawTarDataset:
+    def __init__(self, filename, indexname: str, preload: bool=False) -> None:
         self.filename = filename
         self.names = []
         self.offsets = []
@@ -38,10 +40,10 @@ class _RawTarDataset(object):
         else:
             self.data = None
 
-    def __len__(self):
+    def __len__(self) -> int:
         return len(self.names)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int):
         if self.data is None:
             self.data = np.memmap(self.filename, mode="r", dtype="uint8")
         ofs = self.offsets[idx] * 512
@@ -64,7 +66,7 @@ class _RawTarDataset(object):
         return sdata
 
 
-def preprocess():
+def preprocess() -> None:
     # Follow https://github.com/Alibaba-MIIL/ImageNet21K/blob/main/dataset_preprocessing/processing_script.sh
     # Expect 12358684 samples with 11221 classes
     # ImageNet folder has 21841 classes (synsets)
@@ -79,7 +81,6 @@ def preprocess():
     log_files = os.listdir(i22ktarlogs)
     log_files = [x for x in log_files if x.endswith(".tarlog")]
     log_files.sort()
-    chunk_datasets = []
     dataset_lens = []
     min_count = 0
     create_npy_tarlogs = True

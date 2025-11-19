@@ -12,23 +12,23 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC, abstractmethod
-from typing import Generic, Type, TypeVar
+from abc import ABC
+from typing import Generic, TypeVar
 
 # Generic type for service configuration
 ConfigT = TypeVar("ConfigT")
 
 
 class Configurable(Generic[ConfigT]):
-    default_config: Type[ConfigT]
+    default_config: type[ConfigT]
 
     def __init__(self, **kwargs) -> None:
         self.config: ConfigT = self.default_config(**kwargs)
 
 
 class Service(Configurable[ConfigT], ABC):
-    @abstractmethod
-    def start(self) -> None: ...
+    def start(self) -> None:
+        super().start()
 
-    @abstractmethod
-    def stop(self) -> None: ...
+    def stop(self) -> None:
+        super().stop()

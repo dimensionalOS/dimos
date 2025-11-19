@@ -14,10 +14,8 @@
 
 import asyncio
 import threading
+
 import pytest
-import csv
-import os
-from datetime import datetime
 
 
 @pytest.fixture
@@ -27,57 +25,100 @@ def event_loop():
     loop.close()
 
 
-@pytest.fixture(autouse=True)
-def monitor_threads(request):
-    test_name = request.node.name
-    test_module = request.node.module.__name__
-    initial_threads = threading.active_count()
-    initial_thread_names = [t.name for t in threading.enumerate()]
-    start_time = datetime.now()
+_session_threads = set()
+_seen_threads = set()
+_seen_threads_lock = threading.RLock()
+_before_test_threads = {}  # Map test name to set of thread IDs before test
+
+_skip_for = ["lcm", "heavy", "ros"]
+
+
+@pytest.fixture(scope="module")
+def dimos_cluster():
+    from dimos.core import start
+
+    dimos = start(4)
+    try:
+        yield dimos
+    finally:
+        dimos.stop()
+
+
+@pytest.hookimpl()
+def pytest_sessionfinish(session):
+    """Track threads that exist at session start - these are not leaks."""
 
     yield
 
-    end_time = datetime.now()
-    final_threads = threading.active_count()
-    final_thread_names = [t.name for t in threading.enumerate()]
+    # Check for session-level thread leaks at teardown
+    final_threads = [
+        t
+        for t in threading.enumerate()
+        if t.name != "MainThread" and t.ident not in _session_threads
+    ]
 
-    new_threads = [t for t in final_thread_names if t not in initial_thread_names]
-    dead_threads = [t for t in initial_thread_names if t not in final_thread_names]
-    leaked_threads = final_threads - initial_threads
+    if final_threads:
+        thread_info = [f"{t.name} (daemon={t.daemon})" for t in final_threads]
+        pytest.fail(
+            f"\n{len(final_threads)} thread(s) leaked during test session: {thread_info}\n"
+            "Session-scoped fixtures must clean up all threads in their teardown."
+        )
 
-    csv_file = "thread_monitor_report.csv"
-    file_exists = os.path.isfile(csv_file)
 
-    with open(csv_file, "a", newline="") as f:
-        writer = csv.writer(f)
+@pytest.fixture(autouse=True)
+def monitor_threads(request):
+    # Skip monitoring for tests marked with specified markers
+    if any(request.node.get_closest_marker(marker) for marker in _skip_for):
+        yield
+        return
 
-        if not file_exists:
-            writer.writerow(
-                [
-                    "timestamp",
-                    "test_module",
-                    "test_name",
-                    "initial_threads",
-                    "final_threads",
-                    "thread_change",
-                    "leaked_threads",
-                    "new_thread_names",
-                    "closed_thread_names",
-                    "duration_seconds",
-                ]
-            )
+    # Capture threads before test runs
+    test_name = request.node.nodeid
+    with _seen_threads_lock:
+        _before_test_threads[test_name] = {
+            t.ident for t in threading.enumerate() if t.ident is not None
+        }
 
-        writer.writerow(
-            [
-                start_time.isoformat(),
-                test_module,
-                test_name,
-                initial_threads,
-                final_threads,
-                final_threads - initial_threads,
-                leaked_threads,
-                "|".join(new_threads) if new_threads else "",
-                "|".join(dead_threads) if dead_threads else "",
-                (end_time - start_time).total_seconds(),
-            ]
+    yield
+
+    with _seen_threads_lock:
+        before = _before_test_threads.get(test_name, set())
+        current = {t.ident for t in threading.enumerate() if t.ident is not None}
+
+        # New threads are ones that exist now but didn't exist before this test
+        new_thread_ids = current - before
+
+        if not new_thread_ids:
+            return
+
+        # Get the actual thread objects for new threads
+        new_threads = [
+            t for t in threading.enumerate() if t.ident in new_thread_ids and t.name != "MainThread"
+        ]
+
+        # Filter out expected persistent threads from Dask that are shared globally
+        # These threads are intentionally left running and cleaned up on process exit
+        expected_persistent_thread_prefixes = ["Dask-Offload"]
+        new_threads = [
+            t
+            for t in new_threads
+            if not any(t.name.startswith(prefix) for prefix in expected_persistent_thread_prefixes)
+        ]
+
+        # Filter out threads we've already seen (from previous tests)
+        truly_new = [t for t in new_threads if t.ident not in _seen_threads]
+
+        # Mark all new threads as seen
+        for t in new_threads:
+            if t.ident is not None:
+                _seen_threads.add(t.ident)
+
+        if not truly_new:
+            return
+
+        thread_names = [t.name for t in truly_new]
+
+        pytest.fail(
+            f"Non-closed threads created during this test. Thread names: {thread_names}. "
+            "Please look at the first test that fails and fix that."
         )

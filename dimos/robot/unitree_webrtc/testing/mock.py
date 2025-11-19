@@ -12,35 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Iterator
+import glob
 import os
 import pickle
-import glob
-from typing import Union, Iterator, cast, overload
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
+from typing import cast, overload
 
-from reactivex import operators as ops
-from reactivex import interval, from_iterable
+from reactivex import from_iterable, interval, operators as ops
 from reactivex.observable import Observable
+
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
 
 
 class Mock:
-    def __init__(self, root="office", autocast: bool = True):
+    def __init__(self, root: str = "office", autocast: bool = True) -> None:
         current_dir = os.path.dirname(os.path.abspath(__file__))
         self.root = os.path.join(current_dir, f"mockdata/{root}")
         self.autocast = autocast
         self.cnt = 0
 
     @overload
-    def load(self, name: Union[int, str], /) -> LidarMessage: ...
+    def load(self, name: int | str, /) -> LidarMessage: ...
     @overload
-    def load(self, *names: Union[int, str]) -> list[LidarMessage]: ...
+    def load(self, *names: int | str) -> list[LidarMessage]: ...
 
-    def load(self, *names: Union[int, str]) -> Union[LidarMessage, list[LidarMessage]]:
+    def load(self, *names: int | str) -> LidarMessage | list[LidarMessage]:
         if len(names) == 1:
             return self.load_one(names[0])
         return list(map(lambda name: self.load_one(name), names))
 
-    def load_one(self, name: Union[int, str]) -> LidarMessage:
+    def load_one(self, name: int | str) -> LidarMessage:
         if isinstance(name, int):
             file_name = f"/lidar_data_{name:03d}.pickle"
         else:
@@ -48,7 +49,7 @@ class Mock:
 
         full_path = self.root + file_name
         with open(full_path, "rb") as f:
-            return LidarMessage.from_msg(cast(RawLidarMsg, pickle.load(f)))
+            return LidarMessage.from_msg(cast("RawLidarMsg", pickle.load(f)))
 
     def iterate(self) -> Iterator[LidarMessage]:
         pattern = os.path.join(self.root, "lidar_data_*.pickle")
@@ -58,7 +59,7 @@ class Mock:
             filename = os.path.splitext(basename)[0]
             yield self.load_one(filename)
 
-    def stream(self, rate_hz=10.0):
+    def stream(self, rate_hz: float = 10.0):
         sleep_time = 1.0 / rate_hz
 
         return from_iterable(self.iterate()).pipe(

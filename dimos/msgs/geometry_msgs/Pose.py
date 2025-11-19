@@ -16,13 +16,10 @@ from __future__ import annotations
 
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import Pose as LCMPose
-from dimos_lcm.geometry_msgs import Transform as LCMTransform
+from dimos_lcm.geometry_msgs import Pose as LCMPose, Transform as LCMTransform
 
 try:
-    from geometry_msgs.msg import Pose as ROSPose
-    from geometry_msgs.msg import Point as ROSPoint
-    from geometry_msgs.msg import Quaternion as ROSQuaternion
+    from geometry_msgs.msg import Point as ROSPoint, Pose as ROSPose, Quaternion as ROSQuaternion
 except ImportError:
     ROSPose = None
     ROSPoint = None
@@ -78,10 +75,14 @@ class Pose(LCMPose):
     @dispatch
     def __init__(
         self,
-        position: VectorConvertable | Vector3 = [0, 0, 0],
-        orientation: QuaternionConvertable | Quaternion = [0, 0, 0, 1],
+        position: VectorConvertable | Vector3 | None = None,
+        orientation: QuaternionConvertable | Quaternion | None = None,
     ) -> None:
         """Initialize a pose with position and orientation."""
+        if orientation is None:
+            orientation = [0, 0, 0, 1]
+        if position is None:
+            position = [0, 0, 0]
         self.position = Vector3(position)
         self.orientation = Quaternion(orientation)
 
@@ -163,7 +164,7 @@ class Pose(LCMPose):
     def __matmul__(self, transform: LCMTransform | Transform) -> Pose:
         return self + transform
 
-    def __add__(self, other: "Pose" | PoseConvertable | LCMTransform | Transform) -> "Pose":
+    def __add__(self, other: Pose | PoseConvertable | LCMTransform | Transform) -> Pose:
         """Compose two poses or apply a transform (transform composition).
 
         The operation self + other represents applying transformation 'other'
@@ -192,7 +193,7 @@ class Pose(LCMPose):
             new_pose = pose + transform
         """
         # Handle Transform objects
-        if isinstance(other, (LCMTransform, Transform)):
+        if isinstance(other, LCMTransform | Transform):
             # Convert Transform to Pose using its translation and rotation
             other_position = Vector3(other.translation)
             other_orientation = Quaternion(other.rotation)
@@ -215,7 +216,7 @@ class Pose(LCMPose):
         return Pose(new_position, new_orientation)
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPose) -> "Pose":
+    def from_ros_msg(cls, ros_msg: ROSPose) -> Pose:
         """Create a Pose from a ROS geometry_msgs/Pose message.
 
         Args:
@@ -253,7 +254,7 @@ class Pose(LCMPose):
 
 
 @dispatch
-def to_pose(value: "Pose") -> "Pose":
+def to_pose(value: Pose) -> Pose:
     """Pass through Pose objects."""
     return value
 

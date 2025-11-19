@@ -12,13 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tests.test_header
-
-from dimos.robot.unitree.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 import os
 import time
+
+from dimos.robot.unitree.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
+from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 
 # Initialize robot
 robot = UnitreeGo2(

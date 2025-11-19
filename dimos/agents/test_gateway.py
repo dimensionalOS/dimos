@@ -17,15 +17,15 @@
 import asyncio
 import os
 
-import pytest
 from dotenv import load_dotenv
+import pytest
 
 from dimos.agents.modules.gateway import UnifiedGatewayClient
 
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_basic():
+async def test_gateway_basic() -> None:
     """Test basic gateway functionality."""
     load_dotenv()
 
@@ -72,7 +72,7 @@ async def test_gateway_basic():
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_streaming():
+async def test_gateway_streaming() -> None:
     """Test gateway streaming functionality."""
     load_dotenv()
 
@@ -99,7 +99,7 @@ async def test_gateway_streaming():
         # Reconstruct content
         content = ""
         for chunk in chunks:
-            if "choices" in chunk and chunk["choices"]:
+            if chunk.get("choices"):
                 delta = chunk["choices"][0].get("delta", {})
                 chunk_content = delta.get("content")
                 if chunk_content is not None:
@@ -113,7 +113,7 @@ async def test_gateway_streaming():
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_tools():
+async def test_gateway_tools() -> None:
     """Test gateway can pass tool definitions to LLM and get responses."""
     load_dotenv()
 
@@ -158,7 +158,7 @@ async def test_gateway_tools():
 
 @pytest.mark.tofix
 @pytest.mark.asyncio
-async def test_gateway_providers():
+async def test_gateway_providers() -> None:
     """Test gateway with different providers."""
     load_dotenv()
 

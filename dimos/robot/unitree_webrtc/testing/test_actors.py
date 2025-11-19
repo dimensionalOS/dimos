@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from collections.abc import Callable
 import time
-from typing import Callable
 
 import pytest
 
@@ -36,12 +36,12 @@ def client():
 class Consumer:
     testf: Callable[[int], int]
 
-    def __init__(self, counter=None):
+    def __init__(self, counter=None) -> None:
         self.testf = counter
         print("consumer init with", counter)
 
     async def waitcall(self, n: int):
-        async def task():
+        async def task() -> None:
             await asyncio.sleep(n)
 
             print("sleep finished, calling")
@@ -60,7 +60,7 @@ class Counter(Module):
 
 
 @pytest.mark.tool
-def test_wait(client):
+def test_wait(client) -> None:
     counter = client.submit(Counter, actor=True).result()
 
     async def addten(n):
@@ -74,7 +74,7 @@ def test_wait(client):
 
 
 @pytest.mark.tool
-def test_basic(dimos):
+def test_basic(dimos) -> None:
     counter = dimos.deploy(Counter)
     consumer = dimos.deploy(
         Consumer,
@@ -93,7 +93,7 @@ def test_basic(dimos):
 
 
 @pytest.mark.tool
-def test_mapper_start(dimos):
+def test_mapper_start(dimos) -> None:
     mapper = dimos.deploy(Mapper)
     mapper.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
     print("start res", mapper.start().result())
@@ -106,6 +106,6 @@ if __name__ == "__main__":
 
 
 @pytest.mark.tool
-def test_counter(dimos):
+def test_counter(dimos) -> None:
     counter = dimos.deploy(Counter)
     assert counter.addten(10) == 20

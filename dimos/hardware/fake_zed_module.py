@@ -19,16 +19,17 @@ FakeZEDModule - Replays recorded ZED data for testing without hardware.
 
 import functools
 import logging
+
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
 from dimos.core import Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.msgs.std_msgs import Header
-from dimos.utils.testing import TimedSensorReplay
-from dimos.utils.logging_config import setup_logger
 from dimos.protocol.tf import TF
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(__name__, level=logging.INFO)
 
@@ -44,7 +45,7 @@ class FakeZEDModule(Module):
     camera_info: Out[CameraInfo] = None
     pose: Out[PoseStamped] = None
 
-    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs):
+    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
@@ -57,7 +58,6 @@ class FakeZEDModule(Module):
         self.recording_path = recording_path
         self.frame_id = frame_id
         self._running = False
-        self._subscriptions = []
 
         # Initialize TF publisher
         self.tf = TF()
@@ -198,8 +198,10 @@ class FakeZEDModule(Module):
         return info_replay.stream()
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start replaying recorded data."""
+        super().start()
+
         if self._running:
             logger.warning("FakeZEDModule already running")
             return
@@ -211,54 +213,64 @@ class FakeZEDModule(Module):
         # Subscribe to all streams and publish
         try:
             # Color image stream
-            sub = self._get_color_stream().subscribe(
+            unsub = self._get_color_stream().subscribe(
                 lambda msg: self.color_image.publish(msg) if self._running else None
             )
-            self._subscriptions.append(sub)
+            self._disposables.add(unsub)
             logger.info("Started color image replay stream")
         except Exception as e:
             logger.warning(f"Color image stream not available: {e}")
 
         try:
             # Depth image stream
-            sub = self._get_depth_stream().subscribe(
+            unsub = self._get_depth_stream().subscribe(
                 lambda msg: self.depth_image.publish(msg) if self._running else None
             )
-            self._subscriptions.append(sub)
+            self._disposables.add(unsub)
             logger.info("Started depth image replay stream")
         except Exception as e:
             logger.warning(f"Depth image stream not available: {e}")
 
         try:
             # Pose stream
-            sub = self._get_pose_stream().subscribe(
+            unsub = self._get_pose_stream().subscribe(
                 lambda msg: self._publish_pose(msg) if self._running else None
             )
-            self._subscriptions.append(sub)
+            self._disposables.add(unsub)
             logger.info("Started pose replay stream")
         except Exception as e:
             logger.warning(f"Pose stream not available: {e}")
 
         try:
             # Camera info stream
-            sub = self._get_camera_info_stream().subscribe(
+            unsub = self._get_camera_info_stream().subscribe(
                 lambda msg: self.camera_info.publish(msg) if self._running else None
             )
-            self._subscriptions.append(sub)
+            self._disposables.add(unsub)
             logger.info("Started camera info replay stream")
         except Exception as e:
             logger.warning(f"Camera info stream not available: {e}")
 
         logger.info("FakeZEDModule replay started")
 
-    def _publish_pose(self, msg):
+    @rpc
+    def stop(self) -> None:
+        if not self._running:
+            return
+
+        self._running = False
+
+        super().stop()
+
+    def _publish_pose(self, msg) -> None:
         """Publish pose and TF transform."""
         if msg:
             self.pose.publish(msg)
 
             # Publish TF transform from world to camera
-            from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
             import time
+
+            from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 
             transform = Transform(
                 translation=Vector3(*msg.position),
@@ -268,20 +280,3 @@ class FakeZEDModule(Module):
                 ts=time.time(),
             )
             self.tf.publish(transform)
-
-    @rpc
-    def stop(self):
-        """Stop replaying data."""
-        if not self._running:
-            return
-
-        self._running = False
-
-        # Dispose of all subscriptions
-        for sub in self._subscriptions:
-            if sub:
-                sub.dispose()
-
-        self._subscriptions = []
-
-        logger.info("FakeZEDModule stopped")

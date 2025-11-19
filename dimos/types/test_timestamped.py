@@ -12,11 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from datetime import datetime, timezone
+import time
 
 import pytest
 from reactivex import operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import (
@@ -32,7 +33,7 @@ from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
 
 
-def test_timestamped_dt_method():
+def test_timestamped_dt_method() -> None:
     ts = 1751075203.4120464
     timestamped = Timestamped(ts)
     dt = timestamped.dt()
@@ -41,7 +42,7 @@ def test_timestamped_dt_method():
     assert dt.tzinfo is not None, "datetime should be timezone-aware"
 
 
-def test_to_ros_stamp():
+def test_to_ros_stamp() -> None:
     """Test the to_ros_stamp function with different input types."""
 
     # Test with float timestamp
@@ -64,7 +65,7 @@ def test_to_ros_stamp():
     assert abs(result.nanosec - 123456000) < 1000  # Allow small rounding error
 
 
-def test_to_datetime():
+def test_to_datetime() -> None:
     """Test the to_datetime function with different input types."""
 
     # Test with float timestamp
@@ -107,9 +108,19 @@ def test_to_datetime():
 
 
 class SimpleTimestamped(Timestamped):
-    def __init__(self, ts: float, data: str):
+    def __init__(self, ts: float, data: str) -> None:
         super().__init__(ts)
         self.data = data
+
+
+@pytest.fixture
+def test_scheduler():
+    """Fixture that provides a ThreadPoolScheduler and cleans it up after the test."""
+    scheduler = ThreadPoolScheduler(max_workers=6)
+    yield scheduler
+    # Cleanup after test
+    scheduler.executor.shutdown(wait=True)
+    time.sleep(0.2)  # Give threads time to finish cleanup
 
 
 @pytest.fixture
@@ -127,7 +138,7 @@ def collection(sample_items):
     return TimestampedCollection(sample_items)
 
 
-def test_empty_collection():
+def test_empty_collection() -> None:
     collection = TimestampedCollection()
     assert len(collection) == 0
     assert collection.duration() == 0.0
@@ -135,7 +146,7 @@ def test_empty_collection():
     assert collection.find_closest(1.0) is None
 
 
-def test_add_items():
+def test_add_items() -> None:
     collection = TimestampedCollection()
     item1 = SimpleTimestamped(2.0, "two")
     item2 = SimpleTimestamped(1.0, "one")
@@ -148,7 +159,7 @@ def test_add_items():
     assert collection[1].data == "two"
 
 
-def test_find_closest(collection):
+def test_find_closest(collection) -> None:
     # Exact match
     assert collection.find_closest(3.0).data == "third"
 
@@ -173,7 +184,7 @@ def test_find_closest(collection):
     assert collection.find_closest(10.0, tolerance=2.0) is None
 
 
-def test_find_before_after(collection):
+def test_find_before_after(collection) -> None:
     # Find before
     assert collection.find_before(2.0).data == "first"
     assert collection.find_before(5.5).data == "fifth"
@@ -185,7 +196,7 @@ def test_find_before_after(collection):
     assert collection.find_after(7.0) is None  # Nothing after last item
 
 
-def test_merge_collections():
+def test_merge_collections() -> None:
     collection1 = TimestampedCollection(
         [
             SimpleTimestamped(1.0, "a"),
@@ -205,12 +216,12 @@ def test_merge_collections():
     assert [item.data for item in merged] == ["a", "b", "c", "d"]
 
 
-def test_duration_and_range(collection):
+def test_duration_and_range(collection) -> None:
     assert collection.duration() == 6.0  # 7.0 - 1.0
     assert collection.time_range() == (1.0, 7.0)
 
 
-def test_slice_by_time(collection):
+def test_slice_by_time(collection) -> None:
     # Slice inclusive of boundaries
     sliced = collection.slice_by_time(2.0, 6.0)
     assert len(sliced) == 2
@@ -226,19 +237,19 @@ def test_slice_by_time(collection):
     assert len(all_slice) == 4
 
 
-def test_iteration(collection):
+def test_iteration(collection) -> None:
     items = list(collection)
     assert len(items) == 4
     assert [item.ts for item in items] == [1.0, 3.0, 5.0, 7.0]
 
 
-def test_single_item_collection():
+def test_single_item_collection() -> None:
     single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
     assert single.duration() == 0.0
     assert single.time_range() == (5.0, 5.0)
 
 
-def test_time_window_collection():
+def test_time_window_collection() -> None:
     # Create a collection with a 2-second window
     window = TimestampedBufferCollection[SimpleTimestamped](window_duration=2.0)
 
@@ -267,7 +278,7 @@ def test_time_window_collection():
     assert window.end_ts == 5.5
 
 
-def test_timestamp_alignment():
+def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 
     # ensure that lfs package is downloaded
@@ -297,9 +308,10 @@ def test_timestamp_alignment():
         return frame
 
     # fake reply of some 0.5s processor of video frames that drops messages
-    fake_video_processor = backpressure(video_raw.pipe(ops.map(spy))).pipe(
-        ops.map(process_video_frame)
-    )
+    # Pass the scheduler to backpressure to manage threads properly
+    fake_video_processor = backpressure(
+        video_raw.pipe(ops.map(spy)), scheduler=test_scheduler
+    ).pipe(ops.map(process_video_frame))
 
     aligned_frames = align_timestamped(fake_video_processor, video_raw).pipe(ops.to_list()).run()
 
@@ -317,3 +329,250 @@ def test_timestamp_alignment():
             f"Aligned pair: primary={primary.ts:.6f}, secondary={secondary.ts:.6f}, diff={diff:.6f}s"
         )
         assert diff <= 0.05
+
+    assert len(aligned_frames) > 2
+
+
+def test_timestamp_alignment_primary_first() -> None:
+    """Test alignment when primary messages arrive before secondary messages."""
+    from reactivex import Subject
+
+    primary_subject = Subject()
+    secondary_subject = Subject()
+
+    results = []
+
+    # Set up alignment with a 2-second buffer
+    aligned = align_timestamped(
+        primary_subject, secondary_subject, buffer_size=2.0, match_tolerance=0.1
+    )
+
+    # Subscribe to collect results
+    aligned.subscribe(lambda x: results.append(x))
+
+    # Send primary messages first
+    primary1 = SimpleTimestamped(1.0, "primary1")
+    primary2 = SimpleTimestamped(2.0, "primary2")
+    primary3 = SimpleTimestamped(3.0, "primary3")
+
+    primary_subject.on_next(primary1)
+    primary_subject.on_next(primary2)
+    primary_subject.on_next(primary3)
+
+    # At this point, no results should be emitted (no secondaries yet)
+    assert len(results) == 0
+
+    # Send secondary messages that match primary1 and primary2
+    secondary1 = SimpleTimestamped(1.05, "secondary1")  # Matches primary1
+    secondary2 = SimpleTimestamped(2.02, "secondary2")  # Matches primary2
+
+    secondary_subject.on_next(secondary1)
+    assert len(results) == 1  # primary1 should now be matched
+    assert results[0][0].data == "primary1"
+    assert results[0][1].data == "secondary1"
+
+    secondary_subject.on_next(secondary2)
+    assert len(results) == 2  # primary2 should now be matched
+    assert results[1][0].data == "primary2"
+    assert results[1][1].data == "secondary2"
+
+    # Send a secondary that's too far from primary3
+    secondary_far = SimpleTimestamped(3.5, "secondary_far")  # Too far from primary3
+    secondary_subject.on_next(secondary_far)
+    # At this point primary3 is removed as unmatchable since secondary progressed past it
+    assert len(results) == 2  # primary3 should not match (outside tolerance)
+
+    # Send a new primary that can match with the future secondary
+    primary4 = SimpleTimestamped(3.45, "primary4")
+    primary_subject.on_next(primary4)
+    assert len(results) == 3  # Should match with secondary_far
+    assert results[2][0].data == "primary4"
+    assert results[2][1].data == "secondary_far"
+
+    # Complete the streams
+    primary_subject.on_completed()
+    secondary_subject.on_completed()
+
+
+def test_timestamp_alignment_multiple_secondaries() -> None:
+    """Test alignment with multiple secondary observables."""
+    from reactivex import Subject
+
+    primary_subject = Subject()
+    secondary1_subject = Subject()
+    secondary2_subject = Subject()
+
+    results = []
+
+    # Set up alignment with two secondary streams
+    aligned = align_timestamped(
+        primary_subject,
+        secondary1_subject,
+        secondary2_subject,
+        buffer_size=1.0,
+        match_tolerance=0.05,
+    )
+
+    # Subscribe to collect results
+    aligned.subscribe(lambda x: results.append(x))
+
+    # Send a primary message
+    primary1 = SimpleTimestamped(1.0, "primary1")
+    primary_subject.on_next(primary1)
+
+    # No results yet (waiting for both secondaries)
+    assert len(results) == 0
+
+    # Send first secondary
+    sec1_msg1 = SimpleTimestamped(1.01, "sec1_msg1")
+    secondary1_subject.on_next(sec1_msg1)
+
+    # Still no results (waiting for secondary2)
+    assert len(results) == 0
+
+    # Send second secondary
+    sec2_msg1 = SimpleTimestamped(1.02, "sec2_msg1")
+    secondary2_subject.on_next(sec2_msg1)
+
+    # Now we should have a result
+    assert len(results) == 1
+    assert results[0][0].data == "primary1"
+    assert results[0][1].data == "sec1_msg1"
+    assert results[0][2].data == "sec2_msg1"
+
+    # Test partial match (one secondary missing)
+    primary2 = SimpleTimestamped(2.0, "primary2")
+    primary_subject.on_next(primary2)
+
+    # Send only one secondary
+    sec1_msg2 = SimpleTimestamped(2.01, "sec1_msg2")
+    secondary1_subject.on_next(sec1_msg2)
+
+    # No result yet
+    assert len(results) == 1
+
+    # Send a secondary2 that's too far
+    sec2_far = SimpleTimestamped(2.1, "sec2_far")  # Outside tolerance
+    secondary2_subject.on_next(sec2_far)
+
+    # Still no result (secondary2 is outside tolerance)
+    assert len(results) == 1
+
+    # Complete the streams
+    primary_subject.on_completed()
+    secondary1_subject.on_completed()
+    secondary2_subject.on_completed()
+
+
+def test_timestamp_alignment_delayed_secondary() -> None:
+    """Test alignment when secondary messages arrive late but still within tolerance."""
+    from reactivex import Subject
+
+    primary_subject = Subject()
+    secondary_subject = Subject()
+
+    results = []
+
+    # Set up alignment with a 2-second buffer
+    aligned = align_timestamped(
+        primary_subject, secondary_subject, buffer_size=2.0, match_tolerance=0.1
+    )
+
+    # Subscribe to collect results
+    aligned.subscribe(lambda x: results.append(x))
+
+    # Send primary messages
+    primary1 = SimpleTimestamped(1.0, "primary1")
+    primary2 = SimpleTimestamped(2.0, "primary2")
+    primary3 = SimpleTimestamped(3.0, "primary3")
+
+    primary_subject.on_next(primary1)
+    primary_subject.on_next(primary2)
+    primary_subject.on_next(primary3)
+
+    # No results yet
+    assert len(results) == 0
+
+    # Send delayed secondaries (in timestamp order)
+    secondary1 = SimpleTimestamped(1.05, "secondary1")  # Matches primary1
+    secondary_subject.on_next(secondary1)
+    assert len(results) == 1  # primary1 matched
+    assert results[0][0].data == "primary1"
+    assert results[0][1].data == "secondary1"
+
+    secondary2 = SimpleTimestamped(2.02, "secondary2")  # Matches primary2
+    secondary_subject.on_next(secondary2)
+    assert len(results) == 2  # primary2 matched
+    assert results[1][0].data == "primary2"
+    assert results[1][1].data == "secondary2"
+
+    # Now send a secondary that's past primary3's match window
+    secondary_future = SimpleTimestamped(3.2, "secondary_future")  # Too far from primary3
+    secondary_subject.on_next(secondary_future)
+    # At this point, primary3 should be removed as unmatchable
+    assert len(results) == 2  # No new matches
+
+    # Send a new primary that can match with secondary_future
+    primary4 = SimpleTimestamped(3.15, "primary4")
+    primary_subject.on_next(primary4)
+    assert len(results) == 3  # Should match immediately
+    assert results[2][0].data == "primary4"
+    assert results[2][1].data == "secondary_future"
+
+    # Complete the streams
+    primary_subject.on_completed()
+    secondary_subject.on_completed()
+
+
+def test_timestamp_alignment_buffer_cleanup() -> None:
+    """Test that old buffered primaries are cleaned up."""
+    import time as time_module
+
+    from reactivex import Subject
+
+    primary_subject = Subject()
+    secondary_subject = Subject()
+
+    results = []
+
+    # Set up alignment with a 0.5-second buffer
+    aligned = align_timestamped(
+        primary_subject, secondary_subject, buffer_size=0.5, match_tolerance=0.05
+    )
+
+    # Subscribe to collect results
+    aligned.subscribe(lambda x: results.append(x))
+
+    # Use real timestamps for this test
+    now = time_module.time()
+
+    # Send an old primary
+    old_primary = Timestamped(now - 1.0)  # 1 second ago
+    old_primary.data = "old"
+    primary_subject.on_next(old_primary)
+
+    # Send a recent secondary to trigger cleanup
+    recent_secondary = Timestamped(now)
+    recent_secondary.data = "recent"
+    secondary_subject.on_next(recent_secondary)
+
+    # Old primary should not match (outside buffer window)
+    assert len(results) == 0
+
+    # Send a matching pair within buffer
+    new_primary = Timestamped(now + 0.1)
+    new_primary.data = "new_primary"
+    new_secondary = Timestamped(now + 0.11)
+    new_secondary.data = "new_secondary"
+
+    primary_subject.on_next(new_primary)
+    secondary_subject.on_next(new_secondary)
+
+    # Should have one match
+    assert len(results) == 1
+    assert results[0][0].data == "new_primary"
+    assert results[0][1].data == "new_secondary"
+
+    # Complete the streams
+    primary_subject.on_completed()
+    secondary_subject.on_completed()

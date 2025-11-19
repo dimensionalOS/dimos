@@ -19,19 +19,19 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
-import threading
 from collections import deque
 from dataclasses import dataclass
 from enum import IntFlag
-from typing import List, Optional, Tuple
+import threading
 
-import numpy as np
-
-from dimos.core import Module, In, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3
-from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
-from dimos.utils.logging_config import setup_logger
 from dimos_lcm.std_msgs import Bool
+import numpy as np
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Vector3
+from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
 logger = setup_logger("dimos.robot.unitree.frontier_exploration")
@@ -59,7 +59,7 @@ class GridPoint:
 class FrontierCache:
     """Cache for grid points to avoid duplicate point creation."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.points = {}
 
     def get_point(self, x: int, y: int) -> GridPoint:
@@ -69,7 +69,7 @@ class FrontierCache:
             self.points[key] = GridPoint(x, y)
         return self.points[key]
 
-    def clear(self):
+    def clear(self) -> None:
         """Clear the point cache."""
         self.points.clear()
 
@@ -90,8 +90,8 @@ class WavefrontFrontierExplorer(Module):
     """
 
     # LCM inputs
-    costmap: In[OccupancyGrid] = None
-    odometry: In[PoseStamped] = None
+    global_costmap: In[OccupancyGrid] = None
+    odom: In[PoseStamped] = None
     goal_reached: In[Bool] = None
     explore_cmd: In[Bool] = None
     stop_explore_cmd: In[Bool] = None
@@ -110,7 +110,7 @@ class WavefrontFrontierExplorer(Module):
         num_no_gain_attempts: int = 2,
         goal_timeout: float = 15.0,
         **kwargs,
-    ):
+    ) -> None:
         """
         Initialize the frontier explorer.
 
@@ -137,65 +137,66 @@ class WavefrontFrontierExplorer(Module):
         self.goal_timeout = goal_timeout
 
         # Latest data
-        self.latest_costmap: Optional[OccupancyGrid] = None
-        self.latest_odometry: Optional[PoseStamped] = None
+        self.latest_costmap: OccupancyGrid | None = None
+        self.latest_odometry: PoseStamped | None = None
 
         # Goal reached event
         self.goal_reached_event = threading.Event()
 
         # Exploration state
         self.exploration_active = False
-        self.exploration_thread: Optional[threading.Thread] = None
+        self.exploration_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
 
         logger.info("WavefrontFrontierExplorer module initialized")
 
     @rpc
-    def start(self):
-        """Start the frontier exploration module."""
-        # Subscribe to inputs
-        self.costmap.subscribe(self._on_costmap)
-        self.odometry.subscribe(self._on_odometry)
+    def start(self) -> None:
+        super().start()
 
-        # Subscribe to goal_reached if available
+        unsub = self.global_costmap.subscribe(self._on_costmap)
+        self._disposables.add(Disposable(unsub))
+
+        unsub = self.odom.subscribe(self._on_odometry)
+        self._disposables.add(Disposable(unsub))
+
         if self.goal_reached.transport is not None:
-            self.goal_reached.subscribe(self._on_goal_reached)
+            unsub = self.goal_reached.subscribe(self._on_goal_reached)
+            self._disposables.add(Disposable(unsub))
 
-        # Subscribe to exploration commands
         if self.explore_cmd.transport is not None:
-            self.explore_cmd.subscribe(self._on_explore_cmd)
-        if self.stop_explore_cmd.transport is not None:
-            self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+            unsub = self.explore_cmd.subscribe(self._on_explore_cmd)
+            self._disposables.add(Disposable(unsub))
 
-        logger.info("WavefrontFrontierExplorer started")
+        if self.stop_explore_cmd.transport is not None:
+            unsub = self.stop_explore_cmd.subscribe(self._on_stop_explore_cmd)
+            self._disposables.add(Disposable(unsub))
 
     @rpc
-    def cleanup(self):
-        """Clean up resources."""
+    def stop(self) -> None:
         self.stop_exploration()
-        self._close_module()
-        logger.info("WavefrontFrontierExplorer cleanup complete")
+        super().stop()
 
-    def _on_costmap(self, msg: OccupancyGrid):
+    def _on_costmap(self, msg: OccupancyGrid) -> None:
         """Handle incoming costmap messages."""
         self.latest_costmap = msg
 
-    def _on_odometry(self, msg: PoseStamped):
+    def _on_odometry(self, msg: PoseStamped) -> None:
         """Handle incoming odometry messages."""
         self.latest_odometry = msg
 
-    def _on_goal_reached(self, msg: Bool):
+    def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached messages."""
         if msg.data:
             self.goal_reached_event.set()
 
-    def _on_explore_cmd(self, msg: Bool):
+    def _on_explore_cmd(self, msg: Bool) -> None:
         """Handle exploration command messages."""
         if msg.data:
             logger.info("Received exploration start command via LCM")
             self.explore()
 
-    def _on_stop_explore_cmd(self, msg: Bool):
+    def _on_stop_explore_cmd(self, msg: Bool) -> None:
         """Handle stop exploration command messages."""
         if msg.data:
             logger.info("Received exploration stop command via LCM")
@@ -215,7 +216,7 @@ class WavefrontFrontierExplorer(Module):
         obstacle_count = np.sum(costmap.grid >= self.occupancy_threshold)
         return int(free_count + obstacle_count)
 
-    def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> List[GridPoint]:
+    def _get_neighbors(self, point: GridPoint, costmap: OccupancyGrid) -> list[GridPoint]:
         """Get valid neighboring points for a given grid point."""
         neighbors = []
 
@@ -261,7 +262,7 @@ class WavefrontFrontierExplorer(Module):
 
     def _find_free_space(
         self, start_x: int, start_y: int, costmap: OccupancyGrid
-    ) -> Tuple[int, int]:
+    ) -> tuple[int, int]:
         """
         Find the nearest free space point using BFS from the starting position.
         """
@@ -287,7 +288,7 @@ class WavefrontFrontierExplorer(Module):
         # If no free space found, return original position
         return (start_x, start_y)
 
-    def _compute_centroid(self, frontier_points: List[Vector3]) -> Vector3:
+    def _compute_centroid(self, frontier_points: list[Vector3]) -> Vector3:
         """Compute the centroid of a list of frontier points."""
         if not frontier_points:
             return Vector3(0.0, 0.0, 0.0)
@@ -298,7 +299,7 @@ class WavefrontFrontierExplorer(Module):
 
         return Vector3(centroid[0], centroid[1], 0.0)
 
-    def detect_frontiers(self, robot_pose: Vector3, costmap: OccupancyGrid) -> List[Vector3]:
+    def detect_frontiers(self, robot_pose: Vector3, costmap: OccupancyGrid) -> list[Vector3]:
         """
         Main frontier detection algorithm using wavefront exploration.
 
@@ -416,8 +417,8 @@ class WavefrontFrontierExplorer(Module):
         return ranked_frontiers
 
     def _update_exploration_direction(
-        self, robot_pose: Vector3, goal_pose: Optional[Vector3] = None
-    ):
+        self, robot_pose: Vector3, goal_pose: Vector3 | None = None
+    ) -> None:
         """Update the current exploration direction based on robot movement or selected goal."""
         if goal_pose is not None:
             # Calculate direction from robot to goal
@@ -565,11 +566,11 @@ class WavefrontFrontierExplorer(Module):
 
     def _rank_frontiers(
         self,
-        frontier_centroids: List[Vector3],
-        frontier_sizes: List[int],
+        frontier_centroids: list[Vector3],
+        frontier_sizes: list[int],
         robot_pose: Vector3,
         costmap: OccupancyGrid,
-    ) -> List[Vector3]:
+    ) -> list[Vector3]:
         """
         Find the single best frontier using comprehensive scoring and filtering.
 
@@ -607,9 +608,7 @@ class WavefrontFrontierExplorer(Module):
         # Extract just the frontiers (remove scores) and return as list
         return [frontier for frontier, _ in valid_frontiers]
 
-    def get_exploration_goal(
-        self, robot_pose: Vector3, costmap: OccupancyGrid
-    ) -> Optional[Vector3]:
+    def get_exploration_goal(self, robot_pose: Vector3, costmap: OccupancyGrid) -> Vector3 | None:
         """
         Get the single best exploration goal using comprehensive frontier scoring.
 
@@ -673,11 +672,11 @@ class WavefrontFrontierExplorer(Module):
         self.last_costmap = costmap
         return None
 
-    def mark_explored_goal(self, goal: Vector3):
+    def mark_explored_goal(self, goal: Vector3) -> None:
         """Mark a goal as explored."""
         self.explored_goals.append(goal)
 
-    def reset_exploration_session(self):
+    def reset_exploration_session(self) -> None:
         """
         Reset all exploration state variables for a new exploration session.
 
@@ -729,7 +728,12 @@ class WavefrontFrontierExplorer(Module):
         self.no_gain_counter = 0  # Reset counter when exploration stops
         self.stop_event.set()
 
-        if self.exploration_thread and self.exploration_thread.is_alive():
+        # Only join if we're NOT being called from the exploration thread itself
+        if (
+            self.exploration_thread
+            and self.exploration_thread.is_alive()
+            and threading.current_thread() != self.exploration_thread
+        ):
             self.exploration_thread.join(timeout=2.0)
 
         logger.info("Stopped autonomous frontier exploration")
@@ -739,7 +743,7 @@ class WavefrontFrontierExplorer(Module):
     def is_exploration_active(self) -> bool:
         return self.exploration_active
 
-    def _exploration_loop(self):
+    def _exploration_loop(self) -> None:
         """Main exploration loop running in separate thread."""
         # Track number of goals published
         goals_published = 0
@@ -808,3 +812,8 @@ class WavefrontFrontierExplorer(Module):
                         f"No frontier found (attempt {consecutive_failures}/{max_consecutive_failures}). Retrying in 2 seconds..."
                     )
                     threading.Event().wait(2.0)
+
+
+wavefront_frontier_explorer = WavefrontFrontierExplorer.blueprint
+
+__all__ = ["WavefrontFrontierExplorer", "wavefront_frontier_explorer"]

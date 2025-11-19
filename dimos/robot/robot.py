@@ -15,16 +15,11 @@
 """Minimal robot interface for DIMOS robots."""
 
 from abc import ABC, abstractmethod
-from typing import List, Optional
 
-from reactivex import Observable
-
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.perception.spatial_perception import SpatialMemory
 from dimos.types.robot_capabilities import RobotCapability
 
 
+# TODO: Delete
 class Robot(ABC):
     """Minimal abstract base class for all DIMOS robots.
 
@@ -32,9 +27,9 @@ class Robot(ABC):
     can share, with no required methods - just common properties and helpers.
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the robot with basic properties."""
-        self.capabilities: List[RobotCapability] = []
+        self.capabilities: list[RobotCapability] = []
         self.skill_library = None
 
     def has_capability(self, capability: RobotCapability) -> bool:
@@ -56,42 +51,10 @@ class Robot(ABC):
         """
         return self.skill_library
 
-    def cleanup(self):
+    @abstractmethod
+    def cleanup(self) -> None:
         """Clean up robot resources.
 
         Override this method to provide cleanup logic.
         """
-        pass
-
-
-class UnitreeRobot(Robot):
-    @abstractmethod
-    def get_odom(self) -> PoseStamped: ...
-
-    @abstractmethod
-    def navigate_to(self, pose: PoseStamped, blocking: bool = True) -> None: ...
-
-    @abstractmethod
-    def navigate_to_object(self, pose: PoseStamped, blocking: bool = True) -> None: ...
-
-    @abstractmethod
-    def explore(self) -> bool: ...
-
-    @abstractmethod
-    def stop_exploration(self) -> bool: ...
-
-    @abstractmethod
-    def is_exploration_active(self) -> bool: ...
-
-    @property
-    @abstractmethod
-    def spatial_memory(self) -> Optional[SpatialMemory]: ...
-
-
-class GpsRobot(ABC):
-    @property
-    @abstractmethod
-    def gps_position_stream(self) -> Observable[LatLon]: ...
-
-    @abstractmethod
-    def set_gps_travel_goal_points(self, points: list[LatLon]) -> None: ...
+        ...

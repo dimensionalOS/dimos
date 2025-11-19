@@ -12,30 +12,35 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from collections.abc import Callable
+from dataclasses import dataclass
+from functools import partial
 import inspect
 import threading
-from dataclasses import dataclass
 from typing import (
     Any,
-    Callable,
-    Optional,
     get_args,
     get_origin,
     get_type_hints,
+    overload,
 )
 
 from dask.distributed import Actor, get_worker
+from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
+from dimos.core.resource import Resource
+from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
+from dimos.utils.generic import classproperty
 
 
-def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
+def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
     # we are actually instantiating a new loop here
     # to not interfere with an existing dask loop
 
@@ -69,17 +74,22 @@ class ModuleConfig:
     tf_transport: type[TFSpec] = LCMTF
 
 
-class ModuleBase(Configurable[ModuleConfig], SkillContainer):
-    _rpc: Optional[RPCSpec] = None
-    _tf: Optional[TFSpec] = None
-    _loop: Optional[asyncio.AbstractEventLoop] = None
-    _loop_thread: Optional[threading.Thread]
+class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
+    _rpc: RPCSpec | None = None
+    _tf: TFSpec | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
+    _loop_thread: threading.Thread | None
+    _disposables: CompositeDisposable
+    _bound_rpc_calls: dict[str, RpcCall] = {}
+
+    rpc_calls: list[str] = []
 
     default_config = ModuleConfig
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._loop, self._loop_thread = get_loop()
+        self._disposables = CompositeDisposable()
         # we can completely override comms protocols if we want
         try:
             # here we attempt to figure out if we are running on a dask worker
@@ -91,28 +101,65 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
         except ValueError:
             ...
 
-    def _close_module(self):
+    @rpc
+    def start(self) -> None:
+        pass
+
+    @rpc
+    def stop(self) -> None:
+        self._close_module()
+        super().stop()
+
+    def _close_module(self) -> None:
         self._close_rpc()
         if hasattr(self, "_loop") and self._loop_thread:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+            if self._loop_thread.is_alive():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop_thread.join(timeout=2)
             self._loop = None
-            self._loop_thread.join(timeout=2)
             self._loop_thread = None
+        if hasattr(self, "_tf") and self._tf is not None:
+            self._tf.stop()
+            self._tf = None
+        if hasattr(self, "_disposables"):
+            self._disposables.dispose()
 
-    def _close_rpc(self):
+    def _close_rpc(self) -> None:
         # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
         if hasattr(self, "rpc") and self.rpc:
             self.rpc.stop()
             self.rpc = None
 
+    def __getstate__(self):
+        """Exclude unpicklable runtime attributes when serializing."""
+        state = self.__dict__.copy()
+        # Remove unpicklable attributes
+        state.pop("_disposables", None)
+        state.pop("_loop", None)
+        state.pop("_loop_thread", None)
+        state.pop("_rpc", None)
+        state.pop("_tf", None)
+        return state
+
+    def __setstate__(self, state) -> None:
+        """Restore object from pickled state."""
+        self.__dict__.update(state)
+        # Reinitialize runtime attributes
+        self._disposables = CompositeDisposable()
+        self._loop = None
+        self._loop_thread = None
+        self._rpc = None
+        self._tf = None
+
     @property
     def tf(self):
         if self._tf is None:
-            self._tf = self.config.tf_transport()
+            # self._tf = self.config.tf_transport()
+            self._tf = LCMTF()
         return self._tf
 
     @tf.setter
-    def tf(self, value):
+    def tf(self, value) -> None:
         import warnings
 
         warnings.warn(
@@ -153,9 +200,9 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
     def io(self) -> str:
         def _box(name: str) -> str:
             return [
-                f"┌┴" + "─" * (len(name) + 1) + "┐",
+                "┌┴" + "─" * (len(name) + 1) + "┐",
                 f"│ {name} │",
-                f"└┬" + "─" * (len(name) + 1) + "┘",
+                "└┬" + "─" * (len(name) + 1) + "┘",
             ]
 
         # can't modify __str__ on a function like we are doing for I/O
@@ -196,15 +243,62 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer):
 
         return "\n".join(ret)
 
+    @classproperty
+    def blueprint(self):
+        # Here to prevent circular imports.
+        from dimos.core.blueprints import create_module_blueprint
+
+        return partial(create_module_blueprint, self)
+
+    @rpc
+    def get_rpc_method_names(self) -> list[str]:
+        return self.rpc_calls
+
+    @rpc
+    def set_rpc_method(self, method: str, callable: RpcCall) -> None:
+        callable.set_rpc(self.rpc)
+        self._bound_rpc_calls[method] = callable
+
+    @overload
+    def get_rpc_calls(self, method: str) -> RpcCall: ...
+
+    @overload
+    def get_rpc_calls(self, method1: str, method2: str, *methods: str) -> tuple[RpcCall, ...]: ...
+
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
+        missing = [m for m in methods if m not in self._bound_rpc_calls]
+        if missing:
+            raise ValueError(
+                f"RPC methods not found. Class: {self.__class__.__name__}, RPC methods: {', '.join(missing)}"
+            )
+        result = tuple(self._bound_rpc_calls[m] for m in methods)
+        return result[0] if len(result) == 1 else result
+
 
 class DaskModule(ModuleBase):
     ref: Actor
     worker: int
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self.ref = None
 
-        for name, ann in get_type_hints(self, include_extras=True).items():
+        # Get type hints with proper namespace resolution for subclasses
+        # Collect namespaces from all classes in the MRO chain
+        import sys
+
+        globalns = {}
+        for cls in self.__class__.__mro__:
+            if cls.__module__ in sys.modules:
+                globalns.update(sys.modules[cls.__module__].__dict__)
+
+        try:
+            hints = get_type_hints(self.__class__, globalns=globalns, include_extras=True)
+        except (NameError, AttributeError, TypeError):
+            # If we still can't resolve hints, skip type hint processing
+            # This can happen with complex forward references
+            hints = {}
+
+        for name, ann in hints.items():
             origin = get_origin(ann)
             if origin is Out:
                 inner, *_ = get_args(ann) or (Any,)
@@ -222,11 +316,11 @@ class DaskModule(ModuleBase):
         self.worker = worker.name
         return worker.name
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
     # called from remote
-    def set_transport(self, stream_name: str, transport: Transport):
+    def set_transport(self, stream_name: str, transport: Transport) -> bool:
         stream = getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
@@ -246,10 +340,10 @@ class DaskModule(ModuleBase):
             raise TypeError(f"Input {input_name} is not a valid stream")
         input_stream.connection = remote_stream
 
-    def dask_receive_msg(self, input_name: str, msg: Any):
+    def dask_receive_msg(self, input_name: str, msg: Any) -> None:
         getattr(self, input_name).transport.dask_receive_msg(msg)
 
-    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]):
+    def dask_register_subscriber(self, output_name: str, subscriber: RemoteIn[T]) -> None:
         getattr(self, output_name).transport.dask_register_subscriber(subscriber)
 
 

@@ -18,6 +18,7 @@
 """Int32 message type."""
 
 from typing import ClassVar
+
 from dimos_lcm.std_msgs import Int32 as LCMInt32
 
 
@@ -26,6 +27,6 @@ class Int32(LCMInt32):
 
     msg_name: ClassVar[str] = "std_msgs.Int32"
 
-    def __init__(self, data: int = 0):
+    def __init__(self, data: int = 0) -> None:
         """Initialize Int32 with data value."""
         self.data = data

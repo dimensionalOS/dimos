@@ -14,10 +14,11 @@
 
 """Testing utilities for agents."""
 
+from collections.abc import Iterator, Sequence
 import json
 import os
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Sequence, Union
+from typing import Any
 
 from langchain.chat_models import init_chat_model
 from langchain_core.callbacks.manager import CallbackManagerForLLMRun
@@ -39,14 +40,14 @@ class MockModel(SimpleChatModel):
     2. Record mode: Uses a real LLM and saves responses to a JSON file
     """
 
-    responses: List[Union[str, AIMessage]] = []
+    responses: list[str | AIMessage] = []
     i: int = 0
-    json_path: Optional[Path] = None
+    json_path: Path | None = None
     record: bool = False
-    real_model: Optional[Any] = None
-    recorded_messages: List[Dict[str, Any]] = []
+    real_model: Any | None = None
+    recorded_messages: list[dict[str, Any]] = []
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Extract custom parameters before calling super().__init__
         responses = kwargs.pop("responses", [])
         json_path = kwargs.pop("json_path", None)
@@ -58,7 +59,7 @@ class MockModel(SimpleChatModel):
         self.json_path = Path(json_path) if json_path else None
         self.record = bool(os.getenv("RECORD"))
         self.i = 0
-        self._bound_tools: Optional[Sequence[Any]] = None
+        self._bound_tools: Sequence[Any] | None = None
         self.recorded_messages = []
 
         if self.record:
@@ -76,8 +77,8 @@ class MockModel(SimpleChatModel):
     def _llm_type(self) -> str:
         return "tool-call-fake-chat-model"
 
-    def _load_responses_from_json(self) -> List[AIMessage]:
-        with open(self.json_path, "r") as f:
+    def _load_responses_from_json(self) -> list[AIMessage]:
+        with open(self.json_path) as f:
             data = json.load(f)
 
         responses = []
@@ -92,7 +93,7 @@ class MockModel(SimpleChatModel):
                 responses.append(msg)
         return responses
 
-    def _save_responses_to_json(self):
+    def _save_responses_to_json(self) -> None:
         if not self.json_path:
             return
 
@@ -112,9 +113,9 @@ class MockModel(SimpleChatModel):
 
     def _call(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> str:
         """Not used in _generate."""
@@ -122,9 +123,9 @@ class MockModel(SimpleChatModel):
 
     def _generate(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> ChatResult:
         if self.record:
@@ -146,7 +147,7 @@ class MockModel(SimpleChatModel):
         else:
             # Playback mode - use predefined responses
             if not self.responses:
-                raise ValueError(f"No responses available for playback. ")
+                raise ValueError("No responses available for playback. ")
 
             if self.i >= len(self.responses):
                 # Don't wrap around - stay at last response
@@ -165,9 +166,9 @@ class MockModel(SimpleChatModel):
 
     def _stream(
         self,
-        messages: List[BaseMessage],
-        stop: Optional[List[str]] = None,
-        run_manager: Optional[CallbackManagerForLLMRun] = None,
+        messages: list[BaseMessage],
+        stop: list[str] | None = None,
+        run_manager: CallbackManagerForLLMRun | None = None,
         **kwargs: Any,
     ) -> Iterator[ChatGenerationChunk]:
         """Stream not implemented for testing."""
@@ -178,9 +179,9 @@ class MockModel(SimpleChatModel):
 
     def bind_tools(
         self,
-        tools: Sequence[Union[dict[str, Any], type, Any]],
+        tools: Sequence[dict[str, Any] | type | Any],
         *,
-        tool_choice: Optional[str] = None,
+        tool_choice: str | None = None,
         **kwargs: Any,
     ) -> Runnable:
         """Store tools and return self."""
@@ -191,6 +192,6 @@ class MockModel(SimpleChatModel):
         return self
 
     @property
-    def tools(self) -> Optional[Sequence[Any]]:
+    def tools(self) -> Sequence[Any] | None:
         """Get bound tools for inspection."""
         return self._bound_tools

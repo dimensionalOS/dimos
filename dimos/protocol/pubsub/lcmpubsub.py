@@ -14,22 +14,20 @@
 
 from __future__ import annotations
 
-import pickle
-import subprocess
-import sys
-import threading
-import traceback
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-import lcm
+from turbojpeg import TurboJPEG
 
+from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.protocol.pubsub.spec import PickleEncoderMixin, PubSub, PubSubEncoderMixin
-from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf, check_system
-from dimos.protocol.service.spec import Service
-from dimos.utils.deprecation import deprecated
+from dimos.protocol.service.lcmservice import LCMConfig, LCMService, autoconf
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    import threading
 
 logger = setup_logger(__name__)
 
@@ -39,7 +37,7 @@ class LCMMsg(Protocol):
     msg_name: str
 
     @classmethod
-    def lcm_decode(cls, data: bytes) -> "LCMMsg":
+    def lcm_decode(cls, data: bytes) -> LCMMsg:
         """Decode bytes into an LCM message instance."""
         ...
 
@@ -51,7 +49,7 @@ class LCMMsg(Protocol):
 @dataclass
 class Topic:
     topic: str = ""
-    lcm_type: Optional[type[LCMMsg]] = None
+    lcm_type: type[LCMMsg] | None = None
 
     def __str__(self) -> str:
         if self.lcm_type is None:
@@ -62,7 +60,7 @@ class Topic:
 class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     default_config = LCMConfig
     _stop_event: threading.Event
-    _thread: Optional[threading.Thread]
+    _thread: threading.Thread | None
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:
@@ -70,7 +68,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         super().__init__(**kwargs)
         self._callbacks = {}
 
-    def publish(self, topic: Topic, message: bytes):
+    def publish(self, topic: Topic, message: bytes) -> None:
         """Publish a message to the specified channel."""
         if self.l is None:
             logger.error("Tried to publish after LCM was closed")
@@ -83,62 +81,19 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         if self.l is None:
             logger.error("Tried to subscribe after LCM was closed")
 
-            def noop():
+            def noop() -> None:
                 pass
 
             return noop
 
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
 
-        def unsubscribe():
+        def unsubscribe() -> None:
             if self.l is None:
                 return
             self.l.unsubscribe(lcm_subscription)
 
         return unsubscribe
-
-    @deprecated("Listen for the lastest message directly")
-    def wait_for_message(self, topic: Topic, timeout: float = 1.0) -> Any:
-        """Wait for a single message on the specified topic.
-
-        Args:
-            topic: The topic to listen on
-            timeout: Maximum time to wait for a message in seconds
-
-        Returns:
-            The received message or None if timeout occurred
-        """
-
-        if self.l is None:
-            logger.error("Tried to wait for message after LCM was closed")
-            return None
-
-        received_message = None
-        message_event = threading.Event()
-
-        def message_handler(channel, data):
-            nonlocal received_message
-            try:
-                # Decode the message if type is specified
-                if hasattr(self, "decode") and topic.lcm_type is not None:
-                    received_message = self.decode(data, topic)
-                else:
-                    received_message = data
-                message_event.set()
-            except Exception as e:
-                print(f"Error decoding message: {e}")
-                message_event.set()
-
-        # Subscribe to the topic
-        subscription = self.l.subscribe(str(topic), message_handler)
-
-        try:
-            # Wait for message or timeout
-            message_event.wait(timeout)
-            return received_message
-        finally:
-            # Clean up subscription
-            self.l.unsubscribe(subscription)
 
 
 class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
@@ -153,6 +108,36 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
         return topic.lcm_type.lcm_decode(msg)
 
 
+class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
+    def encode(self, msg: LCMMsg, _: Topic) -> bytes:
+        return msg.lcm_jpeg_encode()
+
+    def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
+        if topic.lcm_type is None:
+            raise ValueError(
+                f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
+            )
+        return topic.lcm_type.lcm_jpeg_decode(msg)
+
+
+class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
+    def __init__(self, quality: int = 75, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.jpeg = TurboJPEG()
+        self.quality = quality
+
+    def encode(self, msg: Any, _topic: str) -> bytes:
+        if not isinstance(msg, Image):
+            raise ValueError("Can only encode images.")
+
+        bgr_image = msg.to_bgr().to_opencv()
+        return self.jpeg.encode(bgr_image, quality=self.quality)
+
+    def decode(self, msg: bytes, _topic: str) -> Image:
+        bgr_array = self.jpeg.decode(msg)
+        return Image(data=bgr_array, format=ImageFormat.BGR)
+
+
 class LCM(
     LCMEncoderMixin,
     LCMPubSubBase,
@@ -163,3 +148,21 @@ class PickleLCM(
     PickleEncoderMixin,
     LCMPubSubBase,
 ): ...
+
+
+class JpegLCM(
+    JpegEncoderMixin,
+    LCMPubSubBase,
+): ...
+
+
+__all__ = [
+    "LCM",
+    "JpegLCM",
+    "LCMEncoderMixin",
+    "LCMMsg",
+    "LCMMsg",
+    "LCMPubSubBase",
+    "PickleLCM",
+    "autoconf",
+]

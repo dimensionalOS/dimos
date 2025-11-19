@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable, Iterable
 import time
+from typing import Any, Protocol
+
 import open3d as o3d
-from typing import Callable, Union, Any, Protocol, Iterable
 from reactivex.observable import Observable
 
 color1 = [1, 0.706, 0]
@@ -28,7 +30,7 @@ color = [color1, color2, color3, color4]
 #
 # (in case there is some preparation within the fuction and this time needs to be subtracted
 # from the benchmark target)
-def benchmark(calls: int, targetf: Callable[[], Union[int, None]]) -> float:
+def benchmark(calls: int, targetf: Callable[[], int | None]) -> float:
     start = time.time()
     timemod = 0
     for _ in range(calls):
@@ -89,8 +91,8 @@ def show3d_stream(
     Subsequent geometries update the visualizer. If no new geometry, just poll events.
     geometry_observable: Observable of objects with .o3d_geometry or Open3D geometry
     """
-    import threading
     import queue
+    import threading
     import time
     from typing import Any
 

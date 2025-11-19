@@ -6,15 +6,10 @@
 # Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
 # ------------------------------------------------------------------------------------------------
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
-
-import torch
-from torch.autograd import gradcheck
 
 from functions.ms_deform_attn_func import MSDeformAttnFunction, ms_deform_attn_core_pytorch
-
+import torch
+from torch.autograd import gradcheck
 
 N, M, D = 1, 2, 2
 Lq, L, P = 2, 2, 2
@@ -27,7 +22,7 @@ torch.manual_seed(3)
 
 
 @torch.no_grad()
-def check_forward_equal_with_pytorch_double():
+def check_forward_equal_with_pytorch_double() -> None:
     value = torch.rand(N, S, M, D).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5
@@ -62,7 +57,7 @@ def check_forward_equal_with_pytorch_double():
 
 
 @torch.no_grad()
-def check_forward_equal_with_pytorch_float():
+def check_forward_equal_with_pytorch_float() -> None:
     value = torch.rand(N, S, M, D).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5
@@ -90,8 +85,8 @@ def check_forward_equal_with_pytorch_float():
 
 
 def check_gradient_numerical(
-    channels=4, grad_value=True, grad_sampling_loc=True, grad_attn_weight=True
-):
+    channels: int=4, grad_value: bool=True, grad_sampling_loc: bool=True, grad_attn_weight: bool=True
+) -> None:
     value = torch.rand(N, S, M, channels).cuda() * 0.01
     sampling_locations = torch.rand(N, Lq, M, L, P, 2).cuda()
     attention_weights = torch.rand(N, Lq, M, L, P).cuda() + 1e-5
