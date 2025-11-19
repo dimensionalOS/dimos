@@ -234,29 +234,44 @@ class TestReplayMode(unittest.TestCase):
                 # Mock the fake connection
                 mock_conn_instance = MagicMock()
                 mock_conn_instance.connected = True
-                mock_conn_instance.odom_stream.return_value.subscribe = MagicMock()
-                mock_conn_instance.status_stream.return_value.subscribe = MagicMock()
-                mock_conn_instance.telemetry_stream.return_value.subscribe = MagicMock()
+                mock_conn_instance.odom_stream.return_value.subscribe = MagicMock(
+                    return_value=lambda: None
+                )
+                mock_conn_instance.status_stream.return_value.subscribe = MagicMock(
+                    return_value=lambda: None
+                )
+                mock_conn_instance.telemetry_stream.return_value.subscribe = MagicMock(
+                    return_value=lambda: None
+                )
+                mock_conn_instance.disconnect = MagicMock()
                 mock_fake_conn.return_value = mock_conn_instance
 
                 # Mock the fake video
                 mock_video_instance = MagicMock()
                 mock_video_instance.start.return_value = True
-                mock_video_instance.get_stream.return_value.subscribe = MagicMock()
+                mock_video_instance.get_stream.return_value.subscribe = MagicMock(
+                    return_value=lambda: None
+                )
+                mock_video_instance.stop = MagicMock()
                 mock_fake_video.return_value = mock_video_instance
 
                 # Create module with replay connection string
                 module = DroneConnectionModule(connection_string="replay")
                 module.video = MagicMock()
                 module.movecmd = MagicMock()
+                module.movecmd.subscribe = MagicMock(return_value=lambda: None)
                 module.tf = MagicMock()
 
-                # Start should use Fake classes
-                result = module.start()
+                try:
+                    # Start should use Fake classes
+                    result = module.start()
 
-                self.assertTrue(result)
-                mock_fake_conn.assert_called_once_with("replay")
-                mock_fake_video.assert_called_once()
+                    self.assertTrue(result)
+                    mock_fake_conn.assert_called_once_with("replay")
+                    mock_fake_video.assert_called_once()
+                finally:
+                    # Always clean up
+                    module.stop()
 
     def test_connection_module_replay_with_messages(self) -> None:
         """Test connection module in replay mode receives and processes messages."""
@@ -363,30 +378,34 @@ class TestReplayMode(unittest.TestCase):
             module.tf = MagicMock()
             module.movecmd = MagicMock()
 
-            print("\n[TEST] Starting connection module in replay mode...")
-            result = module.start()
+            try:
+                print("\n[TEST] Starting connection module in replay mode...")
+                result = module.start()
 
-            # Give time for messages to process
-            import time
+                # Give time for messages to process
+                import time
 
-            time.sleep(0.1)
+                time.sleep(0.1)
 
-            print(f"\n[TEST] Module started: {result}")
-            print(f"[TEST] Total odom messages published: {len(published_odom)}")
-            print(f"[TEST] Total video frames published: {len(published_video)}")
-            print(f"[TEST] Total status messages published: {len(published_status)}")
+                print(f"\n[TEST] Module started: {result}")
+                print(f"[TEST] Total odom messages published: {len(published_odom)}")
+                print(f"[TEST] Total video frames published: {len(published_video)}")
+                print(f"[TEST] Total status messages published: {len(published_status)}")
 
-            # Verify module started and is processing messages
-            self.assertTrue(result)
-            self.assertIsNotNone(module.connection)
-            self.assertIsNotNone(module.video_stream)
+                # Verify module started and is processing messages
+                self.assertTrue(result)
+                self.assertIsNotNone(module.connection)
+                self.assertIsNotNone(module.video_stream)
 
-            # Should have published some messages
-            self.assertGreater(
-                len(published_odom) + len(published_video) + len(published_status),
-                0,
-                "No messages were published in replay mode",
-            )
+                # Should have published some messages
+                self.assertGreater(
+                    len(published_odom) + len(published_video) + len(published_status),
+                    0,
+                    "No messages were published in replay mode",
+                )
+            finally:
+                # Clean up
+                module.stop()
 
 
 class TestDroneFullIntegration(unittest.TestCase):
@@ -498,7 +517,7 @@ class TestDroneFullIntegration(unittest.TestCase):
         drone.start()
 
         # Verify modules were deployed
-        self.assertEqual(self.mock_dimos.deploy.call_count, 2)
+        self.assertEqual(self.mock_dimos.deploy.call_count, 4)
 
         # Test get_odom
         odom = drone.get_odom()
@@ -604,41 +623,6 @@ class TestDroneControlCommands(unittest.TestCase):
 
 class TestDronePerception(unittest.TestCase):
     """Test drone perception capabilities."""
-
-    @patch("dimos.robot.drone.drone.core.start")
-    @patch("dimos.protocol.pubsub.lcm.autoconf")
-    @patch("dimos.robot.drone.drone.FoxgloveBridge")
-    def test_get_single_rgb_frame(self, mock_foxglove, mock_lcm_autoconf, mock_core_start) -> None:
-        """Test getting a single RGB frame from camera."""
-        # Set up mocks
-        mock_dimos = MagicMock()
-        mock_core_start.return_value = mock_dimos
-
-        # Create drone
-        drone = Drone(connection_string="replay")
-
-        # Mock connection module to return an image
-        test_image = Image(
-            data=np.random.randint(0, 255, (1080, 1920, 3), dtype=np.uint8),
-            format=ImageFormat.RGB,
-            frame_id="camera_link",
-        )
-
-        # Mock the connection module
-        mock_connection = MagicMock()
-        mock_connection.get_single_frame.return_value = test_image
-        drone.connection = mock_connection
-
-        # Get frame
-        frame = drone.get_single_rgb_frame(timeout=2.0)
-
-        # Verify
-        self.assertIsNotNone(frame)
-        self.assertIsInstance(frame, Image)
-        self.assertEqual(frame.format, ImageFormat.RGB)
-
-        # Check that connection method was called
-        mock_connection.get_single_frame.assert_called_once()
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
@@ -913,64 +897,6 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
         if hasattr(telem_msg, "data"):
             telem_dict = json.loads(telem_msg.data)
             self.assertIn("timestamp", telem_dict)
-
-
-class TestGetSingleFrameIntegration(unittest.TestCase):
-    """Test the get_single_frame method with full integration."""
-
-    def test_get_single_frame_with_replay(self) -> None:
-        """Test get_single_frame() method using DroneConnectionModule with replay data."""
-        import cv2
-
-        from dimos.utils.data import get_data
-
-        # Try to get replay data
-        try:
-            get_data("drone")
-        except:
-            self.skipTest("No drone replay data available")
-
-        # Create connection module with replay mode
-        module = DroneConnectionModule(connection_string="replay")
-
-        # Set up mock outputs (module needs these)
-        module.odom = MagicMock()
-        module.status = MagicMock()
-        module.telemetry = MagicMock()
-        module.video = MagicMock()
-        module.tf = MagicMock()
-        module.movecmd = MagicMock()
-
-        # Start the module
-        result = module.start()
-        self.assertTrue(result, "Module failed to start")
-
-        # Give time for video frames to be received
-        import time
-
-        time.sleep(1.0)
-
-        # Now test the get_single_frame method
-        frame = module.get_single_frame()
-
-        if frame is not None:
-            self.assertIsInstance(frame, Image)
-            self.assertIsInstance(frame.data, np.ndarray)
-
-            output_path = "./drone_single_frame_test.png"
-
-            # Frame should now be corrected in the module, just write it
-            cv2.imwrite(output_path, frame.data)
-
-            print(f"\n[TEST] Saved frame from get_single_frame() to {output_path}")
-            print(f"[TEST] Frame shape: {frame.data.shape}")
-            print(f"[TEST] Frame format: {frame.format}")
-            print(f"[TEST] File size: {os.path.getsize(output_path)} bytes")
-        else:
-            print("[TEST] get_single_frame() returned None")
-
-        # Clean up
-        module.stop()
 
 
 if __name__ == "__main__":

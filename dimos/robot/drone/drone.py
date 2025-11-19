@@ -28,7 +28,7 @@ from reactivex import Observable
 
 from dimos import core
 from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
-from dimos.agents2.skills.osm import OsmSkillContainer
+from dimos.agents2.skills.osm import OsmSkill
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -133,6 +133,7 @@ class Drone(Robot):
         # Configure LCM transports
         self.connection.odom.transport = core.LCMTransport("/drone/odom", PoseStamped)
         self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
+        self.connection.gps_goal.transport = core.pLCMTransport("/gps_goal")
         self.connection.status.transport = core.LCMTransport("/drone/status", String)
         self.connection.telemetry.transport = core.LCMTransport("/drone/telemetry", String)
         self.connection.video.transport = core.LCMTransport("/drone/video", Image)
@@ -326,18 +327,8 @@ class Drone(Robot):
         """
         return self.connection.fly_to(lat, lon, alt)
 
-    def get_single_rgb_frame(self, timeout: float = 2.0) -> Image | None:
-        """Get a single RGB frame from camera.
-
-        Args:
-            timeout: Timeout in seconds (currently unused as we get latest frame)
-
-        Returns:
-            Image message or None
-        """
-        if self.connection:
-            return self.connection.get_single_frame()
-        return None
+    def cleanup(self) -> None:
+        self.stop()
 
     def stop(self) -> None:
         """Stop the drone system."""
@@ -420,6 +411,11 @@ def main() -> None:
     from dimos.agents2.spec import Model, Provider
 
     human_input = drone.dimos.deploy(HumanInput)
+    google_maps = drone.dimos.deploy(GoogleMapsSkillContainer)
+    osm_skill = drone.dimos.deploy(OsmSkill)
+
+    google_maps.gps_location.transport = core.pLCMTransport("/gps_location")
+    osm_skill.gps_location.transport = core.pLCMTransport("/gps_location")
 
     agent = Agent(
         system_prompt="""You are controlling a DJI drone with MAVLink interface.
@@ -437,8 +433,8 @@ def main() -> None:
 
     agent.register_skills(drone.connection)
     agent.register_skills(human_input)
-    agent.register_skills(GoogleMapsSkillContainer(drone, drone.gps_position_stream))
-    agent.register_skills(OsmSkillContainer(drone, drone.gps_position_stream))
+    agent.register_skills(google_maps)
+    agent.register_skills(osm_skill)
     agent.run_implicit_skill("human")
 
     agent.start()
