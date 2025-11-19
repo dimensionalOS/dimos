@@ -23,6 +23,7 @@ from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.perception.detection.yolo_2d_det")
 
+
 class Yolo2DDetector(Detector):
     def __init__(
         self,
@@ -34,11 +35,11 @@ class Yolo2DDetector(Detector):
             get_data(model_path) / model_name,
             task="detect",
         )
-        
+
         # CHANGE 1: Force CPU to avoid CUDA issues
         self.device = "cpu"  # Force CPU for now
         logger.info("FORCED CPU for YOLO 2d detector (CUDA compatibility issue)")
-        
+
         # Comment out the old logic temporarily
         # if device:
         #     self.device = device
@@ -49,7 +50,7 @@ class Yolo2DDetector(Detector):
         # else:
         #     self.device = "cpu"
         #     logger.debug("Using CPU for YOLO 2d detector")
-    
+
     def process_image(self, image: Image) -> ImageDetections2D:
         """
         Process an image and return detection results.
@@ -67,16 +68,16 @@ class Yolo2DDetector(Detector):
             persist=True,
             verbose=True,  # CHANGED to True for debugging
         )
-        
+
         # CHANGE 3: Add debug logging
         logger.info(f"YOLO detected {len(results)} frames")
         if results and results[0].boxes is not None:
             logger.info(f"Found {len(results[0].boxes)} objects in frame")
         else:
             logger.warning("No objects detected by YOLO")
-        
+
         return ImageDetections2D.from_ultralytics_result(image, results)
-    
+
     def stop(self) -> None:
         """
         Clean up resources used by the detector, including tracker threads.

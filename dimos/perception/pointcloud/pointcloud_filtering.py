@@ -228,39 +228,41 @@ class PointcloudFiltering:
         Returns:
             List of updated ObjectData with pointcloud and 3D information
         """
-        
+
         # ADD THESE CHECKS FIRST - Before _validate_inputs
         if color_img is None:
             logger.error("Color image is None in process_images!")
             return []
-        
+
         if depth_img is None:
             logger.error("Depth image is None in process_images!")
             return []
-        
+
         # Check dimensions match
         if color_img.shape[:2] != depth_img.shape[:2]:
-            logger.error(f"Color and depth image dimensions don't match: "
-                        f"Color={color_img.shape}, Depth={depth_img.shape}")
+            logger.error(
+                f"Color and depth image dimensions don't match: "
+                f"Color={color_img.shape}, Depth={depth_img.shape}"
+            )
             return []  # Return empty list instead of raising error
-        
+
         # Check depth is in correct format
         if len(depth_img.shape) != 2:
             logger.error(f"Depth image has wrong dimensions: {depth_img.shape}, expected 2D")
             return []
-        
+
         # Ensure depth is float32
         if depth_img.dtype != np.float32:
             logger.warning(f"Converting depth from {depth_img.dtype} to float32")
             depth_img = depth_img.astype(np.float32)
-        
+
         # NOW do the existing validation
         try:
             self._validate_inputs(color_img, depth_img, objects)
         except Exception as e:
             logger.error(f"Validation failed: {e}")
             return []
-        
+
         if not objects:
             logger.info("No objects to process")
             return []

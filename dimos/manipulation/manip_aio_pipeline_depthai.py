@@ -21,6 +21,7 @@ from collections.abc import Callable
 import threading
 import time
 from typing import Any
+
 import cv2
 from manip_aio_processer_new_depthai import ManipulationProcessor
 import numpy as np
@@ -103,10 +104,13 @@ class ManipulationPipeline:
 
         logger.info(f"Initialized ManipulationPipeline with {self.num_cameras} cameras")
 
-    def create_depthai_stream(self, color_queue: Any, depth_queue: Any, camera_idx: int) -> rx.Observable:
+    def create_depthai_stream(
+        self, color_queue: Any, depth_queue: Any, camera_idx: int
+    ) -> rx.Observable:
         """
         Create an RxPy observable from DepthAI queues.
         """
+
         def subscribe(observer, scheduler=None):
             def emit_frames():
                 logger.info(f"Camera {camera_idx} stream started")
@@ -133,14 +137,18 @@ class ManipulationPipeline:
                             if rgb.shape[:2] != depth.shape[:2]:
                                 h, w = rgb.shape[:2]
                                 depth = cv2.resize(depth, (w, h), interpolation=cv2.INTER_NEAREST)
-                                logger.debug(f"Camera {camera_idx}: Resized depth to match RGB {w}x{h}")
+                                logger.debug(
+                                    f"Camera {camera_idx}: Resized depth to match RGB {w}x{h}"
+                                )
 
                             # Emit frame
-                            observer.on_next({
-                                "rgb": rgb,
-                                "depth": depth,
-                                "camera_idx": camera_idx,
-                            })
+                            observer.on_next(
+                                {
+                                    "rgb": rgb,
+                                    "depth": depth,
+                                    "camera_idx": camera_idx,
+                                }
+                            )
                         else:
                             # No frames available, wait a bit
                             time.sleep(0.001)
@@ -179,7 +187,7 @@ class ManipulationPipeline:
         # Check if it's time to generate grasps
         current_time = time.time()
         should_generate_grasps = False
-        
+
         if self.processor.enable_grasp_generation:
             time_since_last = current_time - self.last_grasp_time
             if generate_grasps or (time_since_last >= self.grasp_interval):
@@ -192,12 +200,13 @@ class ManipulationPipeline:
                 results = self.processor.process_frame(
                     rgb_images=rgb_images,
                     depth_images=depth_images,
-                    generate_grasps=should_generate_grasps  # Only true every 5 seconds
+                    generate_grasps=should_generate_grasps,  # Only true every 5 seconds
                 )
                 self._emit_results(results)
             except Exception as e:
                 logger.error(f"Frame processing error: {e}")
                 import traceback
+
                 traceback.print_exc()
             finally:
                 self.processing = False
