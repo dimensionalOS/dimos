@@ -33,27 +33,31 @@ Key Insight:
   robot state updates at 5Hz (normal mode).
 """
 
-import time
-import threading
-import math
-from typing import List, Optional
 from dataclasses import dataclass
+import math
+import threading
+import time
+from typing import TYPE_CHECKING
 
-from xarm.wrapper import XArmAPI
+# Lazy import to avoid requiring xarm SDK at module import time
+# This allows tests to run without the SDK installed
+if TYPE_CHECKING:
+    from xarm.wrapper import XArmAPI
 
-from dimos.core import Module, In, Out, rpc
+from reactivex.disposable import CompositeDisposable, Disposable
+
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.sensor_msgs import JointState, JointCommand, RobotState
 from dimos.msgs.geometry_msgs import WrenchStamped
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger
-from reactivex.disposable import Disposable, CompositeDisposable
 
 from .components import (
+    GripperControlComponent,
+    KinematicsComponent,
     MotionControlComponent,
     StateQueryComponent,
     SystemControlComponent,
-    KinematicsComponent,
-    GripperControlComponent,
 )
 
 logger = setup_logger(__file__)
@@ -130,8 +134,8 @@ class XArmDriver(
         """Initialize the xArm driver."""
         super().__init__(*args, **kwargs)
 
-        # xArm SDK instance
-        self.arm: Optional[XArmAPI] = None
+        # xArm SDK instance (string annotation to avoid runtime import)
+        self.arm: XArmAPI | None = None
 
         # State tracking variables (updated by SDK callback)
         self.curr_state: int = 4  # Robot state (4 = stopped initially)
@@ -139,29 +143,29 @@ class XArmDriver(
         self.curr_mode: int = 0  # Current control mode
         self.curr_cmdnum: int = 0  # Command queue length
         self.curr_warn: int = 0  # Warning code
-        self.curr_tcp_pose: List[float] = []  # TCP pose [x, y, z, roll, pitch, yaw]
-        self.curr_tcp_offset: List[float] = []  # TCP offset [x, y, z, roll, pitch, yaw]
-        self.curr_joints: List[float] = []  # Joint positions
+        self.curr_tcp_pose: list[float] = []  # TCP pose [x, y, z, roll, pitch, yaw]
+        self.curr_tcp_offset: list[float] = []  # TCP offset [x, y, z, roll, pitch, yaw]
+        self.curr_joints: list[float] = []  # Joint positions
 
         # Shared state (protected by locks)
         self._joint_cmd_lock = threading.Lock()
         self._joint_state_lock = threading.Lock()
-        self._joint_cmd_: Optional[List[float]] = None  # Latest joint command
-        self._vel_cmd_: Optional[List[float]] = None  # Latest velocity command
-        self._joint_states_: Optional[JointState] = None  # Latest joint state
-        self._robot_state_: Optional[RobotState] = None  # Latest robot state
+        self._joint_cmd_: list[float] | None = None  # Latest joint command
+        self._vel_cmd_: list[float] | None = None  # Latest velocity command
+        self._joint_states_: JointState | None = None  # Latest joint state
+        self._robot_state_: RobotState | None = None  # Latest robot state
         self._last_cmd_time: float = 0.0  # Timestamp of last command received (for timeout)
 
         # Thread management
-        self._state_thread: Optional[threading.Thread] = None  # Joint state publishing
-        self._control_thread: Optional[threading.Thread] = None  # Command sending
+        self._state_thread: threading.Thread | None = None  # Joint state publishing
+        self._control_thread: threading.Thread | None = None  # Command sending
         self._stop_event = threading.Event()  # Thread-safe stop signal
 
         # Joint names based on number of joints
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
 
         # Joint state message (initialized in _init_publisher)
-        self._joint_state_msg: Optional[JointState] = None
+        self._joint_state_msg: JointState | None = None
 
         logger.info(
             f"XArmDriver initialized for {self.config.num_joints}-joint arm at "
@@ -201,10 +205,18 @@ class XArmDriver(
             f"dof={self.config.num_joints}"
         )
 
+        # Lazy import of xarm SDK (allows tests to run without SDK installed)
+        try:
+            from xarm.wrapper import XArmAPI as _XArmAPI
+        except ImportError as e:
+            logger.error(f"xarm SDK not installed: {e}")
+            logger.error("Install with: pip install xarm-python-sdk")
+            raise
+
         # Create XArmAPI instance (matching C++ constructor parameters)
         logger.info("Creating XArmAPI instance...")
         try:
-            self.arm = XArmAPI(
+            self.arm = _XArmAPI(
                 port=self.config.ip_address,
                 is_radian=self.config.is_radian,
                 do_not_open=True,  # Don't auto-connect (we'll call connect())
