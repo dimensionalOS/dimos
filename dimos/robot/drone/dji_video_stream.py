@@ -21,8 +21,8 @@ import functools
 import subprocess
 import threading
 import time
+
 import numpy as np
-from typing import Optional
 from reactivex import Subject
 
 from dimos.msgs.sensor_msgs import Image, ImageFormat
@@ -34,7 +34,7 @@ logger = setup_logger(__name__)
 class DJIDroneVideoStream:
     """Capture drone video using GStreamer appsink."""
 
-    def __init__(self, port: int = 5600):
+    def __init__(self, port: int = 5600) -> None:
         self.port = port
         self._video_subject = Subject()
         self._process = None
@@ -96,7 +96,7 @@ class DJIDroneVideoStream:
             logger.error(f"Failed to start video stream: {e}")
             return False
 
-    def _capture_loop(self):
+    def _capture_loop(self) -> None:
         """Read frames with fixed size."""
         # Fixed parameters
         width, height = 640, 360
@@ -150,7 +150,7 @@ class DJIDroneVideoStream:
                     logger.error(f"Error in capture loop: {e}")
                 time.sleep(0.1)
 
-    def _error_monitor(self):
+    def _error_monitor(self) -> None:
         """Monitor GStreamer stderr."""
         while self._running and self._process:
             try:
@@ -164,7 +164,7 @@ class DJIDroneVideoStream:
             except:
                 pass
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop video stream."""
         self._running = False
 
@@ -186,7 +186,7 @@ class DJIDroneVideoStream:
 class FakeDJIVideoStream(DJIDroneVideoStream):
     """Replay video for testing."""
 
-    def __init__(self, port: int = 5600):
+    def __init__(self, port: int = 5600) -> None:
         super().__init__(port)
         from dimos.utils.data import get_data
 
@@ -208,7 +208,7 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
         video_store = TimedSensorReplay("drone/video")
         return video_store.stream()
 
-    def stop(self):
+    def stop(self) -> None:
         """Stop replay."""
         self._running = False
         logger.info("Video replay stopped")

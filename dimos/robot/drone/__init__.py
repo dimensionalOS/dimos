@@ -14,9 +14,9 @@
 
 """Generic drone module for MAVLink-based drones."""
 
-from .mavlink_connection import MavlinkConnection
-from .connection_module import DroneConnectionModule
 from .camera_module import DroneCameraModule
+from .connection_module import DroneConnectionModule
 from .drone import Drone
+from .mavlink_connection import MavlinkConnection
 
-__all__ = ["MavlinkConnection", "DroneConnectionModule", "DroneCameraModule", "Drone"]
+__all__ = ["Drone", "DroneCameraModule", "DroneConnectionModule", "MavlinkConnection"]

@@ -17,26 +17,26 @@
 
 """Core unit tests for drone module."""
 
-import unittest
-from unittest.mock import MagicMock, patch, Mock
-import time
-import threading
 import json
-
-from dimos.robot.drone.mavlink_connection import MavlinkConnection, FakeMavlinkConnection
-from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
-from dimos.robot.drone.connection_module import DroneConnectionModule
-from dimos.robot.drone.drone import Drone
-from dimos.msgs.geometry_msgs import Vector3, PoseStamped, Quaternion
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-import numpy as np
 import os
+import time
+import unittest
+from unittest.mock import MagicMock, patch
+
+import numpy as np
+
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.robot.drone.connection_module import DroneConnectionModule
+from dimos.robot.drone.dji_video_stream import FakeDJIVideoStream
+from dimos.robot.drone.drone import Drone
+from dimos.robot.drone.mavlink_connection import FakeMavlinkConnection, MavlinkConnection
 
 
 class TestMavlinkProcessing(unittest.TestCase):
     """Test MAVLink message processing and coordinate conversions."""
 
-    def test_mavlink_message_processing(self):
+    def test_mavlink_message_processing(self) -> None:
         """Test that MAVLink messages trigger correct odom/tf publishing."""
         conn = MavlinkConnection("udp:0.0.0.0:14550")
 
@@ -84,7 +84,7 @@ class TestMavlinkProcessing(unittest.TestCase):
         # So we expect sign flips in the quaternion conversion
         self.assertIsNotNone(pose.orientation)
 
-    def test_position_integration(self):
+    def test_position_integration(self) -> None:
         """Test velocity integration for indoor flight positioning."""
         conn = MavlinkConnection("udp:0.0.0.0:14550")
         conn.mavlink = MagicMock()
@@ -131,7 +131,7 @@ class TestMavlinkProcessing(unittest.TestCase):
         self.assertAlmostEqual(conn._position["x"], expected_x, places=2)
         self.assertAlmostEqual(conn._position["y"], expected_y, places=2)
 
-    def test_ned_to_ros_coordinate_conversion(self):
+    def test_ned_to_ros_coordinate_conversion(self) -> None:
         """Test NED to ROS coordinate system conversion for all axes."""
         conn = MavlinkConnection("udp:0.0.0.0:14550")
         conn.mavlink = MagicMock()
@@ -189,11 +189,11 @@ class TestMavlinkProcessing(unittest.TestCase):
 class TestReplayMode(unittest.TestCase):
     """Test replay mode functionality."""
 
-    def test_fake_mavlink_connection(self):
+    def test_fake_mavlink_connection(self) -> None:
         """Test FakeMavlinkConnection replays messages correctly."""
         with patch("dimos.utils.testing.TimedSensorReplay") as mock_replay:
             # Mock the replay stream
-            mock_stream = MagicMock()
+            MagicMock()
             mock_messages = [
                 {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
                 {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193},
@@ -215,7 +215,7 @@ class TestReplayMode(unittest.TestCase):
             self.assertIsNotNone(msg2)
             self.assertEqual(msg2.get_type(), "HEARTBEAT")
 
-    def test_fake_video_stream_no_throttling(self):
+    def test_fake_video_stream_no_throttling(self) -> None:
         """Test FakeDJIVideoStream returns replay stream directly."""
         with patch("dimos.utils.testing.TimedSensorReplay") as mock_replay:
             mock_stream = MagicMock()
@@ -227,7 +227,7 @@ class TestReplayMode(unittest.TestCase):
             # Verify stream is returned directly without throttling
             self.assertEqual(result_stream, mock_stream)
 
-    def test_connection_module_replay_mode(self):
+    def test_connection_module_replay_mode(self) -> None:
         """Test connection module uses Fake classes in replay mode."""
         with patch("dimos.robot.drone.mavlink_connection.FakeMavlinkConnection") as mock_fake_conn:
             with patch("dimos.robot.drone.dji_video_stream.FakeDJIVideoStream") as mock_fake_video:
@@ -258,9 +258,8 @@ class TestReplayMode(unittest.TestCase):
                 mock_fake_conn.assert_called_once_with("replay")
                 mock_fake_video.assert_called_once()
 
-    def test_connection_module_replay_with_messages(self):
+    def test_connection_module_replay_with_messages(self) -> None:
         """Test connection module in replay mode receives and processes messages."""
-        import os
 
         os.environ["DRONE_CONNECTION"] = "replay"
 
@@ -291,7 +290,7 @@ class TestReplayMode(unittest.TestCase):
             def create_mavlink_stream():
                 stream = MagicMock()
 
-                def subscribe(callback):
+                def subscribe(callback) -> None:
                     print("\n[TEST] MAVLink replay stream subscribed")
                     for msg in mavlink_messages:
                         print(f"[TEST] Replaying MAVLink: {msg['mavpackettype']}")
@@ -303,7 +302,7 @@ class TestReplayMode(unittest.TestCase):
             def create_video_stream():
                 stream = MagicMock()
 
-                def subscribe(callback):
+                def subscribe(callback) -> None:
                     print("[TEST] Video replay stream subscribed")
                     for i, frame in enumerate(video_frames):
                         print(
@@ -315,7 +314,7 @@ class TestReplayMode(unittest.TestCase):
                 return stream
 
             # Configure mock replay to return appropriate streams
-            def replay_side_effect(store_name):
+            def replay_side_effect(store_name: str):
                 print(f"[TEST] TimedSensorReplay created for: {store_name}")
                 mock = MagicMock()
                 if "mavlink" in store_name:
@@ -393,7 +392,7 @@ class TestReplayMode(unittest.TestCase):
 class TestDroneFullIntegration(unittest.TestCase):
     """Full integration test of Drone class with replay mode."""
 
-    def setUp(self):
+    def setUp(self) -> None:
         """Set up test environment."""
         # Mock the DimOS core module
         self.mock_dimos = MagicMock()
@@ -407,14 +406,14 @@ class TestDroneFullIntegration(unittest.TestCase):
         self.foxglove_patch = patch("dimos.robot.drone.drone.FoxgloveBridge")
         self.mock_foxglove = self.foxglove_patch.start()
 
-    def tearDown(self):
+    def tearDown(self) -> None:
         """Clean up patches."""
         self.pubsub_patch.stop()
         self.foxglove_patch.stop()
 
     @patch("dimos.robot.drone.drone.core.start")
     @patch("dimos.utils.testing.TimedSensorReplay")
-    def test_full_system_with_replay(self, mock_replay, mock_core_start):
+    def test_full_system_with_replay(self, mock_replay, mock_core_start) -> None:
         """Test full drone system initialization and operation with replay mode."""
         # Set up mock replay data
         mavlink_messages = [
@@ -445,7 +444,7 @@ class TestDroneFullIntegration(unittest.TestCase):
             )
         ]
 
-        def replay_side_effect(store_name):
+        def replay_side_effect(store_name: str):
             mock = MagicMock()
             if "mavlink" in store_name:
                 # Create stream that emits MAVLink messages
@@ -519,20 +518,20 @@ class TestDroneFullIntegration(unittest.TestCase):
         mock_connection.move.assert_called_once_with(Vector3(1.0, 0.0, 0.5), 2.0)
 
         # Test control commands
-        result = drone.arm()
+        drone.arm()
         mock_connection.arm.assert_called_once()
 
-        result = drone.takeoff(altitude=10.0)
+        drone.takeoff(altitude=10.0)
         mock_connection.takeoff.assert_called_once_with(10.0)
 
-        result = drone.land()
+        drone.land()
         mock_connection.land.assert_called_once()
 
-        result = drone.disarm()
+        drone.disarm()
         mock_connection.disarm.assert_called_once()
 
         # Test mode setting
-        result = drone.set_mode("GUIDED")
+        drone.set_mode("GUIDED")
         mock_connection.set_mode.assert_called_once_with("GUIDED")
 
         # Clean up
@@ -549,7 +548,7 @@ class TestDroneControlCommands(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_arm_disarm_commands(self, mock_get_data, mock_replay):
+    def test_arm_disarm_commands(self, mock_get_data, mock_replay) -> None:
         """Test arm and disarm commands work with fake connection."""
         # Set up mock replay
         mock_stream = MagicMock()
@@ -568,7 +567,7 @@ class TestDroneControlCommands(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_takeoff_land_commands(self, mock_get_data, mock_replay):
+    def test_takeoff_land_commands(self, mock_get_data, mock_replay) -> None:
         """Test takeoff and land commands with fake connection."""
         mock_stream = MagicMock()
         mock_stream.subscribe = lambda callback: None
@@ -587,7 +586,7 @@ class TestDroneControlCommands(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_set_mode_command(self, mock_get_data, mock_replay):
+    def test_set_mode_command(self, mock_get_data, mock_replay) -> None:
         """Test flight mode setting with fake connection."""
         mock_stream = MagicMock()
         mock_stream.subscribe = lambda callback: None
@@ -609,7 +608,7 @@ class TestDronePerception(unittest.TestCase):
     @patch("dimos.robot.drone.drone.core.start")
     @patch("dimos.protocol.pubsub.lcm.autoconf")
     @patch("dimos.robot.drone.drone.FoxgloveBridge")
-    def test_get_single_rgb_frame(self, mock_foxglove, mock_lcm_autoconf, mock_core_start):
+    def test_get_single_rgb_frame(self, mock_foxglove, mock_lcm_autoconf, mock_core_start) -> None:
         """Test getting a single RGB frame from camera."""
         # Set up mocks
         mock_dimos = MagicMock()
@@ -643,7 +642,7 @@ class TestDronePerception(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_video_stream_replay(self, mock_get_data, mock_replay):
+    def test_video_stream_replay(self, mock_get_data, mock_replay) -> None:
         """Test video stream works with replay data."""
         # Set up video frames - create a test pattern instead of random noise
         import cv2
@@ -670,7 +669,7 @@ class TestDronePerception(unittest.TestCase):
         mock_stream = MagicMock()
         received_frames = []
 
-        def subscribe_side_effect(callback):
+        def subscribe_side_effect(callback) -> None:
             for frame in video_frames:
                 img = Image(data=frame, format=ImageFormat.BGR)
                 callback(img)
@@ -709,7 +708,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_movement_command_conversion(self, mock_get_data, mock_replay):
+    def test_movement_command_conversion(self, mock_get_data, mock_replay) -> None:
         """Test movement commands are properly converted from ROS to NED."""
         mock_stream = MagicMock()
         mock_stream.subscribe = lambda callback: None
@@ -729,7 +728,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_odometry_from_replay(self, mock_get_data, mock_replay):
+    def test_odometry_from_replay(self, mock_get_data, mock_replay) -> None:
         """Test odometry is properly generated from replay messages."""
         # Set up replay messages
         messages = [
@@ -747,7 +746,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
             },
         ]
 
-        def replay_stream_subscribe(callback):
+        def replay_stream_subscribe(callback) -> None:
             for msg in messages:
                 callback(msg)
 
@@ -776,7 +775,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_position_integration_indoor(self, mock_get_data, mock_replay):
+    def test_position_integration_indoor(self, mock_get_data, mock_replay) -> None:
         """Test position integration for indoor flight without GPS."""
         messages = [
             {"mavpackettype": "ATTITUDE", "roll": 0, "pitch": 0, "yaw": 0},
@@ -793,7 +792,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
             },
         ]
 
-        def replay_stream_subscribe(callback):
+        def replay_stream_subscribe(callback) -> None:
             for msg in messages:
                 callback(msg)
 
@@ -807,7 +806,7 @@ class TestDroneMovementAndOdometry(unittest.TestCase):
         initial_time = time.time()
         conn._last_update = initial_time
 
-        for i in range(3):
+        for _i in range(3):
             conn.update_telemetry(timeout=0.01)
             time.sleep(0.1)  # Let some time pass for integration
 
@@ -821,7 +820,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_status_extraction(self, mock_get_data, mock_replay):
+    def test_status_extraction(self, mock_get_data, mock_replay) -> None:
         """Test status is properly extracted from MAVLink messages."""
         messages = [
             {"mavpackettype": "HEARTBEAT", "type": 2, "base_mode": 193},  # Armed
@@ -835,7 +834,7 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
             {"mavpackettype": "GLOBAL_POSITION_INT", "relative_alt": 8000, "hdg": 27000},
         ]
 
-        def replay_stream_subscribe(callback):
+        def replay_stream_subscribe(callback) -> None:
             for msg in messages:
                 callback(msg)
 
@@ -866,14 +865,14 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
 
     @patch("dimos.utils.testing.TimedSensorReplay")
     @patch("dimos.utils.data.get_data")
-    def test_telemetry_json_publishing(self, mock_get_data, mock_replay):
+    def test_telemetry_json_publishing(self, mock_get_data, mock_replay) -> None:
         """Test full telemetry is published as JSON."""
         messages = [
             {"mavpackettype": "ATTITUDE", "roll": 0.1, "pitch": 0.2, "yaw": 0.3},
             {"mavpackettype": "GLOBAL_POSITION_INT", "lat": 377810501, "lon": -1224069671},
         ]
 
-        def replay_stream_subscribe(callback):
+        def replay_stream_subscribe(callback) -> None:
             for msg in messages:
                 callback(msg)
 
@@ -919,10 +918,10 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
 class TestGetSingleFrameIntegration(unittest.TestCase):
     """Test the get_single_frame method with full integration."""
 
-    def test_get_single_frame_with_replay(self):
+    def test_get_single_frame_with_replay(self) -> None:
         """Test get_single_frame() method using DroneConnectionModule with replay data."""
         import cv2
-        import os
+
         from dimos.utils.data import get_data
 
         # Try to get replay data

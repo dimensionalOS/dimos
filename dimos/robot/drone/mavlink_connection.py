@@ -18,16 +18,13 @@
 import functools
 import logging
 import time
-from typing import Optional, Dict, Any
+from typing import Any
 
 from pymavlink import mavutil
 from reactivex import Subject
-from reactivex import operators as ops
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
-from dimos.robot.connection_interface import ConnectionInterface
 from dimos.utils.logging_config import setup_logger
-from dimos.core import In, Module, Out, rpc
 
 logger = setup_logger(__name__, level=logging.INFO)
 
@@ -40,7 +37,7 @@ class MavlinkConnection:
         connection_string: str = "udp:0.0.0.0:14550",
         outdoor: bool = False,
         max_velocity: float = 5.0,
-    ):
+    ) -> None:
         """Initialize drone connection.
 
         Args:
@@ -68,7 +65,7 @@ class MavlinkConnection:
         # Flag to prevent concurrent fly_to commands
         self.flying_to_target = False
 
-    def connect(self):
+    def connect(self) -> bool:
         """Connect to drone via MAVLink."""
         try:
             logger.info(f"Connecting to {self.connection_string}")
@@ -83,7 +80,7 @@ class MavlinkConnection:
             logger.error(f"Connection failed: {e}")
             return False
 
-    def update_telemetry(self, timeout: float = 0.1):
+    def update_telemetry(self, timeout: float = 0.1) -> None:
         """Update telemetry data from available messages."""
         if not self.connected:
             return
@@ -97,9 +94,7 @@ class MavlinkConnection:
             msg_type = msg.get_type()
             msg_dict = msg.to_dict()
             if msg_type == "HEARTBEAT":
-                armed = bool(
-                    msg_dict.get("base_mode", 0) & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
-                )
+                bool(msg_dict.get("base_mode", 0) & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED)
                 # print("HEARTBEAT:", msg_dict, "ARMED:", armed)
             # print("MESSAGE", msg_dict)
             # print("MESSAGE TYPE", msg_type)
@@ -148,7 +143,7 @@ class MavlinkConnection:
 
             self._publish_telemetry()
 
-    def _publish_odom(self):
+    def _publish_odom(self) -> None:
         """Publish odometry data - GPS for outdoor mode, velocity integration for indoor mode."""
         attitude = self.telemetry.get("ATTITUDE", {})
         roll = attitude.get("roll", 0)
@@ -239,7 +234,7 @@ class MavlinkConnection:
 
         self._odom_subject.on_next(pose)
 
-    def _publish_status(self):
+    def _publish_status(self) -> None:
         """Publish drone status with key telemetry."""
         heartbeat = self.telemetry.get("HEARTBEAT", {})
         sys_status = self.telemetry.get("SYS_STATUS", {})
@@ -265,7 +260,7 @@ class MavlinkConnection:
         }
         self._status_subject.on_next(status)
 
-    def _publish_telemetry(self):
+    def _publish_telemetry(self) -> None:
         """Publish full telemetry data."""
         telemetry_with_ts = self.telemetry.copy()
         telemetry_with_ts["timestamp"] = time.time()
@@ -577,7 +572,7 @@ class MavlinkConnection:
                 logger.info("Arm command accepted")
 
                 # Verify armed status
-                for i in range(10):
+                for _i in range(10):
                     msg = self.mavlink.recv_match(type="HEARTBEAT", blocking=True, timeout=1)
                     if msg:
                         armed = msg.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED
@@ -997,14 +992,14 @@ class MavlinkConnection:
         """Get full telemetry stream."""
         return self._telemetry_subject
 
-    def get_telemetry(self) -> Dict[str, Any]:
+    def get_telemetry(self) -> dict[str, Any]:
         """Get current telemetry."""
         # Update telemetry multiple times to ensure we get data
         for _ in range(5):
             self.update_telemetry(timeout=0.2)
         return self.telemetry.copy()
 
-    def disconnect(self):
+    def disconnect(self) -> None:
         """Disconnect from drone."""
         if self.mavlink:
             self.mavlink.close()
@@ -1025,15 +1020,15 @@ class MavlinkConnection:
 class FakeMavlinkConnection(MavlinkConnection):
     """Replay MAVLink for testing."""
 
-    def __init__(self, connection_string: str):
+    def __init__(self, connection_string: str) -> None:
         # Call parent init (which no longer calls connect())
         super().__init__(connection_string)
 
         # Create fake mavlink object
         class FakeMavlink:
-            def __init__(self):
-                from dimos.utils.testing import TimedSensorReplay
+            def __init__(self) -> None:
                 from dimos.utils.data import get_data
+                from dimos.utils.testing import TimedSensorReplay
 
                 get_data("drone")
 
@@ -1047,7 +1042,7 @@ class FakeMavlinkConnection(MavlinkConnection):
                 self.target_component = 1
                 self.mav = self  # self.mavlink.mav is used in many places
 
-            def recv_match(self, blocking=False, type=None, timeout=None):
+            def recv_match(self, blocking: bool = False, type=None, timeout=None):
                 """Return next replay message as fake message object."""
                 if not self.messages:
                     return None
@@ -1056,7 +1051,7 @@ class FakeMavlinkConnection(MavlinkConnection):
 
                 # Create message object with ALL attributes that might be accessed
                 class FakeMsg:
-                    def __init__(self, d):
+                    def __init__(self, d) -> None:
                         self._dict = d
                         # Set any direct attributes that get accessed
                         self.base_mode = d.get("base_mode", 0)
@@ -1075,22 +1070,22 @@ class FakeMavlinkConnection(MavlinkConnection):
 
                 return FakeMsg(msg_dict)
 
-            def wait_heartbeat(self, timeout=30):
+            def wait_heartbeat(self, timeout: int = 30) -> None:
                 """Fake heartbeat received."""
                 pass
 
-            def close(self):
+            def close(self) -> None:
                 """Fake close."""
                 pass
 
             # Command methods that get called but don't need to do anything in replay
-            def command_long_send(self, *args, **kwargs):
+            def command_long_send(self, *args, **kwargs) -> None:
                 pass
 
-            def set_position_target_local_ned_send(self, *args, **kwargs):
+            def set_position_target_local_ned_send(self, *args, **kwargs) -> None:
                 pass
 
-            def set_position_target_global_int_send(self, *args, **kwargs):
+            def set_position_target_global_int_send(self, *args, **kwargs) -> None:
                 pass
 
         # Set up fake mavlink
