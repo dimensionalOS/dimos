@@ -267,6 +267,23 @@ class SpatialMemory:
         embedding = self.embedding_provider.get_embedding(image)
         return self.vector_db.query_by_embedding(embedding, limit)
     
+    def query_by_text(self, text: str, limit: int = 5) -> List[Dict]:
+        """
+        Query the vector database for images matching the provided text description.
+        
+        This method uses CLIP's text-to-image matching capability to find images
+        that semantically match the text query (e.g., "where is the kitchen").
+        
+        Args:
+            text: Text query to search for
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of results, each containing the image, its metadata, and similarity score
+        """
+        logger.info(f"Querying spatial memory with text: '{text}'")
+        return self.vector_db.query_by_text(text, limit)
+    
     def cleanup(self):
         """Clean up resources."""
         if self.vector_db:

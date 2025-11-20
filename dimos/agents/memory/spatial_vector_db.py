@@ -167,6 +167,35 @@ class SpatialVectorDB:
         
         return processed_results
     
+    def query_by_text(self, text: str, limit: int = 5) -> List[Dict]:
+        """
+        Query the vector database for images matching the provided text description.
+        
+        This method uses CLIP's text-to-image matching capability to find images
+        that semantically match the text query (e.g., "where is the kitchen").
+        
+        Args:
+            text: Text query to search for
+            limit: Maximum number of results to return
+            
+        Returns:
+            List of results, each containing the image, its metadata, and similarity score
+        """
+        from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
+        
+        embedding_provider = ImageEmbeddingProvider(model_name="clip")
+        
+        text_embedding = embedding_provider.get_text_embedding(text)
+        
+        results = self.image_collection.query(
+            query_embeddings=[text_embedding.tolist()],
+            n_results=limit
+        )
+        
+        logger.info(f"Text query: '{text}' returned {len(results['ids'] if 'ids' in results else [])} results")
+        
+        return self._process_query_results(results)
+    
     def get_all_locations(self) -> List[Tuple[float, float]]:
         """
         Get all stored locations (x, y coordinates).
