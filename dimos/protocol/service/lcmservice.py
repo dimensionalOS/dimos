@@ -90,7 +90,7 @@ def check_multicast() -> list[str]:
 
     else:
         # For other systems, skip multicast configuration
-        logger.warning(f"Multicast configuration not supported on {system}")
+        logger.warning(f"Multicast configuration not supported on {sys.platform}")
 
     return commands_needed
 
@@ -170,7 +170,7 @@ def check_buffers() -> tuple[list[str], int | None]:
 
     else:
         # For other systems, skip buffer configuration
-        logger.warning(f"Buffer configuration not supported on {system}")
+        logger.warning(f"Buffer configuration not supported on {sys.platform}")
 
     return commands_needed, current_max
 
