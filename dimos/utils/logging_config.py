@@ -193,7 +193,7 @@ def setup_logger(level: int | None = None) -> Any:
 
 
 def setup_exception_handler() -> None:
-    def handle_exception(exc_type, exc_value, exc_traceback):
+    def handle_exception(exc_type, exc_value, exc_traceback) -> None:
         # Don't log KeyboardInterrupt
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)

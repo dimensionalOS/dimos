@@ -35,7 +35,7 @@ from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
 
 # Initialize logger for the agent module
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 # Load API key from environment
 load_dotenv()

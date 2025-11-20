@@ -39,7 +39,7 @@ from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 # Global for mouse events
 mouse_click = None
