@@ -54,6 +54,7 @@ all_modules = {
     "gps_nav_skill": "dimos.agents2.skills.gps_nav_skill",
     "holonomic_local_planner": "dimos.navigation.local_planner.holonomic_local_planner",
     "human_input": "dimos.agents2.cli.human",
+    "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",
     "llm_agent": "dimos.agents2.agent",
     "mapper": "dimos.robot.unitree_webrtc.type.map",
     "navigation_skill": "dimos.agents2.skills.navigation",

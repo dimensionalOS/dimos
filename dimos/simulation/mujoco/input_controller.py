@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,25 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import functools
-import warnings
+
+from typing import Any, Protocol
+
+from numpy.typing import NDArray
 
 
-def deprecated(reason: str):
-    """
-    This function itself is deprecated as we can use `from warnings import deprecated` in Python 3.13+.
-    """
+class InputController(Protocol):
+    """A protocol for input devices to control the robot."""
 
-    def decorator(func):
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            warnings.warn(
-                f"{func.__name__} is deprecated: {reason}",
-                category=DeprecationWarning,
-                stacklevel=2,
-            )
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
+    def get_command(self) -> NDArray[Any]: ...
+    def stop(self) -> None: ...

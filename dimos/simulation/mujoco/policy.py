@@ -18,11 +18,11 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-import mujoco
+import mujoco  # type: ignore[import-untyped]
 import numpy as np
-import onnxruntime as rt
+import onnxruntime as rt  # type: ignore[import-untyped]
 
-from dimos.simulation.mujoco.types import InputController
+from dimos.simulation.mujoco.input_controller import InputController
 
 
 class OnnxController(ABC):
