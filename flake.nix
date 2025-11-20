@@ -139,15 +139,118 @@
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
             export DISPLAY=:0
             export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH" 
-            PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
-            if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
-              . "$PROJECT_ROOT/env/bin/activate"
-            fi
             
             # without this alias, the pytest uses the non-venv python and fails
             alias pytest="python -m pytest"
+            
+            PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
             [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
             [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
+            cd "$PROJECT_ROOT"
+            
+            # 
+            # python & setup
+            # 
+            if [ -f "$PROJECT_ROOT/venv/bin/activate" ]; then
+              . "$PROJECT_ROOT/venv/bin/activate"
+            else
+              # 
+              # automate the readme
+              # 
+              
+              # helper
+              confirm_ask() {
+                echo
+                question="$1";answer=""
+                while true; do
+                  echo "$question"; read response
+                  if [ -z "$response" ]; then
+                    echo
+                    return 0 # success
+                    break
+                  fi
+                  case "$response" in
+                    [Yy]* ) answer='yes'; break;;
+                    [Nn]* ) answer='no'; break;;
+                    * ) echo "Please answer yes or no.";;
+                  esac
+                done
+                if [ "$answer" = "yes" ]
+                then
+                    echo
+                    return 0 # success
+                fi
+                echo
+                return 1 # failure
+              }
+              
+              macos_version="$(sw_vers -productVersion)"
+              macos_major_version="''${macos_version%%.*}"
+              if confirm_ask "Would you like me to set up the environment for you? [y/n]"; then
+                echo "Making sure git lfs is installed..."
+                git lfs install || true
+                
+                if confirm_ask "Should I donwload the models and data? (around 17Gb) this will be needed to run the simulation [y/n]"; then
+                  echo "Downloading the models and data..."
+                  git lfs fetch --all
+                  git lfs pull
+                  echo "Done!"
+                fi
+                
+                # check if no .env
+                if ! [ -f ".env" ]
+                then
+                    echo "Setting up .env file..."
+                    cp default.env .env
+                    echo
+                    echo "note: you might want to edit the .env file with your own settings"
+                    echo
+                fi
+                
+                echo "Setting up virtualenv..."
+                python3 -m venv venv
+                echo "Activating virtualenv..."
+                . venv/bin/activate
+                echo "Installing python dependencies..."
+                pip install -e .
+                
+                # if really old MacOS then ignore the lcm dependency (it'll be supplied by nix)
+                if [ "$macos_major_version" -le 13 ]; then
+                    echo "You're on a really old MacOS version. Ignore the errors above (and probably later below) about LCM"
+                    echo "Got it? (press enter)";read _
+                    rm -f pyproject.original.toml
+                    cp pyproject.toml pyproject.original.toml
+                    # install dimos-lcm without installing lcm
+                    pip install --no-deps 'git+https://github.com/dimensionalOS/dimos-lcm.git'
+                    # manually install dependencies of dimos-lcm
+                    pip install foxglove-websocket numpy
+                    # remove dimos-lcm from pyproject.toml for a moment
+                    grep -v '^\s*#' pyproject.original.toml | grep -v "dimos-lcm @ .*" > pyproject.toml
+                    pip install -e .[cpu,dev] 2>&1 | grep -v -E "Could not find a version that satisfies the requirement lcm |ERROR: No matching distribution found for lcm"
+                    # restore pyproject.toml
+                    rm -f pyproject.toml
+                    mv pyproject.original.toml pyproject.toml
+                fi
+                
+                # CUDA/CPU dependencies
+                if ! [ "$(uname)" = "Darwin" ] && confirm_ask "Want me to install the cuda dependencies? [y/n]"; then
+                    pip install -e .[cuda,dev]
+                else
+                    pip install -e .[cpu,dev]
+                fi
+                
+                # Mujoco/Simulation dependencies
+                if confirm_ask "Want me to install the optional simulation (mujoco) dependencies? [y/n]"; then
+                  pip install -e .[sim]
+                fi
+                
+                if confirm_ask "Would you like me to run the tests to make sure everything is working? [y/n]"; then
+                  echo "Running tests..."
+                  python -m pytest -s "$PROJECT_ROOT/dimos/"
+                  echo "tests finished"
+                fi
+              fi
+            fi
           '';
         };
 
