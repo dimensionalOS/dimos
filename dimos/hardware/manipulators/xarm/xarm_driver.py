@@ -153,10 +153,9 @@ class XArmDriver(
         self._last_cmd_time: float = 0.0  # Timestamp of last command received (for timeout)
 
         # Thread management
-        self._running = False
         self._state_thread: Optional[threading.Thread] = None  # Joint state publishing
         self._control_thread: Optional[threading.Thread] = None  # Command sending
-        self._stop_event = threading.Event()
+        self._stop_event = threading.Event()  # Thread-safe stop signal
 
         # Joint names based on number of joints
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
@@ -282,8 +281,7 @@ class XArmDriver(
         """Stop the xArm driver and disable servo mode."""
         logger.info("Stopping xArm driver...")
 
-        # Stop both threads
-        self._running = False
+        # Signal threads to stop
         self._stop_event.set()
 
         # Wait for state thread to finish
@@ -668,10 +666,10 @@ class XArmDriver(
 
         logger.info(f"Starting joint state thread at {joint_state_rate}Hz")
 
-        # Start state publishing thread
-        self._running = True
+        # Clear stop event for new start cycle
         self._stop_event.clear()
 
+        # Start state publishing thread
         self._state_thread = threading.Thread(
             target=self._joint_state_loop, daemon=True, name="xarm_state_thread"
         )
@@ -806,7 +804,7 @@ class XArmDriver(
 
         next_time = time.time()
 
-        while self._running and self.arm.connected:
+        while not self._stop_event.is_set() and self.arm.connected:
             try:
                 curr_time = time.time()
 
@@ -912,7 +910,7 @@ class XArmDriver(
         # last_log_time = time.time()  # Disabled - used for logging
         timeout_logged = False
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 current_time = time.time()
 
@@ -1028,7 +1026,7 @@ class XArmDriver(
 
         logger.info(f"Robot state loop started at {self.config.robot_state_rate}Hz")
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 # Create robot state message from current state variables
                 # These are updated by _report_data_callback when SDK pushes updates
