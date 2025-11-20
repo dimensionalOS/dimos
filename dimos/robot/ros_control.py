@@ -42,8 +42,6 @@ from dimos.robot.ros_command_queue import ROSCommandQueue
 from dimos.utils.logging_config import setup_logger
 from nav_msgs.msg import OccupancyGrid
 
-from dimos.utils.ros_utils import costmap_msg_to_numpy
-
 from dimos.robot.ros_transform_push import ROSTransformAbility
 from dimos.robot.ros_transform import ROSTransformRXAbility
 import logging

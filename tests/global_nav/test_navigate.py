@@ -26,8 +26,10 @@ def init_robot(env):
     print("robot initialized")
 
     def sub_position():
-
-        base_link = robot.ros_control.transform("base_link", 10)
+        #        base_link = robot.ros_control.transform("base_link", 10)
+        base_link = robot.ros_control.get_transform_stream(
+            child_frame="base_link", parent_frame="map"
+        )
 
         def cb(msg):
             q = msg.transform.rotation
