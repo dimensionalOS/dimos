@@ -63,7 +63,7 @@ curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix 
 # clone the repository
 git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
 
-# setup the environment (follow the prompts)
+# setup the environment (follow the prompts after nix develop)
 cd dimos
 nix develop
 
