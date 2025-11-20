@@ -26,6 +26,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
+      - ROBOT_IP=${ROBOT_IP:-}
       - HARDWARE_MODE=false
 
     # Volume mounts
@@ -90,6 +91,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=all
       - ROS_DOMAIN_ID=${ROS_DOMAIN_ID:-42}
       - ROBOT_CONFIG_PATH=${ROBOT_CONFIG_PATH:-mechanum_drive}
+      - ROBOT_IP=${ROBOT_IP:-}
       - HARDWARE_MODE=true
       # Mid-360 Lidar configuration
       - LIDAR_INTERFACE=${LIDAR_INTERFACE:-}

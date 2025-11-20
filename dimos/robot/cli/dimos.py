@@ -27,7 +27,10 @@ from dimos.utils.logging_config import setup_exception_handler
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})
 
-main = typer.Typer()
+main = typer.Typer(
+    help="Dimensional CLI",
+    no_args_is_help=True,
+)
 
 
 def create_dynamic_callback():
@@ -105,7 +108,7 @@ def run(
         [], "--extra-module", help="Extra modules to add to the blueprint"
     ),
 ) -> None:
-    """Run the robot with the specified configuration."""
+    """Start a robot blueprint"""
     setup_exception_handler()
 
     config: GlobalConfig = ctx.obj
@@ -122,7 +125,7 @@ def run(
 
 @main.command()
 def show_config(ctx: typer.Context) -> None:
-    """Show current configuration status."""
+    """Show current config settings and their values."""
     config: GlobalConfig = ctx.obj
 
     for field_name, value in config.model_dump().items():
@@ -135,6 +138,42 @@ def list() -> None:
     blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
     for blueprint_name in sorted(blueprints):
         typer.echo(blueprint_name)
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def lcmspy(ctx: typer.Context) -> None:
+    """LCM spy tool for monitoring LCM messages."""
+    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+
+    sys.argv = ["lcmspy", *ctx.args]
+    lcmspy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def skillspy(ctx: typer.Context) -> None:
+    """Skills spy tool for monitoring skills."""
+    from dimos.utils.cli.skillspy.skillspy import main as skillspy_main
+
+    sys.argv = ["skillspy", *ctx.args]
+    skillspy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def agentspy(ctx: typer.Context) -> None:
+    """Agent spy tool for monitoring agents."""
+    from dimos.utils.cli.agentspy.agentspy import main as agentspy_main
+
+    sys.argv = ["agentspy", *ctx.args]
+    agentspy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def humancli(ctx: typer.Context) -> None:
+    """Interface interacting with agents."""
+    from dimos.utils.cli.human.humanclianim import main as humancli_main
+
+    sys.argv = ["humancli", *ctx.args]
+    humancli_main()
 
 
 if __name__ == "__main__":
