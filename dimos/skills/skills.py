@@ -33,6 +33,7 @@ class SkillLibrary:
     def __init__(self):
         self.registered_skills: list["AbstractSkill"] = []
         self.class_skills: list["AbstractSkill"] = []
+        self._running_skills = {}  # {skill_name: (instance, subscription)}
 
         self.init()
         
@@ -148,6 +149,86 @@ class SkillLibrary:
     
     def get_list_of_skills_as_json(self, list_of_skills: list["AbstractSkill"]) -> list[str]:
         return list(map(pydantic_function_tool, list_of_skills))
+        
+    
+    def register_running_skill(self, name: str, instance: Any, subscription=None):
+        """
+        Register a running skill with its subscription.
+        
+        Args:
+            name: Name of the skill (will be converted to lowercase)
+            instance: Instance of the running skill
+            subscription: Optional subscription associated with the skill
+        """
+        name = name.lower()
+        self._running_skills[name] = (instance, subscription)
+        logger.info(f"Registered running skill: {name}")
+        
+    def unregister_running_skill(self, name: str):
+        """
+        Unregister a running skill.
+        
+        Args:
+            name: Name of the skill to remove (will be converted to lowercase)
+        
+        Returns:
+            True if the skill was found and removed, False otherwise
+        """
+        name = name.lower()
+        if name in self._running_skills:
+            del self._running_skills[name]
+            logger.info(f"Unregistered running skill: {name}")
+            return True
+        return False
+        
+    def get_running_skills(self):
+        """
+        Get all running skills.
+        
+        Returns:
+            A dictionary of running skill names and their (instance, subscription) tuples
+        """
+        return self._running_skills.copy()
+        
+    def terminate_skill(self, name: str):
+        """
+        Terminate a running skill.
+        
+        Args:
+            name: Name of the skill to terminate (will be converted to lowercase)
+            
+        Returns:
+            A message indicating whether the skill was successfully terminated
+        """
+        name = name.lower()
+        if name in self._running_skills:
+            instance, subscription = self._running_skills[name]
+            
+            if hasattr(instance, 'stop') and callable(instance.stop):
+                try:
+                    result = instance.stop()
+                    logger.info(f"Stopped skill: {name}")
+                    return f"Successfully terminated skill: {name}"
+                except Exception as e:
+                    error_msg = f"Error stopping skill {name}: {e}"
+                    logger.error(error_msg)
+                    return error_msg
+            
+            elif subscription is not None:
+                try:
+                    if hasattr(subscription, 'dispose') and callable(subscription.dispose):
+                        subscription.dispose()
+                        logger.info(f"Disposed subscription for skill: {name}")
+                        self.unregister_running_skill(name)
+                        return f"Successfully terminated skill: {name}"
+                except Exception as e:
+                    error_msg = f"Error disposing subscription for skill {name}: {e}"
+                    logger.error(error_msg)
+                    return error_msg
+                    
+            return f"Skill {name} does not have a stop method or disposable subscription"
+        else:
+            return f"No running skill found with name: {name}"
 
 # endregion SkillLibrary
 
@@ -164,6 +245,28 @@ class AbstractSkill(BaseModel):
 
     def clone(self) -> "AbstractSkill":
         return AbstractSkill()
+        
+    
+    def register_as_running(self, name: str, skill_library: SkillLibrary, subscription=None):
+        """
+        Register this skill as running in the skill library.
+        
+        Args:
+            name: Name of the skill (will be converted to lowercase)
+            skill_library: The skill library to register with
+            subscription: Optional subscription associated with the skill
+        """
+        skill_library.register_running_skill(name, self, subscription)
+        
+    def unregister_as_running(self, name: str, skill_library: SkillLibrary):
+        """
+        Unregister this skill from the skill library.
+        
+        Args:
+            name: Name of the skill to remove (will be converted to lowercase)
+            skill_library: The skill library to unregister from
+        """
+        skill_library.unregister_running_skill(name)
 
     # ==== Tools ====
     def get_tools(self) -> Any:

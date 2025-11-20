@@ -23,7 +23,6 @@ from dimos.skills.skills import AbstractRobotSkill
 from dimos.agents.claude_agent import ClaudeAgent
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
-from dimos.skills.kill_skill import register_running_skill, unregister_running_skill
 
 logger = setup_logger("dimos.skills.monitor_skill", level=logging.INFO)
 
@@ -90,7 +89,8 @@ class MonitorSkill(AbstractRobotSkill):
             on_completed=lambda: logger.info("Monitor observable completed")
         )
         
-        register_running_skill("monitor", self)
+        skill_library = self._robot.get_skills()
+        self.register_as_running("monitor", skill_library, self._subscription)
         
         logger.info(f"Monitor started with timestep={self.timestep}s, query='{self.query_text}'")
         return f"Monitor started with timestep={self.timestep}s, query='{self.query_text}'"
@@ -202,7 +202,8 @@ class MonitorSkill(AbstractRobotSkill):
             self._subscription.dispose()
             self._subscription = None
             
-            unregister_running_skill("monitor")
+            skill_library = self._robot.get_skills()
+            self.unregister_as_running("monitor", skill_library)
             
             return "Monitor stopped"
         return "Monitor was not running"

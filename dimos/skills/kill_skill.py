@@ -13,19 +13,18 @@ import logging
 from typing import Optional, Dict, Any, List
 from pydantic import Field
 
-from dimos.skills.skills import AbstractRobotSkill
+from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.skills.kill_skill", level=logging.INFO)
-
-RUNNING_SKILLS_REGISTRY = {}
 
 class KillSkill(AbstractRobotSkill):
     """
     A skill that terminates other running skills.
     
     This skill can be used to stop long-running or background skills
-    like the monitor skill.
+    like the monitor skill. It uses the centralized process management
+    in the SkillLibrary to track and terminate skills.
     """
     
     skill_name: str = Field(..., description="Name of the skill to terminate")
@@ -49,80 +48,46 @@ class KillSkill(AbstractRobotSkill):
         """
         super().__call__()
         
-        skill_name = self.skill_name.lower()
+        skill_library = self._robot.get_skills()
         
-        if skill_name in RUNNING_SKILLS_REGISTRY:
-            skill_instance = RUNNING_SKILLS_REGISTRY[skill_name]
-            
-            if hasattr(skill_instance, 'stop') and callable(skill_instance.stop):
-                try:
-                    result = skill_instance.stop()
-                    logger.info(f"Stopped skill: {skill_name}")
-                    return f"Successfully terminated skill: {skill_name}"
-                except Exception as e:
-                    error_msg = f"Error stopping skill {skill_name}: {e}"
-                    logger.error(error_msg)
-                    return error_msg
-            
-            elif hasattr(skill_instance, 'stop_monitoring') and callable(skill_instance.stop_monitoring):
-                try:
-                    result = skill_instance.stop_monitoring()
-                    logger.info(f"Stopped skill: {skill_name} using stop_monitoring()")
-                    return f"Successfully terminated skill: {skill_name}"
-                except Exception as e:
-                    error_msg = f"Error stopping skill {skill_name}: {e}"
-                    logger.error(error_msg)
-                    return error_msg
-            else:
-                error_msg = f"Skill {skill_name} does not have a stop or stop_monitoring method"
-                logger.error(error_msg)
-                return error_msg
-        else:
-            return f"No running skill found with name: {skill_name}"
+        # Terminate the skill using the skill library
+        return skill_library.terminate_skill(self.skill_name)
     
     @classmethod
-    def list_running_skills(cls) -> List[str]:
+    def list_running_skills(cls, skill_library: SkillLibrary) -> List[str]:
         """
         List all currently running skills.
         
+        Args:
+            skill_library: The skill library to get running skills from
+            
         Returns:
             A list of names of running skills
         """
-        return list(RUNNING_SKILLS_REGISTRY.keys())
+        return list(skill_library.get_running_skills().keys())
 
-def register_running_skill(name: str, instance: Any):
+
+def get_running_skills(skill_library: SkillLibrary) -> Dict[str, tuple]:
     """
-    Register a running skill in the global registry.
+    Get all running skills from the skill library.
     
     Args:
-        name: Name of the skill (will be converted to lowercase)
-        instance: Instance of the running skill
+        skill_library: The skill library to get running skills from
+        
+    Returns:
+        A dictionary of running skill names and their (instance, subscription) tuples
     """
-    RUNNING_SKILLS_REGISTRY[name.lower()] = instance
-    logger.info(f"Registered running skill: {name}")
+    return skill_library.get_running_skills()
 
-def unregister_running_skill(name: str):
+def terminate_skill(name: str, skill_library: SkillLibrary) -> str:
     """
-    Remove a skill from the global registry.
+    Terminate a running skill using the skill library.
     
     Args:
-        name: Name of the skill to remove (will be converted to lowercase)
-    
+        name: Name of the skill to terminate
+        skill_library: The skill library to terminate the skill from
+        
     Returns:
-        True if the skill was found and removed, False otherwise
+        A message indicating whether the skill was successfully terminated
     """
-    name = name.lower()
-    if name in RUNNING_SKILLS_REGISTRY:
-        del RUNNING_SKILLS_REGISTRY[name]
-        logger.info(f"Unregistered running skill: {name}")
-        return True
-    return False
-
-def get_running_skills():
-    """
-    Get a list of all currently running skills.
-    
-    Returns:
-        A dictionary of running skill names and their instances
-    """
-    return RUNNING_SKILLS_REGISTRY.copy()
+    return skill_library.terminate_skill(name)

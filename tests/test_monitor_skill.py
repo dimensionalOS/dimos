@@ -23,7 +23,7 @@ from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.monitor_skill import MonitorSkill
-from dimos.skills.kill_skill import KillSkill, get_running_skills
+from dimos.skills.kill_skill import KillSkill
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.logging_config import setup_logger
 import tests.test_header
@@ -88,7 +88,7 @@ def main():
                                        max_duration=60.0)  # Run for 60 seconds
     logger.info(f"Monitor skill result: {result}")
     
-    logger.info(f"Running skills: {get_running_skills().keys()}")
+    logger.info(f"Running skills: {robot_skills.get_running_skills().keys()}")
     
     try:
         logger.info("Monitor running. Will stop after 30 seconds...")
@@ -98,7 +98,7 @@ def main():
         kill_result = robot_skills.call("KillSkill", skill_name="monitor")
         logger.info(f"Kill skill result: {kill_result}")
         
-        logger.info(f"Running skills after kill: {get_running_skills().keys()}")
+        logger.info(f"Running skills after kill: {robot_skills.get_running_skills().keys()}")
         
         logger.info("Starting monitor skill again with different parameters...")
         result = robot_skills.call("MonitorSkill", 
@@ -110,12 +110,12 @@ def main():
         logger.info("Monitor running again. Will complete after max_duration...")
         time.sleep(25.0)  # Slightly longer than max_duration
         
-        logger.info(f"Running skills after max_duration: {get_running_skills().keys()}")
+        logger.info(f"Running skills after max_duration: {robot_skills.get_running_skills().keys()}")
         
     except KeyboardInterrupt:
         logger.info("Test interrupted by user")
         
-        if "monitor" in get_running_skills():
+        if "monitor" in robot_skills.get_running_skills():
             robot_skills.call("KillSkill", skill_name="monitor")
     
     logger.info("Test completed")
