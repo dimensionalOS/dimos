@@ -226,7 +226,7 @@
                     pip install foxglove-websocket numpy
                     # remove dimos-lcm from pyproject.toml for a moment
                     grep -v '^\s*#' pyproject.original.toml | grep -v "dimos-lcm @ .*" > pyproject.toml
-                    pip install -e .[cpu,dev] 2>&1 | grep -v -E "Could not find a version that satisfies the requirement lcm |ERROR: No matching distribution found for lcm"
+                    pip install -e .[cpu,dev,sim] 2>&1 | grep -v -E "Could not find a version that satisfies the requirement lcm |ERROR: No matching distribution found for lcm"
                     # restore pyproject.toml
                     rm -f pyproject.toml
                     mv pyproject.original.toml pyproject.toml
@@ -249,6 +249,9 @@
                   python -m pytest -s "$PROJECT_ROOT/dimos/"
                   echo "tests finished"
                 fi
+                
+                echo "here's the main command to run:"
+                echo      CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py 
               fi
             fi
           '';
