@@ -36,7 +36,7 @@ from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.utils.logging_config import setup_logger
 from dimos.web.fastapi_server import FastAPIServer
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 def main():

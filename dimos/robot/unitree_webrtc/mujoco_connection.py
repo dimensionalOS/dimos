@@ -44,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 T = TypeVar("T")
 

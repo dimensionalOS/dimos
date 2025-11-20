@@ -31,7 +31,7 @@ from dimos.robot.agilex.piper_arm import PiperArmRobot
 from dimos.skills.manipulation.pick_and_place import PickAndPlace
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 async def run_piper_arm():
