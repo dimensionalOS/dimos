@@ -38,7 +38,6 @@ def init_robot(env):
             env.update({"base_link": msg})
 
             env["position"] = Vector(msg.transform.translation).to_2d()
-            # euler angle, first value is yaw
             env["rotation"] = Vector(rotation.as_euler("zyx", degrees=False))
 
         base_link.subscribe(cb)
@@ -99,30 +98,12 @@ def main():
         print(env["path"])
 
     def walk():
-        position = env["position"]
+        print("WALKING!")
         target = env["target"]
-
-        # Calculate distance between current position and target
-        distance = position.distance(target)
-
-        # If we're more than 0.1m away from the target, move toward it
-        if distance > 0.1:
-            # Calculate direction vector from current position to target
-            direction = (target - position).normalize()
-
-            # Calculate velocities (linear x, y and angular z)
-            x_vel = direction.x
-            y_vel = direction.y
-            yaw_vel = 0.0  # For simplicity, no rotation for now
-
-            # Move the robot with 2 second duration
-            robot.move_vel(x_vel, y_vel, yaw_vel, 2.0)
-
-            print(f"Walking to target: {target}. Distance: {distance:.2f}m")
-            return True
-        else:
-            print(f"Reached target: {target}")
-            return False
+        print("TARGET", target.x, target.y)
+        val = robot.navigate_to_goal_local([target.x, target.y], is_robot_frame=False)
+        print("WALKING DONE")
+        return val
 
     # Define helper functions for IPython
     def move(x, y, yaw=0.0, duration=2.0):
@@ -165,7 +146,7 @@ def main():
                 env["target"] = env["path"].get_vector(0)
 
                 # Try to walk to the target
-                if not walk():
+                if walk():
                     # If we reached the current target point, remove it from the path
                     if len(env["path"]) > 0:
                         print(f"Reached waypoint: {env['path'][0]}")
@@ -185,7 +166,13 @@ def main():
             return False
 
     drawer = Drawer(interactive=True, dark_mode=True)
-    drawer.on_click = lambda x: navigate_to(x) and draw()
+
+    def onclick(x):
+        navigate_to(x)
+        draw()
+        auto()
+
+    drawer.on_click = onclick
 
     def draw():
         costmap = env["costmap"]
