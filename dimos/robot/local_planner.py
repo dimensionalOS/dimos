@@ -30,10 +30,10 @@ class VFHPurePursuitPlanner:
                  robot: Robot,
                  safety_threshold: float = 0.5,
                  histogram_bins: int = 72,
-                 max_linear_vel: float = 0.5,
+                 max_linear_vel: float = 0.8,
                  max_angular_vel: float = 1.0,
                  lookahead_distance: float = 1.0,
-                 goal_tolerance: float = 1.0,
+                 goal_tolerance: float = 0.3,
                  robot_width: float = 0.5,
                  robot_length: float = 0.7,
                  visualization_size: int = 400):
@@ -68,8 +68,8 @@ class VFHPurePursuitPlanner:
         self.selected_direction = None
         
         # VFH parameters
-        self.alpha = 0.1  # Histogram smoothing factor
-        self.obstacle_weight = 2.0
+        self.alpha = 0.25  # Histogram smoothing factor
+        self.obstacle_weight = 3.0
         self.goal_weight = 1.0
         self.prev_direction_weight = 0.5
         self.prev_selected_angle = 0.0
@@ -96,7 +96,7 @@ class VFHPurePursuitPlanner:
     
         if self.check_goal_collision():
             logger.warning("Goal is in collision. Adjusted goal to safe position.")
-            self.goal_xy = self.adjust_goal_to_valid_position(self.goal_xy, 1.0)
+            self.goal_xy = self.adjust_goal_to_valid_position(self.goal_xy, 0.5)
 
     def plan(self) -> Dict[str, float]:
         """
@@ -123,9 +123,28 @@ class VFHPurePursuitPlanner:
             return {'x_vel': 0.0, 'angular_vel': 0.0}
         
         self.histogram = self.build_polar_histogram(occupancy_grid, grid_info, robot_pose)
-        self.selected_direction = self.select_direction(self.histogram, goal_direction)
+        self.selected_direction = self.select_direction(
+            self.goal_weight,
+            self.obstacle_weight,
+            self.prev_direction_weight,
+            self.histogram, 
+            goal_direction,
+        )
+
         linear_vel, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
+
+        if self.check_collision(self.selected_direction):
+            self.selected_direction = self.select_direction(
+                0.0,
+                self.obstacle_weight,
+                0.0,
+                self.histogram,
+                goal_direction
+            )
         
+            _, angular_vel = self.compute_pure_pursuit(goal_distance, self.selected_direction)
+            linear_vel = 0.0
+
         return {'x_vel': linear_vel, 'angular_vel': angular_vel}
     
     def update_visualization(self) -> np.ndarray:
@@ -192,7 +211,7 @@ class VFHPurePursuitPlanner:
         logger.info("Started visualization frame emitter thread")
         return subject
     
-    def build_polar_histogram(self, 
+    def build_polar_histogram(self,
                               occupancy_grid: np.ndarray, 
                               grid_info: Tuple[int, int, float],
                               robot_pose: Tuple[float, float, float]) -> np.ndarray:
@@ -245,9 +264,6 @@ class VFHPurePursuitPlanner:
                 obstacle_value = occupancy_grid[y, x] / 100.0  # Normalize to 0-1 range
                 
                 if distance > 0:
-                    # Apply different scaling based on whether obstacle is within safety threshold
-                    if distance <= self.safety_threshold:
-                        histogram[bin_index] += obstacle_value * (1.0 + (1.0 - distance / self.safety_threshold))
                     # Use inverse square law for obstacles beyond safety threshold
                     histogram[bin_index] += obstacle_value / (distance ** 2)
         
@@ -262,18 +278,22 @@ class VFHPurePursuitPlanner:
         
         return smoothed_histogram
     
-    def select_direction(self, histogram: np.ndarray, goal_direction: float) -> float:
+    def select_direction(self, goal_weight: float, 
+                               obstacle_weight: float, 
+                               prev_direction_weight: float, 
+                               histogram: np.ndarray, 
+                               goal_direction: float) -> float:
         """ Select best direction (remains unchanged)."""
         if np.max(histogram) > 0:
             histogram = histogram / np.max(histogram)
         cost = np.zeros(self.histogram_bins)
         for i in range(self.histogram_bins):
             angle = (i / self.histogram_bins) * 2 * np.pi - np.pi
-            obstacle_cost = self.obstacle_weight * histogram[i]
+            obstacle_cost = obstacle_weight * histogram[i]
             angle_diff = abs(normalize_angle(angle - goal_direction))
-            goal_cost = self.goal_weight * angle_diff
+            goal_cost = goal_weight * angle_diff
             prev_diff = abs(normalize_angle(angle - self.prev_selected_angle))
-            prev_direction_cost = self.prev_direction_weight * prev_diff
+            prev_direction_cost = prev_direction_weight * prev_diff
             cost[i] = obstacle_cost + goal_cost + prev_direction_cost
         min_cost_idx = np.argmin(cost)
         selected_angle = (min_cost_idx / self.histogram_bins) * 2 * np.pi - np.pi
@@ -281,14 +301,73 @@ class VFHPurePursuitPlanner:
         return selected_angle
 
     def compute_pure_pursuit(self, goal_distance: float, goal_direction: float) -> Tuple[float, float]:
-        """ Compute pure pursuit velocities (remains unchanged)."""
+        """ Compute pure pursuit velocities with collision check."""
         if goal_distance < self.goal_tolerance:
             return 0.0, 0.0
+        
         lookahead = min(self.lookahead_distance, goal_distance)
         linear_vel = min(self.max_linear_vel, goal_distance)
         angular_vel = 2.0 * np.sin(goal_direction) / lookahead
         angular_vel = max(-self.max_angular_vel, min(angular_vel, self.max_angular_vel))
+        
         return linear_vel, angular_vel
+
+    def check_collision(self, selected_direction: float) -> bool:
+        """Check if there's an obstacle in the selected direction within safety threshold.
+        
+        Args:
+            selected_direction: The selected direction of travel in radians
+            
+        Returns:
+            bool: True if collision detected, False otherwise
+        """
+        # Get the latest costmap and robot pose
+        costmap = self.robot.ros_control.get_costmap()
+        if costmap is None:
+            return False  # No costmap available
+            
+        occupancy_grid, grid_info, grid_origin = ros_msg_to_numpy_grid(costmap)
+        _, _, grid_resolution = grid_info
+        grid_origin_x, grid_origin_y, _ = grid_origin
+        
+        odom = self.robot.ros_control.get_odometry()
+        if odom is None:
+            return False  # No odometry available
+            
+        robot_pose = ros_msg_to_pose_tuple(odom)
+        robot_x, robot_y, robot_theta = robot_pose
+        
+        # Convert robot position to grid coordinates
+        robot_rel_x = robot_x - grid_origin_x
+        robot_rel_y = robot_y - grid_origin_y
+        robot_cell_x = int(robot_rel_x / grid_resolution)
+        robot_cell_y = int(robot_rel_y / grid_resolution)
+        
+        # Direction in world frame
+        direction_world = robot_theta + selected_direction
+        
+        # Safety distance in cells
+        safety_cells = int(self.safety_threshold / grid_resolution)
+        
+        # Get grid dimensions
+        height, width = occupancy_grid.shape
+        
+        # Check for obstacles along the selected direction
+        for dist in range(1, safety_cells + 1):
+            # Calculate cell position
+            cell_x = robot_cell_x + int(dist * np.cos(direction_world))
+            cell_y = robot_cell_y + int(dist * np.sin(direction_world))
+            
+            # Check if cell is within grid bounds
+            if not (0 <= cell_x < width and 0 <= cell_y < height):
+                continue
+            
+            # Check if cell contains an obstacle (threshold at 50)
+            if occupancy_grid[cell_y, cell_x] > 50:
+                logger.debug(f"Collision detected at distance {dist * grid_resolution:.2f}m")
+                return True
+                
+        return False  # No collision detected
 
     def is_goal_reached(self) -> bool:
         """Check if the robot is within the goal tolerance distance."""

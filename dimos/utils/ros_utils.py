@@ -36,7 +36,7 @@ def ros_msg_to_pose_tuple(odom_msg) -> Tuple[float, float, float]:
 def ros_msg_to_numpy_grid(costmap_msg) -> Tuple[np.ndarray, Tuple[int, int, float], Tuple[float, float, float]]:
     """Convert ROS OccupancyGrid message to numpy array, resolution, and origin pose"""
     if costmap_msg is None:
-        return np.zeros((100, 100), dtype=np.int8), 0.1, (0.0, 0.0, 0.0)
+        return np.zeros((100, 100), dtype=np.int8), (100, 100, 0.1), (0.0, 0.0, 0.0)
         
     width = costmap_msg.info.width
     height = costmap_msg.info.height

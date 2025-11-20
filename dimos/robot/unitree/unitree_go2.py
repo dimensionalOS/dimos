@@ -278,11 +278,6 @@ class UnitreeGo2(Robot):
             
             # Send velocity command to robot
             self.ros_control.move_vel_control(x=x_vel, y=0, yaw=angular_vel)
-
-            # Check if tracking has been lost
-            if tracking_started and (not tracking_data or not tracking_data.get("targets") or not tracking_data["targets"]):
-                logger.warning("Target lost during navigation. Stopping.")
-                break
             
             # Control rate
             time.sleep(0.05)
