@@ -32,47 +32,70 @@ print("Testing ManipulationPipeline with Dual OAK-D S2\n")
 def create_camera_pipeline():
     """Create DepthAI pipeline for OAK-D S2 with MATCHING RGB and depth sizes"""
     pipeline = dai.Pipeline()
-
+    
     # Use ColorCamera nodes for both cameras
     cam_left = pipeline.create(dai.node.ColorCamera)
     cam_right = pipeline.create(dai.node.ColorCamera)
-
+    
     cam_left.setBoardSocket(dai.CameraBoardSocket.CAM_B)
     cam_right.setBoardSocket(dai.CameraBoardSocket.CAM_C)
-
+    
     # Set resolution
     cam_left.setResolution(dai.ColorCameraProperties.SensorResolution.THE_800_P)
     cam_right.setResolution(dai.ColorCameraProperties.SensorResolution.THE_800_P)
-
+    
     # Configure left camera for color preview
     cam_left.setPreviewSize(640, 480)  # RGB will be 640x480
     cam_left.setInterleaved(False)
     cam_left.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-
+    
+    # Stereo depth using ISP output
+    stereo = pipeline.create(dai.node.StereoDepth)
+    stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
+    
+    # Enhanced depth settings for OAK-D SR
+    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
+    stereo.setLeftRightCheck(True)
+    stereo.setExtendedDisparity(False)
+    stereo.setSubpixel(True)  # CHANGED: Enable subpixel for SR accuracy
+    stereo.setSubpixelFractionalBits(3)  # ADD: Better accuracy for SR
+    
+    # ADD TEMPORAL FILTER for depth stabilization
+    config = stereo.initialConfig.get()
+    config.postProcessing.temporalFilter.enable = True
+    config.postProcessing.temporalFilter.alpha = 0.4  # Lower = more smoothing (0.4 is good for SR)
+    config.postProcessing.temporalFilter.delta = 20  # Depth difference threshold in mm
+    
+    # Optional: Add spatial filter for additional smoothing
+    config.postProcessing.spatialFilter.enable = True
+    config.postProcessing.spatialFilter.holeFillingRadius = 2
+    config.postProcessing.spatialFilter.numIterations = 1
+    
+    # ADD: Decimation filter to reduce noise
+    config.postProcessing.decimationFilter.decimationFactor = 2
+    
+    stereo.initialConfig.set(config)
+    
+    # ⚠️ MATCH RGB SIZE!
+    stereo.setOutputSize(640, 480)  # Match the RGB preview size
+    
+    # Enable depth/color alignment for better sync
+    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_B)  # Align depth to left camera
+    
+    # Link ISP outputs to stereo
+    cam_left.isp.link(stereo.left)
+    cam_right.isp.link(stereo.right)
+    
     # Output color preview from left camera
     xout_color = pipeline.create(dai.node.XLinkOut)
     xout_color.setStreamName("color")
     cam_left.preview.link(xout_color.input)
-
-    # Stereo depth using ISP output
-    stereo = pipeline.create(dai.node.StereoDepth)
-    stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
-    stereo.setLeftRightCheck(True)
-    stereo.setExtendedDisparity(False)
-    stereo.setSubpixel(False)
     
-    # ⚠️ ADD THIS LINE TO MATCH RGB SIZE!
-    stereo.setOutputSize(640, 480)  # Match the RGB preview size
-
-    # Link ISP outputs to stereo
-    cam_left.isp.link(stereo.left)
-    cam_right.isp.link(stereo.right)
-
+    # Output depth
     xout_depth = pipeline.create(dai.node.XLinkOut)
     xout_depth.setStreamName("depth")
     stereo.depth.link(xout_depth.input)
-
+    
     return pipeline
 
 
@@ -82,66 +105,45 @@ def test_pipeline_streaming():
     print("=" * 60)
     print("TESTING MANIPULATION PIPELINE WITH STREAMING")
     print("=" * 60)
+    
 
-    for i, device_info in enumerate(device_infos[:2]):
-        try:
-            pipeline = create_camera_pipeline()
-            device = stack.enter_context(dai.Device(pipeline, device_info, dai.UsbSpeed.SUPER))
-            
-            # GET CALIBRATION FROM DEVICE
-            calibData = device.readCalibration()
-            
-            # Get intrinsics for the RGB camera (CAM_B for left camera)
-            intrinsics_matrix = calibData.getCameraIntrinsics(
-                dai.CameraBoardSocket.CAM_B,  # RGB camera
-                640, 480  # Resolution you're using
-            )
-            
-            # Extract [fx, fy, cx, cy] from 3x3 matrix
-            fx = intrinsics_matrix[0][0]
-            fy = intrinsics_matrix[1][1]
-            cx = intrinsics_matrix[0][2]
-            cy = intrinsics_matrix[1][2]
-            
-            print(f"Camera {i} intrinsics: fx={fx:.2f}, fy={fy:.2f}, cx={cx:.2f}, cy={cy:.2f}")
-            
-            # Build camera config with actual calibration
-            if i == 0:
-                extrinsics = cam1_to_robot
-            else:
-                extrinsics = cam2_to_robot
-                
-            camera_configs.append({
-                "camera_id": i,
-                "intrinsics": [fx, fy, cx, cy],
-                "extrinsics": extrinsics
-            })
-            
-            # Get output queues
-            q_color = device.getOutputQueue(name="color", maxSize=4, blocking=False)
-            q_depth = device.getOutputQueue(name="depth", maxSize=4, blocking=False)
-            camera_queues.append((q_color, q_depth))
-            
-            print(f"✓ Camera {i} connected: {device_info.getMxId()}")
-        except Exception as e:
-            print(f"✗ Camera {i} failed: {e}")
-            import traceback
-            traceback.print_exc()
-            return
+    '''cam1_to_robot = np.array([
+        [-0.53421983586013, 0.28566181028607796, -0.7956170543154898, 0.8973138144208128], 
+        [0.43909663767729723, 0.8980159691658256, 0.027594599175484902, -0.1705116675994124], 
+        [-0.7223595432705714, 0.33461119118649363, 0.6051710840569698, 0.7518842627691702], 
+        [0.0, 0.0, 0.0, 1.0]
+    ])'''
 
     cam1_to_robot = np.array([
-        [-0.5676864072910737, 0.20246387231771812, -0.797960226692451, 0.7502531269058595],
-        [0.5144743879160396, 0.8439489366835451, -0.15187592452107102, -0.1942131460591212],
-        [-0.6426882970424852, 0.49674799715432, 0.5832608165887726, 0.6305214067250764],
-        [0.0, 0.0, 0.0, 1.0],
+        [-0.53421983586013, 0.28566181028607796, -0.7956170543154898, 0.74],
+        [0.43909663767729723, 0.8980159691658256, 0.027594599175484902, -0.65],
+        [-0.7223595432705714, 0.33461119118649363, 0.6051710840569698, 0.52],
+        [0.0, 0.0, 0.0, 1.0]
     ])
 
+
+    '''cam2_to_robot = np.array([
+        [0.2229563350955039, 0.6792812252924256, -0.6991905960508926, 0.6358115197817389], 
+        [0.9116600722732756, -0.39928312270158645, -0.09720545534256696, 0.12181570654110657], 
+        [0.3452048453649909, 0.6157515772540829, 0.7082962726470059, 0.36083947540851385], 
+        [0.0, 0.0, 0.0, 1.0]
+    ])'''
+
+    '''cam2_to_robot_original = np.array([
+        [0.2229563350955039, 0.6792812252924256, -0.6991905960508926, 0.75], 
+        [0.9116600722732756, -0.39928312270158645, -0.09720545534256696, 0.05], 
+        [0.3452048453649909, 0.6157515772540829, 0.7082962726470059, 0.52],
+        [0.0, 0.0, 0.0, 1.0]
+    ])'''
+
+
+
     cam2_to_robot = np.array([
-        [0.5697063789662457, 0.5775554768385595, -0.5846916391902254, 0.4934273137283139],
-        [0.8040468878867589, -0.5389612872714936, 0.2510564337002188, 0.28780764457046215],
-        [0.1701271402357255, 0.6131479446238394, 0.771431367108426, 0.33694074301593196],
-        [0.0, 0.0, 0.0, 1.0],
-    ])
+        [0.37719678033860765, 0.8128571754461661, -0.4438308250086612, -0.09803426042385065], 
+        [0.909480284876999, -0.4155789527032386, 0.011821399668918736, 0.5418114101741569], 
+        [0.17483763988981624, 0.4081143790602827, 0.8960326184252441, 0.305856197441436], 
+        [0.0, 0.0, 0.0, 1.0]])
+
 
     # Convert intrinsics from 3x3 matrix to [fx, fy, cx, cy] format
     camera_configs = [
@@ -162,7 +164,7 @@ def test_pipeline_streaming():
 
     manip_pipeline = ManipulationPipeline(
         camera_configs=camera_configs,
-        min_confidence=0.05,
+        min_confidence=0,
         enable_grasp_generation=True,
         grasp_server_url="ws://13.59.77.54:8000/ws/grasp",
         enable_segmentation=True,  # CHANGED: Disable to save memory

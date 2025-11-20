@@ -198,6 +198,32 @@ class ManipulationProcessor:
                     segmentation_results = {"objects": [], "viz_frame": rgb.copy()}
                 per_camera_segmentation_results.append(segmentation_results)
 
+            # =========== ADD DEPTH FILTERING HERE =========== 
+            # Apply aggressive depth filtering for OAK-D SR
+            filtered_depth_images = []
+            for i, depth in enumerate(depth_images):
+                # Debug before filtering
+                valid_depth = depth[depth > 0]
+                if len(valid_depth) > 0:
+                    print(f"BEFORE filter - Camera {i}: min={valid_depth.min():.3f}m, max={valid_depth.max():.3f}m")
+                
+                depth_filtered = depth.copy()
+                # STRICT range for OAK-D SR - anything outside is noise
+                depth_filtered[depth_filtered < 0.2] = 0  # Min 20cm
+                depth_filtered[depth_filtered > 1.0] = 0  # Max 1m - CRITICAL for SR!
+                
+                # Debug after filtering
+                valid_after = depth_filtered[depth_filtered > 0]
+                if len(valid_after) > 0:
+                    print(f"AFTER filter - Camera {i}: {len(valid_after)} pixels remaining")
+                
+                filtered_depth_images.append(depth_filtered)
+            
+            # Replace original with filtered
+            depth_images = filtered_depth_images
+            # =========== END OF DEPTH FILTERING ===========
+
+
             # Step 3: Point Cloud Processing
             pointcloud_time = 0
             per_camera_all_objects = []
@@ -290,11 +316,14 @@ class ManipulationProcessor:
                 cam_data['world_full_pointcloud'] = world_full_pcd
                 cam_data['world_objects'] = world_objects
         
-            # Stitch all world point clouds together
-            full_pcd = self.stitch_pointclouds(world_full_pcds)
-        
-            # Merge objects from all cameras (remove duplicates in 3D)
-            all_objects = self.merge_multi_view_detections(world_all_objects)
+            # TEMPORARY: Use only first camera's point cloud
+            if False:  # Disable multi-camera for testing
+                full_pcd = world_full_pcds[0] if world_full_pcds else o3d.geometry.PointCloud()
+                all_objects = world_all_objects[:len(per_camera_data[0]['all_objects'])]
+            else:
+                # Original stitching code
+                full_pcd = self.stitch_pointclouds(world_full_pcds)
+                all_objects = self.merge_multi_view_detections(world_all_objects)
 
             world_detected_only = []
             for cam_data in per_camera_data:
@@ -621,11 +650,16 @@ class ManipulationProcessor:
 
     def run_pointcloud_filtering(
         self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: list[dict], cam_idx: int = 0
-        ) -> list[dict]:
+    ) -> list[dict]:
         """Run point cloud filtering on detected objects."""
         try:
+            # ADD DEPTH RANGE FILTERING HERE for OAK-D SR
+            depth_filtered = depth_image.copy()
+            depth_filtered[depth_filtered < 0.3] = 0  # Min 20cm for SR
+            depth_filtered[depth_filtered > 5.0] = 0  # Max 1m for SR
+            
             filtered_objects = self.pointcloud_filters[cam_idx].process_images(
-                rgb_image, depth_image, objects
+                rgb_image, depth_filtered, objects  # Use filtered depth
             )
             return filtered_objects if filtered_objects else []
         except Exception as e:
@@ -867,7 +901,7 @@ class ManipulationProcessor:
             return combined_pcd
         
         # Remove duplicate/overlapping points using voxel downsampling
-        voxel_size = 0.005  # 5mm voxel size
+        voxel_size = 0.01 # 5mm voxel size
         stitched_pcd = combined_pcd.voxel_down_sample(voxel_size)
         
         # Optional: Statistical outlier removal

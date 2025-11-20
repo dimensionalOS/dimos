@@ -23,7 +23,7 @@ from typing import Any, Optional
 
 import numpy as np
 
-from dimos.manipulation.manip_aio_pipeline_new import ManipulationPipeline
+from manip_aio_pipeline_depthai import ManipulationPipeline
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
@@ -73,64 +73,57 @@ class VLMTaskPlanner:
         self.camera_id = camera_id
 
     def plan_pick_task(
-        self, instruction: str, rgb_image: np.ndarray, retry_on_failure: bool = True
+        self, instruction: str, rgb_image: np.ndarray = None, retry_on_failure: bool = True
     ) -> TaskPlan | None:
         """
         Plan a pick task based on natural language instruction.
-
-        Args:
-            instruction: Natural language command (e.g., "pick up the blue mug")
-            rgb_image: Current camera view
-            retry_on_failure: Whether to retry with different prompts if parsing fails
-
-        Returns:
-            TaskPlan with grasp information, or None if planning failed
         """
-        # Get current objects with grasps from pipeline
-        objects_with_grasps = self.pipeline.get_objects_with_grasps()
-
-        if not objects_with_grasps:
-            logger.warning("No objects with grasps available")
-            return None
-
-        # Query VLM to identify target object
-        vlm_response = self._query_vlm_for_object(rgb_image, instruction, objects_with_grasps)
-
+        # Get current RGB if not provided
+        if rgb_image is None:
+            with self.pipeline.lock:
+                if self.pipeline.latest_rgb_images[self.camera_id] is not None:
+                    rgb_image = self.pipeline.latest_rgb_images[self.camera_id].copy()
+                else:
+                    logger.error("No RGB image available")
+                    return None
+        
+        # Query VLM to identify target pixel
+        vlm_response = self._query_vlm_for_object_simple(rgb_image, instruction)
+        
         if not vlm_response:
             logger.error("VLM failed to identify target object")
             return None
-
-        # Parse VLM response to get pixel coordinates
+        
+        # Parse pixel coordinates from VLM
         pixel_coords = self._parse_pixel_from_vlm(vlm_response)
-
-        if not pixel_coords and retry_on_failure:
-            # Retry with more explicit prompt
-            vlm_response = self._query_vlm_with_explicit_format(rgb_image, instruction)
-            pixel_coords = self._parse_pixel_from_vlm(vlm_response)
-
+        
         if not pixel_coords:
-            logger.error(f"Could not parse pixel coordinates from VLM response: {vlm_response}")
+            logger.error(f"Could not parse pixel coordinates from VLM response")
             return None
-
-        # Find object at pixel location
-        target_object = self.pipeline.find_object_at_pixel(pixel_coords, self.camera_id)
-
+        
+        # Generate grasps for ONLY the object at this pixel (fast!)
+        target_object = self.pipeline.generate_grasp_for_object_at_pixel(
+            pixel_coords, 
+            self.camera_id
+        )
+        
         if not target_object:
             logger.warning(f"No object found at pixel {pixel_coords}")
             return None
-
-        # Get best grasp for object
+        
+        # Get best grasp
         best_grasp = None
         if target_object.get("grasps"):
-            best_grasp = target_object["grasps"][0]  # Already sorted by score
+            best_grasp = target_object["grasps"][0]  # First grasp is usually best
+            logger.info(f"Selected best grasp from {len(target_object['grasps'])} options")
         else:
-            logger.warning(f"Object at {pixel_coords} has no grasps")
+            logger.warning("No grasps generated for target object")
             return None
-
-        # Extract confidence and reasoning from VLM
+        
+        # Build task plan
         confidence = self._extract_confidence(vlm_response)
         reasoning = self._extract_reasoning(vlm_response)
-
+        
         return TaskPlan(
             instruction=instruction,
             target_object=target_object,
@@ -155,45 +148,62 @@ class VLMTaskPlanner:
 
         prompt = f"""You are a robotic manipulation assistant. Your task is to identify which object to pick based on the instruction.
 
-Instruction: {instruction}
+        Instruction: {instruction}
 
-Available objects detected in scene:
-{chr(10).join(object_descriptions)}
+        Available objects detected in scene:
+        {chr(10).join(object_descriptions)}
 
-Please identify the target object by clicking on it in the image. Respond with:
-1. The pixel coordinates [x, y] where you would click
-2. Your confidence (0-1)
-3. Brief reasoning for your selection
+        Please identify the target object by clicking on it in the image. Respond with:
+        1. The pixel coordinates [x, y] where you would click
+        2. Your confidence (0-1)
+        3. Brief reasoning for your selection
 
-Format your response as:
-PIXEL: [x, y]
-CONFIDENCE: 0.X
-REASONING: <your explanation>
-"""
+        Format your response as:
+        PIXEL: [x, y]
+        CONFIDENCE: 0.X
+        REASONING: <your explanation>   
+        """
 
         # Convert numpy image to Image message
         image_msg = Image.from_numpy(rgb_image)
 
         return self.vlm.query(image_msg, prompt)
 
+    def _query_vlm_for_object_simple(self, rgb_image: np.ndarray, instruction: str) -> str:
+        """Simple VLM query without object list."""
+        
+        prompt = f"""You are a robotic manipulation assistant. 
+    Task: {instruction}
+
+    Click on the object I should pick up. Be specific - click directly on the object mentioned.
+
+    Respond with:
+    PIXEL: [x, y]
+    CONFIDENCE: 0.X
+    REASONING: brief explanation
+    """
+        
+        image_msg = Image.from_numpy(rgb_image)
+        return self.vlm.query(image_msg, prompt)
+
     def _query_vlm_with_explicit_format(self, rgb_image: np.ndarray, instruction: str) -> str:
         """Retry with more explicit formatting instructions."""
-
+        
         prompt = f"""Click on the object described: "{instruction}"
 
-IMPORTANT: Your response MUST include pixel coordinates in this EXACT format:
-PIXEL: [x, y]
+    IMPORTANT: Your response MUST include pixel coordinates in this EXACT format:
+    PIXEL: [x, y]
 
-Where x is the horizontal position (0 to image width)
-And y is the vertical position (0 to image height)
+    Where x is the horizontal position (0 to image width)
+    And y is the vertical position (0 to image height)
 
-Example response:
-PIXEL: [320, 240]
-CONFIDENCE: 0.9
-REASONING: The blue mug is clearly visible in the center of the image.
+    Example response:
+    PIXEL: [320, 240]
+    CONFIDENCE: 0.9
+    REASONING: The blue mug is clearly visible in the center of the image.
 
-Now identify and click on: {instruction}"""
-
+    Now identify and click on: {instruction}"""
+        
         image_msg = Image.from_numpy(rgb_image)
         return self.vlm.query(image_msg, prompt)
 
@@ -229,10 +239,10 @@ Now identify and click on: {instruction}"""
         # Query VLM for placement location
         prompt = f"""Instruction: {instruction}
 
-    Where should I place the object? Provide pixel coordinates.
+        Where should I place the object? Provide pixel coordinates.
 
-    PIXEL: [x, y]
-    REASONING: <why this location>"""
+        PIXEL: [x, y]
+        REASONING: <why this location>"""
 
         response = self.vlm.query(Image.from_numpy(rgb_image), prompt)
         pixel = self._parse_pixel_from_vlm(response)
