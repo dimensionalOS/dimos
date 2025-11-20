@@ -54,6 +54,22 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 - **DimOS Interface / Development Tools**
   - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
 
+## MacOS Installation
+
+```sh
+# Install Nix
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+
+# clone the repository
+git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
+
+# setup the environment (follow the prompts)
+cd dimos
+nix develop
+
+# You should be able to follow the instructions below as well for a more manual installation
+```
+
 ---
 ## Python Installation
 Tested on Ubuntu 22.04/24.04
