@@ -404,7 +404,7 @@ class ClaudeAgent(LLMAgent):
                                         "signature": current_block['signature']
                                     }
                                     thinking_blocks.append(thinking_block)
-                                    memory_file.write(f"\nTHINKING COMPLETE (FALLBACK): block {current_block['id']}\n")
+                                memory_file.write(f"\nTHINKING COMPLETE: block {current_block['id']}\n")
                             
                             elif current_block['type'] == "redacted_thinking":
                                 # Handle redacted thinking blocks
@@ -469,7 +469,7 @@ class ClaudeAgent(LLMAgent):
             logger.exception(e)  # This will print the full traceback
             raise
             
-    def direct_query(self, query_text: str):
+    def direct_query(self, query_text: str, base64_image: Optional[str] = None, dimensions: Optional[Tuple[int, int]] = None):
         """Execute a direct streaming query with Claude that handles multi-turn tool calling.
         
         Unlike run_streaming_query, this method completely bypasses the LLMAgent pipeline
@@ -478,6 +478,8 @@ class ClaudeAgent(LLMAgent):
         
         Args:
             query_text (str): The query text to process
+            base64_image (Optional[str]): Optional Base64-encoded image to include in the query
+            dimensions (Optional[Tuple[int, int]]): Optional image dimensions (width, height)
             
         Returns:
             The final text response from Claude after all tool calls are complete
@@ -488,8 +490,8 @@ class ClaudeAgent(LLMAgent):
         # Get RAG context
         _, condensed_results = self._get_rag_context()
         
-        # Build the initial prompt
-        messages = self._build_prompt(None, None, False, condensed_results)
+        # Build the initial prompt including image if provided
+        messages = self._build_prompt(base64_image, dimensions, False, condensed_results)
         claude_params = messages.get('claude_prompt', {}).copy()
         
         # Initialize conversation history
@@ -567,8 +569,8 @@ class ClaudeAgent(LLMAgent):
         
         logger.info(f"Direct query complete. Final response: {final_response}")
         return final_response
-
-    def run_streaming_query(self, query_text: str):
+    # TODO: Delete, not used
+    def run_streaming_query(self, query_text: str, base64_image: Optional[str] = None, dimensions: Optional[Tuple[int, int]] = None):
         """Run a streaming query with Claude that handles multi-turn tool calling.
         
         This method creates a continuous streaming session that:
@@ -580,48 +582,14 @@ class ClaudeAgent(LLMAgent):
         
         Args:
             query_text (str): The query text to process
+            base64_image (Optional[str]): Optional Base64-encoded image to include in the query
+            dimensions (Optional[Tuple[int, int]]): Optional image dimensions (width, height)
             
         Returns:
             The final text response from Claude after all tool calls are complete
         """
         # Use the direct query method instead since it works better with the early exit in LLMAgent
-        return self.direct_query(query_text)
-    
-    def _observable_query(self, observer, base64_image=None, dimensions=None, override_token_limit=False, incoming_query=None):
-        """Override of LLMAgent._observable_query to handle thinking blocks correctly.
-        
-        This implementation checks if thinking is enabled in Claude params, and if so,
-        uses direct_query instead of the normal LLMAgent path. This bypasses the early exit
-        in the parent class when thinking blocks are detected.
-        
-        Args:
-            observer: The observer to emit responses to
-            base64_image: Optional base64-encoded image
-            dimensions: Optional image dimensions
-            override_token_limit: Whether to override token limits
-            incoming_query: Optional query to update the agent's query
-        """
-        try:
-            # Update query if provided
-            self._update_query(incoming_query)
-            
-            # Check if thinking is enabled in Claude parameters
-            thinking_enabled = self.thinking_budget_tokens is not None
-            
-            if thinking_enabled:
-                # Use direct_query for thinking-enabled queries to bypass early exit
-                logger.info("Thinking is enabled, using direct_query implementation")
-                result = self.direct_query(self.query)
-                observer.on_next(result)
-                self.response_subject.on_next(result)
-                observer.on_completed()
-            else:
-                # Use the parent implementation for regular queries
-                super()._observable_query(observer, base64_image, dimensions, override_token_limit, incoming_query)
-        except Exception as e:
-            logger.error(f"Query failed in {self.dev_name}: {e}")
-            observer.on_error(e)
-            self.response_subject.on_error(e)
+        return self.direct_query(query_text, base64_image, dimensions)
         
     def _handle_tooling(self, response_message, messages):
         """Override of LLMAgent._handle_tooling to handle Claude's message format.
@@ -660,12 +628,9 @@ class ClaudeAgent(LLMAgent):
             # Build assistant message with text content and thinking blocks
             assistant_content = []
             
-            # First add all thinking blocks - we must preserve the exact thinking block structure
+            # First add all thinking blocks
             if hasattr(current_response, 'thinking_blocks') and current_response.thinking_blocks:
-                # Claude API requires the exact original thinking blocks to be preserved
-                for block in current_response.thinking_blocks:
-                    # Make sure we're keeping the exact structure including signature
-                    assistant_content.append(block)
+                assistant_content.extend(current_response.thinking_blocks)
             
             # Then add text content if present
             if current_response.content.strip():
