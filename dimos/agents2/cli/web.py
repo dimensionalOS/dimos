@@ -81,4 +81,4 @@ class WebInput(Module):
 
 web_input = WebInput.blueprint
 
-__all__ = ["web_input", "WebInput"]
+__all__ = ["WebInput", "web_input"]
