@@ -97,7 +97,7 @@
                 let 
                     # 1. fix pkg-config on darwin
                     pkgConfPackages = aggregation.getAll { hasAllFlags=[ "packageConfGroup" ]; attrPath=[ "pkg" ]; };
-                    packageConfPackagesString = lib.print { prefix="packageConfPackagesString"; } (aggregation.getAll {
+                    packageConfPackagesString = (aggregation.getAll {
                         hasAllFlags=[ "packageConfGroup" ];
                         attrPath=[ "pkg" ];
                         strAppend="/lib/pkgconfig";
