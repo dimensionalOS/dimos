@@ -19,8 +19,9 @@ from enum import Enum
 import json
 import threading
 import time
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
+from annotated_doc import Doc
 from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool as langchain_tool
 from rich.console import Console
@@ -40,16 +41,48 @@ logger = setup_logger()
 
 @dataclass
 class SkillCoordinatorConfig:
-    skill_transport: type[SkillCommsSpec] = LCMSkillComms
+    """Configuration for the SkillCoordinator module.
+
+    The SkillCoordinator is the central orchestration layer between agents and skills,
+    managing skill lifecycle, state tracking, and cross-event-loop message routing. This
+    configuration class controls how skills communicate with the coordinator.
+    """
+
+    skill_transport: Annotated[
+        type[SkillCommsSpec],
+        Doc(
+            """Communication transport implementation for skill messages between skills (thread pools)
+            and coordinator. Must implement SkillCommsSpec (publish/subscribe semantics).
+            Defaults to LCMSkillComms (LCM over "/skill" channel). Custom transports can
+            implement the SkillCommsSpec interface."""
+        ),
+    ] = LCMSkillComms
 
 
 class SkillStateEnum(Enum):
+    """Lifecycle state of a skill invocation.
+
+    State Transition Flow (unidirectional, message-driven):
+        pending → running → (completed | error)
+
+        - pending: Scheduled but not yet executing
+        - running: Actively executing in thread pool
+        - completed: Finished successfully
+        - error: Terminated with an exception
+
+    State transitions correspond directly to message types (MsgType.start, stream, ret, error).
+    Terminal states (completed, error) trigger automatic cleanup when clear=True in
+    generate_snapshot(), guaranteeing exactly one terminal state per invocation.
+    """
+
     pending = 0
     running = 1
     completed = 2
     error = 3
 
-    def colored_name(self) -> Text:
+    def colored_name(
+        self,
+    ) -> Annotated[Text, Doc("The state name as a rich Text object with color styling.")]:
         """Return the state name as a rich Text object with color."""
         colors = {
             SkillStateEnum.pending: "yellow",
@@ -62,21 +95,121 @@ class SkillStateEnum(Enum):
 
 # This object maintains the state of a skill run on a caller end
 class SkillState:
-    call_id: str
-    name: str
-    state: SkillStateEnum
-    skill_config: SkillConfig
+    """Tracks execution state of a single skill invocation.
 
-    msg_count: int = 0
-    sent_tool_msg: bool = False
+    Manages the skill lifecycle (pending → running → completed/error), accumulates stream
+    messages via the configured reducer, and encodes state for agent consumption using the
+    dual-protocol pattern.
 
-    start_msg: SkillMsg[Literal[MsgType.start]] = None  # type: ignore[assignment]
-    end_msg: SkillMsg[Literal[MsgType.ret]] = None  # type: ignore[assignment]
-    error_msg: SkillMsg[Literal[MsgType.error]] = None  # type: ignore[assignment]
-    ret_msg: SkillMsg[Literal[MsgType.ret]] = None  # type: ignore[assignment]
-    reduced_stream_msg: list[SkillMsg[Literal[MsgType.reduced_stream]]] = None  # type: ignore[assignment]
+    Dual-Protocol Pattern:
+        - First agent_encode() call: Returns ToolMessage (LangChain protocol compatibility)
+        - Subsequent calls: Return JSON status updates (skill name, call_id, state, data, duration)
 
-    def __init__(self, call_id: str, name: str, skill_config: SkillConfig | None = None) -> None:
+    State Transitions (via handle_msg()):
+        - MsgType.start: pending → running
+        - MsgType.stream: maintains running, applies reducer
+        - MsgType.ret: running → completed
+        - MsgType.error: any state → error
+
+    Notification Logic (handle_msg() returns True when):
+        - Stream messages with Stream.call_agent
+        - Return messages with Return.call_agent
+        - Error messages (always)
+        - Start messages never trigger notification
+
+    Example:
+        >>> from dimos.protocol.skill.type import Stream, Reducer, Output
+        >>> config = SkillConfig(
+        ...     name="navigate_to",
+        ...     ret=Return.call_agent,
+        ...     stream=Stream.none,
+        ...     reducer=Reducer.all,
+        ...     output=Output.standard,
+        ...     schema={}
+        ... )
+        >>> skill_state = SkillState(call_id="abc123", name="navigate_to", skill_config=config)
+        >>> start_msg = SkillMsg(call_id="abc123", skill_name="navigate_to", content={}, type=MsgType.start)
+        >>> skill_state.handle_msg(start_msg)  # Transitions to running
+        False
+        >>> tool_msg = skill_state.agent_encode()  # First call returns ToolMessage
+        >>> isinstance(tool_msg, ToolMessage)
+        True
+        >>> json_update = skill_state.agent_encode()  # Subsequent calls return JSON
+        >>> import json
+        >>> data = json.loads(json_update)
+        >>> data['name']
+        'navigate_to'
+    """
+
+    call_id: Annotated[
+        str,
+        Doc(
+            "Unique identifier for this skill invocation, used for message routing and tool result correlation"
+        ),
+    ]
+    name: Annotated[str, Doc("Name of the skill being executed")]
+    state: Annotated[
+        SkillStateEnum,
+        Doc(
+            "Current lifecycle state tracking execution progress (pending, running, completed, error)"
+        ),
+    ]
+    skill_config: Annotated[
+        SkillConfig,
+        Doc(
+            "Configuration controlling skill behavior including streaming mode, return mode, reducer function, and output format"
+        ),
+    ]
+
+    msg_count: Annotated[
+        int,
+        Doc(
+            "Total number of SkillMsg messages received from the skill execution, used for progress tracking"
+        ),
+    ] = 0
+    sent_tool_msg: Annotated[
+        bool,
+        Doc(
+            "Flag tracking whether the initial ToolMessage has been sent, ensures correct protocol adherence"
+        ),
+    ] = False
+
+    start_msg: Annotated[
+        SkillMsg[Literal[MsgType.start]] | None,
+        Doc("The MsgType.start message marking execution begin, used for duration calculation"),
+    ] = None
+    end_msg: Annotated[
+        SkillMsg[Literal[MsgType.ret]] | None,
+        Doc("Terminal message (either ret or error), marks completion timestamp"),
+    ] = None
+    error_msg: Annotated[
+        SkillMsg[Literal[MsgType.error]] | None,
+        Doc(
+            "MsgType.error message if skill terminated with exception, contains error details for agent"
+        ),
+    ] = None
+    ret_msg: Annotated[
+        SkillMsg[Literal[MsgType.ret]] | None,
+        Doc("MsgType.ret message with final return value, only present for successful completion"),
+    ] = None
+    reduced_stream_msg: Annotated[
+        list[SkillMsg[Literal[MsgType.reduced_stream]]] | None,
+        Doc(
+            "Accumulated stream messages after applying the configured reducer function, provides incremental progress for streaming skills"
+        ),
+    ] = None
+
+    def __init__(
+        self,
+        call_id: Annotated[str, Doc("Unique identifier for this skill invocation")],
+        name: Annotated[str, Doc("Name of the skill being executed")],
+        skill_config: Annotated[
+            SkillConfig | None,
+            Doc(
+                "Optional configuration controlling skill behavior. If None, defaults to no streaming, no return, all reducer, standard output"
+            ),
+        ] = None,
+    ) -> None:
         super().__init__()
 
         self.skill_config = skill_config or SkillConfig(
@@ -92,7 +225,15 @@ class SkillState:
         self.call_id = call_id
         self.name = name
 
-    def duration(self) -> float:
+    def duration(
+        self,
+    ) -> Annotated[
+        float,
+        Doc(
+            """Duration in seconds. Returns elapsed time if completed,
+            time since start if running, or 0.0 if not started."""
+        ),
+    ]:
         """Calculate the duration of the skill run."""
         if self.start_msg and self.end_msg:
             return self.end_msg.ts - self.start_msg.ts
@@ -101,7 +242,20 @@ class SkillState:
         else:
             return 0.0
 
-    def content(self) -> dict[str, Any] | str | int | float | None:  # type: ignore[return]
+    def content(
+        self,
+    ) -> Annotated[
+        dict[str, Any] | str | int | float | None,
+        Doc("""
+            The content from the skill's execution state.
+
+            Returns the reduced stream message content when running,
+            the return message content (or reduced stream if streaming) when completed,
+            or the error message content (with optional stream context) when errored.
+            Returns None for pending state or when no content is available.
+        """),
+    ]:
+        """Get the content from the current skill execution state."""
         if self.state == SkillStateEnum.running:
             if self.reduced_stream_msg:
                 return self.reduced_stream_msg.content  # type: ignore[attr-defined, no-any-return]
@@ -114,15 +268,31 @@ class SkillState:
         if self.state == SkillStateEnum.error:
             print("Error msg:", self.error_msg.content)
             if self.reduced_stream_msg:
-                (self.reduced_stream_msg.content + "\n" + self.error_msg.content)  # type: ignore[attr-defined]
+                return self.reduced_stream_msg.content + "\n" + self.error_msg.content  # type: ignore[attr-defined]
             else:
                 return self.error_msg.content  # type: ignore[return-value]
 
-    def agent_encode(self) -> ToolMessage | str:
-        # tool call can emit a single ToolMessage
-        # subsequent messages are considered SituationalAwarenessMessages,
-        # those are collapsed into a HumanMessage, that's artificially prepended to history
+        return None
 
+    def agent_encode(
+        self,
+    ) -> Annotated[
+        ToolMessage | str,
+        Doc(
+            """ToolMessage on first call, JSON string on subsequent calls.
+
+            This dual-protocol pattern bridges LangChain's tool call requirements
+            (one ToolMessage per tool_call_id) with the need for ongoing status updates
+            from long-running skills.
+
+            First call returns a ToolMessage that completes the tool invocation protocol
+            and enters permanent conversation history. Subsequent calls return JSON-encoded
+            state snapshots that get aggregated into an AIMessage providing situational
+            awareness about active skills, without violating the one-ToolMessage constraint.
+            """
+        ),
+    ]:
+        """Encode skill state for agent consumption using dual-protocol pattern."""
         if not self.sent_tool_msg:
             self.sent_tool_msg = True
             return ToolMessage(
@@ -142,7 +312,30 @@ class SkillState:
             )
 
     # returns True if the agent should be called for this message
-    def handle_msg(self, msg: SkillMsg) -> bool:  # type: ignore[type-arg]
+    def handle_msg(
+        self,
+        msg: Annotated[SkillMsg, Doc("The skill message to process")],  # type: ignore[type-arg]
+    ) -> Annotated[
+        bool,
+        Doc(
+            """Whether the coordinator should notify the agent about this message.
+            True for errors (always), stream messages with Stream.call_agent,
+            and return messages with Return.call_agent. False otherwise."""
+        ),
+    ]:
+        """Process an incoming skill message and update internal state.
+
+        Updates the skill's execution state based on the message type. For stream
+        messages, applies the configured reducer to accumulate outputs. The return
+        value determines whether the coordinator should schedule an agent call to
+        process this message.
+
+        Notification logic:
+        - Start messages: Never notify (skill is initializing)
+        - Stream messages: Notify only if configured with Stream.call_agent
+        - Return messages: Notify only if configured with Return.call_agent
+        - Error messages: Always notify (errors require agent attention)
+        """
         self.msg_count += 1
         if msg.type == MsgType.stream:
             self.state = SkillStateEnum.running
@@ -212,9 +405,14 @@ class SkillState:
 
 # subclassed the dict just to have a better string representation
 class SkillStateDict(dict[str, SkillState]):
-    """Custom dict for skill states with better string representation."""
+    """Dictionary mapping call_id to SkillState with Rich-formatted table display.
 
-    def table(self) -> Table:
+    Provides table() and __str__() methods for debugging and monitoring skill execution
+    in SkillCoordinator.
+    Table columns: Call ID, Skill, State (colored), Duration, Messages.
+    """
+
+    def table(self) -> Annotated[Table, Doc("Rich Table with formatted skill state columns")]:
         # Add skill states section
         states_table = Table(show_header=True)
         states_table.add_column("Call ID", style="dim", width=12)
@@ -263,17 +461,102 @@ class SkillStateDict(dict[str, SkillState]):
 # It aggregates skills from static and dynamic containers, manages skill states,
 # and decides when to notify the agent about updates.
 class SkillCoordinator(Module):
+    """Central orchestration layer between agents and skills.
+
+    Manages skill lifecycle, state tracking, and message routing across event loops,
+    decoupling agents (asyncio) from skills (thread pools) using lazy event creation
+    and thread-safe cross-loop notification.
+
+    Container Types:
+        - Static: Fixed skills cached at registration for O(1) lookup
+        - Dynamic: Runtime-generated skills queried on-demand for context-dependent generation
+
+    Cross-Event-Loop Synchronization:
+        - asyncio.Event created lazily in agent's loop on first wait_for_updates()
+        - call_soon_threadsafe bridges transport loop and agent loop
+        - Message-driven state tracking via SkillState objects
+
+    Examples:
+        Basic coordinator setup and skill invocation:
+
+        >>> from dimos.core.module import Module
+        >>> from dimos.protocol.skill.skill import skill
+        >>>
+        >>> # Note that you'll need to do a bit more for the skill to be available to llm agents -- see the tutorial.
+        >>> class NavigationModule(Module):
+        ...     @skill()
+        ...     def navigate_to(self, location: str) -> str:
+        ...         return f"Navigating to {location}"
+        >>>
+        >>> # Set up coordinator
+        >>> coordinator = SkillCoordinator()
+        >>> coordinator.register_skills(NavigationModule())
+        >>> coordinator.start()
+        >>> coordinator.call_skill(call_id="123", skill_name="navigate_to", args={"args": ["kitchen"]})
+        >>>
+        >>> # Verify skill state was created
+        >>> snapshot = coordinator.generate_snapshot(clear=False)
+        >>> "123" in snapshot
+        True
+        >>> coordinator.stop()
+
+        Agent integration with update loop (async):
+
+        >>> import asyncio
+        >>> # (In actual async context)
+        >>> # await coordinator.wait_for_updates(timeout=1.0)
+        >>> # snapshot = coordinator.generate_snapshot(clear=True)
+        >>> # for call_id, state in snapshot.items():
+        >>> #     message = state.agent_encode()  # First: ToolMessage, then: JSON
+
+    Notes:
+        - Not thread-safe for _skill_state (single coordinator loop assumed)
+        - generate_snapshot(clear=True) provides atomic read-and-clear, removing terminal states
+        - Completed/errored skills removed after snapshot(clear=True)
+        - Message flow pattern: Skills publish messages in a fixed sequence:
+            1. One `start` message when execution begins
+            2. Zero or more `stream` messages during execution (for incremental progress)
+            3. Exactly one terminal message: either `ret` (success) or `error` (failure)
+    """
+
     default_config = SkillCoordinatorConfig  # type: ignore[assignment]
     empty: bool = True
 
-    _static_containers: list[SkillContainer]
-    _dynamic_containers: list[SkillContainer]
-    _skill_state: SkillStateDict  # key is call_id, not skill_name
-    _skills: dict[str, SkillConfig]
-    _updates_available: asyncio.Event | None
-    _loop: asyncio.AbstractEventLoop | None
+    _static_containers: Annotated[
+        list[SkillContainer],
+        Doc(
+            "Containers with fixed skills known at registration time. Skills are cached immediately for performance."
+        ),
+    ]
+    _dynamic_containers: Annotated[
+        list[SkillContainer],
+        Doc(
+            "Containers whose skills depend on runtime context. Queried on each skills() call; not cached."
+        ),
+    ]
+    _skill_state: Annotated[
+        SkillStateDict,
+        Doc(
+            "Maps call_id to SkillState objects tracking each skill invocation. Key is call_id (unique per invocation), not skill_name (reusable)."
+        ),
+    ]
+    _skills: Annotated[
+        dict[str, SkillConfig], Doc("Cached static skills for O(1) lookup performance.")
+    ]
+    _updates_available: Annotated[
+        asyncio.Event | None,
+        Doc(
+            "Event signaling skill updates ready for agent processing. Created lazily in agent's event loop on first wait_for_updates() call."
+        ),
+    ]
+    _loop: Annotated[
+        asyncio.AbstractEventLoop | None, Doc("Coordinator's own event loop for message handling.")
+    ]
     _loop_thread: threading.Thread | None
-    _agent_loop: asyncio.AbstractEventLoop | None
+    _agent_loop: Annotated[
+        asyncio.AbstractEventLoop | None,
+        Doc("Agent's event loop, captured when updates_available event is created."),
+    ]
 
     def __init__(self) -> None:
         # TODO: Why isn't this super().__init__() ?
@@ -355,8 +638,32 @@ class SkillCoordinator(Module):
 
     # internal skill call
     def call_skill(
-        self, call_id: str | Literal[False], skill_name: str, args: dict[str, Any]
+        self,
+        call_id: Annotated[
+            str | Literal[False],
+            Doc("""Unique identifier for this skill invocation. If False, a
+            timestamp-based ID will be auto-generated. This ID is used to
+            track skill execution state and correlate responses."""),
+        ],
+        skill_name: Annotated[
+            str,
+            Doc("""Name of the skill to invoke, as registered in the
+            coordinator's skill registry."""),
+        ],
+        args: Annotated[
+            dict[str, Any],
+            Doc("""Dictionary containing skill invocation arguments. Expected to
+            contain an "args" key with either a list of positional arguments
+            or a dict of keyword arguments. Will be interpreted by
+            `interpret_tool_call_args` to extract positional and keyword args."""),
+        ],
     ) -> None:
+        """Execute a skill invocation requested by an agent.
+
+        Creates a SkillState to track execution and delegates to the skill's call method.
+        Auto-generates call_id from timestamp if not provided. Logs error and returns
+        early if skill not found (e.g., expired dynamic skill).
+        """
         if not call_id:
             call_id = str(time.time())
         skill_config = self.get_skill_config(skill_name)
@@ -392,7 +699,25 @@ class SkillCoordinator(Module):
     # Updates local skill state (appends to streamed data if needed etc)
     #
     # Checks if agent needs to be notified (if ToolConfig has Return=call_agent or Stream=call_agent)
-    def handle_message(self, msg: SkillMsg) -> None:  # type: ignore[type-arg]
+    def handle_message(
+        self,
+        msg: Annotated[
+            SkillMsg,  # type: ignore[type-arg]
+            Doc(
+                """The incoming skill message containing status updates, output, or errors.
+                Must contain a valid call_id and skill_name."""
+            ),
+        ],
+    ) -> None:
+        """Process incoming skill messages and notify the agent when needed.
+
+        Routes messages to the appropriate SkillState. If notification is required
+        (based on skill config), sets the agent's updates_available event using
+        call_soon_threadsafe for cross-loop communication.
+
+        Handles orphan messages (no SkillState) by lazy initialization with warning.
+        Post-shutdown messages are silently dropped.
+        """
         if self._closed_coord:
             import traceback
 
@@ -460,17 +785,14 @@ class SkillCoordinator(Module):
             return False
         return True
 
-    async def wait_for_updates(self, timeout: float | None = None) -> True:  # type: ignore[valid-type]
+    async def wait_for_updates(
+        self,
+        timeout: Annotated[float | None, Doc("Optional timeout in seconds")] = None,
+    ) -> Annotated[bool, Doc("True if updates are available, False on timeout")]:
         """Wait for skill updates to become available.
 
         This method should be called by the agent when it's ready to receive updates.
         It will block until updates are available or timeout is reached.
-
-        Args:
-            timeout: Optional timeout in seconds
-
-        Returns:
-            True if updates are available, False on timeout
         """
         updates_available = self._ensure_updates_available()
         if updates_available is None:
@@ -521,8 +843,31 @@ class SkillCoordinator(Module):
             else:
                 raise
 
-    def generate_snapshot(self, clear: bool = True) -> SkillStateDict:
-        """Generate a fresh snapshot of completed skills and optionally clear them."""
+    def generate_snapshot(
+        self,
+        clear: Annotated[
+            bool,
+            Doc(
+                """Whether to perform cleanup after snapshot generation. If True,
+                removes completed/errored skills from tracking, resets stream accumulators
+                for running skills, and clears the updates_available event. If False,
+                returns a simple copy without side effects."""
+            ),
+        ] = True,
+    ) -> Annotated[
+        SkillStateDict,
+        Doc(
+            """Dictionary mapping call_id to SkillState objects. Each SkillState contains
+            the skill's execution state, accumulated outputs, and error information.
+            The returned dict is a copy independent of internal state."""
+        ),
+    ]:
+        """Generate an atomic snapshot of skill states with optional cleanup.
+
+        Returns a point-in-time copy of all tracked skill invocations. When clear=True,
+        performs atomic read-and-clear: removes terminal states (completed/error), resets
+        stream accumulators for running skills, and clears the updates_available event.
+        """
         ret = copy(self._skill_state)
 
         if clear:
@@ -612,7 +957,24 @@ class SkillCoordinator(Module):
     #
     # Dynamic containers will be queried at runtime via
     # .skills() method
-    def register_skills(self, container: SkillContainer) -> None:
+    def register_skills(
+        self,
+        container: Annotated[
+            SkillContainer,
+            Doc(
+                """The skill container to register. Must implement the SkillContainer
+                protocol with a dynamic_skills() method and a skills() method that returns
+                a mapping of skill names to SkillConfig objects."""
+            ),
+        ],
+    ) -> None:
+        """Register a skill container with the coordinator, making its skills available to agents.
+
+        Static containers (dynamic_skills() == False): Skills cached immediately for O(1) lookup.
+        Dynamic containers (dynamic_skills() == True): Skills queried at runtime for context-dependent generation.
+
+        Skill resolution order: cached static skills first, then dynamic container query.
+        """
         self.empty = False
         if not container.dynamic_skills():
             logger.info(f"Registering static skill container, {container}")
