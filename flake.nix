@@ -152,7 +152,26 @@
             # python & setup
             # 
             if [ -f "$PROJECT_ROOT/venv/bin/activate" ]; then
+              # if there is a venv, load it
+              _nix_python_path="$(realpath "$(which python)")"
               . "$PROJECT_ROOT/venv/bin/activate"
+              # check the venv to make sure it wasn't created with a different (non nix) python
+              if [ "$_nix_python_path" != "$(realpath "$(which python)")" ]
+              then
+                  echo
+                  echo
+                  echo "WARNING:"
+                  echo "     Your venv was created with something other than the current nix python"
+                  echo "     This could happen if you made the venv before doing `nix develop`"
+                  echo "     It could also happen if the nix-python was updated but the venv wasn't"
+                  echo "     WHAT YOU NEED TO DO:"
+                  echo "     - If you're about to make/test a PR, delete/rename your venv and run `nix develop` again" 
+                  echo "     - If you're just trying to get the code working, you can continue but you might get bugs FYI" 
+                  echo
+                  echo
+                  echo "Got it? (press enter)"; read _
+                  echo
+              fi
             else
               # 
               # automate the readme
