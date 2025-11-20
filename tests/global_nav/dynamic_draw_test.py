@@ -1,13 +1,10 @@
 import numpy as np
 from vectortypes import Vector
 from draw import Drawer
-from typing import Optional
 from astar import astar
-import time
 import random
 import matplotlib.pyplot as plt
 from costmap import Costmap
-from astar import astar
 
 # Load the costmap
 costmap = Costmap.from_pickle("costmapMsg.pickle")

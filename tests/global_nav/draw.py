@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import List, Tuple, Dict, Any, Union, Optional
+from typing import List, Dict, Any, Union
 from costmap import Costmap
 from vector import Vector
 from path import Path
