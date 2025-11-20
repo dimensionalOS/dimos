@@ -188,7 +188,6 @@ class PlanningAgent(OpenAIAgent):
         Returns:
             PlanningAgentResponse: Validated response with type, content, and needs_confirmation
         """
-        
         try:
             return super()._send_query(messages)
         except Exception as e:

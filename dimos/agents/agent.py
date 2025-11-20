@@ -793,7 +793,6 @@ class OpenAIAgent(LLMAgent):
                     tools=(self.skill_library.get_tools()
                            if self.skill_library is not None else NOT_GIVEN),
                 )
-
             response_message = response.choices[0].message
             if response_message is None:
                 logger.error("Response message does not exist.")

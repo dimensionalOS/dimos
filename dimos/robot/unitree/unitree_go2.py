@@ -17,28 +17,13 @@ from typing import Optional, Union, Tuple
 import numpy as np
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
-from dimos.hardware.interface import HardwareInterface
-from dimos.agents.agent import Agent, OpenAIAgent, OpenAIAgent
-from dimos.skills.skills import AbstractSkill
-from dimos.stream.frame_processor import FrameProcessor
-from dimos.stream.video_provider import VideoProvider
+from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 from dimos.stream.video_providers.unitree import UnitreeVideoProvider
-from dimos.stream.videostream import VideoStream
-from dimos.stream.video_provider import AbstractVideoProvider
-from dimos.stream.video_operators import VideoOperators as vops
-from reactivex import Observable, create
-from reactivex import operators as ops
 from reactivex.disposable import CompositeDisposable
-import asyncio
 import logging
-import threading
 import time
-from queue import Queue
-from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod
-from aiortc import MediaStreamTrack
+from dimos.robot.unitree.external.go2_webrtc_connect.go2_webrtc_driver.webrtc_driver import WebRTCConnectionMethod
 import os
-from datetime import timedelta
-from dotenv import load_dotenv, find_dotenv
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.logging_config import setup_logger
@@ -66,7 +51,7 @@ class UnitreeGo2(Robot):
             disable_video_stream: bool = False,
             mock_connection: bool = False,
             enable_visual_servoing: bool = False,
-            skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None):
+            skills: Optional[Union[SkillLibrary, AbstractSkill]] = None):
 
         """Initialize the UnitreeGo2 robot.
         
@@ -80,7 +65,7 @@ class UnitreeGo2(Robot):
             use_webrtc: Whether to use WebRTC video provider ONLY
             disable_video_stream: Whether to disable the video stream
             mock_connection: Whether to mock the connection to the robot
-            skills: Skills instance. Can be MyUnitreeSkills for full functionality or any AbstractSkill for custom development..
+            skills: Skills library or custom skill implementation. Default is MyUnitreeSkills() if None.
         """
         print(f"Initializing UnitreeGo2 with use_ros: {use_ros} and use_webrtc: {use_webrtc}")
         if not (use_ros ^ use_webrtc):  # XOR operator ensures exactly one is True
@@ -93,14 +78,22 @@ class UnitreeGo2(Robot):
                 disable_video_stream=disable_video_stream,
                 mock_connection=mock_connection)
 
-        super().__init__(ros_control=ros_control, output_dir=output_dir, skills=skills)
+        # Initialize skill library
+        if skills is None:
+            skills = MyUnitreeSkills(robot=self)
 
-        # Unitree specific skill initialization
-        self.skills = skills
-        if skills is not None:
-            self.initialize_skills(skills)
+        super().__init__(ros_control=ros_control, output_dir=output_dir, skill_library=skills)
 
-        # camera stuff
+        if self.skill_library is not None:
+            for skill in self.skill_library:
+                if isinstance(skill, AbstractRobotSkill):
+                    self.skill_library.create_instance(skill.__name__, robot=self)
+            if isinstance(self.skill_library, MyUnitreeSkills):
+                self.skill_library._robot = self
+                self.skill_library.init()
+                self.skill_library.initialize_skills()
+        
+        # Camera stuff
         self.camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
         self.camera_pitch = np.deg2rad(0)  # negative for downward pitch
         self.camera_height = 0.44  # meters
@@ -168,5 +161,5 @@ class UnitreeGo2(Robot):
             logger.warning("Visual servoing is disabled, cannot follow human")
             return False
 
-    def do(self, *args, **kwargs):
-        pass
+    def get_skills(self) -> Optional[SkillLibrary]:
+        return self.skill_library

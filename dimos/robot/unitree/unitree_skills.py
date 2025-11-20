@@ -185,12 +185,9 @@ class MyUnitreeSkills(SkillLibrary):
         # Add dynamic skills to this class
         self.register_skills(self.create_skills_live())
 
-        # Refresh the class skills
-        self.refresh_class_skills()
-
         if robot is not None:
             self._robot = robot
-            # self.initialize_skills()
+            self.initialize_skills()
 
     def initialize_skills(self):
         # Create the skills and add them to the list of skills
@@ -200,6 +197,9 @@ class MyUnitreeSkills(SkillLibrary):
         for skill_class in self:
             print(f"{Colors.GREEN_PRINT_COLOR}Creating instance for skill: {skill_class}{Colors.RESET_COLOR}")
             self.create_instance(skill_class.__name__, robot=self._robot)
+        
+        # Refresh the class skills
+        self.refresh_class_skills()
 
     def create_skills_live(self) -> List[AbstractRobotSkill]:
         # ================================================

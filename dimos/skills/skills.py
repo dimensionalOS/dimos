@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Any, Optional, Union
+from typing import Any, Optional
 from pydantic import BaseModel
 from openai import pydantic_function_tool
 
@@ -33,7 +33,10 @@ class SkillLibrary:
     def __init__(self):
         self.registered_skills: list["AbstractSkill"] = []
         self.class_skills: list["AbstractSkill"] = []
+
+        self.init()
         
+    def init(self):
         # Collect all skills from the parent class and update self.skills
         self.refresh_class_skills()
 
@@ -192,10 +195,6 @@ class AbstractRobotSkill(AbstractSkill):
               f"Robot Skill Initialized with Robot: {robot}"
               f"{Colors.RESET_COLOR}")
 
-        # Handle Robot() reference if AbstractRobotSkill() is instantiated standalone with robot=Robot()
-        if robot is not None:
-            self._robot.skill_library.add(self)
-    
     def set_robot(self, robot: Robot) -> None:
         """Set the robot reference for this skills instance.
         
