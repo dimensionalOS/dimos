@@ -12,6 +12,70 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Decorator and runtime for exposing robot capabilities as LLM tool calls.
+
+This module provides the core abstractions for defining and executing *skills*: wrappers around
+robot capabilities that allow LLMs to invoke them as tool calls.
+Skills transform high-level intentions (e.g., "navigate to the kitchen") into concrete actions.
+
+Core components
+---------------
+`@skill` decorator
+    Transforms `Module` methods into agent-callable tools with configurable execution
+    semantics (streaming, passive/active behavior, thread pooling). Auto-generates JSON
+    schemas for LLM tool calling.
+
+`SkillContainer` class
+    Base infrastructure inherited by all Modules, providing skill execution, threading,
+    and transport. Available automatically via `Module` inheritance.
+
+`SkillContainerConfig` dataclass
+    Configuration for skill transport layer (defaults to LCM-based communication).
+
+Architecture
+------------
+Skills execute in a distributed, asynchronous environment where every `Module` inherits
+from `SkillContainer`. The `@skill` decorator wraps methods with execution routing and
+schema generation.
+
+See also
+--------
+`dimos.core.module.Module` : Base class that inherits `SkillContainer`
+`dimos.protocol.skill.coordinator.SkillCoordinator` : Manages skill execution state for agents
+`dimos.protocol.skill.type` : Enums and types for skill configuration
+`dimos.agents2.agent` : LLM agents that discover and invoke skills
+
+Related docs
+------------
+- Build your first skill tutorial: `docs/tutorials/skill_basics/tutorial.md`
+- Wire a skill to an agent tutorial: `docs/tutorials/skill_with_agent/tutorial.md`
+- Explainer on the Skill concept: `docs/concepts/skills.md`
+
+Examples
+--------
+Basic skill returning a result:
+
+>>> from dimos.core.module import Module
+>>> from dimos.protocol.skill.skill import skill
+>>>
+>>> class RobotSkills(Module):
+...     @skill()
+...     def greet(self, name: str) -> str:
+...         '''Greet someone by name.'''
+...         return f"Hello, {name}!"
+
+Notes
+-----
+**Thread pool execution:**
+Skills execute in a `ThreadPoolExecutor` when called via coordinator (with `call_id`),
+preventing blocking during long-running operations.
+
+**Passive skill requirements:**
+Skills with `stream=Stream.passive` never wake the agent except on errors. Their data
+is only delivered when an active skill keeps the agent loop running; by design,
+passive skills are for auxiliary data like telemetry during primary tasks.
+"""
+
 import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
