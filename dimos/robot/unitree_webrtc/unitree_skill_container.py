@@ -106,11 +106,6 @@ class UnitreeSkillContainer(SkillModule):
             time.sleep(1)
 
     @skill()
-    def speak(self, text: str) -> str:
-        """Speak text out loud through the robot's speakers."""
-        return f"This is being said aloud: {text}"
-
-    @skill()
     def execute_sport_command(self, command_name: str) -> str:
         if self._publish_request is None:
             return f"Error: Robot not connected (cannot execute {command_name})"
