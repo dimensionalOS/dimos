@@ -212,10 +212,6 @@ class ConnectionModule(Module):
         unsub = self.connection.odom_stream().subscribe(self._publish_tf)
         self._disposables.add(unsub)
 
-        if self.connection_type == "mujoco":
-            unsub = self.connection.gps_stream().subscribe(self._publish_gps_location)
-            self._disposables.add(unsub)
-
         unsub = self.connection.video_stream().subscribe(self._on_video)
         self._disposables.add(unsub)
 
@@ -249,9 +245,6 @@ class ConnectionModule(Module):
         timestamp = msg.ts if msg.ts else time.time()
         self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
-
-    def _publish_gps_location(self, msg: LatLon) -> None:
-        self.gps_location.publish(msg)
 
     def _publish_tf(self, msg) -> None:
         self._odom = msg
