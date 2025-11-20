@@ -92,11 +92,6 @@ _basic_no_nav = (
         foxglove_bridge(),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_g1")
-    .remappings(
-        [
-            (CameraModule, "image", "color_image"),
-        ]
-    )
     .transports(
         {
             # G1 uses Twist for movement commands
