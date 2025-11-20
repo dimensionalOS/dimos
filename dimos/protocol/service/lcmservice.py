@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
 import os
+import platform
 import subprocess
 import sys
 import threading
@@ -48,7 +49,10 @@ def check_multicast() -> list[str]:
 
     sudo = "" if check_root() else "sudo "
 
-    if sys.platform == "linux":
+    system = platform.system()
+
+    if system == "Linux":
+        # Linux commands
         loopback_interface = "lo"
         # Check if loopback interface has multicast enabled
         try:
@@ -74,7 +78,7 @@ def check_multicast() -> list[str]:
                 f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
             )
 
-    elif sys.platform == "darwin":  # macOS
+    elif system == "Darwin":  # macOS
         loopback_interface = "lo0"
         # Check if multicast route exists
         try:
@@ -90,7 +94,7 @@ def check_multicast() -> list[str]:
 
     else:
         # For other systems, skip multicast configuration
-        logger.warning(f"Multicast configuration not supported on {sys.platform}")
+        logger.warning(f"Multicast configuration not supported on {system}")
 
     return commands_needed
 
@@ -105,8 +109,9 @@ def check_buffers() -> tuple[list[str], int | None]:
     current_max = None
 
     sudo = "" if check_root() else "sudo "
+    system = platform.system()
 
-    if sys.platform == "linux":
+    if system == "Linux":
         # Linux buffer configuration
         try:
             result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
@@ -130,7 +135,7 @@ def check_buffers() -> tuple[list[str], int | None]:
         except:
             commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
 
-    elif sys.platform == "darwin":  # macOS
+    elif system == "Darwin":  # macOS
         # macOS buffer configuration - check and set UDP buffer related sysctls
         try:
             result = subprocess.run(
@@ -170,7 +175,7 @@ def check_buffers() -> tuple[list[str], int | None]:
 
     else:
         # For other systems, skip buffer configuration
-        logger.warning(f"Buffer configuration not supported on {sys.platform}")
+        logger.warning(f"Buffer configuration not supported on {system}")
 
     return commands_needed, current_max
 
@@ -217,6 +222,8 @@ def autoconf() -> None:
     if os.environ.get("CI"):
         logger.info("CI environment detected: Skipping automatic system configuration.")
         return
+
+    system = platform.system()
 
     commands_needed = []
 
@@ -268,7 +275,7 @@ class LCMConfig:
     lcm: lcm.LCM | None = None
 
     def __post_init__(self):
-        if self.url is None and sys.platform == "darwin":
+        if self.url is None and platform.system() == "Darwin":
             # On macOS, use multicast with TTL=0 to keep traffic local
             self.url = "udpm://239.255.76.67:7667?ttl=0"
 
