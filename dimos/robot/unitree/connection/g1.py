@@ -38,7 +38,6 @@ logger = setup_logger(__file__)
 
 class G1Connection(Module):
     cmd_vel: In[Twist] = None  # type: ignore
-    odom_in: In[Odometry] = None  # type: ignore
     lidar: Out[LidarMessage] = None  # type: ignore
     odom: Out[PoseStamped] = None  # type: ignore
     ip: str
@@ -85,9 +84,6 @@ class G1Connection(Module):
 
             unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
             self._disposables.add(unsub)
-        else:
-            unsub = self.odom_in.subscribe(self._publish_odom)
-            self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:
