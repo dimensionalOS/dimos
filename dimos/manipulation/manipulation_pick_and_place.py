@@ -322,7 +322,7 @@ def test_vlm_manipulation():
         cv2.waitKey(1)
         print("✓ Windows created")
         
-        # Setup visualization queues (EXACT same as working test)
+        # Setup visualization queues
         detection_queue = queue.Queue(maxsize=2)
         pointcloud_queue = queue.Queue(maxsize=2)
         background_queue = queue.Queue(maxsize=2)
