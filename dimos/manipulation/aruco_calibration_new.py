@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """
-one_time_calibration_oak_improved.py - Enhanced ArUco calibration for dual OAK-D S2 setup
-Improved accuracy with validation and better corner detection
+realsense_aruco_calibration.py - ArUco calibration for RealSense cameras
+Adapted from OAK-D calibration for RealSense D435/D435i
 """
 
 import cv2
 import numpy as np
 import json
-import depthai as dai
-import contextlib
+import pyrealsense2 as rs
+import time
 from datetime import datetime
-import os
 
-class OAKRobotCalibrator:
+class RealSenseRobotCalibrator:
     def __init__(self):
         # ArUco board parameters - ADJUST TO YOUR BOARD!
-        self.board_squares_x = 5  # Your board dimensions
+        self.board_squares_x = 5  
         self.board_squares_y = 5  
-        self.square_length = 0.11176    # 11.76cm - verified correct
-        self.marker_length = 0.089408   # 9.4cm - verified correct
+        self.square_length = 0.11176    # 11.76cm
+        self.marker_length = 0.089408   # 8.9408cm
         
         print(f"\nBoard config: {self.board_squares_x}x{self.board_squares_y} squares")
         print(f"Square length: {self.square_length*1000:.1f}mm")
@@ -26,41 +25,16 @@ class OAKRobotCalibrator:
         print(f"Marker ratio: {self.marker_length/self.square_length:.2f}")
         print(f"Using ArUco dictionary: DICT_4X4_50\n")
         
-        # Camera intrinsics - will be loaded from OAK-D factory calibration
-        self.camera_matrix = np.array([
-            [500, 0, 320],
-            [0, 500, 240],
-            [0, 0, 1]
-        ], dtype=float)
-        self.dist_coeffs = np.zeros(5)
-        
         # Setup ArUco detector for DICT_4X4_50
         self.aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
         
-        # IMPROVED: Enhanced detection parameters for better accuracy
+        # Relaxed detection parameters
         self.parameters = cv2.aruco.DetectorParameters()
-        
-        # Adaptive thresholding - optimized for OAK-D SR resolution
         self.parameters.adaptiveThreshWinSizeMin = 3
-        self.parameters.adaptiveThreshWinSizeMax = 23  # Reduced for 640x480
-        self.parameters.adaptiveThreshWinSizeStep = 4
-        
-        # Contour filtering - more permissive for board detection
+        self.parameters.adaptiveThreshWinSizeMax = 50
+        self.parameters.adaptiveThreshWinSizeStep = 5
         self.parameters.minMarkerPerimeterRate = 0.01
         self.parameters.maxMarkerPerimeterRate = 4.0
-        self.parameters.polygonalApproxAccuracyRate = 0.05  # Slightly higher for distorted images
-        self.parameters.minCornerDistanceRate = 0.05
-        self.parameters.minMarkerDistanceRate = 0.05
-        
-        # CRITICAL: Enable corner refinement for subpixel accuracy
-        self.parameters.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
-        self.parameters.cornerRefinementWinSize = 5
-        self.parameters.cornerRefinementMaxIterations = 30
-        self.parameters.cornerRefinementMinAccuracy = 0.1
-        
-        # Bits extraction
-        self.parameters.perspectiveRemovePixelPerCell = 8  # Higher for better bit extraction
-        self.parameters.perspectiveRemoveIgnoredMarginPerCell = 0.13
         
         self.detector = cv2.aruco.ArucoDetector(self.aruco_dict, self.parameters)
         
@@ -73,241 +47,221 @@ class OAKRobotCalibrator:
         )
         
         self.charuco_detector = cv2.aruco.CharucoDetector(self.board)
-        
-        # Calibration quality thresholds
-        self.min_corners_per_frame = 10  # Minimum corners for valid frame
-        self.max_reprojection_error = 1.0  # Maximum acceptable error in pixels
-        self.target_frames = 25  # More frames for better calibration
     
-    def get_oak_intrinsics(self, device):
-        """Get actual camera intrinsics from OAK-D factory calibration"""
-        calibData = device.readCalibration()
+    def detect_cameras(self):
+        """Find available RealSense cameras"""
+        print("\n=== DETECTING REALSENSE CAMERAS ===")
+        ctx = rs.context()
+        devices = ctx.query_devices()
         
-        # Get intrinsics for the RGB camera (CAM_B socket, 640x480)
-        intrinsics = calibData.getCameraIntrinsics(
-            dai.CameraBoardSocket.CAM_B,
-            640, 480
-        )
+        print(f"Found {len(devices)} RealSense devices:")
+        for i, device in enumerate(devices):
+            serial = device.get_info(rs.camera_info.serial_number)
+            name = device.get_info(rs.camera_info.name)
+            print(f"  Device {i}: {name} (S/N: {serial})")
+        
+        if len(devices) == 0:
+            raise Exception("No RealSense cameras found!")
+        
+        return devices
+    
+    def create_realsense_pipeline(self, device_index=0):
+        """Create RealSense pipeline using proven configuration from manipulation code"""
+        ctx = rs.context()
+        devices = ctx.query_devices()
+        
+        if device_index >= len(devices):
+            raise ValueError(f"Device index {device_index} not found")
+        
+        device = devices[device_index]
+        serial = device.get_info(rs.camera_info.serial_number)
+        
+        print(f"  Initializing RealSense {serial}")
+        
+        # STEP 1: Hardware reset (important for D435)
+        print(f"    1. Hardware reset...")
+        device.hardware_reset()
+        time.sleep(3)
+        
+        # STEP 2: Get fresh context after reset
+        ctx = rs.context()
+        devices = ctx.query_devices()
+        for d in devices:
+            if d.get_info(rs.camera_info.serial_number) == serial:
+                device = d
+                break
+        
+        # STEP 3: Create pipeline with config
+        pipeline = rs.pipeline()
+        config = rs.config()
+        
+        config.enable_device(serial)
+        config.enable_stream(rs.stream.color, 640, 480, rs.format.rgb8, 6)  # 6 FPS for stability
+        config.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 6)
+        
+        # STEP 4: Start pipeline
+        print(f"    2. Starting pipeline (640x480 @ 6fps)...")
+        profile = pipeline.start(config)
+        
+        # STEP 5: Create align object
+        align = rs.align(rs.stream.color)
+        
+        # STEP 6: CRITICAL warmup phase for D435
+        print(f"    3. Warming up (essential for D435)...")
+        for i in range(50):
+            try:
+                pipeline.wait_for_frames(timeout_ms=500)
+            except:
+                pass
+            if i % 10 == 0:
+                print(f"       Warmup {i}/50")
+        
+        # STEP 7: Validate and get intrinsics
+        print(f"    4. Getting intrinsics...")
+        frames = pipeline.wait_for_frames(timeout_ms=10000)
+        aligned = align.process(frames)
+        color_frame = aligned.get_color_frame()
+        
+        if not color_frame:
+            raise RuntimeError("Could not get color frame after warmup")
+        
+        # Get intrinsics
+        intrinsics = color_frame.profile.as_video_stream_profile().intrinsics
         
         # Create camera matrix
         camera_matrix = np.array([
-            [intrinsics[0][0], 0, intrinsics[0][2]],
-            [0, intrinsics[1][1], intrinsics[1][2]],
+            [intrinsics.fx, 0, intrinsics.ppx],
+            [0, intrinsics.fy, intrinsics.ppy],
             [0, 0, 1]
         ], dtype=float)
         
         # Get distortion coefficients
-        distortion = np.array(calibData.getDistortionCoefficients(dai.CameraBoardSocket.CAM_B))
+        dist_coeffs = np.array(intrinsics.coeffs)
         
-        print(f"    ✓ Loaded factory calibration:")
-        print(f"      fx={intrinsics[0][0]:.1f}, fy={intrinsics[1][1]:.1f}")
-        print(f"      cx={intrinsics[0][2]:.1f}, cy={intrinsics[1][2]:.1f}")
-        print(f"      Distortion coeffs: {distortion[:5]}")
+        print(f"    ✓ Ready! Intrinsics: fx={intrinsics.fx:.1f}, fy={intrinsics.fy:.1f}")
+        print(f"      cx={intrinsics.ppx:.1f}, cy={intrinsics.ppy:.1f}")
         
-        return camera_matrix, distortion
-        
-    def detect_cameras(self):
-        """Find available OAK-D cameras"""
-        print("\n=== DETECTING OAK-D CAMERAS ===")
-        device_infos = dai.Device.getAllAvailableDevices()
-        
-        print(f"Found {len(device_infos)} OAK-D devices:")
-        for i, info in enumerate(device_infos):
-            print(f"  Device {i}: {info.getMxId()}")
-        
-        if len(device_infos) < 2:
-            raise Exception(f"Need 2 OAK-D cameras, only found {len(device_infos)}")
-        
-        print(f"Will use first 2 cameras")
-        return device_infos[:2]
-    
-    def create_pipeline(self):
-        """Create pipeline for OAK-D S2"""
-        pipeline = dai.Pipeline()
-        
-        # Use ColorCamera for left camera
-        cam_left = pipeline.create(dai.node.ColorCamera)
-        cam_left.setBoardSocket(dai.CameraBoardSocket.CAM_B)
-        cam_left.setResolution(dai.ColorCameraProperties.SensorResolution.THE_800_P)
-        cam_left.setPreviewSize(640, 480)
-        cam_left.setInterleaved(False)
-        cam_left.setColorOrder(dai.ColorCameraProperties.ColorOrder.BGR)
-        
-        # Output color preview
-        xout_color = pipeline.create(dai.node.XLinkOut)
-        xout_color.setStreamName("color")
-        cam_left.preview.link(xout_color.input)
-        
-        return pipeline
+        return pipeline, align, camera_matrix, dist_coeffs, serial
     
     def measure_robot_offset(self):
-        """Get robot offset from ArUco board origin with validation"""
+        """Get robot offset from ArUco board origin"""
         print("\n=== ROBOT-TO-BOARD OFFSET ===")
-        print("\nMEASUREMENT GUIDE:")
-        print("1. Place ArUco board flat on the table")
-        print("2. Board origin = top-left corner of first marker (ID 0)")
-        print("3. Measure FROM board origin TO robot base center")
-        print("4. Use a ruler/tape measure for accuracy (±5mm)")
-        print("5. Double-check all measurements!")
-        print("\nCoordinate frames:")
-        print("  Board: X=right, Y=back, Z=down (from camera view)")
-        print("  Robot: X=forward (toward camera), Y=right, Z=up\n")
+        print("Measure from ArUco board ORIGIN to robot base center\n")
         
-        # Get measurements with validation
-        while True:
-            print("Enter measurements in BOARD coordinates (meters):")
-            x_board = float(input("  X offset (right from board origin): "))
-            y_board = float(input("  Y offset (back from board origin): "))
-            z_board = float(input("  Z offset (down from board origin): "))
+        print("Coordinate frames:")
+        print("  Board: X=right, Y=down, Z=forward (from camera view)")
+        print("  Robot: X=forward, Y=left, Z=up\n")
+        
+        print("Enter offset in METERS:")
+        x_offset = float(input("X offset (board→robot, meters): "))
+        y_offset = float(input("Y offset (board→robot, meters): "))
+        z_offset = float(input("Z offset (board→robot, meters): "))
+        
+        # Ask about rotation
+        print("\nIs the board aligned with robot axes? (y/n)")
+        aligned = input().lower() == 'y'
+        
+        if aligned:
+            # Simple translation only
+            board_to_robot = np.array([
+                [1, 0, 0, x_offset],
+                [0, 1, 0, y_offset],
+                [0, 0, 1, z_offset],
+                [0, 0, 0, 1]
+            ])
+            print("Using identity rotation (board aligned with robot)")
+        else:
+            print("\nSpecify board rotation (common cases):")
+            print("  1. Board rotated 90° CCW from robot X")
+            print("  2. Board rotated 180° from robot X")
+            print("  3. Custom rotation")
+            choice = input("Choice (1/2/3): ")
             
-            print(f"\nYou entered:")
-            print(f"  X = {x_board*100:.1f}cm (right from board)")
-            print(f"  Y = {y_board*100:.1f}cm (back from board)")
-            print(f"  Z = {z_board*100:.1f}cm (down from board)")
-            
-            confirm = input("\nIs this correct? (y/n): ").lower()
-            if confirm == 'y':
-                break
-            print("\nLet's measure again...\n")
+            if choice == '1':
+                board_to_robot = np.array([
+                    [0, -1, 0, x_offset],
+                    [1,  0, 0, y_offset],
+                    [0,  0, 1, z_offset],
+                    [0,  0, 0, 1]
+                ])
+            elif choice == '2':
+                board_to_robot = np.array([
+                    [-1, 0, 0, x_offset],
+                    [0, -1, 0, y_offset],
+                    [0,  0, 1, z_offset],
+                    [0,  0, 0, 1]
+                ])
+            else:
+                # Your original hardcoded rotation
+                board_to_robot = np.array([
+                    [0, -1, 0, y_offset],   
+                    [-1, 0, 0, x_offset],   
+                    [0,  0, 1, z_offset],
+                    [0,  0, 0, 1]
+                ])
         
-        # Create transformation with rotation
-        board_to_robot = np.array([
-            [ 0, -1,  0,  y_board],   # Robot X = -Board Y
-            [-1,  0,  0,  x_board],   # Robot Y = -Board X
-            [ 0,  0,  1,  z_board],   # Robot Z = -Board Z
-            [ 0,  0,  0,  1]
-        ])
-        
-        print(f"\n✓ Board-to-robot offset recorded")
-        print(f"  Robot base is {np.linalg.norm([x_board, y_board, z_board])*100:.1f}cm from board origin")
-        
+        print(f"\nBoard offset: ({x_offset:.3f}, {y_offset:.3f}, {z_offset:.3f}) m")
         return board_to_robot
     
-    def validate_frame(self, corners, ids, camera_matrix, dist_coeffs):
-        """Validate captured frame quality using reprojection error"""
-        if ids is None or len(ids) < 4:
-            return False, float('inf')
-        
-        # Get object and image points
-        obj_points, img_points = self.board.matchImagePoints(corners, ids)
-        
-        if len(obj_points) < self.min_corners_per_frame:
-            return False, float('inf')
-        
-        # Estimate pose
-        ret, rvec, tvec = cv2.solvePnP(
-            obj_points, img_points,
-            camera_matrix, dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE
-        )
-        
-        if not ret:
-            return False, float('inf')
-        
-        # Calculate reprojection error
-        projected, _ = cv2.projectPoints(obj_points, rvec, tvec, 
-                                        camera_matrix, dist_coeffs)
-        error = cv2.norm(img_points, projected, cv2.NORM_L2) / len(projected)
-        
-        return error < self.max_reprojection_error, error
-    
-    def calibrate_camera(self, device_info, camera_name):
-        """Calibrate a single OAK-D camera with enhanced accuracy"""
-        print(f"\n=== CALIBRATING {camera_name} ({device_info.getMxId()[:12]}) ===")
-        
-        print("\nCAPTURE STRATEGY FOR BEST CALIBRATION:")
-        print("1. Start with board filling ~60% of frame")
-        print("2. Capture at different distances (40-80cm for OAK-D SR)")
-        print("3. Tilt board ±30° in different directions")
-        print("4. Move board to corners and center of frame")
-        print("5. Ensure even lighting (avoid shadows)")
-        print(f"6. Target: {self.target_frames} high-quality frames\n")
-        
-        print("Controls:")
-        print("  SPACE - Capture frame (when green)")
-        print("  'c'   - Compute calibration")
-        print("  'q'   - Quit/cancel\n")
+    def calibrate_camera(self, device_index, camera_name):
+        """Calibrate a single RealSense camera to the ArUco board"""
+        print(f"\n=== CALIBRATING {camera_name} (Device {device_index}) ===")
+        print("Position camera to see the ArUco board clearly")
+        print("Press SPACE to capture frames, 'c' to compute calibration")
+        print("Press 'q' to quit\n")
         
         all_charuco_corners = []
         all_charuco_ids = []
         captured_frames = 0
-        rejected_frames = 0
+        target_frames = 15
         
-        # Create pipeline and device
-        pipeline = self.create_pipeline()
+        # Create pipeline
+        pipeline, align, camera_matrix, dist_coeffs, serial = self.create_realsense_pipeline(device_index)
         
-        with contextlib.ExitStack() as stack:
-            device = stack.enter_context(
-                dai.Device(pipeline, device_info, dai.UsbSpeed.SUPER)
-            )
-            
-            # Get real calibration data from OAK-D
-            camera_matrix, dist_coeffs = self.get_oak_intrinsics(device)
-            
-            # Store for refinement
-            self.camera_matrix = camera_matrix
-            self.dist_coeffs = dist_coeffs
-            
-            # Get output queue
-            q_color = device.getOutputQueue(name="color", maxSize=4, blocking=False)
-            
-            print(f"✓ Camera connected: {device_info.getMxId()}")
-            
-            # Create window
-            window_name = f"{camera_name}"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            
+        print(f"✓ Camera connected: {serial}")
+        
+        # Create window
+        window_name = f"{camera_name}"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        
+        try:
             while True:
-                color_data = q_color.tryGet()
+                # Get frames
+                frames = pipeline.wait_for_frames()
+                aligned_frames = align.process(frames)
+                color_frame = aligned_frames.get_color_frame()
                 
-                if color_data is None:
+                if not color_frame:
                     continue
                 
-                frame = color_data.getCvFrame()
+                # Convert to numpy array
+                frame = np.asanyarray(color_frame.get_data())
+                # Convert RGB to BGR for OpenCV
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 
                 # Detect ArUco markers
                 corners, ids, rejected = self.detector.detectMarkers(gray)
                 
-                # IMPROVED: Try to use refineDetectedMarkers if available (newer OpenCV)
-                # Otherwise, just skip this step
-                try:
-                    if hasattr(cv2.aruco, 'refineDetectedMarkers'):
-                        corners, ids, rejected, recovered = cv2.aruco.refineDetectedMarkers(
-                            image=gray,
-                            board=self.board,
-                            detectedCorners=corners,
-                            detectedIds=ids,
-                            rejectedCorners=rejected,
-                            cameraMatrix=camera_matrix,
-                            distCoeffs=dist_coeffs
-                        )
-                        if recovered is not None and len(recovered) > 0:
-                            print(f"  Recovered {len(recovered)} additional markers")
-                except:
-                    # If refineDetectedMarkers is not available, continue without it
-                    pass
-                
                 # Prepare display
                 display = frame.copy()
-                
-                # Status text background
-                overlay = display.copy()
-                cv2.rectangle(overlay, (0, 0), (640, 100), (0, 0, 0), -1)
-                display = cv2.addWeighted(overlay, 0.3, display, 0.7, 0)
                 
                 if ids is not None and len(ids) > 0:
                     # Draw detected markers
                     cv2.aruco.drawDetectedMarkers(display, corners, ids)
+                    
+                    cv2.putText(display, f"ArUco markers: {len(ids)}", 
+                               (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 
+                               0.5, (255, 255, 255), 1)
                     
                     # Get Charuco corners
                     charuco_corners, charuco_ids, marker_corners, marker_ids = \
                         self.charuco_detector.detectBoard(gray)
                     
                     corner_count = len(charuco_corners) if charuco_corners is not None else 0
-                    
-                    # Validate frame quality
-                    is_valid, error = self.validate_frame(corners, ids, camera_matrix, dist_coeffs)
+                    cv2.putText(display, f"ChArUco corners: {corner_count}", 
+                               (10, 170), cv2.FONT_HERSHEY_SIMPLEX, 
+                               0.5, (255, 255, 255), 1)
                     
                     if charuco_corners is not None and corner_count > 4:
                         # Draw Charuco corners
@@ -334,89 +288,67 @@ class OAKRobotCalibrator:
                                     thickness=3
                                 )
                                 
-                                # Status based on validation
-                                if is_valid:
-                                    status_color = (0, 255, 0)  # Green
-                                    status_text = f"GOOD! Error: {error:.2f}px - Press SPACE"
-                                else:
-                                    status_color = (0, 165, 255)  # Orange
-                                    status_text = f"Error too high: {error:.2f}px (max: {self.max_reprojection_error})"
-                                
-                                cv2.putText(display, status_text, 
-                                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                                        0.7, status_color, 2)
+                                cv2.putText(display, "GOOD! Press SPACE to capture", 
+                                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                                           0.7, (0, 255, 0), 2)
                     else:
-                        cv2.putText(display, f"Too few corners: {corner_count}/{self.min_corners_per_frame}", 
-                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                                0.7, (0, 165, 255), 2)
-                    
-                    # Show detection stats
-                    cv2.putText(display, f"Markers: {len(ids)} | Corners: {corner_count}", 
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
-                            0.5, (255, 255, 255), 1)
+                        cv2.putText(display, f"Too few corners: {corner_count}", 
+                                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                                   0.7, (0, 165, 255), 2)
                 else:
                     cv2.putText(display, "No ArUco markers detected", 
-                            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-                            0.7, (0, 0, 255), 2)
-                    cv2.putText(display, "Adjust position/lighting", 
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
-                            0.5, (255, 255, 255), 1)
+                               (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+                               0.7, (0, 0, 255), 2)
                 
                 # Show frame count
-                cv2.putText(display, f"Captured: {captured_frames}/{self.target_frames} | Rejected: {rejected_frames}", 
-                        (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 
-                        0.5, (255, 255, 255), 1)
+                cv2.putText(display, f"Frames: {captured_frames}/{target_frames}", 
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 
+                           0.6, (255, 255, 255), 2)
                 
-                # Show the frame
                 cv2.imshow(window_name, display)
                 
                 # Key handling
-                key = cv2.waitKey(10) & 0xFF
+                key = cv2.waitKey(1) & 0xFF
                 
-                if key == ord(' ') or key == 32:  # Space bar
-                    if ids is not None and charuco_corners is not None:
-                        is_valid, error = self.validate_frame(corners, ids, camera_matrix, dist_coeffs)
+                if key == ord(' '):  # Space - capture
+                    if (ids is not None and charuco_corners is not None and 
+                        len(charuco_corners) > 4):
+                        all_charuco_corners.append(charuco_corners)
+                        all_charuco_ids.append(charuco_ids)
+                        captured_frames += 1
+                        print(f"  ✓ Captured frame {captured_frames}/{target_frames}")
                         
-                        if is_valid:
-                            all_charuco_corners.append(charuco_corners)
-                            all_charuco_ids.append(charuco_ids)
-                            captured_frames += 1
-                            print(f"  ✓ Frame {captured_frames} captured (error: {error:.3f}px)")
-                            
-                            if captured_frames >= self.target_frames:
-                                print(f"  Target reached! Computing calibration...")
-                                break
-                        else:
-                            rejected_frames += 1
-                            print(f"  ✗ Frame rejected - error too high: {error:.3f}px")
-                    else:
-                        print(f"  ✗ Cannot capture - insufficient detection")
+                        if captured_frames >= target_frames:
+                            print(f"  Target reached, computing calibration...")
+                            break
                 
-                elif key == ord('c') or key == ord('C'):
-                    if captured_frames >= 10:  # Minimum frames for calibration
+                elif key == ord('c'):  # Compute calibration
+                    if captured_frames >= 5:
                         print(f"  Computing with {captured_frames} frames...")
                         break
                     else:
-                        print(f"  ✗ Need at least 10 frames (have {captured_frames})")
+                        print(f"  Need at least 5 frames (have {captured_frames})")
                 
-                elif key == ord('q') or key == 27:
+                elif key == ord('q') or key == 27:  # Quit
                     print("  Calibration cancelled")
                     cv2.destroyAllWindows()
+                    pipeline.stop()
                     return None, None, None
         
-        cv2.destroyAllWindows()
+        finally:
+            cv2.destroyAllWindows()
+            pipeline.stop()
         
-        # Compute calibration from captured frames
+        # Compute calibration
         if len(all_charuco_corners) == 0:
             print("  ERROR: No valid frames captured!")
             return None, None, None
         
-        print(f"\n  Computing pose from {len(all_charuco_corners)} frames...")
+        print(f"  Computing pose from {len(all_charuco_corners)} frames...")
         
-        # Get pose for each frame and compute statistics
+        # Get pose for each frame
         all_rvecs = []
         all_tvecs = []
-        all_errors = []
         
         for corners, ids in zip(all_charuco_corners, all_charuco_ids):
             obj_points, img_points = self.board.matchImagePoints(corners, ids)
@@ -424,32 +356,17 @@ class OAKRobotCalibrator:
             if len(obj_points) > 4:
                 ret, rvec, tvec = cv2.solvePnP(
                     obj_points, img_points,
-                    camera_matrix, dist_coeffs,
-                    flags=cv2.SOLVEPNP_ITERATIVE
+                    camera_matrix, dist_coeffs
                 )
                 if ret:
-                    # Calculate error for this frame
-                    projected, _ = cv2.projectPoints(obj_points, rvec, tvec, 
-                                                    camera_matrix, dist_coeffs)
-                    error = cv2.norm(img_points, projected, cv2.NORM_L2) / len(projected)
-                    
                     all_rvecs.append(rvec)
                     all_tvecs.append(tvec)
-                    all_errors.append(error)
         
         if len(all_rvecs) == 0:
-            print("  ERROR: Could not estimate pose from any frame!")
+            print("  ERROR: Could not estimate pose!")
             return None, None, None
         
-        # Report calibration quality
-        mean_error = np.mean(all_errors)
-        std_error = np.std(all_errors)
-        print(f"  Reprojection error: {mean_error:.3f} ± {std_error:.3f} pixels")
-        
-        if mean_error > 0.5:
-            print("  ⚠️  Warning: High reprojection error. Consider recalibrating.")
-        
-        # Average all poses (could use more sophisticated methods)
+        # Average all poses
         avg_rvec = np.mean(all_rvecs, axis=0)
         avg_tvec = np.mean(all_tvecs, axis=0)
         
@@ -461,218 +378,104 @@ class OAKRobotCalibrator:
         cam_to_board[:3, 3] = avg_tvec.squeeze()
         
         print(f"  ✓ {camera_name} calibration complete!")
-        print(f"    Translation: {avg_tvec.squeeze()}")
-        print(f"    Mean error: {mean_error:.3f} pixels")
+        print(f"    Translation to board: {avg_tvec.squeeze()}")
+        print(f"    Serial: {serial}")
         
-        return cam_to_board, camera_matrix, dist_coeffs
-    def validate_stereo_calibration(self, cam1_to_robot, cam2_to_robot, device_infos):
-        """Validate that both cameras see the same world point correctly"""
-        print("\n=== STEREO CALIBRATION VALIDATION ===")
+        # Store intrinsics as 1D array (format used in your pipeline)
+        intrinsics_1d = [camera_matrix[0,0], camera_matrix[1,1], 
+                        camera_matrix[0,2], camera_matrix[1,2]]
         
-        # Test multiple points in robot workspace
-        test_points = [
-            np.array([0.0, 0.0, 0.0, 1]),   # Robot base
-            np.array([0.5, 0.0, 0.1, 1]),   # 50cm forward, 10cm up
-            np.array([0.3, 0.2, 0.05, 1]),  # Right workspace
-            np.array([0.3, -0.2, 0.05, 1]), # Left workspace
-        ]
-        
-        all_errors = []
-        
-        for i, point_robot in enumerate(test_points):
-            # Transform to each camera
-            cam1_point = np.linalg.inv(cam1_to_robot) @ point_robot
-            cam2_point = np.linalg.inv(cam2_to_robot) @ point_robot
-            
-            # Check consistency through relative transformation
-            cam1_to_cam2 = np.linalg.inv(cam2_to_robot) @ cam1_to_robot
-            cam2_point_from_cam1 = np.linalg.inv(cam1_to_cam2) @ cam1_point
-            
-            error = np.linalg.norm(cam2_point[:3] - cam2_point_from_cam1[:3])
-            all_errors.append(error)
-            
-            print(f"\nTest point {i+1}: {point_robot[:3]}")
-            print(f"  Camera 1 sees at: {cam1_point[:3]}")
-            print(f"  Camera 2 sees at: {cam2_point[:3]}")
-            print(f"  Cross-validation error: {error*1000:.1f}mm")
-        
-        mean_error = np.mean(all_errors)
-        max_error = np.max(all_errors)
-        
-        print(f"\n=== VALIDATION RESULTS ===")
-        print(f"Mean error: {mean_error*1000:.1f}mm")
-        print(f"Max error: {max_error*1000:.1f}mm")
-        
-        # Extract camera positions
-        cam1_pos = cam1_to_robot[:3, 3]
-        cam2_pos = cam2_to_robot[:3, 3]
-        baseline = np.linalg.norm(cam1_pos - cam2_pos)
-        
-        print(f"\nCamera positions from robot base:")
-        print(f"  Camera 1: X={cam1_pos[0]:.3f}m, Y={cam1_pos[1]:.3f}m, Z={cam1_pos[2]:.3f}m")
-        print(f"  Camera 2: X={cam2_pos[0]:.3f}m, Y={cam2_pos[1]:.3f}m, Z={cam2_pos[2]:.3f}m")
-        print(f"  Baseline: {baseline*100:.1f}cm")
-        
-        if mean_error > 0.01:  # More than 10mm average error
-            print("\n⚠️  WARNING: Large calibration error between cameras!")
-            print("   Recommendations:")
-            print("   1. Recalibrate with more frames")
-            print("   2. Ensure accurate board-to-robot measurement")
-            print("   3. Check camera {}'s calibration".format(
-                "2 (second)" if all_errors[0] < all_errors[-1] else "1 (first)"
-            ))
-        else:
-            print("\n✓ Stereo calibration validated successfully!")
-            print("  Both cameras agree on 3D positions within tolerance")
+        return cam_to_board, intrinsics_1d, serial
     
     def run_calibration(self):
-        """Main calibration routine with enhanced validation"""
-        print("\n" + "="*60)
-        print("    ENHANCED DUAL OAK-D S2 ROBOT CALIBRATION")
-        print("="*60)
-        print(f"DepthAI version: {dai.__version__}")
-        print(f"OpenCV version: {cv2.__version__}")
+        """Main calibration routine for single RealSense camera"""
+        print("\n" + "="*50)
+        print("    REALSENSE ROBOT CALIBRATION")
+        print("="*50)
         
         # Step 1: Detect cameras
-        device_infos = self.detect_cameras()
+        devices = self.detect_cameras()
+        
+        # Ask which camera to calibrate
+        if len(devices) > 1:
+            print("\nWhich camera to calibrate?")
+            for i in range(len(devices)):
+                print(f"  {i}: Device {i}")
+            device_idx = int(input("Enter device number: "))
+        else:
+            device_idx = 0
+            print(f"\nUsing device 0 (only device found)")
         
         # Step 2: Measure robot offset
         board_to_robot = self.measure_robot_offset()
         
-        # Step 3: Calibrate first camera
-        input("\nPress Enter to start calibrating Camera 1...")
-        cam1_to_board, cam1_intrinsics, cam1_distortion = self.calibrate_camera(device_infos[0], "Camera 1")
-        if cam1_to_board is None:
-            print("ERROR: Camera 1 calibration failed!")
+        # Step 3: Calibrate camera
+        input("\nPress Enter to start calibration...")
+        cam_to_board, intrinsics, serial = self.calibrate_camera(device_idx, "RealSense")
+        
+        if cam_to_board is None:
+            print("ERROR: Calibration failed!")
             return False
         
-        # Step 4: Calibrate second camera
-        input("\nPress Enter to start calibrating Camera 2...")
-        cam2_to_board, cam2_intrinsics, cam2_distortion = self.calibrate_camera(device_infos[1], "Camera 2")
-        if cam2_to_board is None:
-            print("ERROR: Camera 2 calibration failed!")
-            return False
+        # Step 4: Transform to robot coordinate system
+        cam_to_robot = board_to_robot @ cam_to_board
         
-        # Step 5: Transform to robot coordinate system
-        cam1_to_robot = board_to_robot @ cam1_to_board
-        cam2_to_robot = board_to_robot @ cam2_to_board
+        # Step 5: Verify
+        print("\n=== VERIFICATION ===")
+        cam_pos = cam_to_robot[:3, 3]
+        print(f"Camera position from robot base:")
+        print(f"  X={cam_pos[0]:.3f}m, Y={cam_pos[1]:.3f}m, Z={cam_pos[2]:.3f}m")
+        print("\n⚠️  VERIFY: Does this match your physical setup?")
         
-        # Step 6: Validate stereo calibration
-        self.validate_stereo_calibration(cam1_to_robot, cam2_to_robot, device_infos)
-        
-        # Step 7: Save calibration with timestamp
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        
+        # Step 6: Save calibration
         calibration_data = {
             'timestamp': datetime.now().isoformat(),
-            'calibration_id': timestamp,
-            'camera_ids': {
-                'camera1': device_infos[0].getMxId(),
-                'camera2': device_infos[1].getMxId()
-            },
-            'camera_configs': [
-                {
-                    'mx_id': device_infos[0].getMxId(),
-                    'intrinsics': cam1_intrinsics.tolist(),
-                    'distortion': cam1_distortion.tolist(),
-                    'extrinsics': cam1_to_robot.tolist()
-                },
-                {
-                    'mx_id': device_infos[1].getMxId(),
-                    'intrinsics': cam2_intrinsics.tolist(),
-                    'distortion': cam2_distortion.tolist(),
-                    'extrinsics': cam2_to_robot.tolist()
-                }
-            ],
+            'serial': serial,
+            'intrinsics': intrinsics,  # Already in [fx, fy, cx, cy] format
+            'extrinsics': cam_to_robot.tolist(),
             'board_params': {
                 'squares_x': self.board_squares_x,
                 'squares_y': self.board_squares_y,
                 'square_length': self.square_length,
                 'marker_length': self.marker_length
             },
-            'board_to_robot_offset': board_to_robot.tolist(),
-            'calibration_params': {
-                'min_corners_per_frame': self.min_corners_per_frame,
-                'max_reprojection_error': self.max_reprojection_error,
-                'target_frames': self.target_frames
-            }
+            'board_to_robot_offset': board_to_robot.tolist()
         }
         
-        # Save with timestamp
-        json_filename = f'camera_calibration_oak_{timestamp}.json'
-        npz_filename = f'camera_calibration_oak_{timestamp}.npz'
-        
-        with open(json_filename, 'w') as f:
+        # Save files
+        with open('realsense_calibration.json', 'w') as f:
             json.dump(calibration_data, f, indent=2)
         
-        # Also save latest (for easy access)
-        with open('camera_calibration_oak_latest.json', 'w') as f:
-            json.dump(calibration_data, f, indent=2)
+        np.savez('realsense_calibration.npz',
+                 cam_to_robot=cam_to_robot,
+                 intrinsics=intrinsics)
         
-        # Save numpy arrays
-        np.savez(npz_filename,
-                 cam1_to_robot=cam1_to_robot,
-                 cam2_to_robot=cam2_to_robot,
-                 cam1_intrinsics=cam1_intrinsics,
-                 cam2_intrinsics=cam2_intrinsics,
-                 cam1_distortion=cam1_distortion,
-                 cam2_distortion=cam2_distortion)
-        
-        # Also save as latest
-        np.savez('camera_calibration_oak_latest.npz',
-                 cam1_to_robot=cam1_to_robot,
-                 cam2_to_robot=cam2_to_robot,
-                 cam1_intrinsics=cam1_intrinsics,
-                 cam2_intrinsics=cam2_intrinsics,
-                 cam1_distortion=cam1_distortion,
-                 cam2_distortion=cam2_distortion)
-        
-        print("\n" + "="*60)
+        print("\n" + "="*50)
         print("    CALIBRATION COMPLETE!")
-        print("="*60)
+        print("="*50)
         print("\nSaved to:")
-        print(f"  - {json_filename} (timestamped)")
-        print(f"  - camera_calibration_oak_latest.json (latest)")
-        print(f"  - {npz_filename} (numpy arrays)")
-        print(f"  - camera_calibration_oak_latest.npz (latest numpy)")
+        print("  - realsense_calibration.json")
+        print("  - realsense_calibration.npz")
         
         print("\n=== COPY THIS TO YOUR CODE ===")
         print(f"""
-import numpy as np
+# RealSense calibration
+cam_to_robot = np.array({cam_to_robot.tolist()})
 
-# Camera MxIds
-CAMERA_1_MXID = "{device_infos[0].getMxId()}"
-CAMERA_2_MXID = "{device_infos[1].getMxId()}"
-
-# Camera transforms (robot base is origin)
-cam1_to_robot = np.array({cam1_to_robot.tolist()})
-
-cam2_to_robot = np.array({cam2_to_robot.tolist()})
-
-# Camera intrinsics (for reference)
-cam1_intrinsics = np.array({cam1_intrinsics.tolist()})
-cam2_intrinsics = np.array({cam2_intrinsics.tolist()})
-
-camera_configs = {{
-    CAMERA_1_MXID: {{
-        'intrinsics': cam1_intrinsics,
-        'extrinsics': cam1_to_robot
-    }},
-    CAMERA_2_MXID: {{
-        'intrinsics': cam2_intrinsics,
-        'extrinsics': cam2_to_robot
-    }}
-}}
+camera_configs = [{{
+    "camera_id": 0,
+    "intrinsics": {intrinsics},  # [fx, fy, cx, cy]
+    "extrinsics": cam_to_robot,
+}}]
         """)
         
         return True
 
 if __name__ == "__main__":
-    calibrator = OAKRobotCalibrator()
+    calibrator = RealSenseRobotCalibrator()
     success = calibrator.run_calibration()
     
     if success:
-        print("\n✓ Calibration successful! OAK-D cameras are now calibrated to robot frame.")
-        print("  Use the latest calibration files for your application.")
+        print("\n✓ Calibration successful!")
     else:
-        print("\n✗ Calibration failed. Please check setup and try again.")
+        print("\n✗ Calibration failed.")

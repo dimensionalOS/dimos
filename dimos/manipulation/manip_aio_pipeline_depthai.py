@@ -153,8 +153,8 @@ class ManipulationPipeline:
                         
                     except Exception as e:
                         if "timeout" not in str(e).lower():
-                            logger.error(f"Camera {camera_idx} stream error: {e}")
-                        time.sleep(0.001)
+                            #logger.error(f"Camera {camera_idx} stream error: {e}")
+                            time.sleep(0.001)
                         
                 observer.on_completed()
             
@@ -234,7 +234,7 @@ class ManipulationPipeline:
                             time.sleep(0.001)
                             
                     except Exception as e:
-                        logger.error(f"Camera {camera_idx} stream error: {e}")
+                        #logger.error(f"Camera {camera_idx} stream error: {e}")
                         observer.on_error(e)
                         break
                         
@@ -472,7 +472,7 @@ class ManipulationPipeline:
         
         for i, obj in enumerate(all_objects):
             bbox = obj.get("bbox")
-            if bbox and len(bbox) >= 4:
+            if bbox is not None and len(bbox) >= 4:
                 x1, y1, x2, y2 = bbox[:4]
                 print(f"🔍 DEBUG: Object {i} bbox: ({x1:.0f},{y1:.0f})-({x2:.0f},{y2:.0f})")
                 if x1 <= x <= x2 and y1 <= y <= y2:

@@ -29,6 +29,7 @@ import numpy as np
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 import sys
 import os
+os.environ['YOLO_VERBOSE'] = 'False'
 sys.path.insert(0, '/home/dimensional5/Documents/dimos')
 
 from dimos.perception.common.utils import (
@@ -204,8 +205,8 @@ class ManipulationProcessor:
             for i, depth in enumerate(depth_images):
                 # Debug before filtering
                 valid_depth = depth[depth > 0]
-                if len(valid_depth) > 0:
-                    print(f"BEFORE filter - Camera {i}: min={valid_depth.min():.3f}m, max={valid_depth.max():.3f}m")
+                #if len(valid_depth) > 0:
+                    #print(f"BEFORE filter - Camera {i}: min={valid_depth.min():.3f}m, max={valid_depth.max():.3f}m")
                 
                 depth_filtered = depth.copy()
                 # STRICT range for OAK-D SR - anything outside is noise
@@ -214,8 +215,8 @@ class ManipulationProcessor:
                 
                 # Debug after filtering
                 valid_after = depth_filtered[depth_filtered > 0]
-                if len(valid_after) > 0:
-                    print(f"AFTER filter - Camera {i}: {len(valid_after)} pixels remaining")
+                #if len(valid_after) > 0:
+                    #print(f"AFTER filter - Camera {i}: {len(valid_after)} pixels remaining")
                 
                 filtered_depth_images.append(depth_filtered)
             
@@ -367,8 +368,8 @@ class ManipulationProcessor:
             #base_image = colorize_depth(depth_images[viz_camera_idx], max_depth=10.0)
             base_image = rgb_images[viz_camera_idx].copy()
 
-            print(f"Depth range: {depth_images[viz_camera_idx].min():.2f}m to {depth_images[viz_camera_idx].max():.2f}m")
-            print(f"Base image shape: {base_image.shape}, range: [{base_image.min()}, {base_image.max()}]")
+            #print(f"Depth range: {depth_images[viz_camera_idx].min():.2f}m to {depth_images[viz_camera_idx].max():.2f}m")
+            #print(f"Base image shape: {base_image.shape}, range: [{base_image.min()}, {base_image.max()}]")
 
             #Convert [fx, fy, cx, cy] to 3x3 matrix for visualization
             intrinsics_1d = self.camera_configs[viz_camera_idx]['intrinsics']
@@ -519,7 +520,7 @@ class ManipulationProcessor:
             detection_results = self.detector.process_image(dimos_bgr)
 
             # DEBUG: Log what YOLO found
-            logger.info(f"YOLO raw detections: {len(detection_results.detections)}")
+            #logger.info(f"YOLO raw detections: {len(detection_results.detections)}")
             
             # Extract raw components from ImageDetections2D
             bboxes = []
@@ -837,12 +838,8 @@ class ManipulationProcessor:
             traceback.print_exc()
             return [{**obj, 'grasps': []} for obj in filtered_objects]
         
-    def transform_pointcloud_to_world(
-        self,
-        pointcloud: o3d.geometry.PointCloud,
-        extrinsics: np.ndarray
-    ) -> o3d.geometry.PointCloud:
-        """Transform point cloud from camera frame to world frame."""
+    def transform_pointcloud_to_world(self, pointcloud, extrinsics):
+        #print(f"🔍 DEBUG: Transforming with extrinsics:\n{extrinsics}")
         if pointcloud is None or len(pointcloud.points) == 0:
             return o3d.geometry.PointCloud()
         

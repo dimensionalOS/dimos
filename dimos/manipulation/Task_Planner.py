@@ -15,7 +15,11 @@
 """
 Task planner that uses VLM for object selection and grasp execution planning.
 """
-
+import importlib
+import manip_aio_pipeline_depthai
+import manip_aio_processer_new_depthai
+importlib.reload(manip_aio_pipeline_depthai)
+importlib.reload(manip_aio_processer_new_depthai)
 from dataclasses import dataclass
 import json
 import re

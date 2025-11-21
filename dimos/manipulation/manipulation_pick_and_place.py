@@ -8,6 +8,17 @@ import numpy as np
 import pyrealsense2 as rs
 from manip_aio_pipeline_depthai import ManipulationPipeline
 from Task_Planner import VLMTaskPlanner
+from scipy.spatial.transform import Rotation  
+from dimos import core
+from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
+from dimos.manipulation.control.cartesian_motion_controller import CartesianMotionController
+from dimos.msgs.sensor_msgs.JointState import JointState
+from dimos.msgs.sensor_msgs.JointCommand import JointCommand
+from dimos.msgs.sensor_msgs.RobotState import RobotState
+from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Pose import Pose
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
+from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 # Import VLM model - adjust path as needed
 # Comment out the real import and force the mock
@@ -28,8 +39,8 @@ class QwenVlModel:
     def query(self, img, prompt):
         # Target object 0 (cup) which is at bbox (387,160)-(448,278)
         # Pick the center of the cup
-        x = (387 + 448) // 2  # = 417
-        y = (160 + 278) // 2  # = 219
+        x = 469  # = 417
+        y = 177 # = 219
         return f"PIXEL: [{x}, {y}]\nCONFIDENCE: 0.8\nREASONING: Targeting cup (object 0)"
 
 print("=" * 60)
@@ -104,6 +115,54 @@ def create_realsense_pipeline(device_index=0):
     
     return pipeline, align, intrinsics_array, serial
 
+def rotation_matrix_to_quaternion(rot_matrix):
+    """Convert 3x3 rotation matrix to quaternion (x,y,z,w format)"""
+    r = Rotation.from_matrix(rot_matrix)
+    quat = r.as_quat()  # Returns [x, y, z, w]
+    return quat
+
+def create_grasp_pose(grasp_dict, apply_transform=True):
+    """Convert grasp dictionary to Pose object"""
+    # Get position and rotation from grasp
+    position = grasp_dict['translation']
+    rot_matrix = np.array(grasp_dict['rotation_matrix'])
+
+    
+    if apply_transform:
+        # Apply camera to robot transformation
+        transform = np.array([
+            [ 0.58097254, -0.02551784, -0.81352305,  1.25596331],
+            [ 0.78601229, -0.24191228,  0.56891398, -0.8309276 ],
+            [ -0.21131867, -0.96996252, -0.12048706,  0.13877683],
+            [ 0.0,         0.0,         0.0,         1.0       ]
+        ])
+        
+        # Transform position
+        pos_homo = np.append(position, 1)
+        position = (transform @ pos_homo)[:3]
+        
+        # Transform rotation
+        #rot_matrix = transform[:3, :3] @ rot_matrix
+        # Try using the inverse transform for rotation
+        #rot_matrix = np.linalg.inv(transform[:3, :3]) @ rot_matrix
+        print(rot_matrix,'rot matrix')
+    
+    # Convert rotation matrix to quaternion
+    #quat = rotation_matrix_to_quaternion(rot_matrix)
+    quat = [0, 0, 0, 1]
+    print (quat, 'quat')    
+    euler = Rotation.from_quat(quat).as_euler('xyz', degrees=True)
+    print(f"Grasp wants euler angles: roll={euler[0]:.1f}°, pitch={euler[1]:.1f}°, yaw={euler[2]:.1f}°")
+    # Create PoseStamped - it IS a Pose, not HAS a Pose
+    pose_msg = PoseStamped(
+        ts=time.time(),
+        frame_id="base",
+        position=[position[0], position[1], position[2]],
+        orientation=[quat[0], quat[1], quat[2], quat[3]]
+    )
+    
+    return pose_msg
+
 
 def test_vlm_manipulation():
     """Test VLM-guided manipulation with exact visualization from working test."""
@@ -111,14 +170,98 @@ def test_vlm_manipulation():
     print("=" * 60)
     print("TESTING VLM MANIPULATION WITH REALSENSE")
     print("=" * 60)
+
+    # Initialize DiMoS cluster for motion control
+    print("\nStarting DiMoS cluster for motion control...")
+    dimos = core.start(1)
+    
+    # Deploy xArm driver
+    print("Deploying xArm driver...")
+    arm_driver = dimos.deploy(
+        XArmDriver,
+        ip_address="192.168.1.210",  # UPDATE WITH YOUR ROBOT IP
+        xarm_type="xarm6",
+        report_type="dev",
+        enable_on_start=True,
+    )
+    
+    # Set up driver transports
+    arm_driver.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
+    arm_driver.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
+    arm_driver.joint_position_command.transport = core.LCMTransport(
+        "/xarm/joint_position_command", JointCommand
+    )
+    arm_driver.joint_velocity_command.transport = core.LCMTransport(
+        "/xarm/joint_velocity_command", JointCommand
+    )
+    
+    print("Starting xArm driver...")
+    arm_driver.start()
+
+    # ============ ADD GRIPPER ENABLE HERE ============
+    print("\nInitializing gripper...")
+    code, msg = arm_driver.set_gripper_enable(1)
+    if code == 0:
+        print(f"✓ Gripper enabled: {msg}")
+    else:
+        print(f"⚠ Warning: Gripper enable failed: {msg}")
+    time.sleep(0.5)
+    
+    # Optional: Open gripper to known state
+    print("Opening gripper to start position...")
+    code, msg = arm_driver.set_gripper_position(850, wait=True)
+    print(f"Gripper initialized: {msg}")
+    # ==================================================
+    
+    # Deploy Cartesian motion controller
+    print("Deploying Cartesian motion controller...")
+    motion_controller = dimos.deploy(
+        CartesianMotionController,
+        arm_driver=arm_driver,
+        control_frequency=20.0,
+        position_kp=1.0,
+        position_kd=0.1,
+        orientation_kp=2.0,
+        orientation_kd=0.2,
+        max_linear_velocity=0.15,
+        max_angular_velocity=0.8,
+        position_tolerance=0.002,
+        orientation_tolerance=0.02,
+        velocity_control_mode=True,
+    )
+    
+    # Set up controller transports
+    motion_controller.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
+    motion_controller.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
+    motion_controller.joint_position_command.transport = core.LCMTransport(
+        "/xarm/joint_position_command", JointCommand
+    )
+    motion_controller.target_pose.transport = core.LCMTransport("/target_pose", PoseStamped)
+    motion_controller.current_pose.transport = core.LCMTransport("/xarm/current_pose", PoseStamped)
+    
+    print("Starting motion controller...")
+    motion_controller.start()
+    print("✓ Motion control system ready")
     
     # Camera transformation
+    '''cam_to_robot = np.array([
+        [-0.53421983586013, 0.28566181028607796, -0.7956170543154898, 0.98],
+        [0.43909663767729723, 0.8980159691658256, 0.027594599175484902, -0.66],
+        [-0.7223595432705714, 0.33461119118649363, 0.6051710840569698, 0.62],
+        [0.0, 0.0, 0.0, 1.0]
+    ])'''
+
     cam_to_robot = np.array([
-        [-0.53421983586013, 0.28566181028607796, -0.7956170543154898, 0.74],
-        [0.43909663767729723, 0.8980159691658256, 0.027594599175484902, -0.65],
-        [-0.7223595432705714, 0.33461119118649363, 0.6051710840569698, 0.52],
+        [-0.47055580643315087, -0.37561388946893404, -0.7984306100532885, 0.98], 
+        [-0.6600291194015566, 0.750377866382916, 0.03598081689773558, -0.66], 
+        [-0.5856097630453686, -0.5439184347681572, 0.6010107667465743, 0.52], 
         [0.0, 0.0, 0.0, 1.0]
     ])
+
+    #cam_to_robot = np.identity(4)
+
+    #print("🔍 DEBUG: Using cam_to_robot matrix:")
+    #print(cam_to_robot)
     
     try:
         # Initialize camera
@@ -131,6 +274,7 @@ def test_vlm_manipulation():
             "extrinsics": cam_to_robot,
         }]
         
+        #print(f"🔍 DEBUG: camera_configs[0]['extrinsics']:\n{camera_configs[0]['extrinsics']}")
         # Initialize manipulation pipeline WITHOUT automatic grasps
         print("\nInitializing ManipulationPipeline...")
         manip_pipeline = ManipulationPipeline(
@@ -234,8 +378,8 @@ def test_vlm_manipulation():
         def update_objects(objects):
             latest_objects[0] = objects
             frame_counter[0] += 1
-            if frame_counter[0] % 30 == 0:
-                print(f"\nFrame {frame_counter[0]}: {len(objects)} objects detected")
+            #if frame_counter[0] % 30 == 0:
+                #print(f"\nFrame {frame_counter[0]}: {len(objects)} objects detected")
         
         def update_time(t):
             latest_time[0] = t
@@ -308,22 +452,78 @@ def test_vlm_manipulation():
                         print("🔍 DEBUG: VLM call completed")
                         print(f"🔍 DEBUG: task_plan is: {task_plan}")
                         
-                        if task_plan:
-                            print(f"  ✓ Found: {task_plan.target_object.get('class_name', 'unknown')}")
-                            print(f"  ✓ Pixel: {task_plan.pixel_location}")
-                            print(f"  ✓ Confidence: {task_plan.confidence:.2f}")
-                            
-                            # DEBUG: Check if grasps exist
-                            print(f"  🔍 DEBUG: Object has {len(task_plan.target_object.get('grasps', []))} grasps")
-                            
-                            if task_plan.selected_grasp:
+                        if task_plan:  # Check if task_plan exists
+                            if task_plan and task_plan.selected_grasp:
                                 grasp = task_plan.selected_grasp
-                                print(f"\n📍 END-EFFECTOR COORDINATES:")
-                                print(f"  Position: {grasp['translation']}")
-                                print(f"  Gripper: {grasp.get('width', 0.04)*1000:.1f}mm")
+                                grasp_pose = create_grasp_pose(grasp, apply_transform=True)
                                 
-                                # DEBUG: Check grasp details
-                                print(f"  🔍 DEBUG: Grasp keys: {grasp.keys()}")
+                                print(f"\n📍 GRASP POSE (Robot Frame):")
+                                print(f"  Position: x={grasp_pose.x:.3f}, y={grasp_pose.y:.3f}, z={grasp_pose.z:.3f}")
+                                
+                                # GET CURRENT ORIENTATION - DON'T CHANGE IT!
+                                current = motion_controller.get_current_pose()
+                                if current:
+                                    keep_orientation = [
+                                        current.orientation.x,
+                                        current.orientation.y, 
+                                        current.orientation.z,
+                                        current.orientation.w
+                                    ]
+                                else:
+                                    keep_orientation = [0, 0, 0, 1]  # Fallback
+                                
+                                print("\n🤖 EXECUTING GRASP MOTION (position only, keeping orientation):")
+                                
+                                # Move to grasp position WITHOUT changing orientation
+                                print("  1. Moving to grasp position...")
+                                position = [grasp_pose.x - 0.05, grasp_pose.y + 0.05, grasp_pose.z + 0.015]
+                                motion_controller.set_target_pose(position, keep_orientation, grasp_pose.frame_id)
+                                
+                                start_time = time.time()
+                                while True:
+                                    current = motion_controller.get_current_pose()
+                                    if current:
+                                        dist = np.sqrt((current.x - position[0])**2 + 
+                                                    (current.y - position[1])**2 + 
+                                                    (current.z - position[2])**2)
+                                        if dist < 0.01:  # Within 5mm is good enough
+                                            # STOP THE CONTROLLER FROM TRACKING!
+                                            motion_controller.clear_target() 
+                                            print(f"     ✓ Close enough ({dist*1000:.1f}mm), stopping")
+                                            break
+                                    
+                                    if time.time() - start_time > 9:  # Safety timeout
+                                        motion_controller.clear_target()
+                                        print("     Timeout reached, stopping")
+                                        break
+                                    
+                                    time.sleep(0.1)
+                                
+                                # Close gripper
+                                print("  2. Closing gripper...")
+                                code, msg = arm_driver.set_gripper_position(
+                                    position=50,   # 850 = fully open
+                                    wait=True,
+                                    speed=1000
+                                )
+                                time.sleep(1)
+                                print("     ✓ Object grasped")
+                                
+                                # Lift up (still keeping same orientation)
+                                print("  3. Lifting object...")
+                                lift_position = [0.45, 0, 0.65]
+                                motion_controller.set_target_pose(lift_position, keep_orientation, grasp_pose.frame_id)
+                                tart_time = time.time()
+                                if time.time() - start_time > 15:  # Safety timeout
+                                    motion_controller.clear_target()
+                                    print("     Timeout reached, stopping")
+                                    break
+                                
+                                while not motion_controller.is_converged():
+                                    time.sleep(0.1)
+                                print("     ✓ Object lifted")
+                                
+                                print("\n✅ GRASP EXECUTED SUCCESSFULLY!")
                                 
                                 # Queue result for display
                                 vlm_task_queue.put({
@@ -332,11 +532,11 @@ def test_vlm_manipulation():
                                     'position': grasp['translation'],
                                     'pixel': task_plan.pixel_location
                                 })
-                            else:
+                            else:  # This else is for if task_plan.selected_grasp
                                 print("  ❌ DEBUG: No selected grasp found!")
-                        else:
+                        else:  # This else is for if task_plan
                             print("  ✗ VLM failed to identify target")
-                    else:
+                    else:  # This else is for if rgb_image is not None
                         print("  ✗ No camera data available")
                     
                     # Wait before next command
@@ -403,9 +603,9 @@ def test_vlm_manipulation():
                 
                 # Print status periodically
                 loop_counter += 1
-                if loop_counter % 300 == 0:  # Every ~10 seconds
-                    if latest_objects[0] is not None:
-                        print(f"[Status] Objects: {len(latest_objects[0])}, Time: {latest_time[0]:.3f}s")
+                #if loop_counter % 300 == 0:  # Every ~10 seconds
+                    #if latest_objects[0] is not None:
+                        #print(f"[Status] Objects: {len(latest_objects[0])}, Time: {latest_time[0]:.3f}s")
                 
                 # Check for quit
                 key = cv2.waitKey(1)
@@ -422,6 +622,15 @@ def test_vlm_manipulation():
         
     finally:
         print("\nCleaning up...")
+        if 'motion_controller' in locals():
+            print("Stopping motion controller...")
+            motion_controller.stop()
+        if 'arm_driver' in locals():
+            print("Stopping arm driver...")
+            arm_driver.stop()
+        if 'dimos' in locals():
+            print("Stopping DiMoS cluster...")
+            dimos.stop()
         if 'manip_pipeline' in locals():
             manip_pipeline.stop()
         if 'rs_pipeline' in locals():
