@@ -40,6 +40,7 @@ all_blueprints = {
     "xarm5-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm5_servo",
     "xarm7-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm7_servo",
     "xarm-cartesian": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_cartesian",
+    "xarm-trajectory": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_trajectory",
     # Demo blueprints
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents2.skills.demo_skill:demo_skill",
@@ -82,7 +83,8 @@ all_modules = {
     "web_input": "dimos.agents2.cli.web",
     # xArm manipulator modules
     "xarm_driver": "dimos.hardware.manipulators.xarm.xarm_driver",
-    "cartesian_motion_controller": "dimos.manipulation.control.cartesian_motion_controller",
+    "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
+    "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
 }
 
 
