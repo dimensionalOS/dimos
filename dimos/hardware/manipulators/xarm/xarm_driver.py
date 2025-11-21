@@ -78,6 +78,10 @@ class XArmDriverConfig(ModuleConfig):
     velocity_control: bool = False  # Use velocity control mode instead of position
     velocity_duration: float = 0.1  # Duration for velocity commands (seconds)
 
+    # Auto-recovery settings
+    auto_recovery: bool = True  # Automatically recover from mode/state errors
+    recovery_cooldown: float = 3.0  # Minimum seconds between recovery attempts
+
     @property
     def num_joints(self) -> int:
         """Get number of joints from xArm type."""
@@ -155,6 +159,10 @@ class XArmDriver(
         self._state_thread: threading.Thread | None = None  # Joint state publishing
         self._control_thread: threading.Thread | None = None  # Command sending
         self._stop_event = threading.Event()  # Thread-safe stop signal
+
+        # Auto-recovery tracking
+        self._last_recovery_attempt: float = 0.0  # Time of last recovery attempt
+        self._consecutive_failures: int = 0  # Count of consecutive code=9 failures
 
         # Joint names based on number of joints
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
@@ -988,13 +996,38 @@ class XArmDriver(
 
                     if code is not None and code != 0:
                         if code == 9:
-                            logger.warning(
-                                f"Command failed: not ready to move "
-                                f"(code=9, state={self.curr_state}, mode={self.curr_mode}). "
-                                f"Check robot mode and state."
-                            )
+                            self._consecutive_failures += 1
+                            # Only log occasionally to avoid spam
+                            if (
+                                self._consecutive_failures == 1
+                                or self._consecutive_failures % 50 == 0
+                            ):
+                                logger.warning(
+                                    f"Command failed: not ready to move "
+                                    f"(code=9, state={self.curr_state}, mode={self.curr_mode}). "
+                                    f"Failures: {self._consecutive_failures}"
+                                )
+
+                            # Attempt auto-recovery after a few failures (with cooldown)
+                            current_time = time.time()
+                            if (
+                                self.config.auto_recovery
+                                and self._consecutive_failures >= 5
+                                and current_time - self._last_recovery_attempt
+                                > self.config.recovery_cooldown
+                            ):
+                                logger.info(
+                                    f"Auto-recovery: Attempting to recover from not-ready state "
+                                    f"(state={self.curr_state}, mode={self.curr_mode})..."
+                                )
+                                self._last_recovery_attempt = current_time
+                                self._try_recover_from_error()
+                                self._consecutive_failures = 0
                         else:
                             logger.warning(f"Command failed with code: {code}")
+                    else:
+                        # Success - reset failure counter
+                        self._consecutive_failures = 0
 
                 # Maintain loop frequency
                 next_time += period
@@ -1173,3 +1206,7 @@ class XArmDriver(
     # - SystemControlComponent: System control methods (enable_servo_mode, etc.)
     # - KinematicsComponent: Kinematics methods (get_inverse_kinematics, etc.)
     # =========================================================================
+
+
+# Expose blueprint for declarative composition
+xarm_driver = XArmDriver.blueprint

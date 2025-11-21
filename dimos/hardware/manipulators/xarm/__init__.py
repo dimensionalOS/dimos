@@ -18,17 +18,12 @@ xArm Manipulator Driver Module
 Real-time driver and components for xArm5/6/7 manipulators.
 """
 
-from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver, XArmDriverConfig
-from dimos.hardware.manipulators.xarm.sample_trajectory_generator import (
-    SampleTrajectoryGenerator,
-    TrajectoryGeneratorConfig,
-)
 from dimos.hardware.manipulators.xarm.spec import ArmDriverSpec
+from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver, XArmDriverConfig, xarm_driver
 
 __all__ = [
+    "ArmDriverSpec",
     "XArmDriver",
     "XArmDriverConfig",
-    "SampleTrajectoryGenerator",
-    "TrajectoryGeneratorConfig",
-    "ArmDriverSpec",
+    "xarm_driver",
 ]
