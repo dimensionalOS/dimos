@@ -37,8 +37,8 @@ import time
 from dimos import core
 from dimos.hardware.manipulators.xarm import XArmDriver
 from dimos.manipulation.control import CartesianMotionController
-from dimos.msgs.sensor_msgs import JointState, JointCommand, RobotState
 from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 
 # Global flag for graceful shutdown
 shutdown_requested = False
