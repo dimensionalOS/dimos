@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-Manipulation Planning Module
+Trajectory Generator Module
 
-Trajectory generation and motion planning for robotic manipulators.
+Generates time-parameterized trajectories from waypoints.
 """
 
 from dimos.manipulation.planning.trajectory_generator.joint_trajectory_generator import (
