@@ -13,36 +13,20 @@
 # limitations under the License.
 
 """
-Manipulation Control Modules
+Servo Control Modules
 
-Hardware-agnostic controllers for robotic manipulation tasks.
-
-Submodules:
-- servo_control: Real-time servo-level controllers (Cartesian motion control)
-- trajectory_controller: Trajectory planning and execution
+Real-time servo-level controllers for robotic manipulation.
+Includes Cartesian motion control with PID-based tracking.
 """
 
-# Re-export from servo_control for backwards compatibility
-from dimos.manipulation.control.servo_control import (
+from dimos.manipulation.control.servo_control.cartesian_motion_controller import (
     CartesianMotionController,
     CartesianMotionControllerConfig,
     cartesian_motion_controller,
 )
 
-# Re-export from trajectory_controller
-from dimos.manipulation.control.trajectory_controller import (
-    JointTrajectoryController,
-    JointTrajectoryControllerConfig,
-    joint_trajectory_controller,
-)
-
 __all__ = [
-    # Servo control
     "CartesianMotionController",
     "CartesianMotionControllerConfig",
-    # Trajectory control
-    "JointTrajectoryController",
-    "JointTrajectoryControllerConfig",
     "cartesian_motion_controller",
-    "joint_trajectory_controller",
 ]
