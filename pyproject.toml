@@ -193,6 +193,7 @@ dev = [
     "pytest-mock==3.15.0",
     "pytest-env==1.1.5",
     "pytest-timeout==2.4.0",
+    "xdoctest>=1.3.0",
     "textual==3.7.1",
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
@@ -304,3 +305,9 @@ env = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+# xdoctest configuration
+# (Not running on CI yet. Run with e.g. `xdoctest <FILE> --global-exec "import dimos"`; can also use pytest to run it)
+# Chose xdoctest because it's better than vanilla doctest at floating-point comparisons, and because it uses a less fragile AST-based approach. It's used by PyTorch.
+# Disable built-in doctest to avoid conflicts
+xdoctest_style = "google"
