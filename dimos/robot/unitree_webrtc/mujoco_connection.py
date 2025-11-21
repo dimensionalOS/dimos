@@ -163,11 +163,11 @@ class MujocoConnection:
         self.odom_stream.cache_clear()
         self.video_stream.cache_clear()
 
-    def standup(self) -> None:
-        print("standup supressed")
+    def standup(self) -> bool:
+        return True
 
-    def liedown(self) -> None:
-        print("liedown supressed")
+    def liedown(self) -> bool:
+        return True
 
     def get_video_frame(self) -> NDArray[Any] | None:
         if self.shm_data is None:

@@ -79,8 +79,8 @@ class Go2ConnectionProtocol(Protocol):
     def odom_stream(self) -> Observable: ...
     def video_stream(self) -> Observable: ...
     def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
-    def standup(self) -> None: ...
-    def liedown(self) -> None: ...
+    def standup(self) -> bool: ...
+    def liedown(self) -> bool: ...
     def publish_request(self, topic: str, data: dict) -> dict: ...
 
 
@@ -137,30 +137,26 @@ class ReplayConnection(UnitreeWebRTCConnection):
     def start(self) -> None:
         pass
 
-    def standup(self) -> None:
-        print("standup suppressed")
+    def standup(self) -> bool:
+        return True
 
-    def liedown(self) -> None:
-        print("liedown suppressed")
+    def liedown(self) -> bool:
+        return True
 
     @simple_mcache
     def lidar_stream(self):
-        print("lidar stream start")
         lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")
         return lidar_store.stream(**self.replay_config)
 
     @simple_mcache
     def odom_stream(self):
-        print("odom stream start")
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
         return odom_store.stream(**self.replay_config)
 
     # we don't have raw video stream in the data set
     @simple_mcache
     def video_stream(self):
-        print("video stream start")
         video_store = TimedSensorReplay(f"{self.dir_name}/video")
-
         return video_store.stream(**self.replay_config)
 
     def move(self, twist: Twist, duration: float = 0.0) -> bool:
@@ -231,8 +227,10 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     @rpc
     def stop(self) -> None:
         self.liedown()
+
         if self.connection:
             self.connection.stop()
+
         super().stop()
 
     @classmethod
@@ -299,14 +297,14 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         return self.connection.move(twist, duration)
 
     @rpc
-    def standup(self) -> None:
+    def standup(self) -> bool:
         """Make the robot stand up."""
-        self.connection.standup()
+        return self.connection.standup()
 
     @rpc
-    def liedown(self) -> None:
+    def liedown(self) -> bool:
         """Make the robot lie down."""
-        self.connection.liedown()
+        return self.connection.liedown()
 
     @rpc
     def publish_request(self, topic: str, data: dict) -> dict:
