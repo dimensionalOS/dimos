@@ -62,6 +62,9 @@ dependencies = [
     # Class Extraction
     "pydantic",
 
+    # For documenting parameters etc
+    "annotated-doc",
+
     # Developer Specific
     "ipykernel",
 
@@ -261,7 +264,7 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
+extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH", "D300"]
 # TODO: All of these should be fixed, but it's easier commit autofixes first
 ignore = ["A001", "A002", "B008", "B017", "B019", "B023", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F401", "F403", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N812", "N813", "N813", "N816", "N817", "N999", "RUF002", "RUF003", "RUF006", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007"]
 
