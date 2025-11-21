@@ -79,6 +79,8 @@ plugins:
   - mkdocstrings:
       handlers:
         python:
+          extensions:
+            - griffe_typingdoc
           options:
             docstring_style: google
             members_order: alphabetical
