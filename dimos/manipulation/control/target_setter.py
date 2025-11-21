@@ -25,7 +25,7 @@ import sys
 import time
 
 from dimos import core
-from dimos.msgs.geometry_msgs import PoseStamped, Vector3, Quaternion
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 
 
 class TargetSetter:
@@ -47,8 +47,8 @@ class TargetSetter:
         self.latest_current_pose = None
 
         print("TargetSetter initialized")
-        print(f"  Publishing to: /target_pose")
-        print(f"  Subscribing to: /xarm/current_pose")
+        print("  Publishing to: /target_pose")
+        print("  Subscribing to: /xarm/current_pose")
 
     def start(self):
         """Start subscribing to current pose."""
@@ -81,13 +81,13 @@ class TargetSetter:
         if is_identity and self.latest_current_pose is not None:
             # Use current orientation
             orientation = self.latest_current_pose.orientation
-            print(f"\n✓ Published target (preserving current orientation):")
+            print("\n✓ Published target (preserving current orientation):")
         else:
             # Convert Euler to Quaternion
             euler = Vector3(roll, pitch, yaw)
             quat = Quaternion.from_euler(euler)
             orientation = [quat.x, quat.y, quat.z, quat.w]
-            print(f"\n✓ Published target:")
+            print("\n✓ Published target:")
 
         pose = PoseStamped(
             ts=time.time(),
@@ -116,42 +116,50 @@ def interactive_mode(setter):
     print("Interactive Target Setter")
     print("=" * 80)
     print("Mode: WORLD FRAME (absolute coordinates)")
-    print("\nEnter target coordinates (Ctrl+C to quit)")
+    print("\nFormat: x y z [roll pitch yaw]")
+    print("  - 3 values: position only (keep current orientation)")
+    print("  - 6 values: position + orientation (degrees)")
+    print("Example: 0.4 0.0 0.2        (position only)")
+    print("Example: 0.4 0.0 0.2 0 180 0 (with orientation)")
+    print("Ctrl+C to quit")
     print("=" * 80)
 
     try:
         while True:
-            print("\n" + "-" * 80)
-
-            # Get position
             try:
-                print("\nEnter target position (in meters):")
-                x_str = input("  x (m): ").strip()
-                y_str = input("  y (m): ").strip()
-                z_str = input("  z (m): ").strip()
+                # Print current pose before asking for input
+                if setter.latest_current_pose is not None:
+                    p = setter.latest_current_pose
+                    # Convert quaternion to euler for display
+                    quat = Quaternion(p.orientation)
+                    euler = quat.to_euler()
+                    print(
+                        f"Current: {p.x:.3f} {p.y:.3f} {p.z:.3f} {math.degrees(euler.x):.1f} {math.degrees(euler.y):.1f} {math.degrees(euler.z):.1f}"
+                    )
 
-                if not x_str or not y_str or not z_str:
-                    print("⚠ All position coordinates required")
+                line = input("> ").strip()
+
+                if not line:
                     continue
 
-                x = float(x_str)
-                y = float(y_str)
-                z = float(z_str)
+                parts = line.split()
 
-                # Get orientation
-                print(
-                    "\nEnter orientation (in degrees, leave blank to preserve current orientation):"
-                )
-                roll_str = input("  roll (°): ").strip()
-                pitch_str = input("  pitch (°): ").strip()
-                yaw_str = input("  yaw (°): ").strip()
+                if len(parts) == 3:
+                    # Position only - keep current orientation
+                    x, y, z = [float(p) for p in parts]
+                    setter.publish_pose(x, y, z)
 
-                roll = math.radians(float(roll_str)) if roll_str else 0.0
-                pitch = math.radians(float(pitch_str)) if pitch_str else 0.0
-                yaw = math.radians(float(yaw_str)) if yaw_str else 0.0
+                elif len(parts) == 6:
+                    # Full pose (orientation in degrees)
+                    x, y, z = [float(p) for p in parts[:3]]
+                    roll = math.radians(float(parts[3]))
+                    pitch = math.radians(float(parts[4]))
+                    yaw = math.radians(float(parts[5]))
+                    setter.publish_pose(x, y, z, roll, pitch, yaw)
 
-                # Publish
-                setter.publish_pose(x, y, z, roll, pitch, yaw)
+                else:
+                    print("⚠ Expected 3 (x y z) or 6 (x y z roll pitch yaw) values")
+                    continue
 
             except ValueError as e:
                 print(f"⚠ Invalid input: {e}")
