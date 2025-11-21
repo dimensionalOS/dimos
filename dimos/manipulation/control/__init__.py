@@ -21,9 +21,11 @@ Hardware-agnostic controllers for robotic manipulation tasks.
 from dimos.manipulation.control.cartesian_motion_controller import (
     CartesianMotionController,
     CartesianMotionControllerConfig,
+    cartesian_motion_controller,
 )
 
 __all__ = [
     "CartesianMotionController",
     "CartesianMotionControllerConfig",
+    "cartesian_motion_controller",
 ]
