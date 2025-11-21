@@ -4,6 +4,7 @@
     "watch": "deno run -A build.ts --watch"
   },
   "imports": {
-    "@std/assert": "jsr:@std/assert@1"
+    "@std/assert": "jsr:@std/assert@1",
+    "pickleparser": "npm:pickleparser@^0.2.1"
   }
 }

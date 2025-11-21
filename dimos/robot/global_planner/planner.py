@@ -34,6 +34,9 @@ logger = setup_logger("dimos.robot.unitree.global_planner", level=logging.DEBUG)
 class Planner(Visualizable):
     local_nav: Callable[[VectorLike], bool]
 
+    @abstractmethod
+    def plan(self, goal: VectorLike) -> Path: ...
+
     def start(self):
         return self
 
@@ -54,9 +57,6 @@ class Planner(Visualizable):
         if not hasattr(self, "_vis_subject"):
             return
         self._vis_subject.on_next((name, drawable))
-
-    @abstractmethod
-    def plan(self, goal: VectorLike) -> Path: ...
 
     # actually we might want to rewrite this into rxpy
     def walk_loop(self, path: Path) -> bool:

@@ -477,6 +477,646 @@ var require_browser = __commonJS({
   }
 });
 
+// ../../../../../../.cache/deno/deno_esbuild/registry.npmjs.org/pickleparser@0.2.1/node_modules/pickleparser/dist/index.js
+var require_dist = __commonJS({
+  "../../../../../../.cache/deno/deno_esbuild/registry.npmjs.org/pickleparser@0.2.1/node_modules/pickleparser/dist/index.js"(exports, module) {
+    (function(global, factory) {
+      typeof exports === "object" && typeof module !== "undefined" ? factory(exports) : typeof define === "function" && define.amd ? define(["exports"], factory) : (global = typeof globalThis !== "undefined" ? globalThis : global || self, factory(global.pickleparser = {}));
+    })(exports, function(exports2) {
+      "use strict";
+      class BufferReader {
+        constructor(buffer) {
+          this._utf8Decoder = new TextDecoder("utf-8");
+          this._asciiDecoder = new TextDecoder("ascii");
+          this._buffer = buffer;
+          this._dataView = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+          this._position = 0;
+        }
+        get length() {
+          return this._buffer.byteLength;
+        }
+        get position() {
+          return this._position;
+        }
+        byte() {
+          const position = this._position;
+          this.skip(1);
+          return this._dataView.getUint8(position);
+        }
+        bytes(length) {
+          const position = this._position;
+          this.skip(length);
+          return this._buffer.subarray(position, this._position);
+        }
+        uint16() {
+          const position = this.position;
+          this.skip(2);
+          return this._dataView.getUint16(position, true);
+        }
+        int32() {
+          const position = this.position;
+          this.skip(4);
+          return this._dataView.getInt32(position, true);
+        }
+        uint32() {
+          const position = this.position;
+          this.skip(4);
+          return this._dataView.getUint32(position, true);
+        }
+        uint64() {
+          const position = this.position;
+          this.skip(8);
+          const left = this._dataView.getUint32(position, true);
+          const right = this._dataView.getUint32(position + 4, true);
+          const number = left + 2 ** 32 * right;
+          if (!Number.isSafeInteger(number)) {
+            console.warn(number, "exceeds MAX_SAFE_INTEGER. Precision may be lost");
+          }
+          return number;
+        }
+        float64() {
+          const position = this.position;
+          this.skip(8);
+          return this._dataView.getFloat64(position, false);
+        }
+        skip(offset) {
+          this._position += offset;
+          if (this._position > this._buffer.length) {
+            throw new Error("Expected " + (this._position - this._buffer.length) + " more bytes. The file might be corrupted. Unexpected end of file.");
+          }
+        }
+        string(size, encoding) {
+          const data = this.bytes(size);
+          return encoding == "utf-8" ? this._utf8Decoder.decode(data) : this._asciiDecoder.decode(data);
+        }
+        line() {
+          const index = this._buffer.indexOf(10, this._position);
+          if (index == -1) {
+            throw new Error("Could not find end of line.");
+          }
+          const size = index - this._position;
+          const text = this.string(size, "ascii");
+          this.skip(1);
+          return text;
+        }
+        hasNext() {
+          return this.position < this.length;
+        }
+      }
+      function readUint64(data) {
+        if (data.length > 8) {
+          throw new Error("Value too large to unpickling");
+        }
+        const buffer = new ArrayBuffer(8);
+        const uint8 = new Uint8Array(buffer);
+        uint8.set(data);
+        const subReader = new BufferReader(uint8);
+        const number = subReader.uint64();
+        return number;
+      }
+      function readUint64WithBigInt(data) {
+        let fixedLength = 0;
+        let partCount = 0;
+        while (fixedLength < data.length) {
+          fixedLength += 4;
+          partCount += 1;
+        }
+        const buffer = new ArrayBuffer(fixedLength);
+        const uint8 = new Uint8Array(buffer);
+        uint8.set(data);
+        const view = new DataView(buffer, 0, fixedLength);
+        let number = BigInt(0);
+        for (let partIndex = 0; partIndex < partCount; partIndex++) {
+          const part = BigInt(view.getUint32(partIndex * 4, true));
+          number |= part << BigInt(partIndex * 32);
+        }
+        return number;
+      }
+      const ArraySetProvider = {
+        create: () => [],
+        createWithItems: (value2) => Array.from(value2),
+        addMethod: function(set, value2) {
+          set.push(value2);
+        }
+      };
+      const StdandardSetProvider = {
+        create: () => /* @__PURE__ */ new Set(),
+        createWithItems: (value2) => new Set(value2),
+        addMethod: function(set, value2) {
+          set.add(value2);
+        }
+      };
+      const SetProviderFactory = (type) => {
+        switch (type) {
+          case "Set":
+            return StdandardSetProvider;
+          case "array":
+            return ArraySetProvider;
+          default:
+            throw new Error(`Unknown unpickling type [${type}] of Set.`);
+        }
+      };
+      const ObjectDictionaryProvider = {
+        create: () => ({}),
+        setMethod: function(dict, key, value2) {
+          dict[key] = value2;
+        }
+      };
+      const StdandardDictionaryProvider = {
+        create: () => /* @__PURE__ */ new Map(),
+        setMethod: function(dict, key, value2) {
+          dict.set(key, value2);
+        }
+      };
+      const DictionaryProviderFactory = (type) => {
+        switch (type) {
+          case "Map":
+            return StdandardDictionaryProvider;
+          case "object":
+            return ObjectDictionaryProvider;
+          default:
+            throw new Error(`Unknown unpickling type [${type}] of Dictionary.`);
+        }
+      };
+      function createPObject(module2, name) {
+        const PObject = function(...args) {
+          if (new.target) {
+            Object.defineProperty(this, "args", {
+              value: args,
+              enumerable: false,
+              configurable: false,
+              writable: false
+            });
+          } else {
+            const PFunction = function(...args2) {
+              Object.defineProperty(this, "args", {
+                value: args2,
+                enumerable: false,
+                configurable: false,
+                writable: false
+              });
+            };
+            PFunction.prototype.__module__ = module2;
+            PFunction.prototype.__name__ = name;
+            return Reflect.construct(PFunction, args);
+          }
+        };
+        PObject.prototype.__module__ = module2;
+        PObject.prototype.__name__ = name;
+        PObject.prototype.__setnewargs_ex__ = function(...kwargs) {
+          Object.defineProperty(this, "kwargs", {
+            value: kwargs,
+            enumerable: false,
+            configurable: false,
+            writable: false
+          });
+        };
+        return PObject;
+      }
+      const DefualtOptions = {
+        nameResolver: {
+          resolve: (module2, name) => createPObject(module2, name)
+        },
+        persistentResolver: {
+          resolve: (pid) => {
+            throw new Error(`Unregistered persistent id: \`${pid}\`.`);
+          }
+        },
+        extensionResolver: {
+          resolve: (extCode) => {
+            throw new Error(`Unregistered extension code: \`${extCode.toString(16)}\`.`);
+          }
+        },
+        unpicklingTypeOfSet: "array",
+        unpicklingTypeOfDictionary: "object"
+      };
+      class Parser {
+        constructor(options) {
+          this._options = { ...DefualtOptions, ...options };
+          this._nameResolver = this._options.nameResolver;
+          this._persistentResolver = this._options.persistentResolver;
+          this._extensionResolver = this._options.extensionResolver;
+          this._setProvider = SetProviderFactory(this._options.unpicklingTypeOfSet);
+          this._dictionaryProvider = DictionaryProviderFactory(this._options.unpicklingTypeOfDictionary);
+          this._buffers = options?.buffers;
+        }
+        parse(buffer) {
+          const reader = new BufferReader(buffer);
+          return this.read(reader);
+        }
+        read(reader) {
+          let stack = [];
+          const metastack = [];
+          const memo = /* @__PURE__ */ new Map();
+          while (reader.hasNext()) {
+            const opcode = reader.byte();
+            switch (opcode) {
+              case 128: {
+                const version = reader.byte();
+                if (version > 5) {
+                  throw new Error(`Unsupported protocol version '${version}'.`);
+                }
+                break;
+              }
+              case 46:
+                return stack.pop();
+              case 149:
+                reader.skip(8);
+                break;
+              case 40:
+                metastack.push(stack);
+                stack = [];
+                break;
+              case 49:
+                stack = metastack.pop();
+                break;
+              case 48:
+                stack.pop();
+                break;
+              case 50:
+                stack.push(stack[stack.length - 1]);
+                break;
+              case 112: {
+                const index = parseInt(reader.line(), 10);
+                memo.set(index, stack[stack.length - 1]);
+                break;
+              }
+              case 113:
+                memo.set(reader.byte(), stack[stack.length - 1]);
+                break;
+              case 114:
+                memo.set(reader.uint32(), stack[stack.length - 1]);
+                break;
+              case 148:
+                memo.set(memo.size, stack[stack.length - 1]);
+                break;
+              case 103: {
+                const index = parseInt(reader.line(), 10);
+                stack.push(memo.get(index));
+                break;
+              }
+              case 104:
+                stack.push(memo.get(reader.byte()));
+                break;
+              case 106:
+                stack.push(memo.get(reader.uint32()));
+                break;
+              case 78:
+                stack.push(null);
+                break;
+              case 136:
+                stack.push(true);
+                break;
+              case 137:
+                stack.push(false);
+                break;
+              case 73: {
+                const value2 = reader.line();
+                if (value2 == "01") {
+                  stack.push(true);
+                } else if (value2 == "00") {
+                  stack.push(false);
+                } else {
+                  stack.push(parseInt(value2, 10));
+                }
+                break;
+              }
+              case 76:
+                stack.push(parseInt(reader.line(), 10));
+                break;
+              case 70:
+                stack.push(parseFloat(reader.line()));
+                break;
+              case 83: {
+                const data = reader.line();
+                if (data.length >= 2 && data[0] == data.slice(-1) && ['"', "'"].includes(data[0])) {
+                  stack.push(data.slice(1, -1));
+                  break;
+                } else {
+                  throw new Error("Insecure string pickle.");
+                }
+              }
+              case 86:
+                stack.push(reader.line());
+                break;
+              case 74:
+                stack.push(reader.int32());
+                break;
+              case 75:
+                stack.push(reader.byte());
+                break;
+              case 77:
+                stack.push(reader.uint16());
+                break;
+              case 138: {
+                const length = reader.byte();
+                const data = reader.bytes(length);
+                const number = readUint64(data);
+                stack.push(number);
+                break;
+              }
+              case 139: {
+                const length = reader.uint32();
+                const data = reader.bytes(length);
+                const number = readUint64WithBigInt(data);
+                stack.push(number);
+                break;
+              }
+              case 71:
+                stack.push(reader.float64());
+                break;
+              case 66:
+                stack.push(reader.bytes(reader.int32()));
+                break;
+              case 67:
+                stack.push(reader.bytes(reader.byte()));
+                break;
+              case 142:
+                stack.push(reader.bytes(reader.uint64()));
+                break;
+              case 84:
+                stack.push(reader.string(reader.uint32(), "ascii"));
+                break;
+              case 85:
+                stack.push(reader.string(reader.byte(), "ascii"));
+                break;
+              case 88:
+                stack.push(reader.string(reader.uint32(), "utf-8"));
+                break;
+              case 140:
+                stack.push(reader.string(reader.byte(), "utf-8"));
+                break;
+              case 141:
+                stack.push(reader.string(reader.uint64(), "utf-8"));
+                break;
+              case 41:
+                stack.push([]);
+                break;
+              case 116: {
+                const items = stack;
+                stack = metastack.pop();
+                stack.push(items);
+                break;
+              }
+              case 133: {
+                stack.push([stack.pop()]);
+                break;
+              }
+              case 134: {
+                const b = stack.pop();
+                const a = stack.pop();
+                stack.push([a, b]);
+                break;
+              }
+              case 135: {
+                const c = stack.pop();
+                const b = stack.pop();
+                const a = stack.pop();
+                stack.push([a, b, c]);
+                break;
+              }
+              case 93:
+                stack.push([]);
+                break;
+              case 108: {
+                const items = stack;
+                stack = metastack.pop();
+                stack.push(items);
+                break;
+              }
+              case 97: {
+                const append = stack.pop();
+                stack[stack.length - 1].push(append);
+                break;
+              }
+              case 101: {
+                const appends = stack;
+                stack = metastack.pop();
+                const list = stack[stack.length - 1];
+                list.push(...appends);
+                break;
+              }
+              case 125: {
+                const dict = this._dictionaryProvider.create();
+                stack.push(dict);
+                break;
+              }
+              case 100: {
+                const items = stack;
+                stack = metastack.pop();
+                const dict = this._dictionaryProvider.create();
+                for (let i = 0; i < items.length; i += 2) {
+                  dict[items[i]] = items[i + 1];
+                }
+                stack.push(dict);
+                break;
+              }
+              case 115: {
+                const value2 = stack.pop();
+                const key = stack.pop();
+                const dict = stack[stack.length - 1];
+                this._dictionaryProvider.setMethod(dict, key, value2);
+                break;
+              }
+              case 117: {
+                const items = stack;
+                stack = metastack.pop();
+                const dict = stack[stack.length - 1];
+                for (let pos = 0; pos < items.length; pos += 2) {
+                  this._dictionaryProvider.setMethod(dict, items[pos], items[pos + 1]);
+                }
+                break;
+              }
+              case 143: {
+                const set = this._setProvider.create();
+                stack.push(set);
+                break;
+              }
+              case 145: {
+                const items = stack;
+                stack = metastack.pop();
+                const set = this._setProvider.createWithItems(items);
+                stack.push(set);
+                break;
+              }
+              case 144: {
+                const items = stack;
+                stack = metastack.pop();
+                const set = stack[stack.length - 1];
+                for (let i = 0; i < items.length; i++) {
+                  this._setProvider.addMethod(set, items[i]);
+                }
+                break;
+              }
+              case 130: {
+                const extCode = reader.byte();
+                const cls = this._extensionResolver.resolve(extCode);
+                stack.push(cls);
+                break;
+              }
+              case 131: {
+                const extCode = reader.uint16();
+                const cls = this._extensionResolver.resolve(extCode);
+                stack.push(cls);
+                break;
+              }
+              case 132: {
+                const extCode = reader.uint32();
+                const cls = this._extensionResolver.resolve(extCode);
+                stack.push(cls);
+                break;
+              }
+              case 99: {
+                const module2 = reader.line();
+                const name = reader.line();
+                const cls = this._nameResolver.resolve(module2, name);
+                stack.push(cls);
+                break;
+              }
+              case 147: {
+                const name = stack.pop();
+                const module2 = stack.pop();
+                const cls = this._nameResolver.resolve(module2, name);
+                stack.push(cls);
+                break;
+              }
+              case 105: {
+                const module2 = reader.line();
+                const name = reader.line();
+                const args = stack;
+                stack = metastack.pop();
+                const cls = this._nameResolver.resolve(module2, name);
+                const obj = Reflect.construct(cls, args);
+                stack.push(obj);
+                break;
+              }
+              case 111: {
+                const args = stack;
+                const cls = args.pop();
+                stack = metastack.pop();
+                const obj = Reflect.construct(cls, args);
+                stack.push(obj);
+                break;
+              }
+              case 129: {
+                const args = stack.pop();
+                const cls = stack.pop();
+                const obj = Reflect.construct(cls, args);
+                stack.push(obj);
+                break;
+              }
+              case 146: {
+                const kwargs = stack.pop();
+                const args = stack.pop();
+                const cls = stack.pop();
+                const obj = Reflect.construct(cls, args);
+                if (obj.__setnewargs_ex__) {
+                  obj.__setnewargs_ex__(kwargs);
+                }
+                stack.push(obj);
+                break;
+              }
+              case 80: {
+                const pid = reader.line();
+                const cls = this._persistentResolver.resolve(pid);
+                stack.push(cls);
+                break;
+              }
+              case 81: {
+                const pid = stack.pop();
+                const cls = this._persistentResolver.resolve(pid);
+                stack.push(cls);
+                break;
+              }
+              case 82: {
+                const args = stack.pop();
+                const func = stack.pop();
+                stack.push(func(...args));
+                break;
+              }
+              case 98: {
+                const state = stack.pop();
+                const obj = stack[stack.length - 1];
+                if (obj.__setstate__) {
+                  obj.__setstate__(state);
+                  break;
+                }
+                if (obj instanceof Map) {
+                  if (state instanceof Map && state.has("__dict__")) {
+                    for (const [key, value2] of state.get("__dict__")) {
+                      obj.set(key, value2);
+                    }
+                    break;
+                  }
+                  if (state.__dict__) {
+                    for (const key in state.__dict__) {
+                      obj.set(key, state.__dict__[key]);
+                    }
+                    break;
+                  }
+                } else {
+                  if (state instanceof Map) {
+                    Object.assign(obj, Object.fromEntries(state));
+                  } else {
+                    Object.assign(obj, state);
+                  }
+                }
+                break;
+              }
+              case 150:
+                stack.push(reader.bytes(reader.uint64()));
+                break;
+              case 151: {
+                if (this._buffers == null) {
+                  throw new Error("pickle stream refers to out-of-band data but no *buffers* argument was given");
+                }
+                const next = this._buffers.next();
+                if (next.done) {
+                  throw new Error("not enough out-of-band buffers");
+                }
+                stack.push(next.value);
+                break;
+              }
+              case 152:
+                stack.push(stack.pop());
+                break;
+              default:
+                throw new Error(`Unsupported opcode '${opcode}'.`);
+            }
+          }
+          throw new Error("Unexpected end of file.");
+        }
+      }
+      class NameRegistry {
+        constructor() {
+          this._registry = /* @__PURE__ */ new Map();
+        }
+        register(module2, name, func) {
+          const fqn = NameRegistry.getFullyQualifiedName(module2, name);
+          if (this._registry.has(fqn)) {
+            throw new Error(`'${fqn}' is already registered.`);
+          }
+          this._registry.set(fqn, func);
+          return this;
+        }
+        resolve(module2, name) {
+          const fqn = NameRegistry.getFullyQualifiedName(module2, name);
+          return this._registry.get(fqn) ?? this.onMissingName(module2, name);
+        }
+        onMissingName(module2, name) {
+          return createPObject(module2, name);
+        }
+        static getFullyQualifiedName(module2, name) {
+          return module2 + "." + name;
+        }
+      }
+      exports2.BufferReader = BufferReader;
+      exports2.NameRegistry = NameRegistry;
+      exports2.Parser = Parser;
+    });
+  }
+});
+
 // ../../../../../../.cache/deno/deno_esbuild/registry.npmjs.org/engine.io-parser@5.2.3/node_modules/engine.io-parser/build/esm/commons.js
 var PACKET_TYPES = /* @__PURE__ */ Object.create(null);
 PACKET_TYPES["open"] = "0";
@@ -3952,6 +4592,8 @@ Object.assign(lookup2, {
 });
 
 // clientside/init.ts
+var import_npm_pickleparser = __toESM(require_dist());
+var parser = new import_npm_pickleparser.default.Parser();
 var serverState = {
   status: "disconnected",
   connected_clients: 0,
@@ -3979,16 +4621,23 @@ function deepMerge(source, destination) {
   }
   return destination;
 }
-socket.on("full_state", (fullState) => {
-  console.log("Received full state:", fullState);
-  serverState = fullState;
+function update_entity(name, data, config) {
+  if (!data || !(data instanceof ArrayBuffer)) {
+    return;
+  }
+  console.log("update_entity", name, data, config);
+  console.log(parser.parse(new Uint8Array(data)));
+}
+function state_update(state) {
+  console.log("Received partial state update:", state);
+  serverState = deepMerge(state, { ...serverState });
+  for (const [key, value2] of Object.entries(state)) {
+    update_entity(key, value2.data, value2.config);
+  }
   updateUI();
-});
-socket.on("state_update", (partialState) => {
-  console.log("Received partial state update:", partialState);
-  serverState = deepMerge(partialState, { ...serverState });
-  updateUI();
-});
+}
+socket.on("state_update", state_update);
+socket.on("full_state", state_update);
 function updateUI() {
   console.log("Current state:", serverState);
   const jsonElement = document.getElementById("json");

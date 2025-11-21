@@ -41,12 +41,7 @@ class Costmap:
 
     def serialize(self) -> tuple:
         """Serialize the Costmap instance to a tuple."""
-        return (
-            self.grid.tolist(),
-            self.resolution,
-            self.origin.serialize(),
-            self.origin_theta,
-        )
+        return pickle.dumps(self)
 
     @classmethod
     def from_msg(cls, costmap_msg: OccupancyGrid) -> "Costmap":

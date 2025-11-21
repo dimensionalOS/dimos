@@ -124,9 +124,9 @@ class WebsocketVis:
         """Process a drawable object and return a dictionary representation"""
         if isinstance(drawable, tuple):
             obj, config = drawable
-            return {"object": obj.serialize(), "config": config}
+            return {"data": obj.serialize(), "config": config}
         else:
-            return {"object": drawable.serialize(), "config": {}}
+            return {"data": drawable.serialize(), "config": {}}
 
     def connect(self, obs: Observable[Tuple[str, Drawable]], window_name: str = "main"):
         """Connect to an Observable stream and update state on new data"""

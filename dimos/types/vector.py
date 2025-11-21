@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pickle
 import numpy as np
 from geometry_msgs.msg import Vector3
 from typing import (
@@ -113,7 +114,7 @@ class Vector:
 
     def serialize(self) -> Tuple:
         """Serialize the vector to a tuple."""
-        return tuple(self._data.tolist())
+        pickle.dumps(self)
 
     def __eq__(self, other) -> bool:
         if isinstance(other, Vector):
