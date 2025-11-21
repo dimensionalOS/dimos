@@ -18,13 +18,11 @@ type EncodedPath = Encoded<"path"> & {
 }
 
 export class Path {
-    coords: Vector[]
-    constructor(coords: Vector[]) {
-        this.coords = coords
+    constructor(public coords: Array<[number, number]>) {
     }
 
     static decode(data: EncodedPath): Path {
-        return new Path(data.points.map((p) => new Vector(...p)))
+        return new Path(data.points)
     }
 }
 

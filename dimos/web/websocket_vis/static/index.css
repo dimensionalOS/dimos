@@ -299,12 +299,3 @@ svg {
     stroke-width: 1;
     stroke: white;
 }
-
-.quick-display {
-    position: absolute;
-    background-color: black;
-    border: 1px solid white;
-    color: white;
-    padding: 5px;
-    z-index: 1000;
-}

@@ -109,8 +109,9 @@ class AstarPlanner(Planner):
         smudge = costmap.smudge()
         self.vis("global_costmap", smudge)
         self.vis("pos", pos)
+        self.vis("target", goal)
         path = astar(smudge, goal, pos)
         if path:
             path = path.resample(0.25)
-            self.vis("global_target", path)
+            self.vis("a*", path)
         return path
