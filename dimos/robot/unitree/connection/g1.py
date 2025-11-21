@@ -77,14 +77,13 @@ class G1Connection(Module):
 
         self.connection.start()
 
-        unsub = self.cmd_vel.subscribe(self.move)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
         if self.connection_type == "mujoco":
             unsub = self.connection.odom_stream().subscribe(self._publish_sim_odom)
             self._disposables.add(unsub)
 
-            unsub = self.connection.lidar_stream().subscribe(self._on_lidar)
+            unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
             self._disposables.add(unsub)
         else:
             unsub = self.odom_in.subscribe(self._publish_odom)
@@ -139,10 +138,6 @@ class G1Connection(Module):
                 orientation=msg.orientation,
             )
         )
-
-    def _on_lidar(self, msg: LidarMessage) -> None:
-        if self.lidar.transport:
-            self.lidar.publish(msg)
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
