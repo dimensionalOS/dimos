@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Claude agent implementation for the DIMOS agent framework.
 
 This module provides a ClaudeAgent class that implements the LLMAgent interface
@@ -15,6 +29,7 @@ import logging
 import anthropic
 from anthropic.types import ContentBlock, MessageParam, ToolUseBlock
 from dotenv import load_dotenv
+from httpx._transports import base
 from pydantic import BaseModel
 from reactivex import Observable
 from reactivex.disposable import Disposable
@@ -25,7 +40,7 @@ from reactivex import create
 from dimos.agents.agent import LLMAgent
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.skills.skills import AbstractSkill
+from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
@@ -34,7 +49,30 @@ from dimos.utils.threadpool import get_scheduler
 load_dotenv()
 
 # Initialize logger for the Claude agent
-logger = setup_logger("dimos.agents.claude")
+logger = setup_logger("dimos.agents.claude", level=logging.DEBUG)
+
+# Response object compatible with LLMAgent
+class ResponseMessage:
+    def __init__(self, content="", tool_calls=None, thinking_blocks=None):
+        self.content = content
+        self.tool_calls = tool_calls or []
+        self.thinking_blocks = thinking_blocks or []
+        self.parsed = None
+    
+    def __str__(self):
+        # Return a string representation for logging
+        parts = []
+        
+        # Include content if available
+        if self.content:
+            parts.append(self.content)
+        
+        # Include tool calls if available
+        if self.tool_calls:
+            tool_names = [tc.function.name for tc in self.tool_calls]
+            parts.append(f"[Tools called: {', '.join(tool_names)}]")
+        
+        return "\n".join(parts) if parts else "[No content]"
 
 class ClaudeAgent(LLMAgent):
     """Claude agent implementation that uses Anthropic's API for processing.
@@ -64,7 +102,7 @@ class ClaudeAgent(LLMAgent):
                  image_detail: str = "low",
                  pool_scheduler: Optional[ThreadPoolScheduler] = None,
                  process_all_inputs: Optional[bool] = None,
-                 thinking_budget_tokens: Optional[int] = None):
+                 thinking_budget_tokens: Optional[int] = 2000):
         """
         Initializes a new instance of the ClaudeAgent.
 
@@ -89,7 +127,7 @@ class ClaudeAgent(LLMAgent):
             image_detail (str): Detail level for images ("low", "high", "auto").
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
             process_all_inputs (bool): Whether to process all inputs or skip when busy.
-            thinking_budget_tokens (int): Number of tokens to allocate for Claude's thinking.
+            thinking_budget_tokens (int): Number of tokens to allocate for Claude's thinking. 0 disables thinking.
         """
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
@@ -119,6 +157,16 @@ class ClaudeAgent(LLMAgent):
         
         # Configure skills
         self.skills = skills
+        self.skill_library = None # Required for error 'ClaudeAgent' object has no attribute 'skill_library' due to skills refactor
+        if isinstance(self.skills, SkillLibrary):
+            self.skill_library = self.skills
+        elif isinstance(self.skills, list):
+            self.skill_library = SkillLibrary()
+            for skill in self.skills:
+                self.skill_library.add(skill)
+        elif isinstance(self.skills, AbstractSkill):
+            self.skill_library = SkillLibrary()
+            self.skill_library.add(self.skills)
         
         self.response_model = response_model
         self.model_name = model_name
@@ -213,60 +261,70 @@ class ClaudeAgent(LLMAgent):
             
         return claude_tools
 
-    def _build_prompt(self, base64_image: Optional[str],
-                      dimensions: Optional[Tuple[int, int]],
-                      override_token_limit: bool,
-                      condensed_results: str) -> dict:
+    def _build_prompt(self, base64_image: Optional[Union[str, List[str]]] = None,
+                      dimensions: Optional[Tuple[int, int]] = None,
+                      override_token_limit: bool = False,
+                      rag_results: str = "",
+                      thinking_budget_tokens: int = None) -> dict:
         """Builds a prompt message specifically for Claude API.
 
         This method creates messages in Claude's format directly, without using
         any OpenAI-specific formatting or token counting.
 
         Args:
-            base64_image (str): Optional Base64-encoded image.
+            base64_image (Union[str, List[str]]): Optional Base64-encoded image(s).
             dimensions (Tuple[int, int]): Optional image dimensions.
             override_token_limit (bool): Whether to override token limits.
-            condensed_results (str): The condensed RAG context.
+            rag_results (str): The condensed RAG context.
+            thinking_budget_tokens (int): Number of tokens to allocate for Claude's thinking.
 
         Returns:
             dict: A dict containing Claude API parameters.
         """
-        # Build Claude message content
-        claude_content = []
         
-        # Add RAG context and query as text
-        text_content = ""
-        if condensed_results:
-            text_content += f"{condensed_results}\n\n"
-        text_content += self.query
+        # Append user query to conversation history while handling RAG
+        if rag_results:
+            self.conversation_history.append({"role": "user", "content": f"{rag_results}\n\n{self.query}"})
+            logger.info(f"Added new user message to conversation history with RAG context (now has {len(self.conversation_history)} messages)")
+        else:   
+            self.conversation_history.append({"role": "user", "content": self.query})
+            logger.info(f"Added new user message to conversation history (now has {len(self.conversation_history)} messages)")
         
-        claude_content.append({"type": "text", "text": text_content})
-        
-        # Add image if present
-        if base64_image:
-            claude_content.append({
-                "type": "image",
-                "source": {
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": base64_image
-                }
-            })
-        
-        # Create Claude messages
-        claude_messages = [{"role": "user", "content": claude_content}]
-        
-        # Build complete Claude parameters
+        if base64_image is not None:
+            # Handle both single image (str) and multiple images (List[str])
+            images = [base64_image] if isinstance(base64_image, str) else base64_image
+            
+            # Add each image as a separate entry in conversation history
+            for img in images:
+                img_content = [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/jpeg",
+                            "data": img
+                        }
+                    }
+                ]
+                self.conversation_history.append({"role": "user", "content": img_content})
+            
+            if images:
+                logger.info(f"Added {len(images)} image(s) as separate entries to conversation history")
+    
+        # Create Claude parameters with basic settings
         claude_params = {
-            "messages": claude_messages,
             "model": self.model_name,
             "max_tokens": self.max_output_tokens_per_request,
-            "temperature": 0  # Add temperature to make responses more deterministic
+            "temperature": 0,  # Add temperature to make responses more deterministic
+            "messages": self.conversation_history
         }
         
-        # Add system prompt if present
+        # Add system prompt as a top-level parameter (not as a message)
         if self.system_query:
-            claude_params["system"] = self.system_query
+            claude_params['system'] = self.system_query
+        
+        # Store the parameters for use in _send_query
+        self.claude_api_params = claude_params.copy()
             
         # Add tools if skills are available
         if self.skills and self.skills.get_tools():
@@ -279,16 +337,15 @@ class ClaudeAgent(LLMAgent):
                 }
             
         # Add thinking if enabled and hard code required temperature = 1
-        if self.thinking_budget_tokens is not None:
+        if thinking_budget_tokens is not None and thinking_budget_tokens != 0:
             claude_params["thinking"] = {
                 "type": "enabled",
-                "budget_tokens": self.thinking_budget_tokens
+                "budget_tokens": thinking_budget_tokens
             }
             claude_params["temperature"] = 1  # Required to be 1 when thinking is enabled # Default to 0 for deterministic responses
             
-        # Store the parameters for use in _send_query
-        self.claude_api_params = claude_params
-            
+        # Store the parameters for use in _send_query and return them
+        self.claude_api_params = claude_params.copy()
         return {'claude_prompt': claude_params}
         
     def _send_query(self, messages: dict) -> Any:
@@ -302,37 +359,15 @@ class ClaudeAgent(LLMAgent):
         """
         try:
             # Get Claude parameters
-            claude_params = (messages.get('claude_prompt', None) or 
-                           self.claude_api_params)
+            print("\n\n==== CLAUDE API PARAMETERS ====")
+            # print(json.dumps(messages, indent=2, default=str))
+            claude_params = (messages.get('claude_prompt', None) or self.claude_api_params)
             
-            # Log full request parameters to console
-            print("\n\n==== CLAUDE API REQUEST ====")
-            print(json.dumps(claude_params, indent=2, default=str))
+            # Log request parameters with truncated base64 data
+            print("\n\n==== CLAUDE API REQUEST ====\n")
+            logger.debug(self._debug_api_call(claude_params))
             
-            print("==== END REQUEST ====")
-            
-            # Response object compatible with LLMAgent
-            class ResponseMessage:
-                def __init__(self, content="", tool_calls=None, thinking_blocks=None):
-                    self.content = content
-                    self.tool_calls = tool_calls or []
-                    self.thinking_blocks = thinking_blocks or []
-                    self.parsed = None
-                
-                def __str__(self):
-                    # Return a string representation for logging
-                    parts = []
-                    
-                    # Include content if available
-                    if self.content:
-                        parts.append(self.content)
-                    
-                    # Include tool calls if available
-                    if self.tool_calls:
-                        tool_names = [tc.function.name for tc in self.tool_calls]
-                        parts.append(f"[Tools called: {', '.join(tool_names)}]")
-                    
-                    return "\n".join(parts) if parts else "[No content]"
+            print("==== END REQUEST ====\n")
             
             # Initialize response containers
             text_content = ""
@@ -358,8 +393,8 @@ class ClaudeAgent(LLMAgent):
                     
                     for event in stream:
                         # Log each event to console
-                        print(f"EVENT: {event.type}")  
-                        print(json.dumps(event.model_dump(), indent=2, default=str))
+                        # print(f"EVENT: {event.type}")  
+                        # print(json.dumps(event.model_dump(), indent=2, default=str))
                         
                         if event.type == "content_block_start":
                             # Initialize a new content block
@@ -371,14 +406,14 @@ class ClaudeAgent(LLMAgent):
                             if event.delta.type == "thinking_delta":
                                 # Accumulate thinking content
                                 current_block['content'] = event.delta.thinking
-                                memory_file.write(f"THINKING: {event.delta.thinking}")
+                                memory_file.write(f"{event.delta.thinking}")
                                 memory_file.flush()  # Ensure content is written immediately
                             
                             elif event.delta.type == "text_delta":
                                 # Accumulate text content
                                 text_content += event.delta.text
                                 current_block['content'] += event.delta.text
-                                memory_file.write(f"RESPONSE: {event.delta.text}")
+                                memory_file.write(f"{event.delta.text}")
                                 memory_file.flush()
                             
                             elif event.delta.type == "signature_delta":
@@ -404,7 +439,7 @@ class ClaudeAgent(LLMAgent):
                                         "signature": current_block['signature']
                                     }
                                     thinking_blocks.append(thinking_block)
-                                    memory_file.write(f"\nTHINKING COMPLETE (FALLBACK): block {current_block['id']}\n")
+                                memory_file.write(f"\nTHINKING COMPLETE: block {current_block['id']}\n")
                             
                             elif current_block['type'] == "redacted_thinking":
                                 # Handle redacted thinking blocks
@@ -432,7 +467,10 @@ class ClaudeAgent(LLMAgent):
                                         })
                                     })
                                     tool_calls.append(tool_call_obj)
-                                    logger.debug(f"Tool call complete: {tool_name}")
+                                    
+                                    # Write tool call information to memory.txt
+                                    memory_file.write(f"\n\nTOOL CALL: {tool_name}\n")
+                                    memory_file.write(f"ARGUMENTS: {json.dumps(tool_input, indent=2)}\n")
                             
                             # Reset current block
                             current_block = {'type': None, 'id': None, 'content': "", 'signature': None}
@@ -440,8 +478,8 @@ class ClaudeAgent(LLMAgent):
                         
                         elif event.type == "message_delta" and event.delta.stop_reason == "tool_use":
                             # When a tool use is detected
-                            logger.debug(f"Tool use stop reason detected in stream")
-                    
+                            logger.info(f"Tool use stop reason detected in stream")
+
                     # Mark the end of the response in memory.txt
                     memory_file.write(f"\n\nRESPONSE COMPLETE\n\n")
                     memory_file.flush()
@@ -468,156 +506,114 @@ class ClaudeAgent(LLMAgent):
             logger.error(f"Unexpected error in Anthropic API call: {e}")
             logger.exception(e)  # This will print the full traceback
             raise
-            
-    def direct_query(self, query_text: str):
-        """Execute a direct streaming query with Claude that handles multi-turn tool calling.
+    
+    # TODO: Delete, deprecated
+    def direct_query(self, query_text: str, base64_image: Optional[str] = None, dimensions: Optional[Tuple[int, int]] = None, rag_results: Optional[str] = None) -> str:
+        """Execute a direct query with Claude.
         
-        Unlike run_streaming_query, this method completely bypasses the LLMAgent pipeline
-        and directly interacts with the Claude API. This allows it to work even when the
-        parent LLMAgent._observable_query method would exit early due to thinking blocks.
+        This is a convenience wrapper around _observable_query that returns just the response text.
+        It creates a temporary observer to collect the response.
         
         Args:
             query_text (str): The query text to process
+            base64_image (Optional[str]): Optional Base64-encoded image
+            dimensions (Optional[Tuple[int, int]]): Optional image dimensions
+            rag_results (Optional[str]): Optional RAG context
             
         Returns:
-            The final text response from Claude after all tool calls are complete
+            str: The response text from Claude
         """
-        # Start with the user query
+        # Store the new query text
         self.query = query_text
+        logger.info(f"Processing new query: {self.query}")
         
-        # Get RAG context
-        _, condensed_results = self._get_rag_context()
+        # Create a temporary observer to collect the response
+        class TempObserver(Observer):
+            def __init__(self):
+                self.response = ""
+            def on_next(self, value):
+                self.response = value
+            def on_error(self, error):
+                logger.error(f"Error in direct query: {error}")
+            def on_completed(self):
+                pass
+                
+        observer = TempObserver()
+        self._observable_query(observer, base64_image, dimensions, False, query_text, False)
+        return observer.response
+
+    def _observable_query(self,
+                             observer: Observer,
+                             base64_image: Optional[str] = None,
+                             dimensions: Optional[Tuple[int, int]] = None,
+                             override_token_limit: bool = False,
+                             incoming_query: Optional[str] = None,
+                             reset_conversation: bool = False,
+                             thinking_budget_tokens: int = None):
+        """Main query handler that manages conversation history and Claude interactions.
         
-        # Build the initial prompt
-        messages = self._build_prompt(None, None, False, condensed_results)
-        claude_params = messages.get('claude_prompt', {}).copy()
+        This is the primary method for handling all queries, whether they come through
+        direct_query or through the observable pattern. It manages the conversation
+        history, builds prompts, and handles tool calls.
         
-        # Initialize conversation history
-        conversation = claude_params.get('messages', []).copy()
-        final_response = ""
+        Args:
+            observer (Observer): The observer to emit responses to
+            base64_image (Optional[str]): Optional Base64-encoded image
+            dimensions (Optional[Tuple[int, int]]): Optional image dimensions
+            override_token_limit (bool): Whether to override token limits
+            incoming_query (Optional[str]): Optional query to update the agent's query
+            reset_conversation (bool): Whether to reset the conversation history
+        """
         
-        # Main processing loop that continues until all tool calls are complete
-        still_processing = True
-        while still_processing:
-            # Send query with current conversation state
-            claude_params['messages'] = conversation
+        try:
+            logger.info("_observable_query called in claude")
+            # Reset conversation history if requested
+            if reset_conversation:
+                self.conversation_history = []
+                    
+            # Update query and get context
+            self._update_query(incoming_query)
+            _, rag_results = self._get_rag_context()
+        
+            # Build prompt and get Claude parameters
+            budget = thinking_budget_tokens if thinking_budget_tokens is not None else self.thinking_budget_tokens
+            messages = self._build_prompt(base64_image, dimensions, override_token_limit, rag_results, budget)
+            claude_params = messages.get('claude_prompt', {}).copy()
+            
+            # Send query and get response
             response_message = self._send_query({'claude_prompt': claude_params})
             
             if response_message is None:
                 logger.error("Received None response from Claude API")
-                break
-                
-            # Add response text to final output
-            if response_message.content:
-                final_response += ("\n" if final_response else "") + response_message.content
-            
-            # Process any tool calls
-            if response_message.tool_calls and len(response_message.tool_calls) > 0:
-                logger.info(f"Processing {len(response_message.tool_calls)} tool calls")
-                
-                # Process each tool call individually
-                for i, tool_call in enumerate(response_message.tool_calls):
-                    logger.info(f"Processing tool call {i+1}/{len(response_message.tool_calls)}: {tool_call.function.name}")
-                    
-                    # Build assistant message with content and thinking blocks
-                    assistant_content = []
-                    
-                    # Add thinking blocks if available
-                    if hasattr(response_message, 'thinking_blocks') and response_message.thinking_blocks:
-                        assistant_content.extend(response_message.thinking_blocks)
-                    
-                    # Add text content if present
-                    if response_message.content and response_message.content.strip():
-                        assistant_content.append({"type": "text", "text": response_message.content})
-                    
-                    # Add tool use block
-                    assistant_content.append({
-                        "type": "tool_use",
-                        "id": tool_call.id,
-                        "name": tool_call.function.name,
-                        "input": json.loads(tool_call.function.arguments)
-                    })
-                    
-                    # Add assistant message to conversation
-                    conversation.append({
-                        "role": "assistant",
-                        "content": assistant_content
-                    })
-                    
-                    # Execute the tool
-                    name = tool_call.function.name
-                    args = json.loads(tool_call.function.arguments)
-                    result = self.skills.call_function(name, **args)
-                    logger.info(f"Tool '{name}' executed with args {args} and returned: {result}")
-                    
-                    # Add tool result to conversation
-                    conversation.append({
-                        "role": "user",
-                        "content": [{
-                            "type": "tool_result",
-                            "tool_use_id": tool_call.id,
-                            "content": f"{result}"
-                        }]
-                    })
-                
-                # Continue processing with updated conversation
-            else:
-                # No more tool calls - we're done
-                still_processing = False
-        
-        logger.info(f"Direct query complete. Final response: {final_response}")
-        return final_response
-
-    def run_streaming_query(self, query_text: str):
-        """Run a streaming query with Claude that handles multi-turn tool calling.
-        
-        This method creates a continuous streaming session that:
-        1. Sends the initial query to Claude
-        2. Processes streaming responses with thinking blocks
-        3. Uses _handle_tooling to execute any tool calls that Claude makes
-        4. Continues the conversation with tool results
-        5. Repeats until Claude completes its response without tool calls
-        
-        Args:
-            query_text (str): The query text to process
-            
-        Returns:
-            The final text response from Claude after all tool calls are complete
-        """
-        # Use the direct query method instead since it works better with the early exit in LLMAgent
-        return self.direct_query(query_text)
-    
-    def _observable_query(self, observer, base64_image=None, dimensions=None, override_token_limit=False, incoming_query=None):
-        """Override of LLMAgent._observable_query to handle thinking blocks correctly.
-        
-        This implementation checks if thinking is enabled in Claude params, and if so,
-        uses direct_query instead of the normal LLMAgent path. This bypasses the early exit
-        in the parent class when thinking blocks are detected.
-        
-        Args:
-            observer: The observer to emit responses to
-            base64_image: Optional base64-encoded image
-            dimensions: Optional image dimensions
-            override_token_limit: Whether to override token limits
-            incoming_query: Optional query to update the agent's query
-        """
-        try:
-            # Update query if provided
-            self._update_query(incoming_query)
-            
-            # Check if thinking is enabled in Claude parameters
-            thinking_enabled = self.thinking_budget_tokens is not None
-            
-            if thinking_enabled:
-                # Use direct_query for thinking-enabled queries to bypass early exit
-                logger.info("Thinking is enabled, using direct_query implementation")
-                result = self.direct_query(self.query)
-                observer.on_next(result)
-                self.response_subject.on_next(result)
+                observer.on_next("")
                 observer.on_completed()
-            else:
-                # Use the parent implementation for regular queries
-                super()._observable_query(observer, base64_image, dimensions, override_token_limit, incoming_query)
+                return
+                
+            # Add thinking blocks and text content to conversation history
+            content_blocks = []
+            if response_message.thinking_blocks:
+                content_blocks.extend(response_message.thinking_blocks)
+            if response_message.content:
+                content_blocks.append({
+                    "type": "text",
+                    "text": response_message.content
+                })
+            if content_blocks:
+                self.conversation_history.append({
+                    "role": "assistant",
+                    "content": content_blocks
+                })
+
+            # Handle tool calls if present
+            if response_message.tool_calls:
+                self._handle_tooling(response_message, messages)
+            
+            # Send response to observers
+            result = response_message.content or ""
+            observer.on_next(result)
+            self.response_subject.on_next(result)
+            observer.on_completed()
+            
         except Exception as e:
             logger.error(f"Query failed in {self.dev_name}: {e}")
             observer.on_error(e)
@@ -642,102 +638,61 @@ class ClaudeAgent(LLMAgent):
             logger.info("No tool calls found in response message")
             return None
             
-        # Make deep copy of messages to avoid modifying the original
-        messages_copy = messages.copy()
-        claude_params = messages_copy.get('claude_prompt', {}).copy()
-        
-        # Initialize conversation history if not already present
-        conversation = claude_params.get('messages', []).copy()
-        
-        # Store the current state of the dialogue
-        current_response = response_message
-        final_response = current_response.content
-        
-        # Process tool calls one by one, maintaining conversation state
-        for i, tool_call in enumerate(response_message.tool_calls):
-            logger.info(f"Processing tool call {i+1}/{len(response_message.tool_calls)}: {tool_call.function.name}")
+        if len(response_message.tool_calls) > 1:
+            logger.warning("Multiple tool calls detected in response message. Not a tested feature.")
+        # Execute all tools first and collect their results
+        for tool_call in response_message.tool_calls:
+            logger.info(f"Processing tool call: {tool_call.function.name}")
             
-            # Build assistant message with text content and thinking blocks
-            assistant_content = []
-            
-            # First add all thinking blocks - we must preserve the exact thinking block structure
-            if hasattr(current_response, 'thinking_blocks') and current_response.thinking_blocks:
-                # Claude API requires the exact original thinking blocks to be preserved
-                for block in current_response.thinking_blocks:
-                    # Make sure we're keeping the exact structure including signature
-                    assistant_content.append(block)
-            
-            # Then add text content if present
-            if current_response.content.strip():
-                assistant_content.append({"type": "text", "text": current_response.content})
-            
-            # Add just the current tool call
+            # Add tool call to conversation history
             tool_use_block = {
                 "type": "tool_use",
                 "id": tool_call.id,
                 "name": tool_call.function.name,
                 "input": json.loads(tool_call.function.arguments)
             }
-            assistant_content.append(tool_use_block)
-            
-            # Add assistant response to conversation
-            conversation.append({
+            self.conversation_history.append({
                 "role": "assistant",
-                "content": assistant_content
+                "content": [tool_use_block]
             })
             
-            # Execute this tool
-            name = tool_call.function.name
+            # Execute the tool
             args = json.loads(tool_call.function.arguments)
-            result = self.skills.call(name, **args)
-            logger.info(f"Tool '{name}' returned: {result}")
-            # Format the tool result
-            tool_result = {
-                "type": "tool_result",
-                "tool_use_id": tool_call.id,
-                "content": f"{result}"
-            }
+            tool_result = self.skills.call(tool_call.function.name, **args)
             
-            # Add tool result to conversation
-            conversation.append({
-                "role": "user",
-                "content": [tool_result]
-            })
-            
-            # Log the conversation state
-            print("\n\n==== CLAUDE API TOOL CONTINUATION STATE ====")
-            print(json.dumps(conversation, indent=2, default=str))
-            print("==== END TOOL CONTINUATION STATE ====")
-            
-            # If this isn't the last tool, follow up with Claude to get next instruction
-            if i < len(response_message.tool_calls) - 1:
-                # Send continuation query with updated conversation
-                claude_params['messages'] = conversation
-                next_response = self._send_query({'claude_prompt': claude_params})
-                
-                if next_response is None:
-                    logger.error("Received None response from Claude API in tool continuation")
-                    break
-                    
-                # Update current response and add to final output
-                current_response = next_response
-                final_response += "\n" + next_response.content
-                
-                # Check if the next response has new tool calls
-                if hasattr(next_response, 'tool_calls') and next_response.tool_calls:
-                    # Recursive call to handle new tool calls
-                    logger.info(f"Found additional {len(next_response.tool_calls)} tool calls in continuation")
-                    claude_params['messages'] = conversation
-                    recursive_response = self._handle_tooling(next_response, {'claude_prompt': claude_params})
-                    if recursive_response:
-                        final_response += "\n" + recursive_response.content
-                    return ResponseMessage(content=final_response)
+            # Add tool result to conversation history
+            if tool_result:
+                self.conversation_history.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": tool_call.id,
+                        "content": f"{tool_result}"
+                    }]
+                })
         
-        # After all tools are processed, get final response from Claude
-        claude_params['messages'] = conversation
-        final_claude_response = self._send_query({'claude_prompt': claude_params})
-        
-        if final_claude_response:
-            final_response += "\n" + final_claude_response.content
+        # Get final response from Claude with all tool results in context
+        self.run_observable_query(
+            query_text=f"Tool {tool_call.function.name} execution complete. Please summarize the results and continue.",
+            thinking_budget_tokens=0
+        ).run()
+
+    def _debug_api_call(self, claude_params: dict):
+        """Debugging function to log API calls with truncated base64 data."""
+        # Remove tools to reduce verbosity
+        import copy
+        log_params = copy.deepcopy(claude_params)
+        if 'tools' in log_params:
+            del log_params['tools']
             
-        return ResponseMessage(content=final_response)
+        # Truncate base64 data in images - much cleaner approach
+        if 'messages' in log_params:
+            for msg in log_params['messages']:
+                if 'content' in msg:
+                    for content in msg['content']:
+                        if isinstance(content, dict) and content.get('type') == 'image':
+                            source = content.get('source', {})
+                            if source.get('type') == 'base64' and 'data' in source:
+                                data = source['data']
+                                source['data'] = f"{data[:50]}..."
+        return json.dumps(log_params, indent=2, default=str) 
