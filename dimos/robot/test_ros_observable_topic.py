@@ -130,9 +130,9 @@ def test_parallel_and_cleanup():
 # here we test parallel subs and slow observers hogging our topic
 # we expect slow observers to skip messages by default
 #
-# ROS thread ─► ReplaySubject─► observe_on(pool) ─► sample(0.05) ─► sub1 (fast)
-#                          ├──► observe_on(pool) ─► sample(0.05) ─► sub2 (slow)
-#                          └──► observe_on(pool) ─► sample(0.05) ─► sub3 (slower)
+# ROS thread ─► ReplaySubject─► observe_on(pool) ─► backpressure.latest ─► sub1 (fast)
+#                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
+#                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
 def test_parallel_and_hog():
     robot = MockRobot()
 
@@ -154,6 +154,7 @@ def test_parallel_and_hog():
     assert len(robot._node.subs) == 1
 
     time.sleep(2)
+
     subscription1.dispose()
     subscription2.dispose()
     subscription3.dispose()
@@ -177,3 +178,7 @@ def test_parallel_and_hog():
 if __name__ == "__main__":
     test_parallel_and_cleanup()
     test_parallel_and_hog()
+
+
+
+    # so skills can stream into the thought process.
