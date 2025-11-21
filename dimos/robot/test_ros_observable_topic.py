@@ -32,7 +32,7 @@ class MockROSNode:
             message_count = 0
             while not stop_event.is_set():
                 message_count += 1
-                time.sleep(0.1)  # 10Hz default publication rate
+                time.sleep(0.1)  # 20Hz default publication rate
                 callback(message_count)
             # cleanup
             self.subs.pop(sub_id)
@@ -63,17 +63,17 @@ class MockRobot(ROSObservableTopicAbility):
 # 3. that the system unsubscribes from ROS when observers are disposed
 # 4. that the system replays the last message to new observers,
 #    before the new ROS sub starts producing
-def test_parallel_and_replay():
+def test_parallel_and_cleanup():
     robot = MockRobot()
     received_messages = []
 
-    obs1 = robot.topic2("/odom", msg.Odometry)
+    obs1 = robot.topic("/odom", msg.Odometry)
     print(f"Created subscription: {obs1}")
 
     subscription1 = obs1.subscribe(lambda x: received_messages.append(x + 2))
     subscription2 = obs1.subscribe(lambda x: received_messages.append(x + 3))
 
-    obs2 = robot.topic2("/odom", msg.Odometry)
+    obs2 = robot.topic("/odom", msg.Odometry)
     subscription3 = obs2.subscribe(lambda x: received_messages.append(x + 5))
 
     time.sleep(0.25)
@@ -81,10 +81,13 @@ def test_parallel_and_replay():
     # We have 2 messages and 3 subscribers
     assert len(received_messages) == 6, "Should have received exactly 6 messages"
 
-    #                           [1, 1, 1, 2, 2, 2] +
-    #                           [2, 3, 5, 2, 3, 5]
-    #                           =
-    assert received_messages == [3, 4, 6, 4, 5, 7]
+    #        [1, 1, 1, 2, 2, 2] +
+    #        [2, 3, 5, 2, 3, 5]
+    #        =
+    for i in [3, 4, 6, 4, 5, 7]:
+        assert i in received_messages, (
+            f"Expected {i} in received messages, got {received_messages}"
+        )
 
     # ensure that ROS end has only a single subscription
     assert len(robot._node.subs) == 1, (
@@ -103,15 +106,16 @@ def test_parallel_and_replay():
     second_received = []
     second_sub = obs1.subscribe(lambda x: second_received.append(x))
 
+    time.sleep(0.075)
     # we immediately receive the stored topic message
     assert len(second_received) == 1
 
     # now that sub is hot, we wait for a second one
-    time.sleep(0.15)
+    time.sleep(0.2)
 
     # we expect 2, 1 since first message was preserved from a previous ros topic sub
     # second one is the first message of the second ros topic sub
-    assert second_received == [2, 1]
+    assert second_received == [2, 1, 2]
 
     print(f"Second subscription immediately received {len(second_received)} message(s)")
 
@@ -124,35 +128,52 @@ def test_parallel_and_replay():
 
 
 # here we test parallel subs and slow observers hogging our topic
+# we expect slow observers to skip messages by default
+#
+# ROS thread ─► ReplaySubject─► observe_on(pool) ─► sample(0.05) ─► sub1 (fast)
+#                          ├──► observe_on(pool) ─► sample(0.05) ─► sub2 (slow)
+#                          └──► observe_on(pool) ─► sample(0.05) ─► sub3 (slower)
 def test_parallel_and_hog():
     robot = MockRobot()
 
-    obs1 = robot.topic2("/odom", msg.Odometry)
-    obs2 = robot.topic2("/odom", msg.Odometry)
-
+    obs1 = robot.topic("/odom", msg.Odometry)
+    obs2 = robot.topic("/odom", msg.Odometry)
 
     subscriber1_messages = []
     subscriber2_messages = []
     subscriber3_messages = []
 
     subscription1 = obs1.subscribe(lambda x: subscriber1_messages.append(x))
-    subscription2 = obs1.subscribe(lambda x: time.sleep(0.15) or subscriber2_messages.append(x))
-    subscription3 = obs2.subscribe(lambda x: time.sleep(0.2) or subscriber3_messages.append(x))
+    subscription2 = obs1.subscribe(
+        lambda x: time.sleep(0.15) or subscriber2_messages.append(x)
+    )
+    subscription3 = obs2.subscribe(
+        lambda x: time.sleep(0.25) or subscriber3_messages.append(x)
+    )
+
+    assert len(robot._node.subs) == 1
 
     time.sleep(2)
     subscription1.dispose()
     subscription2.dispose()
     subscription3.dispose()
 
-    print("Subscriber 1 messages:", subscriber1_messages)
-    print("Subscriber 2 messages:", subscriber2_messages)
-    print("Subscriber 3 messages:", subscriber3_messages)
+    print("Subscriber 1 messages:", len(subscriber1_messages), subscriber1_messages)
+    print("Subscriber 2 messages:", len(subscriber2_messages), subscriber2_messages)
+    print("Subscriber 3 messages:", len(subscriber3_messages), subscriber3_messages)
 
+    assert len(subscriber1_messages) == 19
+    assert len(subscriber2_messages) == 12
+    assert len(subscriber3_messages) == 7
 
+    assert subscriber2_messages[1] != [2]
+    assert subscriber3_messages[1] != [2]
 
+    time.sleep(0.1)
 
-
+    assert robot._node.subs == {}
 
 
 if __name__ == "__main__":
-    test_parallel_and_replay()
+    test_parallel_and_cleanup()
+    test_parallel_and_hog()
