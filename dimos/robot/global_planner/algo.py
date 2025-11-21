@@ -10,7 +10,7 @@ def astar(
     costmap: Costmap,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),
-    cost_threshold: int = 70,
+    cost_threshold: int = 60,
     allow_diagonal: bool = True,
 ) -> Optional[Path]:
     """

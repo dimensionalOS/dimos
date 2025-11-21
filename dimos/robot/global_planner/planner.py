@@ -111,5 +111,6 @@ class AstarPlanner(Planner):
         self.vis("pos", pos)
         path = astar(smudge, goal, pos)
         if path:
-            self.vis("planner_path", path)
+            path = path.resample(0.25)
+            self.vis("global_target", path)
         return path
