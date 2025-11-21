@@ -572,8 +572,9 @@ class ClaudeAgent(LLMAgent):
             # Reset conversation history if requested
             if reset_conversation:
                 self.conversation_history = []
-            # Create a local copy of conversation history
+            # Create a local copy of conversation history and record its length
             messages = copy.deepcopy(self.conversation_history)
+            base_len = len(messages)
             # Update query and get context
             self._update_query(incoming_query)
             _, rag_results = self._get_rag_context()
@@ -602,12 +603,13 @@ class ClaudeAgent(LLMAgent):
                     "content": content_blocks
                 })
             
-            # At the end, update the global conversation history under a lock
+            # At the end, append only new messages to the global conversation history under a lock
             import threading
             if not hasattr(self, '_history_lock'):
                 self._history_lock = threading.Lock()
             with self._history_lock:
-                self.conversation_history = messages
+                for msg in messages[base_len:]:
+                    self.conversation_history.append(msg)
 
             # Handle tool calls if present
             if response_message.tool_calls:
