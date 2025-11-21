@@ -14,6 +14,7 @@
 
 import logging
 from pathlib import Path
+from threading import Thread
 import time
 from typing import Any, Protocol
 
@@ -33,11 +34,6 @@ from dimos.msgs.geometry_msgs import (
 )
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Header
-from dimos.perception.common.utils import (
-    load_camera_info,
-    load_camera_info_opencv,
-    rectify_image,
-)
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
@@ -177,10 +173,8 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()
-    camera_matrix: Any
-    dist_coeffs: Any
-    rectify_image: bool
     _global_config: GlobalConfig
+    _camera_info_thread: Thread | None = None
 
     def __init__(
         self,
@@ -190,11 +184,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         **kwargs,
     ) -> None:
         self._global_config = global_config or GlobalConfig()
-        self.rectify_image = not self._global_config.simulation
-        self.camera_info_static, self.camera_matrix, self.dist_coeffs = _get_lcm_camera_info(
-            self._global_config.unitree_connection_type
-        )
-        self.rectify_image = not self._global_config.simulation
 
         ip = ip if ip is not None else self._global_config.robot_ip
 
@@ -217,10 +206,16 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
-        self._disposables.add(self.connection.lidar_stream().subscribe(self._on_lidar))
+        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
-        self._disposables.add(self.connection.video_stream().subscribe(self._on_video))
+        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
+
+        self._camera_info_thread = Thread(
+            target=self.publish_camera_info,
+            daemon=True,
+        )
+        self._camera_info_thread.start()
 
         self.standup()
 
@@ -230,6 +225,9 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         if self.connection:
             self.connection.stop()
+
+        if self._camera_info_thread and self._camera_info_thread.is_alive():
+            self._camera_info_thread.join(timeout=1.0)
 
         super().stop()
 
@@ -271,24 +269,9 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         if self.odom.transport:
             self.odom.publish(msg)
 
-    def _on_lidar(self, msg: LidarMessage) -> None:
-        if self.lidar.transport:
-            self.lidar.publish(msg)
-
-    def _on_video(self, msg: Image) -> None:
-        if self.rectify_image:
-            msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
-        if self.color_image.transport:
-            self.color_image.publish(msg)
-
-        header = Header(msg.ts if msg.ts else time.time(), "camera_link")
-        self.camera_info_static.header = header
-        if self.camera_info.transport:
-            self.camera_info.publish(self.camera_info_static)
-
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(self.camera_info_static)
+            self.camera_info.publish(_camera_info_static())
             time.sleep(1.0)
 
     @rpc
