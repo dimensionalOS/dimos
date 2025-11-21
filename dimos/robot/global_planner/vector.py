@@ -10,7 +10,6 @@ from typing import (
 import numpy as np
 from geometry_msgs.msg import Vector3
 
-
 T = TypeVar("T", bound="Vector")
 
 
@@ -100,6 +99,10 @@ class Vector:
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
+    def serialize(self) -> Tuple:
+        """Serialize the vector to a tuple."""
+        return tuple(self._data.tolist())
+
     def __eq__(self, other) -> bool:
         if isinstance(other, Vector):
             return np.array_equal(self._data, other._data)
@@ -183,9 +186,7 @@ class Vector:
 
     def angle(self, other) -> float:
         """Compute the angle (in radians) between this vector and another."""
-        if self.length() < 1e-10 or (
-            isinstance(other, Vector) and other.length() < 1e-10
-        ):
+        if self.length() < 1e-10 or (isinstance(other, Vector) and other.length() < 1e-10):
             return 0.0
 
         if isinstance(other, Vector):
@@ -194,8 +195,7 @@ class Vector:
             other_data = np.array(other, dtype=float)
 
         cos_angle = np.clip(
-            np.dot(self._data, other_data)
-            / (np.linalg.norm(self._data) * np.linalg.norm(other_data)),
+            np.dot(self._data, other_data) / (np.linalg.norm(self._data) * np.linalg.norm(other_data)),
             -1.0,
             1.0,
         )
@@ -553,12 +553,8 @@ if __name__ == "__main__":
     print("Testing VectorLike Protocol:")
     print(f"isinstance(Vector(1,2), VectorLike):      {isinstance(vec2d, VectorLike)}")
     print(f"isinstance(np.array([1,2]), VectorLike):  {isinstance(arr2d, VectorLike)}")
-    print(
-        f"isinstance((1,2), VectorLike):            {isinstance((1.0, 2.0), VectorLike)}"
-    )
-    print(
-        f"isinstance([1,2], VectorLike):            {isinstance([1.0, 2.0], VectorLike)}"
-    )
+    print(f"isinstance((1,2), VectorLike):            {isinstance((1.0, 2.0), VectorLike)}")
+    print(f"isinstance([1,2], VectorLike):            {isinstance([1.0, 2.0], VectorLike)}")
     print()
 
     # Test mixed operations using different vector types
@@ -575,10 +571,6 @@ if __name__ == "__main__":
         return (a_np + b_np) / 2
 
     print("Mixed operations between different vector types:")
-    print(
-        f"distance(Vector(1,2,3), [4,5,6]):           {distance(vec3d, [4.0, 5.0, 6.0])}"
-    )
-    print(
-        f"distance(np.array([1,2,3]), (4,5,6)):       {distance(arr3d, (4.0, 5.0, 6.0))}"
-    )
+    print(f"distance(Vector(1,2,3), [4,5,6]):           {distance(vec3d, [4.0, 5.0, 6.0])}")
+    print(f"distance(np.array([1,2,3]), (4,5,6)):       {distance(arr3d, (4.0, 5.0, 6.0))}")
     print(f"midpoint(Vector(1,2,3), np.array([4,5,6])): {midpoint(vec3d, numpy_arr)}")

@@ -23,6 +23,7 @@ from rxpy_backpressure import BackPressure
 from nav_msgs import msg
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.threadpool import get_scheduler
+from dimos.robot.global_planner.costmap import Costmap
 
 from rclpy.qos import (
     QoSProfile,
@@ -56,14 +57,6 @@ class QOS(enum.Enum):
 
         raise ValueError(f"Unknown QoS enum value: {self}")
 
-
-# TODO: should go to some shared file, this is copy pasted from ros_control.py
-sensor_qos = QoSProfile(
-    reliability=QoSReliabilityPolicy.BEST_EFFORT,
-    history=QoSHistoryPolicy.KEEP_LAST,
-    durability=QoSDurabilityPolicy.VOLATILE,
-    depth=1,
-)
 
 logger = setup_logger("dimos.robot.ros_control.observable_topic")
 
@@ -99,7 +92,12 @@ class ROSObservableTopicAbility:
 
         # upstream ROS callback
         def _on_subscribe(obs, _):
-            ros_sub = self._node.create_subscription(msg_type, topic_name, obs.on_next, qos_profile)
+            cb = obs.on_next
+            if msg_type == Costmap:
+                msg_type = msg.OccupancyGrid
+                cb = lambda msg: Costmap.from_msg(msg)
+
+            ros_sub = self._node.create_subscription(msg_type, topic_name, cb, qos_profile)
             return Disposable(lambda: self._node.destroy_subscription(ros_sub))
 
         upstream = rx.create(_on_subscribe)

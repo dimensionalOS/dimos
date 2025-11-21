@@ -15,28 +15,54 @@
 import logging
 
 from dataclasses import dataclass
-from abc import ABC, abstractmethod
+from abc import abstractmethod
+from typing import Tuple, Callable
 
 from dimos.robot.robot import Robot
 from dimos.utils.logging_config import setup_logger
-from dimos.robot.global_planner.vector import VectorLike, to_vector
+from dimos.robot.global_planner.vector import VectorLike, to_vector, Vector
 from dimos.robot.global_planner.path import Path
 from dimos.robot.global_planner.costmap import Costmap
 from dimos.robot.global_planner.algo import astar
 from nav_msgs import msg
+from dimos.web.websocket_vis.types import Drawable, Visualizable
+from reactivex.subject import Subject
+from reactivex import Observable
 
 logger = setup_logger("dimos.robot.unitree.global_planner", level=logging.DEBUG)
 
 
 @dataclass
-class Planner(ABC):
-    robot: Robot
+class Planner(Visualizable):
+    local_nav: Callable[[VectorLike], bool]
+
+    def start(self):
+        return self
+
+    def stop(self):
+        if hasattr(self, "costmap"):
+            self.costmap.dispose()
+            del self.costmap
+        if hasattr(self, "_vis_subject"):
+            self._vis_subject.dispose()
+
+    def vis_stream(self) -> Observable[Tuple[str, Drawable]]:
+        # check if we have self._vis_subject
+        if not hasattr(self, "_vis_subject"):
+            self._vis_subject = Subject()
+        return self._vis_subject
+
+    def vis(self, name: str, drawable: Drawable) -> None:
+        if not hasattr(self, "_vis_subject"):
+            return
+        self._vis_subject.on_next((name, drawable))
 
     @abstractmethod
     def plan(self, goal: VectorLike) -> Path: ...
 
     # actually we might want to rewrite this into rxpy
     def walk_loop(self, path: Path) -> bool:
+        self.vis("planner_path", path)
         # pop the next goal from the path
         local_goal = path.head()
         print("path head", local_goal)
@@ -69,18 +95,18 @@ class Planner(ABC):
 
 
 class AstarPlanner(Planner):
-    def __init__(self, robot: Robot):
-        super().__init__(robot)
-        self.costmap = self.robot.ros_control.topic_latest("map", msg.OccupancyGrid)
-
-    def start(self):
-        return self
-
-    def stop(self):
-        if hasattr(self, "costmap"):
-            self.costmap.dispose()
-            del self.costmap
+    def __init__(
+        self,
+        costmap: Callable[[], Costmap],
+        base_link: Callable[[], Tuple[Vector, Vector]],
+        local_nav: Callable[[Vector], bool],
+    ):
+        super().__init__(local_nav)
+        self.base_link = base_link
+        self.costmap = costmap
 
     def plan(self, goal: VectorLike) -> Path:
-        [pos, rot] = self.robot.ros_control.transform_euler("base_link")
-        return astar(Costmap.from_msg(self.costmap()).smudge(), goal, pos)
+        [pos, rot] = self.base_link()
+        costmap = self.costmap().smudge()
+        self.vis("costmap", costmap)
+        return astar(costmap, goal, pos)

@@ -4,10 +4,13 @@ import threading
 import os
 import sys
 import asyncio
+from typing import Tuple
 from starlette.routing import Route
 from starlette.responses import HTMLResponse
 from starlette.applications import Starlette
 from starlette.staticfiles import StaticFiles
+from dimos.web.websocket_vis.types import Drawable
+from reactivex import Observable
 
 
 async def serve_index(request):
@@ -116,6 +119,30 @@ class WebsocketVis:
             )
             self.server_thread.start()
             return self
+
+    def process_drawable(self, drawable: Drawable):
+        """Process a drawable object and return a dictionary representation"""
+        if isinstance(drawable, tuple):
+            obj, config = drawable
+            return {"object": obj.serialize(), "config": config}
+        else:
+            return {"object": drawable.serialize(), "config": {}}
+
+    def connect(self, obs: Observable[Tuple[str, Drawable]], window_name: str = "main"):
+        """Connect to an Observable stream and update state on new data"""
+        # Subscribe to the stream
+        print("Subing to", obs)
+
+        def new_update(data):
+            print("RECEIVECD UPDATE", data)
+            [name, drawable] = data
+            self.update_state({name: self.process_drawable(drawable)})
+
+        obs.subscribe(
+            on_next=new_update,
+            on_error=lambda e: print(f"Error in stream: {e}"),
+            on_completed=lambda: print("Stream completed"),
+        )
 
     def stop(self):
         if self.server_thread and self.server_thread.is_alive():
