@@ -77,7 +77,7 @@ class UnitreeGo2(Robot):
             use_webrtc: Whether to use WebRTC video provider ONLY
             disable_video_stream: Whether to disable the video stream
             mock_connection: Whether to mock the connection to the robot
-            skills: Skills instance. Can be MyUnitreeSkills for full functionality or any AbstractSkill for custom development.
+            skills: Skills library or custom skill implementation. Default is MyUnitreeSkills() if None.
         """
         print(f"Initializing UnitreeGo2 with use_ros: {use_ros} and use_webrtc: {use_webrtc}")
         if not (use_ros ^ use_webrtc):  # XOR operator ensures exactly one is True
