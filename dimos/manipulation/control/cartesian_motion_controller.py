@@ -26,17 +26,17 @@ Architecture:
 - Supports velocity-based and position-based control modes
 """
 
-import time
-import threading
-import math
-from typing import Optional
 from dataclasses import dataclass
+import math
+import threading
+import time
+from typing import Optional
 
-from dimos.core import Module, In, Out, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.sensor_msgs import JointState, JointCommand, RobotState
-from dimos.msgs.geometry_msgs import PoseStamped, Pose, Twist, Vector3, Quaternion
 from dimos.hardware.manipulators.xarm.spec import ArmDriverSpec
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Twist, Vector3
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 
@@ -53,7 +53,7 @@ class CartesianMotionControllerConfig(ModuleConfig):
 
     # PID gains for position control (m/s per meter of error)
     position_kp: float = 5.0  # Proportional gain
-    position_ki: float = .1  # Integral gain
+    position_ki: float = 0.1  # Integral gain
     position_kd: float = 0.1  # Derivative gain
 
     # PID gains for orientation control (rad/s per radian of error)
@@ -64,8 +64,8 @@ class CartesianMotionControllerConfig(ModuleConfig):
     # Safety limits
     max_linear_velocity: float = 0.2  # m/s - maximum TCP linear velocity
     max_angular_velocity: float = 1.0  # rad/s - maximum TCP angular velocity
-    max_position_error: float = 0.5  # m - max allowed position error before emergency stop
-    max_orientation_error: float = 1.57  # rad (~90°) - max allowed orientation error
+    max_position_error: float = 0.7  # m - max allowed position error before emergency stop
+    max_orientation_error: float = 6.28  # rad (~360°) - allow any orientation
 
     # Convergence thresholds
     position_tolerance: float = 0.001  # m - position considered "reached"
@@ -95,6 +95,12 @@ class CartesianMotionController(Module):
 
     default_config = CartesianMotionControllerConfig
 
+    # RPC methods to request from other modules (resolved at blueprint build time)
+    rpc_calls = [
+        "XArmDriver.get_forward_kinematics",
+        "XArmDriver.get_inverse_kinematics",
+    ]
+
     # Input topics
     joint_state: In[JointState] = None  # Feedback from arm driver
     robot_state: In[RobotState] = None  # Robot status from arm driver
@@ -105,30 +111,30 @@ class CartesianMotionController(Module):
     cartesian_velocity: Out[Twist] = None  # Debug: Cartesian velocity commands
     current_pose: Out[PoseStamped] = None  # Current TCP pose (for target setters)
 
-    def __init__(self, arm_driver: ArmDriverSpec, *args, **kwargs) -> None:
+    def __init__(self, arm_driver: ArmDriverSpec | None = None, *args, **kwargs) -> None:
         """
         Initialize the Cartesian motion controller.
 
         Args:
-            arm_driver: Hardware driver implementing ArmDriverSpec protocol
-                       (must provide get_inverse_kinematics and get_forward_kinematics RPC)
+            arm_driver: (Optional) Hardware driver implementing ArmDriverSpec protocol.
+                       When using blueprints, this is resolved automatically via rpc_calls.
         """
         super().__init__(*args, **kwargs)
 
-        # Hardware driver reference (protocol-based, hardware-agnostic!)
-        self.arm_driver = arm_driver
+        # Hardware driver reference - set via arm_driver param (legacy) or RPC wiring (blueprint)
+        self._arm_driver_legacy = arm_driver
 
         # State tracking
-        self._latest_joint_state: Optional[JointState] = None
-        self._latest_robot_state: Optional[RobotState] = None
-        self._target_pose_: Optional[PoseStamped] = None
+        self._latest_joint_state: JointState | None = None
+        self._latest_robot_state: RobotState | None = None
+        self._target_pose_: PoseStamped | None = None
         self._last_target_time: float = 0.0
 
         # Current TCP pose (computed via FK)
-        self._current_tcp_pose: Optional[Pose] = None
+        self._current_tcp_pose: Pose | None = None
 
         # Thread management
-        self._control_thread: Optional[threading.Thread] = None
+        self._control_thread: threading.Thread | None = None
         self._stop_event = threading.Event()
 
         # State locks
@@ -184,6 +190,24 @@ class CartesianMotionController(Module):
             f"(velocity_mode={self.config.velocity_control_mode})"
         )
 
+    def _call_fk(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
+        """Call FK - uses blueprint RPC wiring or legacy arm_driver reference."""
+        try:
+            return self.get_rpc_calls("XArmDriver.get_forward_kinematics")(joint_positions)
+        except (ValueError, KeyError):
+            if self._arm_driver_legacy:
+                return self._arm_driver_legacy.get_forward_kinematics(joint_positions)
+            raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
+
+    def _call_ik(self, pose: list[float]) -> tuple[int, list[float] | None]:
+        """Call IK - uses blueprint RPC wiring or legacy arm_driver reference."""
+        try:
+            return self.get_rpc_calls("XArmDriver.get_inverse_kinematics")(pose)
+        except (ValueError, KeyError):
+            if self._arm_driver_legacy:
+                return self._arm_driver_legacy.get_inverse_kinematics(pose)
+            raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
+
     @rpc
     def start(self) -> None:
         """Start the Cartesian motion controller."""
@@ -209,7 +233,7 @@ class CartesianMotionController(Module):
             if self.target_pose.connection is not None or self.target_pose._transport is not None:
                 self.target_pose.subscribe(self._on_target_pose)
                 logger.info("Subscribed to target_pose")
-        except Exception as e:
+        except Exception:
             logger.debug("target_pose not connected (expected - uses RPC)")
 
         # Start control loop thread
@@ -282,7 +306,7 @@ class CartesianMotionController(Module):
         logger.info("Target cleared, tracking stopped")
 
     @rpc
-    def get_current_pose(self) -> Optional[Pose]:
+    def get_current_pose(self) -> Pose | None:
         """
         Get the current TCP pose (computed via FK).
 
@@ -308,7 +332,10 @@ class CartesianMotionController(Module):
             return False
 
         pos_error, ori_error = self._compute_pose_error(current_pose, target_pose)
-        return pos_error < self.config.position_tolerance and ori_error < self.config.orientation_tolerance
+        return (
+            pos_error < self.config.position_tolerance
+            and ori_error < self.config.orientation_tolerance
+        )
 
     # =========================================================================
     # Private Methods - Callbacks
@@ -363,7 +390,6 @@ class CartesianMotionController(Module):
                 # Read shared state
                 with self._state_lock:
                     joint_state = self._latest_joint_state
-                    robot_state = self._latest_robot_state
 
                 with self._target_lock:
                     target_pose = self._target_pose_
@@ -376,9 +402,7 @@ class CartesianMotionController(Module):
                     continue
 
                 # Compute current TCP pose via FK
-                code, current_pose_list = self.arm_driver.get_forward_kinematics(
-                    list(joint_state.position)
-                )
+                code, current_pose_list = self._call_fk(list(joint_state.position))
 
                 if code != 0 or current_pose_list is None:
                     logger.warning(f"FK failed with code: {code}")
@@ -393,7 +417,9 @@ class CartesianMotionController(Module):
                         current_pose_list[1] / 1000.0,
                         current_pose_list[2] / 1000.0,
                     ]
-                    euler_angles = Vector3(current_pose_list[3], current_pose_list[4], current_pose_list[5])
+                    euler_angles = Vector3(
+                        current_pose_list[3], current_pose_list[4], current_pose_list[5]
+                    )
                     quat = Quaternion.from_euler(euler_angles)
                     self._current_tcp_pose = Pose(
                         position=position_m,
@@ -423,7 +449,9 @@ class CartesianMotionController(Module):
 
                 # If not tracking, skip control
                 if not is_tracking or target_pose is None:
-                    logger.debug(f"Not tracking: is_tracking={is_tracking}, target_pose={target_pose is not None}")
+                    logger.debug(
+                        f"Not tracking: is_tracking={is_tracking}, target_pose={target_pose is not None}"
+                    )
                     time.sleep(period)
                     continue
 
@@ -439,10 +467,12 @@ class CartesianMotionController(Module):
                 )
 
                 # Log error periodically (every 1 second)
-                if not hasattr(self, '_last_error_log_time'):
+                if not hasattr(self, "_last_error_log_time"):
                     self._last_error_log_time = 0
                 if current_time - self._last_error_log_time > 1.0:
-                    logger.info(f"Curr=[{self._current_tcp_pose.x:.3f},{self._current_tcp_pose.y:.3f},{self._current_tcp_pose.z:.3f}]m Tgt=[{target_pose.x:.3f},{target_pose.y:.3f},{target_pose.z:.3f}]m Err={pos_error_mag*1000:.1f}mm")
+                    logger.info(
+                        f"Curr=[{self._current_tcp_pose.x:.3f},{self._current_tcp_pose.y:.3f},{self._current_tcp_pose.z:.3f}]m Tgt=[{target_pose.x:.3f},{target_pose.y:.3f},{target_pose.z:.3f}]m Err={pos_error_mag * 1000:.1f}mm"
+                    )
                     self._last_error_log_time = current_time
 
                 # Safety check: excessive error
@@ -468,9 +498,12 @@ class CartesianMotionController(Module):
 
                 # Check convergence periodically
                 if current_time - self._last_convergence_check > 1.0:
-                    if pos_error_mag < self.config.position_tolerance and ori_error_mag < self.config.orientation_tolerance:
+                    if (
+                        pos_error_mag < self.config.position_tolerance
+                        and ori_error_mag < self.config.orientation_tolerance
+                    ):
                         logger.info(
-                            f"Converged! pos_err={pos_error_mag*1000:.2f}mm, "
+                            f"Converged! pos_err={pos_error_mag * 1000:.2f}mm, "
                             f"ori_err={math.degrees(ori_error_mag):.2f}°"
                         )
                     self._last_convergence_check = current_time
@@ -490,9 +523,7 @@ class CartesianMotionController(Module):
                         pass
 
                 # Integrate velocity to get next desired pose
-                next_pose = self._integrate_velocity(
-                    self._current_tcp_pose, cartesian_twist, dt
-                )
+                next_pose = self._integrate_velocity(self._current_tcp_pose, cartesian_twist, dt)
 
                 # Compute IK to get target joint angles
                 # Convert Pose to xArm format: [x, y, z, roll, pitch, yaw]
@@ -506,8 +537,10 @@ class CartesianMotionController(Module):
                     next_pose.yaw,
                 ]
 
-                logger.debug(f"Calling IK for pose (mm): [{next_pose_list[0]:.1f}, {next_pose_list[1]:.1f}, {next_pose_list[2]:.1f}]")
-                code, target_joints = self.arm_driver.get_inverse_kinematics(next_pose_list)
+                logger.debug(
+                    f"Calling IK for pose (mm): [{next_pose_list[0]:.1f}, {next_pose_list[1]:.1f}, {next_pose_list[2]:.1f}]"
+                )
+                code, target_joints = self._call_ik(next_pose_list)
 
                 if code != 0 or target_joints is None:
                     logger.warning(f"IK failed with code: {code}, target_joints={target_joints}")
@@ -521,8 +554,10 @@ class CartesianMotionController(Module):
                 # TODO: Query arm_driver for its actual DOF instead of hardcoding
                 num_arm_joints = 6  # xarm6 has 6 joints (excluding gripper)
                 if len(target_joints) > num_arm_joints:
-                    if not hasattr(self, '_ik_truncation_logged'):
-                        logger.info(f"IK returns {len(target_joints)} joints, using first {num_arm_joints} (excluding gripper)")
+                    if not hasattr(self, "_ik_truncation_logged"):
+                        logger.info(
+                            f"IK returns {len(target_joints)} joints, using first {num_arm_joints} (excluding gripper)"
+                        )
                         self._ik_truncation_logged = True
                     target_joints = target_joints[:num_arm_joints]
 
@@ -535,7 +570,9 @@ class CartesianMotionController(Module):
                 # Always try to publish - the Out stream will handle transport availability
                 try:
                     self.joint_position_command.publish(joint_cmd)
-                    logger.debug(f"✓ Pub cmd: [{target_joints[0]:.6f}, {target_joints[1]:.6f}, {target_joints[2]:.6f}, ...]")
+                    logger.debug(
+                        f"✓ Pub cmd: [{target_joints[0]:.6f}, {target_joints[1]:.6f}, {target_joints[2]:.6f}, ...]"
+                    )
                 except Exception as e:
                     logger.error(f"✗ Failed to publish joint command: {e}")
 
@@ -559,9 +596,7 @@ class CartesianMotionController(Module):
 
         logger.info("Cartesian control loop stopped")
 
-    def _compute_pose_error(
-        self, current_pose: Pose, target_pose: Pose
-    ) -> tuple[float, float]:
+    def _compute_pose_error(self, current_pose: Pose, target_pose: Pose) -> tuple[float, float]:
         """
         Compute position and orientation error between current and target pose.
 
@@ -659,10 +694,19 @@ class CartesianMotionController(Module):
 
         return Pose(
             position=next_position,
-            orientation=[next_orientation.x, next_orientation.y, next_orientation.z, next_orientation.w],
+            orientation=[
+                next_orientation.x,
+                next_orientation.y,
+                next_orientation.z,
+                next_orientation.w,
+            ],
         )
 
     @staticmethod
     def _normalize_angle(angle: float) -> float:
         """Normalize angle to [-pi, pi]."""
         return math.atan2(math.sin(angle), math.cos(angle))
+
+
+# Expose blueprint for declarative composition
+cartesian_motion_controller = CartesianMotionController.blueprint
