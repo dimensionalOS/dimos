@@ -13,10 +13,9 @@
 # limitations under the License.
 
 import logging
-from pathlib import Path
 from threading import Thread
 import time
-from typing import Any, Protocol
+from typing import Protocol
 
 from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.disposable import Disposable
@@ -42,28 +41,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(__file__, level=logging.INFO)
-
-
-_PARAMS_DIR = Path(__file__).parent / "../../unitree_webrtc/params"
-
-
-def _get_lcm_camera_info(connection_type: str) -> tuple[CameraInfo, Any, Any]:
-    if connection_type == "mujoco":
-        camera_params_path = _PARAMS_DIR / "sim_camera.yaml"
-    else:
-        camera_params_path = _PARAMS_DIR / "front_camera_720.yaml"
-
-    lcm_camera_info = load_camera_info(str(camera_params_path), frame_id="camera_link")
-
-    if connection_type == "mujoco":
-        camera_matrix = None
-        dist_coeffs = None
-    else:
-        camera_matrix, dist_coeffs = load_camera_info_opencv(str(camera_params_path))
-        # zero out distortion coefficients for rectification
-        lcm_camera_info.D = [0.0] * len(lcm_camera_info.D)
-
-    return lcm_camera_info, camera_matrix, dist_coeffs
 
 
 class Go2ConnectionProtocol(Protocol):
