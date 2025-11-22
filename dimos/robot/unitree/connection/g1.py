@@ -13,24 +13,13 @@
 # limitations under the License.
 
 
-import time
-
 from reactivex.disposable import Disposable
 
 from dimos import spec
-from dimos.core import DimosCluster, In, Module, Out, rpc
+from dimos.core import DimosCluster, In, Module, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs import (
-    PoseStamped,
-    Quaternion,
-    Transform,
-    Twist,
-    Vector3,
-)
-from dimos.msgs.nav_msgs.Odometry import Odometry
+from dimos.msgs.geometry_msgs import Twist
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
@@ -38,8 +27,6 @@ logger = setup_logger(__file__)
 
 class G1Connection(Module):
     cmd_vel: In[Twist] = None  # type: ignore
-    lidar: Out[LidarMessage] = None  # type: ignore
-    odom: Out[PoseStamped] = None  # type: ignore
     ip: str
     connection_type: str | None = None
     _global_config: GlobalConfig
@@ -56,7 +43,7 @@ class G1Connection(Module):
         self.ip = ip if ip is not None else self._global_config.robot_ip
         self.connection_type = connection_type or self._global_config.unitree_connection_type
         self.connection = None
-        Module.__init__(self, *args, **kwargs)
+        super().__init__(*args, **kwargs)
 
     @rpc
     def start(self) -> None:
@@ -68,9 +55,9 @@ class G1Connection(Module):
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")
             case "mujoco":
-                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
-
-                self.connection = MujocoConnection(self._global_config)
+                raise ValueError(
+                    "This module does not support simulation, use G1SimConnection instead"
+                )
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
@@ -78,62 +65,10 @@ class G1Connection(Module):
 
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
-        if self.connection_type == "mujoco":
-            unsub = self.connection.odom_stream().subscribe(self._publish_sim_odom)
-            self._disposables.add(unsub)
-
-            unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
-            self._disposables.add(unsub)
-
     @rpc
     def stop(self) -> None:
         self.connection.stop()
         super().stop()
-
-    def _publish_tf(self, msg: PoseStamped) -> None:
-        if self.odom.transport:
-            self.odom.publish(msg)
-
-        self.tf.publish(Transform.from_pose("base_link", msg))
-
-        # Publish camera_link transform
-        camera_link = Transform(
-            translation=Vector3(0.3, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
-            ts=time.time(),
-        )
-
-        map_to_world = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="map",
-            child_frame_id="world",
-            ts=time.time(),
-        )
-
-        self.tf.publish(camera_link, map_to_world)
-
-    def _publish_odom(self, msg: Odometry) -> None:
-        self._publish_tf(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.pose.pose.position,
-                orientation=msg.pose.orientation,
-            )
-        )
-
-    def _publish_sim_odom(self, msg: SimOdometry) -> None:
-        self._publish_tf(
-            PoseStamped(
-                ts=msg.ts,
-                frame_id=msg.frame_id,
-                position=msg.position,
-                orientation=msg.orientation,
-            )
-        )
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
