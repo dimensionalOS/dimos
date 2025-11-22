@@ -69,9 +69,9 @@ class DimosRobotCall:
     def __init__(self) -> None:
         self.process = None
 
-    def start(self):
+    def start(self) -> None:
         self.process = subprocess.Popen(
-            ["dimos-robot", "run", "demo-skill"],
+            ["dimos", "run", "demo-skill"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -143,7 +143,7 @@ def human_input():
 
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-def test_dimos_robot_demo_e2e(lcm_spy, dimos_robot_call, human_input):
+def test_dimos_robot_demo_e2e(lcm_spy, dimos_robot_call, human_input) -> None:
     lcm_spy.wait_for_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
     lcm_spy.wait_for_topic("/rpc/HumanInput/start/res")
     lcm_spy.wait_for_message_content("/agent", b"AIMessage")

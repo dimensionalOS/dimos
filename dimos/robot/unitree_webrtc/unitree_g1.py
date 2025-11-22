@@ -63,6 +63,7 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.keyboard_teleop import KeyboardTeleop
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
@@ -461,11 +462,9 @@ class UnitreeG1(Robot, Resource):
 
     def _deploy_joystick(self) -> None:
         """Deploy joystick control module."""
-        from dimos.robot.unitree_webrtc.g1_joystick_module import G1JoystickModule
-
         logger.info("Deploying G1 joystick module...")
-        self.joystick = self._dimos.deploy(G1JoystickModule)
-        self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.joystick = self._dimos.deploy(KeyboardTeleop)
+        self.joystick.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
         logger.info("Joystick module deployed - pygame window will open")
 
     def _deploy_ros_bridge(self) -> None:
