@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,14 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 
-from typing import Protocol
+# Video/Camera constants
+VIDEO_WIDTH = 320
+VIDEO_HEIGHT = 240
+DEPTH_CAMERA_FOV = 160
 
-import numpy as np
+# Depth camera range/filtering constants
+MAX_RANGE = 3
+MIN_RANGE = 0.2
+MAX_HEIGHT = 1.2
 
+# Lidar constants
+LIDAR_RESOLUTION = 0.05
 
-class InputController(Protocol):
-    """A protocol for input devices to control the robot."""
+# Simulation timing constants
+STEPS_PER_FRAME = 7
+VIDEO_FPS = 20
+LIDAR_FPS = 2
 
-    def get_command(self) -> np.ndarray: ...
-    def stop(self) -> None: ...
+LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"
