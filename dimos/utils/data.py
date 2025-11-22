@@ -106,13 +106,26 @@ def _get_lfs_dir() -> Path:
 
 
 def _check_git_lfs_available() -> bool:
+    missing = []
+
+    # Check if git is available
     try:
-        subprocess.run(["git", "lfs", "version"], capture_output=True, check=True, text=True)
+        subprocess.run(["git", "--version"], capture_output=True, check=True, text=True)
     except (subprocess.CalledProcessError, FileNotFoundError):
+        missing.append("git")
+
+    # Check if git-lfs is available
+    try:
+        subprocess.run(["git-lfs", "version"], capture_output=True, check=True, text=True)
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        missing.append("git-lfs")
+
+    if missing:
         raise RuntimeError(
-            "Git LFS is not installed. Please install git-lfs to use test data utilities.\n"
-            "Installation instructions: https://git-lfs.github.io/"
+            f"Missing required tools: {', '.join(missing)}.\n\n"
+            "Git LFS installation instructions: https://git-lfs.github.io/"
         )
+
     return True
 
 
