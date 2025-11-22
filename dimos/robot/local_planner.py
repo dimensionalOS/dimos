@@ -37,6 +37,7 @@ class VFHPurePursuitPlanner:
                  max_angular_vel: float = 1.0,
                  lookahead_distance: float = 1.0,
                  goal_tolerance: float = 0.5,
+                 angle_tolerance: float = 0.1,  # ~5.7 degrees
                  robot_width: float = 0.5,
                  robot_length: float = 0.7,
                  visualization_size: int = 400):
@@ -51,6 +52,7 @@ class VFHPurePursuitPlanner:
             max_angular_vel: Maximum angular velocity (rad/s)
             lookahead_distance: Lookahead distance for pure pursuit (meters)
             goal_tolerance: Distance at which the goal is considered reached (meters)
+            angle_tolerance: Angle at which the goal orientation is considered reached (radians)
             robot_width: Width of the robot for visualization (meters)
             robot_length: Length of the robot for visualization (meters)
             visualization_size: Size of the visualization image in pixels
@@ -62,6 +64,7 @@ class VFHPurePursuitPlanner:
         self.max_angular_vel = max_angular_vel
         self.lookahead_distance = lookahead_distance
         self.goal_tolerance = goal_tolerance
+        self.angle_tolerance = angle_tolerance
         self.robot_width = robot_width
         self.robot_length = robot_length
         self.visualization_size = visualization_size
@@ -74,7 +77,7 @@ class VFHPurePursuitPlanner:
         self.alpha = 0.25  # Histogram smoothing factor
         self.obstacle_weight = 1.5
         self.goal_weight = 1.0
-        self.prev_direction_weight = 1.0
+        self.prev_direction_weight = 0.7
         self.prev_selected_angle = 0.0
         self.goal_distance_scale_factor = 3.0
         self.prev_linear_vel = 0.0
@@ -83,6 +86,8 @@ class VFHPurePursuitPlanner:
         
         # Goal and Waypoint Tracking
         self.goal_xy: Optional[Tuple[float, float]] = None  # Current target for VFH/PurePursuit
+        self.goal_theta: Optional[float] = None  # Goal orientation in odom frame
+        self.position_reached: bool = False  # Flag indicating if position goal is reached
         self.waypoints: Optional[Path] = None             # Full path if following waypoints
         self.waypoints_in_odom: Optional[Path] = None     # Full path in odom frame
         self.waypoint_frame: Optional[str] = None         # Frame of the waypoints
@@ -92,19 +97,51 @@ class VFHPurePursuitPlanner:
         # topics
         self.local_costmap = self.robot.ros_control.topic_latest("/local_costmap/costmap", OccupancyGrid)
 
-    def set_goal(self, goal_xy: VectorLike, frame: str = "odom"):
+    def _transform_orientation_to_odom(self, orientation: float, source_frame: str) -> float:
+        """Transform an orientation angle from source frame to odom frame.
+        
+        Args:
+            orientation: Orientation angle in radians (in source frame)
+            source_frame: The source frame of the orientation
+            
+        Returns:
+            float: Transformed orientation in odom frame, or original if transform fails
+        """
+        # If already in odom frame, no need to transform
+        if source_frame == "odom":
+            return orientation
+            
+        try:
+            # Use existing transform_euler_rot to get the rotation offset between frames
+            rot_offset = self.robot.ros_control.transform_euler_rot(source_frame, "odom")
+            if rot_offset is not None:
+                # Add the yaw component of the offset to transform the orientation
+                transformed_orientation = normalize_angle(orientation + rot_offset[2])
+                logger.info(f"Orientation transformed from {source_frame} to odom: {transformed_orientation:.2f} rad")
+                return transformed_orientation
+            else:
+                logger.warning(f"Could not transform orientation from {source_frame} to odom frame. Using as is.")
+                return orientation
+        except Exception as e:
+            logger.warning(f"Error transforming orientation: {e}. Using orientation as is.")
+            return orientation
+
+    def set_goal(self, goal_xy: VectorLike, frame: str = "odom", goal_theta: Optional[float] = None):
         """Set a single goal position, converting to odom frame if necessary.
            This clears any existing waypoints being followed.
 
         Args:
             goal_xy: The goal position to set.
             frame: The frame of the goal position.
+            goal_theta: Optional goal orientation in radians (in the specified frame)
         """
         # Clear waypoint following state
         self.waypoints = None
         self.current_waypoint_index = 0
         self.final_goal_reached = False
+        self.position_reached = False
         self.goal_xy = None # Clear previous goal
+        self.goal_theta = None # Clear previous goal orientation
 
         target_goal_xy: Optional[Tuple[float, float]] = None
 
@@ -118,12 +155,19 @@ class VFHPurePursuitPlanner:
             self.goal_xy = self.adjust_goal_to_valid_position(target_goal_xy)
         else:
             self.goal_xy = target_goal_xy # Set the adjusted or original valid goal
+            
+        # Set goal orientation if provided
+        if goal_theta is not None:
+            self.goal_theta = self._transform_orientation_to_odom(goal_theta, frame)
+            logger.info(f"Goal orientation set in odom frame: {self.goal_theta:.2f} rad")
 
-    def set_goal_waypoints(self, waypoints: Path, frame: str = "map"):
+    def set_goal_waypoints(self, waypoints: Path, frame: str = "map", goal_theta: Optional[float] = None):
         """Sets a path of waypoints for the robot to follow. 
 
         Args:
             waypoints: A list of waypoints to follow. Each waypoint is a tuple of (x, y) coordinates in odom frame.
+            frame: The frame of the waypoints.
+            goal_theta: Optional final orientation in radians (in the specified frame)
         """
 
         if not isinstance(waypoints, Path) or len(waypoints) == 0:
@@ -131,8 +175,10 @@ class VFHPurePursuitPlanner:
             self.waypoints = None
             self.waypoint_frame = None
             self.goal_xy = None
+            self.goal_theta = None
             self.current_waypoint_index = 0
             self.final_goal_reached = False
+            self.position_reached = False
             return
 
         logger.info(f"Setting goal waypoints with {len(waypoints)} points.")
@@ -140,6 +186,7 @@ class VFHPurePursuitPlanner:
         self.waypoint_frame = frame
         self.current_waypoint_index = 0
         self.final_goal_reached = False
+        self.position_reached = False
 
         # Transform waypoints to odom frame
         self.waypoints_in_odom = self.robot.ros_control.transform_path(self.waypoints, source_frame=frame, target_frame="odom")
@@ -151,6 +198,11 @@ class VFHPurePursuitPlanner:
             self.goal_xy = self.adjust_goal_to_valid_position(first_waypoint)
         else:
             self.goal_xy = to_tuple(first_waypoint) # Initial target
+            
+        # Set goal orientation if provided
+        if goal_theta is not None:
+            self.goal_theta = self._transform_orientation_to_odom(goal_theta, frame)
+            logger.info(f"Final waypoint orientation set in odom frame: {self.goal_theta:.2f} rad")
 
     def _update_waypoint_target(self, robot_pos_np: np.ndarray) -> bool:
         """Helper function to manage waypoint progression and update the target goal.
@@ -171,10 +223,17 @@ class VFHPurePursuitPlanner:
         dist_to_final = np.linalg.norm(robot_pos_np - final_waypoint)
         
         if dist_to_final < self.goal_tolerance:
-            self.final_goal_reached = True
+            self.position_reached = True
             self.goal_xy = to_tuple(final_waypoint)
-            logger.info("Reached final waypoint.")
-            return True
+            
+            # If goal orientation is not specified or achieved, consider fully reached
+            if self.goal_theta is None or self._is_goal_orientation_reached():
+                self.final_goal_reached = True
+                logger.info("Reached final waypoint with correct orientation.")
+                return True
+            else:
+                logger.info("Reached final waypoint position, rotating to target orientation.")
+                return False
             
         # Always find the lookahead point
         lookahead_point = None
@@ -204,6 +263,25 @@ class VFHPurePursuitPlanner:
                 
         return False  # Final goal not reached in this update cycle
 
+    def _is_goal_orientation_reached(self) -> bool:
+        """Check if the current robot orientation matches the goal orientation.
+        
+        Returns:
+            bool: True if orientation is reached or no orientation goal is set
+        """
+        if self.goal_theta is None:
+            return True  # No orientation goal set
+            
+        # Get current robot orientation in odom frame
+        [_, rot] = self.robot.ros_control.transform_euler("base_link", "odom")
+        _, _, robot_theta = rot  # yaw component
+        
+        # Calculate the angle difference and normalize
+        angle_diff = abs(normalize_angle(self.goal_theta - robot_theta))
+        
+        logger.debug(f"Orientation error: {angle_diff:.4f} rad, tolerance: {self.angle_tolerance:.4f} rad")
+        return angle_diff <= self.angle_tolerance
+
     def plan(self) -> Dict[str, float]:
         """
         Compute velocity commands using VFH + Pure Pursuit.
@@ -226,6 +304,11 @@ class VFHPurePursuitPlanner:
             # If the helper indicates the final goal was just reached, stop immediately
             if just_reached_final:
                  return {'x_vel': 0.0, 'angular_vel': 0.0}
+                 
+            # Check if position is reached but orientation isn't
+            if self.position_reached and self.goal_theta is not None and not self._is_goal_orientation_reached():
+                # We need to rotate in place to match the goal orientation
+                return self._rotate_to_goal_orientation()
 
         # --- Single Goal or Current Waypoint Target Set --- 
         if self.goal_xy is None:
@@ -253,10 +336,21 @@ class VFHPurePursuitPlanner:
         goal_direction = normalize_angle(goal_direction)
         
         # In waypoint mode, goal tolerance check is handled by waypoint advance logic
-        # Only apply goal tolerance stop for single goal mode
-        if self.waypoints is None and goal_distance < self.goal_tolerance: 
-             logger.info("Single goal reached.")
-             return {'x_vel': 0.0, 'angular_vel': 0.0}
+        # For single goal mode, check position and orientation
+        if self.waypoints is None:
+            # First check position
+            if goal_distance < self.goal_tolerance:
+                self.position_reached = True
+                
+                # If goal orientation is specified, rotate to match it
+                if self.goal_theta is not None and not self._is_goal_orientation_reached():
+                    logger.info("Position goal reached. Rotating to target orientation.")
+                    return self._rotate_to_goal_orientation()
+                else:
+                    logger.info("Single goal reached.")
+                    return {'x_vel': 0.0, 'angular_vel': 0.0}
+            else:
+                self.position_reached = False
             
         # Calculate VFH/Direction Selection
         goal_distance_scale = 1.0
@@ -303,7 +397,33 @@ class VFHPurePursuitPlanner:
         filtered_linear_vel = self.prev_linear_vel * self.linear_vel_filter_factor + linear_vel * (1 - self.linear_vel_filter_factor)
 
         return {'x_vel': filtered_linear_vel, 'angular_vel': angular_vel}
-    
+        
+    def _rotate_to_goal_orientation(self) -> Dict[str, float]:
+        """Compute velocity commands to rotate to the goal orientation.
+        
+        Returns:
+            Dict[str, float]: Velocity commands with zero linear velocity
+        """
+        # Get current robot orientation
+        [_, rot] = self.robot.ros_control.transform_euler("base_link", "odom")
+        _, _, robot_theta = rot
+        
+        # Calculate the angle difference
+        angle_diff = normalize_angle(self.goal_theta - robot_theta)
+        
+        # Determine rotation direction and speed
+        if abs(angle_diff) < self.angle_tolerance:
+            # Already at correct orientation
+            return {'x_vel': 0.0, 'angular_vel': 0.0}
+            
+        # Calculate rotation speed - proportional to the angle difference
+        # but capped at max_angular_vel
+        direction = 1.0 if angle_diff > 0 else -1.0
+        angular_vel = direction * min(abs(angle_diff) * 2.0, self.max_angular_vel)
+        
+        # logger.debug(f"Rotating to goal orientation: angle_diff={angle_diff:.4f}, angular_vel={angular_vel:.4f}")
+        return {'x_vel': 0.0, 'angular_vel': angular_vel}
+
     def update_visualization(self) -> np.ndarray:
         """
         Generate visualization by calling the utility function.
@@ -541,12 +661,12 @@ class VFHPurePursuitPlanner:
         return False  # No collision detected
 
     def is_goal_reached(self) -> bool:
-        """Check if the final goal (single or last waypoint) is reached."""
+        """Check if the final goal (single or last waypoint) is reached, including orientation."""
         if self.waypoints is not None:
-            # Waypoint mode: check if the final waypoint index has been passed
+            # Waypoint mode: check if the final waypoint and orientation have been reached
             return self.final_goal_reached
         else:
-            # Single goal mode: check distance to the single goal
+            # Single goal mode: check distance to the single goal and orientation
             if self.goal_xy is None:
                 return False # No goal set
             
@@ -555,7 +675,15 @@ class VFHPurePursuitPlanner:
             
             goal_x, goal_y = self.goal_xy
             distance_to_goal = np.linalg.norm([goal_x - robot_x, goal_y - robot_y])
-            return distance_to_goal < self.goal_tolerance
+            
+            # First check position
+            position_reached = distance_to_goal < self.goal_tolerance
+            
+            # Then check orientation if a goal orientation was specified
+            if position_reached and self.goal_theta is not None:
+                return self._is_goal_orientation_reached()
+                
+            return position_reached
 
     def check_goal_collision(self, goal_xy: VectorLike) -> bool:
         """Check if the current goal is in collision with obstacles in the costmap.

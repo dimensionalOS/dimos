@@ -241,7 +241,7 @@ class UnitreeGo2(Robot):
 
         return goal_reached
 
-    def navigate_path_local(self, path: Path, timeout: float = 120.0, stop_event: Optional[threading.Event] = None) -> bool:
+    def navigate_path_local(self, path: Path, timeout: float = 120.0, goal_theta: Optional[float] = None, stop_event: Optional[threading.Event] = None) -> bool:
         """
         Navigates the robot along a path of waypoints using the waypoint following capability
         of the VFHPurePursuitPlanner.
@@ -257,7 +257,7 @@ class UnitreeGo2(Robot):
         logger.info(f"Starting navigation along path with {len(path)} waypoints and timeout {timeout}s.")
 
         # Set the path in the local planner
-        self.local_planner.set_goal_waypoints(path)
+        self.local_planner.set_goal_waypoints(path, goal_theta=goal_theta)
 
         start_time = time.time()
         path_completed = False

@@ -235,7 +235,7 @@ class NavigateToObject(AbstractRobotSkill):
                         )
     
                         # Update the goal in the local planner
-                        self._robot.local_planner.set_goal((goal_x_robot, goal_y_robot), frame="base_link")
+                        self._robot.local_planner.set_goal((goal_x_robot, goal_y_robot), frame="base_link", goal_theta=-target["angle"])
                         last_update_time = current_time
                         tracking_started = True
     
