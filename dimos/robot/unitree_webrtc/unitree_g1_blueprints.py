@@ -55,18 +55,15 @@ from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.g1 import g1_connection
+from dimos.robot.unitree.connection.g1sim import g1_sim_connection
 from dimos.robot.unitree_webrtc.keyboard_teleop import keyboard_teleop
 from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
-# Basic configuration with navigation and visualization
 _basic_no_nav = (
     autoconnect(
-        # Core connection module for G1
-        g1_connection(),
-        # Camera module
         camera_module(
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
@@ -119,11 +116,13 @@ _basic_no_nav = (
 
 basic_ros = autoconnect(
     _basic_no_nav,
+    g1_connection(),
     ros_nav(),
 )
 
-basic_bt_nav = autoconnect(
+basic_sim = autoconnect(
     _basic_no_nav,
+    g1_sim_connection(),
     behavior_tree_navigator(),
 )
 
@@ -138,8 +137,8 @@ standard = autoconnect(
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
-standard_bt_nav = autoconnect(
-    basic_bt_nav,
+standard_sim = autoconnect(
+    basic_sim,
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
@@ -172,8 +171,8 @@ agentic = autoconnect(
     _agentic_skills,
 )
 
-agentic_bt_nav = autoconnect(
-    standard_bt_nav,
+agentic_sim = autoconnect(
+    standard_sim,
     _agentic_skills,
 )
 
