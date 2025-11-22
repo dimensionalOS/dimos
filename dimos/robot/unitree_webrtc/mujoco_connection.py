@@ -82,10 +82,6 @@ class MujocoConnection:
         try:
             self.process = subprocess.Popen(
                 [sys.executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
             )
 
         except Exception as e:
