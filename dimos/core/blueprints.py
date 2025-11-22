@@ -110,6 +110,41 @@ class ModuleBlueprintSet:
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
+    def _verify_no_name_conflicts(self) -> None:
+        name_to_types = defaultdict(set)
+        name_to_modules = defaultdict(list)
+
+        for blueprint in self.blueprints:
+            for conn in blueprint.connections:
+                connection_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
+                name_to_types[connection_name].add(conn.type)
+                name_to_modules[connection_name].append((blueprint.module, conn.type))
+
+        conflicts = {}
+        for conn_name, types in name_to_types.items():
+            if len(types) > 1:
+                modules_by_type = defaultdict(list)
+                for module, conn_type in name_to_modules[conn_name]:
+                    modules_by_type[conn_type].append(module)
+                conflicts[conn_name] = modules_by_type
+
+        if not conflicts:
+            return
+
+        error_lines = ["Blueprint cannot start because there are conflicting connections."]
+        for name, modules_by_type in conflicts.items():
+            type_entries = []
+            for conn_type, modules in modules_by_type.items():
+                for module in modules:
+                    type_str = f"{conn_type.__module__}.{conn_type.__name__}"
+                    module_str = module.__name__
+                    type_entries.append((type_str, module_str))
+            if len(type_entries) >= 2:
+                locations = ", ".join(f"{type_} in {module}" for type_, module in type_entries)
+                error_lines.append(f"    - '{name}' has conflicting types. {locations}")
+
+        raise ValueError("\n".join(error_lines))
+
     def _deploy_all_modules(
         self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
     ) -> None:
@@ -208,6 +243,8 @@ class ModuleBlueprintSet:
         if global_config is None:
             global_config = GlobalConfig()
         global_config = global_config.model_copy(update=self.global_config_overrides)
+
+        self._verify_no_name_conflicts()
 
         module_coordinator = ModuleCoordinator(global_config=global_config)
         module_coordinator.start()
