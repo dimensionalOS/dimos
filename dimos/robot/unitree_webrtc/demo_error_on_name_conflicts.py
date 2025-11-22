@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dimos.core.blueprints import autoconnect
+from dimos.core.core import rpc
 from dimos.core.module import Module
 from dimos.core.stream import In, Out
 
@@ -28,9 +29,25 @@ class Data2:
 class ModuleA(Module):
     shared_data: Out[Data1] = None
 
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
 
 class ModuleB(Module):
     shared_data: In[Data2] = None
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+    @rpc
+    def stop(self) -> None:
+        super().stop()
 
 
 blueprint = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
