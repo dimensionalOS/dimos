@@ -69,6 +69,8 @@ def _get_repo_root() -> Path:
     # Clone if not already cloned
     if not (repo_dir / ".git").exists():
         try:
+            env = os.environ.copy()
+            env["GIT_LFS_SKIP_SMUDGE"] = "1"
             subprocess.run(
                 [
                     "git",
@@ -83,6 +85,7 @@ def _get_repo_root() -> Path:
                 check=True,
                 capture_output=True,
                 text=True,
+                env=env,
             )
         except subprocess.CalledProcessError as e:
             raise RuntimeError(
