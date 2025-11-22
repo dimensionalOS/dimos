@@ -21,6 +21,9 @@ import tarfile
 import tempfile
 
 from dimos.constants import DIMOS_PROJECT_ROOT
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger(__file__)
 
 
 def _get_user_data_dir() -> Path:
@@ -54,10 +57,12 @@ def _get_repo_root() -> Path:
         test_file = data_dir / ".write_test"
         test_file.touch()
         test_file.unlink()
+        logger.info(f"Using local user data directory at '{data_dir}'")
     except (OSError, PermissionError):
         # Fall back to temp dir if data dir not writable
         data_dir = Path(tempfile.gettempdir()) / "dimos"
         data_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Using tmp data directory at '{data_dir}'")
 
     repo_dir = data_dir / "repo"
 
