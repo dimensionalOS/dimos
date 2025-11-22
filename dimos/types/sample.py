@@ -14,7 +14,6 @@
 
 import builtins
 from collections import OrderedDict
-from collections.abc import Sequence
 from enum import Enum
 import json
 import logging
@@ -27,7 +26,7 @@ from jsonref import replace_refs
 from mbodied.data.utils import to_features
 from mbodied.utils.import_utils import smart_import
 import numpy as np
-from pydantic import BaseModel, ConfigDict, ValidationError
+from pydantic import BaseModel, ConfigDict
 from pydantic.fields import FieldInfo
 from pydantic_core import from_json
 import torch

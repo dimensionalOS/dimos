@@ -14,10 +14,6 @@
 
 import random
 
-import numpy as np
-import open3d as o3d
-
-
 
 # Distance calculations
 def human_like_distance(distance_meters) -> str:

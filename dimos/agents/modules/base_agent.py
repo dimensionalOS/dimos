@@ -15,7 +15,6 @@
 """Base agent module that wraps BaseAgent for DimOS module usage."""
 
 import threading
-from typing import Any
 
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse

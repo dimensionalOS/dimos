@@ -17,9 +17,8 @@ Utility functions for frontier exploration visualization and testing.
 """
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
-from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 
 

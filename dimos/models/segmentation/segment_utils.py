@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import numpy as np
-import torch
 
 
 def find_medoid_and_closest_points(points, num_closest: int=5):

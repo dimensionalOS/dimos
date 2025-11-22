@@ -23,14 +23,13 @@ import time
 from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
-from dimos.core import LCMTransport, Module, rpc, start
+from dimos.core import LCMTransport, start
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
-from dimos.web.robot_web_interface import RobotWebInterface
 
 
 def main() -> None:

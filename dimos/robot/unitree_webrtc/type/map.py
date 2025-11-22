@@ -22,7 +22,6 @@ from reactivex.disposable import Disposable
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 

@@ -16,12 +16,11 @@ import base64
 from collections.abc import Callable
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from reactivex import Observable, Observer, create, operators as ops
-import zmq
 
 if TYPE_CHECKING:
     from dimos.stream.frame_processor import FrameProcessor

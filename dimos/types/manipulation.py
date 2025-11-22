@@ -14,7 +14,6 @@
 
 from abc import ABC
 from dataclasses import dataclass, field
-from enum import Enum
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import uuid

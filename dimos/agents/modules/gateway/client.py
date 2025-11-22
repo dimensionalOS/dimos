@@ -21,7 +21,6 @@ import os
 from types import TracebackType
 from typing import Any
 
-import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .tensorzero_embedded import TensorZeroEmbeddedGateway
