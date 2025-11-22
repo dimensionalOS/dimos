@@ -201,43 +201,72 @@ class KeyRecorder(AbstractAudioTransform):
     def _combine_audio_events(self, audio_events: List[AudioEvent]) -> AudioEvent:
         """Combine multiple audio events into a single event."""
         if not audio_events:
+            logger.warning("Attempted to combine empty audio events list")
             return None
 
-        first_event = audio_events[0]
+        # Filter out any empty events that might cause broadcasting errors
+        valid_events = [event for event in audio_events if event is not None and 
+                      (hasattr(event, 'data') and event.data is not None and 
+                       event.data.size > 0)]
+        
+        if not valid_events:
+            logger.warning("No valid audio events to combine")
+            return None
+
+        first_event = valid_events[0]
         channels = first_event.channels
         dtype = first_event.data.dtype
 
+        # Calculate total samples only from valid events
+        total_samples = sum(event.data.shape[0] for event in valid_events)
+        
+        # Safety check - if somehow we got no samples
+        if total_samples <= 0:
+            logger.warning(f"Combined audio would have {total_samples} samples - aborting")
+            return None
+            
         # For multichannel audio, data shape could be (samples,) or (samples, channels)
         if len(first_event.data.shape) == 1:
             # 1D audio data (mono)
-            total_samples = sum(event.data.shape[0] for event in audio_events)
             combined_data = np.zeros(total_samples, dtype=dtype)
 
             # Copy data
             offset = 0
-            for event in audio_events:
+            for event in valid_events:
                 samples = event.data.shape[0]
-                combined_data[offset : offset + samples] = event.data
-                offset += samples
+                if samples > 0:  # Extra safety check
+                    combined_data[offset : offset + samples] = event.data
+                    offset += samples
         else:
             # Multichannel audio data (stereo or more)
-            total_samples = sum(event.data.shape[0] for event in audio_events)
             combined_data = np.zeros((total_samples, channels), dtype=dtype)
 
             # Copy data
             offset = 0
-            for event in audio_events:
+            for event in valid_events:
                 samples = event.data.shape[0]
-                combined_data[offset : offset + samples] = event.data
-                offset += samples
+                if samples > 0 and offset + samples <= total_samples:  # Safety check
+                    try:
+                        combined_data[offset : offset + samples] = event.data
+                        offset += samples
+                    except ValueError as e:
+                        logger.error(f"Error combining audio events: {e}. "  
+                                    f"Event shape: {event.data.shape}, "  
+                                    f"Combined shape: {combined_data.shape}, "
+                                    f"Offset: {offset}, Samples: {samples}")
+                        # Continue with next event instead of failing completely
 
         # Create new audio event with the combined data
-        return AudioEvent(
-            data=combined_data,
-            sample_rate=self._sample_rate,
-            timestamp=audio_events[0].timestamp,
-            channels=channels,
-        )
+        if combined_data.size > 0:
+            return AudioEvent(
+                data=combined_data,
+                sample_rate=self._sample_rate,
+                timestamp=valid_events[0].timestamp,
+                channels=channels,
+            )
+        else:
+            logger.warning("Failed to create valid combined audio event")
+            return None
 
     def _handle_error(self, error):
         """Handle errors from the observable."""
