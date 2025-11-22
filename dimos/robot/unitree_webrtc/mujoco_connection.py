@@ -15,52 +15,110 @@
 # limitations under the License.
 
 
-import atexit
+import base64
+from collections.abc import Callable
 import functools
-import logging
+import json
+import pickle
+import subprocess
+import sys
 import threading
 import time
-from typing import Any
+from typing import Any, TypeVar
 
+import numpy as np
+from numpy.typing import NDArray
 from reactivex import Observable
+from reactivex.abc import ObserverBase, SchedulerBase
+from reactivex.disposable import Disposable
 
 from dimos.core.global_config import GlobalConfig
-from dimos.mapping.types import LatLon
-from dimos.msgs.geometry_msgs import Twist
+from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.odometry import Odometry
+from dimos.simulation.mujoco.constants import LAUNCHER_PATH, LIDAR_FPS, VIDEO_FPS
+from dimos.simulation.mujoco.shared_memory import ShmWriter
 from dimos.utils.data import get_data
+from dimos.utils.logging_config import setup_logger
 
-LIDAR_FREQUENCY = 10
 ODOM_FREQUENCY = 50
-VIDEO_FREQUENCY = 30
 
-logger = logging.getLogger(__name__)
+logger = setup_logger(__file__)
+
+T = TypeVar("T")
 
 
 class MujocoConnection:
+    """MuJoCo simulator connection that runs in a separate subprocess."""
+
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
-            from dimos.simulation.mujoco.mujoco import MujocoThread
+            import mujoco  # type: ignore[import-untyped]
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
+
         get_data("mujoco_sim")
-        self.mujoco_thread = MujocoThread(global_config)
+
+        self.global_config = global_config
+        self.process: subprocess.Popen[str] | None = None
+        self.shm_data: ShmWriter | None = None
+        self._last_video_seq = 0
+        self._last_odom_seq = 0
+        self._last_lidar_seq = 0
+        self._stop_timer: threading.Timer | None = None
+
         self._stream_threads: list[threading.Thread] = []
         self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
-        # Register cleanup on exit
-        atexit.register(self.stop)
-
     def start(self) -> None:
-        self.mujoco_thread.start()
+        self.shm_data = ShmWriter()
+
+        config_pickle = base64.b64encode(pickle.dumps(self.global_config)).decode("ascii")
+        shm_names_json = json.dumps(self.shm_data.shm.to_names())
+
+        # Launch the subprocess
+        try:
+            self.process = subprocess.Popen(
+                [sys.executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+            )
+
+        except Exception as e:
+            self.shm_data.cleanup()
+            raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
+
+        # Wait for process to be ready
+        ready_timeout = 10
+        start_time = time.time()
+        while time.time() - start_time < ready_timeout:
+            if self.process.poll() is not None:
+                exit_code = self.process.returncode
+                self.stop()
+                raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
+            if self.shm_data.is_ready():
+                logger.info("MuJoCo process started successfully")
+                return
+            time.sleep(0.1)
+
+        # Timeout
+        self.stop()
+        raise RuntimeError("MuJoCo process failed to start (timeout)")
 
     def stop(self) -> None:
-        """Clean up all resources. Can be called multiple times safely."""
         if self._is_cleaned_up:
             return
 
         self._is_cleaned_up = True
+
+        # Cancel any pending timers
+        if self._stop_timer:
+            self._stop_timer.cancel()
+            self._stop_timer = None
 
         # Stop all stream threads
         for stop_event in self._stop_events:
@@ -73,21 +131,37 @@ class MujocoConnection:
                 if thread.is_alive():
                     logger.warning(f"Stream thread {thread.name} did not stop gracefully")
 
-        # Clean up the MuJoCo thread
-        if hasattr(self, "mujoco_thread") and self.mujoco_thread:
-            self.mujoco_thread.cleanup()
+        # Signal subprocess to stop
+        if self.shm_data:
+            self.shm_data.signal_stop()
+
+        # Wait for process to finish
+        if self.process:
+            try:
+                self.process.terminate()
+                try:
+                    self.process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    logger.warning("MuJoCo process did not stop gracefully, killing")
+                    self.process.kill()
+                    self.process.wait(timeout=2)
+            except Exception as e:
+                logger.error(f"Error stopping MuJoCo process: {e}")
+
+            self.process = None
+
+        # Clean up shared memory
+        if self.shm_data:
+            self.shm_data.cleanup()
+            self.shm_data = None
 
         # Clear references
         self._stream_threads.clear()
         self._stop_events.clear()
 
-        # Clear cached methods to prevent memory leaks
-        if hasattr(self, "lidar_stream"):
-            self.lidar_stream.cache_clear()
-        if hasattr(self, "odom_stream"):
-            self.odom_stream.cache_clear()
-        if hasattr(self, "video_stream"):
-            self.video_stream.cache_clear()
+        self.lidar_stream.cache_clear()
+        self.odom_stream.cache_clear()
+        self.video_stream.cache_clear()
 
     def standup(self) -> None:
         print("standup supressed")
@@ -95,12 +169,59 @@ class MujocoConnection:
     def liedown(self) -> None:
         print("liedown supressed")
 
-    @functools.cache
-    def lidar_stream(self):
-        def on_subscribe(observer, scheduler):
+    def get_video_frame(self) -> NDArray[Any] | None:
+        if self.shm_data is None:
+            return None
+
+        frame, seq = self.shm_data.read_video()
+        if seq > self._last_video_seq:
+            self._last_video_seq = seq
+            return frame
+
+        return None
+
+    def get_odom_message(self) -> Odometry | None:
+        if self.shm_data is None:
+            return None
+
+        odom_data, seq = self.shm_data.read_odom()
+        if seq > self._last_odom_seq and odom_data is not None:
+            self._last_odom_seq = seq
+            pos, quat_wxyz, timestamp = odom_data
+
+            # Convert quaternion from (w,x,y,z) to (x,y,z,w) for ROS/Dimos
+            orientation = Quaternion(quat_wxyz[1], quat_wxyz[2], quat_wxyz[3], quat_wxyz[0])
+
+            return Odometry(
+                position=Vector3(pos[0], pos[1], pos[2]),
+                orientation=orientation,
+                ts=timestamp,
+                frame_id="world",
+            )
+
+        return None
+
+    def get_lidar_message(self) -> LidarMessage | None:
+        if self.shm_data is None:
+            return None
+
+        lidar_msg, seq = self.shm_data.read_lidar()
+        if seq > self._last_lidar_seq and lidar_msg is not None:
+            self._last_lidar_seq = seq
+            return lidar_msg
+
+        return None
+
+    def _create_stream(
+        self,
+        getter: Callable[[], T | None],
+        frequency: float,
+        stream_name: str,
+    ) -> Observable[T]:
+        def on_subscribe(observer: ObserverBase[T], _scheduler: SchedulerBase | None) -> Disposable:
             if self._is_cleaned_up:
                 observer.on_completed()
-                return lambda: None
+                return Disposable(lambda: None)
 
             stop_event = threading.Event()
             self._stop_events.append(stop_event)
@@ -108,14 +229,12 @@ class MujocoConnection:
             def run() -> None:
                 try:
                     while not stop_event.is_set() and not self._is_cleaned_up:
-                        lidar_to_publish = self.mujoco_thread.get_lidar_message()
-
-                        if lidar_to_publish:
-                            observer.on_next(lidar_to_publish)
-
-                        time.sleep(1 / LIDAR_FREQUENCY)
+                        data = getter()
+                        if data is not None:
+                            observer.on_next(data)
+                        time.sleep(1 / frequency)
                 except Exception as e:
-                    logger.error(f"Lidar stream error: {e}")
+                    logger.error(f"{stream_name} stream error: {e}")
                 finally:
                     observer.on_completed()
 
@@ -126,113 +245,48 @@ class MujocoConnection:
             def dispose() -> None:
                 stop_event.set()
 
-            return dispose
+            return Disposable(dispose)
 
         return Observable(on_subscribe)
 
     @functools.cache
-    def odom_stream(self):
-        def on_subscribe(observer, scheduler):
-            if self._is_cleaned_up:
-                observer.on_completed()
-                return lambda: None
-
-            stop_event = threading.Event()
-            self._stop_events.append(stop_event)
-
-            def run() -> None:
-                try:
-                    while not stop_event.is_set() and not self._is_cleaned_up:
-                        odom_to_publish = self.mujoco_thread.get_odom_message()
-                        if odom_to_publish:
-                            observer.on_next(odom_to_publish)
-
-                        time.sleep(1 / ODOM_FREQUENCY)
-                except Exception as e:
-                    logger.error(f"Odom stream error: {e}")
-                finally:
-                    observer.on_completed()
-
-            thread = threading.Thread(target=run, daemon=True)
-            self._stream_threads.append(thread)
-            thread.start()
-
-            def dispose() -> None:
-                stop_event.set()
-
-            return dispose
-
-        return Observable(on_subscribe)
+    def lidar_stream(self) -> Observable[LidarMessage]:
+        return self._create_stream(self.get_lidar_message, LIDAR_FPS, "Lidar")
 
     @functools.cache
-    def gps_stream(self):
-        def on_subscribe(observer, scheduler):
-            if self._is_cleaned_up:
-                observer.on_completed()
-                return lambda: None
-
-            stop_event = threading.Event()
-            self._stop_events.append(stop_event)
-
-            def run() -> None:
-                lat = 37.78092426217621
-                lon = -122.40682866540769
-                try:
-                    while not stop_event.is_set() and not self._is_cleaned_up:
-                        observer.on_next(LatLon(lat=lat, lon=lon))
-                        lat += 0.00001
-                        time.sleep(1)
-                finally:
-                    observer.on_completed()
-
-            thread = threading.Thread(target=run, daemon=True)
-            self._stream_threads.append(thread)
-            thread.start()
-
-            def dispose() -> None:
-                stop_event.set()
-
-            return dispose
-
-        return Observable(on_subscribe)
+    def odom_stream(self) -> Observable[Odometry]:
+        return self._create_stream(self.get_odom_message, ODOM_FREQUENCY, "Odom")
 
     @functools.cache
-    def video_stream(self):
-        def on_subscribe(observer, scheduler):
-            if self._is_cleaned_up:
-                observer.on_completed()
-                return lambda: None
+    def video_stream(self) -> Observable[Image]:
+        def get_video_as_image() -> Image | None:
+            frame = self.get_video_frame()
+            return Image.from_numpy(frame) if frame is not None else None
 
-            stop_event = threading.Event()
-            self._stop_events.append(stop_event)
-
-            def run() -> None:
-                try:
-                    while not stop_event.is_set() and not self._is_cleaned_up:
-                        with self.mujoco_thread.pixels_lock:
-                            if self.mujoco_thread.shared_pixels is not None:
-                                img = Image.from_numpy(self.mujoco_thread.shared_pixels.copy())
-                                observer.on_next(img)
-                        time.sleep(1 / VIDEO_FREQUENCY)
-                except Exception as e:
-                    logger.error(f"Video stream error: {e}")
-                finally:
-                    observer.on_completed()
-
-            thread = threading.Thread(target=run, daemon=True)
-            self._stream_threads.append(thread)
-            thread.start()
-
-            def dispose() -> None:
-                stop_event.set()
-
-            return dispose
-
-        return Observable(on_subscribe)
+        return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
 
     def move(self, twist: Twist, duration: float = 0.0) -> None:
-        if not self._is_cleaned_up:
-            self.mujoco_thread.move(twist, duration)
+        if self._is_cleaned_up or self.shm_data is None:
+            return
+
+        linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
+        angular = np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32)
+        self.shm_data.write_command(linear, angular)
+
+        if duration > 0:
+            if self._stop_timer:
+                self._stop_timer.cancel()
+
+            def stop_movement() -> None:
+                if self.shm_data:
+                    self.shm_data.write_command(
+                        np.zeros(3, dtype=np.float32), np.zeros(3, dtype=np.float32)
+                    )
+                self._stop_timer = None
+
+            self._stop_timer = threading.Timer(duration, stop_movement)
+            self._stop_timer.daemon = True
+            self._stop_timer.start()
 
     def publish_request(self, topic: str, data: dict[str, Any]) -> None:
         print(f"publishing request, topic={topic}, data={data}")

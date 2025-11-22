@@ -210,6 +210,11 @@ EOF\n\
         echo "Generated MID360_config.json with LIDAR_COMPUTER_IP=${LIDAR_COMPUTER_IP} and LIDAR_IP=${LIDAR_IP}"\n\
     fi\n\
     \n\
+    # Display Robot IP configuration if set\n\
+    if [ -n "${ROBOT_IP}" ]; then\n\
+        echo "Robot IP configured on local network: ${ROBOT_IP}"\n\
+    fi\n\
+    \n\
 fi\n\
 \n\
 # Execute the command\n\
