@@ -15,16 +15,18 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING
 
-from dimos.perception.detection.type import ImageDetections2D
-
-if TYPE_CHECKING:
-    from dimos.perception.detection.type import Detection2DBBox
+from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 
 
 class IDSystem(ABC):
     """Abstract base class for ID assignment systems."""
+
+    def register_detections(self, detections: ImageDetections2D) -> None:
+        """Register multiple detections."""
+        for detection in detections.detections:
+            if isinstance(detection, Detection2DBBox):
+                self.register_detection(detection)
 
     @abstractmethod
     def register_detection(self, detection: Detection2DBBox) -> int:

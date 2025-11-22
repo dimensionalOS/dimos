@@ -114,6 +114,10 @@ class Vector:
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
+    def serialize(self) -> dict:
+        """Serialize the vector to a dictionary."""
+        return {"type": "vector", "c": self._data.tolist()}
+
     def __eq__(self, other: Any) -> bool:
         if isinstance(other, Vector):
             return np.array_equal(self._data, other._data)
