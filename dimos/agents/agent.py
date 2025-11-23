@@ -627,6 +627,7 @@ class OpenAIAgent(LLMAgent):
                  agent_type: str = "Vision",
                  query: str = "What do you see?",
                  input_query_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
                  output_dir: str = os.path.join(os.getcwd(), "assets",
                                                 "agent"),
@@ -654,6 +655,7 @@ class OpenAIAgent(LLMAgent):
             agent_type (str): The type of the agent.
             query (str): The default query text.
             input_query_stream (Observable): An observable for query input.
+            input_data_stream (Observable): An observable for data input.
             input_video_stream (Observable): An observable for video frames.
             output_dir (str): Directory for output files.
             agent_memory (AbstractAgentSemanticMemory): The memory system.
