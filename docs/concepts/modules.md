@@ -32,12 +32,12 @@ The Module abstraction solves three critical challenges:
 
 <!-- Citation: blueprints.py:41-45 - ModuleBlueprint has no hierarchical constraints, just module class + connections -->
 
-**Safety Through Boundaries** - Module boundaries enforce clear separation. LLM reasoning runs in agent modules, real-time control in hardware modules. Streams validate types at runtime, preventing data corruption. Each module manages its own resources and lifecycle independently.
+**Safety through independence and isolation** - Because modules are mapped onto separate processes, every module has its own address space. And so, even if one module fails catastrophically (e.g. a segfault), that won't necessarily bring down the other modules.
 
 <!-- Citation: module.py:113-126 - _close_module() shows independent resource management (loop, rpc, tf, disposables) -->
 <!-- Citation: stream.py:87-99 - Stream class validates type parameter at initialization -->
 
-**Distributed Execution** - Modules run as Dask actors across a cluster. Deploy computationally intensive perception on GPU workers while running navigation on CPU workers. The system handles network communication, serialization, and RPC automatically.
+**Distributed execution** - Modules run as Dask actors across a cluster. Deploy computationally intensive perception on GPU workers while running navigation on CPU workers. The system handles network communication, serialization, and RPC automatically.
 
 <!-- Citation: module.py:313-317 - set_ref() stores Dask actor reference and worker name -->
 <!-- Citation: module.py:133-153 - __getstate__/__setstate__ enable serialization for Dask distribution -->
@@ -52,17 +52,57 @@ Modules deploy as Dask actors, each with its own event loop for async operations
 <!-- Citation: module.py:133-153 - Serialization implementation excludes unpicklable runtime attributes -->
 <!-- Citation: module.py:283 - DaskModule stores self.ref = None (Actor reference) -->
 
-### Typed Streams
+### Declare what sorts of data a module consumes and produces with *streams*
 
-Modules declare `In[T]` and `Out[T]` streams as class attributes. During initialization, type hints are introspected and stream instances created. Streams provide reactive, push-based data flow between modules, built on ReactiveX. Type validation ensures connected streams have compatible types.
+When you define a Module, you can declare what sorts of data it consumes and what sorts of data it produces:
+
+```python
+class ModuleA(Module):
+    image: Out[Image] = None
+    start_explore: Out[Bool] = None
+```
+
+In particular, these declarations are done with *streams*: `In[T]` for input and `Out[T]` for output, where `T` is the type variable for the type of data the stream carries.
+
+Streams provide reactive, push-based data flow between modules, built on ReactiveX. Type validation ensures connected streams have compatible types.
 
 <!-- Citation: module.py:295-310 - DaskModule.__init__ uses get_type_hints() to introspect In/Out type annotations and create stream instances -->
 <!-- Citation: stream.py:26 - import reactivex as rx -->
 <!-- Citation: stream.py:56-66 - pure_observable() and observable() implement ReactiveX interface -->
 
-### RPC for Request-Response
+### RPC system
 
-While streams handle continuous data flow, `@rpc` decorated methods provide synchronous request-response communication. Modules declare dependencies in the `rpc_calls` list, which are bound during initialization. This makes dependencies explicit and enables validation before deployment.
+We've seen how modules might be wired to other modules on the basis of the sorts of data it consumes and produces. But there's yet another way in which a Module can in some sense depend on other Modules: a Module can declare that it needs to be able to (synchronously) invoke certain methods of certain other Modules via RPC.
+
+```python
+class Greeter(Module):
+    """High-level Greeter skill built on lower-level RobotCapabilities, from the first skill tutorial."""
+
+    # Declares what this module needs from other modules -- in this case, from
+    # another RobotCapabilities module that provides lower-level capabilities.
+    rpc_calls = [
+        "RobotCapabilities.speak",
+    ]
+
+    @skill()
+    def greet(self, name: str = "friend") -> str:
+        """Greet someone by name."""
+        # ...
+        # A skill that invokes RobotCapabilities.speak
+        # See the first skill tutorial for more details.
+
+    # ...
+
+class RobotCapabilities(Module):
+    """Low-level capabilities that our (mock) robot possesses."""
+
+    @rpc
+    def speak(self, text: str) -> str:
+        """Speak text out loud through the robot's speakers."""
+        # ...
+
+    # ...
+```
 
 <!-- Citation: module.py:85 - rpc_calls: list[str] = [] class variable declaration -->
 <!-- Citation: module.py:268-275 - get_rpc_calls() retrieves from _bound_rpc_calls dictionary -->
@@ -70,7 +110,9 @@ While streams handle continuous data flow, `@rpc` decorated methods provide sync
 
 ### Skills for LLM Interaction
 
-Every Module inherits from `SkillContainer` - any module can expose skills that AI agents discover and invoke. Skills bridge natural language commands and robot actions, maintaining clear boundaries between AI reasoning and robot control.
+Any module can expose skills that AI agents discover and invoke, in virtue of inheriting from `SkillContainer`. Skills bridge natural language commands and robot actions, maintaining clear boundaries between AI reasoning and robot control.
+
+(See [the Skills concept](./skills.md) for more discussion and the [Skill tutorials](../tutorials/index.md) for end-to-end examples.)
 
 <!-- Citation: module.py:77 - class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource) -->
 
@@ -138,3 +180,9 @@ Modules follow a defined lifecycle: initialize with configuration, deploy to Das
 ---
 
 Understanding how modules communicate through streams and RPC, deploy with Dask, and expose skills enables building sophisticated robot applications from composable pieces.
+
+## See also
+
+- [Blueprints](./blueprints.md)
+- [Skills](./skills.md)
+- [Agents](./agent.md)
