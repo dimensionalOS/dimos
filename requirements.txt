@@ -19,7 +19,7 @@ tiktoken>=0.8.0
 Flask>=2.2
 python-multipart==0.0.20
 reactivex
-git+https://github.com/leshy/rxpy-backpressure.git
+git+https://github.com/dimensionalOS/rxpy-backpressure.git
 pytest-asyncio==0.26.0
 asyncio==3.4.3
 
