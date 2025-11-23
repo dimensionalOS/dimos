@@ -76,6 +76,8 @@ nav:
     - Modules: concepts/modules.md
     - Skills: concepts/skills.md
     - Agent: concepts/agent.md
+    - Transport: concepts/transport.md
+    - Blueprints: concepts/blueprints.md
   - API Reference:
     - api/index.md
     - Agents: api/agents.md
