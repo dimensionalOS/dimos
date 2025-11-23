@@ -69,10 +69,13 @@ class SpeakSkill(SkillModule):
             text_subject = Subject()
             audio_complete = threading.Event()
             self._tts_node.consume_text(text_subject)
+
+            def set_as_complete(t: str):
+                audio_complete.set()
+
             subscription = self._tts_node.emit_text().subscribe(
-                on_next=lambda t: logger.debug(f"TTS processing: {t}"),
-                on_completed=audio_complete.set,
-                on_error=audio_complete.set,
+                on_next=set_as_complete,
+                on_error=set_as_complete,
             )
 
             text_subject.on_next(text)
