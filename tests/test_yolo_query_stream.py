@@ -14,6 +14,8 @@ from dimos.utils.logging_config import logger
 from dimos.stream.video_provider import VideoProvider
 from dimos.perception.yolo_query_stream import YoloQueryStream
 from dimos.types.vector import Vector
+from dimos.utils.reactive import backpressure
+from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 
 
 
@@ -135,11 +137,11 @@ def main():
         )
         
         # Create video stream
-        video_stream = video_provider.capture_video_as_observable(realtime=True, fps=5)
+        video_stream = backpressure(video_provider.capture_video_as_observable(realtime=True, fps=30))
         
         # Set placeholder robot for cleanup
         robot = None
-    
+    query_stream.detector = Detic2DDetector(vocabulary=None, threshold=0.4)
     # Create object detection stream
     detection_stream = query_stream.create_stream(video_stream)
     

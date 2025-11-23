@@ -34,6 +34,7 @@ from dimos.robot.local_planner import VFHPurePursuitPlanner
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.path import Path
 from dimos.types.costmap import Costmap
+from dimos.utils.reactive import backpressure
 
 # Set up logging
 logger = setup_logger("dimos.robot.unitree.unitree_go2", level=logging.DEBUG)
@@ -135,7 +136,7 @@ class UnitreeGo2(Robot):
 
         # Initialize visual servoing if enabled
         if self.video_stream is not None:
-            self.video_stream_ros = self.get_ros_video_stream(fps=8)
+            self.video_stream_ros = backpressure(self.get_ros_video_stream(fps=8))
             self.person_tracker = PersonTrackingStream(
                 camera_intrinsics=self.camera_intrinsics,
                 camera_pitch=self.camera_pitch,
