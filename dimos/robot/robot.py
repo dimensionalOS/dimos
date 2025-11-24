@@ -107,10 +107,41 @@ class Robot(ABC):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
         
-        # Initialize SpatialMemory immediately
-        self._spatial_memory = None
-        self._spatial_memory_subscription = None
-        self._init_spatial_memory(new_map=new_memory)
+        # Import SpatialMemory here to avoid circular imports
+        from dimos.perception.spatial_perception import SpatialMemory
+        
+        # Initialize spatial memory - this will be handled by SpatialMemory class
+        video_stream = None
+        transform_provider = None
+        
+        # Only create video stream if ROS control is available
+        if self.ros_control is not None and self.ros_control.video_provider is not None:
+            # Get video stream
+            video_stream = self.get_ros_video_stream(fps=10)  # Lower FPS for processing
+            
+            # Define transform provider
+            def transform_provider():
+                position, rotation = self.ros_control.transform_euler("base_link")
+                if position is None or rotation is None:
+                    return {
+                        "position": None,
+                        "rotation": None
+                    }
+                return {
+                    "position": position,
+                    "rotation": rotation
+                }
+        
+        # Create SpatialMemory instance - it will handle all initialization internally
+        self._spatial_memory = SpatialMemory(
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            new_memory=new_memory,
+            output_dir=self.spatial_memory_dir,
+            video_stream=video_stream,
+            transform_provider=transform_provider
+        )
 
     def get_ros_video_stream(self, fps: int = 30) -> Observable:
         """Get the ROS video stream with rate limiting and frame processing.
@@ -294,146 +325,19 @@ class Robot(ABC):
         """
         self.hardware_interface.set_configuration(configuration)
 
-    def _init_spatial_memory(self, new_map: bool = False, min_distance_threshold: float = 0.01, min_time_threshold: float = 1.0) -> None:
-        """Initialize the spatial memory instance and start continuous processing.
-        
-        Args:
-            new_map: If True, creates a new spatial memory from scratch
-            min_distance_threshold: Minimum distance in meters to record a new frame
-            min_time_threshold: Minimum time in seconds to record a new frame
-        """
-        # Clean up any existing subscription
-        if self._spatial_memory_subscription is not None and not self._spatial_memory_subscription.is_disposed:
-            logger.info("Disposing existing spatial memory subscription")
-            self._spatial_memory_subscription.dispose()
-            self._spatial_memory_subscription = None
-            
-        # Set up persistent ChromaDB
-        if new_map and os.path.exists(self.db_path):
-            try:
-                logger.info(f"Creating new ChromaDB database (new_map=True)")
-                # Try to delete any existing database files
-                import shutil
-                for item in os.listdir(self.db_path):
-                    item_path = os.path.join(self.db_path, item)
-                    if os.path.isfile(item_path):
-                        os.unlink(item_path)
-                    elif os.path.isdir(item_path):
-                        shutil.rmtree(item_path)
-                logger.info(f"Removed existing ChromaDB files from {self.db_path}")
-            except Exception as e:
-                logger.error(f"Error clearing ChromaDB directory: {e}")
-        
-        db_client = chromadb.PersistentClient(path=self.db_path)
-        
-        # Setup visual memory
-        if new_map or not os.path.exists(self.visual_memory_path):
-            logger.info("Creating new visual memory")
-            visual_memory = VisualMemory(output_dir=self.spatial_memory_dir)
-        else:
-            try:
-                logger.info(f"Loading existing visual memory from {self.visual_memory_path}...")
-                visual_memory = VisualMemory.load(self.visual_memory_path, output_dir=self.spatial_memory_dir)
-                logger.info(f"Loaded {visual_memory.count()} images from previous runs")
-            except Exception as e:
-                logger.error(f"Error loading visual memory: {e}")
-                visual_memory = VisualMemory(output_dir=self.spatial_memory_dir)
-        
-        # Create spatial memory instance
-        self._spatial_memory = SpatialMemory(
-            collection_name=self.spatial_memory_collection,
-            min_distance_threshold=min_distance_threshold,
-            min_time_threshold=min_time_threshold,
-            chroma_client=db_client,
-            visual_memory=visual_memory
-        )
-        
-        # Store the visual memory instance for saving later
-        self._visual_memory = visual_memory
-        
-        # Start continuous background processing of video frames if ROS control is available
-        if self.ros_control is not None and self.ros_control.video_provider is not None:
-            logger.info("Starting continuous spatial memory processing")
-            try:
-                # Get video stream
-                video_stream = self.get_ros_video_stream(fps=10)  # Lower FPS to reduce processing load
-                
-                # Map each video frame to include both position and rotation from transform
-                combined_stream = video_stream.pipe(
-                    ops.map(lambda video_frame: {
-                        "frame": video_frame,
-                        **self._extract_transform_data(*self.ros_control.transform_euler("base_link"))
-                    })
-                )
-                
-                # Process with spatial memory
-                result_stream = self._spatial_memory.process_stream(combined_stream)
-                
-                # Subscribe to the result stream
-                self._spatial_memory_subscription = result_stream.subscribe(
-                    on_next=self._on_spatial_memory_update,
-                    on_error=lambda e: logger.error(f"Error in spatial memory stream: {e}"),
-                    on_completed=lambda: logger.info("Spatial memory stream completed")
-                )
-                
-                logger.info("Continuous spatial memory processing started successfully")
-            except Exception as e:
-                logger.error(f"Failed to start continuous spatial memory processing: {e}")
-        else:
-            logger.warning("ROS control or video provider not available, spatial memory will not process video frames")
+
     
-    def _extract_transform_data(self, position, rotation):
-        """Extract position and rotation from a transform message."""
-        if position is None or rotation is None:
-            return {
-                "position": None,
-                "rotation": None
-            }
-        return {
-            "position": position,
-            "rotation": rotation
-        }
+
     
-    def _on_spatial_memory_update(self, result):
-        """Handle updates from the spatial memory processing stream."""
-        # Log successful frame storage (if stored)
-        if result.get('stored', True) != False:
-            position = result['position']
-            logger.debug(f"Spatial memory updated with frame at ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})")
-            
-            # Periodically save visual memory to disk (e.g., every 100 frames)
-            if hasattr(self, '_visual_memory') and self._visual_memory is not None:
-                if self._spatial_memory.stored_frame_count % 100 == 0:
-                    self.save_spatial_memory()
-    
-    def get_spatial_memory(self, new_map: bool = False, min_distance_threshold: float = 0.01, min_time_threshold: float = 1.0) -> SpatialMemory:
-        """Get the spatial memory instance, initializing or reinitializing if needed.
-        
-        Args:
-            new_map: If True, reinitializes spatial memory from scratch
-            min_distance_threshold: Minimum distance in meters to record a new frame
-            min_time_threshold: Minimum time in seconds to record a new frame
-            
-        Returns:
-            The spatial memory instance
-        """
-        if self._spatial_memory is None or new_map:
-            self._init_spatial_memory(new_map, min_distance_threshold, min_time_threshold)
-        
-        return self._spatial_memory
-    
-    def save_spatial_memory(self) -> bool:
-        """Save the visual memory component of spatial memory to disk.
+    def get_spatial_memory(self) -> Optional[SpatialMemory]:
+        """Simple getter for the spatial memory instance.
         
         Returns:
-            True if memory was saved successfully, False otherwise
+            The spatial memory instance or None if not set.
         """
-        if hasattr(self, '_visual_memory') and self._visual_memory is not None:
-            visual_memory_filename = os.path.basename(self.visual_memory_path)
-            saved_path = self._visual_memory.save(visual_memory_filename)
-            logger.info(f"Saved {self._visual_memory.count()} images to disk at {saved_path}")
-            return True
-        return False
+        return self._spatial_memory if self._spatial_memory else None
+    
+
         
     def cleanup(self):
         """Clean up resources used by the robot.
@@ -442,22 +346,9 @@ class Robot(ABC):
         ensure proper release of resources such as ROS connections and
         subscriptions.
         """
-        # Dispose of spatial memory subscription if active
-        if hasattr(self, '_spatial_memory_subscription') and self._spatial_memory_subscription is not None:
-            try:
-                logger.info("Disposing spatial memory subscription")
-                self._spatial_memory_subscription.dispose()
-                self._spatial_memory_subscription = None
-            except Exception as e:
-                logger.error(f"Error disposing spatial memory subscription: {e}")
-        
-        # Save spatial memory if it exists
-        self.save_spatial_memory()
-        
-        # Clean up spatial memory if it exists
-        if self._spatial_memory:
-            self._spatial_memory.cleanup()
-            self._spatial_memory = None
+        # Dispose of resources
+        if self.disposables:
+            self.disposables.dispose()
         
         if self.ros_control:
             self.ros_control.cleanup()

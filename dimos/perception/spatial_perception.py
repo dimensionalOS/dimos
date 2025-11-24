@@ -25,9 +25,10 @@ from typing import Dict, List, Tuple, Optional, Any, Union
 
 import numpy as np
 import cv2
-from reactivex import Observable
+from reactivex import Observable, disposable
 from reactivex import operators as ops
 from reactivex.subject import Subject
+from reactivex.disposable import CompositeDisposable
 from datetime import datetime
 
 from dimos.utils.logging_config import setup_logger
@@ -54,10 +55,15 @@ class SpatialMemory:
         embedding_model: str = "clip", 
         embedding_dimensions: int = 512,
         min_distance_threshold: float = 0.01,  # Min distance in meters to store a new frame
-        min_time_threshold: float = 1.0,  # Min time in seconds to store a new frame
+        min_time_threshold: float = 1.0,  # Min time in seconds to record a new frame
+        db_path: Optional[str] = None,  # Path for ChromaDB persistence
+        visual_memory_path: Optional[str] = None,  # Path for saving/loading visual memory
+        new_memory: bool = False,  # Whether to create a new memory from scratch
+        output_dir: Optional[str] = None,  # Directory for storing visual memory data
         chroma_client: Any = None,  # Optional ChromaDB client for persistence
         visual_memory: Optional['VisualMemory'] = None,  # Optional VisualMemory instance for storing images
-        output_dir: Optional[str] = None,  # Directory for storing visual memory data
+        video_stream: Optional[Observable] = None,  # Video stream to process
+        transform_provider: Optional[callable] = None,  # Function that returns position and rotation
     ):
         """
         Initialize the spatial perception system.
@@ -78,15 +84,60 @@ class SpatialMemory:
         self.min_distance_threshold = min_distance_threshold
         self.min_time_threshold = min_time_threshold
         
-        # Create visual memory if not provided
-        if visual_memory is None and output_dir is not None:
-            visual_memory = VisualMemory(output_dir=output_dir)
+        # Set up paths for persistence
+        self.db_path = db_path
+        self.visual_memory_path = visual_memory_path
+        self.output_dir = output_dir
         
-        # Pass the chroma_client and visual_memory to SpatialVectorDB
+        # Setup ChromaDB client if not provided
+        self._chroma_client = chroma_client
+        if chroma_client is None and db_path is not None:
+            # Create db directory if needed
+            os.makedirs(db_path, exist_ok=True)
+            
+            # Clean up existing DB if creating new memory
+            if new_memory and os.path.exists(db_path):
+                try:
+                    logger.info(f"Creating new ChromaDB database (new_memory=True)")
+                    # Try to delete any existing database files
+                    import shutil
+                    for item in os.listdir(db_path):
+                        item_path = os.path.join(db_path, item)
+                        if os.path.isfile(item_path):
+                            os.unlink(item_path)
+                        elif os.path.isdir(item_path):
+                            shutil.rmtree(item_path)
+                    logger.info(f"Removed existing ChromaDB files from {db_path}")
+                except Exception as e:
+                    logger.error(f"Error clearing ChromaDB directory: {e}")
+            
+            from chromadb.config import Settings
+            import chromadb
+            self._chroma_client = chromadb.PersistentClient(
+                path=db_path,
+                settings=Settings(anonymized_telemetry=False)
+            )
+        
+        # Initialize or load visual memory
+        self._visual_memory = visual_memory
+        if visual_memory is None:
+            if new_memory or not os.path.exists(visual_memory_path or ""):
+                logger.info("Creating new visual memory")
+                self._visual_memory = VisualMemory(output_dir=output_dir)
+            else:
+                try:
+                    logger.info(f"Loading existing visual memory from {visual_memory_path}...")
+                    self._visual_memory = VisualMemory.load(visual_memory_path, output_dir=output_dir)
+                    logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
+                except Exception as e:
+                    logger.error(f"Error loading visual memory: {e}")
+                    self._visual_memory = VisualMemory(output_dir=output_dir)
+        
+        # Initialize vector database
         self.vector_db: SpatialVectorDB = SpatialVectorDB(
             collection_name=collection_name,
-            chroma_client=chroma_client,
-            visual_memory=visual_memory
+            chroma_client=self._chroma_client,
+            visual_memory=self._visual_memory
         )
         
         self.embedding_provider: ImageEmbeddingProvider = ImageEmbeddingProvider(
@@ -100,10 +151,17 @@ class SpatialMemory:
         self.frame_count: int = 0
         self.stored_frame_count: int = 0
         
-        # Initialize robot_locations 
+        # For tracking stream subscription
+        self._subscription = None
+        
+        # List to store robot locations
         self.robot_locations: List[RobotLocation] = []
         
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
+        
+        # Start processing video stream if provided
+        if video_stream is not None and transform_provider is not None:
+            self.start_continuous_processing(video_stream, transform_provider)
     
     
     def query_by_location(self, x: float, y: float, radius: float = 2.0, limit: int = 5) -> List[Dict]:
@@ -120,6 +178,83 @@ class SpatialMemory:
             List of results, each containing the image and its metadata
         """
         return self.vector_db.query_by_location(x, y, radius, limit)
+    
+    def start_continuous_processing(self, video_stream: Observable, transform_provider: callable) -> disposable.Disposable:
+        """
+        Start continuous processing of video frames from an Observable stream.
+        
+        Args:
+            video_stream: Observable of video frames
+            transform_provider: Callable that returns position and rotation for each frame
+            
+        Returns:
+            Disposable subscription that can be used to stop processing
+        """
+        # Stop any existing subscription
+        self.stop_continuous_processing()
+        
+        # Map each video frame to include transform data
+        combined_stream = video_stream.pipe(
+            ops.map(lambda video_frame: {
+                "frame": video_frame,
+                **transform_provider()
+            })
+        )
+        
+        # Process with spatial memory
+        result_stream = self.process_stream(combined_stream)
+        
+        # Subscribe to the result stream
+        self._subscription = result_stream.subscribe(
+            on_next=self._on_frame_processed,
+            on_error=lambda e: logger.error(f"Error in spatial memory stream: {e}"),
+            on_completed=lambda: logger.info("Spatial memory stream completed")
+        )
+        
+        logger.info("Continuous spatial memory processing started")
+        return self._subscription
+    
+    def stop_continuous_processing(self) -> None:
+        """
+        Stop continuous processing of video frames.
+        """
+        if self._subscription is not None:
+            try:
+                self._subscription.dispose()
+                self._subscription = None
+                logger.info("Stopped continuous spatial memory processing")
+            except Exception as e:
+                logger.error(f"Error stopping spatial memory processing: {e}")
+    
+    def _on_frame_processed(self, result: Dict[str, Any]) -> None:
+        """
+        Handle updates from the spatial memory processing stream.
+        """
+        # Log successful frame storage (if stored)
+        position = result.get('position')
+        if position is not None:
+            logger.debug(f"Spatial memory updated with frame at ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})")
+        
+        # Periodically save visual memory to disk (e.g., every 100 frames)
+        if self._visual_memory is not None and self.visual_memory_path is not None:
+            if self.stored_frame_count % 100 == 0:
+                self.save()
+    
+    def save(self) -> bool:
+        """
+        Save the visual memory component to disk.
+        
+        Returns:
+            True if memory was saved successfully, False otherwise
+        """
+        if self._visual_memory is not None and self.visual_memory_path is not None:
+            try:
+                saved_path = self._visual_memory.save(self.visual_memory_path)
+                logger.info(f"Saved {self._visual_memory.count()} images to {saved_path}")
+                return True
+            except Exception as e:
+                logger.error(f"Failed to save visual memory: {e}")
+        return False
     
     def process_stream(self, combined_stream: Observable) -> Observable:
         """
@@ -250,7 +385,7 @@ class SpatialMemory:
             self.robot_locations.append(location)
             logger.info(f"Added robot location '{location.name}' at position {location.position}")
             return True
-            
+        
         except Exception as e:
             logger.error(f"Error adding robot location: {e}")
             return False
@@ -283,5 +418,12 @@ class SpatialMemory:
     
     def cleanup(self):
         """Clean up resources."""
+        # Stop any ongoing processing
+        self.stop_continuous_processing()
+        
+        # Save data if possible
+        self.save()
+        
+        # Log cleanup
         if self.vector_db:
             logger.info(f"Cleaning up SpatialMemory, stored {self.stored_frame_count} frames")
