@@ -32,7 +32,7 @@ import json
 import os
 import threading
 import logging
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Union
 
 # Third-party imports
 from dotenv import load_dotenv
@@ -46,13 +46,15 @@ from reactivex.subject import Subject
 
 # Local imports
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
-from dimos.agents.memory.chroma_impl import AgentSemanticMemory
+from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
-from dimos.robot.skills import AbstractSkill
+from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
+from dimos.stream.stream_merger import create_stream_merger
 from dimos.stream.video_operators import Operators as MyOps, VideoOperators as MyVidOps
+from dimos.types.constants import Colors
 from dimos.utils.threadpool import get_scheduler
 from dimos.utils.logging_config import setup_logger
 
@@ -90,7 +92,7 @@ class Agent:
         """
         self.dev_name = dev_name
         self.agent_type = agent_type
-        self.agent_memory = agent_memory or AgentSemanticMemory()
+        self.agent_memory = agent_memory or OpenAISemanticMemory()
         self.disposables = CompositeDisposable()
         self.pool_scheduler = pool_scheduler if pool_scheduler else get_scheduler()
 
@@ -125,7 +127,6 @@ class LLMAgent(Agent):
     Attributes:
         query (str): The current query text to process.
         prompt_builder (PromptBuilder): Handles construction of prompts.
-        skills (AbstractSkill): Available tools/functions for the agent.
         system_query (str): System prompt for RAG context situations.
         image_detail (str): Detail level for image processing ('low','high','auto').
         max_input_tokens_per_request (int): Maximum input token count.
@@ -149,7 +150,10 @@ class LLMAgent(Agent):
                  process_all_inputs: bool = False,
                  system_query: Optional[str] = None,
                  max_output_tokens_per_request: int = 16384,
-                 max_input_tokens_per_request: int = 128000):
+                 max_input_tokens_per_request: int = 128000,
+                 input_query_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
+                 input_video_stream: Optional[Observable] = None):
         """
         Initializes a new instance of the LLMAgent.
 
@@ -162,12 +166,10 @@ class LLMAgent(Agent):
             process_all_inputs (bool): Whether to process every input emission (True) or 
                 skip emissions when the agent is busy processing a previous input (False).
         """
-        super().__init__(dev_name, agent_type, agent_memory or
-                         AgentSemanticMemory(), pool_scheduler)
+        super().__init__(dev_name, agent_type, agent_memory, pool_scheduler)
         # These attributes can be configured by a subclass if needed.
         self.query: Optional[str] = None
         self.prompt_builder: Optional[PromptBuilder] = None
-        self.skills: Optional[AbstractSkill] = None
         self.system_query: Optional[str] = system_query
         self.image_detail: str = "low"
         self.max_input_tokens_per_request: int = max_input_tokens_per_request
@@ -183,6 +185,49 @@ class LLMAgent(Agent):
         
         # Subject for emitting responses
         self.response_subject = Subject()
+        
+        # Conversation history for maintaining context between calls
+        self.conversation_history = []
+
+        # Initialize input streams
+        self.input_video_stream = input_video_stream
+        self.input_query_stream = input_query_stream if (input_data_stream is None) else (input_query_stream.pipe(
+            RxOps.with_latest_from(input_data_stream),
+            RxOps.map(lambda combined: {
+                "query": combined[0],
+                "objects": combined[1] if len(combined) > 1 else "No object data available"
+            }),
+            RxOps.map(lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"),
+            RxOps.do_action(lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m") or 
+                                    [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]),
+        ))
+
+        # Setup stream subscriptions based on inputs provided
+        if (self.input_video_stream is not None) and (self.input_query_stream is not None):
+            self.merged_stream = create_stream_merger(
+                data_input_stream=self.input_video_stream,
+                text_query_stream=self.input_query_stream
+            )
+            
+            logger.info("Subscribing to merged input stream...")
+            # Define a query extractor for the merged stream
+            query_extractor = lambda emission: (emission[0], emission[1][0])
+            self.disposables.add(
+                self.subscribe_to_image_processing(
+                    self.merged_stream, 
+                    query_extractor=query_extractor
+                )
+            )
+        else:
+            # If no merged stream, fall back to individual streams
+            if self.input_video_stream is not None:
+                logger.info("Subscribing to input video stream...")
+                self.disposables.add(
+                    self.subscribe_to_image_processing(self.input_video_stream))
+            if self.input_query_stream is not None:
+                logger.info("Subscribing to input query stream...")
+                self.disposables.add(
+                    self.subscribe_to_query_processing(self.input_query_stream))
 
     def _update_query(self, incoming_query: Optional[str]) -> None:
         """Updates the query if an incoming query is provided.
@@ -278,14 +323,14 @@ class LLMAgent(Agent):
         # TODO: Make this more generic or move implementation to OpenAIAgent.
         # This is presently OpenAI-specific.
         def _tooling_callback(message, messages, response_message,
-                              skills: AbstractSkill):
+                              skill_library: SkillLibrary):
             has_called_tools = False
             new_messages = []
             for tool_call in message.tool_calls:
                 has_called_tools = True
                 name = tool_call.function.name
                 args = json.loads(tool_call.function.arguments)
-                result = skills.call_function(name, **args)
+                result = skill_library.call(name, **args)
                 logger.info(f"Function Call Results: {result}")
                 new_messages.append({
                     "role": "tool",
@@ -305,7 +350,7 @@ class LLMAgent(Agent):
 
         if response_message.tool_calls is not None:
             return _tooling_callback(response_message, messages,
-                                     response_message, self.skills)
+                                     response_message, self.skill_library)
         return None
 
     def _observable_query(self,
@@ -340,9 +385,9 @@ class LLMAgent(Agent):
                 raise Exception("Response message does not exist.")
 
             # TODO: Make this more generic. The parsed tag and tooling handling may be OpenAI-specific.
-            # If no skills are provided or there are no tool calls, emit the response directly.
-            if (self.skills is None or
-                    self.skills.get_tools() in (None, NOT_GIVEN) or
+            # If no skill library is provided or there are no tool calls, emit the response directly.
+            if (self.skill_library is None or
+                    self.skill_library.get_tools() in (None, NOT_GIVEN) or
                     response_message.tool_calls is None):
                 final_msg = (response_message.parsed
                              if hasattr(response_message, 'parsed') and
@@ -398,7 +443,9 @@ class LLMAgent(Agent):
                 logger.info(f"LLM Response [{self.dev_name}]: {response}")
 
     def subscribe_to_image_processing(
-            self, frame_observable: Observable) -> Disposable:
+            self,
+            frame_observable: Observable,
+            query_extractor=None) -> Disposable:
         """Subscribes to a stream of video frames for processing.
 
         This method sets up a subscription to process incoming video frames.
@@ -406,7 +453,11 @@ class LLMAgent(Agent):
         _observable_query method. The response is then logged to a file.
 
         Args:
-            frame_observable (Observable): An observable emitting video frames.
+            frame_observable (Observable): An observable emitting video frames or
+                                         (query, frame) tuples if query_extractor is provided.
+            query_extractor (callable, optional): Function to extract query and frame from
+                                                each emission. If None, assumes emissions are
+                                                raw frames and uses self.system_query.
 
         Returns:
             Disposable: A disposable representing the subscription.
@@ -421,18 +472,16 @@ class LLMAgent(Agent):
             "counts": {}
         }
 
-        def _process_frame(frame) -> Observable:
+        def _process_frame(emission) -> Observable:
             """
-            Processes a single frame by:
-            - Logging the receipt
-            - Exporting the frame as a JPEG
-            - Encoding the image
-            - Filtering out invalid results
-            - Sending the encoded image to the LLM via _observable_query
-            
-            Returns:
-                An observable that emits the response from _observable_query.
+            Processes a frame or (query, frame) tuple.
             """
+            # Extract query and frame
+            if query_extractor:
+                query, frame = query_extractor(emission)
+            else:
+                query = self.system_query
+                frame = emission
             return just(frame).pipe(
                 MyOps.print_emission(id='B', **print_emission_args),
                 RxOps.observe_on(self.pool_scheduler),
@@ -454,20 +503,20 @@ class LLMAgent(Agent):
                         observer,
                         base64_image=base64_and_dims[0],
                         dimensions=base64_and_dims[1],
-                        incoming_query=self.system_query))),
+                        incoming_query=query))),  # Use the extracted query
                 MyOps.print_emission(id='H', **print_emission_args),
             )
 
         # Use a mutable flag to ensure only one frame is processed at a time.
         is_processing = [False]
 
-        def process_if_free(frame):
+        def process_if_free(emission):
             if not self.process_all_inputs and is_processing[0]:
                 # Drop frame if a request is in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
-                return _process_frame(frame).pipe(
+                return _process_frame(emission).pipe(
                     MyOps.print_emission(id='I', **print_emission_args),
                     RxOps.observe_on(self.pool_scheduler),
                     MyOps.print_emission(id='J', **print_emission_args),
@@ -577,7 +626,7 @@ class LLMAgent(Agent):
             RxOps.subscribe_on(self.pool_scheduler),
             RxOps.share())
 
-    def run_observable_query(self, query_text: str) -> Observable:
+    def run_observable_query(self, query_text: str, **kwargs) -> Observable:
         """Creates an observable that processes a one-off text query to Agent and emits the response.
         
         This method provides a simple way to send a text query and get an observable
@@ -586,12 +635,15 @@ class LLMAgent(Agent):
         
         Args:
             query_text (str): The query text to process.
+            **kwargs: Additional arguments to pass to _observable_query. Supported args vary by agent type.
+                     For example, ClaudeAgent supports: base64_image, dimensions, override_token_limit,
+                     reset_conversation, thinking_budget_tokens
             
         Returns:
             Observable: An observable that emits the response as a string.
         """
         return create(lambda observer, _: self._observable_query(
-            observer, incoming_query=query_text)) 
+            observer, incoming_query=query_text, **kwargs)) 
 
     def dispose_all(self):
         """Disposes of all active subscriptions managed by this agent."""
@@ -618,6 +670,7 @@ class OpenAIAgent(LLMAgent):
                  agent_type: str = "Vision",
                  query: str = "What do you see?",
                  input_query_stream: Optional[Observable] = None,
+                 input_data_stream: Optional[Observable] = None,
                  input_video_stream: Optional[Observable] = None,
                  output_dir: str = os.path.join(os.getcwd(), "assets",
                                                 "agent"),
@@ -630,7 +683,7 @@ class OpenAIAgent(LLMAgent):
                  tokenizer: Optional[AbstractTokenizer] = None,
                  rag_query_n: int = 4,
                  rag_similarity_threshold: float = 0.45,
-                 skills: Optional[AbstractSkill] = None,
+                 skills: Optional[Union[AbstractSkill, list[AbstractSkill], SkillLibrary]] = None,
                  response_model: Optional[BaseModel] = None,
                  frame_processor: Optional[FrameProcessor] = None,
                  image_detail: str = "low",
@@ -645,6 +698,7 @@ class OpenAIAgent(LLMAgent):
             agent_type (str): The type of the agent.
             query (str): The default query text.
             input_query_stream (Observable): An observable for query input.
+            input_data_stream (Observable): An observable for data input.
             input_video_stream (Observable): An observable for video frames.
             output_dir (str): Directory for output files.
             agent_memory (AbstractAgentSemanticMemory): The memory system.
@@ -656,21 +710,20 @@ class OpenAIAgent(LLMAgent):
             tokenizer (AbstractTokenizer): Custom tokenizer for token counting.
             rag_query_n (int): Number of results to fetch in RAG queries.
             rag_similarity_threshold (float): Minimum similarity for RAG results.
-            skills (AbstractSkill): Skills available to the agent.
+            skills (Union[AbstractSkill, List[AbstractSkill], SkillLibrary]): Skills available to the agent.
             response_model (BaseModel): Optional Pydantic model for responses.
             frame_processor (FrameProcessor): Custom frame processor.
             image_detail (str): Detail level for images ("low", "high", "auto").
             pool_scheduler (ThreadPoolScheduler): The scheduler to use for thread pool operations.
                 If None, the global scheduler from get_scheduler() will be used.
             process_all_inputs (bool): Whether to process all inputs or skip when busy.
-                If None, defaults to True for text queries, False for video streams.
+                If None, defaults to True for text queries and merged streams, False for video streams.
             openai_client (OpenAI): The OpenAI client to use. This can be used to specify
                 a custom OpenAI client if targetting another provider.
         """
         # Determine appropriate default for process_all_inputs if not provided
         if process_all_inputs is None:
-            # Default to True for text queries, False for video streams
-            if input_query_stream is not None and input_video_stream is None:
+            if input_query_stream is not None:
                 process_all_inputs = True
             else:
                 process_all_inputs = False
@@ -681,15 +734,28 @@ class OpenAIAgent(LLMAgent):
             agent_memory=agent_memory,
             pool_scheduler=pool_scheduler,
             process_all_inputs=process_all_inputs,
-            system_query=system_query
+            system_query=system_query,
+            input_query_stream=input_query_stream,
+            input_data_stream=input_data_stream,
+            input_video_stream=input_video_stream
         )
         self.client = openai_client or OpenAI()
         self.query = query
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
 
-        # Configure skills.
+        # Configure skill library.
         self.skills = skills
+        self.skill_library = None
+        if isinstance(self.skills, SkillLibrary):
+            self.skill_library = self.skills
+        elif isinstance(self.skills, list):
+            self.skill_library = SkillLibrary()
+            for skill in self.skills:
+                self.skill_library.add(skill)
+        elif isinstance(self.skills, AbstractSkill):
+            self.skill_library = SkillLibrary()
+            self.skill_library.add(self.skills)
 
         self.response_model = response_model if response_model is not None else NOT_GIVEN
         self.model_name = model_name
@@ -709,23 +775,6 @@ class OpenAIAgent(LLMAgent):
 
         self.frame_processor = frame_processor or FrameProcessor(
             delete_on_init=True)
-        self.input_video_stream = input_video_stream
-        self.input_query_stream = input_query_stream
-
-        # Ensure only one input stream is provided.
-        if self.input_video_stream is not None and self.input_query_stream is not None:
-            raise ValueError(
-                "More than one input stream provided. Please provide only one input stream."
-            )
-
-        if self.input_video_stream is not None:
-            logger.info("Subscribing to input video stream...")
-            self.disposables.add(
-                self.subscribe_to_image_processing(self.input_video_stream))
-        if self.input_query_stream is not None:
-            logger.info("Subscribing to input query stream...")
-            self.disposables.add(
-                self.subscribe_to_query_processing(self.input_query_stream))
 
         logger.info("OpenAI Agent Initialized.")
 
@@ -773,7 +822,7 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     response_format=self.response_model,
-                    tools=(self.skills.get_tools() if self.skills is not None else NOT_GIVEN),
+                    tools=(self.skill_library.get_tools() if self.skill_library is not None else NOT_GIVEN),
                     max_tokens=self.max_output_tokens_per_request,
                 )
             else:
@@ -781,10 +830,9 @@ class OpenAIAgent(LLMAgent):
                     model=self.model_name,
                     messages=messages,
                     max_tokens=self.max_output_tokens_per_request,
-                    tools=(self.skills.get_tools()
-                           if self.skills is not None else NOT_GIVEN),
+                    tools=(self.skill_library.get_tools()
+                           if self.skill_library is not None else NOT_GIVEN),
                 )
-
             response_message = response.choices[0].message
             if response_message is None:
                 logger.error("Response message does not exist.")

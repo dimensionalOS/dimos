@@ -1,0 +1,5 @@
+_BASE_: "Base_S4_DLA.yaml"
+SOLVER:
+  MAX_ITER: 90000
+  BASE_LR: 0.08
+  IMS_PER_BATCH: 128

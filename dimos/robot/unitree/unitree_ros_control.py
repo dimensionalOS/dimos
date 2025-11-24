@@ -52,6 +52,8 @@ class UnitreeROSControl(ROSControl):
     DEFAULT_WEBRTC_TOPIC = 'webrtc_req'
     DEFAULT_CMD_VEL_TOPIC = 'cmd_vel_out'
     DEFAULT_POSE_TOPIC = 'pose_cmd'
+    DEFAULT_ODOM_TOPIC = 'odom'
+    DEFAULT_COSTMAP_TOPIC = 'local_costmap/costmap'
     DEFAULT_MAX_LINEAR_VELOCITY = 1.0
     DEFAULT_MAX_ANGULAR_VELOCITY = 2.0
 
@@ -66,6 +68,8 @@ class UnitreeROSControl(ROSControl):
                  webrtc_api_topic: str = None,
                  move_vel_topic: str = None,
                  pose_topic: str = None,
+                 odom_topic: str = None,
+                 costmap_topic: str = None,
                  state_msg_type: Type = None,
                  imu_msg_type: Type = None,
                  webrtc_msg_type: Type = None,
@@ -84,6 +88,9 @@ class UnitreeROSControl(ROSControl):
             imu_topic: ROS Topic name for IMU data (defaults to DEFAULT_IMU_TOPIC)
             webrtc_topic: ROS Topic for WebRTC commands (defaults to DEFAULT_WEBRTC_TOPIC)
             cmd_vel_topic: ROS Topic for direct movement velocity commands (defaults to DEFAULT_CMD_VEL_TOPIC)
+            pose_topic: ROS Topic for pose commands (defaults to DEFAULT_POSE_TOPIC)
+            odom_topic: ROS Topic for odometry data (defaults to DEFAULT_ODOM_TOPIC)
+            costmap_topic: ROS Topic for local costmap data (defaults to DEFAULT_COSTMAP_TOPIC)
             state_msg_type: ROS Message type for state data (defaults to DEFAULT_STATE_MSG_TYPE)
             imu_msg_type: ROS message type for IMU data (defaults to DEFAULT_IMU_MSG_TYPE)
             webrtc_msg_type: ROS message type for webrtc data (defaults to DEFAULT_WEBRTC_MSG_TYPE)
@@ -109,6 +116,8 @@ class UnitreeROSControl(ROSControl):
         webrtc_topic = webrtc_topic or self.DEFAULT_WEBRTC_TOPIC
         move_vel_topic = move_vel_topic or self.DEFAULT_CMD_VEL_TOPIC
         pose_topic = pose_topic or self.DEFAULT_POSE_TOPIC
+        odom_topic = odom_topic or self.DEFAULT_ODOM_TOPIC
+        costmap_topic = costmap_topic or self.DEFAULT_COSTMAP_TOPIC
         webrtc_api_topic = webrtc_api_topic or self.DEFAULT_WEBRTC_API_TOPIC
         state_msg_type = state_msg_type or self.DEFAULT_STATE_MSG_TYPE
         imu_msg_type = imu_msg_type or self.DEFAULT_IMU_MSG_TYPE
@@ -129,6 +138,8 @@ class UnitreeROSControl(ROSControl):
             webrtc_api_topic=webrtc_api_topic,
             move_vel_topic=move_vel_topic,
             pose_topic=pose_topic,
+            odom_topic=odom_topic,
+            costmap_topic=costmap_topic,
             max_linear_velocity=max_linear_velocity,
             max_angular_velocity=max_angular_velocity,
             debug=debug

@@ -1,0 +1,17 @@
+_BASE_: "Base-C2_L_R5021k_640b64_4x.yaml"
+MODEL:
+  ROI_BOX_HEAD:
+    USE_ZEROSHOT_CLS: True
+  WEIGHTS: ''
+  TIMM:
+    BASE_NAME: convnext_tiny_21k
+    OUT_LEVELS: [2, 3, 4]
+    PRETRAINED: True
+  FPN:
+    IN_FEATURES: ["layer2", "layer3", "layer4"]
+SOLVER:
+  MAX_ITER: 180000
+  IMS_PER_BATCH: 32
+  BASE_LR: 0.0001
+DATASETS:
+  TRAIN: ("lvis_v1_train+coco",)

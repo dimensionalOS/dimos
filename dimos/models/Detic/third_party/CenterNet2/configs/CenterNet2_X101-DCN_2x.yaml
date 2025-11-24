@@ -1,0 +1,22 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  CENTERNET:
+    USE_DEFORMABLE: True
+  WEIGHTS: "detectron2://ImageNetPretrained/FAIR/X-101-32x8d.pkl"
+  PIXEL_STD: [57.375, 57.120, 58.395]
+  RESNETS:
+    STRIDE_IN_1X1: False
+    NUM_GROUPS: 32
+    WIDTH_PER_GROUP: 8
+    DEPTH: 101
+    DEFORM_ON_PER_STAGE: [False, False, True, True] # on Res4, Res5
+    DEFORM_MODULATED: True
+  ROI_HEADS:
+    IN_FEATURES: ["p3", "p4"]
+SOLVER:
+  STEPS: (120000, 160000)
+  MAX_ITER: 180000
+  CHECKPOINT_PERIOD: 40000
+INPUT:
+  MIN_SIZE_TRAIN: (480, 960)
+  MIN_SIZE_TRAIN_SAMPLING: "range"

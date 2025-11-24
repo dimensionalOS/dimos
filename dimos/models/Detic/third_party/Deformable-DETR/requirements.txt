@@ -1,0 +1,4 @@
+pycocotools
+tqdm
+cython
+scipy

@@ -1,0 +1,301 @@
+:root,
+svg {
+    --color-red: #fd5548;
+    --color-green: #73e3bb;
+    --color-blue: #555;
+    --color-lightblue: #adf7f6;
+    --color-orange: #ffa500;
+    --color-bgblue: #141d22;
+
+    --text-color: #fff;
+    --text-color-alt: #aaa;
+    --text-color-p: #ccc;
+    --background-color: #000;
+    --background-color-alt: #111;
+
+    --font-family: "JetBrains Mono", monospace;
+    --line-height: 1.2rem;
+    --border-thickness: 1px;
+
+    --font-weight-normal: 500;
+    --font-weight-medium: 600;
+    --font-weight-bold: 800;
+
+    fill: var(--text-color);
+    font-family: var(--font-family);
+    font-optical-sizing: auto;
+    font-weight: var(--font-weight-normal);
+    font-style: normal;
+    font-variant-numeric: tabular-nums lining-nums;
+    font-size: 16px;
+    width: 100%;
+}
+
+body {
+    position: relative;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    max-width: calc(min(100ch, round(down, 100%, 1ch)));
+    line-height: var(--line-height);
+    background-color: black;
+}
+
+canvas {
+    background-color: rgba(0, 0, 0, 1);
+    width: 100%;
+    height: auto;
+}
+
+.left-section {
+    flex: 1; /* Takes up 50% of the container width */
+}
+
+.right-section {
+    flex: 1; /* Takes up 50% of the container width */
+}
+
+.skelesvg {
+    background-color: #000000;
+    width: 100%;
+    height: auto;
+    border: 1px solid white;
+}
+
+video {
+    width: 100%;
+    height: auto;
+}
+
+#plotly_container {
+    filter: invert(100%) hue-rotate(180deg);
+}
+
+button {
+    font-family: var(--font-family);
+    white-space: nowrap;
+    border: none;
+    padding: 5px;
+    cursor: pointer;
+    margin: 0;
+    background-color: black;
+    color: white;
+    height: 2em;
+    border: 1px solid white;
+}
+
+button:hover {
+    background-color: white;
+    color: black;
+}
+
+button.selected {
+    background-color: white;
+    color: black;
+}
+
+button.checkbox-button {
+    position: relative;
+    padding-left: 20px;
+    text-align: left;
+    margin: 2px;
+    width: auto;
+    min-width: 80px;
+}
+
+button.checkbox-button::before {
+    content: "";
+    position: absolute;
+    left: 5px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 10px;
+    height: 10px;
+    border: 1px solid white;
+    background-color: black;
+}
+
+button.checkbox-button.checked::before {
+    background-color: white;
+}
+
+button.checkbox-button:hover::before {
+    border-color: var(--color-green);
+}
+
+/* Adjustments for grid layout */
+.controls.grid button.checkbox-button {
+    flex: 0 0 auto;
+}
+
+.controls {
+    position: absolute;
+    bottom: 5px;
+    left: 5px;
+    width: calc(100% - 10px);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 5px;
+    max-height: calc(100% - 30px);
+    overflow-y: auto;
+}
+
+/* For grid layout (multiple items per row) */
+.controls.grid {
+    flex-direction: row;
+    justify-content: flex-start;
+    align-items: flex-start;
+}
+
+/* For horizontal controls layout (default) */
+.controls.horizontal {
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+}
+
+/* For vertical controls layout */
+.controls.vertical {
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+input[type="range"] {
+    -webkit-appearance: none;
+    width: 100%;
+    background: black;
+    outline: 1px solid white;
+    padding-left: 5px;
+    padding-right: 5px;
+    margin-right: 12px;
+}
+
+input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 1.5em;
+    height: 1em;
+    background: black;
+    cursor: pointer;
+    border: 1px solid white;
+}
+
+input[type="range"]::-moz-range-thumb {
+    width: 1.5em;
+    height: 1em;
+    background: black;
+    cursor: pointer;
+    border: 1px solid white;
+}
+
+input[type="range"]::-webkit-slider-thumb:hover {
+    background: white;
+}
+
+input[type="range"]::-moz-range-thumb:hover {
+    background: white;
+}
+
+#window-container {
+    display: flex;
+    flex-wrap: wrap;
+    width: 100vw;
+}
+
+.window {
+    position: relative;
+    border: 1px solid #ccc;
+    box-sizing: border-box;
+    min-width: 30vw;
+    flex: 1 1 30vh;
+    min-height: 33vh;
+    display: flex;
+    flex-direction: column;
+}
+
+#vis {
+    min-height: 100vh;
+    min-width: 100vw;
+}
+
+.window-title {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background-color: black;
+    color: white;
+    padding: 5px;
+    border: 1px solid white;
+    z-index: 100;
+}
+
+.window:has(.window) > .window-title {
+    top: 5px;
+    left: 5px;
+    width: fit-content;
+}
+
+.window-content {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+}
+
+svg {
+    width: 100%;
+    height: 100%;
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+/* Graph styling */
+.keypoint-path {
+    fill: none;
+    stroke-width: 1.5px;
+    vector-effect: non-scaling-stroke;
+}
+
+.annotation-line {
+    stroke-width: 1px;
+    vector-effect: non-scaling-stroke;
+}
+
+.annotation-line.vertical {
+    stroke-dasharray: none;
+}
+
+.annotation-line.horizontal {
+    stroke-dasharray: none;
+}
+
+.annotation-region {
+    opacity: 0.3;
+}
+
+.annotation-point {
+    r: 4px;
+}
+
+.annotation-text {
+    font-size: 12px;
+    font-weight: normal;
+}
+
+.window:has(.window) {
+    border: 0px;
+}
+
+.clickable-keypoint {
+    cursor: pointer; /* Indicates clickability */
+    transition: stroke, r 0.5s; /* Smooth hover transition */
+}
+
+.clickable-keypoint:hover {
+    r: 10px;
+    stroke-width: 1;
+    stroke: white;
+}

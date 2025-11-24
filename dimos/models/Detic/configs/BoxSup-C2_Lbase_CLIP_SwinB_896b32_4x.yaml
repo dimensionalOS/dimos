@@ -1,0 +1,19 @@
+_BASE_: "Base-C2_L_R5021k_640b64_4x.yaml"
+MODEL:
+  ROI_BOX_HEAD:
+    USE_ZEROSHOT_CLS: True
+  WEIGHTS: "models/swin_base_patch4_window7_224_22k.pkl"
+  BACKBONE:
+    NAME: build_swintransformer_fpn_backbone
+  SWIN:
+    SIZE: B-22k
+  FPN:
+    IN_FEATURES: ["swin1", "swin2", "swin3"]
+SOLVER:
+  MAX_ITER: 180000
+  IMS_PER_BATCH: 32
+  BASE_LR: 0.0001
+INPUT:
+  TRAIN_SIZE: 896
+DATASETS:
+  TRAIN: ("lvis_v1_train_norare",)

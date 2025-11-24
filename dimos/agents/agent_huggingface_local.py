@@ -31,6 +31,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 # Local imports
 from dimos.agents.agent import LLMAgent
 from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.agents.memory.chroma_impl import LocalSemanticMemory
 from dimos.agents.prompt_builder.impl import PromptBuilder
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
@@ -75,7 +76,7 @@ class HuggingFaceLocalAgent(LLMAgent):
         super().__init__(
             dev_name=dev_name,
             agent_type=agent_type,
-            agent_memory=agent_memory,
+            agent_memory=agent_memory or LocalSemanticMemory(),
             pool_scheduler=pool_scheduler,
             process_all_inputs=process_all_inputs,
             system_query=system_query

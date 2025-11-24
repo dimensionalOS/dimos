@@ -1,0 +1,2 @@
+#!/usr/bin/env bash
+python3 /app/tests/test_planning_agent_web_interface.py

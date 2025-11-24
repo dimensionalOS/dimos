@@ -1,0 +1,42 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  MASK_ON: True
+  ROI_MASK_HEAD:
+    NAME: "MaskRCNNConvUpsampleHead"
+    NUM_CONV: 4
+    POOLER_RESOLUTION: 14
+  ROI_HEADS:
+    NUM_CLASSES: 10
+    IN_FEATURES: ["dla2"]
+  BACKBONE:
+    NAME: "build_dla_backbone"
+  DLA:
+    NORM: "BN"
+  CENTERNET:
+    IN_FEATURES: ["dla2"]
+    FPN_STRIDES: [4]
+    SOI: [[0, 1000000]]
+    NUM_CLS_CONVS: 1
+    NUM_BOX_CONVS: 1
+    REG_WEIGHT: 1.
+    MORE_POS: True
+    HM_FOCAL_ALPHA: 0.25
+    POST_NMS_TOPK_TEST: 128
+  WEIGHTS: ''
+  PIXEL_MEAN: [123.675, 116.280, 103.530]
+  PIXEL_STD: [58.395, 57.12, 57.375]
+SOLVER:
+  MAX_ITER: 180000
+  STEPS: (120000, 160000)
+  BASE_LR: 0.08
+  IMS_PER_BATCH: 64
+INPUT:
+  FORMAT: RGB
+  CUSTOM_AUG: EfficientDetResizeCrop
+  TRAIN_SIZE: 640
+  MIN_SIZE_TEST: 608
+  MAX_SIZE_TEST: 900
+  MASK_FORMAT: bitmask
+DATASETS:
+  TRAIN: ("nuimages_train",)
+  TEST: ("nuimages_val",)

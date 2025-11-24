@@ -14,3 +14,6 @@ venv*
 # Ignore default runtime output folder
 /assets/output/
 /assets/model-cache/
+assets/agent/memory.txt
+
+.bash_history

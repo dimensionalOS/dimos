@@ -296,6 +296,109 @@ class JumpAndFlip(AbstractRobotSkill):
         return (jump() and flip())
 ```
 
+### Integrating Skills with Agents: Single Skills and Skill Libraries
+
+DimOS agents, such as `OpenAIAgent`, can be endowed with capabilities through two primary mechanisms: by providing them with individual skill classes or with comprehensive `SkillLibrary` instances. This design offers flexibility in how robot functionalities are defined and managed within your agent-based applications.
+
+**Agent's `skills` Parameter**
+
+The `skills` parameter in an agent's constructor is key to this integration:
+
+1.  **A Single Skill Class**: This approach is suitable for skills that are relatively self-contained or have straightforward initialization requirements.
+    *   You pass the skill *class itself* (e.g., `GreeterSkill`) directly to the agent's `skills` parameter.
+    *   The agent then takes on the responsibility of instantiating this skill when it's invoked. This typically involves the agent providing necessary context to the skill's constructor (`__init__`), such as a `Robot` instance (or any other private instance variable) if the skill requires it.
+
+2.  **A `SkillLibrary` Instance**: This is the preferred method for managing a collection of skills, especially when skills have dependencies, require specific configurations, or need to share parameters.
+    *   You first define your custom skill library by inheriting from `SkillLibrary`. Then, you create and configure an *instance* of this library (e.g., `my_lib = EntertainmentSkills(robot=robot_instance)`).
+    *   This pre-configured `SkillLibrary` instance is then passed to the agent's `skills` parameter. The library itself manages the lifecycle and provision of its contained skills.
+
+**Examples:**
+
+#### 1. Using a Single Skill Class with an Agent
+
+First, define your skill. For instance, a `GreeterSkill` that can deliver a configurable greeting:
+
+```python
+class GreeterSkill(AbstractSkill):
+    """Greats the user with a friendly message.""" # Gives the agent better context for understanding (the more detailed the better).
+    
+    greeting: str = Field(..., description="The greating message to display.") # The field needed for the calling of the function. Your agent will also pull from the description here to gain better context. 
+
+    def __init__(self, greeting_message: Optional[str] = None, **data):
+        super().__init__(**data)
+        if greeting_message:
+            self.greeting = greeting_message
+        # Any additional skill-specific initialization can go here
+
+    def __call__(self):
+        super().__call__() # Call parent's method if it contains base logic
+        # Implement the logic for the skill
+        print(self.greeting)
+        return f"Greeting delivered: '{self.greeting}'"
+```
+
+Next, register this skill *class* directly with your agent. The agent can then instantiate it, potentially with specific configurations if your agent or skill supports it (e.g., via default parameters or a more advanced setup).
+
+```python
+agent = OpenAIAgent(
+    dev_name="GreetingBot",
+    system_query="You are a polite bot. If a user asks for a greeting, use your GreeterSkill.",
+    skills=GreeterSkill,  # Pass the GreeterSkill CLASS
+    # The agent will instantiate GreeterSkill.
+    # If the skill had required __init__ args not provided by the agent automatically,
+    # this direct class passing might be insufficient without further agent logic
+    # or by passing a pre-configured instance (see SkillLibrary example).
+    # For simple skills like GreeterSkill with defaults or optional args, this works well.
+    model_name="gpt-4o"
+)
+```
+In this setup, when the `GreetingBot` agent decides to use the `GreeterSkill`, it will instantiate it. If the `GreeterSkill` were to be instantiated by the agent with a specific `greeting_message`, the agent's design would need to support passing such parameters during skill instantiation.
+
+#### 2. Using a `SkillLibrary` Instance with an Agent
+
+Define the SkillLibrary and any skills it will manage in its collection:
+```python
+class MovementSkillsLibrary(SkillLibrary):
+    """A specialized skill library containing movement and navigation related skills."""
+    
+    def __init__(self, robot=None):
+        super().__init__()
+        self._robot = robot
+        
+    def initialize_skills(self, robot=None):
+        """Initialize all movement skills with the robot instance."""
+        if robot:
+            self._robot = robot
+            
+        if not self._robot:
+            raise ValueError("Robot instance is required to initialize skills")
+            
+        # Initialize with all movement-related skills
+        self.add(Navigate(robot=self._robot))
+        self.add(NavigateToGoal(robot=self._robot))
+        self.add(FollowHuman(robot=self._robot))
+        self.add(NavigateToObject(robot=self._robot))
+        self.add(GetPose(robot=self._robot))  # Position tracking skill
+```
+
+Note the addision of initialized skills added to this collection above. 
+
+Proceed to use this skill library in an Agent:
+
+Finally, in your main application code:
+```python
+# 1. Create an instance of your custom skill library, configured with the robot
+my_movement_skills = MovementSkillsLibrary(robot=robot_instance)
+
+# 2. Pass this library INSTANCE to the agent
+performing_agent = OpenAIAgent(
+    dev_name="ShowBot",
+    system_query="You are a show robot. Use your skills as directed.",
+    skills=my_movement_skills,  # Pass the configured SkillLibrary INSTANCE
+    model_name="gpt-4o"
+)
+```
+
 ### Unitree Test Files
 - **`tests/run_go2_ros.py`**: Tests `UnitreeROSControl(ROSControl)` initialization in `UnitreeGo2(Robot)` via direct function calls `robot.move()` and `robot.webrtc_req()` 
 - **`tests/simple_agent_test.py`**: Tests a simple zero-shot class `OpenAIAgent` example

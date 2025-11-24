@@ -1,0 +1,36 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  BACKBONE:
+    NAME: "build_p35_fcos_dla_bifpn_backbone"
+  BIFPN:
+    OUT_CHANNELS: 160
+    NUM_LEVELS: 3
+    NUM_BIFPN: 4
+  DLA:
+    NUM_LAYERS: 34
+    NORM: "SyncBN"
+  FPN:
+    IN_FEATURES: ["dla3", "dla4", "dla5"]
+  ROI_HEADS:
+    IN_FEATURES: ["p3", "p4", "p5"]
+  CENTERNET:
+    POST_NMS_TOPK_TEST: 128
+    FPN_STRIDES: [8, 16, 32]
+    IN_FEATURES: ['p3', 'p4', 'p5']
+    SOI: [[0, 64], [48, 192], [128, 1000000]]
+DATASETS:
+  TRAIN: ("coco_2017_train",)
+  TEST: ("coco_2017_val",)
+SOLVER:
+  IMS_PER_BATCH: 16
+  BASE_LR: 0.02
+  STEPS: (300000, 340000)
+  MAX_ITER: 360000
+  CHECKPOINT_PERIOD: 100000
+  WARMUP_ITERS: 4000
+  WARMUP_FACTOR: 0.00025
+INPUT:
+  MIN_SIZE_TRAIN: (256, 288, 320, 352, 384, 416, 448, 480, 512, 544, 576, 608)
+  MAX_SIZE_TRAIN: 900
+  MAX_SIZE_TEST: 736
+  MIN_SIZE_TEST: 512

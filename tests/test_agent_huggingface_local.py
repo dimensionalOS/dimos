@@ -40,7 +40,7 @@ query_provider = QueryDataProvider()
 system_query = "You are a robot with the following functions. Move(), Reverse(), Left(), Right(), Stop(). Given the following user comands return ONLY the correct function."
 
 # Initialize agent
-agent = HuggingFaceLLMAgent = HuggingFaceLocalAgent(
+agent = HuggingFaceLocalAgent(
     dev_name="HuggingFaceLLMAgent",
     model_name= "Qwen/Qwen2.5-3B",
     agent_type="HF-LLM",

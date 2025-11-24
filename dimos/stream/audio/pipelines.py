@@ -4,7 +4,7 @@ from dimos.stream.audio.node_volume_monitor import monitor
 from dimos.stream.audio.node_key_recorder import KeyRecorder
 from dimos.stream.audio.node_output import SounddeviceAudioOutput
 from dimos.stream.audio.stt.node_whisper import WhisperNode
-from dimos.stream.audio.tts.node_openai import OpenAITTSNode
+from dimos.stream.audio.tts.node_openai import OpenAITTSNode, Voice 
 from dimos.stream.audio.text.node_stdout import TextPrinterNode
 
 
@@ -28,7 +28,7 @@ def stt():
 
 
 def tts():
-    tts_node = OpenAITTSNode()
+    tts_node = OpenAITTSNode(speed=1.2, voice = Voice.ONYX)
     agent_text_printer = TextPrinterNode(prefix="AGENT: ")
     agent_text_printer.consume_text(tts_node.emit_text())
 

@@ -54,6 +54,7 @@ RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-desktop \
     ros-${ROS_DISTRO}-ros-base \
     ros-${ROS_DISTRO}-image-tools \
+    ros-${ROS_DISTRO}-compressed-image-transport \
     ros-${ROS_DISTRO}-vision-msgs \
     ros-${ROS_DISTRO}-rviz2 \
     ros-${ROS_DISTRO}-rqt \
@@ -100,7 +101,7 @@ COPY requirements.txt /app/
 WORKDIR /app
 
 # Install dimos requirements
-RUN pip install -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Set PYTHONPATH permanently
 ENV PYTHONPATH=/app:${PYTHONPATH}

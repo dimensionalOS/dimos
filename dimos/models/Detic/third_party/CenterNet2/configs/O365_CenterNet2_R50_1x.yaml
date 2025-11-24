@@ -1,0 +1,13 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  ROI_HEADS:
+    NUM_CLASSES: 365
+  CENTERNET:
+    NUM_CLASSES: 365
+DATASETS:
+  TRAIN: ("objects365_train",)
+  TEST: ("objects365_val",)
+DATALOADER:
+  SAMPLER_TRAIN: "ClassAwareSampler"
+TEST:
+  DETECTIONS_PER_IMAGE: 300

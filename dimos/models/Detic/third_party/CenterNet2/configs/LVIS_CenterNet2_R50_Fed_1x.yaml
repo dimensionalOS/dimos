@@ -1,0 +1,19 @@
+_BASE_: "Base-CenterNet2.yaml"
+MODEL:
+  ROI_HEADS:
+    NUM_CLASSES: 1203
+    SCORE_THRESH_TEST: 0.02
+    NMS_THRESH_TEST: 0.5
+  CENTERNET:
+    NUM_CLASSES: 1203
+  ROI_BOX_HEAD:
+    USE_SIGMOID_CE: True
+    USE_FED_LOSS: True
+DATASETS:
+  TRAIN: ("lvis_v1_train",)
+  TEST: ("lvis_v1_val",)
+DATALOADER:
+  SAMPLER_TRAIN: "RepeatFactorTrainingSampler"
+  REPEAT_THRESHOLD: 0.001
+TEST:
+  DETECTIONS_PER_IMAGE: 300

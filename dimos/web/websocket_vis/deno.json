@@ -1,0 +1,22 @@
+{
+    "nodeModulesDir": "auto",
+    "tasks": {
+        "build": "deno run -A build.ts",
+        "watch": "deno run -A build.ts --watch"
+    },
+    "lint": {
+        "rules": {
+            "exclude": ["require-await", "ban-ts-comment"]
+        }
+    },
+    "fmt": {
+        "indentWidth": 4,
+        "useTabs": false,
+        "semiColons": false
+    },
+
+    "compilerOptions": {
+        "lib": ["dom", "deno.ns"]
+    }
+}
+
