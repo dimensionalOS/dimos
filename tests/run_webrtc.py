@@ -14,8 +14,8 @@
 
 import os
 from dotenv import load_dotenv
-from dimos.robot.unitree_standalone.unitree_go2 import UnitreeGo2
-from dimos.robot.unitree_standalone.testing.helpers import show3d_stream
+from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+from dimos.robot.unitree_webrtc.testing.helpers import show3d_stream
 
 load_dotenv()
 

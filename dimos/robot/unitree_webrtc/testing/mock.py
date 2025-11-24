@@ -2,7 +2,7 @@ import os
 import pickle
 import glob
 from typing import Union, Iterator, cast, overload
-from dimos.robot.unitree_standalone.type.lidar import LidarMessage, RawLidarMsg
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage, RawLidarMsg
 
 from reactivex import operators as ops
 from reactivex import interval, from_iterable

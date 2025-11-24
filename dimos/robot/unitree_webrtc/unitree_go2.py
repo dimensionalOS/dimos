@@ -2,11 +2,11 @@ import asyncio
 import threading
 
 from dataclasses import dataclass
-from dimos.robot.unitree_standalone.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from go2_webrtc_driver.webrtc_driver import Go2WebRTCConnection, WebRTCConnectionMethod  # type: ignore[import-not-found]
 from go2_webrtc_driver.constants import RTC_TOPIC
 
-from dimos.robot.unitree_standalone.type.map import Map
+from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.robot.global_planner.planner import AstarPlanner
 
 from reactivex.subject import Subject
@@ -17,20 +17,21 @@ from reactivex.disposable import Disposable, CompositeDisposable
 @dataclass
 class UnitreeGo2:
     ip: str
-    conn: Go2WebRTCConnection
     mode: str = "ai"
 
+    conn: Go2WebRTCConnection
+
     # mode = "ai" or "normal"
-    def __init__(self, ip=None, mode="ai"):
+    def __init__(self):
         super().__init__()
-        self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=ip)
+        self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
         self.global_planner = AstarPlanner(
             set_local_nav=self.navigate_path_local,  # needs implementation
             get_costmap=self.ros_control.topic_latest("map", self.map.costmap),
-            get_robot_pos=lambda: [0, 0, 0],  # self.ros_control.transform_euler_pos("base_link"),
-        )
+            get_robot_pos=lambda: [0, 0, 0],
+        )  # self.ros_control.transform_euler_pos("base_link"),
 
     def connect(self):
         self.loop = asyncio.new_event_loop()
@@ -78,7 +79,6 @@ class UnitreeGo2:
             self.conn.datachannel.pub_sub.publish_without_callback("rt/utlidar/switch", "off")
 
         dispose.add(Disposable(cleanup))
-
         self.conn.datachannel.pub_sub.subscribe("rt/utlidar/voxel_map_compressed", on_lidar_data)
         return subject
 

@@ -3,10 +3,10 @@ import time
 import open3d as o3d
 
 from dimos.types.vector import Vector
-from dimos.robot.unitree_standalone.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
-from dimos.robot.unitree_standalone.testing.mock import Mock
-from dimos.robot.unitree_standalone.testing.helpers import show3d, multivis, benchmark
+from dimos.robot.unitree_webrtc.testing.mock import Mock
+from dimos.robot.unitree_webrtc.testing.helpers import show3d, multivis, benchmark
 
 
 def test_load():
