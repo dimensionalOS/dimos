@@ -1,5 +1,8 @@
 site_name: DimOS Documentation
 site_author: Dimensional Team
+
+hooks:
+  - docs/hooks.py
 site_description: The universal framework for AI-native generalist robotics
 repo_name: dimensionalOS/dimos
 repo_url: https://github.com/dimensionalOS/dimos
@@ -64,6 +67,8 @@ markdown_extensions:
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.snippets:
+      base_path: ['.']
 
 nav:
   - Home: index.md
@@ -85,6 +90,7 @@ nav:
 
 plugins:
   - search
+  - marimo
   - mkdocstrings:
       handlers:
         python:

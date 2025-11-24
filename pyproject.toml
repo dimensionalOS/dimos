@@ -233,6 +233,9 @@ docs = [
     "mkdocs-llmstxt>=0.1.0",
     "griffe-typingdoc>=0.2.0",
     "markdown-callouts",
+    "marimo[mcp]",  # for tutorials; mcp extra enables MCP server for coding agents
+    "mkdocs-marimo",
+    "psutil",  # for docs/hooks.py process management
 ]
 
 jetson-jp6-cuda126 = [

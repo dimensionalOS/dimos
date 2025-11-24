@@ -39,6 +39,8 @@ dist/
 build/
 # docs build
 site/
+docs/tutorials/**/tutorial_rendered.html
+**/__marimo__/
 
 # Ignore data directory but keep .lfs subdirectory
 data/*
