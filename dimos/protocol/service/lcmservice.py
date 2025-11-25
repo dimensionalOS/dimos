@@ -83,7 +83,8 @@ def check_multicast() -> list[str]:
         # Check if multicast route exists
         try:
             result = subprocess.run(["netstat", "-nr"], capture_output=True, text=True)
-            if "224.0.0.0/4" not in result.stdout:
+            route_exists = "224.0.0.0/4" in result.stdout or "224.0.0/4" in result.stdout
+            if not route_exists:
                 commands_needed.append(
                     f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}"
                 )
