@@ -85,9 +85,9 @@ Connections are linked based on `(property_name, object_type)`. In this case `('
 
 By default, the name of the property is used to generate the topic name. So for `image`, the topic will be `/image`.
 
-The property name is used only if it's unique. If two modules have the same property name with different types, then both get a random topic such as `/SGVsbG8sIFdvcmxkI`.
+Streams with the same name must have the same type. If two streams share a name but have different types, `build()` raises a `ValueError`. This ensures type safety - an `Out[Temperature]` won't accidentally connect to an `In[Pressure]` just because both are named `data`.
 
-If you don't like the name you can always override it like in the next section.
+If you don't like the default topic name you can always override it like in the next section.
 
 ## Which transport is used?
 
