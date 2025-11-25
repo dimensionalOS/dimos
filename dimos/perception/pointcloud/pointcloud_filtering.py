@@ -115,9 +115,9 @@ class PointcloudFiltering:
 
     def _validate_inputs(  # type: ignore[no-untyped-def]
         self,
-        color_img: np.ndarray,
-        depth_img: np.ndarray,
-        objects: list[ObjectData],  # type: ignore[type-arg]
+        color_img: np.ndarray,  # type: ignore[type-arg]
+        depth_img: np.ndarray,  # type: ignore[type-arg]
+        objects: list[ObjectData],
     ):
         """Validate input parameters."""
         if color_img.shape[:2] != depth_img.shape:
@@ -199,9 +199,9 @@ class PointcloudFiltering:
 
     def process_images(
         self,
-        color_img: np.ndarray,
-        depth_img: np.ndarray,
-        objects: list[ObjectData],  # type: ignore[type-arg]
+        color_img: np.ndarray,  # type: ignore[type-arg]
+        depth_img: np.ndarray,  # type: ignore[type-arg]
+        objects: list[ObjectData],
     ) -> list[ObjectData]:
         """
         Process color and depth images with object detection results to create filtered point clouds.
@@ -278,8 +278,8 @@ class PointcloudFiltering:
             color_img,
             depth_img,
             processed_masks,
-            self.depth_camera_matrix,
-            depth_scale=1.0,  # type: ignore[arg-type]
+            self.depth_camera_matrix,  # type: ignore[arg-type]
+            depth_scale=1.0,
         )
 
         # Process each object and update ObjectData

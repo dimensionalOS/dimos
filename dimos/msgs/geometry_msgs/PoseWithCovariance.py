@@ -16,15 +16,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeAlias
 
-from dimos_lcm.geometry_msgs import (
-    PoseWithCovariance as LCMPoseWithCovariance,  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    PoseWithCovariance as LCMPoseWithCovariance,
 )
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (
-        PoseWithCovariance as ROSPoseWithCovariance,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        PoseWithCovariance as ROSPoseWithCovariance,
     )
 except ImportError:
     ROSPoseWithCovariance = None  # type: ignore[assignment, misc]

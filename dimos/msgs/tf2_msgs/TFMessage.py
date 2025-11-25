@@ -32,8 +32,8 @@ from typing import TYPE_CHECKING, BinaryIO
 from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
 
 try:
-    from geometry_msgs.msg import (
-        TransformStamped as ROSTransformStamped,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TransformStamped as ROSTransformStamped,
     )
     from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 except ImportError:

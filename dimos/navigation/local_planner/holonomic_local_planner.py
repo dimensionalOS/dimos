@@ -223,7 +223,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
 
     def _find_closest_point_on_path(
         self,
-        pose: np.ndarray,
+        pose: np.ndarray,  # type: ignore[type-arg]
         path: np.ndarray,  # type: ignore[type-arg]
     ) -> tuple[int, np.ndarray]:  # type: ignore[type-arg]
         """

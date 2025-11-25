@@ -85,8 +85,8 @@ class FlaskServer(EdgeIO):
         def make_response_generator(key):  # type: ignore[no-untyped-def]
             def response_generator():  # type: ignore[no-untyped-def]
                 return Response(
-                    stream_generator(key)(),
-                    mimetype="multipart/x-mixed-replace; boundary=frame",  # type: ignore[no-untyped-call]
+                    stream_generator(key)(),  # type: ignore[no-untyped-call]
+                    mimetype="multipart/x-mixed-replace; boundary=frame",
                 )
 
             return response_generator
