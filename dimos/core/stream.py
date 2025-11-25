@@ -42,8 +42,8 @@ class ObservableMixin(Generic[T]):
     # might be nicer to write without rxpy but had this snippet ready
     def get_next(self, timeout: float = 10.0) -> T:
         try:
-            return (
-                self.observable()
+            return (  # type: ignore[no-any-return]
+                self.observable()  # type: ignore[no-untyped-call]
                 .pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else []))
                 .run()
             )
@@ -51,19 +51,19 @@ class ObservableMixin(Generic[T]):
             raise Exception(f"No value received after {timeout} seconds") from e
 
     def hot_latest(self) -> Callable[[], T]:
-        return reactive.getter_streaming(self.observable())
+        return reactive.getter_streaming(self.observable())  # type: ignore[no-untyped-call]
 
-    def pure_observable(self):
-        def _subscribe(observer, scheduler=None):
-            unsubscribe = self.subscribe(observer.on_next)
+    def pure_observable(self):  # type: ignore[no-untyped-def]
+        def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
+            unsubscribe = self.subscribe(observer.on_next)  # type: ignore[attr-defined]
             return Disposable(unsubscribe)
 
         return rx.create(_subscribe)
 
     # default return is backpressured because most
     # use cases will want this by default
-    def observable(self):
-        return backpressure(self.pure_observable())
+    def observable(self):  # type: ignore[no-untyped-def]
+        return backpressure(self.pure_observable())  # type: ignore[no-untyped-call]
 
 
 class State(enum.Enum):
@@ -78,21 +78,21 @@ class Transport(ObservableMixin[T]):
     def broadcast(self, selfstream: Out[T], value: T) -> None: ...
 
     def publish(self, msg: T) -> None:
-        self.broadcast(None, msg)
+        self.broadcast(None, msg)  # type: ignore[arg-type]
 
     # used by local Input
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...
+    def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...  # type: ignore[valid-type]
 
 
 class Stream(Generic[T]):
-    _transport: Transport | None
+    _transport: Transport | None  # type: ignore[type-arg]
 
     def __init__(
         self,
         type: type[T],
         name: str,
         owner: Any | None = None,
-        transport: Transport | None = None,
+        transport: Transport | None = None,  # type: ignore[type-arg]
     ) -> None:
         self.name = name
         self.owner = owner
@@ -107,11 +107,11 @@ class Stream(Generic[T]):
         return getattr(self.type, "__name__", repr(self.type))
 
     def _color_fn(self) -> Callable[[str], str]:
-        if self.state == State.UNBOUND:
+        if self.state == State.UNBOUND:  # type: ignore[attr-defined]
             return colors.orange
-        if self.state == State.READY:
+        if self.state == State.READY:  # type: ignore[attr-defined]
             return colors.blue
-        if self.state == State.CONNECTED:
+        if self.state == State.CONNECTED:  # type: ignore[attr-defined]
             return colors.green
         return lambda s: s
 
@@ -122,18 +122,18 @@ class Stream(Generic[T]):
             + self._color_fn()(f"{self.name}[{self.type_name}]")
             + " @ "
             + (
-                colors.orange(self.owner)
+                colors.orange(self.owner)  # type: ignore[arg-type]
                 if isinstance(self.owner, Actor)
-                else colors.green(self.owner)
+                else colors.green(self.owner)  # type: ignore[arg-type]
             )
             + ("" if not self._transport else " via " + str(self._transport))
         )
 
 
 class Out(Stream[T]):
-    _transport: Transport
+    _transport: Transport  # type: ignore[type-arg]
 
-    def __init__(self, *argv, **kwargs) -> None:
+    def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*argv, **kwargs)
 
     @property
@@ -149,7 +149,7 @@ class Out(Stream[T]):
     def state(self) -> State:
         return State.UNBOUND if self.owner is None else State.READY
 
-    def __reduce__(self):
+    def __reduce__(self):  # type: ignore[no-untyped-def]
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
         return (
@@ -162,7 +162,7 @@ class Out(Stream[T]):
             ),
         )
 
-    def publish(self, msg):
+    def publish(self, msg):  # type: ignore[no-untyped-def]
         if not hasattr(self, "_transport") or self._transport is None:
             raise Exception(f"{self} transport for stream is not specified,")
         self._transport.broadcast(self, msg)
@@ -176,27 +176,27 @@ class RemoteStream(Stream[T]):
     # this won't work but nvm
     @property
     def transport(self) -> Transport[T]:
-        return self._transport
+        return self._transport  # type: ignore[return-value]
 
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
-        self.owner.set_transport(self.name, value).result()
+        self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value
 
 
 class RemoteOut(RemoteStream[T]):
-    def connect(self, other: RemoteIn[T]):
+    def connect(self, other: RemoteIn[T]):  # type: ignore[no-untyped-def]
         return other.connect(self)
 
-    def subscribe(self, cb) -> Callable[[], None]:
-        return self.transport.subscribe(cb, self)
+    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
+        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
 
 
 # representation of Input
 # as views from inside of the module
 class In(Stream[T], ObservableMixin[T]):
     connection: RemoteOut[T] | None = None
-    _transport: Transport
+    _transport: Transport  # type: ignore[type-arg]
 
     def __str__(self) -> str:
         mystr = super().__str__()
@@ -206,7 +206,7 @@ class In(Stream[T], ObservableMixin[T]):
 
         return (mystr + " ◀─").ljust(60, "─") + f" {self.connection}"
 
-    def __reduce__(self):
+    def __reduce__(self):  # type: ignore[no-untyped-def]
         if self.owner is None or not hasattr(self.owner, "ref"):
             raise ValueError("Cannot serialise Out without an owner ref")
         return (RemoteIn, (self.type, self.name, self.owner.ref, self._transport))
@@ -214,7 +214,7 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport:
-            self._transport = self.connection.transport
+            self._transport = self.connection.transport  # type: ignore[union-attr]
         return self._transport
 
     @transport.setter
@@ -231,25 +231,25 @@ class In(Stream[T], ObservableMixin[T]):
         return State.UNBOUND if self.owner is None else State.READY
 
     # returns unsubscribe function
-    def subscribe(self, cb) -> Callable[[], None]:
-        return self.transport.subscribe(cb, self)
+    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
+        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
 
 
 # representation of input outside of module
 # used for configuring connections, setting a transport
 class RemoteIn(RemoteStream[T]):
     def connect(self, other: RemoteOut[T]) -> None:
-        return self.owner.connect_stream(self.name, other).result()
+        return self.owner.connect_stream(self.name, other).result()  # type: ignore[no-any-return, union-attr]
 
     # this won't work but that's ok
-    @property
+    @property  # type: ignore[misc]
     def transport(self) -> Transport[T]:
-        return self._transport
+        return self._transport  # type: ignore[return-value]
 
-    def publish(self, msg) -> None:
-        self.transport.broadcast(self, msg)
+    def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
+        self.transport.broadcast(self, msg)  # type: ignore[arg-type]
 
-    @transport.setter
+    @transport.setter  # type: ignore[attr-defined, misc, no-redef]
     def transport(self, value: Transport[T]) -> None:
-        self.owner.set_transport(self.name, value).result()
+        self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value

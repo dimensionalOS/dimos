@@ -28,7 +28,7 @@ class G1Connection(Module):
 
     connection: UnitreeWebRTCConnection
 
-    def __init__(self, ip: str | None = None, **kwargs) -> None:
+    def __init__(self, ip: str | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 
         if ip is None:
@@ -40,7 +40,7 @@ class G1Connection(Module):
         super().start()
         self.connection.start()
         self._disposables.add(
-            self.cmd_vel.subscribe(self.move),
+            self.cmd_vel.subscribe(self.move),  # type: ignore[arg-type]
         )
 
     @rpc
@@ -55,13 +55,13 @@ class G1Connection(Module):
         self.connection.move(twist, duration)
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Forward WebRTC publish requests to connection."""
         return self.connection.publish_request(topic, data)
 
 
 def deploy(dimos: DimosCluster, ip: str, local_planner: spec.LocalPlanner) -> G1Connection:
-    connection = dimos.deploy(G1Connection, ip)
+    connection = dimos.deploy(G1Connection, ip)  # type: ignore[attr-defined]
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
-    return connection
+    return connection  # type: ignore[no-any-return]

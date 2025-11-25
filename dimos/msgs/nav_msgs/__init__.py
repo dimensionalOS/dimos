@@ -1,4 +1,4 @@
-from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, MapMetaData, OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, MapMetaData, OccupancyGrid  # type: ignore[attr-defined]
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.nav_msgs.Path import Path
 

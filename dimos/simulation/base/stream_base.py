@@ -25,7 +25,7 @@ class StreamBase(ABC):
     """Base class for simulation streaming."""
 
     @abstractmethod
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         simulator,
         width: int = 1920,
@@ -61,12 +61,12 @@ class StreamBase(ABC):
         self.proc = None
 
     @abstractmethod
-    def _load_stage(self, usd_path: str | Path):
+    def _load_stage(self, usd_path: str | Path):  # type: ignore[no-untyped-def]
         """Load stage from file."""
         pass
 
     @abstractmethod
-    def _setup_camera(self):
+    def _setup_camera(self):  # type: ignore[no-untyped-def]
         """Setup and validate camera."""
         pass
 
@@ -98,19 +98,19 @@ class StreamBase(ABC):
             self.transport,
             self.rtsp_url,
         ]
-        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE)
+        self.proc = subprocess.Popen(command, stdin=subprocess.PIPE)  # type: ignore[assignment]
 
     @abstractmethod
-    def _setup_annotator(self):
+    def _setup_annotator(self):  # type: ignore[no-untyped-def]
         """Setup annotator."""
         pass
 
     @abstractmethod
-    def stream(self):
+    def stream(self):  # type: ignore[no-untyped-def]
         """Start streaming."""
         pass
 
     @abstractmethod
-    def cleanup(self):
+    def cleanup(self):  # type: ignore[no-untyped-def]
         """Cleanup resources."""
         pass
