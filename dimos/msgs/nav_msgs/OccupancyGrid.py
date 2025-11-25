@@ -382,6 +382,25 @@ class OccupancyGrid(Timestamped):
 
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
 
+    def find_char_in_ascii(self, ascii_str: str, target_char: str):
+        """Find all occurrences of a character in the ASCII grid string.
+
+        args:
+            ascii_str: ASCII string representation of the grid
+            target_char: Character to search for
+
+        returns:
+            list of (x, y) ascii coordinates where the character is found
+        """
+
+        positions = []
+        lines = ascii_str.strip().split("\n")
+        for y, line in enumerate(lines):
+            for x, char in enumerate(line):
+                if char == target_char:
+                    positions.append((x, y))
+        return positions
+
     def agent_encode(self):
         """Return ASCII string for agent."""
 
