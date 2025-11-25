@@ -45,7 +45,7 @@ class G1ZedDeployResult(TypedDict):
 def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     camera = cast(
         "CameraModule",
-        dimos.deploy(
+        dimos.deploy(  # type: ignore[attr-defined]
             CameraModule,
             frequency=4.0,
             transform=Transform(
@@ -69,8 +69,8 @@ def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     return camera
 
 
-def deploy(dimos: DimosCluster, ip: str):
-    nav = rosnav.deploy(
+def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
+    nav = rosnav.deploy(  # type: ignore[call-arg]
         dimos,
         sensor_to_base_link_transform=Transform(
             frame_id="sensor", child_frame_id="base_link", translation=Vector3(0.0, 0.0, 1.5)

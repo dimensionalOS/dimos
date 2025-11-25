@@ -22,7 +22,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger(__name__, level=logging.INFO)
 
 
-def deploy(dimos: DimosCluster, ip: str):
+def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
     connection = go2.deploy(dimos, ip)
     foxglove_bridge.deploy(dimos)
 

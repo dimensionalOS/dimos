@@ -36,10 +36,10 @@ class TFLCM(TFSpec, LCMService):
 
     default_config = Union[TFConfig, LCMConfig]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 
-        import tf_lcm_py as tf
+        import tf_lcm_py as tf  # type: ignore[import-not-found]
 
         self.l = tf.LCM()
         self.buffer = tf.Buffer(self.config.buffer_size)
@@ -58,7 +58,7 @@ class TFLCM(TFSpec, LCMService):
         for t in args:
             self.static_broadcaster.send_static_transform(t)
 
-    def lookup(
+    def lookup(  # type: ignore[no-untyped-def]
         self,
         parent_frame: str,
         child_frame: str,
@@ -81,7 +81,7 @@ class TFLCM(TFSpec, LCMService):
         if isinstance(time_point, float):
             time_point = datetime.fromtimestamp(time_point)
 
-        return self.buffer.can_transform(parent_frame, child_frame, time_point)
+        return self.buffer.can_transform(parent_frame, child_frame, time_point)  # type: ignore[no-any-return]
 
     def get_frames(self) -> set[str]:
         return set(self.buffer.get_all_frame_names())

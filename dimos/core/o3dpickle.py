@@ -15,16 +15,16 @@
 import copyreg
 
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 
 
-def reduce_external(obj):
+def reduce_external(obj):  # type: ignore[no-untyped-def]
     # Convert Vector3dVector to numpy array for pickling
     points_array = np.asarray(obj.points)
     return (reconstruct_pointcloud, (points_array,))
 
 
-def reconstruct_pointcloud(points_array):
+def reconstruct_pointcloud(points_array):  # type: ignore[no-untyped-def]
     # Create new PointCloud and assign the points
     pc = o3d.geometry.PointCloud()
     pc.points = o3d.utility.Vector3dVector(points_array)

@@ -27,12 +27,12 @@ logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
 
 # TODO: Remove, deprecated
 class NavigationModule(Module):
-    goal_pose: Out[PoseStamped] = None
-    goal_reached: In[Bool] = None
-    cancel_goal: Out[Bool] = None
-    joy: Out[Joy] = None
+    goal_pose: Out[PoseStamped] = None  # type: ignore[assignment]
+    goal_reached: In[Bool] = None  # type: ignore[assignment]
+    cancel_goal: Out[Bool] = None  # type: ignore[assignment]
+    joy: Out[Joy] = None  # type: ignore[assignment]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize NavigationModule."""
         Module.__init__(self, *args, **kwargs)
         self.goal_reach = None
@@ -46,7 +46,7 @@ class NavigationModule(Module):
 
     def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached status messages."""
-        self.goal_reach = msg.data
+        self.goal_reach = msg.data  # type: ignore[assignment]
 
     def _set_autonomy_mode(self) -> None:
         """
@@ -81,7 +81,7 @@ class NavigationModule(Module):
         )
 
         if self.joy:
-            self.joy.publish(joy_msg)
+            self.joy.publish(joy_msg)  # type: ignore[no-untyped-call]
             logger.info("Setting autonomy mode via Joy message")
 
     @rpc
@@ -103,9 +103,9 @@ class NavigationModule(Module):
 
         self.goal_reach = None
         self._set_autonomy_mode()
-        self.goal_pose.publish(pose)
+        self.goal_pose.publish(pose)  # type: ignore[no-untyped-call]
         time.sleep(0.2)
-        self.goal_pose.publish(pose)
+        self.goal_pose.publish(pose)  # type: ignore[no-untyped-call]
 
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -130,7 +130,7 @@ class NavigationModule(Module):
 
         if self.cancel_goal:
             cancel_msg = Bool(data=True)
-            self.cancel_goal.publish(cancel_msg)
+            self.cancel_goal.publish(cancel_msg)  # type: ignore[no-untyped-call]
             return True
 
         return False

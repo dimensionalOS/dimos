@@ -24,7 +24,7 @@ import time
 from typing import Any
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -107,16 +107,16 @@ class ManipulationModule(Module):
     """
 
     # LCM inputs
-    rgb_image: In[Image] = None
-    depth_image: In[Image] = None
-    camera_info: In[CameraInfo] = None
+    rgb_image: In[Image] = None  # type: ignore[assignment]
+    depth_image: In[Image] = None  # type: ignore[assignment]
+    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
 
     # LCM outputs
-    viz_image: Out[Image] = None
+    viz_image: Out[Image] = None  # type: ignore[assignment]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
-        ee_to_camera_6dof: list | None = None,
+        ee_to_camera_6dof: list | None = None,  # type: ignore[type-arg]
         **kwargs,
     ) -> None:
         """
@@ -173,11 +173,11 @@ class ManipulationModule(Module):
         self.pose_stabilization_threshold = 0.01
         self.stabilization_timeout = 25.0
         self.stabilization_start_time = None
-        self.reached_poses = deque(maxlen=self.pose_history_size)
+        self.reached_poses = deque(maxlen=self.pose_history_size)  # type: ignore[var-annotated]
         self.adjustment_count = 0
 
         # Pose reachability tracking
-        self.ee_pose_history = deque(maxlen=20)  # Keep history of EE poses
+        self.ee_pose_history = deque(maxlen=20)  # type: ignore[var-annotated]  # Keep history of EE poses
         self.stuck_pose_threshold = 0.001  # 1mm movement threshold
         self.stuck_pose_adjustment_degrees = 5.0
         self.stuck_count = 0
@@ -266,11 +266,11 @@ class ManipulationModule(Module):
     def _on_camera_info(self, msg: CameraInfo) -> None:
         """Handle camera info messages."""
         try:
-            self.camera_intrinsics = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]
+            self.camera_intrinsics = [msg.K[0], msg.K[4], msg.K[2], msg.K[5]]  # type: ignore[assignment]
 
             if self.detector is None:
-                self.detector = Detection3DProcessor(self.camera_intrinsics)
-                self.pbvs = PBVS()
+                self.detector = Detection3DProcessor(self.camera_intrinsics)  # type: ignore[arg-type, assignment]
+                self.pbvs = PBVS()  # type: ignore[assignment]
                 logger.info("Initialized detection and PBVS processors")
 
             self.latest_camera_info = msg
@@ -278,7 +278,7 @@ class ManipulationModule(Module):
             logger.error(f"Error processing camera info: {e}")
 
     @rpc
-    def get_single_rgb_frame(self) -> np.ndarray | None:
+    def get_single_rgb_frame(self) -> np.ndarray | None:  # type: ignore[type-arg]
         """
         get the latest rgb frame from the camera
         """
@@ -406,8 +406,8 @@ class ManipulationModule(Module):
                     time.sleep(0.01)
                     continue
 
-                if feedback.success is not None:
-                    if feedback.success:
+                if feedback.success is not None:  # type: ignore[attr-defined]
+                    if feedback.success:  # type: ignore[attr-defined]
                         logger.info("Pick and place completed successfully!")
                     else:
                         logger.warning("Pick and place failed")
@@ -458,7 +458,7 @@ class ManipulationModule(Module):
             normalized_dist * (self.max_grasp_pitch_degrees - self.min_grasp_pitch_degrees)
         )
 
-        return pitch_degrees
+        return pitch_degrees  # type: ignore[no-any-return]
 
     def check_within_workspace(self, target_pose: Pose) -> bool:
         """
@@ -507,7 +507,7 @@ class ManipulationModule(Module):
         Returns:
             Tuple of (is_stuck, max_std_dev_mm)
         """
-        if len(self.ee_pose_history) < self.ee_pose_history.maxlen:
+        if len(self.ee_pose_history) < self.ee_pose_history.maxlen:  # type: ignore[operator]
             return False
 
         # Extract positions from pose history
@@ -520,7 +520,7 @@ class ManipulationModule(Module):
         # Check if all standard deviations are below stuck threshold
         is_stuck = np.all(std_devs < self.stuck_pose_threshold)
 
-        return is_stuck
+        return is_stuck  # type: ignore[return-value]
 
     def check_reach_and_adjust(self) -> bool:
         """
@@ -642,10 +642,10 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return
 
-        ee_pose = self.arm.get_ee_pose()
-        dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)
+        ee_pose = self.arm.get_ee_pose()  # type: ignore[no-untyped-call]
+        dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)  # type: ignore[attr-defined]
 
-        _, _, _, has_target, target_pose = self.pbvs.compute_control(
+        _, _, _, has_target, target_pose = self.pbvs.compute_control(  # type: ignore[attr-defined]
             ee_pose, self.pregrasp_distance, dynamic_pitch
         )
         if target_pose and has_target:
@@ -665,7 +665,7 @@ class ManipulationModule(Module):
                 self.arm.cmd_ee_pose(target_pose)
                 self.current_executed_pose = target_pose
                 self.waiting_for_reach = True
-                self.waiting_start_time = time.time()
+                self.waiting_start_time = time.time()  # type: ignore[assignment]
                 self.target_updated = False
                 self.adjustment_count += 1
                 time.sleep(0.2)
@@ -674,7 +674,7 @@ class ManipulationModule(Module):
         """Execute grasp stage: move to final grasp position."""
         if self.waiting_for_reach:
             if self.check_reach_and_adjust() and not self.grasp_reached_time:
-                self.grasp_reached_time = time.time()
+                self.grasp_reached_time = time.time()  # type: ignore[assignment]
             return
 
         if self.grasp_reached_time:
@@ -739,7 +739,7 @@ class ManipulationModule(Module):
             self.current_executed_pose = self.final_pregrasp_pose
             self.arm.close_gripper()
             self.waiting_for_reach = True
-            self.waiting_start_time = time.time()
+            self.waiting_start_time = time.time()  # type: ignore[assignment]
 
     def execute_place(self) -> None:
         """Execute place stage: move to place position and release object."""
@@ -759,13 +759,13 @@ class ManipulationModule(Module):
             if place_pose:
                 logger.info("Moving to place position")
                 self.arm.cmd_ee_pose(place_pose, line_mode=True)
-                self.current_executed_pose = place_pose
+                self.current_executed_pose = place_pose  # type: ignore[assignment]
                 self.waiting_for_reach = True
-                self.waiting_start_time = time.time()
+                self.waiting_start_time = time.time()  # type: ignore[assignment]
             else:
                 logger.error("Failed to get place target pose")
                 self.task_failed = True
-                self.overall_success = False
+                self.overall_success = False  # type: ignore[assignment]
 
     def execute_retract(self) -> None:
         """Execute retract stage: retract from place position."""
@@ -793,11 +793,11 @@ class ManipulationModule(Module):
             else:
                 logger.error("No place pose stored for retraction")
                 self.task_failed = True
-                self.overall_success = False
+                self.overall_success = False  # type: ignore[assignment]
 
     def capture_and_process(
         self,
-    ) -> tuple[np.ndarray | None, Detection3DArray | None, Detection2DArray | None, Pose | None]:
+    ) -> tuple[np.ndarray | None, Detection3DArray | None, Detection2DArray | None, Pose | None]:  # type: ignore[type-arg]
         """Capture frame from camera data and process detections."""
         if self.latest_rgb is None or self.latest_depth is None or self.detector is None:
             return None, None, None, None
@@ -852,8 +852,8 @@ class ManipulationModule(Module):
         if rgb is None:
             return None
 
-        self.last_detection_3d_array = detection_3d_array
-        self.last_detection_2d_array = detection_2d_array
+        self.last_detection_3d_array = detection_3d_array  # type: ignore[assignment]
+        self.last_detection_2d_array = detection_2d_array  # type: ignore[assignment]
         if self.target_click:
             x, y = self.target_click
             if self.pick_target(x, y):
@@ -877,7 +877,7 @@ class ManipulationModule(Module):
             stage_handlers[self.grasp_stage]()
 
         target_tracked = self.pbvs.get_current_target() is not None if self.pbvs else False
-        ee_pose = self.arm.get_ee_pose()
+        ee_pose = self.arm.get_ee_pose()  # type: ignore[no-untyped-call]
         feedback = Feedback(
             grasp_stage=self.grasp_stage,
             target_tracked=target_tracked,
@@ -890,34 +890,34 @@ class ManipulationModule(Module):
         )
 
         if self.task_running:
-            self.current_visualization = create_manipulation_visualization(
+            self.current_visualization = create_manipulation_visualization(  # type: ignore[assignment]
                 rgb, feedback, detection_3d_array, detection_2d_array
             )
 
             if self.current_visualization is not None:
                 self._publish_visualization(self.current_visualization)
 
-        return feedback
+        return feedback  # type: ignore[return-value]
 
-    def _publish_visualization(self, viz_image: np.ndarray) -> None:
+    def _publish_visualization(self, viz_image: np.ndarray) -> None:  # type: ignore[type-arg]
         """Publish visualization image to LCM."""
         try:
             viz_rgb = cv2.cvtColor(viz_image, cv2.COLOR_BGR2RGB)
             msg = Image.from_numpy(viz_rgb)
-            self.viz_image.publish(msg)
+            self.viz_image.publish(msg)  # type: ignore[no-untyped-call]
         except Exception as e:
             logger.error(f"Error publishing visualization: {e}")
 
     def check_target_stabilized(self) -> bool:
         """Check if the commanded poses have stabilized."""
-        if len(self.reached_poses) < self.reached_poses.maxlen:
+        if len(self.reached_poses) < self.reached_poses.maxlen:  # type: ignore[operator]
             return False
 
         positions = np.array(
             [[p.position.x, p.position.y, p.position.z] for p in self.reached_poses]
         )
         std_devs = np.std(positions, axis=0)
-        return np.all(std_devs < self.pose_stabilization_threshold)
+        return np.all(std_devs < self.pose_stabilization_threshold)  # type: ignore[return-value]
 
     def get_place_target_pose(self) -> Pose | None:
         """Get the place target pose with z-offset applied based on object height."""
