@@ -220,10 +220,7 @@ class ProducerModule(Module):
 
 will be `/image`.
 
-The stream property name is used as the topic only if it's unique. If two streams share the same name but have different types, the blueprint system assigns each group a random topic id like `/SGVsbG8sIFdvcmxkI` to keep them separate.
-
-<!-- Citation: blueprints.py:233 - topic = f"/{name}" if unique -->
-<!-- Citation: blueprints.py:233 - topic = f"/{short_id()}" if not unique; blueprints.py:249-250 - _is_name_unique checks count -->
+Streams with the same name must have the same type -- this is how the blueprint system knows to wire them together. If two streams share a name but have different types, `build()` raises a `ValueError`.
 
 ### What to do when stream names don't match (remapping)
 
@@ -294,9 +291,6 @@ blueprint = blueprint.transports({
     ("start_explore", Bool): pLCMTransport(),
 })
 ```
-
-> [!NOTE]
-> `expanded_blueprint` does not get the transport overrides because it's created from the initial value of `blueprint`, not the second.
 
 ### Overriding global configuration
 
