@@ -31,109 +31,174 @@ blueprint = autoconnect(
 
 ## Purpose
 
-Traditional robot programming requires manually coding every behavior. With agents, you describe **what** you want ("find the red ball") not **how**.
+Traditional robot programming requires manually coding every behavior. By contrast, agents (and [skills](./skills.md)) allow you to instruct robots at a higher level of abstraction. "Clean the kitchen" becomes: explore → identify objects → navigate to each → manipulate → verify.
 
-**Natural language interface** - Command robots in English, not code.
+> [!TIP]
+> New to agents? Start with the [Equip an agent with skills](../tutorials/skill_with_agent/tutorial.md) tutorial for a hands-on introduction.
 
-**Dynamic task decomposition** - Breaks "clean the kitchen" into steps: explore, identify objects, navigate to each, manipulate, verify.
+## Situating Agents vis-a-vis other DimOS concepts
 
-**Context-aware reasoning** - Queries spatial memory and camera feeds to ground decisions in what the robot saw and where. Enables tasks like "go back to where you saw the red chair."
+Agents are [Modules](./modules.md), so they inherit streams, RPC, lifecycle management, and distributed deployment.
 
-<!-- Evidence: dimos/agents2/agent.py:224 - history() combines system, history, and state messages for context -->
+However, an agent doesn't see information from streams directly. If you want to feed information to an agent, you need to do it via [skills](./skills.md).
 
-## The Agent Loop
+## How to build agentic systems
 
-The agent runs a continuous reasoning loop with asynchronous skill execution:
+Check out these tutorials for a better answer:
 
-1. Receive query
-2. Build context from conversation history + spatial memory
-3. Call LLM with available tools
-4. LLM decides which skills to call
-5. Execute skills asynchronously
-6. Wait for results (may include images)
-7. Feed results back to LLM
-8. Generate response
-9. Loop until task completes
+* [Equip an agent with a skill](../tutorials/skill_with_agent/tutorial.md)
+* [Build a multi-agent RoboButler system](../tutorials/multi_agent/tutorial.md)
+<!-- TODO: Add multiagent tutorial -->
 
-<!-- Evidence: dimos/agents2/agent.py:247-325 - Complete agent_loop() implementation showing this exact flow -->
-
-The loop handles **long-running operations** without blocking. Navigation takes 30 seconds? The agent waits, then resumes reasoning with results.
-
-<!-- Evidence: dimos/agents2/agent.py:304 - await coordinator.wait_for_updates() enables async waiting -->
-
-Skills can **stream updates** back. A skill exploring an environment might yield periodic updates ("Found 3 objects so far...") keeping the agent informed.
-
-<!-- Evidence: dimos/protocol/skill/skill.py:37-42 - Return enum documentation for passive vs call_agent -->
-<!-- Evidence: dimos/protocol/skill/skill.py:44-49 - Stream enum for streaming results -->
-
-## Key Concepts
-
-### The llm_agent() Function
-
-Add an agent using `llm_agent()`, which returns a blueprint that integrates with the composition system:
+But the short answer is, add an agent to the blueprint using `llm_agent()`.
 
 ```python
 from dimos.agents2.agent import llm_agent
 
-# Create an agent blueprint
 agent_bp = llm_agent(
     system_prompt="You are a warehouse robot. Focus on navigation and inventory tasks.",
-    model="gpt-4o-mini",    # Model to use (default)
-    provider="openai"       # LLM provider (default)
+    model="gpt-4o-mini",
+    provider="openai"
 )
 ```
 
+DimOS supports multiple LLM providers through Langchain - switching requires only configuration changes.
+
 <!-- Evidence: dimos/agents2/agent.py:375 - llm_agent = LlmAgent.blueprint factory function -->
 <!-- Evidence: dimos/agents2/spec.py:130-143 - AgentConfig dataclass with system_prompt, model, provider, model_instance fields -->
+<!-- Evidence: dimos/agents2/agent.py:195-197 - init_chat_model usage with provider and model params -->
+<!-- Evidence: dimos/agents2/spec.py:45-47 - Provider enum dynamically created from langchain's 20 supported providers -->
 
-Agents are [Modules](./modules.md), so they fit into the distributed architecture and can run on any Dask worker.
+## Skill discovery (also discussed in tutorials)
 
-<!-- Evidence: dimos/agents2/spec.py:147 - AgentSpec inherits from Module -->
-
-### Skill Discovery
-
-Compose an agent with skill modules using `autoconnect()` - the agent discovers available skills through the Module system:
+For an agent to discover skills, the skill module must register itself. The simplest way is to subclass `SkillModule`:
 
 ```python
-from dimos.core.module import Module
-from dimos.protocol.skill.skill import skill, Return
+from dimos.core.skill_module import SkillModule
+from dimos.protocol.skill.skill import skill
 
-class NavigationSkills(Module):
+class NavigationSkills(SkillModule):
     """Module providing navigation capabilities."""
 
-    rpc_calls = ["NavigationInterface.set_goal", "SpatialMemory.query_by_text"]
-
-    @skill(ret=Return.call_agent)
-    def navigate_with_text(self, query: str) -> str:
-        """Navigate to a location by text description."""
-        query_memory = self.get_rpc_calls("SpatialMemory.query_by_text")
-        results = query_memory(query, n=1)
-
-        if not results:
-            return f"Could not find '{query}' in memory"
-
-        set_goal = self.get_rpc_calls("NavigationInterface.set_goal")
-        set_goal(results[0].pose)
-        return f"Navigating to {query}"
+    @skill()
+    def navigate_to(self, location: str) -> str:
+        """Navigate to the specified location."""
+        # Implementation...
+        return f"Navigating to {location}"
 ```
 
-<!-- Evidence: dimos/protocol/skill/skill.py:65-113 - @skill decorator implementation with Return, Stream, Reducer, Output parameters -->
-<!-- Evidence: dimos/agents2/skills/navigation.py - NavigationSkillContainer example (imported in blueprints) -->
+<!-- Evidence: dimos/core/skill_module.py:20-26 - SkillModule adds set_LlmAgent_register_skills -->
 
-When you build the blueprint, the agent:
+`SkillModule` is just `Module` with a `set_LlmAgent_register_skills` hook that registers its skills when composed with an agent. The naming convention `set_<ModuleName>_<method>` tells the system to call this method with the matching module's method when the blueprint is built.
 
-1. Finds all `@skill` decorated methods
-2. Converts them to LLM tool definitions
-3. Exposes them to the LLM
+<!-- Evidence: dimos/core/blueprints.py:396-405 - Convention: methods starting with set_ are called with matching RPC references -->
+
+When skills are registered, the agent:
+
+1. Converts `@skill` methods to LLM tool definitions (using the docstring as the tool description -- this is why it's important to have good docstrings for those methods)
+2. Exposes them to the LLM for reasoning
 
 <!-- Evidence: dimos/agents2/agent.py:350-351 - get_tools() retrieves tools from coordinator -->
-<!-- Evidence: dimos/protocol/skill/skill.py:96-105 - Skill decorator creates SkillConfig with function schema -->
+<!-- Evidence: dimos/protocol/skill/schema.py:63-103 - function_to_schema extracts docstring -->
 
-**Any Module can provide skills** - no registration needed beyond the `@skill` decorator.
+## The agent loop
 
-<!-- Evidence: dimos/core/module.py:77 - ModuleBase inherits from SkillContainer, so all modules can have skills -->
+The agent runs an event-driven reasoning loop:
 
-### State Management
+1. **Invoke LLM** - With conversation history and skill state
+2. **Execute tool calls** - Dispatch requested skills to coordinator
+3. **Wait for updates** - Suspend until skills produce results
+4. **Process results** - Transform skill outputs into messages
+5. **Repeat** - Continue until no active skills remain
+
+The loop exits when all active skills complete (those with `Return.call_agent` or `Stream.call_agent`).
+
+<!-- Evidence: dimos/agents2/agent.py:482-600 - agent_loop() implementation -->
+
+The loop handles *long-running operations* without blocking. Navigation takes 30 seconds? The agent waits, then resumes reasoning with results.
+
+<!-- Evidence: dimos/agents2/agent.py:304 - await coordinator.wait_for_updates() enables async waiting -->
+
+Skills can *stream updates* back. A skill exploring an environment might yield periodic updates ("Found 3 objects so far...") keeping the agent informed.
+
+<!-- Evidence: dimos/protocol/skill/skill.py:37-42 - Return enum documentation for passive vs call_agent -->
+<!-- Evidence: dimos/protocol/skill/skill.py:44-49 - Stream enum for streaming results -->
+
+## How agents receive information
+
+> [!IMPORTANT]
+> The data flow is: **Stream → Skill → Agent**. Skills are the intended data bridge: they subscribe to streams, process data, and expose it to agents through callable methods.
+
+<!-- Evidence: dimos/agents2/agent.py:163-213 - Agent class has no In[] subscriptions -->
+<!-- Evidence: dimos/protocol/skill/skill.py:65-113 - Skills can use In[T] to subscribe to streams -->
+
+### Two ways to use skills to get information from streams to agents
+
+> [!NOTE]
+> Pattern A wakes the agent when called. Pattern B yields continuously but never wakes the agent—data from the passive skill is delivered only when there are updates from the active skill(s).
+
+#### Pattern A: Agent explicitly calls when needed
+
+```python
+from dimos.core import In, Module
+from dimos.protocol.skill.skill import skill
+
+class CameraSkills(Module):
+    camera_feed: In["CameraImage"]
+
+    def __init__(self):
+        self.latest_frame = None
+
+    def on_camera_feed(self, image):
+        self.latest_frame = image  # Cache for skill access
+
+    @skill()  # By default, wakes agent with result
+    def get_current_frame(self) -> str:
+        """Agent calls this skill to get current camera data."""
+        if self.latest_frame is None:
+            return "No frame available"
+        return f"Frame: {self.latest_frame.timestamp}"
+```
+
+<!-- Evidence: dimos/protocol/skill/type.py:128-138 - Return.call_agent is default -->
+
+#### Pattern B: Passive streaming
+
+```python
+from collections.abc import Generator
+import time
+
+from dimos.core import Module
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Reducer, Stream
+
+class HeartbeatMonitor(Module):
+    @skill(stream=Stream.passive, reducer=Reducer.latest)
+    def track_uptime(self) -> Generator[str, None, None]:
+        """Streams uptime; agent sees latest when woken by other skills."""
+        start = time.time()
+        while True:
+            elapsed = time.time() - start
+            yield f"Uptime: {elapsed:.1f}s"
+            time.sleep(1.0)
+```
+
+<!-- Evidence: dimos/protocol/skill/type.py:47-78 - Stream.passive requires generator -->
+<!-- Evidence: dimos/protocol/skill/type.py:323-328 - Reducer.latest keeps most recent value -->
+
+> [!CAUTION]
+> Passive skills alone cannot keep the agent loop alive. When only passive skills remain, the loop exits.
+
+**Two input paths to agents:**
+
+1. **Synchronous queries** - Direct commands: `agent.query("go to the kitchen")`
+   <!-- Evidence: dimos/agents2/agent.py:247-325 - agent_loop(first_query) parameter -->
+
+2. **Asynchronous skill triggers** - `Stream.call_agent` skills act as the loop "heartbeat." When only passive skills remain, the loop exits.
+   <!-- Evidence: dimos/agents2/cli/human.py - HumanInput skill uses Stream.call_agent -->
+   <!-- Evidence: dimos/agents2/agent.py:295-298 - has_active_skills() check before wait_for_updates -->
+
+## State management
 
 Agents follow a one-way lifecycle - once stopped, they stay stopped:
 
@@ -149,104 +214,29 @@ Stopped agents **cannot restart**. This prevents mixing old and new conversation
 
 This one-way pattern supports explicit state management - each agent instance represents a single conversation session with its own history and context.
 
-## Blueprint Integration
+## Common use cases
 
-Agents work with declarative blueprint composition:
+* **Exploration and mapping** - Agent plans exploration pattern, navigates to waypoints, tags rooms in memory, reports findings.
 
-```python
-from dimos.core.blueprints import autoconnect
+* **Object search and navigation** - Agent searches memory for target object, explores to locate it if not found, navigates to object's location, confirms arrival.
 
-# Compose: hardware + skills + agent + interface
-blueprint = autoconnect(
-    basic,                      # Hardware, navigation, mapping
-    navigation_skill(),         # Navigation skills
-    llm_agent(
-        system_prompt="You are an exploration robot."
-    ),
-    human_input()              # Command interface
-)
-```
+* **Guided tours and explanations** - Agent navigates to key locations, describes what's at each, answers questions about equipment and procedures.
 
-<!-- Evidence: dimos/robot/unitree_webrtc/unitree_go2_blueprints.py:110-116 - Actual "agentic" blueprint -->
+## Best practices
 
-`autoconnect()` wires up streams, registers skills, binds RPC dependencies, and assigns transports.
+* **Use `Return.call_agent` for most skills** - Provides immediate feedback. Use `Return.passive` only when the agent doesn't need completion notification.
 
-<!-- Evidence: dimos/agents2/agent.py:342-348 - register_skills() called during blueprint composition -->
+* **Use skills to bridge streams**
 
-## Design Principles
+<!-- Evidence: dimos/agents2/agent.py:163-213 - Agent class doesn't use In[] subscriptions -->
+<!-- Evidence: dimos/protocol/skill/skill.py:37-49 - Stream and Return enums for skill configuration -->
 
-### Separation of Reasoning and Execution
+## Related concepts
 
-Agents handle high-level reasoning ("I need to go to the kitchen") while skills handle implementation ("navigate to coordinates x, y"). This separation simplifies the LLM's job, enables independent skill testing, and provides clear boundaries between symbolic and subsymbolic processing.
+* [Skills](./skills.md) - Methods that agents can discover and invoke
+* [Blueprints](./blueprints.md) - Composing agents, skills, and hardware into systems
+* [Modules](./modules.md) - The foundational abstraction that agents build upon
 
-### Asynchronous Execution Model
+## API reference
 
-The agent loop never blocks on skill execution. This enables concurrent execution when appropriate, streaming updates from long-running skills, graceful error handling, and real-time responsiveness.
-
-<!-- Evidence: dimos/agents2/agent.py:247 - agent_loop is async def -->
-<!-- Evidence: dimos/agents2/agent.py:304 - await coordinator.wait_for_updates() for non-blocking waiting -->
-
-Skills run concurrently in a thread pool (max 50 workers), preventing blocking.
-
-<!-- Evidence: dimos/protocol/skill/skill.py:126-129 - ThreadPoolExecutor with max 50 workers executes skills -->
-
-### Composable Architecture
-
-Agents compose with other modules through blueprints. You can swap LLM providers, add new skill modules, deploy across hardware platforms, and test with mock skills - all without code changes.
-
-<!-- Evidence: dimos/agents2/spec.py:130-138 - AgentConfig allows provider/model swapping -->
-<!-- Evidence: dimos/agents2/agent.py:342-348 - register_skills() allows dynamic skill addition -->
-
-DimOS supports multiple LLM providers through Langchain - switching requires only configuration changes.
-
-<!-- Evidence: dimos/agents2/agent.py:195-197 - init_chat_model usage with provider and model params -->
-<!-- Evidence: dimos/agents2/spec.py:45-47 - Provider enum dynamically created from langchain's 20 supported providers -->
-
-## Common Use Cases
-
-**Exploration and Mapping** - Agent plans exploration pattern, navigates to waypoints, tags rooms in memory, reports findings.
-
-**Object Search and Navigation** - Agent searches memory for target object, explores to locate it if not found, navigates to object's location, confirms arrival.
-
-**Guided Tours and Explanations** - Agent navigates to key locations, describes what's at each, answers questions about equipment and procedures.
-
-## Best Practices
-
-**Use Return.call_agent for most skills** - Provides immediate feedback. Use `Return.passive` only when the agent doesn't need completion notification.
-
-**Test skills independently** - Test skills in isolation before integrating with an agent. Simplifies debugging.
-
-## How Agents Relate to Other Concepts
-
-**Agent + Module** - Agents are [Modules](./modules.md), inheriting all module capabilities: streams, RPC, lifecycle management, and distributed deployment.
-
-<!-- Evidence: dimos/agents2/spec.py:147 - AgentSpec inherits from Module -->
-
-**Agent + Skills** - Skills from any module can be used. The `@skill` decorator exposes methods, and `SkillCoordinator` manages execution state.
-
-<!-- Evidence: dimos/agents2/agent.py:175 - self.coordinator = SkillCoordinator() initialization -->
-
-**Agent + Blueprint** - `llm_agent()` returns a blueprint composing with others via `autoconnect()`. This declarative pattern keeps systems readable and maintainable.
-
-<!-- Evidence: dimos/agents2/agent.py:375 - llm_agent = LlmAgent.blueprint -->
-
-**Agent + Memory** - Query spatial and semantic memory via RPC to ground reasoning in past observations. Enables episodic and location-aware reasoning.
-
-<!-- Evidence: dimos/agents2/agent.py:224 - history() combines system, history, and state messages -->
-
-<!-- Evidence: dimos/agents2/agent.py:22 - from langchain.chat_models import init_chat_model -->
-
-## Related Concepts
-
-- [Skills](./skills.md) - Methods that agents can discover and invoke
-- [Modules](./modules.md) - The foundational abstraction that agents build upon
-
-## API Reference
-
-- [Agents API](../api/agents.md) - API reference for agent classes, functions, and configuration
-
-## Summary
-
-Agents orchestrate robot behavior through neurosymbolic orchestration - LLMs reason what to do while skills handle how. This separation makes robots controllable through natural language while maintaining safety boundaries between AI reasoning and low-level control.
-
-As modules, agents fit naturally into the distributed architecture. Through dynamic skill discovery, the same agent works across robot platforms - just swap skill modules for each embodiment.
+* [Agents API](../api/agents.md) - API reference for agent classes, functions, and configuration
