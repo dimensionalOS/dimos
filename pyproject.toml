@@ -263,13 +263,10 @@ combine-as-imports = true
 force-sort-within-sections = true
 
 [tool.mypy]
-# mypy doesn't understand plum @dispatch decorator
-# so we gave up on this check globally
-disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
-files = [
-    "dimos/msgs/**/*.py",
-    "dimos/protocol/**/*.py"
-]
+python_version = "3.12"
+incremental = true
+strict = true
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]

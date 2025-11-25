@@ -29,7 +29,7 @@ from dimos.utils.cli import theme
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from dimos.protocol.skill.comms import SkillMsg
+    from dimos.protocol.skill.comms import SkillMsg  # type: ignore[attr-defined]
 
 
 class AgentSpy:
@@ -58,7 +58,7 @@ class AgentSpy:
         time.sleep(0.2)
         self.agent_interface.stop()
 
-    def _handle_message(self, msg: SkillMsg) -> None:
+    def _handle_message(self, msg: SkillMsg) -> None:  # type: ignore[type-arg]
         """Handle incoming skill messages."""
         if not self._running:
             return
@@ -111,7 +111,7 @@ def format_duration(duration: float) -> str:
         return f"{duration / 3600:.1f}h"
 
 
-class AgentSpyApp(App):
+class AgentSpyApp(App):  # type: ignore[type-arg]
     """A real-time CLI dashboard for agent skill monitoring using Textual."""
 
     CSS_PATH = theme.CSS_PATH
@@ -140,14 +140,14 @@ class AgentSpyApp(App):
         Binding("ctrl+c", "quit", "Quit", show=False),
     ]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.spy = AgentSpy()
-        self.table: DataTable | None = None
+        self.table: DataTable | None = None  # type: ignore[type-arg]
         self.skill_history: list[tuple[str, SkillState, float]] = []  # (call_id, state, start_time)
 
     def compose(self) -> ComposeResult:
-        self.table = DataTable(zebra_stripes=False, cursor_type=None)
+        self.table = DataTable(zebra_stripes=False, cursor_type=None)  # type: ignore[arg-type]
         self.table.add_column("Call ID")
         self.table.add_column("Skill Name")
         self.table.add_column("State")
@@ -268,7 +268,7 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "web":
         import os
 
-        from textual_serve.server import Server
+        from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")
         server.serve()

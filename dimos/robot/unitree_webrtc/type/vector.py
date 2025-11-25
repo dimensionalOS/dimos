@@ -89,7 +89,7 @@ class Vector:
         return float(self._data[idx])
 
     def __iter__(self) -> Iterable[float]:
-        return iter(self._data)
+        return iter(self._data)  # type: ignore[no-any-return]
 
     def __repr__(self) -> str:
         components = ",".join(f"{x:.6g}" for x in self._data)
@@ -114,7 +114,7 @@ class Vector:
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
-    def serialize(self) -> dict:
+    def serialize(self) -> dict:  # type: ignore[type-arg]
         """Serialize the vector to a dictionary."""
         return {"type": "vector", "c": self._data.tolist()}
 

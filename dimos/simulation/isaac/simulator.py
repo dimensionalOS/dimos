@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from isaacsim import SimulationApp
+from isaacsim import SimulationApp  # type: ignore[import-not-found]
 
 from ..base.simulator_base import SimulatorBase
 
@@ -25,15 +25,15 @@ class IsaacSimulator(SimulatorBase):
         self,
         headless: bool = True,
         open_usd: str | None = None,
-        entities: list[dict[str, str | dict]] | None = None,  # Add but ignore
+        entities: list[dict[str, str | dict]] | None = None,  # type: ignore[type-arg]  # Add but ignore
     ) -> None:
         """Initialize the Isaac Sim simulation."""
         super().__init__(headless, open_usd)
         self.app = SimulationApp({"headless": headless, "open_usd": open_usd})
 
-    def get_stage(self):
+    def get_stage(self):  # type: ignore[no-untyped-def]
         """Get the current USD stage."""
-        import omni.usd
+        import omni.usd  # type: ignore[import-not-found]
 
         self.stage = omni.usd.get_context().get_stage()
         return self.stage
