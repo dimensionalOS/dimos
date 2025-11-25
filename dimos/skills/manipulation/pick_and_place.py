@@ -272,9 +272,9 @@ class PickAndPlace(AbstractRobotSkill):
 
     def _query_single_point(
         self,
-        frame: np.ndarray,
+        frame: np.ndarray,  # type: ignore[type-arg]
         query: str,
-        point_type: str,  # type: ignore[type-arg]
+        point_type: str,
     ) -> tuple[int, int] | None:
         """
         Query Qwen to get a single point location.

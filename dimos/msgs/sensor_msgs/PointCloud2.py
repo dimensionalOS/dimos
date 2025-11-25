@@ -60,9 +60,9 @@ class PointCloud2(Timestamped):
     @classmethod
     def from_numpy(
         cls,
-        points: np.ndarray,
+        points: np.ndarray,  # type: ignore[type-arg]
         frame_id: str = "world",
-        timestamp: float | None = None,  # type: ignore[type-arg]
+        timestamp: float | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 

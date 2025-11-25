@@ -113,7 +113,7 @@ class HostedGraspGenerator:
 
     def _send_grasp_request_sync(
         self,
-        points: np.ndarray,
+        points: np.ndarray,  # type: ignore[type-arg]
         colors: np.ndarray | None,  # type: ignore[type-arg]
     ) -> list[dict] | None:  # type: ignore[type-arg]
         """Send synchronous grasp request to grasp server."""
@@ -151,7 +151,7 @@ class HostedGraspGenerator:
 
     async def _async_grasp_request(
         self,
-        points: np.ndarray,
+        points: np.ndarray,  # type: ignore[type-arg]
         colors: np.ndarray,  # type: ignore[type-arg]
     ) -> list[dict] | None:  # type: ignore[type-arg]
         """Async grasp request helper."""

@@ -17,15 +17,15 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import (
-    PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped,  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped,
 )
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (
-        PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped,
     )
 except ImportError:
     ROSPoseWithCovarianceStamped = None  # type: ignore[assignment, misc]

@@ -365,8 +365,8 @@ def align_timestamped(
         for i, secondary_obs in enumerate(secondary_observables):
             secondary_subs.append(
                 secondary_obs.subscribe(
-                    lambda x, idx=i: on_secondary(idx, x),
-                    on_error=observer.on_error,  # type: ignore[misc]
+                    lambda x, idx=i: on_secondary(idx, x),  # type: ignore[misc]
+                    on_error=observer.on_error,
                 )
             )
 

@@ -16,15 +16,15 @@ from __future__ import annotations
 
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import (
-    TwistWithCovariance as LCMTwistWithCovariance,  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    TwistWithCovariance as LCMTwistWithCovariance,
 )
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (
-        TwistWithCovariance as ROSTwistWithCovariance,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TwistWithCovariance as ROSTwistWithCovariance,
     )
 except ImportError:
     ROSTwistWithCovariance = None  # type: ignore[assignment, misc]

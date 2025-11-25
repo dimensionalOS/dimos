@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations as FoxgloveImageAnnotations,  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations as FoxgloveImageAnnotations,
 )
 
 

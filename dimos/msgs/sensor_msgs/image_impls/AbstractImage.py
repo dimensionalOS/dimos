@@ -204,8 +204,8 @@ class AbstractImage(ABC):
         bgr = self.to_bgr()
         success, buffer = cv2.imencode(
             ".jpg",
-            _to_cpu(bgr.data),
-            [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],  # type: ignore[no-untyped-call]
+            _to_cpu(bgr.data),  # type: ignore[no-untyped-call]
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],
         )
         if not success:
             raise ValueError("Failed to encode image as JPEG")
