@@ -17,15 +17,15 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import (
-    TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped,  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped,
 )
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (
-        TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,
     )
 except ImportError:
     ROSTwistWithCovarianceStamped = None  # type: ignore[assignment, misc]

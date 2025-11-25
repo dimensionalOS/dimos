@@ -149,8 +149,8 @@ class SpatialMemory(Module):
                 try:
                     logger.info(f"Loading existing visual memory from {visual_memory_path}...")
                     self._visual_memory = VisualMemory.load(
-                        visual_memory_path,
-                        output_dir=output_dir,  # type: ignore[arg-type]
+                        visual_memory_path,  # type: ignore[arg-type]
+                        output_dir=output_dir,
                     )
                     logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
                 except Exception as e:

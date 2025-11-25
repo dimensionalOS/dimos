@@ -22,8 +22,8 @@ from plum import dispatch
 
 # Import the actual LCM header type that's returned from decoding
 try:
-    from lcm_msgs.std_msgs.Header import (
-        Header as DecodedLCMHeader,  # type: ignore[import-not-found]
+    from lcm_msgs.std_msgs.Header import (  # type: ignore[import-not-found]
+        Header as DecodedLCMHeader,
     )
 except ImportError:
     DecodedLCMHeader = None

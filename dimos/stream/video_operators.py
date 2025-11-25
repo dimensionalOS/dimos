@@ -204,9 +204,9 @@ class VideoOperators:
         return lambda source: source.pipe(
             ops.scan(
                 lambda acc, frame: frame_processor.compute_optical_flow(  # type: ignore[arg-type, return-value]
-                    acc,
-                    frame,
-                    compute_relevancy=False,  # type: ignore[arg-type]
+                    acc,  # type: ignore[arg-type]
+                    frame,  # type: ignore[arg-type]
+                    compute_relevancy=False,
                 ),
                 (None, None, None),
             ),
@@ -217,8 +217,8 @@ class VideoOperators:
 
     @staticmethod
     def with_zmq_socket(
-        socket: zmq.Socket,
-        scheduler: Any | None = None,  # type: ignore[type-arg]
+        socket: zmq.Socket,  # type: ignore[type-arg]
+        scheduler: Any | None = None,
     ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         def send_frame(frame, socket) -> None:  # type: ignore[no-untyped-def]
             _, img_encoded = cv2.imencode(".jpg", frame)

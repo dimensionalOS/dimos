@@ -476,8 +476,8 @@ class LLMAgent(Agent):
 
     def subscribe_to_image_processing(  # type: ignore[no-untyped-def]
         self,
-        frame_observable: Observable,
-        query_extractor=None,  # type: ignore[type-arg]
+        frame_observable: Observable,  # type: ignore[type-arg]
+        query_extractor=None,
     ) -> Disposable:
         """Subscribes to a stream of video frames for processing.
 
@@ -677,9 +677,9 @@ class LLMAgent(Agent):
         """
         return create(
             lambda observer, _: self._observable_query(
-                observer,
+                observer,  # type: ignore[arg-type]
                 incoming_query=query_text,
-                **kwargs,  # type: ignore[arg-type]
+                **kwargs,
             )
         )
 

@@ -112,9 +112,9 @@ class Detection2DModule(Module):
                 # Active detection - compute real position
                 detection = detections.detections[index]
                 position_3d = self.pixel_to_3d(  # type: ignore[attr-defined]
-                    detection.center_bbox,
+                    detection.center_bbox,  # type: ignore[attr-defined]
                     self.config.camera_info,
-                    assumed_depth=1.0,  # type: ignore[attr-defined]
+                    assumed_depth=1.0,
                 )
             else:
                 # No detection at this index - publish zero transform

@@ -146,8 +146,8 @@ def create_gripper_geometry(
 
 
 def create_all_gripper_geometries(
-    grasp_list: list[dict],
-    max_grasps: int = -1,  # type: ignore[type-arg]
+    grasp_list: list[dict],  # type: ignore[type-arg]
+    max_grasps: int = -1,
 ) -> list[o3d.geometry.TriangleMesh]:
     """
     Create gripper geometries for multiple grasps.

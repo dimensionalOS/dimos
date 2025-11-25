@@ -313,7 +313,7 @@ def project_3d_points_to_2d_cuda(
 
 
 def project_3d_points_to_2d_cpu(
-    points_3d: np.ndarray,
+    points_3d: np.ndarray,  # type: ignore[type-arg]
     camera_intrinsics: list[float] | np.ndarray,  # type: ignore[type-arg]
 ) -> np.ndarray:  # type: ignore[type-arg]
     pts = np.asarray(points_3d, dtype=np.float64)
@@ -446,9 +446,9 @@ def project_2d_points_to_3d(
 
 
 def colorize_depth(
-    depth_img: Union[np.ndarray, "cp.ndarray"],
+    depth_img: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
     max_depth: float = 5.0,
-    overlay_stats: bool = True,  # type: ignore[type-arg]
+    overlay_stats: bool = True,
 ) -> Union[np.ndarray, "cp.ndarray"] | None:  # type: ignore[type-arg]
     """
     Normalize and colorize depth image using COLORMAP_JET with optional statistics overlay.
