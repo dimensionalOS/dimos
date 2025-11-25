@@ -149,7 +149,8 @@ class LCMSpy(LCMService, Topic):
         if topic not in self.topic:  # type: ignore[operator]
             print(self.config)
             self.topic[topic] = self.topic_class(  # type: ignore[assignment, call-arg]
-                topic, history_window=self.config.topic_history_window  # type: ignore[attr-defined]
+                topic,
+                history_window=self.config.topic_history_window,  # type: ignore[attr-defined]
             )
         self.topic[topic].msg(data)  # type: ignore[attr-defined, type-arg]
 

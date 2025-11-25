@@ -15,7 +15,10 @@
 
 # Import LCM messages
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
-from dimos_lcm.vision_msgs import Detection3D, ObjectHypothesisWithPose  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+    Detection3D,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 
 from dimos.core import In, Out, rpc

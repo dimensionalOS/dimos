@@ -262,7 +262,10 @@ class FrameProcessor:
         )
 
     def process_stream_with_jpeg_export(
-        self, frame_stream: Observable, suffix: str = "", loop: bool = False  # type: ignore[type-arg]
+        self,
+        frame_stream: Observable,
+        suffix: str = "",
+        loop: bool = False,  # type: ignore[type-arg]
     ) -> Observable:  # type: ignore[type-arg]
         """Processes stream by saving frames as JPEGs while passing them through.
 

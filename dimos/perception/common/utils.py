@@ -16,7 +16,11 @@ from typing import Union
 
 import cv2
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
-from dimos_lcm.vision_msgs import BoundingBox2D, Detection2D, Detection3D  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+    BoundingBox2D,
+    Detection2D,
+    Detection3D,
+)
 import numpy as np
 import torch
 import yaml
@@ -309,7 +313,8 @@ def project_3d_points_to_2d_cuda(
 
 
 def project_3d_points_to_2d_cpu(
-    points_3d: np.ndarray, camera_intrinsics: list[float] | np.ndarray  # type: ignore[type-arg]
+    points_3d: np.ndarray,
+    camera_intrinsics: list[float] | np.ndarray,  # type: ignore[type-arg]
 ) -> np.ndarray:  # type: ignore[type-arg]
     pts = np.asarray(points_3d, dtype=np.float64)
     valid_mask = pts[:, 2] > 0
@@ -441,7 +446,9 @@ def project_2d_points_to_3d(
 
 
 def colorize_depth(
-    depth_img: Union[np.ndarray, "cp.ndarray"], max_depth: float = 5.0, overlay_stats: bool = True  # type: ignore[type-arg]
+    depth_img: Union[np.ndarray, "cp.ndarray"],
+    max_depth: float = 5.0,
+    overlay_stats: bool = True,  # type: ignore[type-arg]
 ) -> Union[np.ndarray, "cp.ndarray"] | None:  # type: ignore[type-arg]
     """
     Normalize and colorize depth image using COLORMAP_JET with optional statistics overlay.
@@ -478,7 +485,9 @@ def colorize_depth(
         max_depth_actual = float(np.max(valid_depths))
         h, w = depth_rgb_np.shape[:2]
         center_y, center_x = h // 2, w // 2
-        center_region = _to_numpy(depth)[  # type: ignore[no-untyped-call]
+        center_region = _to_numpy(
+            depth
+        )[  # type: ignore[no-untyped-call]
             max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)
         ]
         center_mask = np.isfinite(center_region) & (center_region > 0)

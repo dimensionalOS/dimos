@@ -28,7 +28,9 @@ import reactivex.operators as ops
 import websockets
 
 from dimos.perception.common.utils import colorize_depth
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector  # type: ignore[import-untyped]
+from dimos.perception.detection2d.detic_2d_det import (
+    Detic2DDetector,  # type: ignore[import-untyped]
+)
 from dimos.perception.grasp_generation.utils import draw_grasps_on_image
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
@@ -317,7 +319,9 @@ class ManipulationPipeline:
             time.sleep(0.01)
 
     async def _send_grasp_request(
-        self, points: np.ndarray, colors: np.ndarray | None  # type: ignore[type-arg]
+        self,
+        points: np.ndarray,
+        colors: np.ndarray | None,  # type: ignore[type-arg]
     ) -> list[dict] | None:  # type: ignore[type-arg]
         """Send grasp request to Dimensional Grasp server."""
         try:

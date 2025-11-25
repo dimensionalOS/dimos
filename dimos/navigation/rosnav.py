@@ -34,7 +34,10 @@ import rclpy
 from rclpy.node import Node
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2  # type: ignore[attr-defined]
+from sensor_msgs.msg import (  # type: ignore[attr-defined]
+    Joy as ROSJoy,
+    PointCloud2 as ROSPointCloud2,
+)
 from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8  # type: ignore[attr-defined]
 from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 

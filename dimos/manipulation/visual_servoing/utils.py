@@ -440,7 +440,9 @@ def parse_zed_pose(zed_pose_data: dict[str, Any]) -> Pose | None:
 
 
 def estimate_object_depth(
-    depth_image: np.ndarray, segmentation_mask: np.ndarray | None, bbox: list[float]  # type: ignore[type-arg]
+    depth_image: np.ndarray,
+    segmentation_mask: np.ndarray | None,
+    bbox: list[float],  # type: ignore[type-arg]
 ) -> float:
     """
     Estimate object depth dimension using segmentation mask and depth data.

@@ -27,7 +27,9 @@ from dimos.perception.common.utils import (
     combine_object_data,
     detection_results_to_object_data,
 )
-from dimos.perception.detection2d.detic_2d_det import Detic2DDetector  # type: ignore[import-untyped]
+from dimos.perception.detection2d.detic_2d_det import (
+    Detic2DDetector,  # type: ignore[import-untyped]
+)
 from dimos.perception.grasp_generation.grasp_generation import HostedGraspGenerator
 from dimos.perception.grasp_generation.utils import create_grasp_overlay
 from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
@@ -119,7 +121,10 @@ class ManipulationProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, generate_grasps: bool | None = None  # type: ignore[type-arg]
+        self,
+        rgb_image: np.ndarray,
+        depth_image: np.ndarray,
+        generate_grasps: bool | None = None,  # type: ignore[type-arg]
     ) -> dict[str, Any]:
         """
         Process a single RGB-D frame through the complete pipeline.
@@ -191,7 +196,9 @@ class ManipulationProcessor:
 
             # Combine all objects using intelligent duplicate removal
             all_objects = combine_object_data(
-                detected_objects, segmentation_filtered_objects, overlap_threshold=0.8  # type: ignore[arg-type]
+                detected_objects,
+                segmentation_filtered_objects,
+                overlap_threshold=0.8,  # type: ignore[arg-type]
             )
 
             # Get full point cloud
@@ -329,12 +336,17 @@ class ManipulationProcessor:
             return {"objects": [], "viz_frame": rgb_image.copy()}
 
     def run_pointcloud_filtering(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, objects: list[dict]  # type: ignore[type-arg]
+        self,
+        rgb_image: np.ndarray,
+        depth_image: np.ndarray,
+        objects: list[dict],  # type: ignore[type-arg]
     ) -> list[dict]:  # type: ignore[type-arg]
         """Run point cloud filtering on detected objects."""
         try:
             filtered_objects = self.pointcloud_filter.process_images(
-                rgb_image, depth_image, objects  # type: ignore[arg-type]
+                rgb_image,
+                depth_image,
+                objects,  # type: ignore[arg-type]
             )
             return filtered_objects if filtered_objects else []  # type: ignore[return-value]
         except Exception as e:

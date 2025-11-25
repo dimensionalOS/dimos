@@ -60,7 +60,11 @@ class AudioEvent:
     """Class to represent an audio frame event with metadata."""
 
     def __init__(
-        self, data: np.ndarray, sample_rate: int, timestamp: float, channels: int = 1  # type: ignore[type-arg]
+        self,
+        data: np.ndarray,
+        sample_rate: int,
+        timestamp: float,
+        channels: int = 1,  # type: ignore[type-arg]
     ) -> None:
         """
         Initialize an AudioEvent.

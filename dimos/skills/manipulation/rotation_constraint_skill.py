@@ -89,7 +89,9 @@ class RotationConstraintSkill(AbstractManipulationSkill):
         secondary_pivot_vector = None
         if self.secondary_pivot_point:
             secondary_pivot_vector = Vector(
-                self.secondary_pivot_point[0], self.secondary_pivot_point[1], 0.0  # type: ignore[arg-type]
+                self.secondary_pivot_point[0],
+                self.secondary_pivot_point[1],
+                0.0,  # type: ignore[arg-type]
             )
 
         constraint = RotationConstraint(

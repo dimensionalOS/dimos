@@ -19,7 +19,9 @@ from reactivex import Observable, operators as ops
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector  # type: ignore[import-untyped]
 
 try:
-    from dimos.perception.detection2d.detic_2d_det import Detic2DDetector  # type: ignore[import-untyped]
+    from dimos.perception.detection2d.detic_2d_det import (
+        Detic2DDetector,  # type: ignore[import-untyped]
+    )
 
     DETIC_AVAILABLE = True
 except (ModuleNotFoundError, ImportError):

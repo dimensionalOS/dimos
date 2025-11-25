@@ -17,7 +17,9 @@ import logging
 import threading
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
-from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_bridge import (
+    FoxgloveBridge as LCMFoxgloveBridge,  # type: ignore[import-untyped]
+)
 
 from dimos.core import DimosCluster, Module, rpc
 

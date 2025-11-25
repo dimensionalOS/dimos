@@ -177,7 +177,10 @@ class Image(Timestamped):
 
     @classmethod
     def from_opencv(  # type: ignore[no-untyped-def]
-        cls, cv_image: np.ndarray, format: ImageFormat = ImageFormat.BGR, **kwargs  # type: ignore[type-arg]
+        cls,
+        cv_image: np.ndarray,
+        format: ImageFormat = ImageFormat.BGR,
+        **kwargs,  # type: ignore[type-arg]
     ) -> Image:
         """Construct from an OpenCV image (NumPy array)."""
         return cls(

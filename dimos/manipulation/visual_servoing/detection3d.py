@@ -91,7 +91,10 @@ class Detection3DProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: np.ndarray | None = None  # type: ignore[type-arg]
+        self,
+        rgb_image: np.ndarray,
+        depth_image: np.ndarray,
+        transform: np.ndarray | None = None,  # type: ignore[type-arg]
     ) -> tuple[Detection3DArray, Detection2DArray]:
         """
         Process a single RGB-D frame to extract 3D object detections.

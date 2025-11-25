@@ -239,7 +239,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         if webrtc_msg_type:
             self._webrtc_pub = self._node.create_publisher(
-                webrtc_msg_type, webrtc_topic, qos_profile=command_qos  # type: ignore[arg-type]
+                webrtc_msg_type,
+                webrtc_topic,
+                qos_profile=command_qos,  # type: ignore[arg-type]
             )
 
             # Initialize command queue

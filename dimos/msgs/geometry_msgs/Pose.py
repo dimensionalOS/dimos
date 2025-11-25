@@ -16,10 +16,17 @@ from __future__ import annotations
 
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import Pose as LCMPose, Transform as LCMTransform  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    Pose as LCMPose,
+    Transform as LCMTransform,
+)
 
 try:
-    from geometry_msgs.msg import Point as ROSPoint, Pose as ROSPose, Quaternion as ROSQuaternion  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        Point as ROSPoint,
+        Pose as ROSPose,
+        Quaternion as ROSQuaternion,
+    )
 except ImportError:
     ROSPose = None  # type: ignore[assignment, misc]
     ROSPoint = None  # type: ignore[assignment, misc]

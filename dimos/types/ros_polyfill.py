@@ -22,7 +22,12 @@ try:
     from nav_msgs.msg import OccupancyGrid, Odometry  # type: ignore[attr-defined]
     from std_msgs.msg import Header  # type: ignore[attr-defined]
 except ImportError:
-    from dimos_lcm.geometry_msgs import Point, Pose, Quaternion, Twist  # type: ignore[import-untyped, no-redef]
+    from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped, no-redef]
+        Point,
+        Pose,
+        Quaternion,
+        Twist,
+    )
     from dimos_lcm.nav_msgs import OccupancyGrid, Odometry  # type: ignore[import-untyped, no-redef]
     from dimos_lcm.std_msgs import Header  # type: ignore[import-untyped, no-redef]
 

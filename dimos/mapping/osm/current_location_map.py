@@ -46,7 +46,10 @@ class CurrentLocationMap:
         self, query: str, robot_position: LatLon
     ) -> tuple[LatLon, str] | None:
         return query_for_one_position_and_context(
-            self._vl_model, self._get_current_map(), query, robot_position  # type: ignore[no-untyped-call]
+            self._vl_model,
+            self._get_current_map(),
+            query,
+            robot_position,  # type: ignore[no-untyped-call]
         )
 
     def _get_current_map(self):  # type: ignore[no-untyped-def]

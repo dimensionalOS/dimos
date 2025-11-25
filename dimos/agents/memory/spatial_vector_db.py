@@ -109,7 +109,11 @@ class SpatialVectorDB:
             )
 
     def add_image_vector(
-        self, vector_id: str, image: np.ndarray, embedding: np.ndarray, metadata: dict[str, Any]  # type: ignore[type-arg]
+        self,
+        vector_id: str,
+        image: np.ndarray,
+        embedding: np.ndarray,
+        metadata: dict[str, Any],  # type: ignore[type-arg]
     ) -> None:
         """
         Add an image with its embedding and metadata to the vector database.

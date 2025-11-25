@@ -64,7 +64,11 @@ class ImageEmbeddingProvider:
         try:
             import onnxruntime as ort  # type: ignore[import-untyped]
             import torch
-            from transformers import AutoFeatureExtractor, AutoModel, CLIPProcessor  # type: ignore[import-untyped]
+            from transformers import (  # type: ignore[import-untyped]
+                AutoFeatureExtractor,
+                AutoModel,
+                CLIPProcessor,
+            )
 
             if self.model_name == "clip":
                 model_id = get_data("models_clip") / "model.onnx"

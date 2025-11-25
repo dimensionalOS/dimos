@@ -85,7 +85,8 @@ class FlaskServer(EdgeIO):
         def make_response_generator(key):  # type: ignore[no-untyped-def]
             def response_generator():  # type: ignore[no-untyped-def]
                 return Response(
-                    stream_generator(key)(), mimetype="multipart/x-mixed-replace; boundary=frame"  # type: ignore[no-untyped-call]
+                    stream_generator(key)(),
+                    mimetype="multipart/x-mixed-replace; boundary=frame",  # type: ignore[no-untyped-call]
                 )
 
             return response_generator
@@ -94,7 +95,9 @@ class FlaskServer(EdgeIO):
         for key in self.streams:
             endpoint = f"video_feed_{key}"
             self.app.add_url_rule(
-                f"/video_feed/{key}", endpoint, view_func=make_response_generator(key)  # type: ignore[no-untyped-call]
+                f"/video_feed/{key}",
+                endpoint,
+                view_func=make_response_generator(key),  # type: ignore[no-untyped-call]
             )
 
     def run(self, host: str = "0.0.0.0", port: int = 5555, threaded: bool = True) -> None:

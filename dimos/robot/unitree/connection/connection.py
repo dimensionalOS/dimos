@@ -20,7 +20,11 @@ import time
 from typing import TypeAlias
 
 from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
-from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR  # type: ignore[import-untyped]
+from go2_webrtc_driver.constants import (  # type: ignore[import-untyped]
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+)
 from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-untyped]
     Go2WebRTCConnection,
     WebRTCConnectionMethod,

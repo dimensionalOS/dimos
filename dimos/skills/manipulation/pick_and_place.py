@@ -237,7 +237,8 @@ class PickAndPlace(AbstractRobotSkill):
             return None
 
     def _query_pick_and_place_points(
-        self, frame: np.ndarray  # type: ignore[type-arg]
+        self,
+        frame: np.ndarray,  # type: ignore[type-arg]
     ) -> tuple[tuple[int, int], tuple[int, int]] | None:
         """
         Query Qwen to get both pick and place points in a single query.
@@ -270,7 +271,10 @@ class PickAndPlace(AbstractRobotSkill):
             return None
 
     def _query_single_point(
-        self, frame: np.ndarray, query: str, point_type: str  # type: ignore[type-arg]
+        self,
+        frame: np.ndarray,
+        query: str,
+        point_type: str,  # type: ignore[type-arg]
     ) -> tuple[int, int] | None:
         """
         Query Qwen to get a single point location.

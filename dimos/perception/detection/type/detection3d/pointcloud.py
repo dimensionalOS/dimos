@@ -19,8 +19,17 @@ import functools
 from typing import TYPE_CHECKING, Any
 
 from lcm_msgs.builtin_interfaces import Duration  # type: ignore[import-not-found]
-from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, TextPrimitive  # type: ignore[import-not-found]
-from lcm_msgs.geometry_msgs import Point, Pose, Quaternion, Vector3 as LCMVector3  # type: ignore[import-not-found]
+from lcm_msgs.foxglove_msgs import (  # type: ignore[import-not-found]
+    CubePrimitive,
+    SceneEntity,
+    TextPrimitive,
+)
+from lcm_msgs.geometry_msgs import (  # type: ignore[import-not-found]
+    Point,
+    Pose,
+    Quaternion,
+    Vector3 as LCMVector3,
+)
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color

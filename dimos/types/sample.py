@@ -238,7 +238,9 @@ class Sample(BaseModel):
         return {}
 
     def schema(
-        self, resolve_refs: bool = True, include_descriptions: bool = False  # type: ignore[override]
+        self,
+        resolve_refs: bool = True,
+        include_descriptions: bool = False,  # type: ignore[override]
     ) -> builtins.dict:  # type: ignore[type-arg]
         """Returns a simplified json schema.
 
@@ -431,7 +433,9 @@ class Sample(BaseModel):
 
     @classmethod
     def from_flat_dict(
-        cls, flat_dict: builtins.dict[str, Any], schema: builtins.dict | None = None  # type: ignore[type-arg]
+        cls,
+        flat_dict: builtins.dict[str, Any],
+        schema: builtins.dict | None = None,  # type: ignore[type-arg]
     ) -> "Sample":
         """Initialize a Sample instance from a flattened dictionary."""
         """
