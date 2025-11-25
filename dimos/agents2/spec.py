@@ -200,7 +200,8 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
                     )
                 else:
                     table.add_row(
-                        Text("Agent", style="magenta"), Text(message.content, style="magenta")  # type: ignore[arg-type]
+                        Text("Agent", style="magenta"),
+                        Text(message.content, style="magenta"),  # type: ignore[arg-type]
                     )
 
                 for tool_call in message.tool_calls:

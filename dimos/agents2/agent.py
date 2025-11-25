@@ -314,7 +314,8 @@ class Agent(AgentSpec):
 
                 self.state_messages = snapshot_msgs.get("state_msgs", [])  # type: ignore[attr-defined]
                 self.append_history(
-                    *snapshot_msgs.get("tool_msgs", []), *snapshot_msgs.get("history_msgs", [])  # type: ignore[attr-defined]
+                    *snapshot_msgs.get("tool_msgs", []),
+                    *snapshot_msgs.get("history_msgs", []),  # type: ignore[attr-defined]
                 )
 
         except Exception as e:

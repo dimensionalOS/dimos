@@ -30,7 +30,10 @@ from dimos.msgs.geometry_msgs import Vector3
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField as ROSPointField  # type: ignore[attr-defined]
+    from sensor_msgs.msg import (  # type: ignore[attr-defined]
+        PointCloud2 as ROSPointCloud2,
+        PointField as ROSPointField,
+    )
     from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True
@@ -56,7 +59,10 @@ class PointCloud2(Timestamped):
 
     @classmethod
     def from_numpy(
-        cls, points: np.ndarray, frame_id: str = "world", timestamp: float | None = None  # type: ignore[type-arg]
+        cls,
+        points: np.ndarray,
+        frame_id: str = "world",
+        timestamp: float | None = None,  # type: ignore[type-arg]
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 

@@ -129,7 +129,9 @@ class EmbeddingIDSystem(IDSystem):
             embeddings.pop(0)  # Remove oldest
 
     def _compute_group_similarity(
-        self, query_embeddings: list[np.ndarray], candidate_embeddings: list[np.ndarray]  # type: ignore[type-arg]
+        self,
+        query_embeddings: list[np.ndarray],
+        candidate_embeddings: list[np.ndarray],  # type: ignore[type-arg]
     ) -> float:
         """Compute similarity between two groups of embeddings.
 

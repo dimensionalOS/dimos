@@ -414,8 +414,7 @@ def _rodrigues(x, inverse: bool = False):  # type: ignore[no-untyped-def]
     """Unified Rodrigues transform (vector<->matrix) for NumPy/CuPy arrays."""
 
     if cp is not None and (
-        isinstance(x, cp.ndarray)
-        or getattr(x, "__cuda_array_interface__", None) is not None
+        isinstance(x, cp.ndarray) or getattr(x, "__cuda_array_interface__", None) is not None
     ):
         xp = cp
     else:
@@ -579,7 +578,10 @@ class CudaImage(AbstractImage):
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGRA:
             return CudaImage(
-                _bgra_to_rgba_cuda(self.data), ImageFormat.RGBA, self.frame_id, self.ts  # type: ignore[no-untyped-call]
+                _bgra_to_rgba_cuda(self.data),
+                ImageFormat.RGBA,
+                self.frame_id,
+                self.ts,  # type: ignore[no-untyped-call]
             )
         if self.format == ImageFormat.GRAY:
             return CudaImage(_gray_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
@@ -595,7 +597,10 @@ class CudaImage(AbstractImage):
             return CudaImage(_rgb_to_bgr_cuda(self.data), ImageFormat.BGR, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format == ImageFormat.RGBA:
             return CudaImage(
-                _rgba_to_bgra_cuda(self.data)[..., :3], ImageFormat.BGR, self.frame_id, self.ts  # type: ignore[no-untyped-call]
+                _rgba_to_bgra_cuda(self.data)[..., :3],
+                ImageFormat.BGR,
+                self.frame_id,
+                self.ts,  # type: ignore[no-untyped-call]
             )
         if self.format == ImageFormat.BGRA:
             return CudaImage(self.data[..., :3], ImageFormat.BGR, self.frame_id, self.ts)  # type: ignore[index]
@@ -609,7 +614,10 @@ class CudaImage(AbstractImage):
         if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
             return CudaImage(
-                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)), ImageFormat.BGR, self.frame_id, self.ts  # type: ignore[no-untyped-call]
+                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)),
+                ImageFormat.BGR,
+                self.frame_id,
+                self.ts,  # type: ignore[no-untyped-call]
             )
         return self.copy()  # type: ignore
 
@@ -771,7 +779,11 @@ class CudaImage(AbstractImage):
                     else:
                         raise ValueError("dist_coeffs must be 1D or batched 2D")
                 ok, rvec, tvec = cv2.solvePnP(
-                    obj[b], img[b], K_b, dist_b, flags=cv2.SOLVEPNP_ITERATIVE  # type: ignore[arg-type]
+                    obj[b],
+                    img[b],
+                    K_b,
+                    dist_b,
+                    flags=cv2.SOLVEPNP_ITERATIVE,  # type: ignore[arg-type]
                 )
                 if not ok:
                     raise RuntimeError(f"cv2.solvePnP failed for batch index {b}")

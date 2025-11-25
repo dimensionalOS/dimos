@@ -18,7 +18,10 @@ from enum import IntEnum
 import time
 from typing import TYPE_CHECKING, BinaryIO
 
-from dimos_lcm.nav_msgs import MapMetaData, OccupancyGrid as LCMOccupancyGrid  # type: ignore[import-untyped]
+from dimos_lcm.nav_msgs import (  # type: ignore[import-untyped]
+    MapMetaData,
+    OccupancyGrid as LCMOccupancyGrid,
+)
 from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
 import numpy as np
 from scipy import ndimage

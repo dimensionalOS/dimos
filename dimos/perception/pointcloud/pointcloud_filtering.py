@@ -114,7 +114,10 @@ class PointcloudFiltering:
         return color
 
     def _validate_inputs(  # type: ignore[no-untyped-def]
-        self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]  # type: ignore[type-arg]
+        self,
+        color_img: np.ndarray,
+        depth_img: np.ndarray,
+        objects: list[ObjectData],  # type: ignore[type-arg]
     ):
         """Validate input parameters."""
         if color_img.shape[:2] != depth_img.shape:
@@ -147,7 +150,9 @@ class PointcloudFiltering:
         return processed_masks
 
     def _apply_color_mask(
-        self, pcd: o3d.geometry.PointCloud, rgb_color: np.ndarray  # type: ignore[type-arg]
+        self,
+        pcd: o3d.geometry.PointCloud,
+        rgb_color: np.ndarray,  # type: ignore[type-arg]
     ) -> o3d.geometry.PointCloud:
         """Apply weighted color mask to point cloud."""
         if len(np.asarray(pcd.colors)) > 0:
@@ -193,7 +198,10 @@ class PointcloudFiltering:
         return self._apply_subsampling(self.full_pcd)
 
     def process_images(
-        self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]  # type: ignore[type-arg]
+        self,
+        color_img: np.ndarray,
+        depth_img: np.ndarray,
+        objects: list[ObjectData],  # type: ignore[type-arg]
     ) -> list[ObjectData]:
         """
         Process color and depth images with object detection results to create filtered point clouds.
@@ -267,7 +275,11 @@ class PointcloudFiltering:
 
         # Create point clouds efficiently
         self.full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
-            color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0  # type: ignore[arg-type]
+            color_img,
+            depth_img,
+            processed_masks,
+            self.depth_camera_matrix,
+            depth_scale=1.0,  # type: ignore[arg-type]
         )
 
         # Process each object and update ObjectData

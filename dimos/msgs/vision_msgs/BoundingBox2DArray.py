@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.vision_msgs.BoundingBox2DArray import BoundingBox2DArray as LCMBoundingBox2DArray  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs.BoundingBox2DArray import (
+    BoundingBox2DArray as LCMBoundingBox2DArray,  # type: ignore[import-untyped]
+)
 
 
 class BoundingBox2DArray(LCMBoundingBox2DArray):  # type: ignore[misc]

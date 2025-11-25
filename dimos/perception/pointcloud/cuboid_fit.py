@@ -19,7 +19,8 @@ import open3d as o3d  # type: ignore[import-untyped]
 
 
 def fit_cuboid(
-    points: np.ndarray | o3d.geometry.PointCloud, method: str = "minimal"  # type: ignore[type-arg]
+    points: np.ndarray | o3d.geometry.PointCloud,
+    method: str = "minimal",  # type: ignore[type-arg]
 ) -> dict | None:  # type: ignore[type-arg]
     """
     Fit a cuboid to a point cloud using Open3D's built-in methods.
@@ -118,7 +119,10 @@ def fit_cuboid_simple(points: np.ndarray | o3d.geometry.PointCloud) -> dict | No
 
 
 def _compute_fitting_error(
-    points: np.ndarray, center: np.ndarray, dimensions: np.ndarray, rotation: np.ndarray  # type: ignore[type-arg]
+    points: np.ndarray,
+    center: np.ndarray,
+    dimensions: np.ndarray,
+    rotation: np.ndarray,  # type: ignore[type-arg]
 ) -> float:
     """
     Compute fitting error as mean squared distance from points to cuboid surface.
@@ -154,7 +158,9 @@ def _compute_fitting_error(
 
 
 def get_cuboid_corners(
-    center: np.ndarray, dimensions: np.ndarray, rotation: np.ndarray  # type: ignore[type-arg]
+    center: np.ndarray,
+    dimensions: np.ndarray,
+    rotation: np.ndarray,  # type: ignore[type-arg]
 ) -> np.ndarray:  # type: ignore[type-arg]
     """
     Get the 8 corners of a cuboid.

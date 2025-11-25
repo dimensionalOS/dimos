@@ -369,7 +369,10 @@ class LLMAgent(Agent):
 
         if response_message.tool_calls is not None:
             return _tooling_callback(
-                response_message, messages, response_message, self.skill_library  # type: ignore[attr-defined]
+                response_message,
+                messages,
+                response_message,
+                self.skill_library,  # type: ignore[attr-defined]
             )
         return None
 
@@ -472,7 +475,9 @@ class LLMAgent(Agent):
                 logger.info(f"LLM Response [{self.dev_name}]: {response}")
 
     def subscribe_to_image_processing(  # type: ignore[no-untyped-def]
-        self, frame_observable: Observable, query_extractor=None  # type: ignore[type-arg]
+        self,
+        frame_observable: Observable,
+        query_extractor=None,  # type: ignore[type-arg]
     ) -> Disposable:
         """Subscribes to a stream of video frames for processing.
 
@@ -672,7 +677,9 @@ class LLMAgent(Agent):
         """
         return create(
             lambda observer, _: self._observable_query(
-                observer, incoming_query=query_text, **kwargs  # type: ignore[arg-type]
+                observer,
+                incoming_query=query_text,
+                **kwargs,  # type: ignore[arg-type]
             )
         )
 

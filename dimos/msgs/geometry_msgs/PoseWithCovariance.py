@@ -16,12 +16,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeAlias
 
-from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (
+    PoseWithCovariance as LCMPoseWithCovariance,  # type: ignore[import-untyped]
+)
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (
+        PoseWithCovariance as ROSPoseWithCovariance,  # type: ignore[attr-defined]
+    )
 except ImportError:
     ROSPoseWithCovariance = None  # type: ignore[assignment, misc]
 
@@ -51,7 +55,9 @@ class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
 
     @dispatch  # type: ignore[no-redef]
     def __init__(
-        self, pose: Pose | PoseConvertable, covariance: list[float] | np.ndarray | None = None  # type: ignore[type-arg]
+        self,
+        pose: Pose | PoseConvertable,
+        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
     ) -> None:
         """Initialize with pose and optional covariance."""
         self.pose = Pose(pose) if not isinstance(pose, Pose) else pose

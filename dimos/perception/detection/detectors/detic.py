@@ -181,7 +181,9 @@ class Detic2DDetector(Detector):
         # Import Detic modules
         from centernet.config import add_centernet_config  # type: ignore[import-not-found]
         from detic.config import add_detic_config  # type: ignore[import-not-found]
-        from detic.modeling.text.text_encoder import build_text_encoder  # type: ignore[import-not-found]
+        from detic.modeling.text.text_encoder import (
+            build_text_encoder,  # type: ignore[import-not-found]
+        )
         from detic.modeling.utils import reset_cls_test  # type: ignore[import-not-found]
 
         # Keep reference to these functions for later use

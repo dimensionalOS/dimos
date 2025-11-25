@@ -127,7 +127,9 @@ class ROSTransformAbility:
             # Return as Vector type
             if len(point) > 2:  # type: ignore[arg-type]
                 return Vector(
-                    transformed_ps.point.x, transformed_ps.point.y, transformed_ps.point.z  # type: ignore[union-attr]
+                    transformed_ps.point.x,
+                    transformed_ps.point.y,
+                    transformed_ps.point.z,  # type: ignore[union-attr]
                 )
             else:
                 return Vector(transformed_ps.point.x, transformed_ps.point.y)  # type: ignore[union-attr]

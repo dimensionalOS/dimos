@@ -62,7 +62,8 @@ class OsmSkill(SkillModule):
 
         self._current_location_map.update_position(self._latest_location)  # type: ignore[arg-type]
         location = self._current_location_map.query_for_one_position_and_context(
-            query_sentence, self._latest_location  # type: ignore[arg-type]
+            query_sentence,
+            self._latest_location,  # type: ignore[arg-type]
         )
         if not location:
             return "Could not find anything."

@@ -108,7 +108,9 @@ def broadcast(  # type: ignore[no-untyped-def]
     detections,
     annotations,
 ) -> None:
-    from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations  # type: ignore[import-untyped]
+    from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+        ImageAnnotations,  # type: ignore[import-untyped]
+    )
 
     from dimos.core import LCMTransport
     from dimos.msgs.geometry_msgs import PoseStamped
@@ -135,7 +137,10 @@ def broadcast(  # type: ignore[no-untyped-def]
 
 def process_data():  # type: ignore[no-untyped-def]
     from dimos.msgs.sensor_msgs import Image
-    from dimos.perception.detection.module2D import Detection2DModule, build_imageannotations  # type: ignore[attr-defined]
+    from dimos.perception.detection.module2D import (  # type: ignore[attr-defined]
+        Detection2DModule,
+        build_imageannotations,
+    )
     from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
     from dimos.robot.unitree_webrtc.type.odometry import Odometry
     from dimos.utils.data import get_data

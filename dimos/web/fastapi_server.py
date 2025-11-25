@@ -153,7 +153,8 @@ class FastAPIServer(EdgeIO):
 
         async def video_feed():  # type: ignore[no-untyped-def]
             return StreamingResponse(
-                self.stream_generator(key)(), media_type="multipart/x-mixed-replace; boundary=frame"  # type: ignore[no-untyped-call]
+                self.stream_generator(key)(),
+                media_type="multipart/x-mixed-replace; boundary=frame",  # type: ignore[no-untyped-call]
             )
 
         return video_feed

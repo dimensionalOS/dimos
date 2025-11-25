@@ -23,7 +23,10 @@ import numpy as np
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import CameraInfo as ROSCameraInfo, RegionOfInterest as ROSRegionOfInterest  # type: ignore[attr-defined]
+    from sensor_msgs.msg import (  # type: ignore[attr-defined]
+        CameraInfo as ROSCameraInfo,
+        RegionOfInterest as ROSRegionOfInterest,
+    )
     from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True

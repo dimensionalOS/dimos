@@ -203,7 +203,9 @@ class AbstractImage(ABC):
                 NVIMGCODEC_LAST_USED = False
         bgr = self.to_bgr()
         success, buffer = cv2.imencode(
-            ".jpg", _to_cpu(bgr.data), [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]  # type: ignore[no-untyped-call]
+            ".jpg",
+            _to_cpu(bgr.data),
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],  # type: ignore[no-untyped-call]
         )
         if not success:
             raise ValueError("Failed to encode image as JPEG")

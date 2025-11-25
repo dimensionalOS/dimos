@@ -223,7 +223,8 @@ class DaskTransport(Transport[T]):
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T]) -> None:  # type: ignore[override]
         if not self._started:
             selfstream.connection.owner.dask_register_subscriber(  # type: ignore[union-attr]
-                selfstream.connection.name, selfstream  # type: ignore[union-attr]
+                selfstream.connection.name,
+                selfstream,  # type: ignore[union-attr]
             ).result()
             self._started = True
         self.subscribers.append(callback)
