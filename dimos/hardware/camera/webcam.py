@@ -19,7 +19,7 @@ import time
 from typing import Literal
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex import create
 from reactivex.observable import Observable
 
@@ -43,7 +43,7 @@ class WebcamConfig(CameraConfig):
 class Webcam(CameraHardware[WebcamConfig]):
     default_config = WebcamConfig
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self._capture = None
         self._capture_thread = None
@@ -54,13 +54,13 @@ class Webcam(CameraHardware[WebcamConfig]):
     def image_stream(self) -> Observable[Image]:
         """Create an observable that starts/stops camera on subscription"""
 
-        def subscribe(observer, scheduler=None):
+        def subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
             # Store the observer so emit() can use it
             self._observer = observer
 
             # Start the camera when someone subscribes
             try:
-                self.start()
+                self.start()  # type: ignore[no-untyped-call]
             except Exception as e:
                 observer.on_error(e)
                 return
@@ -74,23 +74,23 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         return backpressure(create(subscribe))
 
-    def start(self):
+    def start(self):  # type: ignore[no-untyped-def]
         if self._capture_thread and self._capture_thread.is_alive():
             return
 
         # Open the video capture
-        self._capture = cv2.VideoCapture(self.config.camera_index)
-        if not self._capture.isOpened():
+        self._capture = cv2.VideoCapture(self.config.camera_index)  # type: ignore[assignment]
+        if not self._capture.isOpened():  # type: ignore[attr-defined]
             raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
 
         # Set camera properties
-        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.frame_width)
-        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.frame_height)
+        self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.frame_width)  # type: ignore[attr-defined]
+        self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, self.config.frame_height)  # type: ignore[attr-defined]
 
         # Clear stop event and start the capture thread
         self._stop_event.clear()
-        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
-        self._capture_thread.start()
+        self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)  # type: ignore[assignment]
+        self._capture_thread.start()  # type: ignore[attr-defined]
 
     def stop(self) -> None:
         """Stop capturing frames"""
@@ -106,7 +106,7 @@ class Webcam(CameraHardware[WebcamConfig]):
             self._capture.release()
             self._capture = None
 
-    def _frame(self, frame: str):
+    def _frame(self, frame: str):  # type: ignore[no-untyped-def]
         if not self.config.frame_id_prefix:
             return frame
         else:
@@ -114,7 +114,7 @@ class Webcam(CameraHardware[WebcamConfig]):
 
     def capture_frame(self) -> Image:
         # Read frame
-        ret, frame = self._capture.read()
+        ret, frame = self._capture.read()  # type: ignore[attr-defined]
         if not ret:
             raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")
 

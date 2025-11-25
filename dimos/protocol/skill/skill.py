@@ -63,14 +63,14 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def skill(
-    reducer: Reducer = Reducer.latest,
+    reducer: Reducer = Reducer.latest,  # type: ignore[assignment]
     stream: Stream = Stream.none,
     ret: Return = Return.call_agent,
     output: Output = Output.standard,
     hide_skill: bool = False,
-) -> Callable:
+) -> Callable:  # type: ignore[type-arg]
     def decorator(f: Callable[..., Any]) -> Any:
-        def wrapper(self, *args, **kwargs):
+        def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             skill = f"{f.__name__}"
 
             call_id = kwargs.get("call_id", None)
@@ -95,7 +95,7 @@ def skill(
 
         skill_config = SkillConfig(
             name=f.__name__,
-            reducer=reducer,
+            reducer=reducer,  # type: ignore[arg-type]
             stream=stream,
             # if stream is passive, ret must be passive too
             ret=ret.passive if stream == Stream.passive else ret,
@@ -121,7 +121,7 @@ class SkillContainerConfig:
 def threaded(f: Callable[..., Any]) -> Callable[..., None]:
     """Decorator to run a function in a thread pool."""
 
-    def wrapper(self, *args, **kwargs):
+    def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         if self._skill_thread_pool is None:
             self._skill_thread_pool = ThreadPoolExecutor(
                 max_workers=50, thread_name_prefix="skill_worker"
@@ -170,7 +170,7 @@ class SkillContainer:
 
         # Continue the MRO chain if there's a parent stop() method
         if hasattr(super(), "stop"):
-            super().stop()
+            super().stop()  # type: ignore[misc]
 
     # TODO: figure out standard args/kwargs passing format,
     # use same interface as skill coordinator call_skill method
@@ -195,7 +195,7 @@ class SkillContainer:
 
             # check if the skill returned a coroutine, if it is, block until it resolves
             if isinstance(val, asyncio.Future):
-                val = asyncio.run(val)
+                val = asyncio.run(val)  # type: ignore[arg-type]
 
             # check if the skill is a generator, if it is, we need to iterate over it
             if hasattr(val, "__iter__") and not isinstance(val, str):

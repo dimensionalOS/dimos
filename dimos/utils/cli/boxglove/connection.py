@@ -22,7 +22,7 @@ from reactivex.observable import Observable
 
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.protocol.pubsub import lcm
+from dimos.protocol.pubsub import lcm  # type: ignore[attr-defined]
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
 from dimos.utils.data import get_data
@@ -33,11 +33,11 @@ Connection = Callable[[], Observable[OccupancyGrid]]
 
 
 def live_connection() -> Observable[OccupancyGrid]:
-    def subscribe(observer, scheduler=None):
+    def subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
         lcm.autoconf()
         l = lcm.LCM()
 
-        def on_message(grid: OccupancyGrid, _) -> None:
+        def on_message(grid: OccupancyGrid, _) -> None:  # type: ignore[no-untyped-def]
             observer.on_next(grid)
 
         l.subscribe(lcm.Topic("/global_costmap", OccupancyGrid), on_message)
@@ -57,7 +57,7 @@ def recorded_connection() -> Observable[OccupancyGrid]:
     return backpressure(
         lidar_store.stream(speed=1).pipe(
             ops.map(mapper.add_frame),
-            ops.map(lambda _: mapper.costmap().inflate(0.1).gradient()),
+            ops.map(lambda _: mapper.costmap().inflate(0.1).gradient()),  # type: ignore[attr-defined]
         )
     )
 
@@ -68,4 +68,4 @@ def single_message() -> Observable[OccupancyGrid]:
         pointcloud = PointCloud2.lcm_decode(pickle.load(f))
     mapper = Map()
     mapper.add_frame(pointcloud)
-    return rx.just(mapper.costmap())
+    return rx.just(mapper.costmap())  # type: ignore[attr-defined]

@@ -26,7 +26,7 @@ class AbstractManipulationSkill(AbstractRobotSkill):
     This abstract class provides access to the robot's manipulation memory system.
     """
 
-    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:
+    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize the manipulation skill.
 
         Args:
@@ -34,7 +34,7 @@ class AbstractManipulationSkill(AbstractRobotSkill):
         """
         super().__init__(*args, robot=robot, **kwargs)
 
-        if self._robot and not self._robot.manipulation_interface:
+        if self._robot and not self._robot.manipulation_interface:  # type: ignore[attr-defined]
             raise NotImplementedError(
                 "This robot does not have a manipulation interface implemented"
             )
@@ -55,4 +55,4 @@ class AbstractManipulationSkill(AbstractRobotSkill):
         if not self._robot.has_capability(RobotCapability.MANIPULATION):
             raise RuntimeError("This robot does not have manipulation capabilities")
 
-        return self._robot.manipulation_interface
+        return self._robot.manipulation_interface  # type: ignore[attr-defined, no-any-return]
