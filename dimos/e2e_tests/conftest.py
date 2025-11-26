@@ -63,15 +63,19 @@ class LCMSpy(LCMService):
         self.messages.setdefault(topic, []).append(data)
 
 
-class DimosRobotCall:
+class DimosCliCall:
     process: subprocess.Popen | None
+    demo_name: str | None = None
 
     def __init__(self) -> None:
         self.process = None
 
     def start(self) -> None:
+        if self.demo_name is None:
+            raise ValueError("Demo name must be set before starting the process.")
+
         self.process = subprocess.Popen(
-            ["dimos", "run", "demo-skill"],
+            ["dimos", "run", self.demo_name],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -122,10 +126,16 @@ def lcm_spy():
 
 
 @pytest.fixture
-def dimos_robot_call():
-    dimos_robot_call = DimosRobotCall()
-    dimos_robot_call.start()
-    yield dimos_robot_call
+def start_blueprint():
+    dimos_robot_call = DimosCliCall()
+
+    def set_name_and_start(demo_name: str) -> DimosCliCall:
+        dimos_robot_call.demo_name = demo_name
+        dimos_robot_call.start()
+        return dimos_robot_call
+
+    yield set_name_and_start
+
     dimos_robot_call.stop()
 
 
@@ -140,17 +150,3 @@ def human_input():
     yield send_human_input
 
     transport.lcm.stop()
-
-
-@pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-def test_dimos_robot_demo_e2e(lcm_spy, dimos_robot_call, human_input) -> None:
-    lcm_spy.wait_for_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
-    lcm_spy.wait_for_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_message_content("/agent", b"AIMessage")
-
-    human_input("what is 52983 + 587237")
-
-    lcm_spy.wait_for_message_content("/agent", b"640220")
-
-    assert "/rpc/DemoCalculatorSkill/sum_numbers/req" in lcm_spy.messages
-    assert "/rpc/DemoCalculatorSkill/sum_numbers/res" in lcm_spy.messages
