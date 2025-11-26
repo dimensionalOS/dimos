@@ -39,7 +39,7 @@ TopicT = TypeVar("TopicT")
 
 # (name, true_if_response_topic) -> TopicT
 TopicGen = Callable[[str, bool], TopicT]
-MsgGen = Callable[[str, list], MsgT]
+MsgGen = Callable[[str, list], MsgT]  # type: ignore[type-arg]
 
 
 class RPCReq(TypedDict):
@@ -69,13 +69,13 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
 
-    def call(self, name: str, arguments: Args, cb: Callable | None):
+    def call(self, name: str, arguments: Args, cb: Callable | None):  # type: ignore[no-untyped-def, type-arg]
         if cb is None:
             return self.call_nowait(name, arguments)
 
         return self.call_cb(name, arguments, cb)
 
-    def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:
+    def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:  # type: ignore[type-arg]
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
         msg_id = float(time.time())
@@ -101,7 +101,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         req: RPCReq = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
 
-    def serve_rpc(self, f: FunctionType, name: str | None = None):
+    def serve_rpc(self, f: FunctionType, name: str | None = None):  # type: ignore[no-untyped-def, override]
         if not name:
             name = f.__name__
 
@@ -140,15 +140,15 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 # simple PUBSUB RPC implementation that doesn't encode
 # special request/response messages, assumes pubsub implementation
 # supports generic dictionary pubsub
-class PassThroughPubSubRPC(PubSubRPCMixin[TopicT, dict], Generic[TopicT]):
-    def _encodeRPCReq(self, req: RPCReq) -> dict:
+class PassThroughPubSubRPC(PubSubRPCMixin[TopicT, dict], Generic[TopicT]):  # type: ignore[type-arg]
+    def _encodeRPCReq(self, req: RPCReq) -> dict:  # type: ignore[type-arg]
         return dict(req)
 
-    def _decodeRPCRes(self, msg: dict) -> RPCRes:
+    def _decodeRPCRes(self, msg: dict) -> RPCRes:  # type: ignore[type-arg]
         return msg  # type: ignore[return-value]
 
-    def _encodeRPCRes(self, res: RPCRes) -> dict:
+    def _encodeRPCRes(self, res: RPCRes) -> dict:  # type: ignore[type-arg]
         return dict(res)
 
-    def _decodeRPCReq(self, msg: dict) -> RPCReq:
+    def _decodeRPCReq(self, msg: dict) -> RPCReq:  # type: ignore[type-arg]
         return msg  # type: ignore[return-value]

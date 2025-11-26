@@ -15,8 +15,12 @@
 from typing import Union
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import BoundingBox2D, Detection2D, Detection3D
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+    BoundingBox2D,
+    Detection2D,
+    Detection3D,
+)
 import numpy as np
 import torch
 import yaml
@@ -36,22 +40,22 @@ try:  # pragma: no cover - optional dependency
 
     _HAS_CUDA = True
 except Exception:  # pragma: no cover - optional dependency
-    cp = None  # type: ignore
+    cp = None
     _HAS_CUDA = False
 
 
-def _is_cu_array(x) -> bool:
-    return _HAS_CUDA and cp is not None and isinstance(x, cp.ndarray)  # type: ignore
+def _is_cu_array(x) -> bool:  # type: ignore[no-untyped-def]
+    return _HAS_CUDA and cp is not None and isinstance(x, cp.ndarray)
 
 
-def _to_numpy(x):
-    return cp.asnumpy(x) if _is_cu_array(x) else x  # type: ignore
+def _to_numpy(x):  # type: ignore[no-untyped-def]
+    return cp.asnumpy(x) if _is_cu_array(x) else x
 
 
-def _to_cupy(x):
-    if _HAS_CUDA and cp is not None and isinstance(x, np.ndarray):  # type: ignore
+def _to_cupy(x):  # type: ignore[no-untyped-def]
+    if _HAS_CUDA and cp is not None and isinstance(x, np.ndarray):
         try:
-            return cp.asarray(x)  # type: ignore
+            return cp.asarray(x)
         except Exception:
             return x
     return x
@@ -114,7 +118,7 @@ def load_camera_info(yaml_path: str, frame_id: str = "camera_link") -> CameraInf
     )
 
 
-def load_camera_info_opencv(yaml_path: str) -> tuple[np.ndarray, np.ndarray]:
+def load_camera_info_opencv(yaml_path: str) -> tuple[np.ndarray, np.ndarray]:  # type: ignore[type-arg]
     """
     Load ROS-style camera_info YAML file and convert to OpenCV camera matrix and distortion coefficients.
 
@@ -143,27 +147,27 @@ def load_camera_info_opencv(yaml_path: str) -> tuple[np.ndarray, np.ndarray]:
     return K, dist
 
 
-def rectify_image_cpu(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:
+def rectify_image_cpu(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
     """CPU rectification using OpenCV. Preserves backend by caller.
 
     Returns an Image with numpy or cupy data depending on caller choice.
     """
-    src = _to_numpy(image.data)
+    src = _to_numpy(image.data)  # type: ignore[no-untyped-call]
     rect = cv2.undistort(src, camera_matrix, dist_coeffs)
     # Caller decides whether to convert back to GPU.
     return Image(data=rect, format=image.format, frame_id=image.frame_id, ts=image.ts)
 
 
-def rectify_image_cuda(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:
+def rectify_image_cuda(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
     """GPU rectification using CuPy bilinear sampling.
 
     Generates an undistorted output grid and samples from the distorted source.
     Falls back to CPU if CUDA not available.
     """
-    if not _HAS_CUDA or cp is None or not image.is_cuda:  # type: ignore
+    if not _HAS_CUDA or cp is None or not image.is_cuda:
         return rectify_image_cpu(image, camera_matrix, dist_coeffs)
 
-    xp = cp  # type: ignore
+    xp = cp
 
     # Source (distorted) image on device
     src = image.data
@@ -205,7 +209,7 @@ def rectify_image_cuda(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.
     vs = fy * yd + cy
 
     # Bilinear sample from src at (vs, us)
-    def _bilinear_sample_cuda(img, x_src, y_src):
+    def _bilinear_sample_cuda(img, x_src, y_src):  # type: ignore[no-untyped-def]
         h, w = int(img.shape[0]), int(img.shape[1])
         # Base integer corners (not clamped)
         x0i = xp.floor(x_src).astype(xp.int32)
@@ -268,11 +272,11 @@ def rectify_image_cuda(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.
             out = out.astype(img.dtype, copy=False)
         return out
 
-    rect = _bilinear_sample_cuda(src, us, vs)
+    rect = _bilinear_sample_cuda(src, us, vs)  # type: ignore[no-untyped-call]
     return Image(data=rect, format=image.format, frame_id=image.frame_id, ts=image.ts)
 
 
-def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:
+def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarray) -> Image:  # type: ignore[type-arg]
     """
     Rectify (undistort) an image using camera calibration parameters.
 
@@ -292,7 +296,7 @@ def rectify_image(image: Image, camera_matrix: np.ndarray, dist_coeffs: np.ndarr
 def project_3d_points_to_2d_cuda(
     points_3d: "cp.ndarray", camera_intrinsics: Union[list[float], "cp.ndarray"]
 ) -> "cp.ndarray":
-    xp = cp  # type: ignore
+    xp = cp
     pts = points_3d.astype(xp.float64, copy=False)
     mask = pts[:, 2] > 0
     if not bool(xp.any(mask)):
@@ -301,7 +305,7 @@ def project_3d_points_to_2d_cuda(
     if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
         fx, fy, cx, cy = [xp.asarray(v, dtype=xp.float64) for v in camera_intrinsics]
     else:
-        K = camera_intrinsics.astype(xp.float64, copy=False)
+        K = camera_intrinsics.astype(xp.float64, copy=False)  # type: ignore[union-attr]
         fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
     u = (valid[:, 0] * fx / valid[:, 2]) + cx
     v = (valid[:, 1] * fy / valid[:, 2]) + cy
@@ -309,8 +313,9 @@ def project_3d_points_to_2d_cuda(
 
 
 def project_3d_points_to_2d_cpu(
-    points_3d: np.ndarray, camera_intrinsics: list[float] | np.ndarray
-) -> np.ndarray:
+    points_3d: np.ndarray,  # type: ignore[type-arg]
+    camera_intrinsics: list[float] | np.ndarray,  # type: ignore[type-arg]
+) -> np.ndarray:  # type: ignore[type-arg]
     pts = np.asarray(points_3d, dtype=np.float64)
     valid_mask = pts[:, 2] > 0
     if not np.any(valid_mask):
@@ -327,9 +332,9 @@ def project_3d_points_to_2d_cpu(
 
 
 def project_3d_points_to_2d(
-    points_3d: Union[np.ndarray, "cp.ndarray"],
-    camera_intrinsics: Union[list[float], np.ndarray, "cp.ndarray"],
-) -> Union[np.ndarray, "cp.ndarray"]:
+    points_3d: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+    camera_intrinsics: Union[list[float], np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+) -> Union[np.ndarray, "cp.ndarray"]:  # type: ignore[type-arg]
     """
     Project 3D points to 2D image coordinates using camera intrinsics.
 
@@ -349,10 +354,10 @@ def project_3d_points_to_2d(
 
     # Filter out points with zero or negative depth
     if _is_cu_array(points_3d) or _is_cu_array(camera_intrinsics):
-        xp = cp  # type: ignore
+        xp = cp
         pts = points_3d if _is_cu_array(points_3d) else xp.asarray(points_3d)
         K = camera_intrinsics if _is_cu_array(camera_intrinsics) else camera_intrinsics
-        return project_3d_points_to_2d_cuda(pts, K)  # type: ignore[arg-type]
+        return project_3d_points_to_2d_cuda(pts, K)
     return project_3d_points_to_2d_cpu(np.asarray(points_3d), np.asarray(camera_intrinsics))
 
 
@@ -361,7 +366,7 @@ def project_2d_points_to_3d_cuda(
     depth_values: "cp.ndarray",
     camera_intrinsics: Union[list[float], "cp.ndarray"],
 ) -> "cp.ndarray":
-    xp = cp  # type: ignore
+    xp = cp
     pts = points_2d.astype(xp.float64, copy=False)
     depths = depth_values.astype(xp.float64, copy=False)
     valid = depths > 0
@@ -372,7 +377,7 @@ def project_2d_points_to_3d_cuda(
     if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
         fx, fy, cx, cy = [xp.asarray(v, dtype=xp.float64) for v in camera_intrinsics]
     else:
-        K = camera_intrinsics.astype(xp.float64, copy=False)
+        K = camera_intrinsics.astype(xp.float64, copy=False)  # type: ignore[union-attr]
         fx, fy, cx, cy = K[0, 0], K[1, 1], K[0, 2], K[1, 2]
     X = (uv[:, 0] - cx) * Z / fx
     Y = (uv[:, 1] - cy) * Z / fy
@@ -380,10 +385,10 @@ def project_2d_points_to_3d_cuda(
 
 
 def project_2d_points_to_3d_cpu(
-    points_2d: np.ndarray,
-    depth_values: np.ndarray,
-    camera_intrinsics: list[float] | np.ndarray,
-) -> np.ndarray:
+    points_2d: np.ndarray,  # type: ignore[type-arg]
+    depth_values: np.ndarray,  # type: ignore[type-arg]
+    camera_intrinsics: list[float] | np.ndarray,  # type: ignore[type-arg]
+) -> np.ndarray:  # type: ignore[type-arg]
     pts = np.asarray(points_2d, dtype=np.float64)
     depths = np.asarray(depth_values, dtype=np.float64)
     valid_mask = depths > 0
@@ -406,10 +411,10 @@ def project_2d_points_to_3d_cpu(
 
 
 def project_2d_points_to_3d(
-    points_2d: Union[np.ndarray, "cp.ndarray"],
-    depth_values: Union[np.ndarray, "cp.ndarray"],
-    camera_intrinsics: Union[list[float], np.ndarray, "cp.ndarray"],
-) -> Union[np.ndarray, "cp.ndarray"]:
+    points_2d: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+    depth_values: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+    camera_intrinsics: Union[list[float], np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+) -> Union[np.ndarray, "cp.ndarray"]:  # type: ignore[type-arg]
     """
     Project 2D image points to 3D coordinates using depth values and camera intrinsics.
 
@@ -430,19 +435,21 @@ def project_2d_points_to_3d(
 
     # Ensure depth_values is a numpy array
     if _is_cu_array(points_2d) or _is_cu_array(depth_values) or _is_cu_array(camera_intrinsics):
-        xp = cp  # type: ignore
+        xp = cp
         pts = points_2d if _is_cu_array(points_2d) else xp.asarray(points_2d)
         depths = depth_values if _is_cu_array(depth_values) else xp.asarray(depth_values)
         K = camera_intrinsics if _is_cu_array(camera_intrinsics) else camera_intrinsics
-        return project_2d_points_to_3d_cuda(pts, depths, K)  # type: ignore[arg-type]
+        return project_2d_points_to_3d_cuda(pts, depths, K)
     return project_2d_points_to_3d_cpu(
         np.asarray(points_2d), np.asarray(depth_values), np.asarray(camera_intrinsics)
     )
 
 
 def colorize_depth(
-    depth_img: Union[np.ndarray, "cp.ndarray"], max_depth: float = 5.0, overlay_stats: bool = True
-) -> Union[np.ndarray, "cp.ndarray"] | None:
+    depth_img: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+    max_depth: float = 5.0,
+    overlay_stats: bool = True,
+) -> Union[np.ndarray, "cp.ndarray"] | None:  # type: ignore[type-arg]
     """
     Normalize and colorize depth image using COLORMAP_JET with optional statistics overlay.
 
@@ -458,7 +465,7 @@ def colorize_depth(
         return None
 
     was_cu = _is_cu_array(depth_img)
-    xp = cp if was_cu else np  # type: ignore
+    xp = cp if was_cu else np
     depth = depth_img if was_cu else np.asarray(depth_img)
 
     valid_mask = xp.isfinite(depth) & (depth > 0)
@@ -467,26 +474,28 @@ def colorize_depth(
         depth_norm = xp.where(valid_mask, xp.clip(depth / max_depth, 0, 1), depth_norm)
 
     # Use CPU for colormap/text; convert back to GPU if needed
-    depth_norm_np = _to_numpy(depth_norm)
+    depth_norm_np = _to_numpy(depth_norm)  # type: ignore[no-untyped-call]
     depth_colored = cv2.applyColorMap((depth_norm_np * 255).astype(np.uint8), cv2.COLORMAP_JET)
     depth_rgb_np = cv2.cvtColor(depth_colored, cv2.COLOR_BGR2RGB)
     depth_rgb_np = (depth_rgb_np * 0.6).astype(np.uint8)
 
-    if overlay_stats and (np.any(_to_numpy(valid_mask))):
-        valid_depths = _to_numpy(depth)[_to_numpy(valid_mask)]
+    if overlay_stats and (np.any(_to_numpy(valid_mask))):  # type: ignore[no-untyped-call]
+        valid_depths = _to_numpy(depth)[_to_numpy(valid_mask)]  # type: ignore[no-untyped-call]
         min_depth = float(np.min(valid_depths))
         max_depth_actual = float(np.max(valid_depths))
         h, w = depth_rgb_np.shape[:2]
         center_y, center_x = h // 2, w // 2
-        center_region = _to_numpy(depth)[
+        center_region = _to_numpy(
+            depth
+        )[  # type: ignore[no-untyped-call]
             max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)
         ]
         center_mask = np.isfinite(center_region) & (center_region > 0)
         if center_mask.any():
             center_depth = float(np.median(center_region[center_mask]))
         else:
-            depth_np = _to_numpy(depth)
-            vm_np = _to_numpy(valid_mask)
+            depth_np = _to_numpy(depth)  # type: ignore[no-untyped-call]
+            vm_np = _to_numpy(valid_mask)  # type: ignore[no-untyped-call]
             center_depth = float(depth_np[center_y, center_x]) if vm_np[center_y, center_x] else 0.0
 
         font = cv2.FONT_HERSHEY_SIMPLEX
@@ -576,11 +585,11 @@ def colorize_depth(
                 line_type,
             )
 
-    return _to_cupy(depth_rgb_np) if was_cu else depth_rgb_np
+    return _to_cupy(depth_rgb_np) if was_cu else depth_rgb_np  # type: ignore[no-untyped-call]
 
 
 def draw_bounding_box(
-    image: Union[np.ndarray, "cp.ndarray"],
+    image: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
     bbox: list[float],
     color: tuple[int, int, int] = (0, 255, 0),
     thickness: int = 2,
@@ -588,7 +597,7 @@ def draw_bounding_box(
     confidence: float | None = None,
     object_id: int | None = None,
     font_scale: float = 0.6,
-) -> Union[np.ndarray, "cp.ndarray"]:
+) -> Union[np.ndarray, "cp.ndarray"]:  # type: ignore[type-arg]
     """
     Draw a bounding box with optional label on an image.
 
@@ -606,7 +615,7 @@ def draw_bounding_box(
         Image with bounding box drawn
     """
     was_cu = _is_cu_array(image)
-    img_np = _to_numpy(image)
+    img_np = _to_numpy(image)  # type: ignore[no-untyped-call]
     x1, y1, x2, y2 = map(int, bbox)
     cv2.rectangle(img_np, (x1, y1), (x2, y2), color, thickness)
 
@@ -643,17 +652,17 @@ def draw_bounding_box(
             1,
         )
 
-    return _to_cupy(img_np) if was_cu else img_np
+    return _to_cupy(img_np) if was_cu else img_np  # type: ignore[no-untyped-call]
 
 
 def draw_segmentation_mask(
-    image: Union[np.ndarray, "cp.ndarray"],
-    mask: Union[np.ndarray, "cp.ndarray"],
+    image: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
+    mask: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
     color: tuple[int, int, int] = (0, 200, 200),
     alpha: float = 0.5,
     draw_contours: bool = True,
     contour_thickness: int = 2,
-) -> Union[np.ndarray, "cp.ndarray"]:
+) -> Union[np.ndarray, "cp.ndarray"]:  # type: ignore[type-arg]
     """
     Draw segmentation mask overlay on an image.
 
@@ -672,8 +681,8 @@ def draw_segmentation_mask(
         return image
 
     was_cu = _is_cu_array(image)
-    img_np = _to_numpy(image)
-    mask_np = _to_numpy(mask)
+    img_np = _to_numpy(image)  # type: ignore[no-untyped-call]
+    mask_np = _to_numpy(mask)  # type: ignore[no-untyped-call]
 
     try:
         mask_np = mask_np.astype(np.uint8)
@@ -689,17 +698,17 @@ def draw_segmentation_mask(
     except Exception as e:
         logger.warning(f"Error drawing segmentation mask: {e}")
 
-    return _to_cupy(img_np) if was_cu else img_np
+    return _to_cupy(img_np) if was_cu else img_np  # type: ignore[no-untyped-call]
 
 
 def draw_object_detection_visualization(
-    image: Union[np.ndarray, "cp.ndarray"],
+    image: Union[np.ndarray, "cp.ndarray"],  # type: ignore[type-arg]
     objects: list[ObjectData],
     draw_masks: bool = False,
     bbox_color: tuple[int, int, int] = (0, 255, 0),
     mask_color: tuple[int, int, int] = (0, 200, 200),
     font_scale: float = 0.6,
-) -> Union[np.ndarray, "cp.ndarray"]:
+) -> Union[np.ndarray, "cp.ndarray"]:  # type: ignore[type-arg]
     """
     Create object detection visualization with bounding boxes and optional masks.
 
@@ -715,7 +724,7 @@ def draw_object_detection_visualization(
         Image with detection visualization
     """
     was_cu = _is_cu_array(image)
-    viz_image = _to_numpy(image).copy()
+    viz_image = _to_numpy(image).copy()  # type: ignore[no-untyped-call]
 
     for obj in objects:
         try:
@@ -732,7 +741,7 @@ def draw_object_detection_visualization(
                 if "color" in obj and obj["color"] is not None:
                     obj_color = obj["color"]
                     if isinstance(obj_color, np.ndarray):
-                        color = tuple(int(c) for c in obj_color)
+                        color = tuple(int(c) for c in obj_color)  # type: ignore[assignment]
                     elif isinstance(obj_color, list | tuple):
                         color = tuple(int(c) for c in obj_color[:3])
 
@@ -749,7 +758,7 @@ def draw_object_detection_visualization(
         except Exception as e:
             logger.warning(f"Error drawing object visualization: {e}")
 
-    return _to_cupy(viz_image) if was_cu else viz_image
+    return _to_cupy(viz_image) if was_cu else viz_image  # type: ignore[no-untyped-call]
 
 
 def detection_results_to_object_data(
@@ -758,7 +767,7 @@ def detection_results_to_object_data(
     class_ids: list[int],
     confidences: list[float],
     names: list[str],
-    masks: list[np.ndarray] | None = None,
+    masks: list[np.ndarray] | None = None,  # type: ignore[type-arg]
     source: str = "detection",
 ) -> list[ObjectData]:
     """
@@ -795,14 +804,14 @@ def detection_results_to_object_data(
             "class_id": class_ids[i] if i < len(class_ids) else 0,
             "label": names[i] if i < len(names) else f"{source}_object",
             "movement_tolerance": 1.0,  # Default to freely movable
-            "segmentation_mask": masks[i].cpu().numpy()
+            "segmentation_mask": masks[i].cpu().numpy()  # type: ignore[attr-defined, typeddict-item]
             if masks and i < len(masks) and isinstance(masks[i], torch.Tensor)
             else masks[i]
             if masks and i < len(masks)
             else None,
             # Initialize 3D properties (will be populated by point cloud processing)
-            "position": Vector(0, 0, 0),
-            "rotation": Vector(0, 0, 0),
+            "position": Vector(0, 0, 0),  # type: ignore[arg-type]
+            "rotation": Vector(0, 0, 0),  # type: ignore[arg-type]
             "size": {
                 "width": 0.0,
                 "height": 0.0,
@@ -835,7 +844,7 @@ def combine_object_data(
 
         # Check mask overlap
         mask2 = obj2.get("segmentation_mask")
-        m2 = _to_numpy(mask2) if mask2 is not None else None
+        m2 = _to_numpy(mask2) if mask2 is not None else None  # type: ignore[no-untyped-call]
         if m2 is None or np.sum(m2 > 0) == 0:
             combined.append(obj_copy)
             continue
@@ -848,7 +857,7 @@ def combine_object_data(
             if mask1 is None:
                 continue
 
-            m1 = _to_numpy(mask1)
+            m1 = _to_numpy(mask1)  # type: ignore[no-untyped-call]
             intersection = np.sum((m1 > 0) & (m2 > 0))
             if intersection / mask2_area >= overlap_threshold:
                 is_duplicate = True
@@ -925,7 +934,7 @@ def find_clicked_detection(
     return None
 
 
-def extract_pose_from_detection3d(detection3d: Detection3D):
+def extract_pose_from_detection3d(detection3d: Detection3D):  # type: ignore[no-untyped-def]
     """Extract PoseStamped from Detection3D message.
 
     Args:

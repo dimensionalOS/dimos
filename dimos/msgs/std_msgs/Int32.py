@@ -19,10 +19,10 @@
 
 from typing import ClassVar
 
-from dimos_lcm.std_msgs import Int32 as LCMInt32
+from dimos_lcm.std_msgs import Int32 as LCMInt32  # type: ignore[import-untyped]
 
 
-class Int32(LCMInt32):
+class Int32(LCMInt32):  # type: ignore[misc]
     """ROS-compatible Int32 message."""
 
     msg_name: ClassVar[str] = "std_msgs.Int32"

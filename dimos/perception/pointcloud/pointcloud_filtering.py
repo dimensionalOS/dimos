@@ -15,7 +15,7 @@
 
 import cv2
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 import torch
 
 from dimos.perception.pointcloud.cuboid_fit import fit_cuboid
@@ -37,8 +37,8 @@ class PointcloudFiltering:
 
     def __init__(
         self,
-        color_intrinsics: str | list[float] | np.ndarray | None = None,
-        depth_intrinsics: str | list[float] | np.ndarray | None = None,
+        color_intrinsics: str | list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
+        depth_intrinsics: str | list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
         color_weight: float = 0.3,
         enable_statistical_filtering: bool = True,
         statistical_neighbors: int = 20,
@@ -106,21 +106,24 @@ class PointcloudFiltering:
         # Store the full point cloud
         self.full_pcd = None
 
-    def generate_color_from_id(self, object_id: int) -> np.ndarray:
+    def generate_color_from_id(self, object_id: int) -> np.ndarray:  # type: ignore[type-arg]
         """Generate a consistent color for a given object ID."""
         np.random.seed(object_id)
         color = np.random.randint(0, 255, 3, dtype=np.uint8)
         np.random.seed(None)
         return color
 
-    def _validate_inputs(
-        self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]
+    def _validate_inputs(  # type: ignore[no-untyped-def]
+        self,
+        color_img: np.ndarray,  # type: ignore[type-arg]
+        depth_img: np.ndarray,  # type: ignore[type-arg]
+        objects: list[ObjectData],
     ):
         """Validate input parameters."""
         if color_img.shape[:2] != depth_img.shape:
             raise ValueError("Color and depth image dimensions don't match")
 
-    def _prepare_masks(self, masks: list[np.ndarray], target_shape: tuple) -> list[np.ndarray]:
+    def _prepare_masks(self, masks: list[np.ndarray], target_shape: tuple) -> list[np.ndarray]:  # type: ignore[type-arg]
         """Prepare and validate masks to match target shape."""
         processed_masks = []
         for mask in masks:
@@ -147,7 +150,9 @@ class PointcloudFiltering:
         return processed_masks
 
     def _apply_color_mask(
-        self, pcd: o3d.geometry.PointCloud, rgb_color: np.ndarray
+        self,
+        pcd: o3d.geometry.PointCloud,
+        rgb_color: np.ndarray,  # type: ignore[type-arg]
     ) -> o3d.geometry.PointCloud:
         """Apply weighted color mask to point cloud."""
         if len(np.asarray(pcd.colors)) > 0:
@@ -184,7 +189,7 @@ class PointcloudFiltering:
             return pcd.voxel_down_sample(self.voxel_size)
         return pcd
 
-    def _extract_masks_from_objects(self, objects: list[ObjectData]) -> list[np.ndarray]:
+    def _extract_masks_from_objects(self, objects: list[ObjectData]) -> list[np.ndarray]:  # type: ignore[type-arg]
         """Extract segmentation masks from ObjectData objects."""
         return [obj["segmentation_mask"] for obj in objects]
 
@@ -193,7 +198,10 @@ class PointcloudFiltering:
         return self._apply_subsampling(self.full_pcd)
 
     def process_images(
-        self, color_img: np.ndarray, depth_img: np.ndarray, objects: list[ObjectData]
+        self,
+        color_img: np.ndarray,  # type: ignore[type-arg]
+        depth_img: np.ndarray,  # type: ignore[type-arg]
+        objects: list[ObjectData],
     ) -> list[ObjectData]:
         """
         Process color and depth images with object detection results to create filtered point clouds.
@@ -267,7 +275,11 @@ class PointcloudFiltering:
 
         # Create point clouds efficiently
         self.full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
-            color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0
+            color_img,
+            depth_img,
+            processed_masks,
+            self.depth_camera_matrix,  # type: ignore[arg-type]
+            depth_scale=1.0,
         )
 
         # Process each object and update ObjectData
@@ -346,7 +358,7 @@ class PointcloudFiltering:
                 colors_array = np.zeros((len(points_array), 3), dtype=np.float32)
 
             updated_obj["point_cloud_numpy"] = points_array
-            updated_obj["colors_numpy"] = colors_array
+            updated_obj["colors_numpy"] = colors_array  # type: ignore[typeddict-unknown-key]
 
             updated_objects.append(updated_obj)
 

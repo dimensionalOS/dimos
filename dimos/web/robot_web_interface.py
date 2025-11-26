@@ -23,7 +23,7 @@ from dimos.web.dimos_interface.api.server import FastAPIServer
 class RobotWebInterface(FastAPIServer):
     """Wrapper class for the dimos-interface FastAPI server."""
 
-    def __init__(self, port: int = 5555, text_streams=None, audio_subject=None, **streams) -> None:
+    def __init__(self, port: int = 5555, text_streams=None, audio_subject=None, **streams) -> None:  # type: ignore[no-untyped-def]
         super().__init__(
             dev_name="Robot Web Interface",
             edge_type="Bidirectional",

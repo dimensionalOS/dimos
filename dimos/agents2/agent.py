@@ -50,7 +50,7 @@ def toolmsg_from_state(state: SkillState) -> ToolMessage:
     if state.skill_config.output != Output.standard:
         content = "output attached in separate messages"
     else:
-        content = state.content()
+        content = state.content()  # type: ignore[assignment]
 
     return ToolMessage(
         # if agent call has been triggered by another skill,
@@ -86,7 +86,7 @@ def summary_from_state(state: SkillState, special_data: bool = False) -> SkillSt
     }
 
 
-def _custom_json_serializers(obj):
+def _custom_json_serializers(obj):  # type: ignore[no-untyped-def]
     if isinstance(obj, datetime.date | datetime.datetime):
         return obj.isoformat()
     raise TypeError(f"Type {type(obj)} not serializable")
@@ -131,7 +131,7 @@ def snapshot_to_messages(
             content = skill_state.content()
             if not content:
                 continue
-            history_msgs.append(HumanMessage(content=content))
+            history_msgs.append(HumanMessage(content=content))  # type: ignore[arg-type]
             continue
 
         special_data = skill_state.skill_config.output == Output.image
@@ -139,12 +139,12 @@ def snapshot_to_messages(
             content = skill_state.content()
             if not content:
                 continue
-            special_msgs.append(HumanMessage(content=content))
+            special_msgs.append(HumanMessage(content=content))  # type: ignore[arg-type]
 
         if skill_state.call_id in tool_call_ids:
             continue
 
-        state_overview.append(summary_from_state(skill_state, special_data))
+        state_overview.append(summary_from_state(skill_state, special_data))  # type: ignore[arg-type]
 
     if state_overview:
         state_overview_str = "\n".join(
@@ -152,7 +152,7 @@ def snapshot_to_messages(
         )
         state_msg = AIMessage("State Overview:\n" + state_overview_str)
 
-    return {
+    return {  # type: ignore[return-value]
         "tool_msgs": tool_msgs,
         "history_msgs": history_msgs,
         "state_msgs": ([state_msg] if state_msg else []) + special_msgs,
@@ -164,7 +164,7 @@ class Agent(AgentSpec):
     system_message: SystemMessage
     state_messages: list[AIMessage | HumanMessage]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         *args,
         **kwargs,
@@ -173,7 +173,7 @@ class Agent(AgentSpec):
 
         self.state_messages = []
         self.coordinator = SkillCoordinator()
-        self._history = []
+        self._history = []  # type: ignore[var-annotated]
         self._agent_id = str(uuid.uuid4())
         self._agent_stopped = False
 
@@ -181,7 +181,7 @@ class Agent(AgentSpec):
             if isinstance(self.config.system_prompt, str):
                 self.system_message = SystemMessage(self.config.system_prompt + SYSTEM_MSG_APPEND)
             else:
-                self.config.system_prompt.content += SYSTEM_MSG_APPEND
+                self.config.system_prompt.content += SYSTEM_MSG_APPEND  # type: ignore[operator]
                 self.system_message = self.config.system_prompt
         else:
             self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
@@ -192,7 +192,7 @@ class Agent(AgentSpec):
         if self.config.model_instance:
             self._llm = self.config.model_instance
         else:
-            self._llm = init_chat_model(
+            self._llm = init_chat_model(  # type: ignore[call-overload]
                 model_provider=self.config.provider, model=self.config.model
             )
 
@@ -216,11 +216,11 @@ class Agent(AgentSpec):
 
     def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
         for msg in msgs:
-            self.publish(msg)
+            self.publish(msg)  # type: ignore[arg-type]
 
         self._history.extend(msgs)
 
-    def history(self):
+    def history(self):  # type: ignore[no-untyped-def]
         return [self.system_message, *self._history, *self.state_messages]
 
     # Used by agent to execute tool calls
@@ -232,19 +232,19 @@ class Agent(AgentSpec):
         for tool_call in tool_calls:
             logger.info(f"executing skill call {tool_call}")
             self.coordinator.call_skill(
-                tool_call.get("id"),
-                tool_call.get("name"),
-                tool_call.get("args"),
+                tool_call.get("id"),  # type: ignore[arg-type]
+                tool_call.get("name"),  # type: ignore[arg-type]
+                tool_call.get("args"),  # type: ignore[arg-type]
             )
 
     # used to inject skill calls into the agent loop without agent asking for it
-    def run_implicit_skill(self, skill_name: str, **kwargs) -> None:
+    def run_implicit_skill(self, skill_name: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         if self._agent_stopped:
             logger.warning("Agent is stopped, cannot execute implicit skill calls.")
             return
         self.coordinator.call_skill(False, skill_name, {"args": kwargs})
 
-    async def agent_loop(self, first_query: str = ""):
+    async def agent_loop(self, first_query: str = ""):  # type: ignore[no-untyped-def]
         # TODO: Should I add a lock here to prevent concurrent calls to agent_loop?
 
         if self._agent_stopped:
@@ -257,20 +257,20 @@ class Agent(AgentSpec):
 
         self.state_messages = []
         if first_query:
-            self.append_history(HumanMessage(first_query))
+            self.append_history(HumanMessage(first_query))  # type: ignore[arg-type]
 
         def _get_state() -> str:
             # TODO: FIX THIS EXTREME HACK
             update = self.coordinator.generate_snapshot(clear=False)
-            snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
+            snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)  # type: ignore[attr-defined]
             return json.dumps(snapshot_msgs, sort_keys=True, default=lambda o: repr(o))
 
         try:
             while True:
                 # we are getting tools from the coordinator on each turn
                 # since this allows for skillcontainers to dynamically provide new skills
-                tools = self.get_tools()
-                self._llm = self._llm.bind_tools(tools)
+                tools = self.get_tools()  # type: ignore[no-untyped-call]
+                self._llm = self._llm.bind_tools(tools)  # type: ignore[assignment]
 
                 # publish to /agent topic for observability
                 for state_msg in self.state_messages:
@@ -278,15 +278,15 @@ class Agent(AgentSpec):
 
                 # history() builds our message history dynamically
                 # ensures we include latest system state, but not old ones.
-                msg = self._llm.invoke(self.history())
-                self.append_history(msg)
+                msg = self._llm.invoke(self.history())  # type: ignore[no-untyped-call]
+                self.append_history(msg)  # type: ignore[arg-type]
 
                 logger.info(f"Agent response: {msg.content}")
 
                 state = _get_state()
 
-                if msg.tool_calls:
-                    self.execute_tool_calls(msg.tool_calls)
+                if msg.tool_calls:  # type: ignore[attr-defined]
+                    self.execute_tool_calls(msg.tool_calls)  # type: ignore[attr-defined]
 
                 # print(self)
                 # print(self.coordinator)
@@ -310,11 +310,12 @@ class Agent(AgentSpec):
                 # generate tool_msgs and general state update message,
                 # depending on a skill having associated tool call from previous interaction
                 # we will return a tool message, and not a general state message
-                snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
+                snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)  # type: ignore[attr-defined]
 
-                self.state_messages = snapshot_msgs.get("state_msgs", [])
+                self.state_messages = snapshot_msgs.get("state_msgs", [])  # type: ignore[attr-defined]
                 self.append_history(
-                    *snapshot_msgs.get("tool_msgs", []), *snapshot_msgs.get("history_msgs", [])
+                    *snapshot_msgs.get("tool_msgs", []),  # type: ignore[attr-defined]
+                    *snapshot_msgs.get("history_msgs", []),  # type: ignore[attr-defined]
                 )
 
         except Exception as e:
@@ -325,29 +326,29 @@ class Agent(AgentSpec):
 
     @rpc
     def loop_thread(self) -> bool:
-        asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
+        asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)  # type: ignore[arg-type]
         return True
 
     @rpc
-    def query(self, query: str):
+    def query(self, query: str):  # type: ignore[no-untyped-def]
         # TODO: could this be
         # from distributed.utils import sync
         # return sync(self._loop, self.agent_loop, query)
-        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()
+        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()  # type: ignore[arg-type]
 
-    async def query_async(self, query: str):
+    async def query_async(self, query: str):  # type: ignore[no-untyped-def]
         return await self.agent_loop(query)
 
     @rpc
-    def register_skills(self, container, run_implicit_name: str | None = None):
-        ret = self.coordinator.register_skills(container)
+    def register_skills(self, container, run_implicit_name: str | None = None):  # type: ignore[no-untyped-def]
+        ret = self.coordinator.register_skills(container)  # type: ignore[func-returns-value]
 
         if run_implicit_name:
             self.run_implicit_skill(run_implicit_name)
 
         return ret
 
-    def get_tools(self):
+    def get_tools(self):  # type: ignore[no-untyped-def]
         return self.coordinator.get_tools()
 
     def _write_debug_history_file(self) -> None:
@@ -355,7 +356,7 @@ class Agent(AgentSpec):
         if not file_path:
             return
 
-        history = [x.__dict__ for x in self.history()]
+        history = [x.__dict__ for x in self.history()]  # type: ignore[no-untyped-call]
 
         with open(file_path, "w") as f:
             json.dump(history, f, default=lambda x: repr(x), indent=2)
@@ -379,21 +380,21 @@ def deploy(
     dimos: DimosCluster,
     system_prompt: str = "You are a helpful assistant for controlling a Unitree Go2 robot.",
     model: Model = Model.GPT_4O,
-    provider: Provider = Provider.OPENAI,
+    provider: Provider = Provider.OPENAI,  # type: ignore[attr-defined]
     skill_containers: list[SkillContainer] | None = None,
 ) -> Agent:
     from dimos.agents2.cli.human import HumanInput
 
     if skill_containers is None:
         skill_containers = []
-    agent = dimos.deploy(
+    agent = dimos.deploy(  # type: ignore[attr-defined]
         Agent,
         system_prompt=system_prompt,
         model=model,
         provider=provider,
     )
 
-    human_input = dimos.deploy(HumanInput)
+    human_input = dimos.deploy(HumanInput)  # type: ignore[attr-defined]
     human_input.start()
 
     agent.register_skills(human_input)
@@ -406,7 +407,7 @@ def deploy(
     agent.start()
     agent.loop_thread()
 
-    return agent
+    return agent  # type: ignore[no-any-return]
 
 
 __all__ = ["Agent", "deploy", "llm_agent"]
