@@ -93,7 +93,7 @@ from dimos.web.robot_web_interface import RobotWebInterface
 robot_ip = os.getenv("ROBOT_IP")
 
 # Initialize robot
-logger.info("Initializing Unitree Robot")        
+logger.info("Initializing Unitree Robot")
 robot = UnitreeGo2(ip=robot_ip,
                     connection_method=connection_method,
                     output_dir=output_dir)
