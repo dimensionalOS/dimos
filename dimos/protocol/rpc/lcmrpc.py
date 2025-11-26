@@ -18,7 +18,7 @@ from dimos.protocol.rpc.pubsubrpc import PassThroughPubSubRPC
 from dimos.utils.generic import short_id
 
 
-class LCMRPC(PassThroughPubSubRPC, PickleLCM):
+class LCMRPC(PassThroughPubSubRPC, PickleLCM):  # type: ignore[type-arg]
     def topicgen(self, name: str, req_or_res: bool) -> Topic:
         suffix = "res" if req_or_res else "req"
         topic = f"/rpc/{name}/{suffix}"

@@ -16,20 +16,20 @@ from abc import ABC, abstractmethod
 
 
 class AbstractSensor(ABC):
-    def __init__(self, sensor_type=None) -> None:
+    def __init__(self, sensor_type=None) -> None:  # type: ignore[no-untyped-def]
         self.sensor_type = sensor_type
 
     @abstractmethod
-    def get_sensor_type(self):
+    def get_sensor_type(self):  # type: ignore[no-untyped-def]
         """Return the type of sensor."""
         pass
 
     @abstractmethod
-    def calculate_intrinsics(self):
+    def calculate_intrinsics(self):  # type: ignore[no-untyped-def]
         """Calculate the sensor's intrinsics."""
         pass
 
     @abstractmethod
-    def get_intrinsics(self):
+    def get_intrinsics(self):  # type: ignore[no-untyped-def]
         """Return the sensor's intrinsics."""
         pass

@@ -52,7 +52,7 @@ bottom_right = alphabet[4]  # Quadrant upper left
 full = alphabet[0]  # Full block
 
 
-class OccupancyGridApp(App):
+class OccupancyGridApp(App):  # type: ignore[type-arg]
     """A Textual app for visualizing OccupancyGrid data in real-time."""
 
     CSS = """
@@ -90,7 +90,7 @@ class OccupancyGridApp(App):
         ("ctrl+c", "quit", "Quit"),
     ]
 
-    def __init__(self, connection: Connection, *args, **kwargs) -> None:
+    def __init__(self, connection: Connection, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.connection = connection
         self.subscription: Disposable | None = None
@@ -117,7 +117,7 @@ class OccupancyGridApp(App):
         def on_error(error: Exception) -> None:
             self.notify(f"Error: {error}", severity="error")
 
-        self.subscription = self.connection().subscribe(on_next=on_grid, on_error=on_error)
+        self.subscription = self.connection().subscribe(on_next=on_grid, on_error=on_error)  # type: ignore[assignment]
 
     async def on_unmount(self) -> None:
         """Clean up subscription when app closes."""
@@ -134,14 +134,14 @@ class OccupancyGridApp(App):
 
         # Render the grid as ASCII art
         grid_text = self.render_grid(grid)
-        self.grid_display.update(grid_text)
+        self.grid_display.update(grid_text)  # type: ignore[union-attr]
 
-    def on_resize(self, event) -> None:
+    def on_resize(self, event) -> None:  # type: ignore[no-untyped-def]
         """Handle terminal resize events."""
         if self.cached_grid:
             # Re-render with new terminal dimensions
             grid_text = self.render_grid(self.cached_grid)
-            self.grid_display.update(grid_text)
+            self.grid_display.update(grid_text)  # type: ignore[union-attr]
 
     def render_grid(self, grid: OccupancyGrid) -> Text:
         """Render the OccupancyGrid as colored ASCII art, scaled to fit terminal."""
@@ -181,7 +181,7 @@ class OccupancyGridApp(App):
         actual_scale_y = grid.height / render_height if render_height > 0 else 1
 
         # Function to get value with fractional scaling
-        def get_cell_value(grid_data: np.ndarray, x: int, y: int) -> int:
+        def get_cell_value(grid_data: np.ndarray, x: int, y: int) -> int:  # type: ignore[type-arg]
             # Use fractional coordinates for smoother scaling
             y_center = int((y + 0.5) * actual_scale_y)
             x_center = int((x + 0.5) * actual_scale_x)
@@ -192,17 +192,17 @@ class OccupancyGridApp(App):
 
             # For now, just sample the center point
             # Could do area averaging for smoother results
-            return grid_data[y_center, x_center]
+            return grid_data[y_center, x_center]  # type: ignore[no-any-return]
 
         # Helper function to check if a cell is an obstacle
-        def is_obstacle(grid_data: np.ndarray, x: int, y: int) -> bool:
+        def is_obstacle(grid_data: np.ndarray, x: int, y: int) -> bool:  # type: ignore[type-arg]
             if x < 0 or x >= render_width or y < 0 or y >= render_height:
                 return False
             value = get_cell_value(grid_data, x, y)
             return value > 90  # Consider cells with >90% probability as obstacles
 
         # Character and color mapping with intelligent obstacle rendering
-        def get_cell_char_and_style(grid_data: np.ndarray, x: int, y: int) -> tuple[str, str]:
+        def get_cell_char_and_style(grid_data: np.ndarray, x: int, y: int) -> tuple[str, str]:  # type: ignore[type-arg]
             value = get_cell_value(grid_data, x, y)
             norm_value = min(value, 100) / 100.0
 
@@ -255,9 +255,9 @@ class OccupancyGridApp(App):
                     # No neighbors - isolated obstacle
                     symbol = full + full
 
-                return symbol, None
+                return symbol, None  # type: ignore[return-value]
             else:
-                return "  ", None
+                return "  ", None  # type: ignore[return-value]
 
         # Render the scaled grid row by row (flip Y axis for proper display)
         for y in range(render_height - 1, -1, -1):
@@ -277,9 +277,9 @@ def main() -> None:
     # app = OccupancyGridApp(core.LCMTransport("/global_costmap", OccupancyGrid).observable)
 
     app = OccupancyGridApp(
-        lambda: core.LCMTransport("/lidar", LidarMessage)
+        lambda: core.LCMTransport("/lidar", LidarMessage)  # type: ignore[no-untyped-call]
         .observable()
-        .pipe(ops.map(lambda msg: msg.costmap()))
+        .pipe(ops.map(lambda msg: msg.costmap()))  # type: ignore[attr-defined]
     )
     app.run()
     import time

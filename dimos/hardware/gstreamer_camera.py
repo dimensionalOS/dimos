@@ -29,11 +29,11 @@ from dimos.utils.logging_config import setup_logger
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi
+import gi  # type: ignore[import-not-found]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import GLib, Gst
+from gi.repository import GLib, Gst  # type: ignore[import-not-found]
 
 logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
 
@@ -43,9 +43,9 @@ Gst.init(None)
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    video: Out[Image] = None
+    video: Out[Image] = None  # type: ignore[assignment]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         host: str = "localhost",
         port: int = 5000,
@@ -120,8 +120,8 @@ class GstreamerCameraModule(Module):
             return
 
         try:
-            self._create_pipeline()
-            self._start_pipeline()
+            self._create_pipeline()  # type: ignore[no-untyped-call]
+            self._start_pipeline()  # type: ignore[no-untyped-call]
             self.running = True
             logger.info(f"GStreamer TCP camera module connected to {self.host}:{self.port}")
         except Exception as e:
@@ -165,7 +165,7 @@ class GstreamerCameraModule(Module):
         logger.warning(f"Disconnected from {self.host}:{self.port}")
         self._schedule_reconnect()
 
-    def _create_pipeline(self):
+    def _create_pipeline(self):  # type: ignore[no-untyped-def]
         # TCP client source with Matroska demuxer to extract absolute timestamps
         pipeline_str = f"""
             tcpclientsrc host={self.host} port={self.port} !
@@ -179,39 +179,39 @@ class GstreamerCameraModule(Module):
 
         try:
             self.pipeline = Gst.parse_launch(pipeline_str)
-            self.appsink = self.pipeline.get_by_name("sink")
-            self.appsink.connect("new-sample", self._on_new_sample)
+            self.appsink = self.pipeline.get_by_name("sink")  # type: ignore[attr-defined]
+            self.appsink.connect("new-sample", self._on_new_sample)  # type: ignore[attr-defined]
         except Exception as e:
             logger.error(f"Failed to create GStreamer pipeline: {e}")
             raise
 
-    def _start_pipeline(self):
+    def _start_pipeline(self):  # type: ignore[no-untyped-def]
         """Start the GStreamer pipeline and main loop."""
         self.main_loop = GLib.MainLoop()
 
         # Start the pipeline
-        ret = self.pipeline.set_state(Gst.State.PLAYING)
+        ret = self.pipeline.set_state(Gst.State.PLAYING)  # type: ignore[attr-defined]
         if ret == Gst.StateChangeReturn.FAILURE:
             logger.error("Unable to set the pipeline to playing state")
             raise RuntimeError("Failed to start GStreamer pipeline")
 
         # Run the main loop in a separate thread
-        self.main_loop_thread = threading.Thread(target=self._run_main_loop)
-        self.main_loop_thread.daemon = True
-        self.main_loop_thread.start()
+        self.main_loop_thread = threading.Thread(target=self._run_main_loop)  # type: ignore[assignment]
+        self.main_loop_thread.daemon = True  # type: ignore[attr-defined]
+        self.main_loop_thread.start()  # type: ignore[attr-defined]
 
         # Set up bus message handling
-        bus = self.pipeline.get_bus()
+        bus = self.pipeline.get_bus()  # type: ignore[attr-defined]
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
 
     def _run_main_loop(self) -> None:
         try:
-            self.main_loop.run()
+            self.main_loop.run()  # type: ignore[attr-defined]
         except Exception as e:
             logger.error(f"Main loop error: {e}")
 
-    def _on_bus_message(self, bus, message) -> None:
+    def _on_bus_message(self, bus, message) -> None:  # type: ignore[no-untyped-def]
         t = message.type
 
         if t == Gst.MessageType.EOS:
@@ -230,7 +230,7 @@ class GstreamerCameraModule(Module):
                 if new_state == Gst.State.PLAYING:
                     logger.info("Pipeline is now playing - connected to TCP server")
 
-    def _on_new_sample(self, appsink):
+    def _on_new_sample(self, appsink):  # type: ignore[no-untyped-def]
         """Handle new video samples from the appsink."""
         sample = appsink.emit("pull-sample")
         if sample is None:
@@ -286,7 +286,7 @@ class GstreamerCameraModule(Module):
 
             # Publish the image
             if self.video and self.running:
-                self.video.publish(image_msg)
+                self.video.publish(image_msg)  # type: ignore[no-untyped-call]
 
             # Log statistics periodically
             self.frame_count += 1

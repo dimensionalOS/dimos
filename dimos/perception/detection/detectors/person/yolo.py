@@ -39,7 +39,7 @@ class YoloPersonDetector(Detector):
             self.device = device
             return
 
-        if is_cuda_available():
+        if is_cuda_available():  # type: ignore[no-untyped-call]
             self.device = "cuda"
             logger.info("Using CUDA for YOLO person detector")
         else:

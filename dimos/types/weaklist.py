@@ -27,12 +27,12 @@ class WeakList:
     """
 
     def __init__(self) -> None:
-        self._refs = []
+        self._refs = []  # type: ignore[var-annotated]
 
     def append(self, obj: Any) -> None:
         """Add an object to the list (stored as weak reference)."""
 
-        def _cleanup(ref) -> None:
+        def _cleanup(ref) -> None:  # type: ignore[no-untyped-def]
             try:
                 self._refs.remove(ref)
             except ValueError:

@@ -36,8 +36,8 @@ if not hasattr(PIL.Image, "LINEAR") and hasattr(PIL.Image, "BILINEAR"):
     PIL.Image.LINEAR = PIL.Image.BILINEAR  # type: ignore[attr-defined]
 
 # Detectron2 imports
-from detectron2.config import get_cfg
-from detectron2.data import MetadataCatalog
+from detectron2.config import get_cfg  # type: ignore[import-not-found]
+from detectron2.data import MetadataCatalog  # type: ignore[import-not-found]
 
 
 # Simple tracking implementation
@@ -48,9 +48,9 @@ class SimpleTracker:
         self.iou_threshold = iou_threshold
         self.max_age = max_age
         self.next_id = 1
-        self.tracks = {}  # id -> {bbox, class_id, age, mask, etc}
+        self.tracks = {}  # type: ignore[var-annotated]  # id -> {bbox, class_id, age, mask, etc}
 
-    def _calculate_iou(self, bbox1, bbox2):
+    def _calculate_iou(self, bbox1, bbox2):  # type: ignore[no-untyped-def]
         """Calculate IoU between two bboxes in format [x1,y1,x2,y2]"""
         x1 = max(bbox1[0], bbox2[0])
         y1 = max(bbox1[1], bbox2[1])
@@ -67,7 +67,7 @@ class SimpleTracker:
 
         return intersection / union if union > 0 else 0
 
-    def update(self, detections, masks):
+    def update(self, detections, masks):  # type: ignore[no-untyped-def]
         """Update tracker with new detections
 
         Args:
@@ -113,7 +113,7 @@ class SimpleTracker:
                 if det[5] != track["class_id"]:
                     continue
 
-                iou = self._calculate_iou(track["bbox"], det[:4])
+                iou = self._calculate_iou(track["bbox"], det[:4])  # type: ignore[no-untyped-call]
                 if iou > best_iou:
                     best_iou = iou
                     best_idx = i
@@ -161,7 +161,7 @@ class SimpleTracker:
 
 
 class Detic2DDetector(Detector):
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self, model_path=None, device: str = "cuda", vocabulary=None, threshold: float = 0.5
     ) -> None:
         """
@@ -179,10 +179,12 @@ class Detic2DDetector(Detector):
         # Set up Detic paths - already added to sys.path at module level
 
         # Import Detic modules
-        from centernet.config import add_centernet_config
-        from detic.config import add_detic_config
-        from detic.modeling.text.text_encoder import build_text_encoder
-        from detic.modeling.utils import reset_cls_test
+        from centernet.config import add_centernet_config  # type: ignore[import-not-found]
+        from detic.config import add_detic_config  # type: ignore[import-not-found]
+        from detic.modeling.text.text_encoder import (  # type: ignore[import-not-found]
+            build_text_encoder,
+        )
+        from detic.modeling.utils import reset_cls_test  # type: ignore[import-not-found]
 
         # Keep reference to these functions for later use
         self.reset_cls_test = reset_cls_test
@@ -249,12 +251,12 @@ class Detic2DDetector(Detector):
 
         # Setup with initial vocabulary
         vocabulary = vocabulary or "lvis"
-        self.setup_vocabulary(vocabulary)
+        self.setup_vocabulary(vocabulary)  # type: ignore[no-untyped-call]
 
         # Initialize our simple tracker
         self.tracker = SimpleTracker(iou_threshold=0.5, max_age=5)
 
-    def setup_vocabulary(self, vocabulary):
+    def setup_vocabulary(self, vocabulary):  # type: ignore[no-untyped-def]
         """
         Setup the model's vocabulary.
 
@@ -264,7 +266,7 @@ class Detic2DDetector(Detector):
         """
         if self.predictor is None:
             # Initialize the model
-            from detectron2.engine import DefaultPredictor
+            from detectron2.engine import DefaultPredictor  # type: ignore[import-not-found]
 
             self.predictor = DefaultPredictor(self.cfg)
 
@@ -285,7 +287,7 @@ class Detic2DDetector(Detector):
                 except:
                     # Default to LVIS if there's an issue
                     print(f"Error loading vocabulary from {vocabulary}, using LVIS")
-                    return self.setup_vocabulary("lvis")
+                    return self.setup_vocabulary("lvis")  # type: ignore[no-untyped-call]
             else:
                 # Assume it's a list of class names
                 class_names = vocabulary
@@ -300,10 +302,10 @@ class Detic2DDetector(Detector):
             num_classes = len(class_names)
 
         # Reset model with new vocabulary
-        self.reset_cls_test(self.predictor.model, classifier, num_classes)
+        self.reset_cls_test(self.predictor.model, classifier, num_classes)  # type: ignore[attr-defined]
         return self.class_names
 
-    def _get_clip_embeddings(self, vocabulary, prompt: str = "a "):
+    def _get_clip_embeddings(self, vocabulary, prompt: str = "a "):  # type: ignore[no-untyped-def]
         """
         Generate CLIP embeddings for a vocabulary list.
 
@@ -320,7 +322,7 @@ class Detic2DDetector(Detector):
         emb = text_encoder(texts).detach().permute(1, 0).contiguous().cpu()
         return emb
 
-    def process_image(self, image: Image):
+    def process_image(self, image: Image):  # type: ignore[no-untyped-def]
         """
         Process an image and return detection results.
 
@@ -337,7 +339,7 @@ class Detic2DDetector(Detector):
                 - masks: list of segmentation masks (numpy arrays)
         """
         # Run inference with Detic
-        outputs = self.predictor(image.to_opencv())
+        outputs = self.predictor(image.to_opencv())  # type: ignore[misc]
         instances = outputs["instances"].to("cpu")
 
         # Extract bounding boxes, classes, scores, and masks
@@ -371,7 +373,7 @@ class Detic2DDetector(Detector):
             return [], [], [], [], []  # , []
 
         # Update tracker with detections and correctly aligned masks
-        track_results = self.tracker.update(detections, filtered_masks)
+        track_results = self.tracker.update(detections, filtered_masks)  # type: ignore[no-untyped-call]
 
         # Process tracking results
         track_ids = []
@@ -398,7 +400,7 @@ class Detic2DDetector(Detector):
             # tracked_masks,
         )
 
-    def visualize_results(
+    def visualize_results(  # type: ignore[no-untyped-def]
         self, image, bboxes, track_ids, class_ids, confidences, names: Sequence[str]
     ):
         """

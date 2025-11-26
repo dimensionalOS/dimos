@@ -29,14 +29,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, BinaryIO
 
-from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
 
 try:
-    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
-    from tf2_msgs.msg import TFMessage as ROSTFMessage
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TransformStamped as ROSTransformStamped,
+    )
+    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 except ImportError:
-    ROSTFMessage = None
-    ROSTransformStamped = None
+    ROSTFMessage = None  # type: ignore[assignment, misc]
+    ROSTransformStamped = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Transform import Transform
@@ -75,7 +77,7 @@ class TFMessage:
             transforms=res,
         )
 
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> TFMessage:
@@ -113,7 +115,7 @@ class TFMessage:
         """Get transform by index."""
         return self.transforms[index]
 
-    def __iter__(self) -> Iterator:
+    def __iter__(self) -> Iterator:  # type: ignore[type-arg]
         """Iterate over transforms."""
         return iter(self.transforms)
 
@@ -150,7 +152,7 @@ class TFMessage:
         Returns:
             ROS TFMessage message
         """
-        ros_msg = ROSTFMessage()
+        ros_msg = ROSTFMessage()  # type: ignore[no-untyped-call]
 
         # Convert each Transform to ROS TransformStamped
         for transform in self.transforms:
