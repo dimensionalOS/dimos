@@ -46,25 +46,25 @@ dependencies = [
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
     "tensorzero==2025.7.5",
-    
+
     # Web Extensions
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
-    
+
     # Agents
     "langchain>=0.3.27",
     "langchain-chroma>=0.2.5",
     "langchain-core>=0.3.72",
     "langchain-openai>=0.3.28",
-    "langchain-text-splitters>=0.3.9",  
-    
+    "langchain-text-splitters>=0.3.9",
+
     # Class Extraction
     "pydantic",
-    
+
     # Developer Specific
     "ipykernel",
-    
+
     # Unitree webrtc streaming
     "aiortc==1.9.0",
     "pycryptodome",
@@ -75,17 +75,17 @@ dependencies = [
 
     # Image
     "PyTurboJPEG==1.8.2",
-    
+
     # Audio
     "openai-whisper",
     "soundfile",
-    
+
     # Hugging Face
     "transformers[torch]==4.49.0",
-    
+
     # Vector Embedding
-    "sentence_transformers",    
-    
+    "sentence_transformers",
+
     # Perception Dependencies
     "ultralytics>=8.3.70",
     "filterpy>=1.4.5",
@@ -104,7 +104,7 @@ dependencies = [
     # Inference
     "onnx",
 
-    # Multiprocess 
+    # Multiprocess
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
@@ -163,7 +163,7 @@ cuda = [
     "mmcv>=2.1.0",
     "xformers>=0.0.20",
 
-    # Detic GPU stack 
+    # Detic GPU stack
     "mss",
     "dataclasses",
     "ftfy",
@@ -292,6 +292,3 @@ env = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-
-
-

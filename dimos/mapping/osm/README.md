@@ -28,7 +28,7 @@ You have to update it with your current location and when you stray too far from
 ```python
 curr_map = CurrentLocationMap(QwenVlModel())
 
-# Set your latest position. 
+# Set your latest position.
 curr_map.update_position(LatLon(lat=..., lon=...))
 
 # If you want to get back a GPS position of a feature (Qwen gets your current position).

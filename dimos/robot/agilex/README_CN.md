@@ -21,27 +21,27 @@ from dimos.types.robot_capabilities import RobotCapability
 
 class YourRobot:
     """您的机器人实现。"""
-    
+
     def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
         # 核心组件
         self.dimos = None
         self.modules = {}
         self.skill_library = SkillLibrary()
-        
+
         # 定义能力
         self.capabilities = robot_capabilities or [
             RobotCapability.VISION,
             RobotCapability.MANIPULATION,
         ]
-    
+
     async def start(self):
         """启动机器人模块。"""
         # 初始化 DIMOS，指定工作线程数
         self.dimos = core.start(2)  # 需要的工作线程数
-        
+
         # 部署模块
         # ... (参见模块系统章节)
-        
+
     def stop(self):
         """停止所有模块并清理资源。"""
         # 停止模块
@@ -96,7 +96,7 @@ self.camera.color_image.transport = core.LCMTransport(
     Image                         # 消息类型
 )
 self.camera.depth_image.transport = core.LCMTransport(
-    "/camera/depth_image", 
+    "/camera/depth_image",
     Image
 )
 ```
@@ -142,23 +142,23 @@ def main():
     # 1. 创建并启动机器人
     robot = YourRobot()
     asyncio.run(robot.start())
-    
+
     # 2. 设置技能
     skills = robot.get_skills()
     skills.add(YourSkill)
     skills.create_instance("YourSkill", robot=robot)
-    
+
     # 3. 设置响应式流
     agent_response_subject = rx.subject.Subject()
     agent_response_stream = agent_response_subject.pipe(ops.share())
-    
+
     # 4. 创建 Web 界面
     web_interface = RobotWebInterface(
         port=5555,
         text_streams={"agent_responses": agent_response_stream},
         audio_subject=rx.subject.Subject()
     )
-    
+
     # 5. 创建智能体
     agent = ClaudeAgent(
         dev_name="your_agent",
@@ -167,12 +167,12 @@ def main():
         system_query="您的系统提示词",
         model_name="claude-3-5-haiku-latest"
     )
-    
+
     # 6. 连接智能体响应
     agent.get_response_observable().subscribe(
         lambda x: agent_response_subject.on_next(x)
     )
-    
+
     # 7. 运行界面
     web_interface.run()
 ```
@@ -205,51 +205,51 @@ class MyRobot:
         self.camera = None
         self.manipulation = None
         self.skill_library = SkillLibrary()
-        
+
         self.capabilities = robot_capabilities or [
             RobotCapability.VISION,
             RobotCapability.MANIPULATION,
         ]
-    
+
     async def start(self):
         # 启动 DIMOS
         self.dimos = core.start(2)
-        
+
         # 启用 LCM
         pubsub.lcm.autoconf()
-        
+
         # 部署相机
         self.camera = self.dimos.deploy(
             CameraModule,
             camera_id=0,
             fps=30
         )
-        
+
         # 配置相机 LCM
         self.camera.color_image.transport = core.LCMTransport("/camera/rgb", Image)
         self.camera.depth_image.transport = core.LCMTransport("/camera/depth", Image)
         self.camera.camera_info.transport = core.LCMTransport("/camera/info", CameraInfo)
-        
+
         # 部署操作模块
         self.manipulation = self.dimos.deploy(ManipulationModule)
-        
+
         # 连接模块
         self.manipulation.rgb_image.connect(self.camera.color_image)
         self.manipulation.depth_image.connect(self.camera.depth_image)
         self.manipulation.camera_info.connect(self.camera.camera_info)
-        
+
         # 配置操作输出
         self.manipulation.viz_image.transport = core.LCMTransport("/viz/output", Image)
-        
+
         # 启动模块
         self.camera.start()
         self.manipulation.start()
-        
+
         await asyncio.sleep(2)  # 允许初始化
-    
+
     def get_skills(self):
         return self.skill_library
-    
+
     def stop(self):
         if self.manipulation:
             self.manipulation.stop()
@@ -279,29 +279,29 @@ def main():
     if not os.getenv("ANTHROPIC_API_KEY"):
         print("请设置 ANTHROPIC_API_KEY")
         return
-    
+
     # 创建机器人
     robot = MyRobot()
-    
+
     try:
         # 启动机器人
         asyncio.run(robot.start())
-        
+
         # 设置技能
         skills = robot.get_skills()
         skills.add(BasicSkill)
         skills.create_instance("BasicSkill", robot=robot)
-        
+
         # 设置流
         agent_response_subject = rx.subject.Subject()
         agent_response_stream = agent_response_subject.pipe(ops.share())
-        
+
         # 创建 Web 界面
         web_interface = RobotWebInterface(
             port=5555,
             text_streams={"agent_responses": agent_response_stream}
         )
-        
+
         # 创建智能体
         agent = ClaudeAgent(
             dev_name="my_agent",
@@ -309,17 +309,17 @@ def main():
             skills=skills,
             system_query=SYSTEM_PROMPT
         )
-        
+
         # 连接响应
         agent.get_response_observable().subscribe(
             lambda x: agent_response_subject.on_next(x)
         )
-        
+
         print("机器人就绪，访问 http://localhost:5555")
-        
+
         # 运行
         web_interface.run()
-        
+
     finally:
         robot.stop()
 
@@ -341,7 +341,7 @@ from dimos.skills import Skill, skill
 class BasicSkill(Skill):
     def __init__(self, robot):
         self.robot = robot
-    
+
     def run(self, action: str):
         # 实现技能逻辑
         return f"已执行：{action}"
@@ -382,27 +382,27 @@ from dimos.core import Module, In, Out, rpc
 class CustomModule(Module):
     # 定义输入
     input_data: In[DataType] = None
-    
-    # 定义输出  
+
+    # 定义输出
     output_data: Out[DataType] = None
-    
+
     def __init__(self, param1, param2, **kwargs):
         super().__init__(**kwargs)
         self.param1 = param1
         self.param2 = param2
-    
+
     @rpc
     def start(self):
         """启动模块处理。"""
         self.input_data.subscribe(self._process_data)
-    
+
     def _process_data(self, data):
         """处理输入数据。"""
         # 处理逻辑
         result = self.process(data)
         # 发布输出
         self.output_data.publish(result)
-    
+
     @rpc
     def stop(self):
         """停止模块。"""
@@ -429,25 +429,25 @@ class ComplexSkill(Skill):
     def __init__(self, robot, **kwargs):
         super().__init__(**kwargs)
         self.robot = robot
-    
+
     def run(self, target: str, location: Optional[str] = None):
         """执行技能逻辑。"""
         try:
             # 1. 感知阶段
             object_info = self.robot.detect_object(target)
-            
+
             # 2. 规划阶段
             if location:
                 plan = self.robot.plan_movement(object_info, location)
-            
+
             # 3. 执行阶段
             result = self.robot.execute_plan(plan)
-            
+
             return {
                 "success": True,
                 "message": f"成功移动 {target} 到 {location}"
             }
-            
+
         except Exception as e:
             return {
                 "success": False,
@@ -462,4 +462,4 @@ class ComplexSkill(Skill):
 3. **延迟加载**：仅在需要时初始化重型模块
 4. **资源池化**：重用昂贵的资源（如神经网络模型）
 
-希望本指南能帮助您快速上手 DIMOS 机器人开发！ 
+希望本指南能帮助您快速上手 DIMOS 机器人开发！

@@ -33,13 +33,22 @@ repos:
       - id: trailing-whitespace
         language: python
         types: [text]
-        stages: [pre-push]
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: [--fix=lf]
       - id: check-json
       - id: check-toml
       - id: check-yaml
       - id: pretty-format-json
         name: format json
         args: [ --autofix, --no-sort-keys ]
+
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: 3.4.1
+    hooks:
+      - id: editorconfig-checker
+        alias: ec
+        args: [-disable-max-line-length, -disable-indentation]
 
   # - repo: local
   #   hooks:
@@ -60,5 +69,3 @@ repos:
         pass_filenames: false
         entry: bin/lfs_check
         language: script
-
-        

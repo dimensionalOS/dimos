@@ -24,7 +24,7 @@ jobs:
       - name: Fix permissions
         run: |
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
-          
+
       - uses: actions/checkout@v4
       - id: filter
         uses: dorny/paths-filter@v3
@@ -132,7 +132,7 @@ jobs:
     uses: ./.github/workflows/_docker-build-template.yml
     with:
       should-run: ${{
-        needs.check-changes.result == 'success' && 
+        needs.check-changes.result == 'success' &&
         (needs.check-changes.outputs.dev == 'true' ||
          (needs.ros-python.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros == 'true')))
         }}
@@ -218,21 +218,20 @@ jobs:
   #     - name: Fix permissions
   #       run: |
   #         sudo chown -R $USER:$USER ${{ github.workspace }} || true
-  #         
+  #
   #     - uses: actions/checkout@v4
   #       with:
   #         lfs: true
-  #         
+  #
   #     - name: Configure Git LFS
   #       run: |
   #         git config --global --add safe.directory '*'
   #         git lfs install
   #         git lfs fetch
   #         git lfs checkout
-  #       
+  #
   #     - name: Run module tests
   #       env:
   #         CI: "true"
   #       run: |
   #         /entrypoint.sh bash -c "pytest -m module"
-      
