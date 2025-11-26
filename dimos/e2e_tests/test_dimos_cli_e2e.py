@@ -19,10 +19,13 @@ import pytest
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
 def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
+    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
+    lcm_spy.save_topic("/rpc/HumanInput/start/res")
+
     start_blueprint("demo-skill")
 
-    lcm_spy.wait_for_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
-    lcm_spy.wait_for_topic("/rpc/HumanInput/start/res")
+    lcm_spy.wait_for_saved_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
+    lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res")
     lcm_spy.wait_for_message_content("/agent", b"AIMessage")
 
     human_input("what is 52983 + 587237")
