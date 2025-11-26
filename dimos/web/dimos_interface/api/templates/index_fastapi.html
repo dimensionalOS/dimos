@@ -126,13 +126,13 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        
+
         .query-form {
             display: flex;
             gap: 10px;
             align-items: center;
         }
-        
+
         .query-input {
             flex-grow: 1;
             padding: 10px;
@@ -140,7 +140,7 @@
             border-radius: 5px;
             font-size: 16px;
         }
-        
+
         .query-button {
             padding: 10px 20px;
             background-color: #28a745;
@@ -151,11 +151,11 @@
             font-size: 16px;
             transition: background-color 0.3s;
         }
-        
+
         .query-button:hover {
             background-color: #218838;
         }
-        
+
         /* Voice button styles */
         .voice-button {
             width: 50px;
@@ -173,17 +173,17 @@
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
             position: relative;
         }
-        
+
         .voice-button:hover {
             transform: scale(1.1);
             box-shadow: 0 4px 8px rgba(0,0,0,0.3);
         }
-        
+
         .voice-button.recording {
             background-color: #ff0000;
             animation: pulse 1.5s infinite;
         }
-        
+
         .voice-button.recording::after {
             content: '';
             position: absolute;
@@ -195,13 +195,13 @@
             border-radius: 50%;
             animation: ripple 1.5s infinite;
         }
-        
+
         @keyframes pulse {
             0% { transform: scale(1); }
             50% { transform: scale(1.05); }
             100% { transform: scale(1); }
         }
-        
+
         @keyframes ripple {
             0% {
                 transform: scale(1);
@@ -212,7 +212,7 @@
                 opacity: 0;
             }
         }
-        
+
         .voice-status {
             position: absolute;
             top: -25px;
@@ -226,34 +226,34 @@
             white-space: nowrap;
             display: none;
         }
-        
+
         .voice-button.recording .voice-status {
             display: block;
         }
-        
+
         .query-response {
             margin-top: 15px;
             padding: 10px;
             border-radius: 5px;
             display: none;
         }
-        
+
         .success {
             background-color: #d4edda;
             color: #155724;
         }
-        
+
         .error {
             background-color: #f8d7da;
             color: #721c24;
         }
 
-                
+
         .text-streams-container {
             max-width: 800px;
             margin: 30px auto;
         }
-        
+
         .text-stream-container {
             background: white;
             padding: 15px;
@@ -261,12 +261,12 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        
+
         .text-stream-container h3 {
             margin-top: 0;
             color: #444;
         }
-        
+
         .text-messages {
             height: 200px;
             overflow-y: auto;
@@ -276,7 +276,7 @@
             margin-bottom: 10px;
             background-color: #f9f9f9;
         }
-        
+
         .text-message {
             padding: 8px;
             margin-bottom: 8px;
@@ -288,7 +288,7 @@
 </head>
 <body>
     <h1>Live Video Streams</h1>
-    
+
     <div class="query-container">
         <h2>Ask a Question</h2>
         <form id="queryForm" class="query-form">
@@ -303,7 +303,7 @@
         </form>
         <div id="queryResponse" class="query-response"></div>
     </div>
-    
+
     <!-- Add text streams section -->
     {% if text_stream_keys %}
     <div class="text-streams-container">
@@ -377,28 +377,28 @@
                     if (!mediaRecorder) {
                         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                         mediaRecorder = new MediaRecorder(stream);
-                        
+
                         mediaRecorder.ondataavailable = e => chunks.push(e.data);
-                        
+
                         mediaRecorder.onstop = async () => {
                             const blob = new Blob(chunks, { type: 'audio/webm' });
                             chunks = [];
-                            
+
                             // Show uploading status
                             queryResponse.textContent = 'Processing voice command...';
                             queryResponse.className = 'query-response';
                             queryResponse.style.display = 'block';
-                            
+
                             const formData = new FormData();
                             formData.append('file', blob, 'recording.webm');
-                            
+
                             try {
-                                const res = await fetch('/upload_audio', { 
-                                    method: 'POST', 
-                                    body: formData 
+                                const res = await fetch('/upload_audio', {
+                                    method: 'POST',
+                                    body: formData
                                 });
                                 const json = await res.json();
-                                
+
                                 if (json.success) {
                                     queryResponse.textContent = 'Voice command received!';
                                     queryResponse.className = 'query-response success';
@@ -415,7 +415,7 @@
                             }
                         };
                     }
-                    
+
                     mediaRecorder.start();
                     voiceBtn.classList.add('recording');
                 } catch (err) {
@@ -428,24 +428,24 @@
         // Handle query form submission
         document.getElementById('queryForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const queryInput = document.getElementById('queryInput');
             const queryResponse = document.getElementById('queryResponse');
             const query = queryInput.value.trim();
-            
+
             if (!query) return;
-            
+
             try {
                 const formData = new FormData();
                 formData.append('query', query);
-                
+
                 const response = await fetch('/submit_query', {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 let result;
-                
+
                 // Better error handling for non-200 responses
                 if (!response.ok) {
                     try {
@@ -463,14 +463,14 @@
                 } else {
                     result = await response.json();
                 }
-                
+
                 queryResponse.textContent = result.message;
                 queryResponse.className = 'query-response ' + (result.success ? 'success' : 'error');
                 queryResponse.style.display = 'block';
-                
+
                 if (result.success) {
                     queryInput.value = '';
-                    
+
                     // Hide the success message after 3 seconds
                     setTimeout(() => {
                         queryResponse.style.display = 'none';
@@ -483,20 +483,20 @@
             }
         });
 
-    
+
         // Text stream event sources
         const textEventSources = {};
-        
+
         function connectTextStream(key) {
             // Close if already open
             if (textEventSources[key]) {
                 textEventSources[key].close();
             }
-            
+
             // Connect to the server-sent events endpoint
             const eventSource = new EventSource(`/text_stream/${key}`);
             textEventSources[key] = eventSource;
-            
+
             // Handle incoming messages
             eventSource.addEventListener('message', function(event) {
                 const messagesContainer = document.getElementById(`text_messages_${key}`);
@@ -504,11 +504,11 @@
                 messageElement.className = 'text-message';
                 messageElement.textContent = event.data;
                 messagesContainer.appendChild(messageElement);
-                
+
                 // Scroll to the bottom to show latest message
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             });
-            
+
             // Handle connection errors
             eventSource.onerror = function() {
                 console.error(`Error in text stream ${key}`);
@@ -516,26 +516,26 @@
                 delete textEventSources[key];
             };
         }
-        
+
         function disconnectTextStream(key) {
             if (textEventSources[key]) {
                 textEventSources[key].close();
                 delete textEventSources[key];
             }
         }
-        
+
         function clearTextStream(key) {
             const messagesContainer = document.getElementById(`text_messages_${key}`);
             messagesContainer.innerHTML = '';
         }
-        
+
         // Auto-connect text streams on page load
         window.addEventListener('load', function() {
             {% for key in text_stream_keys %}
                 connectTextStream('{{ key }}');
             {% endfor %}
         });
-        
+
     </script>
 </body>
 </html>
