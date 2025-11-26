@@ -38,6 +38,5 @@ sudo systemctl restart docker
 # Verify NVIDIA Container Toolkit
 sudo docker run --rm --runtime=nvidia --gpus all ubuntu nvidia-smi
 
-# Full isaac sim container 
+# Full isaac sim container
 sudo docker pull nvcr.io/nvidia/isaac-sim:4.2.0
-

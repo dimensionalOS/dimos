@@ -22,7 +22,7 @@ Install the *Dev Containers* plug-in for VS Code, Cursor, or your IDE of choice 
 
 ### Shell only quick start
 
-Terminal within your IDE should use devcontainer transparently given you installed the plugin, but in case you want to run our shell without an IDE, you can use `./bin/dev` 
+Terminal within your IDE should use devcontainer transparently given you installed the plugin, but in case you want to run our shell without an IDE, you can use `./bin/dev`
 (it depends on npm/node being installed)
 
 ```sh
@@ -37,16 +37,16 @@ found 0 vulnerabilities
 [5299 ms] f0355b6574d9bd277d6eb613e1dc32e3bc18e7493e5b170e335d0e403578bcdb
 {"outcome":"success","containerId":"f0355b6574d9bd277d6eb613e1dc32e3bc18e7493e5b170e335d0e403578bcdb","remoteUser":"root","remoteWorkspaceFolder":"/workspaces/dimos"}
 
-  ██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗     
-  ██╔══██╗██║████╗ ████║██╔════╝████╗  ██║██╔════╝██║██╔═══██╗████╗  ██║██╔══██╗██║     
-  ██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║     
-  ██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║     
+  ██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗
+  ██╔══██╗██║████╗ ████║██╔════╝████╗  ██║██╔════╝██║██╔═══██╗████╗  ██║██╔══██╗██║
+  ██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║
+  ██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║
   ██████╔╝██║██║ ╚═╝ ██║███████╗██║ ╚████║███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗
   ╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝
 
   v_unknown:unknown | Wed May 28 09:23:33 PM UTC 2025
 
-root@dimos:/workspaces/dimos # 
+root@dimos:/workspaces/dimos #
 ```
 
 The script will:
@@ -58,7 +58,7 @@ You’ll land in the workspace as **root** with all project tooling available.
 
 ## Pre-Commit Hooks
 
-We use [pre-commit](https://pre-commit.com) (config in `.pre-commit-config.yaml`) to enforce formatting, licence headers, EOLs, LFS checks, etc. Hooks run in **milliseconds**. 
+We use [pre-commit](https://pre-commit.com) (config in `.pre-commit-config.yaml`) to enforce formatting, licence headers, EOLs, LFS checks, etc. Hooks run in **milliseconds**.
 Hooks also run in CI; any auto-fixes are committed back to your PR, so local installation is optional — but gives faster feedback.
 
 ```sh
@@ -74,11 +74,11 @@ format json..............................................................Passed
 LFS data.................................................................Passed
 
 ```
-Given your editor uses ruff via devcontainers (which it should) actual auto-commit hook won't ever reformat your code - IDE will have already done this. 
+Given your editor uses ruff via devcontainers (which it should) actual auto-commit hook won't ever reformat your code - IDE will have already done this.
 
 ### Running hooks manually
 
-Given your editor uses git via devcontainers (which it should) auto-commit hooks will run automatically, this is in case you want to run them manually. 
+Given your editor uses git via devcontainers (which it should) auto-commit hooks will run automatically, this is in case you want to run them manually.
 
 Inside the dev container (Your IDE will likely run this transparently for each commit if using devcontainer plugin):
 
@@ -140,7 +140,7 @@ Classic development run within a subtree:
 
 root@dimos:/workspaces/dimos # cd dimos/robot/unitree_webrtc/
 root@dimos:/workspaces/dimos/dimos/robot/unitree_webrtc # pytest
-collected 27 items / 22 deselected / 5 selected                                                                                                                                               
+collected 27 items / 22 deselected / 5 selected
 
 type/test_map.py::test_robot_mapping PASSED
 type/test_timeseries.py::test_repr PASSED
@@ -155,13 +155,13 @@ Showing prints:
 ```sh
 root@dimos:/workspaces/dimos/dimos/robot/unitree_webrtc/type # pytest -s test_odometry.py
 test_odometry.py::test_odometry_conversion_and_count Odom ts(2025-05-30 13:52:03) pos(→ Vector Vector([0.432199 0.108042 0.316589])), rot(↑ Vector Vector([ 7.7200000e-04 -9.1280000e-03  3.006
-8621e+00])) yaw(172.3°)                                                                                                                                                                        
-Odom ts(2025-05-30 13:52:03) pos(→ Vector Vector([0.433629 0.105965 0.316143])), rot(↑ Vector Vector([ 0.003814   -0.006436    2.99591235])) yaw(171.7°)             
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.434459 0.104739 0.314794])), rot(↗ Vector Vector([ 0.005558   -0.004183    3.00068456])) yaw(171.9°)  
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.435621 0.101699 0.315852])), rot(↑ Vector Vector([ 0.005391   -0.006002    3.00246893])) yaw(172.0°)  
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.436457 0.09857  0.315254])), rot(↑ Vector Vector([ 0.003358   -0.006916    3.00347172])) yaw(172.1°)             
+8621e+00])) yaw(172.3°)
+Odom ts(2025-05-30 13:52:03) pos(→ Vector Vector([0.433629 0.105965 0.316143])), rot(↑ Vector Vector([ 0.003814   -0.006436    2.99591235])) yaw(171.7°)
+Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.434459 0.104739 0.314794])), rot(↗ Vector Vector([ 0.005558   -0.004183    3.00068456])) yaw(171.9°)
+Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.435621 0.101699 0.315852])), rot(↑ Vector Vector([ 0.005391   -0.006002    3.00246893])) yaw(172.0°)
+Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.436457 0.09857  0.315254])), rot(↑ Vector Vector([ 0.003358   -0.006916    3.00347172])) yaw(172.1°)
 Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.435535 0.097022 0.314399])), rot(↑ Vector Vector([ 1.88300000e-03 -8.17800000e-03  3.00573432e+00])) yaw(172.2°)
-Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.433739 0.097553 0.313479])), rot(↑ Vector Vector([ 8.10000000e-05 -8.71700000e-03  3.00729616e+00])) yaw(172.3°) 
+Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.433739 0.097553 0.313479])), rot(↑ Vector Vector([ 8.10000000e-05 -8.71700000e-03  3.00729616e+00])) yaw(172.3°)
 Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.430924 0.09859  0.31322 ])), rot(↑ Vector Vector([ 1.84000000e-04 -9.68700000e-03  3.00945623e+00])) yaw(172.4°)
 ... etc
 ```
@@ -178,5 +178,3 @@ Odom ts(2025-05-30 13:52:04) pos(→ Vector Vector([0.430924 0.09859  0.31322 ])
 | Filter tests by name        | `pytest -k "<pattern>"`      |
 | Enable stdout in tests      | `pytest -s`                  |
 | Run tagged tests            | `pytest -m <tag>`            |
-
-
