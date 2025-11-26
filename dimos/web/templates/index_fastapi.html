@@ -125,12 +125,12 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        
+
         .query-form {
             display: flex;
             gap: 10px;
         }
-        
+
         .query-input {
             flex-grow: 1;
             padding: 10px;
@@ -138,7 +138,7 @@
             border-radius: 5px;
             font-size: 16px;
         }
-        
+
         .query-button {
             padding: 10px 20px;
             background-color: #28a745;
@@ -149,33 +149,33 @@
             font-size: 16px;
             transition: background-color 0.3s;
         }
-        
+
         .query-button:hover {
             background-color: #218838;
         }
-        
+
         .query-response {
             margin-top: 15px;
             padding: 10px;
             border-radius: 5px;
             display: none;
         }
-        
+
         .success {
             background-color: #d4edda;
             color: #155724;
         }
-        
+
         .error {
             background-color: #f8d7da;
             color: #721c24;
         }
-        
+
         .text-streams-container {
             max-width: 800px;
             margin: 30px auto;
         }
-        
+
         .text-stream-container {
             background: white;
             padding: 15px;
@@ -183,12 +183,12 @@
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
-        
+
         .text-stream-container h3 {
             margin-top: 0;
             color: #444;
         }
-        
+
         .text-messages {
             height: 200px;
             overflow-y: auto;
@@ -198,7 +198,7 @@
             margin-bottom: 10px;
             background-color: #f9f9f9;
         }
-        
+
         .text-message {
             padding: 8px;
             margin-bottom: 8px;
@@ -210,7 +210,7 @@
 </head>
 <body>
     <h1>Live Video Streams</h1>
-    
+
     <div class="query-container">
         <h2>Ask a Question</h2>
         <form id="queryForm" class="query-form">
@@ -219,7 +219,7 @@
         </form>
         <div id="queryResponse" class="query-response"></div>
     </div>
-    
+
     <!-- Add text streams section -->
     {% if text_stream_keys %}
     <div class="text-streams-container">
@@ -237,7 +237,7 @@
         {% endfor %}
     </div>
     {% endif %}
-    
+
     <div class="stream-grid">
         {% for key in stream_keys %}
             <div class="stream-container">
@@ -278,24 +278,24 @@
         // Handle query form submission
         document.getElementById('queryForm').addEventListener('submit', async function(e) {
             e.preventDefault();
-            
+
             const queryInput = document.getElementById('queryInput');
             const queryResponse = document.getElementById('queryResponse');
             const query = queryInput.value.trim();
-            
+
             if (!query) return;
-            
+
             try {
                 const formData = new FormData();
                 formData.append('query', query);
-                
+
                 const response = await fetch('/submit_query', {
                     method: 'POST',
                     body: formData
                 });
-                
+
                 let result;
-                
+
                 // Better error handling for non-200 responses
                 if (!response.ok) {
                     try {
@@ -313,14 +313,14 @@
                 } else {
                     result = await response.json();
                 }
-                
+
                 queryResponse.textContent = result.message;
                 queryResponse.className = 'query-response ' + (result.success ? 'success' : 'error');
                 queryResponse.style.display = 'block';
-                
+
                 if (result.success) {
                     queryInput.value = '';
-                    
+
                     // Hide the success message after 3 seconds
                     setTimeout(() => {
                         queryResponse.style.display = 'none';
@@ -335,17 +335,17 @@
 
         // Text stream event sources
         const textEventSources = {};
-        
+
         function connectTextStream(key) {
             // Close if already open
             if (textEventSources[key]) {
                 textEventSources[key].close();
             }
-            
+
             // Connect to the server-sent events endpoint
             const eventSource = new EventSource(`/text_stream/${key}`);
             textEventSources[key] = eventSource;
-            
+
             // Handle incoming messages
             eventSource.addEventListener('message', function(event) {
                 const messagesContainer = document.getElementById(`text_messages_${key}`);
@@ -353,11 +353,11 @@
                 messageElement.className = 'text-message';
                 messageElement.textContent = event.data;
                 messagesContainer.appendChild(messageElement);
-                
+
                 // Scroll to the bottom to show latest message
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             });
-            
+
             // Handle connection errors
             eventSource.onerror = function() {
                 console.error(`Error in text stream ${key}`);
@@ -365,19 +365,19 @@
                 delete textEventSources[key];
             };
         }
-        
+
         function disconnectTextStream(key) {
             if (textEventSources[key]) {
                 textEventSources[key].close();
                 delete textEventSources[key];
             }
         }
-        
+
         function clearTextStream(key) {
             const messagesContainer = document.getElementById(`text_messages_${key}`);
             messagesContainer.innerHTML = '';
         }
-        
+
         // Auto-connect text streams on page load
         window.addEventListener('load', function() {
             {% for key in text_stream_keys %}

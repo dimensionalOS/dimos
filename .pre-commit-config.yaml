@@ -69,5 +69,3 @@ repos:
         pass_filenames: false
         entry: bin/lfs_check
         language: script
-
-
