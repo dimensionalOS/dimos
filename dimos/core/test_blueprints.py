@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
+
 from dimos.core.blueprints import (
     ModuleBlueprint,
     ModuleBlueprintSet,
@@ -183,6 +185,81 @@ def test_build_happy_path() -> None:
 
     finally:
         coordinator.stop()
+
+
+def test_name_conflicts_are_reported() -> None:
+    class ModuleA(Module):
+        shared_data: Out[Data1] = None
+
+    class ModuleB(Module):
+        shared_data: In[Data2] = None
+
+    blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
+
+    try:
+        blueprint_set._verify_no_name_conflicts()
+        pytest.fail("Expected ValueError to be raised")
+    except ValueError as e:
+        error_message = str(e)
+        assert "Blueprint cannot start because there are conflicting connections" in error_message
+        assert "'shared_data' has conflicting types" in error_message
+        assert "Data1 in ModuleA" in error_message
+        assert "Data2 in ModuleB" in error_message
+
+
+def test_multiple_name_conflicts_are_reported() -> None:
+    class Module1(Module):
+        sensor_data: Out[Data1] = None
+        control_signal: Out[Data2] = None
+
+    class Module2(Module):
+        sensor_data: In[Data2] = None
+        control_signal: In[Data3] = None
+
+    blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint())
+
+    try:
+        blueprint_set._verify_no_name_conflicts()
+        pytest.fail("Expected ValueError to be raised")
+    except ValueError as e:
+        error_message = str(e)
+        assert "Blueprint cannot start because there are conflicting connections" in error_message
+        assert "'sensor_data' has conflicting types" in error_message
+        assert "'control_signal' has conflicting types" in error_message
+
+
+def test_that_remapping_can_resolve_conflicts() -> None:
+    class Module1(Module):
+        data: Out[Data1] = None
+
+    class Module2(Module):
+        data: Out[Data2] = None  # Would conflict with Module1.data
+
+    class Module3(Module):
+        data1: In[Data1] = None
+        data2: In[Data2] = None
+
+    # Without remapping, should raise conflict error
+    blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
+
+    try:
+        blueprint_set._verify_no_name_conflicts()
+        pytest.fail("Expected ValueError due to conflict")
+    except ValueError as e:
+        assert "'data' has conflicting types" in str(e)
+
+    # With remapping to resolve the conflict
+    blueprint_set_remapped = autoconnect(
+        Module1.blueprint(), Module2.blueprint(), Module3.blueprint()
+    ).remappings(
+        [
+            (Module1, "data", "data1"),
+            (Module2, "data", "data2"),
+        ]
+    )
+
+    # Should not raise any exception after remapping
+    blueprint_set_remapped._verify_no_name_conflicts()
 
 
 def test_remapping() -> None:

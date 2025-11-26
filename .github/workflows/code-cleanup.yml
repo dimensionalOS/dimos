@@ -13,20 +13,20 @@ jobs:
     - name: Fix permissions
       run: |
         sudo chown -R $USER:$USER ${{ github.workspace }} || true
-        
+
     - uses: actions/checkout@v3
     - uses: actions/setup-python@v3
     - name: Run pre-commit
       id: pre-commit-first
       uses: pre-commit/action@v3.0.1
       continue-on-error: true
-      
+
     - name: Re-run pre-commit if failed initially
       id: pre-commit-retry
       if: steps.pre-commit-first.outcome == 'failure'
       uses: pre-commit/action@v3.0.1
       continue-on-error: false
-      
+
     - name: Commit code changes
       uses: stefanzweifel/git-auto-commit-action@v5
       with:

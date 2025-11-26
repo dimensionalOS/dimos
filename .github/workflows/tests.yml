@@ -28,14 +28,14 @@ jobs:
   #       if: ${{ !inputs.should-run }}
   #       run: |
   #         exit 0
-          
+
   #     - name: Free disk space
   #       run: |
   #         sudo rm -rf /opt/ghc
   #         sudo rm -rf /usr/share/dotnet
   #         sudo rm -rf /usr/local/share/boost
   #         sudo rm -rf /usr/local/lib/android
-          
+
   run-tests:
     runs-on: [self-hosted, Linux]
     container:
@@ -47,17 +47,16 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-          
+
       - name: Fix permissions
         run: |
           git config --global --add safe.directory '*'
-          
+
       - name: Run tests
         run: |
           /entrypoint.sh bash -c "${{ inputs.cmd }}"
-          
+
       - name: check disk space
         if: failure()
         run: |
           df -h
-        

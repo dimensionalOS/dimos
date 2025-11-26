@@ -13,7 +13,7 @@ from dimos.msgs.geometry_msgs import Vector3
 
 class MyModule(Module):
     # Declare inputs/outputs as class attributes initialized to None
-    data_in: In[Vector3] = None  
+    data_in: In[Vector3] = None
     data_out: Out[Vector3] = None
 
     def __init__():
@@ -60,7 +60,7 @@ stream.subscribe(lambda msg: print(f"Received: {msg}"))
 # Start modules to begin processing
 module.start()  # Calls the @rpc start() method if defined
 
-# Inspect module I/O configuration  
+# Inspect module I/O configuration
 print(module.io().result())  # Shows inputs, outputs, and RPC methods
 
 # Clean shutdown
@@ -107,7 +107,7 @@ pubsub.lcm.autoconf()
 
 This architecture enables building complex robotic systems as composable, distributed modules that communicate efficiently via streams and RPC, scaling from single machines to clusters.
 
-# Dimensional Install 
+# Dimensional Install
 ## Python Installation (Ubuntu 22.04)
 
 ```bash
@@ -140,8 +140,8 @@ pip install .[cuda,dev]
 cp default.env .env
 ```
 
-### Test install 
-```bash 
+### Test install
+```bash
 # Run standard tests
 pytest -s dimos/
 
@@ -163,5 +163,3 @@ export ROBOT_IP=<your_robot_ip>
 # Run the multiprocess Unitree Go2 example
 python dimos/robot/unitree_webrtc/multiprocess/unitree_go2.py
 ```
-
-
