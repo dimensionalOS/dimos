@@ -269,3 +269,40 @@ def create_masked_point_cloud(color_img, depth_img, mask, intrinsic, depth_scale
     
     return pcd
 
+def segment_and_remove_plane(pcd, distance_threshold=0.02, ransac_n=3, num_iterations=1000):
+    """
+    Segment the dominant plane from a point cloud using RANSAC and remove it.
+    Often used to remove table tops, floors, walls, or other planar surfaces.
+    
+    Args:
+        pcd: Open3D point cloud object
+        distance_threshold: Maximum distance a point can be from the plane to be considered an inlier (in meters)
+        ransac_n: Number of points to sample for each RANSAC iteration
+        num_iterations: Number of RANSAC iterations
+    
+    Returns:
+        Open3D point cloud with the dominant plane removed
+    """
+    # Make a copy of the input point cloud to avoid modifying the original
+    pcd_filtered = o3d.geometry.PointCloud()
+    pcd_filtered.points = o3d.utility.Vector3dVector(np.asarray(pcd.points))
+    if pcd.has_colors():
+        pcd_filtered.colors = o3d.utility.Vector3dVector(np.asarray(pcd.colors))
+    if pcd.has_normals():
+        pcd_filtered.normals = o3d.utility.Vector3dVector(np.asarray(pcd.normals))
+    
+    # Check if point cloud has enough points
+    if len(pcd_filtered.points) < ransac_n:
+        return pcd_filtered
+    
+    # Run RANSAC to find the largest plane
+    _, inliers = pcd_filtered.segment_plane(
+        distance_threshold=distance_threshold,
+        ransac_n=ransac_n,
+        num_iterations=num_iterations
+    )
+    
+    # Remove the dominant plane (regardless of orientation)
+    pcd_without_dominant_plane = pcd_filtered.select_by_index(inliers, invert=True)
+    return pcd_without_dominant_plane
+
