@@ -46,6 +46,10 @@ MARIMO_NOTEBOOKS = [
         "source": "docs/tutorials/skill_with_agent/tutorial.py",
         "output": "docs/tutorials/skill_with_agent/tutorial_rendered.html",
     },
+    {
+        "source": "docs/tutorials/multi_agent/tutorial.py",
+        "output": "docs/tutorials/multi_agent/tutorial_rendered.html",
+    },
 ]
 
 
