@@ -17,19 +17,19 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, BinaryIO
 
-from dimos_lcm.geometry_msgs import (
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
     Point as LCMPoint,
     Pose as LCMPose,
     PoseStamped as LCMPoseStamped,
     Quaternion as LCMQuaternion,
 )
-from dimos_lcm.nav_msgs import Path as LCMPath
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
+from dimos_lcm.nav_msgs import Path as LCMPath  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime  # type: ignore[import-untyped]
 
 try:
-    from nav_msgs.msg import Path as ROSPath
+    from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
 except ImportError:
-    ROSPath = None
+    ROSPath = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.types.timestamped import Timestamped
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
@@ -49,7 +49,7 @@ class Path(Timestamped):
     frame_id: str
     poses: list[PoseStamped]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         ts: float = 0.0,
         frame_id: str = "world",
@@ -116,16 +116,16 @@ class Path(Timestamped):
             lcm_pose.header.stamp = LCMTime()
 
             # Set the header with pose timestamp but path's frame_id
-            [lcm_pose.header.stamp.sec, lcm_pose.header.stamp.nsec] = sec_nsec(pose.ts)
+            [lcm_pose.header.stamp.sec, lcm_pose.header.stamp.nsec] = sec_nsec(pose.ts)  # type: ignore[no-untyped-call]
             lcm_pose.header.frame_id = self.frame_id  # All poses use path's frame_id
             lcm_poses.append(lcm_pose)
         lcm_msg.poses = lcm_poses
 
         # Set header with path's own timestamp
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
 
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> Path:
@@ -167,7 +167,7 @@ class Path(Timestamped):
         """Allow indexing and slicing of poses."""
         return self.poses[index]
 
-    def __iter__(self) -> Iterator:
+    def __iter__(self) -> Iterator:  # type: ignore[type-arg]
         """Allow iteration over poses."""
         return iter(self.poses)
 
@@ -219,7 +219,7 @@ class Path(Timestamped):
             ROS Path message
         """
 
-        ros_msg = ROSPath()
+        ros_msg = ROSPath()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id

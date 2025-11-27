@@ -16,7 +16,7 @@ import numpy as np
 import torch
 
 
-def find_medoid_and_closest_points(points, num_closest: int=5):
+def find_medoid_and_closest_points(points, num_closest: int=5):  # type: ignore[no-untyped-def]
     """
     Find the medoid from a collection of points and the closest points to the medoid.
 
@@ -37,11 +37,11 @@ def find_medoid_and_closest_points(points, num_closest: int=5):
     return medoid, points[closest_indices]
 
 
-def sample_points_from_heatmap(heatmap, original_size: int, num_points: int=5, percentile: float=0.95):
+def sample_points_from_heatmap(heatmap, original_size: int, num_points: int=5, percentile: float=0.95):  # type: ignore[no-untyped-def]
     """
     Sample points from the given heatmap, focusing on areas with higher values.
     """
-    width, height = original_size
+    width, height = original_size  # type: ignore[misc]
     threshold = np.percentile(heatmap.numpy(), percentile)
     masked_heatmap = torch.where(heatmap > threshold, heatmap, torch.tensor(0.0))
     probabilities = torch.softmax(masked_heatmap.flatten(), dim=0)
@@ -57,13 +57,13 @@ def sample_points_from_heatmap(heatmap, original_size: int, num_points: int=5, p
     pts = []
     for pt in sampled_coords.tolist():
         x, y = pt
-        x = height * x / w
-        y = width * y / w
+        x = height * x / w  # type: ignore[has-type]
+        y = width * y / w  # type: ignore[has-type]
         pts.append([y, x])
     return pts
 
 
-def apply_mask_to_image(image, mask):
+def apply_mask_to_image(image, mask):  # type: ignore[no-untyped-def]
     """
     Apply a binary mask to an image. The mask should be a binary array where the regions to keep are True.
     """

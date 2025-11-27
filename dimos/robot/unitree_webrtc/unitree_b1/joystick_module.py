@@ -37,10 +37,10 @@ class JoystickModule(Module):
     This allows testing the same interface that navigation will use.
     """
 
-    twist_out: Out[TwistStamped] = None  # Timestamped velocity commands
-    mode_out: Out[Int32] = None  # Mode changes
+    twist_out: Out[TwistStamped] = None  # type: ignore[assignment]  # Timestamped velocity commands
+    mode_out: Out[Int32] = None  # type: ignore[assignment]  # Mode changes
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
@@ -58,7 +58,7 @@ class JoystickModule(Module):
             print("ERROR: pygame not installed. Install with: pip install pygame")
             return False
 
-        self.keys_held = set()
+        self.keys_held = set()  # type: ignore[var-annotated]
         self.pygame_ready = True
         self.running = True
 
@@ -83,7 +83,7 @@ class JoystickModule(Module):
             linear=stop_twist.linear,
             angular=stop_twist.angular,
         )
-        self.twist_out.publish(stop_twist_stamped)
+        self.twist_out.publish(stop_twist_stamped)  # type: ignore[no-untyped-call]
 
         self._thread.join(2)
 
@@ -120,19 +120,19 @@ class JoystickModule(Module):
                         self.current_mode = 0
                         mode_msg = Int32()
                         mode_msg.data = 0
-                        self.mode_out.publish(mode_msg)
+                        self.mode_out.publish(mode_msg)  # type: ignore[no-untyped-call]
                         print("Mode: IDLE")
                     elif event.key == pygame.K_1:
                         self.current_mode = 1
                         mode_msg = Int32()
                         mode_msg.data = 1
-                        self.mode_out.publish(mode_msg)
+                        self.mode_out.publish(mode_msg)  # type: ignore[no-untyped-call]
                         print("Mode: STAND")
                     elif event.key == pygame.K_2:
                         self.current_mode = 2
                         mode_msg = Int32()
                         mode_msg.data = 2
-                        self.mode_out.publish(mode_msg)
+                        self.mode_out.publish(mode_msg)  # type: ignore[no-untyped-call]
                         print("Mode: WALK")
                     elif event.key == pygame.K_SPACE or event.key == pygame.K_q:
                         self.keys_held.clear()
@@ -140,7 +140,7 @@ class JoystickModule(Module):
                         self.current_mode = 0
                         mode_msg = Int32()
                         mode_msg.data = 0
-                        self.mode_out.publish(mode_msg)
+                        self.mode_out.publish(mode_msg)  # type: ignore[no-untyped-call]
                         # Also send zero twist
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
@@ -151,7 +151,7 @@ class JoystickModule(Module):
                             linear=stop_twist.linear,
                             angular=stop_twist.angular,
                         )
-                        self.twist_out.publish(stop_twist_stamped)
+                        self.twist_out.publish(stop_twist_stamped)  # type: ignore[no-untyped-call]
                         print("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC still quits for development convenience
@@ -213,7 +213,7 @@ class JoystickModule(Module):
             twist_stamped = TwistStamped(
                 ts=time.time(), frame_id="base_link", linear=twist.linear, angular=twist.angular
             )
-            self.twist_out.publish(twist_stamped)
+            self.twist_out.publish(twist_stamped)  # type: ignore[no-untyped-call]
 
             # Update pygame display
             self._update_display(twist)
@@ -224,7 +224,7 @@ class JoystickModule(Module):
         pygame.quit()
         print("JoystickModule stopped")
 
-    def _update_display(self, twist) -> None:
+    def _update_display(self, twist) -> None:  # type: ignore[no-untyped-def]
         """Update pygame window with current status."""
         import pygame
 

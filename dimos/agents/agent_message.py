@@ -47,7 +47,7 @@ class AgentMessage:
         if isinstance(image, Image):
             # Convert to AgentImage
             agent_image = AgentImage(
-                base64_jpeg=image.agent_encode(),
+                base64_jpeg=image.agent_encode(),  # type: ignore[arg-type]
                 width=image.width,
                 height=image.height,
                 metadata={"format": image.format.value, "frame_id": image.frame_id},

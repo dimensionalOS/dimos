@@ -115,7 +115,7 @@ LIDAR_INTERFACE=eth0              # Your ethernet interface (find with: ip link 
 LIDAR_COMPUTER_IP=192.168.1.5    # Computer IP on the lidar subnet
 LIDAR_GATEWAY=192.168.1.1        # Gateway IP address for the lidar subnet
 LIDAR_IP=192.168.1.116           # Full IP address of your Mid-360 lidar
-ROBOT_IP=                        # IP addres of robot on local network (if using WebRTC connection) 
+ROBOT_IP=                        # IP addres of robot on local network (if using WebRTC connection)
 
 # Motor Controller
 MOTOR_SERIAL_DEVICE=/dev/ttyACM0  # Serial device (check with: ls /dev/ttyACM*)
@@ -141,18 +141,17 @@ In the container to run the full navigation stack you must run both the dimensio
 
 #### Dimensional Python + Connection Module
 
-For the Unitree G1 
+For the Unitree G1
 ```bash
 dimos run unitree-g1
-ROBOT_IP=XX.X.X.XXX dimos run unitree-g1 # If ROBOT_IP env variable is not set in .env  
+ROBOT_IP=XX.X.X.XXX dimos run unitree-g1 # If ROBOT_IP env variable is not set in .env
 ```
 
-#### Navigation Stack 
+#### Navigation Stack
 
 ```bash
 cd /ros2_ws/src/ros-navigation-autonomy-stack
 ./system_real_robot_with_route_planner.sh
 ```
 
-Now you can place goal points/poses in RVIZ by clicking the "Goalpoint" button. The robot will navigate to the point, running both local and global planners for dynamic obstacle avoidance. 
-
+Now you can place goal points/poses in RVIZ by clicking the "Goalpoint" button. The robot will navigate to the point, running both local and global planners for dynamic obstacle avoidance.

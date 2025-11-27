@@ -182,14 +182,14 @@ export const commands: Record<string, (args: string[]) => Promise<CommandResult>
   },
   banner: () => `
 
-██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗     
-██╔══██╗██║████╗ ████║██╔════╝████╗  ██║██╔════╝██║██╔═══██╗████╗  ██║██╔══██╗██║     
-██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║     
-██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║     
+██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗
+██╔══██╗██║████╗ ████║██╔════╝████╗  ██║██╔════╝██║██╔═══██╗████╗  ██║██╔══██╗██║
+██║  ██║██║██╔████╔██║█████╗  ██╔██╗ ██║███████╗██║██║   ██║██╔██╗ ██║███████║██║
+██║  ██║██║██║╚██╔╝██║██╔══╝  ██║╚██╗██║╚════██║██║██║   ██║██║╚██╗██║██╔══██║██║
 ██████╔╝██║██║ ╚═╝ ██║███████╗██║ ╚████║███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗
 ╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝v${packageJson.version}
 
-Powering generalist robotics 
+Powering generalist robotics
 
 Type 'help' to see list of available commands.
 `,
@@ -272,7 +272,7 @@ Type 'help' to see list of available commands.
     }
 
     const jointPositions = args.join(' ');
-    
+
     try {
       const jointPositionsArray = jointPositions.split(',').map(x => parseFloat(x.trim()));
       const response = await fetch(`${state.connection.url}/control?t=${Date.now()}`, {
@@ -285,7 +285,7 @@ Type 'help' to see list of available commands.
       });
 
       const data = await response.json();
-      
+
       if (response.ok) {
         return `${data.message} ✓`;
       } else {
@@ -302,7 +302,7 @@ Type 'help' to see list of available commands.
     }
 
     const subcommand = args[0].toLowerCase();
-    
+
     if (subcommand === 'status') {
       try {
         const response = await fetch('/unitree/status');
@@ -331,14 +331,14 @@ Type 'help' to see list of available commands.
       hideStream();
       return 'Stopped Unitree video stream.';
     }
-    
+
     if (subcommand === 'command') {
       if (args.length < 2) {
         return 'Usage: unitree command <text> - Send a command to the Unitree API';
       }
-      
+
       const commandText = args.slice(1).join(' ');
-      
+
       try {
         // Ensure we have the text stream keys
         if (textStreamKeys.length === 0) {
@@ -352,7 +352,7 @@ Type 'help' to see list of available commands.
           },
           body: JSON.stringify({ command: commandText })
         });
-        
+
         if (!response.ok) {
           throw new Error(`Server returned ${response.status}`);
         }
@@ -362,13 +362,13 @@ Type 'help' to see list of available commands.
           streamKey: textStreamKeys[0], // Using the first available text stream
           initialMessage: `Command sent: ${commandText}\nPlanningAgent output...`
         };
-        
+
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Server unreachable';
         return `Failed to send command: ${message}. Make sure the API server is running.`;
       }
     }
-    
+
     return 'Invalid subcommand. Available subcommands: status, start_stream, stop_stream, command';
   },
 };

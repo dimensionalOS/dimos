@@ -2,16 +2,16 @@ import argparse
 import glob
 import os
 
-from contact_graspnet_pytorch import config_utils
-from contact_graspnet_pytorch.checkpoints import CheckpointIO
-from contact_graspnet_pytorch.contact_grasp_estimator import GraspEstimator
-from contact_graspnet_pytorch.data import load_available_input_data
+from contact_graspnet_pytorch import config_utils  # type: ignore[import-not-found]
+from contact_graspnet_pytorch.checkpoints import CheckpointIO  # type: ignore[import-not-found]
+from contact_graspnet_pytorch.contact_grasp_estimator import GraspEstimator  # type: ignore[import-not-found]
+from contact_graspnet_pytorch.data import load_available_input_data  # type: ignore[import-not-found]
 import numpy as np
 
 from dimos.utils.data import get_data
 
 
-def inference(global_config,
+def inference(global_config,  # type: ignore[no-untyped-def]
               ckpt_dir,
               input_paths,
               local_regions: bool=True,
