@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import cv2
-from dimos_lcm.vision_msgs import Detection2D, Detection3D
+from dimos_lcm.vision_msgs import Detection2D, Detection3D  # type: ignore[import-untyped]
 import numpy as np
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
@@ -56,9 +56,9 @@ def match_detection_by_id(
 
 
 def transform_pose(
-    obj_pos: np.ndarray,
-    obj_orientation: np.ndarray,
-    transform_matrix: np.ndarray,
+    obj_pos: np.ndarray,  # type: ignore[type-arg]
+    obj_orientation: np.ndarray,  # type: ignore[type-arg]
+    transform_matrix: np.ndarray,  # type: ignore[type-arg]
     to_optical: bool = False,
     to_robot: bool = False,
 ) -> Pose:
@@ -112,11 +112,11 @@ def transform_pose(
 
 
 def transform_points_3d(
-    points_3d: np.ndarray,
-    transform_matrix: np.ndarray,
+    points_3d: np.ndarray,  # type: ignore[type-arg]
+    transform_matrix: np.ndarray,  # type: ignore[type-arg]
     to_optical: bool = False,
     to_robot: bool = False,
-) -> np.ndarray:
+) -> np.ndarray:  # type: ignore[type-arg]
     """
     Transform 3D points with optional frame convention conversion.
     Applies the same transformation pipeline as transform_pose but for multiple points.
@@ -181,11 +181,11 @@ def transform_points_3d(
 
 
 def select_points_from_depth(
-    depth_image: np.ndarray,
+    depth_image: np.ndarray,  # type: ignore[type-arg]
     target_point: tuple[int, int],
-    camera_intrinsics: list[float] | np.ndarray,
+    camera_intrinsics: list[float] | np.ndarray,  # type: ignore[type-arg]
     radius: int = 5,
-) -> np.ndarray:
+) -> np.ndarray:  # type: ignore[type-arg]
     """
     Select points around a target point within a bounding box and project them to 3D.
 
@@ -349,12 +349,12 @@ def calculate_object_similarity(
                 dim_similarities.append(dim_similarity)
 
         # Return average similarity across all dimensions
-        size_similarity = np.mean(dim_similarities) if dim_similarities else 0.0
+        size_similarity = np.mean(dim_similarities) if dim_similarities else 0.0  # type: ignore[assignment]
 
     # Weighted combination
     total_similarity = distance_weight * distance_similarity + size_weight * size_similarity
 
-    return total_similarity, distance, size_similarity
+    return total_similarity, distance, size_similarity  # type: ignore[return-value]
 
 
 def find_best_object_match(
@@ -440,7 +440,9 @@ def parse_zed_pose(zed_pose_data: dict[str, Any]) -> Pose | None:
 
 
 def estimate_object_depth(
-    depth_image: np.ndarray, segmentation_mask: np.ndarray | None, bbox: list[float]
+    depth_image: np.ndarray,  # type: ignore[type-arg]
+    segmentation_mask: np.ndarray | None,  # type: ignore[type-arg]
+    bbox: list[float],
 ) -> float:
     """
     Estimate object depth dimension using segmentation mask and depth data.
@@ -478,7 +480,7 @@ def estimate_object_depth(
             depth_range = depth_90 - depth_10
 
             # Clamp to reasonable bounds with single operation
-            return np.clip(depth_range, 0.02, 0.5)
+            return np.clip(depth_range, 0.02, 0.5)  # type: ignore[no-any-return]
 
     # Fast fallback using area calculation
     bbox_area = (x2 - x1) * (y2 - y1)
@@ -495,12 +497,12 @@ def estimate_object_depth(
 # ============= Visualization Functions =============
 
 
-def create_manipulation_visualization(
-    rgb_image: np.ndarray,
+def create_manipulation_visualization(  # type: ignore[no-untyped-def]
+    rgb_image: np.ndarray,  # type: ignore[type-arg]
     feedback,
     detection_3d_array=None,
     detection_2d_array=None,
-) -> np.ndarray:
+) -> np.ndarray:  # type: ignore[type-arg]
     """
     Create simple visualization for manipulation class using feedback.
 
@@ -630,13 +632,13 @@ def create_manipulation_visualization(
     return viz
 
 
-def create_pbvs_visualization(
-    image: np.ndarray,
+def create_pbvs_visualization(  # type: ignore[no-untyped-def]
+    image: np.ndarray,  # type: ignore[type-arg]
     current_target=None,
     position_error=None,
     target_reached: bool = False,
     grasp_stage: str = "idle",
-) -> np.ndarray:
+) -> np.ndarray:  # type: ignore[type-arg]
     """
     Create simple PBVS visualization overlay.
 
@@ -720,11 +722,11 @@ def create_pbvs_visualization(
 
 
 def visualize_detections_3d(
-    rgb_image: np.ndarray,
+    rgb_image: np.ndarray,  # type: ignore[type-arg]
     detections: list[Detection3D],
     show_coordinates: bool = True,
     bboxes_2d: list[list[float]] | None = None,
-) -> np.ndarray:
+) -> np.ndarray:  # type: ignore[type-arg]
     """
     Visualize detections with 3D position overlay next to bounding boxes.
 
@@ -796,4 +798,4 @@ def visualize_detections_3d(
                     1,
                 )
 
-    return viz
+    return viz  # type: ignore[no-any-return]

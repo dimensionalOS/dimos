@@ -30,7 +30,7 @@ class GoogleMapsSkillContainer(SkillModule):
     _latest_location: LatLon | None = None
     _client: GoogleMaps
 
-    gps_location: In[LatLon] = None
+    gps_location: In[LatLon] = None  # type: ignore[assignment]
 
     def __init__(self) -> None:
         super().__init__()
@@ -39,7 +39,7 @@ class GoogleMapsSkillContainer(SkillModule):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:

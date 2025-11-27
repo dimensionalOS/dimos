@@ -39,7 +39,7 @@ class SkillLibrary:
     def __init__(self) -> None:
         self.registered_skills: list[AbstractSkill] = []
         self.class_skills: list[AbstractSkill] = []
-        self._running_skills = {}  # {skill_name: (instance, subscription)}
+        self._running_skills = {}  # type: ignore[var-annotated]  # {skill_name: (instance, subscription)}
 
         self.init()
 
@@ -78,7 +78,7 @@ class SkillLibrary:
                 # Skip attributes that can't be accessed or aren't classes
                 continue
 
-        return skills
+        return skills  # type: ignore[return-value]
 
     def refresh_class_skills(self) -> None:
         self.class_skills = self.get_class_skills()
@@ -99,7 +99,7 @@ class SkillLibrary:
     def clear(self) -> None:
         self.registered_skills.clear()
 
-    def __iter__(self) -> Iterator:
+    def __iter__(self) -> Iterator:  # type: ignore[type-arg]
         return iter(self.registered_skills)
 
     def __len__(self) -> int:
@@ -108,14 +108,14 @@ class SkillLibrary:
     def __contains__(self, skill: AbstractSkill) -> bool:
         return skill in self.registered_skills
 
-    def __getitem__(self, index):
+    def __getitem__(self, index):  # type: ignore[no-untyped-def]
         return self.registered_skills[index]
 
     # ==== Calling a Function ====
 
-    _instances: dict[str, dict] = {}
+    _instances: dict[str, dict] = {}  # type: ignore[type-arg]
 
-    def create_instance(self, name: str, **kwargs) -> None:
+    def create_instance(self, name: str, **kwargs) -> None:  # type: ignore[no-untyped-def]
         # Key based only on the name
         key = name
 
@@ -123,7 +123,7 @@ class SkillLibrary:
             # Instead of creating an instance, store the args for later use
             self._instances[key] = kwargs
 
-    def call(self, name: str, **args):
+    def call(self, name: str, **args):  # type: ignore[no-untyped-def]
         try:
             # Get the stored args if available; otherwise, use an empty dict
             stored_args = self._instances.get(name, {})
@@ -135,7 +135,7 @@ class SkillLibrary:
             skill_class = getattr(self, name, None)
             if skill_class is None:
                 for skill in self.get():
-                    if name == skill.__name__:
+                    if name == skill.__name__:  # type: ignore[attr-defined]
                         skill_class = skill
                         break
                 if skill_class is None:
@@ -144,7 +144,7 @@ class SkillLibrary:
                     return error_msg
 
             # Initialize the instance with the merged arguments
-            instance = skill_class(**complete_args)
+            instance = skill_class(**complete_args)  # type: ignore[operator]
             print(f"Instance created and function called for: {name} with args: {complete_args}")
 
             # Call the instance directly
@@ -162,9 +162,9 @@ class SkillLibrary:
         return tools_json
 
     def get_list_of_skills_as_json(self, list_of_skills: list[AbstractSkill]) -> list[str]:
-        return list(map(pydantic_function_tool, list_of_skills))
+        return list(map(pydantic_function_tool, list_of_skills))  # type: ignore[arg-type]
 
-    def register_running_skill(self, name: str, instance: Any, subscription=None) -> None:
+    def register_running_skill(self, name: str, instance: Any, subscription=None) -> None:  # type: ignore[no-untyped-def]
         """
         Register a running skill with its subscription.
 
@@ -194,7 +194,7 @@ class SkillLibrary:
             return True
         return False
 
-    def get_running_skills(self):
+    def get_running_skills(self):  # type: ignore[no-untyped-def]
         """
         Get all running skills.
 
@@ -203,7 +203,7 @@ class SkillLibrary:
         """
         return self._running_skills.copy()
 
-    def terminate_skill(self, name: str):
+    def terminate_skill(self, name: str):  # type: ignore[no-untyped-def]
         """
         Terminate a running skill.
 
@@ -256,17 +256,17 @@ class SkillLibrary:
 
 
 class AbstractSkill(BaseModel):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         print("Initializing AbstractSkill Class")
         super().__init__(*args, **kwargs)
-        self._instances = {}
-        self._list_of_skills = []  # Initialize the list of skills
+        self._instances = {}  # type: ignore[var-annotated]
+        self._list_of_skills = []  # type: ignore[var-annotated]  # Initialize the list of skills
         print(f"Instances: {self._instances}")
 
     def clone(self) -> AbstractSkill:
         return AbstractSkill()
 
-    def register_as_running(
+    def register_as_running(  # type: ignore[no-untyped-def]
         self, name: str, skill_library: SkillLibrary, subscription=None
     ) -> None:
         """
@@ -296,7 +296,7 @@ class AbstractSkill(BaseModel):
         return tools_json
 
     def get_list_of_skills_as_json(self, list_of_skills: list[AbstractSkill]) -> list[str]:
-        return list(map(pydantic_function_tool, list_of_skills))
+        return list(map(pydantic_function_tool, list_of_skills))  # type: ignore[arg-type]
 
 
 # endregion AbstractSkill
@@ -310,11 +310,11 @@ else:
 
 
 class AbstractRobotSkill(AbstractSkill):
-    _robot: Robot = None
+    _robot: Robot = None  # type: ignore[assignment]
 
-    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:
+    def __init__(self, *args, robot: Robot | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self._robot = robot
+        self._robot = robot  # type: ignore[assignment]
         print(
             f"{Colors.BLUE_PRINT_COLOR}Robot Skill Initialized with Robot: {robot}{Colors.RESET_COLOR}"
         )
@@ -327,7 +327,7 @@ class AbstractRobotSkill(AbstractSkill):
         """
         self._robot = robot
 
-    def __call__(self):
+    def __call__(self):  # type: ignore[no-untyped-def]
         if self._robot is None:
             raise RuntimeError(
                 f"{Colors.RED_PRINT_COLOR}"

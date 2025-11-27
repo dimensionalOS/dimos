@@ -15,8 +15,11 @@
 from abc import abstractmethod
 from collections.abc import Callable
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation, TextAnnotation
-from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    PointsAnnotation,
+    TextAnnotation,
+)
+from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D  # type: ignore[import-untyped]
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image

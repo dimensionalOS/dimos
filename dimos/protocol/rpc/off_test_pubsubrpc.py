@@ -22,7 +22,7 @@ from dimos.core import Module, rpc, start
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.protocol.service.lcmservice import autoconf
 
-testgrid: list[Callable] = []
+testgrid: list[Callable] = []  # type: ignore[type-arg]
 
 
 # test module we'll use for binding RPC methods
@@ -48,7 +48,7 @@ class MyModule(Module):
 
 # LCMRPC (mixed in PassThroughPubSubRPC into lcm pubsub)
 @contextmanager
-def lcm_rpc_context():
+def lcm_rpc_context():  # type: ignore[no-untyped-def]
     server = LCMRPC(autoconf=True)
     client = LCMRPC(autoconf=True)
     server.start()
@@ -66,7 +66,7 @@ try:
     from dimos.protocol.rpc.redisrpc import RedisRPC
 
     @contextmanager
-    def redis_rpc_context():
+    def redis_rpc_context():  # type: ignore[no-untyped-def]
         server = RedisRPC()
         client = RedisRPC()
         server.start()
@@ -82,10 +82,10 @@ except (ConnectionError, ImportError):
 
 
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_basics(rpc_context) -> None:
+def test_basics(rpc_context) -> None:  # type: ignore[no-untyped-def]
     with rpc_context() as (server, client):
 
-        def remote_function(a: int, b: int):
+        def remote_function(a: int, b: int):  # type: ignore[no-untyped-def]
             return a + b
 
         # You can bind an arbitrary function to arbitrary name
@@ -97,7 +97,7 @@ def test_basics(rpc_context) -> None:
 
         msgs = []
 
-        def receive_msg(response) -> None:
+        def receive_msg(response) -> None:  # type: ignore[no-untyped-def]
             msgs.append(response)
             print(f"Received response: {response}")
 
@@ -108,7 +108,7 @@ def test_basics(rpc_context) -> None:
 
 
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_module_autobind(rpc_context) -> None:
+def test_module_autobind(rpc_context) -> None:  # type: ignore[no-untyped-def]
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -130,7 +130,7 @@ def test_module_autobind(rpc_context) -> None:
 
         msgs = []
 
-        def receive_msg(msg) -> None:
+        def receive_msg(msg) -> None:  # type: ignore[no-untyped-def]
             msgs.append(msg)
 
         client.call("MyModule/add", ([1, 2], {}), receive_msg)
@@ -146,7 +146,7 @@ def test_module_autobind(rpc_context) -> None:
 #
 # can do blocking calls
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_sync(rpc_context) -> None:
+def test_sync(rpc_context) -> None:  # type: ignore[no-untyped-def]
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -160,7 +160,7 @@ def test_sync(rpc_context) -> None:
 #
 # can do blocking calls
 @pytest.mark.parametrize("rpc_context", testgrid)
-def test_kwargs(rpc_context) -> None:
+def test_kwargs(rpc_context) -> None:  # type: ignore[no-untyped-def]
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -173,7 +173,7 @@ def test_kwargs(rpc_context) -> None:
 # or async calls as well
 @pytest.mark.parametrize("rpc_context", testgrid)
 @pytest.mark.asyncio
-async def test_async(rpc_context) -> None:
+async def test_async(rpc_context) -> None:  # type: ignore[no-untyped-def]
     with rpc_context() as (server, client):
         module = MyModule()
         print("\n")
@@ -200,8 +200,8 @@ def test_rpc_full_deploy() -> None:
 
     dimos = start(2)
 
-    module = dimos.deploy(MyModule)
-    caller = dimos.deploy(CallerModule, module.add)
+    module = dimos.deploy(MyModule)  # type: ignore[attr-defined]
+    caller = dimos.deploy(CallerModule, module.add)  # type: ignore[attr-defined]
 
     print("deployed", module)
     print("deployed", caller)
@@ -213,4 +213,4 @@ def test_rpc_full_deploy() -> None:
     # kwargs
     assert caller.add(1, b=1) == 2
 
-    dimos.shutdown()
+    dimos.shutdown()  # type: ignore[no-untyped-call]

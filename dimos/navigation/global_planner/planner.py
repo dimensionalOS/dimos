@@ -29,7 +29,7 @@ import math
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 
-def add_orientations_to_path(path: Path, goal_orientation: Quaternion = None) -> Path:
+def add_orientations_to_path(path: Path, goal_orientation: Quaternion = None) -> Path:  # type: ignore[assignment]
     """Add orientations to path poses based on direction of movement.
 
     Args:
@@ -142,12 +142,12 @@ def resample_path(path: Path, spacing: float) -> Path:
 
 class AstarPlanner(Module):
     # LCM inputs
-    target: In[PoseStamped] = None
-    global_costmap: In[OccupancyGrid] = None
-    odom: In[PoseStamped] = None
+    target: In[PoseStamped] = None  # type: ignore[assignment]
+    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped] = None  # type: ignore[assignment]
 
     # LCM outputs
-    path: Out[Path] = None
+    path: Out[Path] = None  # type: ignore[assignment]
 
     def __init__(self) -> None:
         super().__init__()
@@ -193,7 +193,7 @@ class AstarPlanner(Module):
         if path:
             # Add orientations to the path, using the goal's orientation for the final pose
             path = add_orientations_to_path(path, msg.orientation)
-            self.path.publish(path)
+            self.path.publish(path)  # type: ignore[no-untyped-call]
 
     def plan(self, goal: Pose) -> Path | None:
         """Plan a path from current position to goal."""

@@ -23,7 +23,7 @@ from dimos.web.edge_io import EdgeIO
 
 
 class FlaskServer(EdgeIO):
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         dev_name: str = "Flask Server",
         edge_type: str = "Bidirectional",
@@ -46,21 +46,21 @@ class FlaskServer(EdgeIO):
 
         self.setup_routes()
 
-    def process_frame_flask(self, frame):
+    def process_frame_flask(self, frame):  # type: ignore[no-untyped-def]
         """Convert frame to JPEG format for streaming."""
         _, buffer = cv2.imencode(".jpg", frame)
         return buffer.tobytes()
 
     def setup_routes(self) -> None:
         @self.app.route("/")
-        def index():
+        def index():  # type: ignore[no-untyped-def]
             stream_keys = list(self.streams.keys())  # Get the keys from the streams dictionary
             return render_template("index_flask.html", stream_keys=stream_keys)
 
         # Function to create a streaming response
-        def stream_generator(key):
-            def generate():
-                frame_queue = Queue()
+        def stream_generator(key):  # type: ignore[no-untyped-def]
+            def generate():  # type: ignore[no-untyped-def]
+                frame_queue = Queue()  # type: ignore[var-annotated]
                 disposable = SingleAssignmentDisposable()
 
                 # Subscribe to the shared, ref-counted stream
@@ -82,10 +82,11 @@ class FlaskServer(EdgeIO):
 
             return generate
 
-        def make_response_generator(key):
-            def response_generator():
+        def make_response_generator(key):  # type: ignore[no-untyped-def]
+            def response_generator():  # type: ignore[no-untyped-def]
                 return Response(
-                    stream_generator(key)(), mimetype="multipart/x-mixed-replace; boundary=frame"
+                    stream_generator(key)(),  # type: ignore[no-untyped-call]
+                    mimetype="multipart/x-mixed-replace; boundary=frame",
                 )
 
             return response_generator
@@ -94,7 +95,9 @@ class FlaskServer(EdgeIO):
         for key in self.streams:
             endpoint = f"video_feed_{key}"
             self.app.add_url_rule(
-                f"/video_feed/{key}", endpoint, view_func=make_response_generator(key)
+                f"/video_feed/{key}",
+                endpoint,
+                view_func=make_response_generator(key),  # type: ignore[no-untyped-call]
             )
 
     def run(self, host: str = "0.0.0.0", port: int = 5555, threaded: bool = True) -> None:

@@ -27,15 +27,15 @@
 
   function retryConnection(streamKey: string) {
     if (!retryCount[streamKey]) retryCount[streamKey] = 0;
-    
+
     if (retryCount[streamKey] < MAX_RETRIES) {
       retryCount[streamKey]++;
       const timeLeft = TOTAL_TIMEOUT - (retryCount[streamKey] * RETRY_INTERVAL);
       errorMessages[streamKey] = `Connection attempt ${retryCount[streamKey]}/${MAX_RETRIES}... (${Math.ceil(timeLeft / 1000)}s remaining)`;
-      
+
       // Update timestamp to force a new connection attempt
       timestamps[streamKey] = Date.now();
-      
+
       clearRetryTimer(streamKey);
       retryTimers[streamKey] = setTimeout(() => retryConnection(streamKey), RETRY_INTERVAL);
     } else {
@@ -193,4 +193,4 @@
     align-items: center;
     justify-content: center;
   }
-</style> 
+</style>

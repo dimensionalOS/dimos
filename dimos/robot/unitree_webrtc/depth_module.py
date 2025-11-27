@@ -17,7 +17,7 @@
 import threading
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 
 from dimos.core import In, Module, Out, rpc
@@ -41,13 +41,13 @@ class DepthModule(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None
-    camera_info: In[CameraInfo] = None
+    color_image: In[Image] = None  # type: ignore[assignment]
+    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
 
     # LCM outputs
-    depth_image: Out[Image] = None
+    depth_image: Out[Image] = None  # type: ignore[assignment]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         gt_depth_scale: float = 0.5,
         global_config: GlobalConfig | None = None,
@@ -129,12 +129,12 @@ class DepthModule(Module):
             cx = K[2]
             cy = K[5]
 
-            self.camera_intrinsics = [fx, fy, cx, cy]
+            self.camera_intrinsics = [fx, fy, cx, cy]  # type: ignore[assignment]
 
             # Initialize Metric3D with camera intrinsics
             from dimos.models.depth.metric3d import Metric3D
 
-            self.metric3d = Metric3D(camera_intrinsics=self.camera_intrinsics)
+            self.metric3d = Metric3D(camera_intrinsics=self.camera_intrinsics)  # type: ignore[assignment]
             self._camera_info_received = True
 
             logger.info(
@@ -150,7 +150,7 @@ class DepthModule(Module):
             return
 
         # Simply store the latest frame - processing happens in main loop
-        self._latest_frame = msg
+        self._latest_frame = msg  # type: ignore[assignment]
         logger.debug(
             f"Received video frame: format={msg.format}, shape={msg.data.shape if hasattr(msg.data, 'shape') else 'unknown'}"
         )
@@ -186,7 +186,7 @@ class DepthModule(Module):
 
         logger.info("Main processing loop stopped")
 
-    def _process_depth(self, img_array: np.ndarray) -> None:
+    def _process_depth(self, img_array: np.ndarray) -> None:  # type: ignore[type-arg]
         """Process depth estimation using Metric3D."""
         if self._cannot_process_depth:
             self._last_depth = None

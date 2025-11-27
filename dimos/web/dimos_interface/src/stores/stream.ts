@@ -95,7 +95,7 @@ fetchAvailableStreams().then(streams => {
 
 export const showStream = async (streamKey?: string) => {
   streamStore.update(state => ({ ...state, isLoading: true, error: null }));
-  
+
   try {
     const streams = await fetchAvailableStreams();
     if (streams.length === 0) {
@@ -178,4 +178,3 @@ export const disconnectTextStream = (key: string): void => {
     delete textEventSources[key];
   }
 };
-

@@ -29,7 +29,7 @@ class OsmSkill(SkillModule):
     _latest_location: LatLon | None
     _current_location_map: CurrentLocationMap
 
-    gps_location: In[LatLon] = None
+    gps_location: In[LatLon] = None  # type: ignore[assignment]
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,7 +38,7 @@ class OsmSkill(SkillModule):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
 
     def stop(self) -> None:
         super().stop()
@@ -60,16 +60,17 @@ class OsmSkill(SkillModule):
             query_sentence (str): The query sentence.
         """
 
-        self._current_location_map.update_position(self._latest_location)
+        self._current_location_map.update_position(self._latest_location)  # type: ignore[arg-type]
         location = self._current_location_map.query_for_one_position_and_context(
-            query_sentence, self._latest_location
+            query_sentence,
+            self._latest_location,  # type: ignore[arg-type]
         )
         if not location:
             return "Could not find anything."
 
         latlon, context = location
 
-        distance = int(distance_in_meters(latlon, self._latest_location))
+        distance = int(distance_in_meters(latlon, self._latest_location))  # type: ignore[arg-type]
 
         return f"{context}. It's at position latitude={latlon.lat}, longitude={latlon.lon}. It is {distance} meters away."
 

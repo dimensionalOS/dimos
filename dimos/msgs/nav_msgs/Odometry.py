@@ -17,14 +17,14 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, TypeAlias
 
-from dimos_lcm.nav_msgs import Odometry as LCMOdometry
+from dimos_lcm.nav_msgs import Odometry as LCMOdometry  # type: ignore[import-untyped]
 import numpy as np
 from plum import dispatch
 
 try:
-    from nav_msgs.msg import Odometry as ROSOdometry
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
 except ImportError:
-    ROSOdometry = None
+    ROSOdometry = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -41,12 +41,12 @@ OdometryConvertable: TypeAlias = (
 )
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
 
-class Odometry(LCMOdometry, Timestamped):
+class Odometry(LCMOdometry, Timestamped):  # type: ignore[misc]
     pose: PoseWithCovariance
     twist: TwistWithCovariance
     msg_name = "nav_msgs.Odometry"
@@ -96,7 +96,7 @@ class Odometry(LCMOdometry, Timestamped):
         else:
             self.twist = TwistWithCovariance(Twist(twist))
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, odometry: Odometry) -> None:
         """Initialize from another Odometry (copy constructor)."""
         self.ts = odometry.ts
@@ -105,7 +105,7 @@ class Odometry(LCMOdometry, Timestamped):
         self.pose = PoseWithCovariance(odometry.pose)
         self.twist = TwistWithCovariance(odometry.twist)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_odometry: LCMOdometry) -> None:
         """Initialize from an LCM Odometry."""
         self.ts = lcm_odometry.header.stamp.sec + (lcm_odometry.header.stamp.nsec / 1_000_000_000)
@@ -114,7 +114,7 @@ class Odometry(LCMOdometry, Timestamped):
         self.pose = PoseWithCovariance(lcm_odometry.pose)
         self.twist = TwistWithCovariance(lcm_odometry.twist)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
         odometry_dict: dict[
@@ -154,7 +154,7 @@ class Odometry(LCMOdometry, Timestamped):
         return self.pose.position
 
     @property
-    def orientation(self):
+    def orientation(self):  # type: ignore[no-untyped-def]
         """Get orientation from pose."""
         return self.pose.orientation
 
@@ -245,7 +245,7 @@ class Odometry(LCMOdometry, Timestamped):
             f"  Angular Velocity: [{self.wx:.3f}, {self.wy:.3f}, {self.wz:.3f}]"
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two Odometry messages are equal."""
         if not isinstance(other, Odometry):
             return False
@@ -262,25 +262,25 @@ class Odometry(LCMOdometry, Timestamped):
         lcm_msg = LCMOdometry()
 
         # Set header
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
         lcm_msg.child_frame_id = self.child_frame_id
 
         # Set pose with covariance
         lcm_msg.pose.pose = self.pose.pose
-        if isinstance(self.pose.covariance, np.ndarray):
-            lcm_msg.pose.covariance = self.pose.covariance.tolist()
+        if isinstance(self.pose.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.pose.covariance = self.pose.covariance.tolist()  # type: ignore[has-type]
         else:
-            lcm_msg.pose.covariance = list(self.pose.covariance)
+            lcm_msg.pose.covariance = list(self.pose.covariance)  # type: ignore[has-type]
 
         # Set twist with covariance
         lcm_msg.twist.twist = self.twist.twist
-        if isinstance(self.twist.covariance, np.ndarray):
-            lcm_msg.twist.covariance = self.twist.covariance.tolist()
+        if isinstance(self.twist.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.twist.covariance = self.twist.covariance.tolist()  # type: ignore[has-type]
         else:
-            lcm_msg.twist.covariance = list(self.twist.covariance)
+            lcm_msg.twist.covariance = list(self.twist.covariance)  # type: ignore[has-type]
 
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> Odometry:
@@ -362,7 +362,7 @@ class Odometry(LCMOdometry, Timestamped):
             ROS Odometry message
         """
 
-        ros_msg = ROSOdometry()
+        ros_msg = ROSOdometry()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id

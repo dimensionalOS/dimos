@@ -22,12 +22,12 @@ import os
 import queue
 import warnings
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents2 import Output, Reducer, Stream, skill
+from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import DimosCluster, In, LCMTransport, Module, ModuleConfig, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
@@ -63,7 +63,7 @@ class FakeRTC(UnitreeWebRTCConnection):
     dir_name = "unitree_go2_office_walk2"
 
     # we don't want UnitreeWebRTCConnection to init
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         **kwargs,
     ) -> None:
@@ -87,29 +87,29 @@ class FakeRTC(UnitreeWebRTCConnection):
         print("liedown suppressed")
 
     @functools.cache
-    def lidar_stream(self):
+    def lidar_stream(self):  # type: ignore[no-untyped-def]
         print("lidar stream start")
-        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")
-        return lidar_store.stream(**self.replay_config)
+        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")  # type: ignore[var-annotated]
+        return lidar_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
     @functools.cache
-    def odom_stream(self):
+    def odom_stream(self):  # type: ignore[no-untyped-def]
         print("odom stream start")
-        odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
-        return odom_store.stream(**self.replay_config)
+        odom_store = TimedSensorReplay(f"{self.dir_name}/odom")  # type: ignore[var-annotated]
+        return odom_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
     # we don't have raw video stream in the data set
     @functools.cache
-    def video_stream(self):
+    def video_stream(self):  # type: ignore[no-untyped-def]
         print("video stream start")
-        video_store = TimedSensorReplay(f"{self.dir_name}/video")
+        video_store = TimedSensorReplay(f"{self.dir_name}/video")  # type: ignore[var-annotated]
 
-        return video_store.stream(**self.replay_config)
+        return video_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
-    def move(self, vector: Twist, duration: float = 0.0) -> None:
+    def move(self, vector: Twist, duration: float = 0.0) -> None:  # type: ignore[override]
         pass
 
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Fake publish request for testing."""
         return {"status": "ok", "message": "Fake publish"}
 
@@ -123,11 +123,11 @@ class ConnectionModuleConfig(ModuleConfig):
 
 
 class ConnectionModule(Module):
-    camera_info: Out[CameraInfo] = None
-    odom: Out[PoseStamped] = None
-    lidar: Out[LidarMessage] = None
-    video: Out[Image] = None
-    movecmd: In[Twist] = None
+    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
+    odom: Out[PoseStamped] = None  # type: ignore[assignment]
+    lidar: Out[LidarMessage] = None  # type: ignore[assignment]
+    video: Out[Image] = None  # type: ignore[assignment]
+    movecmd: In[Twist] = None  # type: ignore[assignment]
 
     connection = None
 
@@ -137,35 +137,35 @@ class ConnectionModule(Module):
     # parallel calls
     video_running: bool = False
 
-    def __init__(self, connection_type: str = "webrtc", *args, **kwargs) -> None:
+    def __init__(self, connection_type: str = "webrtc", *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.connection_config = kwargs
         self.connection_type = connection_type
         Module.__init__(self, *args, **kwargs)
 
-    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
-    def video_stream_tool(self) -> Image:
+    @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)  # type: ignore[arg-type]
+    def video_stream_tool(self) -> Image:  # type: ignore[misc]
         """implicit video stream skill, don't call this directly"""
         if self.video_running:
             return "video stream already running"
         self.video_running = True
-        _queue = queue.Queue(maxsize=1)
-        self.connection.video_stream().subscribe(_queue.put)
+        _queue = queue.Queue(maxsize=1)  # type: ignore[var-annotated]
+        self.connection.video_stream().subscribe(_queue.put)  # type: ignore[attr-defined]
 
         yield from iter(_queue.get, None)
 
     @rpc
     def record(self, recording_name: str) -> None:
-        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")
-        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)
+        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
+        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
 
-        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")
-        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)
+        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
+        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
 
-        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")
-        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)
+        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
+        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
 
     @rpc
-    def start(self):
+    def start(self):  # type: ignore[no-untyped-def]
         """Start the connection and subscribe to sensor streams."""
 
         super().start()
@@ -178,18 +178,18 @@ class ConnectionModule(Module):
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection(GlobalConfig())
-                self.connection.start()
+                self.connection = MujocoConnection(GlobalConfig())  # type: ignore[assignment]
+                self.connection.start()  # type: ignore[union-attr]
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
-        unsub = self.connection.odom_stream().subscribe(
-            lambda odom: self._publish_tf(odom) and self.odom.publish(odom)
+        unsub = self.connection.odom_stream().subscribe(  # type: ignore[union-attr]
+            lambda odom: self._publish_tf(odom) and self.odom.publish(odom)  # type: ignore[func-returns-value, no-untyped-call]
         )
         self._disposables.add(unsub)
 
         # Connect sensor streams to outputs
-        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)
+        unsub = self.connection.lidar_stream().subscribe(self.lidar.publish)  # type: ignore[union-attr]
         self._disposables.add(unsub)
 
         # self.connection.lidar_stream().subscribe(lambda lidar: print("LIDAR", lidar.ts))
@@ -201,12 +201,12 @@ class ConnectionModule(Module):
                 int(originalwidth / image_resize_factor), int(originalheight / image_resize_factor)
             )
 
-        unsub = self.connection.video_stream().subscribe(self.video.publish)
+        unsub = self.connection.video_stream().subscribe(self.video.publish)  # type: ignore[union-attr]
         self._disposables.add(unsub)
         unsub = self.camera_info_stream().subscribe(self.camera_info.publish)
         self._disposables.add(unsub)
-        unsub = self.movecmd.subscribe(self.connection.move)
-        self._disposables.add(unsub)
+        unsub = self.movecmd.subscribe(self.connection.move)  # type: ignore[union-attr]
+        self._disposables.add(unsub)  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:
@@ -248,12 +248,12 @@ class ConnectionModule(Module):
             sensor,
         ]
 
-    def _publish_tf(self, msg) -> None:
-        self.odom.publish(msg)
+    def _publish_tf(self, msg) -> None:  # type: ignore[no-untyped-def]
+        self.odom.publish(msg)  # type: ignore[no-untyped-call]
         self.tf.publish(*self._odom_to_tf(msg))
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Publish a request to the WebRTC connection.
         Args:
             topic: The RTC topic to publish to
@@ -261,7 +261,7 @@ class ConnectionModule(Module):
         Returns:
             The result of the publish request
         """
-        return self.connection.publish_request(topic, data)
+        return self.connection.publish_request(topic, data)  # type: ignore[union-attr]
 
     @classmethod
     def _camera_info(cls) -> Out[CameraInfo]:
@@ -303,18 +303,18 @@ class ConnectionModule(Module):
             "binning_y": 0,
         }
 
-        return CameraInfo(**base_msg, header=Header("camera_optical"))
+        return CameraInfo(**base_msg, header=Header("camera_optical"))  # type: ignore[no-any-return]
 
     @functools.cache
     def camera_info_stream(self) -> Observable[CameraInfo]:
         return rx.interval(1).pipe(ops.map(lambda _: self._camera_info()))
 
 
-def deploy_connection(dimos: DimosCluster, **kwargs):
-    foxglove_bridge = dimos.deploy(FoxgloveBridge)
+def deploy_connection(dimos: DimosCluster, **kwargs):  # type: ignore[no-untyped-def]
+    foxglove_bridge = dimos.deploy(FoxgloveBridge)  # type: ignore[attr-defined, name-defined]
     foxglove_bridge.start()
 
-    connection = dimos.deploy(
+    connection = dimos.deploy(  # type: ignore[attr-defined]
         ConnectionModule,
         ip=os.getenv("ROBOT_IP"),
         connection_type=os.getenv("CONNECTION_TYPE", "fake"),

@@ -17,7 +17,7 @@ Real-time 3D object detection processor that extracts object poses from RGB-D da
 """
 
 import cv2
-from dimos_lcm.vision_msgs import (
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
     BoundingBox2D,
     BoundingBox3D,
     Detection2D,
@@ -91,7 +91,10 @@ class Detection3DProcessor:
         )
 
     def process_frame(
-        self, rgb_image: np.ndarray, depth_image: np.ndarray, transform: np.ndarray | None = None
+        self,
+        rgb_image: np.ndarray,  # type: ignore[type-arg]
+        depth_image: np.ndarray,  # type: ignore[type-arg]
+        transform: np.ndarray | None = None,  # type: ignore[type-arg]
     ) -> tuple[Detection3DArray, Detection2DArray]:
         """
         Process a single RGB-D frame to extract 3D object detections.
@@ -109,7 +112,7 @@ class Detection3DProcessor:
         bgr_image = cv2.cvtColor(rgb_image, cv2.COLOR_RGB2BGR)
 
         # Run Sam segmentation with tracking
-        masks, bboxes, track_ids, probs, names = self.detector.process_image(bgr_image)
+        masks, bboxes, track_ids, probs, names = self.detector.process_image(bgr_image)  # type: ignore[no-untyped-call]
 
         if not masks or len(masks) == 0:
             return Detection3DArray(
@@ -233,11 +236,11 @@ class Detection3DProcessor:
 
     def visualize_detections(
         self,
-        rgb_image: np.ndarray,
+        rgb_image: np.ndarray,  # type: ignore[type-arg]
         detections_3d: list[Detection3D],
         detections_2d: list[Detection2D],
         show_coordinates: bool = True,
-    ) -> np.ndarray:
+    ) -> np.ndarray:  # type: ignore[type-arg]
         """
         Visualize detections with 3D position overlay next to bounding boxes.
 
@@ -287,7 +290,7 @@ class Detection3DProcessor:
             return None
 
         # Sort by depth (Z coordinate)
-        def get_z_coord(d):
+        def get_z_coord(d):  # type: ignore[no-untyped-def]
             return abs(d.bbox.center.position.z)
 
         return min(valid_detections, key=get_z_coord)

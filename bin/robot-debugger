@@ -8,7 +8,7 @@
 #
 # And now start this script
 #
-#     $ ./bin/robot-debugger 
+#     $ ./bin/robot-debugger
 #     >>> robot.explore()
 #     True
 #     >>>

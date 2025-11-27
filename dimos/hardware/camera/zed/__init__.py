@@ -20,7 +20,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider
 
 # Check if ZED SDK is available
 try:
-    import pyzed.sl as sl
+    import pyzed.sl as sl  # type: ignore[import-not-found]
 
     HAS_ZED_SDK = True
 except ImportError:
@@ -31,14 +31,14 @@ if HAS_ZED_SDK:
     from dimos.hardware.camera.zed.camera import ZEDCamera, ZEDModule
 else:
     # Provide stub classes when SDK is not available
-    class ZEDCamera:
-        def __init__(self, *args, **kwargs) -> None:
+    class ZEDCamera:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
             raise ImportError(
                 "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
             )
 
-    class ZEDModule:
-        def __init__(self, *args, **kwargs) -> None:
+    class ZEDModule:  # type: ignore[no-redef]
+        def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
             raise ImportError(
                 "ZED SDK not installed. Please install pyzed package to use ZED camera functionality."
             )

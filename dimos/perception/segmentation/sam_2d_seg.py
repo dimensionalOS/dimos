@@ -19,7 +19,7 @@ import os
 import time
 
 import cv2
-import onnxruntime
+import onnxruntime  # type: ignore[import-untyped]
 from ultralytics import FastSAM
 
 from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
@@ -48,7 +48,7 @@ class Sam2DSegmenter:
         use_rich_labeling: bool = False,
         use_filtering: bool = True,
     ) -> None:
-        if is_cuda_available():
+        if is_cuda_available():  # type: ignore[no-untyped-call]
             logger.info("Using CUDA for SAM 2d segmenter")
             if hasattr(onnxruntime, "preload_dlls"):  # Handles CUDA 11 / onnxruntime-gpu<=1.18
                 onnxruntime.preload_dlls(cuda=True, cudnn=True)
@@ -86,13 +86,13 @@ class Sam2DSegmenter:
             self.image_analyzer = ImageAnalyzer()
             self.min_analysis_interval = min_analysis_interval
             self.last_analysis_time = 0
-            self.to_be_analyzed = deque()
-            self.object_names = {}
+            self.to_be_analyzed = deque()  # type: ignore[var-annotated]
+            self.object_names = {}  # type: ignore[var-annotated]
             self.analysis_executor = ThreadPoolExecutor(max_workers=1)
             self.current_future = None
             self.current_queue_ids = None
 
-    def process_image(self, image):
+    def process_image(self, image):  # type: ignore[no-untyped-def]
         """Process an image and return segmentation results."""
         results = self.model.track(
             source=image,
@@ -145,7 +145,7 @@ class Sam2DSegmenter:
 
                 # Get tracked results
                 tracked_masks, tracked_bboxes, tracked_target_ids, tracked_probs, tracked_names = (
-                    get_tracked_results(tracked_targets)
+                    get_tracked_results(tracked_targets)  # type: ignore[no-untyped-call]
                 )
 
                 if self.use_analyzer:
@@ -211,7 +211,7 @@ class Sam2DSegmenter:
                 )
         return [], [], [], [], []
 
-    def check_analysis_status(self, tracked_target_ids):
+    def check_analysis_status(self, tracked_target_ids):  # type: ignore[no-untyped-def]
         """Check if analysis is complete and prepare new queue if needed."""
         if not self.use_analyzer:
             return None, None
@@ -255,12 +255,12 @@ class Sam2DSegmenter:
                 return queue_indices, queue_ids
         return None, None
 
-    def run_analysis(self, frame, tracked_bboxes, tracked_target_ids) -> None:
+    def run_analysis(self, frame, tracked_bboxes, tracked_target_ids) -> None:  # type: ignore[no-untyped-def]
         """Run queue image analysis in background."""
         if not self.use_analyzer:
             return
 
-        queue_indices, queue_ids = self.check_analysis_status(tracked_target_ids)
+        queue_indices, queue_ids = self.check_analysis_status(tracked_target_ids)  # type: ignore[no-untyped-call]
         if queue_indices:
             selected_bboxes = [tracked_bboxes[i] for i in queue_indices]
             cropped_images = crop_images_from_bboxes(frame, selected_bboxes)
@@ -274,11 +274,11 @@ class Sam2DSegmenter:
                 else:
                     prompt_type = "normal"
 
-                self.current_future = self.analysis_executor.submit(
+                self.current_future = self.analysis_executor.submit(  # type: ignore[assignment]
                     self.image_analyzer.analyze_images, cropped_images, prompt_type=prompt_type
                 )
 
-    def get_object_names(self, track_ids, tracked_names: Sequence[str]):
+    def get_object_names(self, track_ids, tracked_names: Sequence[str]):  # type: ignore[no-untyped-def]
         """Get object names for the given track IDs, falling back to tracked names."""
         if not self.use_analyzer:
             return tracked_names
@@ -288,7 +288,7 @@ class Sam2DSegmenter:
             for track_id, tracked_name in zip(track_ids, tracked_names, strict=False)
         ]
 
-    def visualize_results(
+    def visualize_results(  # type: ignore[no-untyped-def]
         self, image, masks, bboxes, track_ids, probs: Sequence[float], names: Sequence[str]
     ):
         """Generate an overlay visualization with segmentation results and object names."""
@@ -333,7 +333,7 @@ def main() -> None:
             time.time()
 
             # Process image and get results
-            masks, bboxes, target_ids, probs, names = segmenter.process_image(frame)
+            masks, bboxes, target_ids, probs, names = segmenter.process_image(frame)  # type: ignore[no-untyped-call]
 
             # Run analysis if enabled
             if segmenter.use_analyzer:

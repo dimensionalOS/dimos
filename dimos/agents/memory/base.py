@@ -28,7 +28,7 @@ from dimos.utils.logging_config import setup_logger
 
 
 class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
-    def __init__(self, connection_type: str = "local", **kwargs) -> None:
+    def __init__(self, connection_type: str = "local", **kwargs) -> None:  # type: ignore[no-untyped-def]
         """
         Initialize with dynamic connection parameters.
         Args:
@@ -53,9 +53,9 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
 
         try:
             if connection_type == "remote":
-                self.connect()
+                self.connect()  # type: ignore[no-untyped-call]
             elif connection_type == "local":
-                self.create()
+                self.create()  # type: ignore[no-untyped-call]
         except Exception as e:
             self.logger.error("Failed to initialize database connection: %s", str(e), exc_info=True)
             raise AgentMemoryConnectionError(
@@ -63,16 +63,16 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
             ) from e
 
     @abstractmethod
-    def connect(self):
+    def connect(self):  # type: ignore[no-untyped-def]
         """Establish a connection to the data store using dynamic parameters specified during initialization."""
 
     @abstractmethod
-    def create(self):
+    def create(self):  # type: ignore[no-untyped-def]
         """Create a local instance of the data store tailored to specific requirements."""
 
     ## Create ##
     @abstractmethod
-    def add_vector(self, vector_id, vector_data):
+    def add_vector(self, vector_id, vector_data):  # type: ignore[no-untyped-def]
         """Add a vector to the database.
         Args:
             vector_id (any): Unique identifier for the vector.
@@ -81,14 +81,14 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
 
     ## Read ##
     @abstractmethod
-    def get_vector(self, vector_id):
+    def get_vector(self, vector_id):  # type: ignore[no-untyped-def]
         """Retrieve a vector from the database by its identifier.
         Args:
             vector_id (any): The identifier of the vector to retrieve.
         """
 
     @abstractmethod
-    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):
+    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):  # type: ignore[no-untyped-def]
         """Performs a semantic search in the vector database.
 
         Args:
@@ -109,7 +109,7 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
 
     ## Update ##
     @abstractmethod
-    def update_vector(self, vector_id, new_vector_data):
+    def update_vector(self, vector_id, new_vector_data):  # type: ignore[no-untyped-def]
         """Update an existing vector in the database.
         Args:
             vector_id (any): The identifier of the vector to update.
@@ -118,7 +118,7 @@ class AbstractAgentSemanticMemory:  # AbstractAgentMemory):
 
     ## Delete ##
     @abstractmethod
-    def delete_vector(self, vector_id):
+    def delete_vector(self, vector_id):  # type: ignore[no-untyped-def]
         """Delete a vector from the database using its identifier.
         Args:
             vector_id (any): The identifier of the vector to delete.

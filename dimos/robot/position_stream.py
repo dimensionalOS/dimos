@@ -21,8 +21,8 @@ This module creates a reactive stream of position updates from ROS odometry or p
 import logging
 import time
 
-from geometry_msgs.msg import PoseStamped
-from nav_msgs.msg import Odometry
+from geometry_msgs.msg import PoseStamped  # type: ignore[attr-defined]
+from nav_msgs.msg import Odometry  # type: ignore[attr-defined]
 from rclpy.node import Node
 from reactivex import Observable, Subject, operators as ops
 
@@ -60,12 +60,12 @@ class PositionStreamProvider:
         self.pose_topic = pose_topic
         self.use_odometry = use_odometry
 
-        self._subject = Subject()
+        self._subject = Subject()  # type: ignore[var-annotated]
 
         self.last_position = None
         self.last_update_time = None
 
-        self._create_subscription()
+        self._create_subscription()  # type: ignore[no-untyped-call]
 
         logger.info(
             f"PositionStreamProvider initialized with "
@@ -73,7 +73,7 @@ class PositionStreamProvider:
             f"{odometry_topic if use_odometry else pose_topic}"
         )
 
-    def _create_subscription(self):
+    def _create_subscription(self):  # type: ignore[no-untyped-def]
         """Create the appropriate ROS subscription based on configuration."""
         if self.use_odometry:
             self.subscription = self.ros_node.create_subscription(
@@ -128,13 +128,13 @@ class PositionStreamProvider:
             update_rate = 1.0 / (current_time - self.last_update_time)
             logger.debug(f"Position update rate: {update_rate:.1f} Hz")
 
-        self.last_position = position
-        self.last_update_time = current_time
+        self.last_position = position  # type: ignore[assignment]
+        self.last_update_time = current_time  # type: ignore[assignment]
 
         self._subject.on_next(position)
         logger.debug(f"Position updated: ({x:.2f}, {y:.2f})")
 
-    def get_position_stream(self) -> Observable:
+    def get_position_stream(self) -> Observable:  # type: ignore[type-arg]
         """
         Get an Observable stream of position updates.
 

@@ -16,5 +16,5 @@ from dimos.protocol.pubsub.lcmpubsub import JpegSharedMemoryEncoderMixin
 from dimos.protocol.pubsub.shmpubsub import SharedMemoryPubSubBase
 
 
-class JpegSharedMemory(JpegSharedMemoryEncoderMixin, SharedMemoryPubSubBase):
+class JpegSharedMemory(JpegSharedMemoryEncoderMixin, SharedMemoryPubSubBase):  # type: ignore[misc]
     pass

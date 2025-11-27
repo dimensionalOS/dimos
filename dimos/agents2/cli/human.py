@@ -16,7 +16,7 @@ import queue
 
 from reactivex.disposable import Disposable
 
-from dimos.agents2 import Output, Reducer, Stream, skill
+from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import pLCMTransport, rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
@@ -25,16 +25,16 @@ from dimos.core.rpc_client import RpcCall
 class HumanInput(Module):
     running: bool = False
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.string, output=Output.human, hide_skill=True)
-    def human(self):
+    @skill(stream=Stream.call_agent, reducer=Reducer.string, output=Output.human, hide_skill=True)  # type: ignore[arg-type]
+    def human(self):  # type: ignore[no-untyped-def]
         """receives human input, no need to run this, it's running implicitly"""
         if self.running:
             return "already running"
         self.running = True
-        transport = pLCMTransport("/human_input")
+        transport = pLCMTransport("/human_input")  # type: ignore[var-annotated]
 
-        msg_queue = queue.Queue()
-        unsub = transport.subscribe(msg_queue.put)
+        msg_queue = queue.Queue()  # type: ignore[var-annotated]
+        unsub = transport.subscribe(msg_queue.put)  # type: ignore[func-returns-value]
         self._disposables.add(Disposable(unsub))
         yield from iter(msg_queue.get, None)
 
@@ -48,7 +48,7 @@ class HumanInput(Module):
 
     @rpc
     def set_LlmAgent_register_skills(self, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)
+        callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         callable(self, run_implicit_name="human")
 
 

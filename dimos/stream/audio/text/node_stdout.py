@@ -49,7 +49,7 @@ class TextPrinterNode(AbstractTextConsumer):
         """
         print(f"{self.prefix}{text}{self.suffix}", end=self.end, flush=True)
 
-    def consume_text(self, text_observable: Observable) -> "AbstractTextConsumer":
+    def consume_text(self, text_observable: Observable) -> "AbstractTextConsumer":  # type: ignore[type-arg]
         """
         Start processing text from the observable source.
 
@@ -62,7 +62,7 @@ class TextPrinterNode(AbstractTextConsumer):
         logger.info("Starting text printer")
 
         # Subscribe to the text observable
-        self.subscription = text_observable.subscribe(
+        self.subscription = text_observable.subscribe(  # type: ignore[assignment]
             on_next=self.print_text,
             on_error=lambda e: logger.error(f"Error: {e}"),
             on_completed=lambda: logger.info("Text printer completed"),
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     from reactivex import Subject
 
     # Create a simple text subject that we can push values to
-    text_subject = Subject()
+    text_subject = Subject()  # type: ignore[var-annotated]
 
     # Create and connect the text printer
     text_printer = TextPrinterNode(prefix="Text: ")

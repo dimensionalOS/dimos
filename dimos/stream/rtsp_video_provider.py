@@ -18,7 +18,7 @@ import subprocess
 import threading
 import time
 
-import ffmpeg  # ffmpeg-python wrapper
+import ffmpeg  # type: ignore[import-untyped]  # ffmpeg-python wrapper
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
@@ -55,11 +55,11 @@ class RtspVideoProvider(AbstractVideoProvider):
         super().__init__(dev_name, pool_scheduler)
         self.rtsp_url = rtsp_url
         # Holds the currently active ffmpeg process Popen object
-        self._ffmpeg_process: subprocess.Popen | None = None
+        self._ffmpeg_process: subprocess.Popen | None = None  # type: ignore[type-arg]
         # Lock to protect access to the ffmpeg process object
         self._lock = threading.Lock()
 
-    def _get_stream_info(self) -> dict:
+    def _get_stream_info(self) -> dict:  # type: ignore[type-arg]
         """Probes the RTSP stream to get video dimensions and FPS using ffprobe."""
         logger.info(f"({self.dev_name}) Probing RTSP stream.")
         try:
@@ -114,7 +114,7 @@ class RtspVideoProvider(AbstractVideoProvider):
         logger.info(f"({self.dev_name}) Stream info: {width}x{height} @ {fps:.2f} FPS")
         return {"width": width, "height": height, "fps": fps}
 
-    def _start_ffmpeg_process(self, width: int, height: int) -> subprocess.Popen:
+    def _start_ffmpeg_process(self, width: int, height: int) -> subprocess.Popen:  # type: ignore[type-arg]
         """Starts the ffmpeg process to capture and decode the stream."""
         logger.info(f"({self.dev_name}) Starting ffmpeg process for rtsp stream.")
         try:
@@ -133,7 +133,7 @@ class RtspVideoProvider(AbstractVideoProvider):
                 .run_async(pipe_stdout=True, pipe_stderr=True)  # Capture stdout and stderr
             )
             logger.info(f"({self.dev_name}) ffmpeg process started (PID: {process.pid})")
-            return process
+            return process  # type: ignore[no-any-return]
         except ffmpeg.Error as e:
             stderr = e.stderr.decode("utf8", errors="ignore") if e.stderr else "No stderr"
             msg = f"({self.dev_name}) Failed to start ffmpeg for {self.rtsp_url}: {stderr}"
@@ -144,7 +144,7 @@ class RtspVideoProvider(AbstractVideoProvider):
             logger.error(msg)
             raise VideoSourceError(msg) from e
 
-    def capture_video_as_observable(self, fps: int = 0) -> Observable:
+    def capture_video_as_observable(self, fps: int = 0) -> Observable:  # type: ignore[type-arg]
         """Creates an observable from the RTSP stream using ffmpeg.
 
         The observable attempts to reconnect if the stream drops.
@@ -167,9 +167,9 @@ class RtspVideoProvider(AbstractVideoProvider):
                 f"({self.dev_name}) The 'fps' argument ({fps}) is currently ignored. Using stream native FPS."
             )
 
-        def emit_frames(observer, scheduler):
+        def emit_frames(observer, scheduler):  # type: ignore[no-untyped-def]
             """Function executed by rx.create to emit frames."""
-            process: subprocess.Popen | None = None
+            process: subprocess.Popen | None = None  # type: ignore[type-arg]
             # Event to signal the processing loop should stop (e.g., on dispose)
             should_stop = threading.Event()
 
@@ -198,7 +198,7 @@ class RtspVideoProvider(AbstractVideoProvider):
                             # Ensure we clear the process variable even if wait/kill fails
                             process = None
                             # Also clear the shared class attribute if this was the active process
-                            if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:
+                            if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:  # type: ignore[attr-defined]
                                 self._ffmpeg_process = None
                     elif process and process.poll() is not None:
                         # Process exists but already terminated
@@ -207,7 +207,7 @@ class RtspVideoProvider(AbstractVideoProvider):
                         )
                         process = None  # Clear the variable
                         # Clear shared attribute if it matches
-                        if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:
+                        if self._ffmpeg_process and self._ffmpeg_process.pid == process.pid:  # type: ignore[attr-defined]
                             self._ffmpeg_process = None
                     else:
                         # Process variable is already None or doesn't match _ffmpeg_process
@@ -243,7 +243,7 @@ class RtspVideoProvider(AbstractVideoProvider):
                         # 3. Frame reading loop
                         while not should_stop.is_set():
                             # Read exactly one frame's worth of bytes
-                            in_bytes = process.stdout.read(frame_size)
+                            in_bytes = process.stdout.read(frame_size)  # type: ignore[union-attr]
 
                             if len(in_bytes) == 0:
                                 # End of stream or process terminated unexpectedly
@@ -251,7 +251,7 @@ class RtspVideoProvider(AbstractVideoProvider):
                                     f"({self.dev_name}) ffmpeg stdout returned 0 bytes. EOF or process terminated."
                                 )
                                 process.wait(timeout=0.5)  # Allow stderr to flush
-                                stderr_data = process.stderr.read().decode("utf8", errors="ignore")
+                                stderr_data = process.stderr.read().decode("utf8", errors="ignore")  # type: ignore[union-attr]
                                 exit_code = process.poll()
                                 logger.warning(
                                     f"({self.dev_name}) ffmpeg process (PID: {process.pid}) exited with code {exit_code}. Stderr: {stderr_data}"
