@@ -31,6 +31,8 @@ class G1Connection(Module):
     connection_type: str | None = None
     _global_config: GlobalConfig
 
+    connection: UnitreeWebRTCConnection
+
     def __init__(
         self,
         ip: str | None = None,
@@ -75,7 +77,7 @@ class G1Connection(Module):
         self.connection.move(twist, duration)
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
         return self.connection.publish_request(topic, data)
 
@@ -84,10 +86,10 @@ g1_connection = G1Connection.blueprint
 
 
 def deploy(dimos: DimosCluster, ip: str, local_planner: spec.LocalPlanner) -> G1Connection:
-    connection = dimos.deploy(G1Connection, ip)
+    connection = dimos.deploy(G1Connection, ip)  # type: ignore[attr-defined]
     connection.cmd_vel.connect(local_planner.cmd_vel)
     connection.start()
-    return connection
+    return connection  # type: ignore[no-any-return]
 
 
 __all__ = ["G1Connection", "deploy", "g1_connection"]

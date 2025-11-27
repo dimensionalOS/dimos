@@ -17,12 +17,12 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-from dimos_lcm.sensor_msgs import Joy as LCMJoy
+from dimos_lcm.sensor_msgs import Joy as LCMJoy  # type: ignore[import-untyped]
 
 try:
-    from sensor_msgs.msg import Joy as ROSJoy
+    from sensor_msgs.msg import Joy as ROSJoy  # type: ignore[attr-defined]
 except ImportError:
-    ROSJoy = None
+    ROSJoy = None  # type: ignore[assignment, misc]
 
 from plum import dispatch
 
@@ -34,7 +34,7 @@ JoyConvertable: TypeAlias = (
 )
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
@@ -67,7 +67,7 @@ class Joy(Timestamped):
         self.axes = axes if axes is not None else []
         self.buttons = buttons if buttons is not None else []
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, joy_tuple: tuple[list[float], list[int]]) -> None:
         """Initialize from a tuple of (axes, buttons)."""
         self.ts = time.time()
@@ -75,7 +75,7 @@ class Joy(Timestamped):
         self.axes = list(joy_tuple[0])
         self.buttons = list(joy_tuple[1])
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, joy_dict: dict[str, list[float] | list[int]]) -> None:
         """Initialize from a dictionary with 'axes' and 'buttons' keys."""
         self.ts = joy_dict.get("ts", time.time())
@@ -83,7 +83,7 @@ class Joy(Timestamped):
         self.axes = list(joy_dict.get("axes", []))
         self.buttons = list(joy_dict.get("buttons", []))
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, joy: Joy) -> None:
         """Initialize from another Joy (copy constructor)."""
         self.ts = joy.ts
@@ -91,7 +91,7 @@ class Joy(Timestamped):
         self.axes = list(joy.axes)
         self.buttons = list(joy.buttons)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_joy: LCMJoy) -> None:
         """Initialize from an LCM Joy message."""
         self.ts = lcm_joy.header.stamp.sec + (lcm_joy.header.stamp.nsec / 1_000_000_000)
@@ -101,13 +101,13 @@ class Joy(Timestamped):
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMJoy()
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
         lcm_msg.axes_length = len(self.axes)
         lcm_msg.axes = self.axes
         lcm_msg.buttons_length = len(self.buttons)
         lcm_msg.buttons = self.buttons
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> Joy:
@@ -131,7 +131,7 @@ class Joy(Timestamped):
             f"axes={self.axes}, buttons={self.buttons})"
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two Joy messages are equal."""
         if not isinstance(other, Joy):
             return False
@@ -167,7 +167,7 @@ class Joy(Timestamped):
         Returns:
             ROS Joy message
         """
-        ros_msg = ROSJoy()
+        ros_msg = ROSJoy()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id

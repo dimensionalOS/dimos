@@ -32,14 +32,14 @@ class AbstractDataProvider(ABC):
 
     def __init__(self, dev_name: str = "NA") -> None:
         self.dev_name = dev_name
-        self._data_subject = Subject()  # Regular Subject, no initial None value
+        self._data_subject = Subject()  # type: ignore[var-annotated]  # Regular Subject, no initial None value
 
     @property
-    def data_stream(self) -> Observable:
+    def data_stream(self) -> Observable:  # type: ignore[type-arg]
         """Get the data stream observable."""
         return self._data_subject
 
-    def push_data(self, data) -> None:
+    def push_data(self, data) -> None:  # type: ignore[no-untyped-def]
         """Push new data to the stream."""
         self._data_subject.on_next(data)
 
@@ -55,13 +55,13 @@ class ROSDataProvider(AbstractDataProvider):
         super().__init__(dev_name)
         self.logger = logging.getLogger(dev_name)
 
-    def push_data(self, data) -> None:
+    def push_data(self, data) -> None:  # type: ignore[no-untyped-def]
         """Push new data to the stream."""
         print(f"ROSDataProvider pushing data of type: {type(data)}")
         super().push_data(data)
         print("Data pushed to subject")
 
-    def capture_data_as_observable(self, fps: int | None = None) -> Observable:
+    def capture_data_as_observable(self, fps: int | None = None) -> Observable:  # type: ignore[type-arg]
         """Get the data stream as an observable.
 
         Args:
@@ -168,7 +168,7 @@ class QueryDataProvider(AbstractDataProvider):
         # Zip the timer with the query source so each timer tick emits the next query.
         query_stream = timer.pipe(
             ops.zip(query_source),
-            ops.map(lambda pair: query_template.format(query=pair[1])),
+            ops.map(lambda pair: query_template.format(query=pair[1])),  # type: ignore[index]
             ops.observe_on(pool_scheduler),
             # ops.do_action(
             #     on_next=lambda q: self.logger.info(f"Emitting query: {q}"),

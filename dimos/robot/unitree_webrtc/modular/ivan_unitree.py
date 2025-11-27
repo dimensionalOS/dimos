@@ -22,9 +22,9 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.reid import ReidModule
-from dimos.protocol.pubsub import lcm
+from dimos.protocol.pubsub import lcm  # type: ignore[attr-defined]
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.unitree_webrtc.modular import deploy_connection
+from dimos.robot.unitree_webrtc.modular import deploy_connection  # type: ignore[attr-defined]
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
@@ -35,11 +35,11 @@ def detection_unitree() -> None:
     dimos = start(8)
     connection = deploy_connection(dimos)
 
-    def goto(pose) -> bool:
+    def goto(pose) -> bool:  # type: ignore[no-untyped-def]
         print("NAVIGATION REQUESTED:", pose)
         return True
 
-    detector = dimos.deploy(
+    detector = dimos.deploy(  # type: ignore[attr-defined]
         Detection2DModule,
         camera_info=ConnectionModule._camera_info(),
     )
@@ -53,7 +53,7 @@ def detection_unitree() -> None:
     detector.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
     detector.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
 
-    reid = dimos.deploy(ReidModule)
+    reid = dimos.deploy(ReidModule)  # type: ignore[attr-defined]
 
     reid.image.connect(connection.video)
     reid.detections.connect(detector.detections)
@@ -63,16 +63,16 @@ def detection_unitree() -> None:
     connection.start()
     reid.start()
 
-    from dimos.agents2 import Agent
+    from dimos.agents2 import Agent  # type: ignore[attr-defined]
     from dimos.agents2.cli.human import HumanInput
 
     agent = Agent(
         system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot.",
         model=Model.GPT_4O,  # Could add CLAUDE models to enum
-        provider=Provider.OPENAI,  # Would need ANTHROPIC provider
+        provider=Provider.OPENAI,  # type: ignore[attr-defined]  # Would need ANTHROPIC provider
     )
 
-    human_input = dimos.deploy(HumanInput)
+    human_input = dimos.deploy(HumanInput)  # type: ignore[attr-defined]
     agent.register_skills(human_input)
     agent.register_skills(detector)
 

@@ -22,13 +22,13 @@ ConfigT = TypeVar("ConfigT")
 class Configurable(Generic[ConfigT]):
     default_config: type[ConfigT]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.config: ConfigT = self.default_config(**kwargs)
 
 
 class Service(Configurable[ConfigT], ABC):
     def start(self) -> None:
-        super().start()
+        super().start()  # type: ignore[misc]
 
     def stop(self) -> None:
-        super().stop()
+        super().stop()  # type: ignore[misc]

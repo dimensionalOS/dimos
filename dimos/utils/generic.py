@@ -74,5 +74,5 @@ def short_id(from_string: str | None = None) -> str:
 
 
 class classproperty(property):
-    def __get__(self, obj, cls):
-        return self.fget(cls)
+    def __get__(self, obj, cls):  # type: ignore[no-untyped-def, override]
+        return self.fget(cls)  # type: ignore[misc]

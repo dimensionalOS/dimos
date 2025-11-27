@@ -71,7 +71,7 @@ SYSTEM_PROMPT = """You are an intelligent robotic assistant controlling a Piper 
 Remember: You're here to assist with manipulation tasks. Be helpful, precise, and always prioritize safe operation of the robot."""
 
 
-def main():
+def main():  # type: ignore[no-untyped-def]
     """Main entry point."""
     print("\n" + "=" * 60)
     print("Piper Arm Robot with Claude Agent")
@@ -94,7 +94,7 @@ def main():
     logger.info("Starting Piper Arm Robot with Agent")
 
     # Create robot instance
-    robot = PiperArmRobot()
+    robot = PiperArmRobot()  # type: ignore[abstract]
 
     try:
         # Start the robot (this is async, so we need asyncio.run)
@@ -103,7 +103,7 @@ def main():
         logger.info("Robot initialized successfully")
 
         # Set up skill library
-        skills = robot.get_skills()
+        skills = robot.get_skills()  # type: ignore[no-untyped-call]
         skills.add(PickAndPlace)
         skills.add(KillSkill)
 
@@ -114,12 +114,12 @@ def main():
         logger.info(f"Skills registered: {[skill.__name__ for skill in skills.get_class_skills()]}")
 
         # Set up streams for agent and web interface
-        agent_response_subject = rx.subject.Subject()
+        agent_response_subject = rx.subject.Subject()  # type: ignore[var-annotated]
         agent_response_stream = agent_response_subject.pipe(ops.share())
-        audio_subject = rx.subject.Subject()
+        audio_subject = rx.subject.Subject()  # type: ignore[var-annotated]
 
         # Set up streams for web interface
-        streams = {}
+        streams = {}  # type: ignore[var-annotated]
 
         text_streams = {
             "agent_responses": agent_response_stream,
@@ -136,7 +136,7 @@ def main():
             raise
 
         # Set up speech-to-text
-        stt_node = stt()
+        stt_node = stt()  # type: ignore[no-untyped-call]
         stt_node.consume_audio(audio_subject.pipe(ops.share()))
 
         # Create Claude agent
@@ -155,7 +155,7 @@ def main():
         agent.get_response_observable().subscribe(lambda x: agent_response_subject.on_next(x))
 
         # Set up text-to-speech for agent responses
-        tts_node = tts()
+        tts_node = tts()  # type: ignore[no-untyped-call]
         tts_node.consume_text(agent.get_response_observable())
 
         logger.info("=" * 60)
@@ -187,4 +187,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[no-untyped-call]

@@ -19,7 +19,7 @@ This module provides pre-configured blueprints for various G1 robot setups,
 from basic teleoperation to full autonomous agent configurations.
 """
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input

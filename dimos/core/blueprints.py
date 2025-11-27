@@ -159,7 +159,7 @@ class ModuleBlueprintSet:
         # Gather all the In/Out connections with remapping applied.
         connections = defaultdict(list)
         # Track original name -> remapped name for each module
-        module_conn_mapping = defaultdict(dict)
+        module_conn_mapping = defaultdict(dict)  # type: ignore[var-annotated]
 
         for blueprint in self.blueprints:
             for conn in blueprint.connections:
@@ -175,7 +175,7 @@ class ModuleBlueprintSet:
             transport = self._get_transport_for(remapped_name, type)
             for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
-                instance.set_transport(original_name, transport)
+                instance.set_transport(original_name, transport)  # type: ignore[union-attr]
 
     def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
@@ -185,7 +185,7 @@ class ModuleBlueprintSet:
         interface_methods = defaultdict(list)  # interface_name.method -> [(module_class, method)]
 
         for blueprint in self.blueprints:
-            for method_name in blueprint.module.rpcs.keys():
+            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
                 method = getattr(module_coordinator.get_instance(blueprint.module), method_name)
                 # Register under concrete class name (backward compatibility)
                 rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method
@@ -211,14 +211,14 @@ class ModuleBlueprintSet:
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
             instance = module_coordinator.get_instance(blueprint.module)
-            for method_name in blueprint.module.rpcs.keys():
+            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
                 if not method_name.startswith("set_"):
                     continue
                 linked_name = method_name.removeprefix("set_")
                 if linked_name not in rpc_methods:
                     continue
                 getattr(instance, method_name)(rpc_methods[linked_name])
-            for requested_method_name in instance.get_rpc_method_names():
+            for requested_method_name in instance.get_rpc_method_names():  # type: ignore[union-attr]
                 # Check if this is an ambiguous interface method
                 if (
                     requested_method_name in interface_methods
@@ -235,7 +235,7 @@ class ModuleBlueprintSet:
 
                 if requested_method_name not in rpc_methods_dot:
                     continue
-                instance.set_rpc_method(
+                instance.set_rpc_method(  # type: ignore[union-attr]
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
@@ -270,11 +270,11 @@ def _make_module_blueprint(
 
     for name, annotation in all_annotations.items():
         origin = get_origin(annotation)
-        if origin not in (In, Out):
+        if origin not in (In, Out):  # type: ignore[comparison-overlap]
             continue
-        direction = "in" if origin == In else "out"
+        direction = "in" if origin == In else "out"  # type: ignore[comparison-overlap]
         type_ = get_args(annotation)[0]
-        connections.append(ModuleConnection(name=name, type=type_, direction=direction))
+        connections.append(ModuleConnection(name=name, type=type_, direction=direction))  # type: ignore[arg-type]
 
     return ModuleBlueprint(module=module, connections=tuple(connections), args=args, kwargs=kwargs)
 
@@ -286,13 +286,13 @@ def create_module_blueprint(module: type[Module], *args: Any, **kwargs: Any) -> 
 
 def autoconnect(*blueprints: ModuleBlueprintSet) -> ModuleBlueprintSet:
     all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
-    all_transports = dict(
+    all_transports = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.transport_map.items()) for x in blueprints], [])
     )
-    all_config_overrides = dict(
+    all_config_overrides = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.global_config_overrides.items()) for x in blueprints], [])
     )
-    all_remappings = dict(
+    all_remappings = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.remapping_map.items()) for x in blueprints], [])
     )
 
