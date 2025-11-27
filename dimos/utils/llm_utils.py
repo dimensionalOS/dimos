@@ -16,7 +16,7 @@ import json
 import re
 
 
-def extract_json(response: str) -> dict | list:
+def extract_json(response: str) -> dict | list:  # type: ignore[type-arg]
     """Extract JSON from potentially messy LLM response.
 
     Tries multiple strategies:
@@ -35,7 +35,7 @@ def extract_json(response: str) -> dict | list:
     """
     # First try to parse the whole response as JSON
     try:
-        return json.loads(response)
+        return json.loads(response)  # type: ignore[no-any-return]
     except json.JSONDecodeError:
         pass
 
@@ -64,7 +64,7 @@ def extract_json(response: str) -> dict | list:
     matches = re.findall(object_pattern, response, re.DOTALL)
     for match in matches:
         try:
-            return json.loads(match)
+            return json.loads(match)  # type: ignore[no-any-return]
         except json.JSONDecodeError:
             continue
 

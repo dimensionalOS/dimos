@@ -29,13 +29,13 @@ class SimpleTracker:
         :param min_count: Minimum number of appearances required
         :param count_window: Number of latest frames to consider for counting
         """
-        self.history = []
+        self.history = []  # type: ignore[var-annotated]
         self.history_size = history_size
         self.min_count = min_count
         self.count_window = count_window
-        self.total_counts = {}
+        self.total_counts = {}  # type: ignore[var-annotated]
 
-    def update(self, track_ids):
+    def update(self, track_ids):  # type: ignore[no-untyped-def]
         # Add new frame's track IDs to history
         self.history.append(track_ids)
         if len(self.history) > self.history_size:
@@ -57,12 +57,12 @@ class SimpleTracker:
         # Return IDs that appear often enough
         return [track_id for track_id, count in id_counts.items() if count >= self.min_count]
 
-    def get_total_counts(self):
+    def get_total_counts(self):  # type: ignore[no-untyped-def]
         """Returns the total count of each tracking ID seen over time, limited to history size."""
         return self.total_counts
 
 
-def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):
+def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):  # type: ignore[no-untyped-def]
     """
     Extracts masks, bounding boxes, probabilities, and class names from one Ultralytics result object.
 
@@ -73,12 +73,12 @@ def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):
     Returns:
     tuple: (masks, bboxes, track_ids, probs, names, areas)
     """
-    masks = []
-    bboxes = []
-    track_ids = []
-    probs = []
-    names = []
-    areas = []
+    masks = []  # type: ignore[var-annotated]
+    bboxes = []  # type: ignore[var-annotated]
+    track_ids = []  # type: ignore[var-annotated]
+    probs = []  # type: ignore[var-annotated]
+    names = []  # type: ignore[var-annotated]
+    areas = []  # type: ignore[var-annotated]
 
     if result.masks is None:
         return masks, bboxes, track_ids, probs, names, areas
@@ -114,7 +114,7 @@ def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):
     return masks, bboxes, track_ids, probs, names, areas
 
 
-def compute_texture_map(frame, blur_size: int = 3):
+def compute_texture_map(frame, blur_size: int = 3):  # type: ignore[no-untyped-def]
     """
     Compute texture map using gradient statistics.
     Returns high values for textured regions and low values for smooth regions.
@@ -152,7 +152,7 @@ def compute_texture_map(frame, blur_size: int = 3):
     return texture_map
 
 
-def filter_segmentation_results(
+def filter_segmentation_results(  # type: ignore[no-untyped-def]
     frame,
     masks,
     bboxes,
@@ -210,7 +210,7 @@ def filter_segmentation_results(
         if texture_value >= texture_threshold:
             mask_sum[mask > 0] = i
             filtered_texture_values.append(
-                texture_value.item()
+                texture_value.item()  # type: ignore[union-attr]
             )  # Store the texture value as a Python float
 
     # Get indices that appear in mask_sum (these are the masks we want to keep)
@@ -240,7 +240,7 @@ def filter_segmentation_results(
     )
 
 
-def plot_results(
+def plot_results(  # type: ignore[no-untyped-def]
     image,
     masks,
     bboxes,
@@ -313,7 +313,7 @@ def plot_results(
     return result
 
 
-def crop_images_from_bboxes(image, bboxes, buffer: int = 0):
+def crop_images_from_bboxes(image, bboxes, buffer: int = 0):  # type: ignore[no-untyped-def]
     """
     Crops regions from an image based on bounding boxes with an optional buffer.
 

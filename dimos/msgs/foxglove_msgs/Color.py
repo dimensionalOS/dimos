@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import hashlib
 
-from dimos_lcm.foxglove_msgs import Color as LCMColor
+from dimos_lcm.foxglove_msgs import Color as LCMColor  # type: ignore[import-untyped]
 
 
-class Color(LCMColor):
+class Color(LCMColor):  # type: ignore[misc]
     """Color with convenience methods."""
 
     @classmethod

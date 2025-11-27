@@ -366,7 +366,7 @@
           filename="package://piper_description/meshes/gripper_base.STL" />
       </geometry>
     </collision>
-  </link> 
+  </link>
   <joint
     name="joint6_to_gripper_base"
     type="fixed">

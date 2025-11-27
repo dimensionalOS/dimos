@@ -29,7 +29,7 @@ logger = setup_logger("dimos.skills.speak")
 _audio_device_lock = threading.RLock()
 
 # Global queue for sequential audio processing
-_audio_queue = queue.Queue()
+_audio_queue = queue.Queue()  # type: ignore[var-annotated]
 _queue_processor_thread = None
 _queue_running = False
 
@@ -79,27 +79,27 @@ class Speak(AbstractSkill):
 
     text: str = Field(..., description="Text to speak")
 
-    def __init__(self, tts_node: Any | None = None, **data) -> None:
+    def __init__(self, tts_node: Any | None = None, **data) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**data)
         self._tts_node = tts_node
         self._audio_complete = threading.Event()
         self._subscription = None
-        self._subscriptions: list = []  # Track all subscriptions
+        self._subscriptions: list = []  # type: ignore[type-arg]  # Track all subscriptions
 
-    def __call__(self):
+    def __call__(self):  # type: ignore[no-untyped-def]
         if not self._tts_node:
             logger.error("No TTS node provided to Speak skill")
             return "Error: No TTS node available"
 
         # Create a result queue to get the result back from the audio thread
-        result_queue = queue.Queue(1)
+        result_queue = queue.Queue(1)  # type: ignore[var-annotated]
 
         # Define the speech task to run in the audio queue
         def speak_task() -> None:
             try:
                 # Using a lock to ensure exclusive access to audio device
                 with _audio_device_lock:
-                    text_subject = Subject()
+                    text_subject = Subject()  # type: ignore[var-annotated]
                     self._audio_complete.clear()
                     self._subscriptions = []
 
@@ -109,15 +109,15 @@ class Speak(AbstractSkill):
                         self._audio_complete.set()
 
                     # This function will be called if there's an error
-                    def on_error(error) -> None:
+                    def on_error(error) -> None:  # type: ignore[no-untyped-def]
                         logger.error(f"Error in TTS processing: {error}")
                         self._audio_complete.set()
 
                     # Connect the Subject to the TTS node and keep the subscription
-                    self._tts_node.consume_text(text_subject)
+                    self._tts_node.consume_text(text_subject)  # type: ignore[union-attr]
 
                     # Subscribe to the audio output to know when it's done
-                    self._subscription = self._tts_node.emit_text().subscribe(
+                    self._subscription = self._tts_node.emit_text().subscribe(  # type: ignore[union-attr]
                         on_next=lambda text: logger.debug(f"TTS processing: {text}"),
                         on_completed=on_complete,
                         on_error=on_error,
