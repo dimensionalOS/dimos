@@ -22,6 +22,7 @@ from pathlib import Path
 import sys
 import tempfile
 import traceback
+from types import TracebackType
 from typing import Any
 
 import structlog
@@ -75,7 +76,7 @@ def _configure_structlog() -> Path:
 
     _LOG_FILE_PATH = _get_log_file_path()
 
-    shared_processors = [
+    shared_processors: list[Any] = [
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.stdlib.PositionalArgumentsFormatter(),
@@ -142,12 +143,14 @@ def setup_logger(level: int | None = None) -> Any:
     # Create console handler with pretty formatting.
     # We use exception_formatter=None because we handle exceptions
     # separately with Rich in the global exception handler
+
     console_renderer = structlog.dev.ConsoleRenderer(
         colors=True,
         pad_event=60,
         force_colors=False,
         sort_keys=True,
-        exception_formatter=None,  # Don't format exceptions in console logs
+        # Don't format exceptions in console logs
+        exception_formatter=None,  # type: ignore[arg-type]
     )
 
     # Wrapper to remove callsite info and exception details before rendering to console.
@@ -193,14 +196,18 @@ def setup_logger(level: int | None = None) -> Any:
 
 
 def setup_exception_handler() -> None:
-    def handle_exception(exc_type, exc_value, exc_traceback) -> None:
+    def handle_exception(
+        exc_type: type[BaseException],
+        exc_value: BaseException,
+        exc_traceback: TracebackType | None,
+    ) -> None:
         # Don't log KeyboardInterrupt
         if issubclass(exc_type, KeyboardInterrupt):
             sys.__excepthook__(exc_type, exc_value, exc_traceback)
             return
 
         # Get a logger for uncaught exceptions
-        logger = setup_logger("uncaught_exception")
+        logger = setup_logger()
 
         # Log the exception with full traceback to JSON
         logger.error(
