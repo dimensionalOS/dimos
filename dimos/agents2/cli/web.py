@@ -73,6 +73,8 @@ class WebInput(Module):
 
     @rpc
     def stop(self) -> None:
+        if self._web_interface:
+            self._web_interface.shutdown()
         if self._thread:
             self._thread.join(timeout=1.0)
         if self._human_transport:
