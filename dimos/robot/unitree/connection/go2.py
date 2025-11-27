@@ -15,7 +15,7 @@
 import logging
 from threading import Thread
 import time
-from typing import Protocol
+from typing import Any, Protocol
 
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
@@ -132,7 +132,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
         video_store = TimedSensorReplay(f"{self.dir_name}/video")  # type: ignore[var-annotated]
         return video_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
-    def move(self, twist: Twist, duration: float = 0.0) -> bool:  # type: ignore[override]
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
         return True
 
     def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
@@ -167,12 +167,13 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         connection_type = self._global_config.unitree_connection_type
 
         if ip in ["fake", "mock", "replay"] or connection_type == "replay":
-            self.connection = ReplayConnection()  # type: ignore[assignment]
+            self.connection = ReplayConnection()
         elif ip == "mujoco" or connection_type == "mujoco":
             from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-            self.connection = MujocoConnection(self._global_config)  # type: ignore[assignment]
+            self.connection = MujocoConnection(self._global_config)
         else:
+            assert ip is not None, "IP address must be provided"
             self.connection = UnitreeWebRTCConnection(ip)
 
         Module.__init__(self, *args, **kwargs)
@@ -257,7 +258,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(_camera_info_static())  # type: ignore[no-untyped-call]
+            self.camera_info.publish(_camera_info_static())
             time.sleep(1.0)
 
     @rpc
@@ -276,7 +277,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         return self.connection.liedown()
 
     @rpc
-    def publish_request(self, topic: str, data: dict) -> dict:
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         """Publish a request to the WebRTC connection.
         Args:
             topic: The RTC topic to publish to

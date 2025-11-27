@@ -125,7 +125,7 @@ class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
         # Connect response output
         if self.response_out:
             disposable = self.response_subject.subscribe(
-                lambda response: self.response_out.publish(response)  # type: ignore[no-untyped-call]
+                lambda response: self.response_out.publish(response)
             )
             self._module_disposables.append(disposable)
 

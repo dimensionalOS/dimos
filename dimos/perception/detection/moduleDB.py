@@ -174,7 +174,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         def scene_thread() -> None:
             while True:
                 scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)  # type: ignore[no-untyped-call]
+                self.scene_update.publish(scene_update)
                 time.sleep(1.0)
 
         threading.Thread(target=scene_thread, daemon=True).start()

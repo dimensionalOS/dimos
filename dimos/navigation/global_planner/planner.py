@@ -193,7 +193,7 @@ class AstarPlanner(Module):
         if path:
             # Add orientations to the path, using the goal's orientation for the final pose
             path = add_orientations_to_path(path, msg.orientation)
-            self.path.publish(path)  # type: ignore[no-untyped-call]
+            self.path.publish(path)
 
     def plan(self, goal: Pose) -> Path | None:
         """Plan a path from current position to goal."""

@@ -14,6 +14,7 @@
 
 
 import time
+from typing import TYPE_CHECKING, Any
 
 from reactivex.disposable import Disposable
 
@@ -30,6 +31,9 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
 logger = setup_logger(__file__)
 
 
@@ -37,19 +41,19 @@ class G1SimConnection(Module):
     cmd_vel: In[Twist] = None  # type: ignore
     lidar: Out[LidarMessage] = None  # type: ignore
     odom: Out[PoseStamped] = None  # type: ignore
-    ip: str
+    ip: str | None
     _global_config: GlobalConfig
 
     def __init__(
         self,
         ip: str | None = None,
         global_config: GlobalConfig | None = None,
-        *args,
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         self._global_config = global_config or GlobalConfig()
         self.ip = ip if ip is not None else self._global_config.robot_ip
-        self.connection = None
+        self.connection: MujocoConnection | None = None
         super().__init__(*args, **kwargs)
 
     @rpc
@@ -59,6 +63,7 @@ class G1SimConnection(Module):
         from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
         self.connection = MujocoConnection(self._global_config)
+        assert self.connection is not None
         self.connection.start()
 
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
@@ -67,6 +72,7 @@ class G1SimConnection(Module):
 
     @rpc
     def stop(self) -> None:
+        assert self.connection is not None
         self.connection.stop()
         super().stop()
 
@@ -106,11 +112,13 @@ class G1SimConnection(Module):
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
+        assert self.connection is not None
         self.connection.move(twist, duration)
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
+        assert self.connection is not None
         return self.connection.publish_request(topic, data)
 
 

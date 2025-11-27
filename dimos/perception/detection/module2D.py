@@ -82,7 +82,7 @@ class Detection2DModule(Module):
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
         return backpressure(
-            self.color_image.pure_observable().pipe(  # type: ignore[no-untyped-call]
+            self.image.pure_observable().pipe(  # type: ignore[no-untyped-call]
                 sharpness_barrier(self.config.max_freq),
             )
         )
@@ -137,11 +137,11 @@ class Detection2DModule(Module):
         # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(
-            lambda det: self.detections.publish(det.to_ros_detection2d_array())  # type: ignore[no-untyped-call]
+            lambda det: self.detections.publish(det.to_ros_detection2d_array())
         )
 
         self.detection_stream_2d().subscribe(
-            lambda det: self.annotations.publish(det.to_foxglove_annotations())  # type: ignore[no-untyped-call]
+            lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
         def publish_cropped_images(detections: ImageDetections2D) -> None:
