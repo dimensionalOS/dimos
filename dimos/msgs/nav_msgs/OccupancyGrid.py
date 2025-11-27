@@ -18,6 +18,7 @@ from enum import IntEnum
 import time
 from typing import TYPE_CHECKING, BinaryIO
 
+import cv2
 from dimos_lcm.nav_msgs import MapMetaData, OccupancyGrid as LCMOccupancyGrid
 from dimos_lcm.std_msgs import Time as LCMTime
 import numpy as np
@@ -39,17 +40,6 @@ from dataclasses import dataclass
 from typing import Optional
 
 import numpy as np
-
-
-@dataclass
-class AsciiGrid:
-    """Container for ASCII grid data."""
-
-    ascii_grid_str: str = ""  # ASCII-art representation (rows separated by '\n')
-    width: int = 0
-    height: int = 0
-    step_row: int = 4  # sampling step from occupancy grid to ascii grid
-    step_col: int = 2
 
 
 class CostValues(IntEnum):
@@ -136,7 +126,6 @@ class OccupancyGrid(Timestamped):
             self.grid = np.array([], dtype=np.int8)
 
         self.robot_pose = robot_pose or self.info.origin
-        self.ascii_grid = AsciiGrid()
 
     def _to_lcm_time(self):
         """Convert timestamp to LCM Time."""
@@ -300,115 +289,206 @@ class OccupancyGrid(Timestamped):
             f"unknown={self.unknown_cells})"
         )
 
-    def augment_ascii(self, robot_pose: Pose = None):
-        """Augment the ASCII grid with robot pose.
-
-        Args:
-            robot_pose: Optional Pose of the robot to mark on the grid
-            detections: Optional list of detection positions to mark on the grid
-        """
-        step_col = self.ascii_grid.step_col
-        step_row = self.ascii_grid.step_row
-
-        ascii_lines = self.ascii_grid.ascii_grid_str.split("\n")
-        ascii_height = len(ascii_lines)
-        ascii_width = len(ascii_lines[0]) if ascii_height > 0 else 0
-
-        # add robot position to ascii grid with 'X'
-        robot_cell = None
-        if robot_pose is not None:
-            robot_grid_pos = self.world_to_grid(robot_pose.position)
-            robot_cell = (
-                round(robot_grid_pos.x / step_col),
-                round(robot_grid_pos.y / step_row),
-            )
-
-            rx, ry = robot_cell
-            if 0 <= ry < ascii_height and 0 <= rx < ascii_width:
-                line = list(ascii_lines[ry])
-                line[rx] = "X"
-                ascii_lines[ry] = "".join(line)
-
-        self.ascii_grid.ascii_grid_str = "\n".join(ascii_lines)
-
-    def grid_to_ascii(self) -> str:
-        """Convert the occupancy grid to an ASCII art representation.
-
+    def is_free_space(
+        self,
+        pixel_x: int,
+        pixel_y: int,
+        size: tuple[int, int] = (1024, 1024),
+        flip_vertical: bool = True,
+    ):
+        """Get the type of point (free, occupied, unknown) at given pixel coordinates in the occupancy grid image.
+        args:
+            pixel_x: X coordinate in pixels (image space)
+            pixel_y: Y coordinate in pixels (image space)
         returns:
-            A string representing the occupancy grid in ASCII art,
-            where:
-            - '.' represents free space (0)
-            - '#' represents obstacles (1-100)
-            - '?' represents unknown space (-1)
-            - 'X' represents the robot's position
+            cost value at the specified pixel
         """
-        step_col = self.ascii_grid.step_col
-        step_row = self.ascii_grid.step_row
+        grid_x, grid_y = self.pixel_to_grid(
+            pixel_x, pixel_y, size=size, flip_vertical=flip_vertical
+        )
 
-        char_map = {CostValues.FREE: ".", CostValues.UNKNOWN: "?"}
+        if self.grid[grid_y, grid_x] == CostValues.FREE:
+            return True
+        else:
+            return False
 
-        # create ascii art lines
-        map_ascii = []
-        for y in range(0, self.height, step_row):
-            line = []
-            for x in range(0, self.width, step_col):
-                cell_value = self.grid[y, x]
-                line.append(char_map.get(cell_value, "#"))
-            map_ascii.append("".join(line))
-
-        ascii_str = "\n".join(map_ascii)
-
-        self.ascii_grid.ascii_grid_str = ascii_str
-        self.ascii_grid.width = len(map_ascii[0]) if map_ascii else 0
-        self.ascii_grid.height = len(map_ascii)
-
-        return ascii_str
-
-    def ascii_to_world(self, ascii_x: int, ascii_y: int) -> Vector3:
-        """Convert ASCII grid coordinates to world coordinates.
+    def get_closest_free_point(
+        self,
+        pixel_x: int,
+        pixel_y: int,
+        size: tuple[int, int] = (1024, 1024),
+        flip_vertical: bool = True,
+        max_search_radius: int = 10,
+    ):
+        """Find the closest free point in the occupancy grid to the given grid coordinates.
 
         args:
-            ascii_x: X coordinate in ASCII grid
-            ascii_y: Y coordinate in ASCII grid
+            pixel_x: X coordinate in pixels (image space)
+            pixel_y: Y coordinate in pixels (image space)
+            max_search_radius: Maximum search radius in grid cells
+        returns:
+            (x, y) grid coordinates of the closest free point, or None if not found
+        """
+        grid_x, grid_y = self.pixel_to_grid(
+            pixel_x, pixel_y, size=size, flip_vertical=flip_vertical
+        )
 
+        y_min = max(0, grid_y - max_search_radius)
+        y_max = min(self.height - 1, grid_y + max_search_radius)
+        x_min = max(0, grid_x - max_search_radius)
+        x_max = min(self.width - 1, grid_x + max_search_radius)
+
+        search_area = self.grid[y_min : y_max + 1, x_min : x_max + 1]
+
+        # TODO: buffer free space?
+        free_positions = np.argwhere(search_area == CostValues.FREE)
+        if free_positions.size > 0:
+            distances = np.linalg.norm(
+                free_positions - np.array([grid_y - y_min, grid_x - x_min]), axis=1
+            )
+            closest_idx = np.argmin(distances)
+            closest_free_pos = free_positions[closest_idx]
+            closest_x = closest_free_pos[1] + x_min
+            closest_y = closest_free_pos[0] + y_min
+            return self.grid_to_pixel(closest_x, closest_y, size=size, flip_vertical=flip_vertical)
+        return None
+
+    def grid_to_pixel(
+        self,
+        grid_x: int,
+        grid_y: int,
+        size: tuple[int, int] = (1024, 1024),
+        flip_vertical: bool = True,
+    ) -> Vector3:
+        """Convert grid coordinates to pixel coordinates in the occupancy grid image.
+
+        args:
+            grid_x: X coordinate in grid
+            grid_y: Y coordinate in grid
+        returns:
+            (pixel_x, pixel_y)
+        """
+        pixel_x = round((grid_x / self.width) * size[0])
+        pixel_y = round((grid_y / self.height) * size[1])
+
+        if flip_vertical:
+            pixel_y = size[1] - pixel_y
+
+        return (pixel_x, pixel_y)
+
+    def pixel_to_grid(
+        self,
+        pixel_x: int,
+        pixel_y: int,
+        size: tuple[int, int] = (1024, 1024),
+        flip_vertical: bool = True,
+    ) -> Vector3:
+        """Convert pixel coordinates in the occupancy grid image to grid coordinates.
+
+        args:
+            pixel_x: X coordinate in pixels (image space)
+            pixel_y: Y coordinate in pixels (image space)
+        returns:
+            (x, y)
+        """
+        if flip_vertical:
+            pixel_y = size[1] - pixel_y
+
+        grid_x = round((pixel_x / size[0]) * self.width)
+        grid_y = round((pixel_y / size[1]) * self.height)
+
+        return (grid_x, grid_y)
+
+    def pixel_to_world(
+        self,
+        pixel_x: int,
+        pixel_y: int,
+        size: tuple[int, int] = (1024, 1024),
+        flip_vertical: bool = True,
+    ) -> Vector3:
+        """Convert pixel coordinates in the occupancy grid image to world coordinates.
+
+        args:
+            pixel_x: X coordinate in pixels (image space)
+            pixel_y: Y coordinate in pixels (image space)
         returns:
             World position as Vector3
         """
-        step_col = self.ascii_grid.step_col
-        step_row = self.ascii_grid.step_row
 
-        grid_x = ascii_x * step_col + step_col // 2  # center of extrapolated cell
-        grid_y = ascii_y * step_row + step_row // 2
+        if flip_vertical:
+            pixel_y = size[1] - pixel_y
+
+        grid_x = (pixel_x / size[0]) * self.width
+        grid_y = (pixel_y / size[1]) * self.height
 
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
 
-    def find_char_in_ascii(self, ascii_str: str, target_char: str):
-        """Find all occurrences of a character in the ASCII grid string.
+    def grid_to_image(
+        self, size: tuple[int, int] = (1024, 1024), flip_vertical: bool = True
+    ) -> Image:
+        """Encode the occupancy grid as image."""
+        # convert to RGB image:
+        # - unknown as yellow
+        # - free space as blue
+        # - obstacles as red shades
+        image_arr = np.zeros((*self.grid.shape, 3), dtype=np.uint8)
 
-        args:
-            ascii_str: ASCII string representation of the grid
-            target_char: Character to search for
+        unknown_mask = self.grid == CostValues.UNKNOWN
+        # unknown as yellow
+        image_arr[unknown_mask] = [255, 255, 0]
 
-        returns:
-            list of (x, y) ascii coordinates where the character is found
-        """
+        known_mask = self.grid != CostValues.UNKNOWN
+        if np.any(known_mask):
+            free_mask = self.grid == 0
 
-        positions = []
-        lines = ascii_str.strip().split("\n")
-        for y, line in enumerate(lines):
-            for x, char in enumerate(line):
-                if char == target_char:
-                    positions.append((x, y))
-        return positions
+            # free space as blue
+            image_arr[free_mask] = [0, 0, 200]
+            obstacle_mask = (self.grid > 0) & (self.grid <= 100)
 
-    def agent_encode(self):
-        """Return ASCII string for agent."""
+            # obstaceles as red shades
+            if np.any(obstacle_mask):
+                # Map from [1..100] to red intensity [255..100]
+                red_intensity = (255 - (self.grid[obstacle_mask] * 155 // 100)).astype(np.uint8)
+                image_arr[obstacle_mask] = np.stack(
+                    [red_intensity, np.zeros_like(red_intensity), np.zeros_like(red_intensity)],
+                    axis=1,
+                )
 
-        self.grid_to_ascii()
-        if self.robot_pose:
-            self.augment_ascii(robot_pose=self.robot_pose)
+        if self.robot_pose is not None:
+            # logger.info(f"robot pose ground truth: {self.robot_pose}")
+            robot_grid_pos = self.world_to_grid(self.robot_pose.position)
+            rgx = round(robot_grid_pos.x)
+            rgy = round(robot_grid_pos.y)
 
-        return self.ascii_grid.ascii_grid_str
+            # logger.info(f"robot pixel in grid_to_image: {rgx, rgy}")
+            box_size = 2
+            for dx in range(-box_size, box_size + 1):
+                for dy in range(-box_size, box_size + 1):
+                    x = rgx + dx
+                    y = rgy + dy
+                    if 0 <= x < self.width and 0 <= y < self.height:
+                        image_arr[y, x] = [0, 255, 0]
+
+        # resize
+        image_arr_resized = cv2.resize(image_arr, size, interpolation=cv2.INTER_NEAREST)
+
+        # flip vertically for correct orientation
+        if flip_vertical:
+            image_arr_resized = cv2.flip(image_arr_resized, 0)
+
+        image = Image(
+            data=image_arr_resized, format=ImageFormat.RGB, frame_id=self.frame_id, ts=self.ts
+        )
+
+        return image
+
+    def agent_encode(self, prompt: str = ""):
+        image = self.grid_to_image()
+        image_encoded = image.agent_encode()
+
+        image_encoded.extend([{"type": "text", "text": str(prompt)}])
+
+        return image_encoded
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""
