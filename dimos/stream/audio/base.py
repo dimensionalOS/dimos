@@ -22,7 +22,7 @@ class AbstractAudioEmitter(ABC):
     """Base class for components that emit audio."""
 
     @abstractmethod
-    def emit_audio(self) -> Observable:
+    def emit_audio(self) -> Observable:  # type: ignore[type-arg]
         """Create an observable that emits audio frames.
 
         Returns:
@@ -35,7 +35,7 @@ class AbstractAudioConsumer(ABC):
     """Base class for components that consume audio."""
 
     @abstractmethod
-    def consume_audio(self, audio_observable: Observable) -> "AbstractAudioConsumer":
+    def consume_audio(self, audio_observable: Observable) -> "AbstractAudioConsumer":  # type: ignore[type-arg]
         """Set the audio observable to consume.
 
         Args:
@@ -60,7 +60,11 @@ class AudioEvent:
     """Class to represent an audio frame event with metadata."""
 
     def __init__(
-        self, data: np.ndarray, sample_rate: int, timestamp: float, channels: int = 1
+        self,
+        data: np.ndarray,  # type: ignore[type-arg]
+        sample_rate: int,
+        timestamp: float,
+        channels: int = 1,
     ) -> None:
         """
         Initialize an AudioEvent.

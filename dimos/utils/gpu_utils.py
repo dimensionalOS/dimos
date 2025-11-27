@@ -13,9 +13,9 @@
 # limitations under the License.
 
 
-def is_cuda_available():
+def is_cuda_available():  # type: ignore[no-untyped-def]
     try:
-        import pycuda.driver as cuda
+        import pycuda.driver as cuda  # type: ignore[import-not-found]
 
         cuda.init()
         return cuda.Device.count() > 0

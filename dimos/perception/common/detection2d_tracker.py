@@ -18,7 +18,7 @@ from collections.abc import Sequence
 import numpy as np
 
 
-def compute_iou(bbox1, bbox2):
+def compute_iou(bbox1, bbox2):  # type: ignore[no-untyped-def]
     """
     Compute Intersection over Union (IoU) of two bounding boxes.
     Each bbox is [x1, y1, x2, y2].
@@ -38,7 +38,7 @@ def compute_iou(bbox1, bbox2):
     return inter_area / union_area
 
 
-def get_tracked_results(tracked_targets):
+def get_tracked_results(tracked_targets):  # type: ignore[no-untyped-def]
     """
     Extract tracked results from a list of target2d objects.
 
@@ -77,7 +77,7 @@ class target2d:
     detection probabilities, and computed texture values.
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         initial_mask,
         initial_bbox,
@@ -106,14 +106,14 @@ class target2d:
         self.score = 1.0
 
         self.track_id = track_id
-        self.probs_history = deque(maxlen=history_size)
-        self.texture_history = deque(maxlen=history_size)
+        self.probs_history = deque(maxlen=history_size)  # type: ignore[var-annotated]
+        self.texture_history = deque(maxlen=history_size)  # type: ignore[var-annotated]
 
-        self.frame_count = deque(maxlen=history_size)  # Total frames this target has been seen.
+        self.frame_count = deque(maxlen=history_size)  # type: ignore[var-annotated]  # Total frames this target has been seen.
         self.missed_frames = 0  # Consecutive frames when no detection was assigned.
         self.history_size = history_size
 
-    def update(self, mask, bbox, track_id, prob: float, name: str, texture_value) -> None:
+    def update(self, mask, bbox, track_id, prob: float, name: str, texture_value) -> None:  # type: ignore[no-untyped-def]
         """
         Update the target with a new detection.
         """
@@ -135,7 +135,7 @@ class target2d:
         self.missed_frames += 1
         self.frame_count.append(0)
 
-    def compute_score(
+    def compute_score(  # type: ignore[no-untyped-def]
         self,
         frame_shape,
         min_area_ratio,
@@ -249,7 +249,7 @@ class target2dTracker:
     falls below the stop threshold or if they are missed for too many consecutive frames.
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         history_size: int = 10,
         score_threshold_start: float = 0.5,
@@ -290,10 +290,10 @@ class target2dTracker:
             weights = {"prob": 1.0, "temporal": 1.0, "texture": 1.0, "border": 1.0, "size": 1.0}
         self.weights = weights
 
-        self.targets = {}  # Dictionary mapping target_id -> target2d instance.
+        self.targets = {}  # type: ignore[var-annotated]  # Dictionary mapping target_id -> target2d instance.
         self.next_target_id = 0
 
-    def update(
+    def update(  # type: ignore[no-untyped-def]
         self,
         frame,
         masks,
@@ -339,7 +339,7 @@ class target2dTracker:
             if matched_target is None:
                 best_iou = 0
                 for target in self.targets.values():
-                    iou = compute_iou(bbox, target.latest_bbox)
+                    iou = compute_iou(bbox, target.latest_bbox)  # type: ignore[no-untyped-call]
                     if iou > 0.5 and iou > best_iou:
                         best_iou = iou
                         matched_target = target

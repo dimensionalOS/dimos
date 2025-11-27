@@ -21,8 +21,8 @@ import asyncio
 import os
 import threading
 
-import dimos_lcm
-from dimos_lcm.foxglove_bridge import FoxgloveBridge
+import dimos_lcm  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_bridge import FoxgloveBridge  # type: ignore[import-untyped]
 
 dimos_lcm_path = os.path.dirname(os.path.abspath(dimos_lcm.__file__))
 print(f"Using dimos_lcm from: {dimos_lcm_path}")

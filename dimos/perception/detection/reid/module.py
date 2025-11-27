@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
     ImageAnnotations,
     TextAnnotation,
 )
-from dimos_lcm.foxglove_msgs.Point2 import Point2
+from dimos_lcm.foxglove_msgs.Point2 import Point2  # type: ignore[import-untyped]
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -42,13 +42,13 @@ class ReidModule(Module):
     image: In[Image] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
-    def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:
+    def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         if idsystem is None:
             try:
                 from dimos.models.embedding import TorchReIDModel
 
-                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)
+                idsystem = EmbeddingIDSystem(model=TorchReIDModel, padding=0)  # type: ignore[arg-type]
             except Exception as e:
                 raise RuntimeError(
                     "TorchReIDModel not available. Please install with: pip install dimos[torchreid]"
@@ -59,8 +59,8 @@ class ReidModule(Module):
     def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
             align_timestamped(
-                self.image.pure_observable(),
-                self.detections.pure_observable().pipe(
+                self.image.pure_observable(),  # type: ignore[no-untyped-call]
+                self.detections.pure_observable().pipe(  # type: ignore[no-untyped-call]
                     ops.filter(lambda d: d.detections_length > 0)  # type: ignore[attr-defined]
                 ),
                 match_tolerance=0.0,
@@ -109,4 +109,4 @@ class ReidModule(Module):
             points=[],
             points_length=0,
         )
-        self.annotations.publish(annotations)
+        self.annotations.publish(annotations)  # type: ignore[no-untyped-call]

@@ -24,11 +24,11 @@ import time
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi
+import gi  # type: ignore[import-not-found]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstVideo", "1.0")
-from gi.repository import GLib, Gst
+from gi.repository import GLib, Gst  # type: ignore[import-not-found]
 
 # Initialize GStreamer
 Gst.init(None)
@@ -85,7 +85,7 @@ class GStreamerTCPSender:
         self.start_time = None
         self.frame_count = 0
 
-    def create_pipeline(self):
+    def create_pipeline(self):  # type: ignore[no-untyped-def]
         """Create the GStreamer pipeline with TCP server sink."""
 
         # Create pipeline
@@ -93,8 +93,8 @@ class GStreamerTCPSender:
 
         # Create elements
         self.videosrc = Gst.ElementFactory.make("v4l2src", "source")
-        self.videosrc.set_property("device", self.device)
-        self.videosrc.set_property("do-timestamp", True)
+        self.videosrc.set_property("device", self.device)  # type: ignore[attr-defined]
+        self.videosrc.set_property("do-timestamp", True)  # type: ignore[attr-defined]
         logger.info(f"Using camera device: {self.device}")
 
         # Create caps filter for video format
@@ -120,17 +120,17 @@ class GStreamerTCPSender:
 
         # H264 encoder
         self.encoder = Gst.ElementFactory.make("x264enc", "encoder")
-        self.encoder.set_property("tune", "zerolatency")
-        self.encoder.set_property("bitrate", self.bitrate)
-        self.encoder.set_property("key-int-max", 30)
+        self.encoder.set_property("tune", "zerolatency")  # type: ignore[attr-defined]
+        self.encoder.set_property("bitrate", self.bitrate)  # type: ignore[attr-defined]
+        self.encoder.set_property("key-int-max", 30)  # type: ignore[attr-defined]
 
         # H264 parser
         h264parse = Gst.ElementFactory.make("h264parse", "parser")
 
         # Use matroskamux which preserves timestamps better
         self.mux = Gst.ElementFactory.make("matroskamux", "mux")
-        self.mux.set_property("streamable", True)
-        self.mux.set_property("writing-app", "gstreamer-tcp-sender")
+        self.mux.set_property("streamable", True)  # type: ignore[attr-defined]
+        self.mux.set_property("writing-app", "gstreamer-tcp-sender")  # type: ignore[attr-defined]
 
         # TCP server sink
         tcpserversink = Gst.ElementFactory.make("tcpserversink", "sink")
@@ -139,18 +139,18 @@ class GStreamerTCPSender:
         tcpserversink.set_property("sync", False)
 
         # Add elements to pipeline
-        self.pipeline.add(self.videosrc)
-        self.pipeline.add(capsfilter)
-        self.pipeline.add(videoconvert)
+        self.pipeline.add(self.videosrc)  # type: ignore[attr-defined]
+        self.pipeline.add(capsfilter)  # type: ignore[attr-defined]
+        self.pipeline.add(videoconvert)  # type: ignore[attr-defined]
         if videocrop:
-            self.pipeline.add(videocrop)
-        self.pipeline.add(self.encoder)
-        self.pipeline.add(h264parse)
-        self.pipeline.add(self.mux)
-        self.pipeline.add(tcpserversink)
+            self.pipeline.add(videocrop)  # type: ignore[attr-defined]
+        self.pipeline.add(self.encoder)  # type: ignore[attr-defined]
+        self.pipeline.add(h264parse)  # type: ignore[attr-defined]
+        self.pipeline.add(self.mux)  # type: ignore[attr-defined]
+        self.pipeline.add(tcpserversink)  # type: ignore[attr-defined]
 
         # Link elements
-        if not self.videosrc.link(capsfilter):
+        if not self.videosrc.link(capsfilter):  # type: ignore[attr-defined]
             raise RuntimeError("Failed to link source to capsfilter")
         if not capsfilter.link(videoconvert):
             raise RuntimeError("Failed to link capsfilter to videoconvert")
@@ -165,11 +165,11 @@ class GStreamerTCPSender:
             if not videoconvert.link(self.encoder):
                 raise RuntimeError("Failed to link videoconvert to encoder")
 
-        if not self.encoder.link(h264parse):
+        if not self.encoder.link(h264parse):  # type: ignore[attr-defined]
             raise RuntimeError("Failed to link encoder to h264parse")
         if not h264parse.link(self.mux):
             raise RuntimeError("Failed to link h264parse to mux")
-        if not self.mux.link(tcpserversink):
+        if not self.mux.link(tcpserversink):  # type: ignore[attr-defined]
             raise RuntimeError("Failed to link mux to tcpserversink")
 
         # Add probe to inject absolute timestamps
@@ -182,11 +182,11 @@ class GStreamerTCPSender:
         probe_pad.add_probe(Gst.PadProbeType.BUFFER, self._inject_absolute_timestamp, None)
 
         # Set up bus message handling
-        bus = self.pipeline.get_bus()
+        bus = self.pipeline.get_bus()  # type: ignore[attr-defined]
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
 
-    def _inject_absolute_timestamp(self, pad, info, user_data):
+    def _inject_absolute_timestamp(self, pad, info, user_data):  # type: ignore[no-untyped-def]
         buffer = info.get_buffer()
         if buffer:
             absolute_time = time.time()
@@ -200,7 +200,7 @@ class GStreamerTCPSender:
             self.frame_count += 1
         return Gst.PadProbeReturn.OK
 
-    def _on_bus_message(self, bus, message) -> None:
+    def _on_bus_message(self, bus, message) -> None:  # type: ignore[no-untyped-def]
         t = message.type
 
         if t == Gst.MessageType.EOS:
@@ -220,22 +220,22 @@ class GStreamerTCPSender:
                     f"Pipeline state changed: {old_state.value_nick} -> {new_state.value_nick}"
                 )
 
-    def start(self):
+    def start(self):  # type: ignore[no-untyped-def]
         if self.running:
             logger.warning("Sender is already running")
             return
 
         logger.info("Creating TCP pipeline with absolute timestamps...")
-        self.create_pipeline()
+        self.create_pipeline()  # type: ignore[no-untyped-call]
 
         logger.info("Starting pipeline...")
-        ret = self.pipeline.set_state(Gst.State.PLAYING)
+        ret = self.pipeline.set_state(Gst.State.PLAYING)  # type: ignore[attr-defined]
         if ret == Gst.StateChangeReturn.FAILURE:
             logger.error("Failed to start pipeline")
             raise RuntimeError("Failed to start GStreamer pipeline")
 
         self.running = True
-        self.start_time = time.time()
+        self.start_time = time.time()  # type: ignore[assignment]
         self.frame_count = 0
 
         logger.info("TCP video sender started:")
@@ -255,7 +255,7 @@ class GStreamerTCPSender:
 
         self.main_loop = GLib.MainLoop()
         try:
-            self.main_loop.run()
+            self.main_loop.run()  # type: ignore[attr-defined]
         except KeyboardInterrupt:
             logger.info("Interrupted by user")
         finally:
@@ -340,7 +340,7 @@ def main() -> None:
     )
 
     # Handle signals gracefully
-    def signal_handler(sig, frame) -> None:
+    def signal_handler(sig, frame) -> None:  # type: ignore[no-untyped-def]
         logger.info(f"Received signal {sig}, shutting down...")
         sender.stop()
         sys.exit(0)
@@ -349,7 +349,7 @@ def main() -> None:
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        sender.start()
+        sender.start()  # type: ignore[no-untyped-call]
     except Exception as e:
         logger.error(f"Failed to start sender: {e}")
         sys.exit(1)

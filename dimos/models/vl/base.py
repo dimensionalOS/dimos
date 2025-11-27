@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 def vlm_detection_to_detection2d(
-    vlm_detection: list, track_id: int, image: Image
+    vlm_detection: list, track_id: int, image: Image  # type: ignore[type-arg]
 ) -> Detection2DBBox | None:
     """Convert a single VLM detection [label, x1, y1, x2, y2] to Detection2DBBox.
 
@@ -50,7 +50,7 @@ def vlm_detection_to_detection2d(
     # Use -1 for class_id since VLM doesn't provide it
     # confidence defaults to 1.0 for VLM
     return Detection2DBBox(
-        bbox=bbox,
+        bbox=bbox,  # type: ignore[arg-type]
         track_id=track_id,
         class_id=-1,
         confidence=1.0,
@@ -62,22 +62,22 @@ def vlm_detection_to_detection2d(
 
 class VlModel(ABC):
     @abstractmethod
-    def query(self, image: Image, query: str, **kwargs) -> str: ...
+    def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
 
     def warmup(self) -> None:
         try:
-            image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
-            self._model.detect(image, "person", settings={"max_objects": 1})
+            image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()  # type: ignore[arg-type]
+            self._model.detect(image, "person", settings={"max_objects": 1})  # type: ignore[attr-defined]
         except Exception:
             pass
 
     # requery once if JSON parsing fails
-    @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)
-    def query_json(self, image: Image, query: str) -> dict:
+    @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[misc]
+    def query_json(self, image: Image, query: str) -> dict:  # type: ignore[type-arg]
         response = self.query(image, query)
-        return extract_json(response)
+        return extract_json(response)  # type: ignore[return-value]
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
         format should be:

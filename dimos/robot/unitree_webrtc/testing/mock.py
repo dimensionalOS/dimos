@@ -59,7 +59,7 @@ class Mock:
             filename = os.path.splitext(basename)[0]
             yield self.load_one(filename)
 
-    def stream(self, rate_hz: float = 10.0):
+    def stream(self, rate_hz: float = 10.0):  # type: ignore[no-untyped-def]
         sleep_time = 1.0 / rate_hz
 
         return from_iterable(self.iterate()).pipe(
@@ -67,14 +67,14 @@ class Mock:
             ops.map(lambda x: x[0] if isinstance(x, tuple) else x),
         )
 
-    def save_stream(self, observable: Observable[LidarMessage]):
-        return observable.pipe(ops.map(lambda frame: self.save_one(frame)))
+    def save_stream(self, observable: Observable[LidarMessage]):  # type: ignore[no-untyped-def]
+        return observable.pipe(ops.map(lambda frame: self.save_one(frame)))  # type: ignore[no-untyped-call]
 
-    def save(self, *frames):
-        [self.save_one(frame) for frame in frames]
+    def save(self, *frames):  # type: ignore[no-untyped-def]
+        [self.save_one(frame) for frame in frames]  # type: ignore[no-untyped-call]
         return self.cnt
 
-    def save_one(self, frame):
+    def save_one(self, frame):  # type: ignore[no-untyped-def]
         file_name = f"/lidar_data_{self.cnt:03d}.pickle"
         full_path = self.root + file_name
 
