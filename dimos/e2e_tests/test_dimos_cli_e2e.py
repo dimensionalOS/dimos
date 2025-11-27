@@ -21,16 +21,17 @@ import pytest
 def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
     lcm_spy.save_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
     lcm_spy.save_topic("/rpc/HumanInput/start/res")
+    lcm_spy.save_topic("/agent")
 
     start_blueprint("demo-skill")
 
     lcm_spy.wait_for_saved_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
     lcm_spy.wait_for_saved_topic("/rpc/HumanInput/start/res")
-    lcm_spy.wait_for_message_content("/agent", b"AIMessage")
+    lcm_spy.wait_for_saved_topic_content("/agent", b"AIMessage")
 
     human_input("what is 52983 + 587237")
 
-    lcm_spy.wait_for_message_content("/agent", b"640220")
+    lcm_spy.wait_for_saved_topic_content("/agent", b"640220")
 
     assert "/rpc/DemoCalculatorSkill/sum_numbers/req" in lcm_spy.messages
     assert "/rpc/DemoCalculatorSkill/sum_numbers/res" in lcm_spy.messages
