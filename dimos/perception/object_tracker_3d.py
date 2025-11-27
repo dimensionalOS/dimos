@@ -14,8 +14,11 @@
 
 
 # Import LCM messages
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection3D, ObjectHypothesisWithPose
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+    Detection3D,
+    ObjectHypothesisWithPose,
+)
 import numpy as np
 
 from dimos.core import In, Out, rpc
@@ -41,13 +44,13 @@ class ObjectTracker3D(ObjectTracker2D):
     """3D object tracking module extending ObjectTracker2D with depth capabilities."""
 
     # Additional inputs (2D tracker already has color_image)
-    depth: In[Image] = None
-    camera_info: In[CameraInfo] = None
+    depth: In[Image] = None  # type: ignore[assignment]
+    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
 
     # Additional outputs (2D tracker already has detection2darray and tracked_overlay)
-    detection3darray: Out[Detection3DArray] = None
+    detection3darray: Out[Detection3DArray] = None  # type: ignore[assignment]
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """
         Initialize 3D object tracking module.
 
@@ -58,7 +61,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Additional state for 3D tracking
         self.camera_intrinsics = None
-        self._latest_depth_frame: np.ndarray | None = None
+        self._latest_depth_frame: np.ndarray | None = None  # type: ignore[type-arg]
         self._latest_camera_info: CameraInfo | None = None
 
         # TF publisher for tracked object
@@ -72,7 +75,7 @@ class ObjectTracker3D(ObjectTracker2D):
         super().start()
 
         # Subscribe to aligned RGB and depth streams
-        def on_aligned_frames(frames_tuple) -> None:
+        def on_aligned_frames(frames_tuple) -> None:  # type: ignore[no-untyped-def]
             rgb_msg, depth_msg = frames_tuple
             with self._frame_lock:
                 self._latest_rgb_frame = rgb_msg.data
@@ -85,8 +88,8 @@ class ObjectTracker3D(ObjectTracker2D):
 
         # Create aligned observable for RGB and depth
         aligned_frames = align_timestamped(
-            self.color_image.observable(),
-            self.depth.observable(),
+            self.color_image.observable(),  # type: ignore[no-untyped-call]
+            self.depth.observable(),  # type: ignore[no-untyped-call]
             buffer_size=2.0,  # 2 second buffer
             match_tolerance=0.5,  # 500ms tolerance
         )
@@ -97,7 +100,7 @@ class ObjectTracker3D(ObjectTracker2D):
         def on_camera_info(camera_info_msg: CameraInfo) -> None:
             self._latest_camera_info = camera_info_msg
             # Extract intrinsics: K is [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-            self.camera_intrinsics = [
+            self.camera_intrinsics = [  # type: ignore[assignment]
                 camera_info_msg.K[0],
                 camera_info_msg.K[4],
                 camera_info_msg.K[2],
@@ -174,17 +177,17 @@ class ObjectTracker3D(ObjectTracker2D):
         y2 = int(center_y + height / 2)
 
         # Get depth value
-        depth_value = self._get_depth_from_bbox([x1, y1, x2, y2], self._latest_depth_frame)
+        depth_value = self._get_depth_from_bbox([x1, y1, x2, y2], self._latest_depth_frame)  # type: ignore[arg-type]
 
         if depth_value is None or depth_value <= 0:
             return None
 
-        fx, fy, cx, cy = self.camera_intrinsics
+        fx, fy, cx, cy = self.camera_intrinsics  # type: ignore[misc]
 
         # Convert pixel coordinates to 3D in optical frame
         z_optical = depth_value
-        x_optical = (center_x - cx) * z_optical / fx
-        y_optical = (center_y - cy) * z_optical / fy
+        x_optical = (center_x - cx) * z_optical / fx  # type: ignore[has-type]
+        y_optical = (center_y - cy) * z_optical / fy  # type: ignore[has-type]
 
         # Create pose in optical frame
         optical_pose = Pose()
@@ -200,8 +203,8 @@ class ObjectTracker3D(ObjectTracker2D):
         robot_pose.orientation = euler_to_quaternion(euler)
 
         # Estimate object size in meters
-        size_x = width * z_optical / fx
-        size_y = height * z_optical / fy
+        size_x = width * z_optical / fx  # type: ignore[has-type]
+        size_y = height * z_optical / fy  # type: ignore[has-type]
         size_z = 0.1  # Default depth size
 
         # Create Detection3D
@@ -240,7 +243,7 @@ class ObjectTracker3D(ObjectTracker2D):
 
         return detection3darray
 
-    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:
+    def _get_depth_from_bbox(self, bbox: list[int], depth_frame: np.ndarray) -> float | None:  # type: ignore[type-arg]
         """
         Calculate depth from bbox using the 25th percentile of closest points.
 
@@ -273,21 +276,21 @@ class ObjectTracker3D(ObjectTracker2D):
 
         return None
 
-    def _draw_reid_overlay(self, image: np.ndarray) -> np.ndarray:
+    def _draw_reid_overlay(self, image: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
         """Draw Re-ID feature matches on visualization."""
         import cv2
 
         viz_image = image.copy()
-        x1, y1, _x2, _y2 = self.last_roi_bbox
+        x1, y1, _x2, _y2 = self.last_roi_bbox  # type: ignore[attr-defined]
 
         # Draw keypoints
-        for kp in self.last_roi_kps:
+        for kp in self.last_roi_kps:  # type: ignore[attr-defined]
             pt = (int(kp.pt[0] + x1), int(kp.pt[1] + y1))
             cv2.circle(viz_image, pt, 3, (0, 255, 0), -1)
 
         # Draw matches
-        for match in self.last_good_matches:
-            current_kp = self.last_roi_kps[match.trainIdx]
+        for match in self.last_good_matches:  # type: ignore[attr-defined]
+            current_kp = self.last_roi_kps[match.trainIdx]  # type: ignore[attr-defined]
             pt_current = (int(current_kp.pt[0] + x1), int(current_kp.pt[1] + y1))
             cv2.circle(viz_image, pt_current, 5, (0, 255, 255), 2)
 
@@ -295,7 +298,7 @@ class ObjectTracker3D(ObjectTracker2D):
             cv2.circle(viz_image, pt_current, 2, (intensity, intensity, 255), -1)
 
         # Draw match count
-        text = f"REID: {len(self.last_good_matches)}/{len(self.last_roi_kps)}"
+        text = f"REID: {len(self.last_good_matches)}/{len(self.last_roi_kps)}"  # type: ignore[attr-defined]
         cv2.putText(viz_image, text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         return viz_image

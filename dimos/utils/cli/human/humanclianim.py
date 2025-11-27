@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 
-from terminaltexteffects import Color
+from terminaltexteffects import Color  # type: ignore[attr-defined]
 
 from dimos.utils.cli import theme
 
@@ -43,7 +43,7 @@ def import_cli_in_background() -> None:
         _import_complete.set()
 
 
-def get_effect_config(effect_name: str):
+def get_effect_config(effect_name: str):  # type: ignore[no-untyped-def]
     """Get hardcoded configuration for a specific effect"""
     # Hardcoded configs for each effect
     global_config = {
@@ -76,7 +76,7 @@ def get_effect_config(effect_name: str):
         "highlight": {"highlight_brightness": 3},
     }
 
-    return {**configs.get(effect_name, {}), **global_config}
+    return {**configs.get(effect_name, {}), **global_config}  # type: ignore[dict-item]
 
 
 def run_banner_animation() -> None:
@@ -136,11 +136,11 @@ def run_banner_animation() -> None:
     # Create and run the effect with config
     effect = EffectClass(ascii_art)
     for key, value in effect_config.items():
-        setattr(effect.effect_config, key, value)
+        setattr(effect.effect_config, key, value)  # type: ignore[attr-defined]
 
     # Run the animation - terminal.print() handles all screen management
-    with effect.terminal_output() as terminal:
-        for frame in effect:
+    with effect.terminal_output() as terminal:  # type: ignore[attr-defined]
+        for frame in effect:  # type: ignore[attr-defined]
             terminal.print(frame)
 
     # Brief pause to see the final frame

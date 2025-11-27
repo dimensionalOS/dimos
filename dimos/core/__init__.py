@@ -54,17 +54,17 @@ __all__ = [
 class CudaCleanupPlugin:
     """Dask worker plugin to cleanup CUDA resources on shutdown."""
 
-    def setup(self, worker) -> None:
+    def setup(self, worker) -> None:  # type: ignore[no-untyped-def]
         """Called when worker starts."""
         pass
 
-    def teardown(self, worker) -> None:
+    def teardown(self, worker) -> None:  # type: ignore[no-untyped-def]
         """Clean up CUDA resources when worker shuts down."""
         try:
             import sys
 
             if "cupy" in sys.modules:
-                import cupy as cp
+                import cupy as cp  # type: ignore[import-not-found]
 
                 # Clear memory pools
                 mempool = cp.get_default_memory_pool()
@@ -78,21 +78,21 @@ class CudaCleanupPlugin:
             pass
 
 
-def patch_actor(actor, cls) -> None: ...
+def patch_actor(actor, cls) -> None: ...  # type: ignore[no-untyped-def]
 
 
 DimosCluster = Client
 
 
 def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
-    def deploy(
+    def deploy(  # type: ignore[no-untyped-def]
         actor_class,
         *args,
         **kwargs,
     ):
         console = Console()
         with console.status(f"deploying [green]{actor_class.__name__}", spinner="arc"):
-            actor = dask_client.submit(
+            actor = dask_client.submit(  # type: ignore[no-untyped-call]
                 actor_class,
                 *args,
                 **kwargs,
@@ -164,7 +164,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # Prevents multiple calls to close_all
         if hasattr(dask_client, "_closed") and dask_client._closed:
             return
-        dask_client._closed = True
+        dask_client._closed = True  # type: ignore[attr-defined]
 
         # Stop all SharedMemory transports before closing Dask
         # This prevents the "leaked shared_memory objects" warning and hangs
@@ -196,7 +196,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             pass
 
         try:
-            dask_client.close(timeout=5)
+            dask_client.close(timeout=5)  # type: ignore[no-untyped-call]
         except Exception:
             pass
 
@@ -217,11 +217,11 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # This is needed, solves race condition in CI thread check
         time.sleep(0.1)
 
-    dask_client.deploy = deploy
-    dask_client.check_worker_memory = check_worker_memory
-    dask_client.stop = lambda: dask_client.close()
-    dask_client.close_all = close_all
-    return dask_client  # type: ignore[return-value]
+    dask_client.deploy = deploy  # type: ignore[attr-defined]
+    dask_client.check_worker_memory = check_worker_memory  # type: ignore[attr-defined]
+    dask_client.stop = lambda: dask_client.close()  # type: ignore[attr-defined, no-untyped-call]
+    dask_client.close_all = close_all  # type: ignore[attr-defined]
+    return dask_client
 
 
 def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
@@ -241,35 +241,35 @@ def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     with console.status(
         f"[green]Initializing dimos local cluster with [bright_blue]{n} workers", spinner="arc"
     ):
-        cluster = LocalCluster(
+        cluster = LocalCluster(  # type: ignore[no-untyped-call]
             n_workers=n,
             threads_per_worker=4,
             memory_limit=memory_limit,
             plugins=[CudaCleanupPlugin()],  # Register CUDA cleanup plugin
         )
-        client = Client(cluster)
+        client = Client(cluster)  # type: ignore[no-untyped-call]
 
     console.print(
         f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
     )
 
     patched_client = patchdask(client, cluster)
-    patched_client._shutting_down = False
+    patched_client._shutting_down = False  # type: ignore[attr-defined]
 
     # Signal handler with proper exit handling
-    def signal_handler(sig, frame) -> None:
+    def signal_handler(sig, frame) -> None:  # type: ignore[no-untyped-def]
         # If already shutting down, force exit
-        if patched_client._shutting_down:
+        if patched_client._shutting_down:  # type: ignore[attr-defined]
             import os
 
             console.print("[red]Force exit!")
             os._exit(1)
 
-        patched_client._shutting_down = True
+        patched_client._shutting_down = True  # type: ignore[attr-defined]
         console.print(f"[yellow]Shutting down (signal {sig})...")
 
         try:
-            patched_client.close_all()
+            patched_client.close_all()  # type: ignore[attr-defined]
         except Exception:
             pass
 

@@ -21,7 +21,7 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
-from rxpy_backpressure import BackPressure
+from rxpy_backpressure import BackPressure  # type: ignore[import-untyped]
 
 from dimos.utils.threadpool import get_scheduler
 
@@ -46,7 +46,7 @@ def backpressure(
     )
 
     # per-subscriber factory
-    def per_sub():
+    def per_sub():  # type: ignore[no-untyped-def]
         # Move processing to thread pool
         base = core.pipe(ops.observe_on(scheduler))
 
@@ -54,19 +54,19 @@ def backpressure(
         if not drop_unprocessed:
             return base
 
-        def _subscribe(observer, sch=None):
+        def _subscribe(observer, sch=None):  # type: ignore[no-untyped-def]
             return base.subscribe(BackPressure.LATEST(observer), scheduler=sch)
 
         return rx.create(_subscribe)
 
     # each `.subscribe()` call gets its own async backpressure chain
-    return rx.defer(lambda *_: per_sub())
+    return rx.defer(lambda *_: per_sub())  # type: ignore[no-untyped-call]
 
 
 class LatestReader(Generic[T]):
     """A callable object that returns the latest value from an observable."""
 
-    def __init__(self, initial_value: T, subscription, connection=None) -> None:
+    def __init__(self, initial_value: T, subscription, connection=None) -> None:  # type: ignore[no-untyped-def]
         self._value = initial_value
         self._subscription = subscription
         self._connection = connection
@@ -83,16 +83,16 @@ class LatestReader(Generic[T]):
 
 
 def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> T:
-    def getter():
+    def getter():  # type: ignore[no-untyped-def]
         result = []
         error = []
         event = threading.Event()
 
-        def on_next(value) -> None:
+        def on_next(value) -> None:  # type: ignore[no-untyped-def]
             result.append(value)
             event.set()
 
-        def on_error(e) -> None:
+        def on_error(e) -> None:  # type: ignore[no-untyped-def]
             error.append(e)
             event.set()
 
@@ -121,10 +121,10 @@ def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> 
         finally:
             subscription.dispose()
 
-    return getter
+    return getter  # type: ignore[return-value]
 
 
-T = TypeVar("T")
+T = TypeVar("T")  # type: ignore[misc]
 
 
 def getter_streaming(
@@ -171,10 +171,10 @@ def getter_streaming(
         sub.dispose()
 
     reader.dispose = _dispose  # type: ignore[attr-defined]
-    return reader
+    return reader  # type: ignore[return-value]
 
 
-T = TypeVar("T")
+T = TypeVar("T")  # type: ignore[misc]
 CB = Callable[[T], Any]
 
 
@@ -182,7 +182,7 @@ def callback_to_observable(
     start: Callable[[CB[T]], Any],
     stop: Callable[[CB[T]], Any],
 ) -> Observable[T]:
-    def _subscribe(observer, _scheduler=None):
+    def _subscribe(observer, _scheduler=None):  # type: ignore[no-untyped-def]
         def _on_msg(value: T) -> None:
             observer.on_next(value)
 
@@ -192,15 +192,15 @@ def callback_to_observable(
     return rx.create(_subscribe)
 
 
-def spy(name: str):
-    def spyfun(x):
+def spy(name: str):  # type: ignore[no-untyped-def]
+    def spyfun(x):  # type: ignore[no-untyped-def]
         print(f"SPY {name}:", x)
         return x
 
     return ops.map(spyfun)
 
 
-def quality_barrier(quality_func: Callable[[T], float], target_frequency: float):
+def quality_barrier(quality_func: Callable[[T], float], target_frequency: float):  # type: ignore[no-untyped-def]
     """
     RxPY pipe operator that selects the highest quality item within each time window.
 
@@ -219,10 +219,10 @@ def quality_barrier(quality_func: Callable[[T], float], target_frequency: float)
             ops.window_with_time(window_duration, window_duration),
             # For each window, find the highest quality item
             ops.flat_map(
-                lambda window: window.pipe(
+                lambda window: window.pipe(  # type: ignore[attr-defined]
                     ops.to_list(),
-                    ops.map(lambda items: max(items, key=quality_func) if items else None),
-                    ops.filter(lambda x: x is not None),
+                    ops.map(lambda items: max(items, key=quality_func) if items else None),  # type: ignore[call-overload]
+                    ops.filter(lambda x: x is not None),  # type: ignore[arg-type]
                 )
             ),
         )

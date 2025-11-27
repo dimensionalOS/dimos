@@ -75,11 +75,11 @@ def get_blueprint_by_name(name: str) -> ModuleBlueprintSet:
         raise ValueError(f"Unknown blueprint set name: {name}")
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
-    return getattr(module, attr)
+    return getattr(module, attr)  # type: ignore[no-any-return]
 
 
 def get_module_by_name(name: str) -> ModuleBlueprintSet:
     if name not in all_modules:
         raise ValueError(f"Unknown module name: {name}")
     python_module = __import__(all_modules[name], fromlist=[name])
-    return getattr(python_module, name)()
+    return getattr(python_module, name)()  # type: ignore[no-any-return]

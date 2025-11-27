@@ -24,22 +24,25 @@ import logging
 import threading
 import time
 
-from geometry_msgs.msg import (
+from geometry_msgs.msg import (  # type: ignore[attr-defined]
     PointStamped as ROSPointStamped,
     PoseStamped as ROSPoseStamped,
     TwistStamped as ROSTwistStamped,
 )
-from nav_msgs.msg import Path as ROSPath
+from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
 import rclpy
 from rclpy.node import Node
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2
-from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8
-from tf2_msgs.msg import TFMessage as ROSTFMessage
+from sensor_msgs.msg import (  # type: ignore[attr-defined]
+    Joy as ROSJoy,
+    PointCloud2 as ROSPointCloud2,
+)
+from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8  # type: ignore[attr-defined]
+from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 
 from dimos import spec
-from dimos.agents2 import Reducer, Stream, skill
+from dimos.agents2 import Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import (
@@ -85,8 +88,8 @@ class ROSNav(
     cmd_vel: Out[Twist] = None  # type: ignore
 
     # Using RxPY Subjects for reactive data flow instead of storing state
-    _local_pointcloud_subject: Subject
-    _global_pointcloud_subject: Subject
+    _local_pointcloud_subject: Subject  # type: ignore[type-arg]
+    _global_pointcloud_subject: Subject  # type: ignore[type-arg]
 
     _current_position_running: bool = False
     _spin_thread: threading.Thread | None = None
@@ -99,7 +102,7 @@ class ROSNav(
     _current_goal: PoseStamped | None = None
     _goal_reached: bool = False
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
 
         # Initialize RxPY Subjects for streaming data
@@ -111,7 +114,7 @@ class ROSNav(
         self._navigation_state = NavigationState.IDLE
         self._goal_reached = False
 
-        if not rclpy.ok():
+        if not rclpy.ok():  # type: ignore[attr-defined]
             rclpy.init()
 
         self._node = Node("navigation_module")
@@ -152,7 +155,7 @@ class ROSNav(
         self._disposables.add(
             self._local_pointcloud_subject.pipe(
                 ops.sample(1.0 / self.config.local_pointcloud_freq),  # Sample at desired frequency
-                ops.map(lambda msg: PointCloud2.from_ros_msg(msg)),
+                ops.map(lambda msg: PointCloud2.from_ros_msg(msg)),  # type: ignore[arg-type]
             ).subscribe(
                 on_next=self.pointcloud.publish,
                 on_error=lambda e: logger.error(f"Lidar stream error: {e}"),
@@ -162,7 +165,7 @@ class ROSNav(
         self._disposables.add(
             self._global_pointcloud_subject.pipe(
                 ops.sample(1.0 / self.config.global_pointcloud_freq),  # Sample at desired frequency
-                ops.map(lambda msg: PointCloud2.from_ros_msg(msg)),
+                ops.map(lambda msg: PointCloud2.from_ros_msg(msg)),  # type: ignore[arg-type]
             ).subscribe(
                 on_next=self.global_pointcloud.publish,
                 on_error=lambda e: logger.error(f"Map stream error: {e}"),
@@ -179,7 +182,7 @@ class ROSNav(
         logger.info("NavigationModule started with ROS2 spinning and RxPY streams")
 
     def _spin_node(self) -> None:
-        while self._running and rclpy.ok():
+        while self._running and rclpy.ok():  # type: ignore[attr-defined]
             try:
                 rclpy.spin_once(self._node, timeout_sec=0.1)
             except Exception as e:
@@ -200,10 +203,10 @@ class ROSNav(
             position=Vector3(msg.point.x, msg.point.y, msg.point.z),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
-        self.goal_active.publish(dimos_pose)
+        self.goal_active.publish(dimos_pose)  # type: ignore[no-untyped-call]
 
     def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
-        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))
+        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))  # type: ignore[no-untyped-call]
 
     def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
@@ -214,7 +217,7 @@ class ROSNav(
     def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = Path.from_ros_msg(msg)
         dimos_path.frame_id = "base_link"
-        self.path_active.publish(dimos_path)
+        self.path_active.publish(dimos_path)  # type: ignore[no-untyped-call]
 
     def _on_ros_tf(self, msg: ROSTFMessage) -> None:
         ros_tf = TFMessage.from_ros_msg(msg)
@@ -241,7 +244,7 @@ class ROSNav(
             self.stop()
 
     def _set_autonomy_mode(self) -> None:
-        joy_msg = ROSJoy()
+        joy_msg = ROSJoy()  # type: ignore[no-untyped-call]
         joy_msg.axes = [
             0.0,  # axis 0
             0.0,  # axis 1
@@ -268,8 +271,8 @@ class ROSNav(
         self.joy_pub.publish(joy_msg)
         logger.info("Setting autonomy mode via Joy message")
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def current_position(self):
+    @skill(stream=Stream.passive, reducer=Reducer.latest)  # type: ignore[arg-type]
+    def current_position(self):  # type: ignore[no-untyped-def]
         """passively stream the current position of the robot every second"""
         if self._current_position_running:
             return "already running"
@@ -281,8 +284,8 @@ class ROSNav(
                 continue
             yield f"current position {tf.translation.x}, {tf.translation.y}"
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.string)
-    def goto(self, x: float, y: float):
+    @skill(stream=Stream.call_agent, reducer=Reducer.string)  # type: ignore[arg-type]
+    def goto(self, x: float, y: float):  # type: ignore[no-untyped-def]
         """
         move the robot in relative coordinates
         x is forward, y is left
@@ -300,7 +303,7 @@ class ROSNav(
         self.navigate_to(pose_to)
         yield "arrived"
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.string)
+    @skill(stream=Stream.call_agent, reducer=Reducer.string)  # type: ignore[arg-type]
     def goto_global(self, x: float, y: float) -> Generator[str, None, None]:
         """
         go to coordinates x,y in the map frame
@@ -341,7 +344,7 @@ class ROSNav(
         self._set_autonomy_mode()
 
         # Enable soft stop (0 = enable)
-        soft_stop_msg = ROSInt8()
+        soft_stop_msg = ROSInt8()  # type: ignore[no-untyped-call]
         soft_stop_msg.data = 0
         self.soft_stop_pub.publish(soft_stop_msg)
 
@@ -371,11 +374,11 @@ class ROSNav(
         """
         logger.info("Stopping navigation")
 
-        cancel_msg = ROSBool()
+        cancel_msg = ROSBool()  # type: ignore[no-untyped-call]
         cancel_msg.data = True
         self.cancel_goal_pub.publish(cancel_msg)
 
-        soft_stop_msg = ROSInt8()
+        soft_stop_msg = ROSInt8()  # type: ignore[no-untyped-call]
         soft_stop_msg.data = 2
         self.soft_stop_pub.publish(soft_stop_msg)
 
@@ -461,7 +464,7 @@ class ROSNav(
                 self._spin_thread.join(timeout=1.0)
 
             if hasattr(self, "_node") and self._node:
-                self._node.destroy_node()
+                self._node.destroy_node()  # type: ignore[no-untyped-call]
 
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
@@ -472,8 +475,8 @@ class ROSNav(
 ros_nav = ROSNav.blueprint
 
 
-def deploy(dimos: DimosCluster):
-    nav = dimos.deploy(ROSNav)
+def deploy(dimos: DimosCluster):  # type: ignore[no-untyped-def]
+    nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
 
     nav.pointcloud.transport = pSHMTransport("/lidar")
     nav.global_pointcloud.transport = pSHMTransport("/map")

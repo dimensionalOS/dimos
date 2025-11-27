@@ -17,7 +17,7 @@ from threading import Thread
 import time
 from typing import Protocol
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -48,13 +48,13 @@ class Go2ConnectionProtocol(Protocol):
 
     def start(self) -> None: ...
     def stop(self) -> None: ...
-    def lidar_stream(self) -> Observable: ...
-    def odom_stream(self) -> Observable: ...
-    def video_stream(self) -> Observable: ...
+    def lidar_stream(self) -> Observable: ...  # type: ignore[type-arg]
+    def odom_stream(self) -> Observable: ...  # type: ignore[type-arg]
+    def video_stream(self) -> Observable: ...  # type: ignore[type-arg]
     def move(self, twist: Twist, duration: float = 0.0) -> bool: ...
     def standup(self) -> bool: ...
     def liedown(self) -> bool: ...
-    def publish_request(self, topic: str, data: dict) -> dict: ...
+    def publish_request(self, topic: str, data: dict) -> dict: ...  # type: ignore[type-arg]
 
 
 def _camera_info_static() -> CameraInfo:
@@ -93,7 +93,7 @@ class ReplayConnection(UnitreeWebRTCConnection):
     dir_name = "unitree_go2_office_walk2"
 
     # we don't want UnitreeWebRTCConnection to init
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         **kwargs,
     ) -> None:
@@ -117,25 +117,25 @@ class ReplayConnection(UnitreeWebRTCConnection):
         return True
 
     @simple_mcache
-    def lidar_stream(self):
-        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")
-        return lidar_store.stream(**self.replay_config)
+    def lidar_stream(self):  # type: ignore[no-untyped-def]
+        lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")  # type: ignore[var-annotated]
+        return lidar_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
     @simple_mcache
-    def odom_stream(self):
-        odom_store = TimedSensorReplay(f"{self.dir_name}/odom")
-        return odom_store.stream(**self.replay_config)
+    def odom_stream(self):  # type: ignore[no-untyped-def]
+        odom_store = TimedSensorReplay(f"{self.dir_name}/odom")  # type: ignore[var-annotated]
+        return odom_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
     # we don't have raw video stream in the data set
     @simple_mcache
-    def video_stream(self):
-        video_store = TimedSensorReplay(f"{self.dir_name}/video")
-        return video_store.stream(**self.replay_config)
+    def video_stream(self):  # type: ignore[no-untyped-def]
+        video_store = TimedSensorReplay(f"{self.dir_name}/video")  # type: ignore[var-annotated]
+        return video_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
-    def move(self, twist: Twist, duration: float = 0.0) -> bool:
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:  # type: ignore[override]
         return True
 
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Fake publish request for testing."""
         return {"status": "ok", "message": "Fake publish"}
 
@@ -153,7 +153,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     _global_config: GlobalConfig
     _camera_info_thread: Thread | None = None
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         ip: str | None = None,
         global_config: GlobalConfig | None = None,
@@ -167,11 +167,11 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         connection_type = self._global_config.unitree_connection_type
 
         if ip in ["fake", "mock", "replay"] or connection_type == "replay":
-            self.connection = ReplayConnection()
+            self.connection = ReplayConnection()  # type: ignore[assignment]
         elif ip == "mujoco" or connection_type == "mujoco":
             from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-            self.connection = MujocoConnection(self._global_config)
+            self.connection = MujocoConnection(self._global_config)  # type: ignore[assignment]
         else:
             self.connection = UnitreeWebRTCConnection(ip)
 
@@ -257,7 +257,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def publish_camera_info(self) -> None:
         while True:
-            self.camera_info.publish(_camera_info_static())
+            self.camera_info.publish(_camera_info_static())  # type: ignore[no-untyped-call]
             time.sleep(1.0)
 
     @rpc
@@ -293,7 +293,7 @@ go2_connection = GO2Connection.blueprint
 def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
     from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 
-    connection = dimos.deploy(GO2Connection, ip)
+    connection = dimos.deploy(GO2Connection, ip)  # type: ignore[attr-defined]
 
     connection.pointcloud.transport = pSHMTransport(
         f"{prefix}/lidar", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
@@ -307,7 +307,7 @@ def deploy(dimos: DimosCluster, ip: str, prefix: str = "") -> GO2Connection:
     connection.camera_info.transport = LCMTransport(f"{prefix}/camera_info", CameraInfo)
     connection.start()
 
-    return connection
+    return connection  # type: ignore[no-any-return]
 
 
 __all__ = ["GO2Connection", "deploy", "go2_connection"]
