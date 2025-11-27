@@ -125,7 +125,7 @@ agentic_ollama = autoconnect(
     standard,
     llm_agent(
         model="qwen3:8b",
-        provider=Provider.OLLAMA,
+        provider=Provider.OLLAMA,  # type: ignore[attr-defined]
     ),
     _common_agentic,
 ).requirements(
@@ -136,7 +136,7 @@ agentic_huggingface = autoconnect(
     standard,
     llm_agent(
         model="Qwen/Qwen2.5-1.5B-Instruct",
-        provider=Provider.HUGGINGFACE,
+        provider=Provider.HUGGINGFACE,  # type: ignore[attr-defined]
     ),
     _common_agentic,
 )
