@@ -41,7 +41,7 @@ def _pose(x: float, y: float, theta: float) -> PoseStamped:
 
 class LCMSpy(LCMService):
     l: lcm.LCM
-    _messages: dict[str, list[bytes]]
+    messages: dict[str, list[bytes]]
     _messages_lock: threading.Lock
     _saved_topics: set[str]
     _saved_topics_lock: threading.Lock
@@ -51,7 +51,7 @@ class LCMSpy(LCMService):
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         self.l = lcm.LCM()
-        self._messages = {}
+        self.messages = {}
         self._messages_lock = threading.Lock()
         self._saved_topics = set()
         self._saved_topics_lock = threading.Lock()
@@ -71,7 +71,7 @@ class LCMSpy(LCMService):
             if topic not in self._saved_topics:
                 return
             with self._messages_lock:
-                self._messages.setdefault(topic, []).append(data)
+                self.messages.setdefault(topic, []).append(data)
 
         with self._topic_listeners_lock:
             listeners = self._topic_listeners.get(topic)
@@ -125,7 +125,7 @@ class LCMSpy(LCMService):
     def wait_for_saved_topic(self, topic: str, timeout: float = 30.0) -> None:
         def condition() -> bool:
             with self._messages_lock:
-                return topic in self._messages
+                return topic in self.messages
 
         self.wait_until(
             condition=condition,
@@ -138,7 +138,7 @@ class LCMSpy(LCMService):
     ) -> None:
         def condition() -> bool:
             with self._messages_lock:
-                return any(content_contains in msg for msg in self._messages.get(topic, []))
+                return any(content_contains in msg for msg in self.messages.get(topic, []))
 
         self.wait_until(
             condition=condition,
