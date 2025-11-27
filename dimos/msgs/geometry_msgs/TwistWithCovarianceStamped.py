@@ -17,14 +17,18 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped,
+)
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,
+    )
 except ImportError:
-    ROSTwistWithCovarianceStamped = None
+    ROSTwistWithCovarianceStamped = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
@@ -33,21 +37,21 @@ from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from TwistWithCovarianceStamped
 TwistWithCovarianceStampedConvertable: TypeAlias = (
-    tuple[Twist | tuple[VectorConvertable, VectorConvertable], list[float] | np.ndarray]
+    tuple[Twist | tuple[VectorConvertable, VectorConvertable], list[float] | np.ndarray]  # type: ignore[type-arg]
     | LCMTwistWithCovarianceStamped
     | dict[
         str,
         Twist
         | tuple[VectorConvertable, VectorConvertable]
         | list[float]
-        | np.ndarray
+        | np.ndarray  # type: ignore[type-arg]
         | float
         | str,
     ]
 )
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
@@ -64,13 +68,13 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         self.ts = ts if ts != 0 else time.time()
         super().__init__(**kwargs)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
         ts: float = 0.0,
         frame_id: str = "",
         twist: Twist | tuple[VectorConvertable, VectorConvertable] | None = None,
-        covariance: list[float] | np.ndarray | None = None,
+        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
     ) -> None:
         """Initialize with timestamp, frame_id, twist and covariance."""
         self.frame_id = frame_id
@@ -84,13 +88,13 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         lcm_msg = LCMTwistWithCovarianceStamped()
         lcm_msg.twist.twist = self.twist
         # LCM expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):
-            lcm_msg.twist.covariance = self.covariance.tolist()
+        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.twist.covariance = self.covariance.tolist()  # type: ignore[has-type]
         else:
-            lcm_msg.twist.covariance = list(self.covariance)
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+            lcm_msg.twist.covariance = list(self.covariance)  # type: ignore[has-type]
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> TwistWithCovarianceStamped:
@@ -121,7 +125,7 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistWithCovarianceStamped) -> TwistWithCovarianceStamped:
+    def from_ros_msg(cls, ros_msg: ROSTwistWithCovarianceStamped) -> TwistWithCovarianceStamped:  # type: ignore[override]
         """Create a TwistWithCovarianceStamped from a ROS geometry_msgs/TwistWithCovarianceStamped message.
 
         Args:
@@ -141,17 +145,17 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
             ts=ts,
             frame_id=ros_msg.header.frame_id,
             twist=twist_with_cov.twist,
-            covariance=twist_with_cov.covariance,
+            covariance=twist_with_cov.covariance,  # type: ignore[has-type]
         )
 
-    def to_ros_msg(self) -> ROSTwistWithCovarianceStamped:
+    def to_ros_msg(self) -> ROSTwistWithCovarianceStamped:  # type: ignore[override]
         """Convert to a ROS geometry_msgs/TwistWithCovarianceStamped message.
 
         Returns:
             ROS TwistWithCovarianceStamped message
         """
 
-        ros_msg = ROSTwistWithCovarianceStamped()
+        ros_msg = ROSTwistWithCovarianceStamped()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id
@@ -161,9 +165,9 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
         # Set twist with covariance
         ros_msg.twist.twist = self.twist.to_ros_msg()
         # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):
-            ros_msg.twist.covariance = self.covariance.tolist()
+        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
+            ros_msg.twist.covariance = self.covariance.tolist()  # type: ignore[has-type]
         else:
-            ros_msg.twist.covariance = list(self.covariance)
+            ros_msg.twist.covariance = list(self.covariance)  # type: ignore[has-type]
 
         return ros_msg

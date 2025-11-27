@@ -40,16 +40,19 @@ class CurrentLocationMap:
         self._position = position
 
     def query_for_one_position(self, query: str) -> LatLon | None:
-        return query_for_one_position(self._vl_model, self._get_current_map(), query)
+        return query_for_one_position(self._vl_model, self._get_current_map(), query)  # type: ignore[no-untyped-call]
 
     def query_for_one_position_and_context(
         self, query: str, robot_position: LatLon
     ) -> tuple[LatLon, str] | None:
         return query_for_one_position_and_context(
-            self._vl_model, self._get_current_map(), query, robot_position
+            self._vl_model,
+            self._get_current_map(),  # type: ignore[no-untyped-call]
+            query,
+            robot_position,
         )
 
-    def _get_current_map(self):
+    def _get_current_map(self):  # type: ignore[no-untyped-def]
         if not self._position:
             raise ValueError("Current position has not been set.")
 
@@ -63,11 +66,11 @@ class CurrentLocationMap:
         logger.info(
             f"Getting a new OSM map, position={self._position}, zoom={self._zoom_level} n_tiles={self._n_tiles}"
         )
-        self._map_image = get_osm_map(self._position, self._zoom_level, self._n_tiles)
+        self._map_image = get_osm_map(self._position, self._zoom_level, self._n_tiles)  # type: ignore[arg-type]
 
     def _position_is_too_far_off_center(self) -> bool:
-        x, y = self._map_image.latlon_to_pixel(self._position)
-        width = self._map_image.image.width
+        x, y = self._map_image.latlon_to_pixel(self._position)  # type: ignore[arg-type, union-attr]
+        width = self._map_image.image.width  # type: ignore[union-attr]
         size_min = width * (0.5 - self._center_width / 2)
         size_max = width * (0.5 + self._center_width / 2)
 

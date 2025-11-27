@@ -17,7 +17,7 @@ from typing import Any
 
 import numpy as np
 from reactivex import Observable
-import sounddevice as sd
+import sounddevice as sd  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import (
     AbstractAudioTransform,
@@ -42,7 +42,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
-        dtype: np.dtype = np.float32,
+        dtype: np.dtype = np.float32,  # type: ignore[assignment, type-arg]
     ) -> None:
         """
         Initialize SounddeviceAudioOutput.
@@ -65,7 +65,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         self._subscription = None
         self.audio_observable = None
 
-    def consume_audio(self, audio_observable: Observable) -> "SounddeviceAudioOutput":
+    def consume_audio(self, audio_observable: Observable) -> "SounddeviceAudioOutput":  # type: ignore[type-arg]
         """
         Subscribe to an audio observable and play the audio through the speakers.
 
@@ -75,7 +75,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         Returns:
             Self for method chaining
         """
-        self.audio_observable = audio_observable
+        self.audio_observable = audio_observable  # type: ignore[assignment]
 
         # Create and start the output stream
         try:
@@ -86,7 +86,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
                 blocksize=self.block_size,
                 dtype=self.dtype,
             )
-            self._stream.start()
+            self._stream.start()  # type: ignore[attr-defined]
             self._running = True
 
             logger.info(
@@ -99,7 +99,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             raise e
 
         # Subscribe to the observable
-        self._subscription = audio_observable.subscribe(
+        self._subscription = audio_observable.subscribe(  # type: ignore[assignment]
             on_next=self._play_audio_event,
             on_error=self._handle_error,
             on_completed=self._handle_completion,
@@ -107,7 +107,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
         return self
 
-    def emit_audio(self) -> Observable:
+    def emit_audio(self) -> Observable:  # type: ignore[type-arg]
         """
         Pass through the audio observable to allow chaining with other components.
 
@@ -133,7 +133,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
             self._stream.close()
             self._stream = None
 
-    def _play_audio_event(self, audio_event) -> None:
+    def _play_audio_event(self, audio_event) -> None:  # type: ignore[no-untyped-def]
         """Play audio from an AudioEvent."""
         if not self._running or not self._stream:
             return
@@ -151,7 +151,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
         except Exception as e:
             logger.error(f"Error playing audio: {e}")
 
-    def _handle_error(self, error) -> None:
+    def _handle_error(self, error) -> None:  # type: ignore[no-untyped-def]
         """Handle errors from the observable."""
         logger.error(f"Error in audio observable: {error}")
 
@@ -166,7 +166,7 @@ class SounddeviceAudioOutput(AbstractAudioTransform):
 
     def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio output devices."""
-        return sd.query_devices()
+        return sd.query_devices()  # type: ignore[no-any-return]
 
 
 if __name__ == "__main__":

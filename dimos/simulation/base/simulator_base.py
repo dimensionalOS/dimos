@@ -23,7 +23,7 @@ class SimulatorBase(ABC):
         self,
         headless: bool = True,
         open_usd: str | None = None,  # Keep for Isaac compatibility
-        entities: list[dict[str, str | dict]] | None = None,  # Add for Genesis
+        entities: list[dict[str, str | dict]] | None = None,  # type: ignore[type-arg]  # Add for Genesis
     ) -> None:
         """Initialize the simulator.
 
@@ -37,11 +37,11 @@ class SimulatorBase(ABC):
         self.stage = None
 
     @abstractmethod
-    def get_stage(self):
+    def get_stage(self):  # type: ignore[no-untyped-def]
         """Get the current stage/scene."""
         pass
 
     @abstractmethod
-    def close(self):
+    def close(self):  # type: ignore[no-untyped-def]
         """Close the simulation."""
         pass

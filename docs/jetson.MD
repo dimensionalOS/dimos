@@ -1,8 +1,8 @@
-# DimOS Jetson Setup Instructions 
-Tested on Jetpack 6.2, CUDA 12.6 
+# DimOS Jetson Setup Instructions
+Tested on Jetpack 6.2, CUDA 12.6
 
-## Required system dependencies 
-`sudo apt install portaudio19-dev python3-pyaudio` 
+## Required system dependencies
+`sudo apt install portaudio19-dev python3-pyaudio`
 
 ## Installing cuSPARSELt
 https://ninjalabo.ai/blogs/jetson_pytorch.html
@@ -17,7 +17,7 @@ ldconfig
 ```
 ## Install Torch and Torchvision wheels
 
-Enter virtualenv 
+Enter virtualenv
 ```bash
 python3 -m venv venv
 source venv/bin/activate
@@ -26,19 +26,19 @@ source venv/bin/activate
 Wheels for jp6/cu126
 https://pypi.jetson-ai-lab.io/jp6/cu126
 
-Check compatibility: 
+Check compatibility:
 https://docs.nvidia.com/deeplearning/frameworks/install-pytorch-jetson-platform-release-notes/pytorch-jetson-rel.html
 
 ### Working torch wheel tested on Jetpack 6.2, CUDA 12.6
 `pip install --no-cache https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl`
 
-### Install torchvision from source: 
+### Install torchvision from source:
 ```bash
-# Set version by checking above torchvision<-->torch compatibility 
+# Set version by checking above torchvision<-->torch compatibility
 
 # We use 0.20.0
 export VERSION=20
- 
+
 sudo apt-get install libjpeg-dev zlib1g-dev libpython3-dev libopenblas-dev libavcodec-dev libavformat-dev libswscale-dev
 git clone --branch release/0.$VERSION https://github.com/pytorch/vision torchvision
 cd torchvision
@@ -46,7 +46,7 @@ export BUILD_VERSION=0.$VERSION.0
 python3 setup.py install --user # remove --user if installing in virtualenv
 ```
 
-### Verify success: 
+### Verify success:
 ```bash
 $ python3
 import torch
@@ -65,8 +65,8 @@ import torchvision
 print(torchvision.__version__)
 ```
 
-## Install Onnxruntime-gpu 
+## Install Onnxruntime-gpu
 
 Find pre-build wheels here for your specific JP/CUDA version: https://pypi.jetson-ai-lab.io/jp6
 
-`pip install https://pypi.jetson-ai-lab.io/jp6/cu126/+f/4eb/e6a8902dc7708/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl#sha256=4ebe6a8902dc7708434b2e1541b3fe629ebf434e16ab5537d1d6a622b42c622b` 
+`pip install https://pypi.jetson-ai-lab.io/jp6/cu126/+f/4eb/e6a8902dc7708/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl#sha256=4ebe6a8902dc7708434b2e1541b3fe629ebf434e16ab5537d1d6a622b42c622b`

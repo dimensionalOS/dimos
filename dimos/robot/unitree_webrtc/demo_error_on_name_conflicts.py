@@ -27,7 +27,7 @@ class Data2:
 
 
 class ModuleA(Module):
-    shared_data: Out[Data1] = None
+    shared_data: Out[Data1] = None  # type: ignore[assignment]
 
     @rpc
     def start(self) -> None:
@@ -39,7 +39,7 @@ class ModuleA(Module):
 
 
 class ModuleB(Module):
-    shared_data: In[Data2] = None
+    shared_data: In[Data2] = None  # type: ignore[assignment]
 
     @rpc
     def start(self) -> None:

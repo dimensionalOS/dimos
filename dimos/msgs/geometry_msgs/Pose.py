@@ -16,14 +16,21 @@ from __future__ import annotations
 
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import Pose as LCMPose, Transform as LCMTransform
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    Pose as LCMPose,
+    Transform as LCMTransform,
+)
 
 try:
-    from geometry_msgs.msg import Point as ROSPoint, Pose as ROSPose, Quaternion as ROSQuaternion
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        Point as ROSPoint,
+        Pose as ROSPose,
+        Quaternion as ROSQuaternion,
+    )
 except ImportError:
-    ROSPose = None
-    ROSPoint = None
-    ROSQuaternion = None
+    ROSPose = None  # type: ignore[assignment, misc]
+    ROSPoint = None  # type: ignore[assignment, misc]
+    ROSQuaternion = None  # type: ignore[assignment, misc]
 
 from plum import dispatch
 
@@ -40,7 +47,7 @@ PoseConvertable: TypeAlias = (
 )
 
 
-class Pose(LCMPose):
+class Pose(LCMPose):  # type: ignore[misc]
     position: Vector3
     orientation: Quaternion
     msg_name = "geometry_msgs.Pose"
@@ -51,13 +58,13 @@ class Pose(LCMPose):
         self.position = Vector3(0.0, 0.0, 0.0)
         self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, x: int | float, y: int | float, z: int | float) -> None:
         """Initialize a pose with position and identity orientation."""
         self.position = Vector3(x, y, z)
         self.orientation = Quaternion(0.0, 0.0, 0.0, 1.0)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
         x: int | float,
@@ -72,7 +79,7 @@ class Pose(LCMPose):
         self.position = Vector3(x, y, z)
         self.orientation = Quaternion(qx, qy, qz, qw)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
         position: VectorConvertable | Vector3 | None = None,
@@ -86,25 +93,25 @@ class Pose(LCMPose):
         self.position = Vector3(position)
         self.orientation = Quaternion(orientation)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, pose_tuple: tuple[VectorConvertable, QuaternionConvertable]) -> None:
         """Initialize from a tuple of (position, orientation)."""
         self.position = Vector3(pose_tuple[0])
         self.orientation = Quaternion(pose_tuple[1])
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, pose_dict: dict[str, VectorConvertable | QuaternionConvertable]) -> None:
         """Initialize from a dictionary with 'position' and 'orientation' keys."""
         self.position = Vector3(pose_dict["position"])
         self.orientation = Quaternion(pose_dict["orientation"])
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, pose: Pose) -> None:
         """Initialize from another Pose (copy constructor)."""
         self.position = Vector3(pose.position)
         self.orientation = Quaternion(pose.orientation)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_pose: LCMPose) -> None:
         """Initialize from an LCM Pose."""
         self.position = Vector3(lcm_pose.position.x, lcm_pose.position.y, lcm_pose.position.z)
@@ -155,7 +162,7 @@ class Pose(LCMPose):
             f"quaternion=[{self.orientation}])"
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two poses are equal."""
         if not isinstance(other, Pose):
             return False
@@ -240,11 +247,11 @@ class Pose(LCMPose):
         Returns:
             ROS Pose message
         """
-        ros_msg = ROSPose()
-        ros_msg.position = ROSPoint(
+        ros_msg = ROSPose()  # type: ignore[no-untyped-call]
+        ros_msg.position = ROSPoint(  # type: ignore[no-untyped-call]
             x=float(self.position.x), y=float(self.position.y), z=float(self.position.z)
         )
-        ros_msg.orientation = ROSQuaternion(
+        ros_msg.orientation = ROSQuaternion(  # type: ignore[no-untyped-call]
             x=float(self.orientation.x),
             y=float(self.orientation.y),
             z=float(self.orientation.z),
@@ -259,7 +266,7 @@ def to_pose(value: Pose) -> Pose:
     return value
 
 
-@dispatch
+@dispatch  # type: ignore[no-redef]
 def to_pose(value: PoseConvertable) -> Pose:
     """Convert a pose-compatible value to a Pose object."""
     return Pose(value)
