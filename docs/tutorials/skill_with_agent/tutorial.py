@@ -88,7 +88,6 @@ def _():
     from dimos.agents2.agent import LlmAgent, llm_agent
     from dimos.core.blueprints import autoconnect
     from docs.tutorials.skill_with_agent.greeter import (
-        Greeter,
         GreeterForAgents,
         RobotCapabilities,
     )
