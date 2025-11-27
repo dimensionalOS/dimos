@@ -32,16 +32,16 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
         self.embeddings = None
         super().__init__(connection_type="local")
 
-    def connect(self):
+    def connect(self):  # type: ignore[no-untyped-def]
         # Stub
-        return super().connect()
+        return super().connect()  # type: ignore[no-untyped-call, safe-super]
 
-    def create(self):
+    def create(self):  # type: ignore[no-untyped-def]
         """Create the embedding function and initialize the Chroma database.
         This method must be implemented by child classes."""
         raise NotImplementedError("Child classes must implement this method")
 
-    def add_vector(self, vector_id, vector_data):
+    def add_vector(self, vector_id, vector_data):  # type: ignore[no-untyped-def]
         """Add a vector to the ChromaDB collection."""
         if not self.db_connection:
             raise Exception("Collection not initialized. Call connect() first.")
@@ -51,12 +51,12 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
             metadatas=[{"name": vector_id}],
         )
 
-    def get_vector(self, vector_id):
+    def get_vector(self, vector_id):  # type: ignore[no-untyped-def]
         """Retrieve a vector from the ChromaDB by its identifier."""
-        result = self.db_connection.get(include=["embeddings"], ids=[vector_id])
+        result = self.db_connection.get(include=["embeddings"], ids=[vector_id])  # type: ignore[attr-defined]
         return result
 
-    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):
+    def query(self, query_texts, n_results: int = 4, similarity_threshold=None):  # type: ignore[no-untyped-def]
         """Query the collection with a specific text and return up to n results."""
         if not self.db_connection:
             raise Exception("Collection not initialized. Call connect() first.")
@@ -71,11 +71,11 @@ class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
             documents = self.db_connection.similarity_search(query=query_texts, k=n_results)
             return [(doc, None) for doc in documents]
 
-    def update_vector(self, vector_id, new_vector_data):
+    def update_vector(self, vector_id, new_vector_data):  # type: ignore[no-untyped-def]
         # TODO
-        return super().connect()
+        return super().connect()  # type: ignore[no-untyped-call, safe-super]
 
-    def delete_vector(self, vector_id):
+    def delete_vector(self, vector_id):  # type: ignore[no-untyped-def]
         """Delete a vector from the ChromaDB using its identifier."""
         if not self.db_connection:
             raise Exception("Collection not initialized. Call connect() first.")
@@ -102,7 +102,7 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
         self.dimensions = dimensions
         super().__init__(collection_name=collection_name)
 
-    def create(self):
+    def create(self):  # type: ignore[no-untyped-def]
         """Connect to OpenAI API and create the ChromaDB client."""
         # Get OpenAI key
         self.OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -110,14 +110,14 @@ class OpenAISemanticMemory(ChromaAgentSemanticMemory):
             raise Exception("OpenAI key was not specified.")
 
         # Set embeddings
-        self.embeddings = OpenAIEmbeddings(
+        self.embeddings = OpenAIEmbeddings(  # type: ignore[assignment]
             model=self.model,
             dimensions=self.dimensions,
-            api_key=self.OPENAI_API_KEY,
+            api_key=self.OPENAI_API_KEY,  # type: ignore[arg-type]
         )
 
         # Create the database
-        self.db_connection = Chroma(
+        self.db_connection = Chroma(  # type: ignore[assignment]
             collection_name=self.collection_name,
             embedding_function=self.embeddings,
             collection_metadata={"hnsw:space": "cosine"},
@@ -148,26 +148,26 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
         # Use CUDA if available, otherwise fall back to CPU
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {device}")
-        self.model = SentenceTransformer(self.model_name, device=device)
+        self.model = SentenceTransformer(self.model_name, device=device)  # type: ignore[name-defined]
 
         # Create a custom embedding class that implements the embed_query method
         class SentenceTransformerEmbeddings:
-            def __init__(self, model) -> None:
+            def __init__(self, model) -> None:  # type: ignore[no-untyped-def]
                 self.model = model
 
-            def embed_query(self, text: str):
+            def embed_query(self, text: str):  # type: ignore[no-untyped-def]
                 """Embed a single query text."""
                 return self.model.encode(text, normalize_embeddings=True).tolist()
 
-            def embed_documents(self, texts: Sequence[str]):
+            def embed_documents(self, texts: Sequence[str]):  # type: ignore[no-untyped-def]
                 """Embed multiple documents/texts."""
                 return self.model.encode(texts, normalize_embeddings=True).tolist()
 
         # Create an instance of our custom embeddings class
-        self.embeddings = SentenceTransformerEmbeddings(self.model)
+        self.embeddings = SentenceTransformerEmbeddings(self.model)  # type: ignore[assignment]
 
         # Create the database
-        self.db_connection = Chroma(
+        self.db_connection = Chroma(  # type: ignore[assignment]
             collection_name=self.collection_name,
             embedding_function=self.embeddings,
             collection_metadata={"hnsw:space": "cosine"},

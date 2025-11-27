@@ -18,7 +18,7 @@ import time
 import numpy as np
 from reactivex import Observable, create, disposable
 
-from dimos.stream.audio.abstract import (
+from dimos.stream.audio.abstract import (  # type: ignore[import-untyped]
     AbstractAudioEmitter,
     AudioEvent,
 )
@@ -27,7 +27,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger("dimos.stream.audio.node_simulated")
 
 
-class SimulatedAudioSource(AbstractAudioEmitter):
+class SimulatedAudioSource(AbstractAudioEmitter):  # type: ignore[misc]
     """Audio source that generates simulated audio for testing."""
 
     def __init__(
@@ -35,7 +35,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         sample_rate: int = 16000,
         frame_length: int = 1024,
         channels: int = 1,
-        dtype: np.dtype = np.float32,
+        dtype: np.dtype = np.float32,  # type: ignore[assignment, type-arg]
         frequency: float = 440.0,  # A4 note
         waveform: str = "sine",  # Type of waveform
         modulation_rate: float = 0.5,  # Modulation rate in Hz
@@ -71,7 +71,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         self._running = False
         self._thread = None
 
-    def _generate_sine_wave(self, time_points: np.ndarray) -> np.ndarray:
+    def _generate_sine_wave(self, time_points: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
         """Generate a waveform based on selected type."""
         # Generate base time points with phase
         t = time_points + self.phase
@@ -131,9 +131,9 @@ class SimulatedAudioSource(AbstractAudioEmitter):
         if self.dtype == np.int16:
             wave = (wave * 32767).astype(np.int16)
 
-        return wave
+        return wave  # type: ignore[no-any-return]
 
-    def _audio_thread(self, observer, interval: float) -> None:
+    def _audio_thread(self, observer, interval: float) -> None:  # type: ignore[no-untyped-def]
         """Thread function for simulated audio generation."""
         try:
             sample_index = 0
@@ -171,7 +171,7 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             self._running = False
             observer.on_completed()
 
-    def emit_audio(self, fps: int = 30) -> Observable:
+    def emit_audio(self, fps: int = 30) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits simulated audio frames.
 
@@ -182,15 +182,15 @@ class SimulatedAudioSource(AbstractAudioEmitter):
             Observable emitting AudioEvent objects
         """
 
-        def on_subscribe(observer, scheduler):
+        def on_subscribe(observer, scheduler):  # type: ignore[no-untyped-def]
             # Calculate interval based on fps
             interval = 1.0 / fps
 
             # Start the audio generation thread
-            self._thread = threading.Thread(
+            self._thread = threading.Thread(  # type: ignore[assignment]
                 target=self._audio_thread, args=(observer, interval), daemon=True
             )
-            self._thread.start()
+            self._thread.start()  # type: ignore[attr-defined]
 
             logger.info(
                 f"Started simulated audio source: {self.sample_rate}Hz, "

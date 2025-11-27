@@ -19,9 +19,13 @@ import threading
 import time
 from typing import TypeAlias
 
-from aiortc import MediaStreamTrack
-from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
-from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
+from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
+from go2_webrtc_driver.constants import (  # type: ignore[import-untyped]
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+)
+from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-untyped]
     Go2WebRTCConnection,
     WebRTCConnectionMethod,
 )
@@ -48,7 +52,7 @@ VideoMessage: TypeAlias = NDArray[np.uint8]  # Shape: (height, width, 3)
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray
+    data: np.ndarray  # type: ignore[type-arg]
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -57,7 +61,7 @@ class SerializableVideoFrame:
     format: str | None = None
 
     @classmethod
-    def from_av_frame(cls, frame):
+    def from_av_frame(cls, frame):  # type: ignore[no-untyped-def]
         return cls(
             data=frame.to_ndarray(format="rgb24"),
             pts=frame.pts,
@@ -68,7 +72,7 @@ class SerializableVideoFrame:
             format=frame.format.name if hasattr(frame, "format") and frame.format else None,
         )
 
-    def to_ndarray(self, format=None):
+    def to_ndarray(self, format=None):  # type: ignore[no-untyped-def]
         return self.data
 
 
@@ -197,8 +201,8 @@ class UnitreeWebRTCConnection(Resource):
             return False
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
-    def unitree_sub_stream(self, topic_name: str):
-        def subscribe_in_thread(cb) -> None:
+    def unitree_sub_stream(self, topic_name: str):  # type: ignore[no-untyped-def]
+        def subscribe_in_thread(cb) -> None:  # type: ignore[no-untyped-def]
             # Run the subscription in the background thread that has the event loop
             def run_subscription() -> None:
                 self.conn.datachannel.pub_sub.subscribe(topic_name, cb)
@@ -206,7 +210,7 @@ class UnitreeWebRTCConnection(Resource):
             # Use call_soon_threadsafe to run in the background thread
             self.loop.call_soon_threadsafe(run_subscription)
 
-        def unsubscribe_in_thread(cb) -> None:
+        def unsubscribe_in_thread(cb) -> None:  # type: ignore[no-untyped-def]
             # Run the unsubscription in the background thread that has the event loop
             def run_unsubscription() -> None:
                 self.conn.datachannel.pub_sub.unsubscribe(topic_name)
@@ -220,7 +224,7 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     # Generic sync API call (we jump into the client thread)
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         future = asyncio.run_coroutine_threadsafe(
             self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
         )
@@ -270,7 +274,7 @@ class UnitreeWebRTCConnection(Resource):
     def lowstate_stream(self) -> Observable[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
-    def standup_ai(self):
+    def standup_ai(self):  # type: ignore[no-untyped-def]
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
 
     def standup_normal(self) -> bool:
@@ -280,17 +284,17 @@ class UnitreeWebRTCConnection(Resource):
         return True
 
     @rpc
-    def standup(self):
+    def standup(self):  # type: ignore[no-untyped-def]
         if self.mode == "ai":
-            return self.standup_ai()
+            return self.standup_ai()  # type: ignore[no-untyped-call]
         else:
             return self.standup_normal()
 
     @rpc
-    def liedown(self):
+    def liedown(self):  # type: ignore[no-untyped-def]
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
 
-    async def handstand(self):
+    async def handstand(self):  # type: ignore[no-untyped-def]
         return self.publish_request(
             RTC_TOPIC["SPORT_MOD"],
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
@@ -298,7 +302,7 @@ class UnitreeWebRTCConnection(Resource):
 
     @rpc
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
-        return self.publish_request(
+        return self.publish_request(  # type: ignore[no-any-return]
             RTC_TOPIC["VUI"],
             {
                 "api_id": 1001,
@@ -319,7 +323,7 @@ class UnitreeWebRTCConnection(Resource):
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                serializable_frame = SerializableVideoFrame.from_av_frame(frame)
+                serializable_frame = SerializableVideoFrame.from_av_frame(frame)  # type: ignore[no-untyped-call]
                 subject.on_next(serializable_frame)
 
         self.conn.video.add_track_callback(accept_track)
@@ -356,9 +360,9 @@ class UnitreeWebRTCConnection(Resource):
         """
         print("Starting WebRTC video stream...")
         stream = self.video_stream()
-        return stream
+        return stream  # type: ignore[no-any-return]
 
-    def stop(self) -> bool:
+    def stop(self) -> bool:  # type: ignore[no-redef]
         """Stop the robot's movement.
 
         Returns:

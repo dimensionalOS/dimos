@@ -17,8 +17,10 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from lcm_msgs.foxglove_msgs import SceneUpdate
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations,
+)
+from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex.observable import Observable
 
 from dimos import spec
@@ -33,7 +35,7 @@ from dimos.perception.detection.type.detection3d import Detection3DPC
 
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3DPC):
-    best_detection: Detection3DPC | None = None  # type: ignore
+    best_detection: Detection3DPC | None = None
     center: Vector3 | None = None  # type: ignore
     track_id: str | None = None  # type: ignore
     detections: int = 0
@@ -51,7 +53,7 @@ class Object3D(Detection3DPC):
             "center": center_str,
         }
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self, track_id: str, detection: Detection3DPC | None = None, *args, **kwargs
     ) -> None:
         if detection is None:
@@ -98,7 +100,7 @@ class Object3D(Detection3DPC):
     def scene_entity_label(self) -> str:
         return f"{self.name} ({self.detections})"
 
-    def agent_encode(self):
+    def agent_encode(self):  # type: ignore[no-untyped-def]
         return {
             "id": self.track_id,
             "name": self.name,
@@ -172,14 +174,14 @@ class ObjectDBModule(Detection3DModule, TableStr):
         def scene_thread() -> None:
             while True:
                 scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)
+                self.scene_update.publish(scene_update)  # type: ignore[no-untyped-call]
                 time.sleep(1.0)
 
         threading.Thread(target=scene_thread, daemon=True).start()
 
         self.detection_stream_3d.subscribe(update_objects)
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.goto = None
         self.objects = {}
@@ -202,7 +204,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
             detection for detection in map(self.add_detection, detections) if detection is not None
         ]
 
-    def add_detection(self, detection: Detection3DPC):
+    def add_detection(self, detection: Detection3DPC):  # type: ignore[no-untyped-def]
         """Add detection to existing object or create new one."""
         closest = self.closest_object(detection)
         if closest and closest.bounding_box_intersects(detection):
@@ -210,13 +212,13 @@ class ObjectDBModule(Detection3DModule, TableStr):
         else:
             return self.create_new_object(detection)
 
-    def add_to_object(self, closest: Object3D, detection: Detection3DPC):
+    def add_to_object(self, closest: Object3D, detection: Detection3DPC):  # type: ignore[no-untyped-def]
         new_object = closest + detection
         if closest.track_id is not None:
             self.objects[closest.track_id] = new_object
         return new_object
 
-    def create_new_object(self, detection: Detection3DPC):
+    def create_new_object(self, detection: Detection3DPC):  # type: ignore[no-untyped-def]
         new_object = Object3D(f"obj_{self.cnt}", detection)
         if new_object.track_id is not None:
             self.objects[new_object.track_id] = new_object
@@ -228,9 +230,9 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in copy(self.objects).values():
             # we need at least 3 detectieons to consider it a valid object
             # for this to be serious we need a ratio of detections within the window of observations
-            if len(obj.detections) < 4:
+            if len(obj.detections) < 4:  # type: ignore[arg-type]
                 continue
-            ret.append(str(obj.agent_encode()))
+            ret.append(str(obj.agent_encode()))  # type: ignore[no-untyped-call]
         if not ret:
             return "No objects detected yet."
         return "\n".join(ret)
@@ -271,7 +273,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return []
 
     @rpc
-    def stop(self):
+    def stop(self):  # type: ignore[no-untyped-def]
         return super().stop()
 
     def goto_object(self, object_id: str) -> Object3D | None:
@@ -294,7 +296,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         for obj in self.objects:
             try:
                 scene_update.entities.append(
-                    obj.to_foxglove_scene_entity(entity_id=f"{obj.name}_{obj.track_id}")
+                    obj.to_foxglove_scene_entity(entity_id=f"{obj.name}_{obj.track_id}")  # type: ignore[attr-defined]
                 )
             except Exception:
                 pass
@@ -306,7 +308,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return len(self.objects.values())
 
 
-def deploy(
+def deploy(  # type: ignore[no-untyped-def]
     dimos: DimosCluster,
     lidar: spec.Pointcloud,
     camera: spec.Camera,
@@ -315,7 +317,7 @@ def deploy(
 ) -> Detection3DModule:
     from dimos.core import LCMTransport
 
-    detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info_stream, **kwargs)
+    detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info_stream, **kwargs)  # type: ignore[attr-defined]
 
     detector.image.connect(camera.image)
     detector.pointcloud.connect(lidar.pointcloud)
@@ -333,4 +335,4 @@ def deploy(
     detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
 
     detector.start()
-    return detector
+    return detector  # type: ignore[no-any-return]

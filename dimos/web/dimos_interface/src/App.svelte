@@ -10,17 +10,17 @@
   const handleVoiceCommand = async (event: CustomEvent) => {
     if (event.detail.success) {
       // Show voice processing message
-      history.update(h => [...h, { 
-        command: '[voice command]', 
-        outputs: ['Processing voice command...'] 
+      history.update(h => [...h, {
+        command: '[voice command]',
+        outputs: ['Processing voice command...']
       }]);
-      
+
       // The actual command will be processed by the agent through the audio pipeline
       // and will appear in the text stream
     } else {
-      history.update(h => [...h, { 
-        command: '[voice command]', 
-        outputs: [`Error: ${event.detail.error}`] 
+      history.update(h => [...h, {
+        command: '[voice command]',
+        outputs: [`Error: ${event.detail.error}`]
       }]);
     }
   };
