@@ -18,20 +18,23 @@ import functools
 import struct
 
 # Import LCM types
-from dimos_lcm.sensor_msgs.PointCloud2 import (
+from dimos_lcm.sensor_msgs.PointCloud2 import (  # type: ignore[import-untyped]
     PointCloud2 as LCMPointCloud2,
 )
-from dimos_lcm.sensor_msgs.PointField import PointField
-from dimos_lcm.std_msgs.Header import Header
+from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Vector3
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import PointCloud2 as ROSPointCloud2, PointField as ROSPointField
-    from std_msgs.msg import Header as ROSHeader
+    from sensor_msgs.msg import (  # type: ignore[attr-defined]
+        PointCloud2 as ROSPointCloud2,
+        PointField as ROSPointField,
+    )
+    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -50,13 +53,16 @@ class PointCloud2(Timestamped):
         frame_id: str = "world",
         ts: float | None = None,
     ) -> None:
-        self.ts = ts
+        self.ts = ts  # type: ignore[assignment]
         self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
         self.frame_id = frame_id
 
     @classmethod
     def from_numpy(
-        cls, points: np.ndarray, frame_id: str = "world", timestamp: float | None = None
+        cls,
+        points: np.ndarray,  # type: ignore[type-arg]
+        frame_id: str = "world",
+        timestamp: float | None = None,
     ) -> PointCloud2:
         """Create PointCloud2 from numpy array of shape (N, 3).
 
@@ -81,7 +87,7 @@ class PointCloud2(Timestamped):
         center = np.asarray(self.pointcloud.points).mean(axis=0)
         return Vector3(*center)
 
-    def points(self):
+    def points(self):  # type: ignore[no-untyped-def]
         return self.pointcloud.points
 
     def __add__(self, other: PointCloud2) -> PointCloud2:
@@ -106,7 +112,7 @@ class PointCloud2(Timestamped):
         )
 
     # TODO what's the usual storage here? is it already numpy?
-    def as_numpy(self) -> np.ndarray:
+    def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get points as numpy array."""
         return np.asarray(self.pointcloud.points)
 
@@ -140,7 +146,7 @@ class PointCloud2(Timestamped):
 
         # Check overlap in all three dimensions
         # Boxes intersect if they overlap in ALL dimensions
-        return (
+        return (  # type: ignore[no-any-return]
             min1[0] <= max2[0]
             and max1[0] >= min2[0]
             and min1[1] <= max2[1]
@@ -174,7 +180,7 @@ class PointCloud2(Timestamped):
             msg.is_bigendian = False
             msg.fields_length = 4  # x, y, z, intensity
             msg.fields = self._create_xyz_field()
-            return msg.lcm_encode()
+            return msg.lcm_encode()  # type: ignore[no-any-return]
 
         # Point cloud dimensions
         msg.height = 1  # Unorganized point cloud
@@ -204,7 +210,7 @@ class PointCloud2(Timestamped):
         msg.is_dense = True  # No invalid points
         msg.is_bigendian = False  # Little endian
 
-        return msg.lcm_encode()
+        return msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> PointCloud2:
@@ -265,7 +271,7 @@ class PointCloud2(Timestamped):
             else None,
         )
 
-    def _create_xyz_field(self) -> list:
+    def _create_xyz_field(self) -> list:  # type: ignore[type-arg]
         """Create standard X, Y, Z field definitions for LCM PointCloud2."""
         fields = []
 
@@ -452,18 +458,18 @@ class PointCloud2(Timestamped):
             dt_fields = []
 
             # Add padding before x if needed
-            if x_offset > 0:
+            if x_offset > 0:  # type: ignore[operator]
                 dt_fields.append(("_pad_x", f"V{x_offset}"))
             dt_fields.append(("x", f"{byte_order}f4"))
 
             # Add padding between x and y if needed
-            gap_xy = y_offset - x_offset - 4
+            gap_xy = y_offset - x_offset - 4  # type: ignore[operator]
             if gap_xy > 0:
                 dt_fields.append(("_pad_xy", f"V{gap_xy}"))
             dt_fields.append(("y", f"{byte_order}f4"))
 
             # Add padding between y and z if needed
-            gap_yz = z_offset - y_offset - 4
+            gap_yz = z_offset - y_offset - 4  # type: ignore[operator]
             if gap_yz > 0:
                 dt_fields.append(("_pad_yz", f"V{gap_yz}"))
             dt_fields.append(("z", f"{byte_order}f4"))
@@ -504,10 +510,10 @@ class PointCloud2(Timestamped):
         if not ROS_AVAILABLE:
             raise ImportError("ROS packages not available. Cannot convert to ROS message.")
 
-        ros_msg = ROSPointCloud2()
+        ros_msg = ROSPointCloud2()  # type: ignore[no-untyped-call]
 
         # Set header
-        ros_msg.header = ROSHeader()
+        ros_msg.header = ROSHeader()  # type: ignore[no-untyped-call]
         ros_msg.header.frame_id = self.frame_id
         ros_msg.header.stamp.sec = int(self.ts)
         ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1e9)
@@ -532,9 +538,9 @@ class PointCloud2(Timestamped):
 
         # Define fields (X, Y, Z as float32)
         ros_msg.fields = [
-            ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),
-            ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),
-            ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),
+            ROSPointField(name="x", offset=0, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+            ROSPointField(name="y", offset=4, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
+            ROSPointField(name="z", offset=8, datatype=ROSPointField.FLOAT32, count=1),  # type: ignore[no-untyped-call]
         ]
 
         # Set point step and row step

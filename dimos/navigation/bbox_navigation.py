@@ -14,7 +14,7 @@
 
 import logging
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
@@ -28,9 +28,9 @@ logger = setup_logger(__name__, level=logging.DEBUG)
 class BBoxNavigationModule(Module):
     """Minimal module that converts 2D bbox center to navigation goals."""
 
-    detection2d: In[Detection2DArray] = None
-    camera_info: In[CameraInfo] = None
-    goal_request: Out[PoseStamped] = None
+    detection2d: In[Detection2DArray] = None  # type: ignore[assignment]
+    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
+    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
 
     def __init__(self, goal_distance: float = 1.0) -> None:
         super().__init__()

@@ -17,14 +17,18 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped,
+)
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped,
+    )
 except ImportError:
-    ROSPoseWithCovarianceStamped = None
+    ROSPoseWithCovarianceStamped = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -32,13 +36,13 @@ from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from PoseWithCovarianceStamped
 PoseWithCovarianceStampedConvertable: TypeAlias = (
-    tuple[PoseConvertable, list[float] | np.ndarray]
+    tuple[PoseConvertable, list[float] | np.ndarray]  # type: ignore[type-arg]
     | LCMPoseWithCovarianceStamped
-    | dict[str, PoseConvertable | list[float] | np.ndarray | float | str]
+    | dict[str, PoseConvertable | list[float] | np.ndarray | float | str]  # type: ignore[type-arg]
 )
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
@@ -55,13 +59,13 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         self.ts = ts if ts != 0 else time.time()
         super().__init__(**kwargs)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(
         self,
         ts: float = 0.0,
         frame_id: str = "",
         pose: Pose | PoseConvertable | None = None,
-        covariance: list[float] | np.ndarray | None = None,
+        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
     ) -> None:
         """Initialize with timestamp, frame_id, pose and covariance."""
         self.frame_id = frame_id
@@ -75,13 +79,13 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         lcm_msg = LCMPoseWithCovarianceStamped()
         lcm_msg.pose.pose = self.pose
         # LCM expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):
-            lcm_msg.pose.covariance = self.covariance.tolist()
+        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.pose.covariance = self.covariance.tolist()  # type: ignore[has-type]
         else:
-            lcm_msg.pose.covariance = list(self.covariance)
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+            lcm_msg.pose.covariance = list(self.covariance)  # type: ignore[has-type]
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> PoseWithCovarianceStamped:
@@ -113,7 +117,7 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseWithCovarianceStamped) -> PoseWithCovarianceStamped:
+    def from_ros_msg(cls, ros_msg: ROSPoseWithCovarianceStamped) -> PoseWithCovarianceStamped:  # type: ignore[override]
         """Create a PoseWithCovarianceStamped from a ROS geometry_msgs/PoseWithCovarianceStamped message.
 
         Args:
@@ -133,17 +137,17 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
             ts=ts,
             frame_id=ros_msg.header.frame_id,
             pose=pose_with_cov.pose,
-            covariance=pose_with_cov.covariance,
+            covariance=pose_with_cov.covariance,  # type: ignore[has-type]
         )
 
-    def to_ros_msg(self) -> ROSPoseWithCovarianceStamped:
+    def to_ros_msg(self) -> ROSPoseWithCovarianceStamped:  # type: ignore[override]
         """Convert to a ROS geometry_msgs/PoseWithCovarianceStamped message.
 
         Returns:
             ROS PoseWithCovarianceStamped message
         """
 
-        ros_msg = ROSPoseWithCovarianceStamped()
+        ros_msg = ROSPoseWithCovarianceStamped()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id
@@ -153,9 +157,9 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         # Set pose with covariance
         ros_msg.pose.pose = self.pose.to_ros_msg()
         # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):
-            ros_msg.pose.covariance = self.covariance.tolist()
+        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
+            ros_msg.pose.covariance = self.covariance.tolist()  # type: ignore[has-type]
         else:
-            ros_msg.pose.covariance = list(self.covariance)
+            ros_msg.pose.covariance = list(self.covariance)  # type: ignore[has-type]
 
         return ros_msg

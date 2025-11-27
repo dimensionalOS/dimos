@@ -44,7 +44,7 @@ class VisualMemory:
         Args:
             output_dir: Directory to store the serialized image data
         """
-        self.images = {}  # Maps IDs to encoded images
+        self.images = {}  # type: ignore[var-annotated]  # Maps IDs to encoded images
         self.output_dir = output_dir
 
         if output_dir:
@@ -53,7 +53,7 @@ class VisualMemory:
         else:
             logger.info("VisualMemory initialized with no persistence directory")
 
-    def add(self, image_id: str, image: np.ndarray) -> None:
+    def add(self, image_id: str, image: np.ndarray) -> None:  # type: ignore[type-arg]
         """
         Add an image to visual memory.
 
@@ -74,7 +74,7 @@ class VisualMemory:
         self.images[image_id] = b64_encoded
         logger.debug(f"Added image {image_id} to visual memory")
 
-    def get(self, image_id: str) -> np.ndarray | None:
+    def get(self, image_id: str) -> np.ndarray | None:  # type: ignore[type-arg]
         """
         Retrieve an image from visual memory.
 

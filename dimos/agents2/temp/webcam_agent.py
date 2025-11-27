@@ -24,7 +24,7 @@ import time
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+from dimos.agents2 import Agent, Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, Module, rpc, start
@@ -38,11 +38,11 @@ from dimos.web.robot_web_interface import RobotWebInterface
 
 
 class WebModule(Module):
-    web_interface: RobotWebInterface = None
-    human_query: rx.subject.Subject = None
-    agent_response: rx.subject.Subject = None
+    web_interface: RobotWebInterface = None  # type: ignore[assignment]
+    human_query: rx.subject.Subject = None  # type: ignore[assignment, type-arg]
+    agent_response: rx.subject.Subject = None  # type: ignore[assignment, type-arg]
 
-    thread: Thread = None
+    thread: Thread = None  # type: ignore[assignment]
 
     _human_messages_running = False
 
@@ -74,15 +74,15 @@ class WebModule(Module):
     @rpc
     def stop(self) -> None:
         if self.web_interface:
-            self.web_interface.stop()
+            self.web_interface.stop()  # type: ignore[attr-defined]
         if self.thread:
             # TODO, you can't just wait for a server to close, you have to signal it to end.
             self.thread.join(timeout=1.0)
 
         super().stop()
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.all, output=Output.human)
-    def human_messages(self):
+    @skill(stream=Stream.call_agent, reducer=Reducer.all, output=Output.human)  # type: ignore[arg-type]
+    def human_messages(self):  # type: ignore[no-untyped-def]
         """Provide human messages from web interface. Don't use this tool, it's running implicitly already"""
         if self._human_messages_running:
             print("human_messages already running, not starting another")
@@ -101,11 +101,11 @@ def main() -> None:
     agent = Agent(
         system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot. ",
         model=Model.GPT_4O,  # Could add CLAUDE models to enum
-        provider=Provider.OPENAI,  # Would need ANTHROPIC provider
+        provider=Provider.OPENAI,  # type: ignore[attr-defined]  # Would need ANTHROPIC provider
     )
 
-    testcontainer = dimos.deploy(SkillContainerTest)
-    webcam = dimos.deploy(
+    testcontainer = dimos.deploy(SkillContainerTest)  # type: ignore[attr-defined]
+    webcam = dimos.deploy(  # type: ignore[attr-defined]
         CameraModule,
         transform=Transform(
             translation=Vector3(0.0, 0.0, 0.0),
@@ -127,7 +127,7 @@ def main() -> None:
 
     webcam.start()
 
-    human_input = dimos.deploy(HumanInput)
+    human_input = dimos.deploy(HumanInput)  # type: ignore[attr-defined]
 
     time.sleep(1)
 

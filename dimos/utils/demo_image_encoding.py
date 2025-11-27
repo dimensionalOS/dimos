@@ -40,7 +40,7 @@ from dimos.utils.fast_image_generator import random_image
 
 
 class EmitterModule(Module):
-    image: Out[Image] = None
+    image: Out[Image] = None  # type: ignore[assignment]
 
     _thread: threading.Thread | None = None
     _stop_event: threading.Event | None = None
@@ -53,24 +53,24 @@ class EmitterModule(Module):
 
     def stop(self) -> None:
         if self._thread:
-            self._stop_event.set()
+            self._stop_event.set()  # type: ignore[union-attr]
             self._thread.join(timeout=2)
         super().stop()
 
     def _publish_image(self) -> None:
         open_file = open("/tmp/emitter-times", "w")
-        while not self._stop_event.is_set():
+        while not self._stop_event.is_set():  # type: ignore[union-attr]
             start = time.time()
             data = random_image(1280, 720)
             total = time.time() - start
             print("took", total)
             open_file.write(str(time.time()) + "\n")
-            self.image.publish(Image(data=data))
+            self.image.publish(Image(data=data))  # type: ignore[no-untyped-call]
         open_file.close()
 
 
 class ReceiverModule(Module):
-    image: In[Image] = None
+    image: In[Image] = None  # type: ignore[assignment]
 
     _open_file = None
 
@@ -80,11 +80,11 @@ class ReceiverModule(Module):
         self._open_file = open("/tmp/receiver-times", "w")
 
     def stop(self) -> None:
-        self._open_file.close()
+        self._open_file.close()  # type: ignore[union-attr]
         super().stop()
 
     def _on_image(self, image: Image) -> None:
-        self._open_file.write(str(time.time()) + "\n")
+        self._open_file.write(str(time.time()) + "\n")  # type: ignore[union-attr]
         print("image")
 
 
@@ -120,7 +120,7 @@ def main() -> None:
         pass
     finally:
         foxglove_bridge.stop()
-        dimos.close()
+        dimos.close()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

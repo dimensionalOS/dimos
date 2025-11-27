@@ -31,7 +31,7 @@ from dimos.agents.claude_agent import ClaudeAgent
 from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.kill_skill import KillSkill
-from dimos.skills.navigation import GetPose
+from dimos.skills.navigation import GetPose  # type: ignore[import-untyped]
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
@@ -47,7 +47,7 @@ SYSTEM_PROMPT_PATH = os.path.join(
 )
 
 
-def main():
+def main():  # type: ignore[no-untyped-def]
     """Main entry point."""
     # Parse command line arguments
     parser = argparse.ArgumentParser(description="Unitree G1 Robot with Claude Agent")
@@ -96,7 +96,7 @@ def main():
     logger.info("Starting Unitree G1 Robot with Agent")
 
     # Create robot instance with recording/replay support
-    robot = UnitreeG1(
+    robot = UnitreeG1(  # type: ignore[abstract]
         ip=robot_ip or "0.0.0.0",  # Dummy IP for replay mode
         recording_path=args.record,
         replay_path=args.replay,
@@ -109,19 +109,19 @@ def main():
 
         # Set up minimal skill library for G1 with robot_type="g1"
         skills = MyUnitreeSkills(robot=robot, robot_type="g1")
-        skills.add(KillSkill)
+        skills.add(KillSkill)  # type: ignore[arg-type]
         skills.add(GetPose)
 
         # Create skill instances
         skills.create_instance("KillSkill", robot=robot, skill_library=skills)
         skills.create_instance("GetPose", robot=robot)
 
-        logger.info(f"Skills registered: {[skill.__name__ for skill in skills.get_class_skills()]}")
+        logger.info(f"Skills registered: {[skill.__name__ for skill in skills.get_class_skills()]}")  # type: ignore[attr-defined]
 
         # Set up streams for agent and web interface
-        agent_response_subject = rx.subject.Subject()
+        agent_response_subject = rx.subject.Subject()  # type: ignore[var-annotated]
         agent_response_stream = agent_response_subject.pipe(ops.share())
-        audio_subject = rx.subject.Subject()
+        audio_subject = rx.subject.Subject()  # type: ignore[var-annotated]
 
         # Set up streams for web interface
         text_streams = {
@@ -142,7 +142,7 @@ def main():
         agent = ClaudeAgent(
             dev_name="unitree_g1_agent",
             input_query_stream=web_interface.query_stream,  # Text input from web
-            skills=skills,
+            skills=skills,  # type: ignore[arg-type]
             system_query=system_prompt,
             model_name="claude-3-5-haiku-latest",
             thinking_budget_tokens=0,
@@ -178,4 +178,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main()  # type: ignore[no-untyped-call]
