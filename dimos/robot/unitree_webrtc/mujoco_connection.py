@@ -61,7 +61,7 @@ class MujocoConnection:
         get_data("mujoco_sim")
 
         self.global_config = global_config
-        self.process: subprocess.Popen[str] | None = None
+        self.process: subprocess.Popen[bytes] | None = None
         self.shm_data: ShmWriter | None = None
         self._last_video_seq = 0
         self._last_odom_seq = 0
@@ -91,6 +91,7 @@ class MujocoConnection:
         # Wait for process to be ready
         ready_timeout = 10
         start_time = time.time()
+        assert self.process is not None
         while time.time() - start_time < ready_timeout:
             if self.process.poll() is not None:
                 exit_code = self.process.returncode

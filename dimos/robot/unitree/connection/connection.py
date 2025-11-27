@@ -279,7 +279,7 @@ class UnitreeWebRTCConnection(Resource):
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
     def standup_ai(self) -> bool:
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})  # type: ignore[no-any-return]
 
     def standup_normal(self) -> bool:
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
@@ -290,13 +290,13 @@ class UnitreeWebRTCConnection(Resource):
     @rpc
     def standup(self) -> bool:
         if self.mode == "ai":
-            return self.standup_ai()  # type: ignore[no-untyped-call]
+            return self.standup_ai()
         else:
             return self.standup_normal()
 
     @rpc
     def liedown(self) -> bool:
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})  # type: ignore[no-any-return]
 
     async def handstand(self):  # type: ignore[no-untyped-def]
         return self.publish_request(

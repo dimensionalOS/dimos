@@ -81,7 +81,7 @@ class NavigationModule(Module):
         )
 
         if self.joy:
-            self.joy.publish(joy_msg)  # type: ignore[no-untyped-call]
+            self.joy.publish(joy_msg)
             logger.info("Setting autonomy mode via Joy message")
 
     @rpc
@@ -103,9 +103,9 @@ class NavigationModule(Module):
 
         self.goal_reach = None
         self._set_autonomy_mode()
-        self.goal_pose.publish(pose)  # type: ignore[no-untyped-call]
+        self.goal_pose.publish(pose)
         time.sleep(0.2)
-        self.goal_pose.publish(pose)  # type: ignore[no-untyped-call]
+        self.goal_pose.publish(pose)
 
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -130,7 +130,7 @@ class NavigationModule(Module):
 
         if self.cancel_goal:
             cancel_msg = Bool(data=True)
-            self.cancel_goal.publish(cancel_msg)  # type: ignore[no-untyped-call]
+            self.cancel_goal.publish(cancel_msg)
             return True
 
         return False

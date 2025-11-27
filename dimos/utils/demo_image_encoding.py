@@ -65,7 +65,7 @@ class EmitterModule(Module):
             total = time.time() - start
             print("took", total)
             open_file.write(str(time.time()) + "\n")
-            self.color_image.publish(Image(data=data))  # type: ignore[no-untyped-call]
+            self.image.publish(Image(data=data))
         open_file.close()
 
 
@@ -76,7 +76,7 @@ class ReceiverModule(Module):
 
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.color_image.subscribe(self._on_image)))
+        self._disposables.add(Disposable(self.image.subscribe(self._on_image)))
         self._open_file = open("/tmp/receiver-times", "w")
 
     def stop(self) -> None:

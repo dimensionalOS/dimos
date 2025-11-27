@@ -65,7 +65,7 @@ class Map(Module):
         self._disposables.add(Disposable(unsub))
 
         def publish(_) -> None:  # type: ignore[no-untyped-def]
-            self.global_map.publish(self.to_lidar_message())  # type: ignore[no-untyped-call]
+            self.global_map.publish(self.to_lidar_message())
 
             # temporary, not sure if it belogs in mapper
             # used only for visualizations, not for any algo
@@ -76,7 +76,7 @@ class Map(Module):
                 max_height=self.max_height,
             )
 
-            self.global_costmap.publish(occupancygrid)  # type: ignore[no-untyped-call]
+            self.global_costmap.publish(occupancygrid)
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(publish)  # type: ignore[assignment]
@@ -116,7 +116,7 @@ class Map(Module):
             min_height=0.15,
             max_height=0.6,
         ).gradient(max_distance=0.25)
-        self.local_costmap.publish(local_costmap)  # type: ignore[no-untyped-call]
+        self.local_costmap.publish(local_costmap)
 
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
