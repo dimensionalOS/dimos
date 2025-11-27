@@ -24,7 +24,7 @@ import numpy as np
 from dimos.types.vector import Vector
 
 if TYPE_CHECKING:
-    import open3d as o3d
+    import open3d as o3d  # type: ignore[import-untyped]
 
 
 class ConstraintType(Enum):
@@ -47,7 +47,7 @@ class AbstractConstraint(ABC):
 class TranslationConstraint(AbstractConstraint):
     """Constraint parameters for translational movement along a single axis."""
 
-    translation_axis: Literal["x", "y", "z"] = None  # Axis to translate along
+    translation_axis: Literal["x", "y", "z"] = None  # type: ignore[assignment]  # Axis to translate along
     reference_point: Vector | None = None
     bounds_min: Vector | None = None  # For bounded translation
     bounds_max: Vector | None = None  # For bounded translation
@@ -58,7 +58,7 @@ class TranslationConstraint(AbstractConstraint):
 class RotationConstraint(AbstractConstraint):
     """Constraint parameters for rotational movement around a single axis."""
 
-    rotation_axis: Literal["roll", "pitch", "yaw"] = None  # Axis to rotate around
+    rotation_axis: Literal["roll", "pitch", "yaw"] = None  # type: ignore[assignment]  # Axis to rotate around
     start_angle: Vector | None = None  # Angle values applied to the specified rotation axis
     end_angle: Vector | None = None  # Angle values applied to the specified rotation axis
     pivot_point: Vector | None = None  # Point of rotation
@@ -85,7 +85,7 @@ class ObjectData(TypedDict, total=False):
     class_id: int  # Class ID from the detector
     label: str  # Semantic label (e.g., 'cup', 'table')
     movement_tolerance: float  # (0.0 = immovable, 1.0 = freely movable)
-    segmentation_mask: np.ndarray  # Binary mask of the object's pixels
+    segmentation_mask: np.ndarray  # type: ignore[type-arg]  # Binary mask of the object's pixels
 
     # 3D pose and dimensions
     position: dict[str, float] | Vector  # 3D position {x, y, z} or Vector
@@ -94,8 +94,8 @@ class ObjectData(TypedDict, total=False):
 
     # Point cloud data
     point_cloud: "o3d.geometry.PointCloud"  # Open3D point cloud object
-    point_cloud_numpy: np.ndarray  # Nx6 array of XYZRGB points
-    color: np.ndarray  # RGB color for visualization [R, G, B]
+    point_cloud_numpy: np.ndarray  # type: ignore[type-arg]  # Nx6 array of XYZRGB points
+    color: np.ndarray  # type: ignore[type-arg]  # RGB color for visualization [R, G, B]
 
 
 class ManipulationMetadata(TypedDict, total=False):
@@ -130,7 +130,7 @@ class ManipulationTask:
     target_point: tuple[float, float] | None = (
         None  # (X,Y) point in pixel-space of the point to manipulate on target object
     )
-    metadata: ManipulationMetadata = field(default_factory=dict)
+    metadata: ManipulationMetadata = field(default_factory=dict)  # type: ignore[assignment]
     timestamp: float = field(default_factory=time.time)
     task_id: str = ""
     result: dict[str, Any] | None = None  # Any result data from the task execution

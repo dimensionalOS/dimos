@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from lcm_msgs.foxglove_msgs import SceneUpdate
+from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 
 from dimos.perception.detection.type.detection3d.pointcloud import Detection3DPC
 from dimos.perception.detection.type.imageDetections import ImageDetections

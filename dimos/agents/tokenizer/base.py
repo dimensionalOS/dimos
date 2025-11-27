@@ -21,17 +21,17 @@ from abc import ABC, abstractmethod
 
 class AbstractTokenizer(ABC):
     @abstractmethod
-    def tokenize_text(self, text: str):
+    def tokenize_text(self, text: str):  # type: ignore[no-untyped-def]
         pass
 
     @abstractmethod
-    def detokenize_text(self, tokenized_text):
+    def detokenize_text(self, tokenized_text):  # type: ignore[no-untyped-def]
         pass
 
     @abstractmethod
-    def token_count(self, text: str):
+    def token_count(self, text: str):  # type: ignore[no-untyped-def]
         pass
 
     @abstractmethod
-    def image_token_count(self, image_width, image_height, image_detail: str = "low"):
+    def image_token_count(self, image_width, image_height, image_detail: str = "low"):  # type: ignore[no-untyped-def]
         pass

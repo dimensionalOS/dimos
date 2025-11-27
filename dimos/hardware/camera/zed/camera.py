@@ -16,10 +16,10 @@ from types import TracebackType
 from typing import Any
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
-import open3d as o3d
-import pyzed.sl as sl
+import open3d as o3d  # type: ignore[import-untyped]
+import pyzed.sl as sl  # type: ignore[import-not-found]
 from reactivex import interval
 
 from dimos.core import Module, Out, rpc
@@ -37,7 +37,7 @@ logger = setup_logger(__name__)
 class ZEDCamera:
     """ZED Camera capture node with neural depth processing."""
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         camera_id: int = 0,
         resolution: sl.RESOLUTION = sl.RESOLUTION.HD720,
@@ -278,7 +278,7 @@ class ZEDCamera:
 
     def capture_frame(
         self,
-    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:  # type: ignore[type-arg]
         """
         Capture a frame from ZED camera.
 
@@ -373,7 +373,7 @@ class ZEDCamera:
 
     def capture_frame_with_pose(
         self,
-    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:
+    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:  # type: ignore[type-arg]
         """
         Capture a frame with synchronized pose data.
 
@@ -485,11 +485,11 @@ class ZEDCamera:
             logger.error(f"Error getting camera info: {e}")
             return {}
 
-    def calculate_intrinsics(self):
+    def calculate_intrinsics(self):  # type: ignore[no-untyped-def]
         """Calculate camera intrinsics from ZED calibration."""
         info = self.get_camera_info()
         if not info:
-            return super().calculate_intrinsics()
+            return super().calculate_intrinsics()  # type: ignore[misc]
 
         left_cam = info.get("left_cam", {})
         resolution = info.get("resolution", {})
@@ -504,7 +504,7 @@ class ZEDCamera:
             "resolution_height": resolution.get("height", 0),
         }
 
-    def __enter__(self):
+    def __enter__(self):  # type: ignore[no-untyped-def]
         """Context manager entry."""
         if not self.open():
             raise RuntimeError("Failed to open ZED camera")
@@ -532,12 +532,12 @@ class ZEDModule(Module):
     """
 
     # Define LCM outputs
-    color_image: Out[Image] = None
-    depth_image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
-    pose: Out[PoseStamped] = None
+    color_image: Out[Image] = None  # type: ignore[assignment]
+    depth_image: Out[Image] = None  # type: ignore[assignment]
+    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
+    pose: Out[PoseStamped] = None  # type: ignore[assignment]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         camera_id: int = 0,
         resolution: str = "HD720",
@@ -616,7 +616,7 @@ class ZEDModule(Module):
 
         try:
             # Initialize ZED camera
-            self.zed_camera = ZEDCamera(
+            self.zed_camera = ZEDCamera(  # type: ignore[assignment]
                 camera_id=self.camera_id,
                 resolution=self.resolution,
                 depth_mode=self.depth_mode,
@@ -624,13 +624,13 @@ class ZEDModule(Module):
             )
 
             # Open camera
-            if not self.zed_camera.open():
+            if not self.zed_camera.open():  # type: ignore[attr-defined]
                 logger.error("Failed to open ZED camera")
                 return
 
             # Enable tracking if requested
             if self.enable_tracking:
-                success = self.zed_camera.enable_positional_tracking(
+                success = self.zed_camera.enable_positional_tracking(  # type: ignore[attr-defined]
                     enable_imu_fusion=self.enable_imu_fusion,
                     set_floor_as_origin=self.set_floor_as_origin,
                     enable_pose_smoothing=True,
@@ -647,7 +647,7 @@ class ZEDModule(Module):
             self._running = True
             publish_interval = 1.0 / self.publish_rate
 
-            self._subscription = interval(publish_interval).subscribe(
+            self._subscription = interval(publish_interval).subscribe(  # type: ignore[assignment]
                 lambda _: self._capture_and_publish()
             )
 
@@ -721,7 +721,7 @@ class ZEDModule(Module):
         except Exception as e:
             logger.error(f"Error in capture and publish: {e}")
 
-    def _publish_color_image(self, image: np.ndarray, header: Header) -> None:
+    def _publish_color_image(self, image: np.ndarray, header: Header) -> None:  # type: ignore[type-arg]
         """Publish color image as LCM message."""
         try:
             # Convert BGR to RGB if needed
@@ -738,12 +738,12 @@ class ZEDModule(Module):
                 ts=header.ts,
             )
 
-            self.color_image.publish(msg)
+            self.color_image.publish(msg)  # type: ignore[no-untyped-call]
 
         except Exception as e:
             logger.error(f"Error publishing color image: {e}")
 
-    def _publish_depth_image(self, depth: np.ndarray, header: Header) -> None:
+    def _publish_depth_image(self, depth: np.ndarray, header: Header) -> None:  # type: ignore[type-arg]
         """Publish depth image as LCM message."""
         try:
             # Depth is float32 in meters
@@ -753,7 +753,7 @@ class ZEDModule(Module):
                 frame_id=header.frame_id,
                 ts=header.ts,
             )
-            self.depth_image.publish(msg)
+            self.depth_image.publish(msg)  # type: ignore[no-untyped-call]
 
         except Exception as e:
             logger.error(f"Error publishing depth image: {e}")
@@ -761,7 +761,7 @@ class ZEDModule(Module):
     def _publish_camera_info(self) -> None:
         """Publish camera calibration information."""
         try:
-            info = self.zed_camera.get_camera_info()
+            info = self.zed_camera.get_camera_info()  # type: ignore[attr-defined]
             if not info:
                 return
 
@@ -831,7 +831,7 @@ class ZEDModule(Module):
                 binning_y=0,
             )
 
-            self.camera_info.publish(msg)
+            self.camera_info.publish(msg)  # type: ignore[no-untyped-call]
 
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
@@ -844,7 +844,7 @@ class ZEDModule(Module):
 
             # Create PoseStamped message
             msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
-            self.pose.publish(msg)
+            self.pose.publish(msg)  # type: ignore[no-untyped-call]
 
             # Publish TF transform
             camera_tf = Transform(

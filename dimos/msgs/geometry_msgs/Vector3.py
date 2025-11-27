@@ -17,15 +17,15 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
+from dimos_lcm.geometry_msgs import Vector3 as LCMVector3  # type: ignore[import-untyped]
 import numpy as np
 from plum import dispatch
 
 # Types that can be converted to/from Vector
-VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray
+VectorConvertable: TypeAlias = Sequence[int | float] | LCMVector3 | np.ndarray  # type: ignore[type-arg]
 
 
-def _ensure_3d(data: np.ndarray) -> np.ndarray:
+def _ensure_3d(data: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
     """Ensure the data array is exactly 3D by padding with zeros or raising an exception if too long."""
     if len(data) == 3:
         return data
@@ -39,7 +39,7 @@ def _ensure_3d(data: np.ndarray) -> np.ndarray:
         )
 
 
-class Vector3(LCMVector3):
+class Vector3(LCMVector3):  # type: ignore[misc]
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -52,28 +52,28 @@ class Vector3(LCMVector3):
         self.y = 0.0
         self.z = 0.0
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, x: int | float) -> None:
         """Initialize a 3D vector from a single numeric value (x, 0, 0)."""
         self.x = float(x)
         self.y = 0.0
         self.z = 0.0
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, x: int | float, y: int | float) -> None:
         """Initialize a 3D vector from x, y components (z=0)."""
         self.x = float(x)
         self.y = float(y)
         self.z = 0.0
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, x: int | float, y: int | float, z: int | float) -> None:
         """Initialize a 3D vector from x, y, z components."""
         self.x = float(x)
         self.y = float(y)
         self.z = float(z)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, sequence: Sequence[int | float]) -> None:
         """Initialize from a sequence (list, tuple) of numbers, ensuring 3D."""
         data = _ensure_3d(np.array(sequence, dtype=float))
@@ -81,22 +81,22 @@ class Vector3(LCMVector3):
         self.y = float(data[1])
         self.z = float(data[2])
 
-    @dispatch
-    def __init__(self, array: np.ndarray) -> None:
+    @dispatch  # type: ignore[no-redef]
+    def __init__(self, array: np.ndarray) -> None:  # type: ignore[type-arg]
         """Initialize from a numpy array, ensuring 3D."""
         data = _ensure_3d(np.array(array, dtype=float))
         self.x = float(data[0])
         self.y = float(data[1])
         self.z = float(data[2])
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, vector: Vector3) -> None:
         """Initialize from another Vector3 (copy constructor)."""
         self.x = vector.x
         self.y = vector.y
         self.z = vector.z
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_vector: LCMVector3) -> None:
         """Initialize from an LCM Vector3."""
         self.x = float(lcm_vector.x)
@@ -120,11 +120,11 @@ class Vector3(LCMVector3):
         return self.x
 
     @property
-    def data(self) -> np.ndarray:
+    def data(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get the underlying numpy array."""
         return np.array([self.x, self.y, self.z], dtype=float)
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int):  # type: ignore[no-untyped-def]
         if idx == 0:
             return self.x
         elif idx == 1:
@@ -138,7 +138,7 @@ class Vector3(LCMVector3):
         return f"Vector({self.data})"
 
     def __str__(self) -> str:
-        def getArrow():
+        def getArrow():  # type: ignore[no-untyped-def]
             repr = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
 
             if self.x == 0 and self.y == 0:
@@ -151,17 +151,17 @@ class Vector3(LCMVector3):
             # Get directional arrow symbol
             return repr[dir_index]
 
-        return f"{getArrow()} Vector {self.__repr__()}"
+        return f"{getArrow()} Vector {self.__repr__()}"  # type: ignore[no-untyped-call]
 
-    def agent_encode(self) -> dict:
+    def agent_encode(self) -> dict:  # type: ignore[type-arg]
         """Encode the vector for agent communication."""
         return {"x": self.x, "y": self.y, "z": self.z}
 
-    def serialize(self) -> dict:
+    def serialize(self) -> dict:  # type: ignore[type-arg]
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": (self.x, self.y, self.z)}
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Vector3):
             return False
@@ -194,7 +194,7 @@ class Vector3(LCMVector3):
     def dot(self, other: VectorConvertable | Vector3) -> float:
         """Compute dot product."""
         other_vector = to_vector(other)
-        return self.x * other_vector.x + self.y * other_vector.y + self.z * other_vector.z
+        return self.x * other_vector.x + self.y * other_vector.y + self.z * other_vector.z  # type: ignore[no-any-return]
 
     def cross(self, other: VectorConvertable | Vector3) -> Vector3:
         """Compute cross product (3D vectors only)."""
@@ -281,7 +281,7 @@ class Vector3(LCMVector3):
     # this is here to test ros_observable_topic
     # doesn't happen irl afaik that we want a vector from ros message
     @classmethod
-    def from_msg(cls, msg) -> Vector3:
+    def from_msg(cls, msg) -> Vector3:  # type: ignore[no-untyped-def]
         return cls(*msg)
 
     @classmethod
@@ -317,7 +317,7 @@ class Vector3(LCMVector3):
         """Convert the vector to a tuple."""
         return (self.x, self.y, self.z)
 
-    def to_numpy(self) -> np.ndarray:
+    def to_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
         """Convert the vector to a numpy array."""
         return np.array([self.x, self.y, self.z], dtype=float)
 
@@ -330,10 +330,10 @@ class Vector3(LCMVector3):
         return np.allclose([self.x, self.y, self.z], 0.0)
 
     @property
-    def quaternion(self):
-        return self.to_quaternion()
+    def quaternion(self):  # type: ignore[no-untyped-def]
+        return self.to_quaternion()  # type: ignore[no-untyped-call]
 
-    def to_quaternion(self):
+    def to_quaternion(self):  # type: ignore[no-untyped-def]
         """Convert Vector3 representing Euler angles (roll, pitch, yaw) to a Quaternion.
 
         Assumes this Vector3 contains Euler angles in radians:
@@ -384,19 +384,19 @@ class Vector3(LCMVector3):
 
 
 @dispatch
-def to_numpy(value: Vector3) -> np.ndarray:
+def to_numpy(value: Vector3) -> np.ndarray:  # type: ignore[type-arg]
     """Convert a Vector3 to a numpy array."""
     return value.to_numpy()
 
 
-@dispatch
-def to_numpy(value: np.ndarray) -> np.ndarray:
+@dispatch  # type: ignore[no-redef]
+def to_numpy(value: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
     """Pass through numpy arrays."""
     return value
 
 
-@dispatch
-def to_numpy(value: Sequence[int | float]) -> np.ndarray:
+@dispatch  # type: ignore[no-redef]
+def to_numpy(value: Sequence[int | float]) -> np.ndarray:  # type: ignore[type-arg]
     """Convert a sequence to a numpy array."""
     return np.array(value, dtype=float)
 
@@ -407,7 +407,7 @@ def to_vector(value: Vector3) -> Vector3:
     return value
 
 
-@dispatch
+@dispatch  # type: ignore[no-redef]
 def to_vector(value: VectorConvertable | Vector3) -> Vector3:
     """Convert a vector-compatible value to a Vector3 object."""
     return Vector3(value)
@@ -419,13 +419,13 @@ def to_tuple(value: Vector3) -> tuple[float, float, float]:
     return value.to_tuple()
 
 
-@dispatch
-def to_tuple(value: np.ndarray) -> tuple[float, ...]:
+@dispatch  # type: ignore[no-redef]
+def to_tuple(value: np.ndarray) -> tuple[float, ...]:  # type: ignore[type-arg]
     """Convert a numpy array to a tuple."""
     return tuple(value.tolist())
 
 
-@dispatch
+@dispatch  # type: ignore[no-redef]
 def to_tuple(value: Sequence[int | float]) -> tuple[float, ...]:
     """Convert a sequence to a tuple."""
     if isinstance(value, tuple):
@@ -440,13 +440,13 @@ def to_list(value: Vector3) -> list[float]:
     return value.to_list()
 
 
-@dispatch
-def to_list(value: np.ndarray) -> list[float]:
+@dispatch  # type: ignore[no-redef]
+def to_list(value: np.ndarray) -> list[float]:  # type: ignore[type-arg]
     """Convert a numpy array to a list."""
     return value.tolist()
 
 
-@dispatch
+@dispatch  # type: ignore[no-redef]
 def to_list(value: Sequence[int | float]) -> list[float]:
     """Convert a sequence to a list."""
     if isinstance(value, list):

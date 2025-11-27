@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 
 
-def filter_detections(
+def filter_detections(  # type: ignore[no-untyped-def]
     bboxes,
     track_ids,
     class_ids,
@@ -93,7 +93,7 @@ def filter_detections(
     )
 
 
-def extract_detection_results(result, class_filter=None, name_filter=None, track_id_filter=None):
+def extract_detection_results(result, class_filter=None, name_filter=None, track_id_filter=None):  # type: ignore[no-untyped-def]
     """
     Extract and optionally filter detection information from a YOLO result object.
 
@@ -111,11 +111,11 @@ def extract_detection_results(result, class_filter=None, name_filter=None, track
             - confidences: list of detection confidences
             - names: list of class names
     """
-    bboxes = []
-    track_ids = []
-    class_ids = []
-    confidences = []
-    names = []
+    bboxes = []  # type: ignore[var-annotated]
+    track_ids = []  # type: ignore[var-annotated]
+    class_ids = []  # type: ignore[var-annotated]
+    confidences = []  # type: ignore[var-annotated]
+    names = []  # type: ignore[var-annotated]
 
     if result.boxes is None:
         return bboxes, track_ids, class_ids, confidences, names
@@ -155,7 +155,7 @@ def extract_detection_results(result, class_filter=None, name_filter=None, track
     return bboxes, track_ids, class_ids, confidences, names
 
 
-def plot_results(
+def plot_results(  # type: ignore[no-untyped-def]
     image, bboxes, track_ids, class_ids, confidences, names: Sequence[str], alpha: float = 0.5
 ):
     """
@@ -208,7 +208,7 @@ def plot_results(
     return vis_img
 
 
-def calculate_depth_from_bbox(depth_map, bbox):
+def calculate_depth_from_bbox(depth_map, bbox):  # type: ignore[no-untyped-def]
     """
     Calculate the average depth of an object within a bounding box.
     Uses the 25th to 75th percentile range to filter outliers.
@@ -245,7 +245,7 @@ def calculate_depth_from_bbox(depth_map, bbox):
         return None
 
 
-def calculate_distance_angle_from_bbox(bbox, depth: int, camera_intrinsics):
+def calculate_distance_angle_from_bbox(bbox, depth: int, camera_intrinsics):  # type: ignore[no-untyped-def]
     """
     Calculate distance and angle to object center based on bbox and depth.
 
@@ -280,7 +280,7 @@ def calculate_distance_angle_from_bbox(bbox, depth: int, camera_intrinsics):
     return distance, angle
 
 
-def calculate_object_size_from_bbox(bbox, depth: int, camera_intrinsics):
+def calculate_object_size_from_bbox(bbox, depth: int, camera_intrinsics):  # type: ignore[no-untyped-def]
     """
     Estimate physical width and height of object in meters.
 

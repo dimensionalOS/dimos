@@ -30,7 +30,7 @@ class CostmapViz:
         self.occupancy_grid = occupancy_grid
 
     @property
-    def data(self) -> np.ndarray | None:
+    def data(self) -> np.ndarray | None:  # type: ignore[type-arg]
         """Get the costmap data as a numpy array."""
         if self.occupancy_grid:
             return self.occupancy_grid.grid
@@ -58,7 +58,7 @@ class CostmapViz:
         return 1.0
 
     @property
-    def origin(self):
+    def origin(self):  # type: ignore[no-untyped-def]
         """Get the origin pose of the costmap."""
         if self.occupancy_grid:
             return self.occupancy_grid.origin

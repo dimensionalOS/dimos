@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.vision_msgs.BoundingBox3DArray import BoundingBox3DArray as LCMBoundingBox3DArray
+from dimos_lcm.vision_msgs.BoundingBox3DArray import (  # type: ignore[import-untyped]
+    BoundingBox3DArray as LCMBoundingBox3DArray,
+)
 
 
-class BoundingBox3DArray(LCMBoundingBox3DArray):
+class BoundingBox3DArray(LCMBoundingBox3DArray):  # type: ignore[misc]
     msg_name = "vision_msgs.BoundingBox3DArray"

@@ -28,7 +28,7 @@ try:
 
     HAS_CUDA = True
 except Exception:  # pragma: no cover - optional dependency
-    cp = None  # type: ignore
+    cp = None
     HAS_CUDA = False
 
 # Optional nvImageCodec (preferred GPU codec)
@@ -39,16 +39,16 @@ try:  # pragma: no cover - optional dependency
         from nvidia import nvimgcodec  # type: ignore
 
         try:
-            _enc_probe = nvimgcodec.Encoder()  # type: ignore[attr-defined]
+            _enc_probe = nvimgcodec.Encoder()
             HAS_NVIMGCODEC = True
         except Exception:
-            nvimgcodec = None  # type: ignore
+            nvimgcodec = None
             HAS_NVIMGCODEC = False
     else:
-        nvimgcodec = None  # type: ignore
+        nvimgcodec = None
         HAS_NVIMGCODEC = False
 except Exception:  # pragma: no cover - optional dependency
-    nvimgcodec = None  # type: ignore
+    nvimgcodec = None
     HAS_NVIMGCODEC = False
 
 
@@ -63,42 +63,42 @@ class ImageFormat(Enum):
     DEPTH16 = "DEPTH16"
 
 
-def _is_cu(x) -> bool:
-    return HAS_CUDA and cp is not None and isinstance(x, cp.ndarray)  # type: ignore
+def _is_cu(x) -> bool:  # type: ignore[no-untyped-def]
+    return HAS_CUDA and cp is not None and isinstance(x, cp.ndarray)
 
 
-def _ascontig(x):
+def _ascontig(x):  # type: ignore[no-untyped-def]
     if _is_cu(x):
-        return x if x.flags["C_CONTIGUOUS"] else cp.ascontiguousarray(x)  # type: ignore
+        return x if x.flags["C_CONTIGUOUS"] else cp.ascontiguousarray(x)
     return x if x.flags["C_CONTIGUOUS"] else np.ascontiguousarray(x)
 
 
-def _to_cpu(x):
-    return cp.asnumpy(x) if _is_cu(x) else x  # type: ignore
+def _to_cpu(x):  # type: ignore[no-untyped-def]
+    return cp.asnumpy(x) if _is_cu(x) else x
 
 
-def _to_cu(x):
-    if HAS_CUDA and cp is not None and isinstance(x, np.ndarray):  # type: ignore
-        return cp.asarray(x)  # type: ignore
+def _to_cu(x):  # type: ignore[no-untyped-def]
+    if HAS_CUDA and cp is not None and isinstance(x, np.ndarray):
+        return cp.asarray(x)
     return x
 
 
-def _encode_nvimgcodec_cuda(bgr_cu, quality: int = 80) -> bytes:  # pragma: no cover - optional
+def _encode_nvimgcodec_cuda(bgr_cu, quality: int = 80) -> bytes:  # type: ignore[no-untyped-def]  # pragma: no cover - optional
     if not HAS_NVIMGCODEC or nvimgcodec is None:
         raise RuntimeError("nvimgcodec not available")
     if bgr_cu.ndim != 3 or bgr_cu.shape[2] != 3:
         raise RuntimeError("nvimgcodec expects HxWx3 image")
-    if bgr_cu.dtype != cp.uint8:  # type: ignore[attr-defined]
+    if bgr_cu.dtype != cp.uint8:
         raise RuntimeError("nvimgcodec requires uint8 input")
     if not bgr_cu.flags["C_CONTIGUOUS"]:
-        bgr_cu = cp.ascontiguousarray(bgr_cu)  # type: ignore[attr-defined]
-    encoder = nvimgcodec.Encoder()  # type: ignore[attr-defined]
+        bgr_cu = cp.ascontiguousarray(bgr_cu)
+    encoder = nvimgcodec.Encoder()
     try:
-        img = nvimgcodec.Image(bgr_cu, nvimgcodec.PixelFormat.BGR)  # type: ignore[attr-defined]
+        img = nvimgcodec.Image(bgr_cu, nvimgcodec.PixelFormat.BGR)
     except Exception:
-        img = nvimgcodec.Image(cp.asnumpy(bgr_cu), nvimgcodec.PixelFormat.BGR)  # type: ignore[attr-defined]
+        img = nvimgcodec.Image(cp.asnumpy(bgr_cu), nvimgcodec.PixelFormat.BGR)
     if hasattr(nvimgcodec, "EncodeParams"):
-        params = nvimgcodec.EncodeParams(quality=quality)  # type: ignore[attr-defined]
+        params = nvimgcodec.EncodeParams(quality=quality)
         bitstreams = encoder.encode([img], [params])
     else:
         bitstreams = encoder.encode([img])
@@ -136,15 +136,15 @@ class AbstractImage(ABC):
         raise ValueError("Invalid image dimensions")
 
     @property
-    def shape(self):
+    def shape(self):  # type: ignore[no-untyped-def]
         return tuple(self.data.shape)
 
     @property
-    def dtype(self):
+    def dtype(self):  # type: ignore[no-untyped-def]
         return self.data.dtype
 
     @abstractmethod
-    def to_opencv(self) -> np.ndarray:  # pragma: no cover - abstract
+    def to_opencv(self) -> np.ndarray:  # type: ignore[type-arg]  # pragma: no cover - abstract
         ...
 
     @abstractmethod
@@ -203,7 +203,9 @@ class AbstractImage(ABC):
                 NVIMGCODEC_LAST_USED = False
         bgr = self.to_bgr()
         success, buffer = cv2.imencode(
-            ".jpg", _to_cpu(bgr.data), [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)]
+            ".jpg",
+            _to_cpu(bgr.data),  # type: ignore[no-untyped-call]
+            [int(cv2.IMWRITE_JPEG_QUALITY), int(quality)],
         )
         if not success:
             raise ValueError("Failed to encode image as JPEG")
