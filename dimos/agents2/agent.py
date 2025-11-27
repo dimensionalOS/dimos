@@ -296,7 +296,7 @@ class Agent(AgentSpec):
 
                 # history() builds our message history dynamically
                 # ensures we include latest system state, but not old ones.
-                messages = self.history()
+                messages = self.history()  # type: ignore[no-untyped-call]
 
                 # Some LLMs don't work without any human messages. Add an initial one.
                 if len(messages) == 1 and isinstance(messages[0], SystemMessage):
