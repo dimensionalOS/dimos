@@ -20,11 +20,11 @@
 
 ## What is Dimensional?
 
-Dimensional is an open-source framework for building agentive generalist robots. DimOS allows off-the-shelf Agents to call tools/functions and read sensor/state data directly from ROS. 
+Dimensional is an open-source framework for building agentive generalist robots. DimOS allows off-the-shelf Agents to call tools/functions and read sensor/state data directly from ROS.
 
-The framework enables neurosymbolic orchestration of Agents as generalized spatial reasoners/planners and Robot state/action primitives as functions. 
+The framework enables neurosymbolic orchestration of Agents as generalized spatial reasoners/planners and Robot state/action primitives as functions.
 
-The result: cross-embodied *"Dimensional Applications"* exceptional at generalization and robust at symbolic action execution. 
+The result: cross-embodied *"Dimensional Applications"* exceptional at generalization and robust at symbolic action execution.
 
 ## DIMOS x Unitree Go2 (OUT OF DATE)
 
@@ -38,18 +38,18 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 - Lidar / PointCloud primitives
 - Any other generic Unitree ROS2 topics
 
-### Features 
+### Features
 
 - **DimOS Agents**
   - Agent() classes with planning, spatial reasoning, and Robot.Skill() function calling abilities.
   - Integrate with any off-the-shelf hosted or local model: OpenAIAgent, ClaudeAgent, GeminiAgent 🚧, DeepSeekAgent 🚧, HuggingFaceRemoteAgent, HuggingFaceLocalAgent, etc.
-  - Modular agent architecture for easy extensibility and chaining of Agent output --> Subagents input. 
+  - Modular agent architecture for easy extensibility and chaining of Agent output --> Subagents input.
   - Agent spatial / language memory for location grounded reasoning and recall.
 
 - **DimOS Infrastructure**
   - A reactive data streaming architecture using RxPY to manage real-time video (or other sensor input), outbound commands, and inbound robot state between the DimOS interface, Agents, and ROS2.
-  - Robot Command Queue to handle complex multi-step actions to Robot.  
-  - Simulation bindings (Genesis, Isaacsim, etc.) to test your agentive application before deploying to a physical robot. 
+  - Robot Command Queue to handle complex multi-step actions to Robot.
+  - Simulation bindings (Genesis, Isaacsim, etc.) to test your agentive application before deploying to a physical robot.
 
 - **DimOS Interface / Development Tools**
   - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
@@ -92,27 +92,27 @@ pip install -e .[cuda,dev]
 cp default.env .env
 ```
 
-#### Test the install 
-```bash 
+#### Test the install
+```bash
 pytest -s dimos/
 ```
 
 #### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
-CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py 
+CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py
 ```
 
 #### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
 ```bash
 pip install -e .[sim]
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py 
+CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py
 ```
 
 #### Test Dimensional with a real UnitreeGo2 over WebRTC
 ```bash
 export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/unitree_go2.py 
+python dimos/robot/unitree_webrtc/unitree_go2.py
 ```
 
 #### Test Dimensional with a real UnitreeGo2 running Agents
@@ -127,7 +127,7 @@ python dimos/robot/unitree_webrtc/run_agents2.py
 
 Full functionality will require API keys for the following:
 
-Requirements: 
+Requirements:
 - OpenAI API key (required for all LLMAgents due to OpenAIEmbeddings)
 - Claude API key (required for ClaudeAgent)
 - Alibaba API key (required for Navigation skills)
@@ -139,10 +139,10 @@ export CLAUDE_API_KEY=<your private key>
 export ALIBABA_API_KEY=<your private key>
 ```
 
-### ROS2 Unitree Go2 SDK Installation 
+### ROS2 Unitree Go2 SDK Installation
 
 #### System Requirements
-- Ubuntu 22.04 
+- Ubuntu 22.04
 - ROS2 Distros: Iron, Humble, Rolling
 
 See [Unitree Go2 ROS2 SDK](https://github.com/dimensionalOS/go2_ros2_sdk) for additional installation instructions.
@@ -167,7 +167,7 @@ colcon build
 
 ### Run the test application
 
-#### ROS2 Terminal: 
+#### ROS2 Terminal:
 ```bash
 # Change path to your Go2 ROS2 SDK installation
 source /ros2_ws/install/setup.bash
@@ -179,7 +179,7 @@ ros2 launch go2_robot_sdk robot.launch.py
 
 ```
 
-#### Python Terminal: 
+#### Python Terminal:
 ```bash
 # Change path to your Go2 ROS2 SDK installation
 source /ros2_ws/install/setup.bash
@@ -189,7 +189,7 @@ python tests/run.py
 #### DimOS Interface:
 ```bash
 cd dimos/web/dimos_interface
-yarn install 
+yarn install
 yarn dev # you may need to run sudo if previously built via Docker
 ```
 
@@ -224,7 +224,7 @@ yarn dev # you may need to run sudo if previously built via Docker
 │   ├── types/        # Type definitions and interfaces
 │   ├── utils/        # Utility functions and helpers
 │   └── web/          # DimOS development interface and API
-│       ├── dimos_interface/ # DimOS web interface 
+│       ├── dimos_interface/ # DimOS web interface
 │       └── websocket_vis/   # Websocket visualizations
 ├── tests/            # Test files
 │   ├── genesissim/   # Genesis simulator tests
@@ -267,11 +267,11 @@ while True: # keep process running
 
 ### DimOS Application with Agent chaining (OUT OF DATE)
 
-Let's build a simple DimOS application with Agent chaining. We define a ```planner``` as a ```PlanningAgent``` that takes in user input to devise a complex multi-step plan. This plan is passed step-by-step to an ```executor``` agent that can queue ```AbstractRobotSkill``` commands to the ```ROSCommandQueue```. 
+Let's build a simple DimOS application with Agent chaining. We define a ```planner``` as a ```PlanningAgent``` that takes in user input to devise a complex multi-step plan. This plan is passed step-by-step to an ```executor``` agent that can queue ```AbstractRobotSkill``` commands to the ```ROSCommandQueue```.
 
-Our reactive Pub/Sub data streaming architecture allows for chaining of ```Agent_0 --> Agent_1 --> ... --> Agent_n``` via the ```input_query_stream``` parameter in each which takes an ```Observable``` input from the previous Agent in the chain. 
+Our reactive Pub/Sub data streaming architecture allows for chaining of ```Agent_0 --> Agent_1 --> ... --> Agent_n``` via the ```input_query_stream``` parameter in each which takes an ```Observable``` input from the previous Agent in the chain.
 
-**Via this method you can chain together any number of Agents() to create complex dimensional applications.** 
+**Via this method you can chain together any number of Agents() to create complex dimensional applications.**
 
 ```python
 
@@ -371,8 +371,8 @@ First, define your skill. For instance, a `GreeterSkill` that can deliver a conf
 ```python
 class GreeterSkill(AbstractSkill):
     """Greats the user with a friendly message.""" # Gives the agent better context for understanding (the more detailed the better).
-    
-    greeting: str = Field(..., description="The greating message to display.") # The field needed for the calling of the function. Your agent will also pull from the description here to gain better context. 
+
+    greeting: str = Field(..., description="The greating message to display.") # The field needed for the calling of the function. Your agent will also pull from the description here to gain better context.
 
     def __init__(self, greeting_message: Optional[str] = None, **data):
         super().__init__(**data)
@@ -410,19 +410,19 @@ Define the SkillLibrary and any skills it will manage in its collection:
 ```python
 class MovementSkillsLibrary(SkillLibrary):
     """A specialized skill library containing movement and navigation related skills."""
-    
+
     def __init__(self, robot=None):
         super().__init__()
         self._robot = robot
-        
+
     def initialize_skills(self, robot=None):
         """Initialize all movement skills with the robot instance."""
         if robot:
             self._robot = robot
-            
+
         if not self._robot:
             raise ValueError("Robot instance is required to initialize skills")
-            
+
         # Initialize with all movement-related skills
         self.add(Navigate(robot=self._robot))
         self.add(NavigateToGoal(robot=self._robot))
@@ -431,7 +431,7 @@ class MovementSkillsLibrary(SkillLibrary):
         self.add(GetPose(robot=self._robot))  # Position tracking skill
 ```
 
-Note the addision of initialized skills added to this collection above. 
+Note the addision of initialized skills added to this collection above.
 
 Proceed to use this skill library in an Agent:
 
@@ -450,9 +450,9 @@ performing_agent = OpenAIAgent(
 ```
 
 ### Unitree Test Files
-- **`tests/run_go2_ros.py`**: Tests `UnitreeROSControl(ROSControl)` initialization in `UnitreeGo2(Robot)` via direct function calls `robot.move()` and `robot.webrtc_req()` 
+- **`tests/run_go2_ros.py`**: Tests `UnitreeROSControl(ROSControl)` initialization in `UnitreeGo2(Robot)` via direct function calls `robot.move()` and `robot.webrtc_req()`
 - **`tests/simple_agent_test.py`**: Tests a simple zero-shot class `OpenAIAgent` example
-- **`tests/unitree/test_webrtc_queue.py`**: Tests `ROSCommandQueue` via a 20 back-to-back WebRTC requests to the robot 
+- **`tests/unitree/test_webrtc_queue.py`**: Tests `ROSCommandQueue` via a 20 back-to-back WebRTC requests to the robot
 - **`tests/test_planning_agent_web_interface.py`**: Tests a simple two-stage `PlanningAgent` chained to an `ExecutionAgent` with backend FastAPI interface.
 - **`tests/test_unitree_agent_queries_fastapi.py`**: Tests a zero-shot `ExecutionAgent` with backend FastAPI interface.
 
@@ -470,11 +470,11 @@ This project is licensed under the Apache 2.0 License - see the [LICENSE](LICENS
 
 ## Acknowledgments
 
-Huge thanks to! 
-- The Roboverse Community and their unitree-specific help. Check out their [Discord](https://discord.gg/HEXNMCNhEh). 
-- @abizovnuralem for his work on the [Unitree Go2 ROS2 SDK](https://github.com/abizovnuralem/go2_ros2_sdk) we integrate with for DimOS. 
-- @legion1581 for his work on the [Unitree Go2 WebRTC Connect](https://github.com/legion1581/go2_webrtc_connect) from which we've pulled the ```Go2WebRTCConnection``` class and other types for seamless WebRTC-only integration with DimOS. 
-- @tfoldi for the webrtc_req integration via Unitree Go2 ROS2 SDK, which allows for seamless usage of Unitree WebRTC control primitives with DimOS. 
+Huge thanks to!
+- The Roboverse Community and their unitree-specific help. Check out their [Discord](https://discord.gg/HEXNMCNhEh).
+- @abizovnuralem for his work on the [Unitree Go2 ROS2 SDK](https://github.com/abizovnuralem/go2_ros2_sdk) we integrate with for DimOS.
+- @legion1581 for his work on the [Unitree Go2 WebRTC Connect](https://github.com/legion1581/go2_webrtc_connect) from which we've pulled the ```Go2WebRTCConnection``` class and other types for seamless WebRTC-only integration with DimOS.
+- @tfoldi for the webrtc_req integration via Unitree Go2 ROS2 SDK, which allows for seamless usage of Unitree WebRTC control primitives with DimOS.
 
 ## Contact
 
@@ -482,6 +482,5 @@ Huge thanks to!
 - Email: [build@dimensionalOS.com](mailto:build@dimensionalOS.com)
 
 ## Known Issues
-- Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. Reccomend restarting ROS2 or moving robot from objects to resolve. 
+- Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. Reccomend restarting ROS2 or moving robot from objects to resolve.
 - ```docker-compose up --build``` does not fully initialize the ROS2 environment due to ```std::bad_alloc``` errors. This will occur during continuous docker development if the ```docker-compose down``` is not run consistently before rebuilding and/or you are on a machine with less RAM, as ROS is very memory intensive. Reccomend running to clear your docker cache/images/containers with ```docker system prune``` and rebuild.
-

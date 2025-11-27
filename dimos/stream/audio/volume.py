@@ -16,7 +16,7 @@
 import numpy as np
 
 
-def calculate_rms_volume(audio_data: np.ndarray) -> float:
+def calculate_rms_volume(audio_data: np.ndarray) -> float:  # type: ignore[type-arg]
     """
     Calculate RMS (Root Mean Square) volume of audio data.
 
@@ -38,10 +38,10 @@ def calculate_rms_volume(audio_data: np.ndarray) -> float:
     if audio_data.dtype == np.int16:
         rms = rms / 32768.0
 
-    return rms
+    return rms  # type: ignore[no-any-return]
 
 
-def calculate_peak_volume(audio_data: np.ndarray) -> float:
+def calculate_peak_volume(audio_data: np.ndarray) -> float:  # type: ignore[type-arg]
     """
     Calculate peak volume of audio data.
 
@@ -63,7 +63,7 @@ def calculate_peak_volume(audio_data: np.ndarray) -> float:
     if audio_data.dtype == np.int16:
         peak = peak / 32768.0
 
-    return peak
+    return peak  # type: ignore[no-any-return]
 
 
 if __name__ == "__main__":
@@ -78,7 +78,7 @@ if __name__ == "__main__":
     # Create observable and subscribe to get a single frame
     audio_observable = audio_source.capture_audio_as_observable()
 
-    def process_frame(frame) -> None:
+    def process_frame(frame) -> None:  # type: ignore[no-untyped-def]
         # Calculate and print both RMS and peak volumes
         rms_vol = calculate_rms_volume(frame.data)
         peak_vol = calculate_peak_volume(frame.data)
@@ -90,7 +90,7 @@ if __name__ == "__main__":
     # Set a flag to track when processing is complete
     processed = {"done": False}
 
-    def process_frame_wrapper(frame) -> None:
+    def process_frame_wrapper(frame) -> None:  # type: ignore[no-untyped-def]
         # Process the frame
         process_frame(frame)
         # Mark as processed

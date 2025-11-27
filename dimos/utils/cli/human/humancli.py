@@ -48,7 +48,7 @@ JSON_THEME = Theme(
 )
 
 
-class HumanCLIApp(App):
+class HumanCLIApp(App):  # type: ignore[type-arg]
     """IRC-like interface for interacting with DimOS agents."""
 
     CSS_PATH = theme.CSS_PATH
@@ -77,10 +77,10 @@ class HumanCLIApp(App):
         Binding("ctrl+l", "clear", "Clear chat"),
     ]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self.human_transport = pLCMTransport("/human_input")
-        self.agent_transport = pLCMTransport("/agent")
+        self.human_transport = pLCMTransport("/human_input")  # type: ignore[var-annotated]
+        self.agent_transport = pLCMTransport("/agent")  # type: ignore[var-annotated]
         self.chat_log: RichLog | None = None
         self.input_widget: Input | None = None
         self._subscription_thread: threading.Thread | None = None
@@ -103,16 +103,16 @@ class HumanCLIApp(App):
         self.console.push_theme(JSON_THEME)
 
         # Set custom highlighter for RichLog
-        self.chat_log.highlighter = JSONHighlighter()
+        self.chat_log.highlighter = JSONHighlighter()  # type: ignore[union-attr]
 
         # Start subscription thread
         self._subscription_thread = threading.Thread(target=self._subscribe_to_agent, daemon=True)
         self._subscription_thread.start()
 
         # Focus on input
-        self.input_widget.focus()
+        self.input_widget.focus()  # type: ignore[union-attr]
 
-        self.chat_log.write(f"[{theme.ACCENT}]{theme.ascii_logo}[/{theme.ACCENT}]")
+        self.chat_log.write(f"[{theme.ACCENT}]{theme.ascii_logo}[/{theme.ACCENT}]")  # type: ignore[union-attr]
 
         # Welcome message
         self._add_system_message("Connected to DimOS Agent Interface")
@@ -124,7 +124,7 @@ class HumanCLIApp(App):
     def _subscribe_to_agent(self) -> None:
         """Subscribe to agent messages in a separate thread."""
 
-        def receive_msg(msg) -> None:
+        def receive_msg(msg) -> None:  # type: ignore[no-untyped-def]
             if not self._running:
                 return
 
@@ -175,8 +175,8 @@ class HumanCLIApp(App):
     def _format_tool_call(self, tool_call: ToolCall) -> str:
         """Format a tool call for display."""
         f = tool_call.get("function", {})
-        name = f.get("name", "unknown")
-        return f"▶ {name}({f.get('arguments', '')})"
+        name = f.get("name", "unknown")  # type: ignore[attr-defined]
+        return f"▶ {name}({f.get('arguments', '')})"  # type: ignore[attr-defined]
 
     def _add_message(self, timestamp: str, sender: str, content: str, color: str) -> None:
         """Add a message to the chat log."""
@@ -200,7 +200,7 @@ class HumanCLIApp(App):
         indent = " " * 19  # Spaces to align with the content after the separator
 
         # Get the width of the chat area (accounting for borders and padding)
-        width = self.chat_log.size.width - 4 if self.chat_log.size else 76
+        width = self.chat_log.size.width - 4 if self.chat_log.size else 76  # type: ignore[union-attr]
 
         # Calculate the available width for text (subtract prefix length)
         text_width = max(width - 20, 40)  # Minimum 40 chars for text
@@ -216,12 +216,12 @@ class HumanCLIApp(App):
                     line, width=text_width, initial_indent="", subsequent_indent=""
                 )
                 if wrapped:
-                    self.chat_log.write(prefix + f"[{color}]{wrapped[0]}[/{color}]")
+                    self.chat_log.write(prefix + f"[{color}]{wrapped[0]}[/{color}]")  # type: ignore[union-attr]
                     for wrapped_line in wrapped[1:]:
-                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")
+                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")  # type: ignore[union-attr]
                 else:
                     # Empty line
-                    self.chat_log.write(prefix)
+                    self.chat_log.write(prefix)  # type: ignore[union-attr]
             else:
                 # Subsequent lines from explicit newlines
                 wrapped = textwrap.wrap(
@@ -229,10 +229,10 @@ class HumanCLIApp(App):
                 )
                 if wrapped:
                     for wrapped_line in wrapped:
-                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")
+                        self.chat_log.write(indent + f"│ [{color}]{wrapped_line}[/{color}]")  # type: ignore[union-attr]
                 else:
                     # Empty line
-                    self.chat_log.write(indent + "│")
+                    self.chat_log.write(indent + "│")  # type: ignore[union-attr]
 
     def _add_system_message(self, content: str) -> None:
         """Add a system message to the chat."""
@@ -252,7 +252,7 @@ class HumanCLIApp(App):
             return
 
         # Clear input
-        self.input_widget.value = ""
+        self.input_widget.value = ""  # type: ignore[union-attr]
 
         # Check for commands
         if message.lower() in ["/exit", "/quit"]:
@@ -277,9 +277,9 @@ Tool calls are displayed in cyan with ▶ prefix"""
 
     def action_clear(self) -> None:
         """Clear the chat log."""
-        self.chat_log.clear()
+        self.chat_log.clear()  # type: ignore[union-attr]
 
-    def action_quit(self) -> None:
+    def action_quit(self) -> None:  # type: ignore[override]
         """Quit the application."""
         self._running = False
         self.exit()
@@ -293,7 +293,7 @@ def main() -> None:
         # Support for textual-serve web mode
         import os
 
-        from textual_serve.server import Server
+        from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")
         server.serve()

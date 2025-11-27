@@ -48,7 +48,7 @@ def topic_text(topic_name: str) -> Text:
     return Text(topic_name, style=theme.BRIGHT_WHITE)
 
 
-class LCMSpyApp(App):
+class LCMSpyApp(App):  # type: ignore[type-arg]
     """A real-time CLI dashboard for LCM traffic statistics using Textual."""
 
     CSS_PATH = "../dimos.tcss"
@@ -78,13 +78,13 @@ class LCMSpyApp(App):
         ("ctrl+c", "quit"),
     ]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.spy = GraphLCMSpy(autoconf=True, graph_log_window=0.5)
-        self.table: DataTable | None = None
+        self.table: DataTable | None = None  # type: ignore[type-arg]
 
     def compose(self) -> ComposeResult:
-        self.table = DataTable(zebra_stripes=False, cursor_type=None)
+        self.table = DataTable(zebra_stripes=False, cursor_type=None)  # type: ignore[arg-type]
         self.table.add_column("Topic")
         self.table.add_column("Freq (Hz)")
         self.table.add_column("Bandwidth")
@@ -99,9 +99,9 @@ class LCMSpyApp(App):
         self.spy.stop()
 
     def refresh_table(self) -> None:
-        topics: list[SpyTopic] = list(self.spy.topic.values())
+        topics: list[SpyTopic] = list(self.spy.topic.values())  # type: ignore[arg-type, call-arg]
         topics.sort(key=lambda t: t.total_traffic(), reverse=True)
-        self.table.clear(columns=False)
+        self.table.clear(columns=False)  # type: ignore[union-attr]
 
         for t in topics:
             freq = t.freq(5.0)
@@ -109,7 +109,7 @@ class LCMSpyApp(App):
             bw_val, bw_unit = t.kbps_hr(5.0)
             total_val, total_unit = t.total_traffic_hr()
 
-            self.table.add_row(
+            self.table.add_row(  # type: ignore[union-attr]
                 topic_text(t.name),
                 Text(f"{freq:.1f}", style=gradient(10, freq)),
                 Text(f"{bw_val} {bw_unit.value}/s", style=gradient(1024 * 3, kbps)),
@@ -123,7 +123,7 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "web":
         import os
 
-        from textual_serve.server import Server
+        from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")
         server.serve()

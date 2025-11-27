@@ -39,7 +39,7 @@ class SpatialVectorDB:
     their absolute locations and querying by location, text, or image cosine semantic similarity.
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         collection_name: str = "spatial_memory",
         chroma_client=None,
@@ -109,7 +109,11 @@ class SpatialVectorDB:
             )
 
     def add_image_vector(
-        self, vector_id: str, image: np.ndarray, embedding: np.ndarray, metadata: dict[str, Any]
+        self,
+        vector_id: str,
+        image: np.ndarray,  # type: ignore[type-arg]
+        embedding: np.ndarray,  # type: ignore[type-arg]
+        metadata: dict[str, Any],
     ) -> None:
         """
         Add an image with its embedding and metadata to the vector database.
@@ -130,7 +134,7 @@ class SpatialVectorDB:
 
         logger.info(f"Added image vector {vector_id} with metadata: {metadata}")
 
-    def query_by_embedding(self, embedding: np.ndarray, limit: int = 5) -> list[dict]:
+    def query_by_embedding(self, embedding: np.ndarray, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images similar to the provided embedding.
 
@@ -150,7 +154,7 @@ class SpatialVectorDB:
     # TODO: implement efficient nearest neighbor search
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> list[dict]:
+    ) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images near the specified location.
 
@@ -168,9 +172,9 @@ class SpatialVectorDB:
         if not results or not results["ids"]:
             return []
 
-        filtered_results = {"ids": [], "metadatas": [], "distances": []}
+        filtered_results = {"ids": [], "metadatas": [], "distances": []}  # type: ignore[var-annotated]
 
-        for i, metadata in enumerate(results["metadatas"]):
+        for i, metadata in enumerate(results["metadatas"]):  # type: ignore[arg-type]
             item_x = metadata.get("x")
             item_y = metadata.get("y")
 
@@ -193,7 +197,7 @@ class SpatialVectorDB:
 
         return self._process_query_results(filtered_results)
 
-    def _process_query_results(self, results) -> list[dict]:
+    def _process_query_results(self, results) -> list[dict]:  # type: ignore[no-untyped-def, type-arg]
         """Process query results to include decoded images."""
         if not results or not results["ids"]:
             return []
@@ -228,7 +232,7 @@ class SpatialVectorDB:
 
         return processed_results
 
-    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images matching the provided text description.
 
@@ -283,7 +287,7 @@ class SpatialVectorDB:
         return locations
 
     @property
-    def image_storage(self):
+    def image_storage(self):  # type: ignore[no-untyped-def]
         """Legacy accessor for compatibility with existing code."""
         return self.visual_memory.images
 
@@ -320,10 +324,10 @@ class SpatialVectorDB:
         if not (results and results["ids"] and len(results["ids"][0]) > 0):
             return None, 0
 
-        best_match_metadata = results["metadatas"][0][0]
-        distance = float(results["distances"][0][0] if "distances" in results else 0.0)
+        best_match_metadata = results["metadatas"][0][0]  # type: ignore[index]
+        distance = float(results["distances"][0][0] if "distances" in results else 0.0)  # type: ignore[index]
 
-        location = RobotLocation.from_vector_metadata(best_match_metadata)
+        location = RobotLocation.from_vector_metadata(best_match_metadata)  # type: ignore[arg-type]
 
         logger.info(
             f"Found location '{location.name}' for query '{query}' (distance: {distance:.3f})"

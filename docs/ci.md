@@ -50,7 +50,7 @@ pytest      # run tests
 
 ### Current hierarchy
 
-    
+
 ```
     ┌──────┐
     │ubuntu│
@@ -64,7 +64,7 @@ pytest      # run tests
     ┌▽──────┐
     │ros-dev│
     └───────┘
-```   
+```
 
 * ghcr.io/dimensionalos/ros:dev
 * ghcr.io/dimensionalos/python:dev
@@ -74,7 +74,7 @@ pytest      # run tests
 
 > **Note**: The diagram shows only currently active images; the system is extensible—new combinations are possible, builds can be run per branch and as parallel as possible
 
-   
+
 ```
     ┌──────┐
     │ubuntu│
@@ -135,7 +135,7 @@ Ideally a child job (e.g. **ros-python**) should depend on both:
 GitHub Actions can’t express “run only if *both* conditions are true *and* the parent job wasn’t skipped”.
 
 We are using `needs: [check-changes, ros]` to ensure the job runs after the ros build, but if ros build has been skipped we need `if: always()` to ensure that the build runs anyway.
-Adding `always` for some reason completely breaks the conditional check, we cannot have OR, AND operators, it just makes the job _always_ run, which means we build python even if we don't need to. 
+Adding `always` for some reason completely breaks the conditional check, we cannot have OR, AND operators, it just makes the job _always_ run, which means we build python even if we don't need to.
 
 This is unfortunate as the build takes ~30 min first time (a few minutes afterwards thanks to caching) and I've spent a lot of time on this, lots of viable seeming options didn't pan out and probably we need to completely rewrite and own the actions runner and not depend on github structure at all. Single job called `CI` or something, within our custom docker image.
 

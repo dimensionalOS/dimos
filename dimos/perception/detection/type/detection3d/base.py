@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING
 from dimos.perception.detection.type.detection2d import Detection2DBBox
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
     from dimos.msgs.geometry_msgs import Transform
 

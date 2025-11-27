@@ -19,7 +19,7 @@ from dimos.perception import spatial_perception
 from dimos.robot.unitree.g1 import g1detector
 
 
-def deploy(dimos: DimosCluster, ip: str):
+def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
     g1 = g1detector.deploy(dimos, ip)
 
     nav = g1.get("nav")
@@ -29,7 +29,7 @@ def deploy(dimos: DimosCluster, ip: str):
 
     spatialmem = spatial_perception.deploy(dimos, camera)
 
-    navskills = dimos.deploy(
+    navskills = dimos.deploy(  # type: ignore[attr-defined]
         NavigationSkillContainer,
         spatialmem,
         nav,
@@ -37,7 +37,7 @@ def deploy(dimos: DimosCluster, ip: str):
     )
     navskills.start()
 
-    agent = agents2.deploy(
+    agent = agents2.deploy(  # type: ignore[attr-defined]
         dimos,
         "You are controling a humanoid robot",
         skill_containers=[connection, nav, camera, spatialmem, navskills],

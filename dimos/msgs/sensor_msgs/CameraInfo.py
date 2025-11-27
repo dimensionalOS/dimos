@@ -17,14 +17,17 @@ from __future__ import annotations
 import time
 
 # Import LCM types
-from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
-from dimos_lcm.std_msgs.Header import Header
+from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import CameraInfo as ROSCameraInfo, RegionOfInterest as ROSRegionOfInterest
-    from std_msgs.msg import Header as ROSHeader
+    from sensor_msgs.msg import (  # type: ignore[attr-defined]
+        CameraInfo as ROSCameraInfo,
+        RegionOfInterest as ROSRegionOfInterest,
+    )
+    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -140,41 +143,41 @@ class CameraInfo(Timestamped):
             frame_id="camera_optical",
         )
 
-    def get_K_matrix(self) -> np.ndarray:
+    def get_K_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get intrinsic matrix as numpy array."""
         return np.array(self.K, dtype=np.float64).reshape(3, 3)
 
-    def get_P_matrix(self) -> np.ndarray:
+    def get_P_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get projection matrix as numpy array."""
         return np.array(self.P, dtype=np.float64).reshape(3, 4)
 
-    def get_R_matrix(self) -> np.ndarray:
+    def get_R_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get rectification matrix as numpy array."""
         return np.array(self.R, dtype=np.float64).reshape(3, 3)
 
-    def get_D_coeffs(self) -> np.ndarray:
+    def get_D_coeffs(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get distortion coefficients as numpy array."""
         return np.array(self.D, dtype=np.float64)
 
-    def set_K_matrix(self, K: np.ndarray):
+    def set_K_matrix(self, K: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
         """Set intrinsic matrix from numpy array."""
         if K.shape != (3, 3):
             raise ValueError(f"K matrix must be 3x3, got {K.shape}")
         self.K = K.flatten().tolist()
 
-    def set_P_matrix(self, P: np.ndarray):
+    def set_P_matrix(self, P: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
         """Set projection matrix from numpy array."""
         if P.shape != (3, 4):
             raise ValueError(f"P matrix must be 3x4, got {P.shape}")
         self.P = P.flatten().tolist()
 
-    def set_R_matrix(self, R: np.ndarray):
+    def set_R_matrix(self, R: np.ndarray):  # type: ignore[no-untyped-def, type-arg]
         """Set rectification matrix from numpy array."""
         if R.shape != (3, 3):
             raise ValueError(f"R matrix must be 3x3, got {R.shape}")
         self.R = R.flatten().tolist()
 
-    def set_D_coeffs(self, D: np.ndarray) -> None:
+    def set_D_coeffs(self, D: np.ndarray) -> None:  # type: ignore[type-arg]
         """Set distortion coefficients from numpy array."""
         self.D = D.flatten().tolist()
 
@@ -216,7 +219,7 @@ class CameraInfo(Timestamped):
         msg.roi.width = self.roi_width
         msg.roi.do_rectify = self.roi_do_rectify
 
-        return msg.lcm_encode()
+        return msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> CameraInfo:
@@ -298,10 +301,10 @@ class CameraInfo(Timestamped):
         if not ROS_AVAILABLE:
             raise ImportError("ROS packages not available. Cannot convert to ROS message.")
 
-        ros_msg = ROSCameraInfo()
+        ros_msg = ROSCameraInfo()  # type: ignore[no-untyped-call]
 
         # Set header
-        ros_msg.header = ROSHeader()
+        ros_msg.header = ROSHeader()  # type: ignore[no-untyped-call]
         ros_msg.header.frame_id = self.frame_id
         ros_msg.header.stamp.sec = int(self.ts)
         ros_msg.header.stamp.nanosec = int((self.ts - int(self.ts)) * 1e9)
@@ -324,7 +327,7 @@ class CameraInfo(Timestamped):
         ros_msg.binning_y = self.binning_y
 
         # ROI
-        ros_msg.roi = ROSRegionOfInterest()
+        ros_msg.roi = ROSRegionOfInterest()  # type: ignore[no-untyped-call]
         ros_msg.roi.x_offset = self.roi_x_offset
         ros_msg.roi.y_offset = self.roi_y_offset
         ros_msg.roi.height = self.roi_height
@@ -351,7 +354,7 @@ class CameraInfo(Timestamped):
             f"  Binning: {self.binning_x}x{self.binning_y}"
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two CameraInfo messages are equal."""
         if not isinstance(other, CameraInfo):
             return False
@@ -373,7 +376,7 @@ class CameraInfo(Timestamped):
 class CalibrationProvider:
     """Provides lazy-loaded access to camera calibration YAML files in a directory."""
 
-    def __init__(self, calibration_dir) -> None:
+    def __init__(self, calibration_dir) -> None:  # type: ignore[no-untyped-def]
         """Initialize with a directory containing calibration YAML files.
 
         Args:
@@ -382,7 +385,7 @@ class CalibrationProvider:
         from pathlib import Path
 
         self._calibration_dir = Path(calibration_dir)
-        self._cache = {}
+        self._cache = {}  # type: ignore[var-annotated]
 
     def _to_snake_case(self, name: str) -> str:
         """Convert PascalCase to snake_case."""
@@ -393,7 +396,7 @@ class CalibrationProvider:
         # Insert underscore before capital letter followed by lowercase
         return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
-    def _find_yaml_file(self, name: str):
+    def _find_yaml_file(self, name: str):  # type: ignore[no-untyped-def]
         """Find YAML file matching the given name (tries both snake_case and exact match).
 
         Args:
@@ -433,12 +436,12 @@ class CalibrationProvider:
         """
         # Check cache first
         if name in self._cache:
-            return self._cache[name]
+            return self._cache[name]  # type: ignore[no-any-return]
 
         # Also check if the snake_case version is cached (for PascalCase access)
         snake_name = self._to_snake_case(name)
         if snake_name != name and snake_name in self._cache:
-            return self._cache[snake_name]
+            return self._cache[snake_name]  # type: ignore[no-any-return]
 
         # Find matching YAML file
         yaml_file = self._find_yaml_file(name)
@@ -455,7 +458,7 @@ class CalibrationProvider:
 
         return camera_info
 
-    def __dir__(self):
+    def __dir__(self):  # type: ignore[no-untyped-def]
         """List available calibrations in both snake_case and PascalCase."""
         calibrations = []
         if self._calibration_dir.exists() and self._calibration_dir.is_dir():
