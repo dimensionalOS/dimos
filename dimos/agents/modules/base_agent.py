@@ -32,7 +32,7 @@ except ImportError:
 logger = setup_logger("dimos.agents.modules.base_agent")
 
 
-class BaseAgentModule(BaseAgent, Module):
+class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
     """Agent module that inherits from BaseAgent and adds DimOS module interface.
 
     This provides a thin wrapper around BaseAgent functionality, exposing it
@@ -40,10 +40,10 @@ class BaseAgentModule(BaseAgent, Module):
     """
 
     # Module I/O - AgentMessage based communication
-    message_in: In[AgentMessage] = None  # Primary input for AgentMessage
-    response_out: Out[AgentResponse] = None  # Output AgentResponse objects
+    message_in: In[AgentMessage] = None  # type: ignore[assignment]  # Primary input for AgentMessage
+    response_out: Out[AgentResponse] = None  # type: ignore[assignment]  # Output AgentResponse objects
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         model: str = "openai::gpt-4o-mini",
         system_prompt: str | None = None,
@@ -98,7 +98,7 @@ class BaseAgentModule(BaseAgent, Module):
         )
 
         # Track module-specific subscriptions
-        self._module_disposables = []
+        self._module_disposables = []  # type: ignore[var-annotated]
 
         # For legacy stream support
         self._latest_image = None
@@ -115,7 +115,7 @@ class BaseAgentModule(BaseAgent, Module):
         # Primary AgentMessage input
         if self.message_in and self.message_in.connection is not None:
             try:
-                disposable = self.message_in.observable().subscribe(
+                disposable = self.message_in.observable().subscribe(  # type: ignore[no-untyped-call]
                     lambda msg: self._handle_agent_message(msg)
                 )
                 self._module_disposables.append(disposable)
@@ -125,7 +125,7 @@ class BaseAgentModule(BaseAgent, Module):
         # Connect response output
         if self.response_out:
             disposable = self.response_subject.subscribe(
-                lambda response: self.response_out.publish(response)
+                lambda response: self.response_out.publish(response)  # type: ignore[no-untyped-call]
             )
             self._module_disposables.append(disposable)
 
@@ -150,8 +150,8 @@ class BaseAgentModule(BaseAgent, Module):
     @rpc
     def clear_history(self) -> None:
         """Clear conversation history."""
-        with self._history_lock:
-            self.history = []
+        with self._history_lock:  # type: ignore[attr-defined]
+            self.history = []  # type: ignore[var-annotated]
         logger.info("Conversation history cleared")
 
     @rpc
@@ -169,7 +169,7 @@ class BaseAgentModule(BaseAgent, Module):
     @rpc
     def get_conversation_history(self) -> list[dict[str, Any]]:
         """Get current conversation history."""
-        with self._history_lock:
+        with self._history_lock:  # type: ignore[attr-defined]
             return self.history.copy()
 
     def _handle_agent_message(self, message: AgentMessage) -> None:
@@ -195,7 +195,7 @@ class BaseAgentModule(BaseAgent, Module):
     def _update_latest_data(self, data: dict[str, Any]) -> None:
         """Update latest data context."""
         with self._data_lock:
-            self._latest_data = data
+            self._latest_data = data  # type: ignore[assignment]
 
     def _update_latest_image(self, img: Any) -> None:
         """Update latest image."""

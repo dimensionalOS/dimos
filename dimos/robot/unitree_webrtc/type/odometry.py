@@ -71,11 +71,11 @@ class RawOdometryMessage(TypedDict):
     data: OdometryData
 
 
-class Odometry(PoseStamped, Timestamped):
+class Odometry(PoseStamped, Timestamped):  # type: ignore[misc]
     name = "geometry_msgs.PoseStamped"
 
-    def __init__(self, frame_id: str = "base_link", *args, **kwargs) -> None:
-        super().__init__(frame_id=frame_id, *args, **kwargs)
+    def __init__(self, frame_id: str = "base_link", *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(frame_id=frame_id, *args, **kwargs)  # type: ignore[misc]
 
     @classmethod
     def from_msg(cls, msg: RawOdometryMessage) -> "Odometry":

@@ -40,7 +40,7 @@ class Yolo2DDetector(Detector):
             self.device = device
             return
 
-        if is_cuda_available():
+        if is_cuda_available():  # type: ignore[no-untyped-call]
             self.device = "cuda"
             logger.debug("Using CUDA for YOLO 2d detector")
         else:

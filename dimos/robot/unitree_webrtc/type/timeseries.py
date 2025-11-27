@@ -91,17 +91,17 @@ class Timeseries(ABC, Generic[EVENT]):
     @property
     def start_time(self) -> datetime:
         """Return the timestamp of the earliest event, assuming the data is sorted."""
-        return next(iter(self)).ts
+        return next(iter(self)).ts  # type: ignore[call-overload, no-any-return, type-var]
 
     @property
     def end_time(self) -> datetime:
         """Return the timestamp of the latest event, assuming the data is sorted."""
-        return next(reversed(list(self))).ts
+        return next(reversed(list(self))).ts  # type: ignore[call-overload, no-any-return]
 
     @property
     def frequency(self) -> float:
         """Calculate the frequency of events in Hz."""
-        return len(list(self)) / (self.duration().total_seconds() or 1)
+        return len(list(self)) / (self.duration().total_seconds() or 1)  # type: ignore[call-overload]
 
     def time_range(self) -> tuple[datetime, datetime]:
         """Return (earliest_ts, latest_ts).  Empty input ⇒ ValueError."""
@@ -121,7 +121,7 @@ class Timeseries(ABC, Generic[EVENT]):
         closest = None
         min_dist = float("inf")
 
-        for event in self:
+        for event in self:  # type: ignore[attr-defined]
             dist = abs(event.ts - target_ts)
             if dist > min_dist:
                 break
@@ -130,11 +130,11 @@ class Timeseries(ABC, Generic[EVENT]):
             closest = event
 
         print(f"closest: {closest}")
-        return closest
+        return closest  # type: ignore[return-value]
 
     def __repr__(self) -> str:
         """Return a string representation of the Timeseries."""
-        return f"Timeseries(date={self.start_time.strftime('%Y-%m-%d')}, start={self.start_time.strftime('%H:%M:%S')}, end={self.end_time.strftime('%H:%M:%S')}, duration={self.duration()}, events={len(list(self))}, freq={self.frequency:.2f}Hz)"
+        return f"Timeseries(date={self.start_time.strftime('%Y-%m-%d')}, start={self.start_time.strftime('%H:%M:%S')}, end={self.end_time.strftime('%H:%M:%S')}, duration={self.duration()}, events={len(list(self))}, freq={self.frequency:.2f}Hz)"  # type: ignore[call-overload]
 
     def __str__(self) -> str:
         """Return a string representation of the Timeseries."""

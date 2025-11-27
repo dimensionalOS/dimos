@@ -18,7 +18,7 @@ from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.robot.unitree.g1 import g1zed
 
 
-def deploy(dimos: DimosCluster, ip: str):
+def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
     g1 = g1zed.deploy(dimos, ip)
 
     nav = g1.get("nav")

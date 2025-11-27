@@ -46,7 +46,7 @@ class AudioNormalizer(AbstractAudioTransform):
         max_gain: float = 10.0,
         decay_factor: float = 0.999,
         adapt_speed: float = 0.05,
-        volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,
+        volume_func: Callable[[np.ndarray], float] = calculate_peak_volume,  # type: ignore[type-arg]
     ) -> None:
         """
         Initialize AudioNormalizer.
@@ -119,7 +119,7 @@ class AudioNormalizer(AbstractAudioTransform):
             channels=audio_event.channels,
         )
 
-    def consume_audio(self, audio_observable: Observable) -> "AudioNormalizer":
+    def consume_audio(self, audio_observable: Observable) -> "AudioNormalizer":  # type: ignore[type-arg]
         """
         Set the audio source observable to consume.
 
@@ -129,10 +129,10 @@ class AudioNormalizer(AbstractAudioTransform):
         Returns:
             Self for method chaining
         """
-        self.audio_observable = audio_observable
+        self.audio_observable = audio_observable  # type: ignore[assignment]
         return self
 
-    def emit_audio(self) -> Observable:
+    def emit_audio(self) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits normalized audio frames.
 
@@ -190,7 +190,7 @@ if __name__ == "__main__":
             use_mic = True
         elif arg.startswith("level="):
             try:
-                target_level = float(arg.split("=")[1])
+                target_level = float(arg.split("=")[1])  # type: ignore[assignment]
             except ValueError:
                 print(f"Invalid target level: {arg}")
                 sys.exit(1)

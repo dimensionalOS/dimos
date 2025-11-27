@@ -36,7 +36,7 @@ logger = setup_logger("dimos.protocol.service.lcmservice")
 def check_root() -> bool:
     """Return True if the current process is running as root (UID 0)."""
     try:
-        return os.geteuid() == 0  # type: ignore[attr-defined]
+        return os.geteuid() == 0
     except AttributeError:
         # Platforms without geteuid (e.g. Windows) – assume non-root.
         return False
@@ -229,7 +229,7 @@ class LCMService(Service[LCMConfig]):
     _call_thread_pool: ThreadPoolExecutor | None = None
     _call_thread_pool_lock: threading.RLock = threading.RLock()
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 
         # we support passing an existing LCM instance
@@ -244,7 +244,7 @@ class LCMService(Service[LCMConfig]):
         self._stop_event = threading.Event()
         self._thread = None
 
-    def __getstate__(self):
+    def __getstate__(self):  # type: ignore[no-untyped-def]
         """Exclude unpicklable runtime attributes when serializing."""
         state = self.__dict__.copy()
         # Remove unpicklable attributes
@@ -256,7 +256,7 @@ class LCMService(Service[LCMConfig]):
         state.pop("_call_thread_pool_lock", None)
         return state
 
-    def __setstate__(self, state) -> None:
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes

@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
@@ -38,7 +38,7 @@ class MoondreamVlModel(VlModel):
 
         return model
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
         if isinstance(image, np.ndarray):
             warnings.warn(
                 "MoondreamVlModel.query should receive standard dimos Image type, not a numpy array",
@@ -57,11 +57,11 @@ class MoondreamVlModel(VlModel):
 
         # Handle both dict and string responses
         if isinstance(result, dict):
-            return result.get("answer", str(result))
+            return result.get("answer", str(result))  # type: ignore[no-any-return]
 
         return str(result)
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's native detect method.
 
         Args:

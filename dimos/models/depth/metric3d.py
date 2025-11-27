@@ -22,10 +22,10 @@ import torch
 
 
 class Metric3D:
-    def __init__(self, camera_intrinsics=None, gt_depth_scale: float=256.0) -> None:
+    def __init__(self, camera_intrinsics=None, gt_depth_scale: float=256.0) -> None:  # type: ignore[no-untyped-def]
         # self.conf = get_config("zoedepth", "infer")
         # self.depth_model = build_model(self.conf)
-        self.depth_model = torch.hub.load(
+        self.depth_model = torch.hub.load(  # type: ignore[no-untyped-call]
             "yvanyin/metric3d", "metric3d_vit_small", pretrain=True
         ).cuda()
         if torch.cuda.device_count() > 1:
@@ -44,7 +44,7 @@ class Metric3D:
     Output: Depth map
     """
 
-    def update_intrinsic(self, intrinsic):
+    def update_intrinsic(self, intrinsic):  # type: ignore[no-untyped-def]
         """
         Update the intrinsic parameters dynamically.
         Ensure that the input intrinsic is valid.
@@ -54,30 +54,30 @@ class Metric3D:
         self.intrinsic = intrinsic
         print(f"Intrinsics updated to: {self.intrinsic}")
 
-    def infer_depth(self, img, debug: bool=False):
+    def infer_depth(self, img, debug: bool=False):  # type: ignore[no-untyped-def]
         if debug:
             print(f"Input image: {img}")
         try:
             if isinstance(img, str):
                 print(f"Image type string: {type(img)}")
-                self.rgb_origin = cv2.imread(img)[:, :, ::-1]
+                self.rgb_origin = cv2.imread(img)[:, :, ::-1]  # type: ignore[assignment]
             else:
                 # print(f"Image type not string: {type(img)}, cv2 conversion assumed to be handled. If not, this will throw an error")
                 self.rgb_origin = img
         except Exception as e:
             print(f"Error parsing into infer_depth: {e}")
 
-        img = self.rescale_input(img, self.rgb_origin)
+        img = self.rescale_input(img, self.rgb_origin)  # type: ignore[no-untyped-call]
 
         with torch.no_grad():
             pred_depth, confidence, output_dict = self.depth_model.inference({"input": img})
 
         # Convert to PIL format
-        depth_image = self.unpad_transform_depth(pred_depth)
+        depth_image = self.unpad_transform_depth(pred_depth)  # type: ignore[no-untyped-call]
 
         return depth_image.cpu().numpy()
 
-    def save_depth(self, pred_depth) -> None:
+    def save_depth(self, pred_depth) -> None:  # type: ignore[no-untyped-def]
         # Save the depth map to a file
         pred_depth_np = pred_depth.cpu().numpy()
         output_depth_file = "output_depth_map.png"
@@ -85,7 +85,7 @@ class Metric3D:
         print(f"Depth map saved to {output_depth_file}")
 
     # Adjusts input size to fit pretrained ViT model
-    def rescale_input(self, rgb, rgb_origin):
+    def rescale_input(self, rgb, rgb_origin):  # type: ignore[no-untyped-def]
         #### ajust input size to fit pretrained model
         # keep ratio resize
         input_size = (616, 1064)  # for vit model
@@ -96,7 +96,7 @@ class Metric3D:
             rgb_origin, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR
         )
         # remember to scale intrinsic, hold depth
-        self.intrinsic_scaled = [
+        self.intrinsic_scaled = [  # type: ignore[assignment]
             self.intrinsic[0] * scale,
             self.intrinsic[1] * scale,
             self.intrinsic[2] * scale,
@@ -118,7 +118,7 @@ class Metric3D:
             cv2.BORDER_CONSTANT,
             value=padding,
         )
-        self.pad_info = [pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half]
+        self.pad_info = [pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half]  # type: ignore[assignment]
 
         #### normalize
         mean = torch.tensor([123.675, 116.28, 103.53]).float()[:, None, None]
@@ -128,23 +128,23 @@ class Metric3D:
         rgb = rgb[None, :, :, :].cuda()
         return rgb
 
-    def unpad_transform_depth(self, pred_depth):
+    def unpad_transform_depth(self, pred_depth):  # type: ignore[no-untyped-def]
         # un pad
         pred_depth = pred_depth.squeeze()
         pred_depth = pred_depth[
-            self.pad_info[0] : pred_depth.shape[0] - self.pad_info[1],
-            self.pad_info[2] : pred_depth.shape[1] - self.pad_info[3],
+            self.pad_info[0] : pred_depth.shape[0] - self.pad_info[1],  # type: ignore[index]
+            self.pad_info[2] : pred_depth.shape[1] - self.pad_info[3],  # type: ignore[index]
         ]
 
         # upsample to original size
         pred_depth = torch.nn.functional.interpolate(
-            pred_depth[None, None, :, :], self.rgb_origin.shape[:2], mode="bilinear"
+            pred_depth[None, None, :, :], self.rgb_origin.shape[:2], mode="bilinear"  # type: ignore[attr-defined]
         ).squeeze()
         ###################### canonical camera space ######################
 
         #### de-canonical transform
         canonical_to_real_scale = (
-            self.intrinsic_scaled[0] / 1000.0
+            self.intrinsic_scaled[0] / 1000.0  # type: ignore[index]
         )  # 1000.0 is the focal length of canonical camera
         pred_depth = pred_depth * canonical_to_real_scale  # now the depth is metric
         pred_depth = torch.clamp(pred_depth, 0, 1000)
@@ -152,14 +152,14 @@ class Metric3D:
 
     """Set new intrinsic value."""
 
-    def update_intrinsic(self, intrinsic) -> None:
+    def update_intrinsic(self, intrinsic) -> None:  # type: ignore[no-redef, no-untyped-def]
         self.intrinsic = intrinsic
 
-    def eval_predicted_depth(self, depth_file, pred_depth) -> None:
+    def eval_predicted_depth(self, depth_file, pred_depth) -> None:  # type: ignore[no-untyped-def]
         if depth_file is not None:
             gt_depth = cv2.imread(depth_file, -1)
             gt_depth = gt_depth / self.gt_depth_scale
-            gt_depth = torch.from_numpy(gt_depth).float().cuda()
+            gt_depth = torch.from_numpy(gt_depth).float().cuda()  # type: ignore[assignment]
             assert gt_depth.shape == pred_depth.shape
 
             mask = gt_depth > 1e-8

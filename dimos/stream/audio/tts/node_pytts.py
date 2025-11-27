@@ -13,16 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pyttsx3
+import pyttsx3  # type: ignore[import-not-found]
 from reactivex import Observable, Subject
 
-from dimos.stream.audio.text.abstract import AbstractTextTransform
+from dimos.stream.audio.text.abstract import AbstractTextTransform  # type: ignore[import-untyped]
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
 
 
-class PyTTSNode(AbstractTextTransform):
+class PyTTSNode(AbstractTextTransform):  # type: ignore[misc]
     """
     A transform node that passes through text but also speaks it using pyttsx3.
 
@@ -42,10 +42,10 @@ class PyTTSNode(AbstractTextTransform):
         self.engine.setProperty("rate", rate)
         self.engine.setProperty("volume", volume)
 
-        self.text_subject = Subject()
+        self.text_subject = Subject()  # type: ignore[var-annotated]
         self.subscription = None
 
-    def emit_text(self) -> Observable:
+    def emit_text(self) -> Observable:  # type: ignore[type-arg]
         """
         Returns an observable that emits text strings passed through this node.
 
@@ -54,7 +54,7 @@ class PyTTSNode(AbstractTextTransform):
         """
         return self.text_subject
 
-    def consume_text(self, text_observable: Observable) -> "AbstractTextTransform":
+    def consume_text(self, text_observable: Observable) -> "AbstractTextTransform":  # type: ignore[type-arg]
         """
         Start processing text from the observable source.
 
@@ -67,7 +67,7 @@ class PyTTSNode(AbstractTextTransform):
         logger.info("Starting PyTTSNode")
 
         # Subscribe to the text observable
-        self.subscription = text_observable.subscribe(
+        self.subscription = text_observable.subscribe(  # type: ignore[assignment]
             on_next=self.process_text,
             on_error=lambda e: logger.error(f"Error in PyTTSNode: {e}"),
             on_completed=lambda: self.on_text_completed(),
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     import time
 
     # Create a simple text subject that we can push values to
-    text_subject = Subject()
+    text_subject = Subject()  # type: ignore[var-annotated]
 
     # Create and connect the TTS node
     tts_node = PyTTSNode(rate=150)

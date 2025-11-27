@@ -1,4 +1,4 @@
-from dimos.perception.detection.type.detection2d import (
+from dimos.perception.detection.type.detection2d import (  # type: ignore[attr-defined]
     Detection2D,
     Detection2DBBox,
     Detection2DPerson,
