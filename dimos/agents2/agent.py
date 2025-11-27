@@ -11,6 +11,61 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+"""LLM-based agent orchestration bridging reasoning with robot skill execution.
+
+This module implements DimOS's neurosymbolic agent architecture: LLM-based agents
+that invoke robot skills through a structured tool-calling protocol.
+
+Core Classes
+------------
+Agent
+    Base agent class requiring explicit loop control via `query()` or `agent_loop()`.
+    Integrates with `SkillCoordinator` to execute long-running skills asynchronously.
+
+LlmAgent
+    Agent variant that auto-starts its processing loop on `start()`. Useful for
+    blueprint composition with `autoconnect()` and `ModuleCoordinator`.
+
+Exports
+-------
+The module's `__all__` includes:
+
+- `Agent`: For explicit loop control
+- `llm_agent`: Blueprint factory (`LlmAgent.blueprint`) for composition
+- `deploy`: Convenience helper for standalone agent deployment
+
+Internal utilities (not exported):
+
+- `SkillStateSummary`: TypedDict for skill state snapshots in LLM messages
+- `snapshot_to_messages`: Transform skill state to LangChain message protocol
+
+Architecture
+------------
+Agents coordinate with a `SkillCoordinator` to discover skills, bind them as LLM
+tools, and execute them asynchronously with streaming updates.
+The event-driven loop alternates between LLM invocations and skill execution,
+with state changes triggering agent calls.
+
+Testing
+-------
+For deterministic testing without LLM API calls, use `MockModel` from
+`dimos.agents2.testing` to inject predetermined responses:
+
+>>> from dimos.agents2.testing import MockModel
+>>> from langchain_core.messages import AIMessage
+>>> mock = MockModel(responses=[AIMessage(content="Test response")])
+>>> agent = Agent(system_prompt="Test", model_instance=mock)
+
+See also
+--------
+dimos.agents2.spec : AgentSpec base class defining the agent interface
+dimos.protocol.skill.coordinator : SkillCoordinator for managing skill lifecycle
+dimos.agents2.cli.human : HumanInput module for CLI-based agent interaction
+dimos.agents2.testing : Testing utilities including MockModel
+dimos.utils.cli.agentspy : CLI tool for real-time monitoring of agent messages
+"""
+
 import asyncio
 import datetime
 import json
@@ -105,7 +160,7 @@ class SkillStateSummary(TypedDict):
     name: Annotated[
         str, Doc("The skill's registered identifier (e.g., 'navigate_to', 'scan_room').")
     ]
-    call_id: Annotated[str, Doc("Unique UUID string identifying this specific skill invocation.")]
+    call_id: Annotated[str, Doc("Unique identifier string for this specific skill invocation.")]
     state: Annotated[str, Doc("Execution state: 'pending', 'running', 'completed', or 'error'.")]
     data: Annotated[
         Any,
@@ -256,7 +311,7 @@ class Agent(AgentSpec):
     through a `SkillCoordinator`, and transforms skill state updates into LangChain
     messages for continued reasoning.
 
-    Lifecycle: INITIALIZED → STARTED (after `start()`) → RUNNING → STOPPED (terminal).
+    Lifecycle: INITIALIZED → STARTED (after `start()`) → RUNNING (during `agent_loop()`) → back to STARTED (loop completes) → STOPPED (after `stop()`).
 
     Agent vs. LlmAgent:
         Use `Agent` when you need explicit control over when the processing loop starts
@@ -274,7 +329,8 @@ class Agent(AgentSpec):
 
     Notes:
         The agent loop terminates when `coordinator.has_active_skills()` returns False.
-        Skills with `Return.none` or `Return.passive` don't prevent termination.
+        Skills with `Return.none`, `Return.passive`, `Stream.none`, or `Stream.passive`
+        don't prevent termination.
 
         For testing, use `MockModel` from `dimos.agents2.testing` to inject
         deterministic responses without requiring real LLM API calls.
