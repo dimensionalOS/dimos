@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import IntFlag
 import threading
 
-from dimos_lcm.std_msgs import Bool
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 
@@ -60,14 +60,14 @@ class FrontierCache:
     """Cache for grid points to avoid duplicate point creation."""
 
     def __init__(self) -> None:
-        self.points = {}
+        self.points = {}  # type: ignore[var-annotated]
 
     def get_point(self, x: int, y: int) -> GridPoint:
         """Get or create a grid point at the given coordinates."""
         key = (x, y)
         if key not in self.points:
             self.points[key] = GridPoint(x, y)
-        return self.points[key]
+        return self.points[key]  # type: ignore[no-any-return]
 
     def clear(self) -> None:
         """Clear the point cache."""
@@ -90,16 +90,16 @@ class WavefrontFrontierExplorer(Module):
     """
 
     # LCM inputs
-    global_costmap: In[OccupancyGrid] = None
-    odom: In[PoseStamped] = None
-    goal_reached: In[Bool] = None
-    explore_cmd: In[Bool] = None
-    stop_explore_cmd: In[Bool] = None
+    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    goal_reached: In[Bool] = None  # type: ignore[assignment]
+    explore_cmd: In[Bool] = None  # type: ignore[assignment]
+    stop_explore_cmd: In[Bool] = None  # type: ignore[assignment]
 
     # LCM outputs
-    goal_request: Out[PoseStamped] = None
+    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         min_frontier_perimeter: float = 0.5,
         occupancy_threshold: int = 99,
@@ -130,7 +130,7 @@ class WavefrontFrontierExplorer(Module):
         self.info_gain_threshold = info_gain_threshold
         self.num_no_gain_attempts = num_no_gain_attempts
         self._cache = FrontierCache()
-        self.explored_goals = []  # list of explored goals
+        self.explored_goals = []  # type: ignore[var-annotated]  # list of explored goals
         self.exploration_direction = Vector3(0.0, 0.0, 0.0)  # current exploration direction
         self.last_costmap = None  # store last costmap for information comparison
         self.no_gain_counter = 0  # track consecutive no-gain attempts
@@ -651,7 +651,7 @@ class WavefrontFrontierExplorer(Module):
 
         if not frontiers:
             # Store current costmap before returning
-            self.last_costmap = costmap
+            self.last_costmap = costmap  # type: ignore[assignment]
             self.reset_exploration_session()
             return None
 
@@ -664,12 +664,12 @@ class WavefrontFrontierExplorer(Module):
             self.mark_explored_goal(selected_goal)
 
             # Store current costmap for next comparison
-            self.last_costmap = costmap
+            self.last_costmap = costmap  # type: ignore[assignment]
 
             return selected_goal
 
         # Store current costmap before returning
-        self.last_costmap = costmap
+        self.last_costmap = costmap  # type: ignore[assignment]
         return None
 
     def mark_explored_goal(self, goal: Vector3) -> None:
@@ -775,7 +775,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.frame_id = "world"
                 goal_msg.ts = self.latest_costmap.ts
 
-                self.goal_request.publish(goal_msg)
+                self.goal_request.publish(goal_msg)  # type: ignore[no-untyped-call]
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1

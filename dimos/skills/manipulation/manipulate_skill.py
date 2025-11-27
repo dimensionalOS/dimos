@@ -80,7 +80,7 @@ class Manipulate(AbstractManipulationSkill):
         task = ManipulationTask(
             description=self.description,
             target_object=self.target_object,
-            target_point=tuple(map(int, self.target_point.strip("()").split(","))),
+            target_point=tuple(map(int, self.target_point.strip("()").split(","))),  # type: ignore[arg-type]
             constraints=constraint,
             metadata=metadata,
             timestamp=timestamp,
@@ -89,7 +89,7 @@ class Manipulate(AbstractManipulationSkill):
         )
 
         # Add task to manipulation interface
-        self.manipulation_interface.add_manipulation_task(task)
+        self.manipulation_interface.add_manipulation_task(task)  # type: ignore[union-attr]
 
         # Execute the manipulation
         result = self._execute_manipulation(task)
@@ -106,9 +106,9 @@ class Manipulate(AbstractManipulationSkill):
         Build metadata for the current environment state, including object data and movement tolerances.
         """
         # Get detected objects from the manipulation interface
-        detected_objects = []
+        detected_objects = []  # type: ignore[var-annotated]
         try:
-            detected_objects = self.manipulation_interface.get_latest_objects() or []
+            detected_objects = self.manipulation_interface.get_latest_objects() or []  # type: ignore[union-attr]
         except Exception as e:
             logger.warning(f"Failed to get detected objects: {e}")
 

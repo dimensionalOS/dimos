@@ -19,7 +19,7 @@ Supports both eye-in-hand and eye-to-hand configurations.
 
 from collections import deque
 
-from dimos_lcm.vision_msgs import Detection3D
+from dimos_lcm.vision_msgs import Detection3D  # type: ignore[import-untyped]
 import numpy as np
 from scipy.spatial.transform import Rotation as R
 
@@ -84,7 +84,7 @@ class PBVS:
                 target_tolerance=target_tolerance,
             )
         else:
-            self.controller = None
+            self.controller = None  # type: ignore[assignment]
 
         # Store parameters for direct mode error computation
         self.target_tolerance = target_tolerance
@@ -100,7 +100,7 @@ class PBVS:
 
         # Detection history for robust tracking
         self.detection_history_size = 3
-        self.detection_history = deque(maxlen=self.detection_history_size)
+        self.detection_history = deque(maxlen=self.detection_history_size)  # type: ignore[var-annotated]
 
         # For direct control mode visualization
         self.last_position_error = None
@@ -272,11 +272,11 @@ class PBVS:
             # Return has_target=True since we have a target, regardless of tracking status
             return velocity_cmd, angular_velocity_cmd, target_reached, True, None
 
-    def create_status_overlay(
+    def create_status_overlay(  # type: ignore[no-untyped-def]
         self,
-        image: np.ndarray,
+        image: np.ndarray,  # type: ignore[type-arg]
         grasp_stage=None,
-    ) -> np.ndarray:
+    ) -> np.ndarray:  # type: ignore[type-arg]
         """
         Create PBVS status overlay on image.
 
@@ -374,7 +374,7 @@ class PBVSController:
             grasp_pose.position.y - ee_pose.position.y,
             grasp_pose.position.z - ee_pose.position.z,
         )
-        self.last_position_error = error
+        self.last_position_error = error  # type: ignore[assignment]
 
         # Compute velocity command with proportional control
         velocity_cmd = Vector3(
@@ -393,7 +393,7 @@ class PBVSController:
                 float(velocity_cmd.z * scale),
             )
 
-        self.last_velocity_cmd = velocity_cmd
+        self.last_velocity_cmd = velocity_cmd  # type: ignore[assignment]
 
         # Compute angular velocity for orientation control
         angular_velocity_cmd = self._compute_angular_velocity(grasp_pose.orientation, ee_pose)
@@ -441,7 +441,7 @@ class PBVSController:
         pitch_error = error_axis_angle[1]
         yaw_error = error_axis_angle[2]
 
-        self.last_rotation_error = Vector3(roll_error, pitch_error, yaw_error)
+        self.last_rotation_error = Vector3(roll_error, pitch_error, yaw_error)  # type: ignore[assignment]
 
         # Apply proportional control
         angular_velocity = Vector3(
@@ -460,15 +460,15 @@ class PBVSController:
                 angular_velocity.x * scale, angular_velocity.y * scale, angular_velocity.z * scale
             )
 
-        self.last_angular_velocity_cmd = angular_velocity
+        self.last_angular_velocity_cmd = angular_velocity  # type: ignore[assignment]
 
         return angular_velocity
 
     def create_status_overlay(
         self,
-        image: np.ndarray,
+        image: np.ndarray,  # type: ignore[type-arg]
         current_target: Detection3D | None = None,
-    ) -> np.ndarray:
+    ) -> np.ndarray:  # type: ignore[type-arg]
         """
         Create PBVS status overlay on image.
 

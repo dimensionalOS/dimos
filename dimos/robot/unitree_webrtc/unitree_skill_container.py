@@ -19,7 +19,7 @@ import difflib
 import time
 from typing import TYPE_CHECKING
 
-from go2_webrtc_driver.constants import RTC_TOPIC
+from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
@@ -59,12 +59,12 @@ class UnitreeSkillContainer(SkillModule):
     @rpc
     def set_ConnectionModule_move(self, callable: RpcCall) -> None:
         self._move = callable
-        self._move.set_rpc(self.rpc)
+        self._move.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     @rpc
     def set_ConnectionModule_publish_request(self, callable: RpcCall) -> None:
         self._publish_request = callable
-        self._publish_request.set_rpc(self.rpc)
+        self._publish_request.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     @skill()
     def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
@@ -97,8 +97,8 @@ class UnitreeSkillContainer(SkillModule):
         time.sleep(seconds)
         return f"Wait completed with length={seconds}s"
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest, hide_skill=True)
-    def current_time(self):
+    @skill(stream=Stream.passive, reducer=Reducer.latest, hide_skill=True)  # type: ignore[arg-type]
+    def current_time(self):  # type: ignore[no-untyped-def]
         """Provides current time implicitly, don't call this skill directly."""
         print("Starting current_time skill")
         while True:

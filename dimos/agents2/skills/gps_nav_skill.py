@@ -31,8 +31,8 @@ class GpsNavSkillContainer(SkillModule):
     _max_valid_distance: int = 50000
     _set_gps_travel_goal_points: RpcCall | None = None
 
-    gps_location: In[LatLon] = None
-    gps_goal: Out[LatLon] = None
+    gps_location: In[LatLon] = None  # type: ignore[assignment]
+    gps_goal: Out[LatLon] = None  # type: ignore[assignment]
 
     def __init__(self) -> None:
         super().__init__()
@@ -40,7 +40,7 @@ class GpsNavSkillContainer(SkillModule):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:
@@ -49,7 +49,7 @@ class GpsNavSkillContainer(SkillModule):
     @rpc
     def set_WebsocketVisModule_set_gps_travel_goal_points(self, callable: RpcCall) -> None:
         self._set_gps_travel_goal_points = callable
-        self._set_gps_travel_goal_points.set_rpc(self.rpc)
+        self._set_gps_travel_goal_points.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     def _on_gps_location(self, location: LatLon) -> None:
         self._latest_location = location
@@ -77,14 +77,14 @@ class GpsNavSkillContainer(SkillModule):
             return f"Not all points were valid. I parsed this: {parsed}"
 
         for new_point in new_points:
-            distance = distance_in_meters(self._get_latest_location(), new_point)
+            distance = distance_in_meters(self._get_latest_location(), new_point)  # type: ignore[arg-type]
             if distance > self._max_valid_distance:
                 return f"Point {new_point} is too far ({int(distance)} meters away)."
 
         logger.info(f"Set travel points: {new_points}")
 
         if self.gps_goal._transport is not None:
-            self.gps_goal.publish(new_points)
+            self.gps_goal.publish(new_points)  # type: ignore[no-untyped-call]
 
         if self._set_gps_travel_goal_points:
             self._set_gps_travel_goal_points(new_points)

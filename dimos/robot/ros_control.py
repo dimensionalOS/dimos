@@ -19,13 +19,13 @@ import threading
 import time
 from typing import Any
 
-from builtin_interfaces.msg import Duration
-from cv_bridge import CvBridge
-from geometry_msgs.msg import Point, Twist, Vector3
-from nav2_msgs.action import Spin
-from nav_msgs.msg import OccupancyGrid, Odometry
+from builtin_interfaces.msg import Duration  # type: ignore[attr-defined]
+from cv_bridge import CvBridge  # type: ignore[attr-defined]
+from geometry_msgs.msg import Point, Twist, Vector3  # type: ignore[attr-defined]
+from nav2_msgs.action import Spin  # type: ignore[import-not-found]
+from nav_msgs.msg import OccupancyGrid, Odometry  # type: ignore[attr-defined]
 import rclpy
-from rclpy.action import ActionClient
+from rclpy.action import ActionClient  # type: ignore[attr-defined]
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.qos import (
@@ -34,7 +34,7 @@ from rclpy.qos import (
     QoSProfile,
     QoSReliabilityPolicy,
 )
-from sensor_msgs.msg import CompressedImage, Image
+from sensor_msgs.msg import CompressedImage, Image  # type: ignore[attr-defined]
 import tf2_ros
 
 from dimos.robot.connection_interface import ConnectionInterface
@@ -104,7 +104,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             costmap_topic: Topic for local costmap data
         """
         # Initialize rclpy and ROS node if not already running
-        if not rclpy.ok():
+        if not rclpy.ok():  # type: ignore[attr-defined]
             rclpy.init()
 
         self._state_topic = state_topic
@@ -137,14 +137,14 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         self._mode = RobotMode.INITIALIZING
 
         # Create sensor data QoS profile
-        sensor_qos = QoSProfile(
+        sensor_qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
             depth=1,
         )
 
-        command_qos = QoSProfile(
+        command_qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -167,16 +167,16 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         self._video_provider = None
         self._bridge = None
         if camera_topics:
-            self._bridge = CvBridge()
+            self._bridge = CvBridge()  # type: ignore[no-untyped-call]
             self._video_provider = ROSVideoProvider(dev_name=f"{node_name}_video")
 
             # Create subscribers for each topic with sensor QoS
             for camera_config in camera_topics.values():
-                topic = camera_config["topic"]
-                msg_type = camera_config["type"]
+                topic = camera_config["topic"]  # type: ignore[index]
+                msg_type = camera_config["type"]  # type: ignore[index]
 
                 logger.info(
-                    f"Subscribing to {topic} with BEST_EFFORT QoS using message type {msg_type.__name__}"
+                    f"Subscribing to {topic} with BEST_EFFORT QoS using message type {msg_type.__name__}"  # type: ignore[attr-defined]
                 )
                 _camera_subscription = self._node.create_subscription(
                     msg_type, topic, self._image_callback, sensor_qos
@@ -227,19 +227,21 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             logger.warning("No costmap topic provided - costmap data tracking will be unavailable")
 
         # Nav2 Action Clients
-        self._spin_client = ActionClient(self._node, Spin, "spin")
+        self._spin_client = ActionClient(self._node, Spin, "spin")  # type: ignore[no-untyped-call]
 
         # Wait for action servers
         if not mock_connection:
-            self._spin_client.wait_for_server()
+            self._spin_client.wait_for_server()  # type: ignore[no-untyped-call]
 
         # Publishers
-        self._move_vel_pub = self._node.create_publisher(Twist, move_vel_topic, command_qos)
-        self._pose_pub = self._node.create_publisher(Vector3, pose_topic, command_qos)
+        self._move_vel_pub = self._node.create_publisher(Twist, move_vel_topic, command_qos)  # type: ignore[arg-type]
+        self._pose_pub = self._node.create_publisher(Vector3, pose_topic, command_qos)  # type: ignore[arg-type]
 
         if webrtc_msg_type:
             self._webrtc_pub = self._node.create_publisher(
-                webrtc_msg_type, webrtc_topic, qos_profile=command_qos
+                webrtc_msg_type,
+                webrtc_topic,  # type: ignore[arg-type]
+                qos_profile=command_qos,
             )
 
             # Initialize command queue
@@ -283,30 +285,30 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         else:
             return None
 
-    def _global_costmap_callback(self, msg) -> None:
+    def _global_costmap_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Callback for costmap data"""
         self._global_costmap_data = msg
 
-    def _imu_callback(self, msg) -> None:
+    def _imu_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Callback for IMU data"""
         self._imu_state = msg
         # Log IMU state (very verbose)
         # logger.debug(f"IMU state updated: {self._imu_state}")
 
-    def _odom_callback(self, msg) -> None:
+    def _odom_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Callback for odometry data"""
         self._odom_data = msg
 
-    def _costmap_callback(self, msg) -> None:
+    def _costmap_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Callback for costmap data"""
         self._costmap_data = msg
 
-    def _state_callback(self, msg) -> None:
+    def _state_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Callback for state messages to track mode and progress"""
 
         # Call the abstract method to update RobotMode enum based on the received state
         self._robot_state = msg
-        self._update_mode(msg)
+        self._update_mode(msg)  # type: ignore[no-untyped-call]
         # Log state changes (very verbose)
         # logger.debug(f"Robot state updated: {self._robot_state}")
 
@@ -328,7 +330,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         return max(min(velocity, max_velocity), -max_velocity)
 
     @abstractmethod
-    def _update_mode(self, *args, **kwargs):
+    def _update_mode(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         """Update robot mode based on state - to be implemented by child classes"""
         pass
 
@@ -389,14 +391,14 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return None
         return self._costmap_data
 
-    def _image_callback(self, msg) -> None:
+    def _image_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Convert ROS image to numpy array and push to data stream"""
         if self._video_provider and self._bridge:
             try:
                 if isinstance(msg, CompressedImage):
-                    frame = self._bridge.compressed_imgmsg_to_cv2(msg)
+                    frame = self._bridge.compressed_imgmsg_to_cv2(msg)  # type: ignore[no-untyped-call]
                 elif isinstance(msg, Image):
-                    frame = self._bridge.imgmsg_to_cv2(msg, "bgr8")
+                    frame = self._bridge.imgmsg_to_cv2(msg, "bgr8")  # type: ignore[no-untyped-call]
                 else:
                     logger.error(f"Unsupported image message type: {type(msg)}")
                     return
@@ -410,7 +412,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         """Data provider property for streaming data"""
         return self._video_provider
 
-    def get_video_stream(self, fps: int = 30) -> Observable | None:
+    def get_video_stream(self, fps: int = 30) -> Observable | None:  # type: ignore[name-defined]
         """Get the video stream from the robot's camera.
 
         Args:
@@ -422,9 +424,9 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         if not self.video_provider:
             return None
 
-        return self.video_provider.get_stream(fps=fps)
+        return self.video_provider.get_stream(fps=fps)  # type: ignore[attr-defined]
 
-    def _send_action_client_goal(
+    def _send_action_client_goal(  # type: ignore[no-untyped-def]
         self, client, goal_msg, description: str | None = None, time_allowance: float = 20.0
     ) -> bool:
         """
@@ -494,7 +496,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
 
         # Create and send command
-        cmd = Twist()
+        cmd = Twist()  # type: ignore[no-untyped-call]
         cmd.linear.x = float(x)
         cmd.linear.y = float(y)
         cmd.angular.z = float(yaw)
@@ -512,7 +514,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             return True
 
         except Exception as e:
-            self._logger.error(f"Failed to send movement command: {e}")
+            self._logger.error(f"Failed to send movement command: {e}")  # type: ignore[attr-defined]
             return False
 
     def reverse(self, distance: float, speed: float = 0.5, time_allowance: float = 120) -> bool:
@@ -535,15 +537,15 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             speed = min(abs(speed), self.MAX_LINEAR_VELOCITY)
 
             # Define function to execute the reverse
-            def execute_reverse():
+            def execute_reverse():  # type: ignore[no-untyped-def]
                 # Create BackUp goal
-                goal = BackUp.Goal()
-                goal.target = Point()
+                goal = BackUp.Goal()  # type: ignore[name-defined]
+                goal.target = Point()  # type: ignore[no-untyped-call]
                 goal.target.x = -distance  # Negative for backward motion
                 goal.target.y = 0.0
                 goal.target.z = 0.0
                 goal.speed = speed  # BackUp expects positive speed
-                goal.time_allowance = Duration(sec=time_allowance)
+                goal.time_allowance = Duration(sec=time_allowance)  # type: ignore[no-untyped-call]
 
                 print(
                     f"[ROSControl] execute_reverse: Creating BackUp goal with distance={distance}m, speed={speed}m/s"
@@ -555,7 +557,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
                 logger.info(f"Moving backward: distance={distance}m, speed={speed}m/s")
 
                 result = self._send_action_client_goal(
-                    self._backup_client,
+                    self._backup_client,  # type: ignore[attr-defined]
                     goal,
                     f"Moving backward {distance}m at {speed}m/s",
                     time_allowance,
@@ -609,11 +611,11 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             )  # At least 20 seconds or double the expected time
 
             # Define function to execute the spin
-            def execute_spin():
+            def execute_spin():  # type: ignore[no-untyped-def]
                 # Create Spin goal
                 goal = Spin.Goal()
                 goal.target_yaw = angle  # Nav2 Spin action expects radians
-                goal.time_allowance = Duration(sec=time_allowance)
+                goal.time_allowance = Duration(sec=time_allowance)  # type: ignore[no-untyped-call]
 
                 logger.info(f"Spinning: angle={degrees}deg ({angle:.2f}rad)")
 
@@ -667,14 +669,14 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         self._executor.shutdown()
 
         # Destroy node and shutdown rclpy
-        self._node.destroy_node()
+        self._node.destroy_node()  # type: ignore[no-untyped-call]
         rclpy.shutdown()
 
     def disconnect(self) -> None:
         """Disconnect from the robot and clean up resources."""
         self.cleanup()
 
-    def webrtc_req(
+    def webrtc_req(  # type: ignore[no-untyped-def]
         self,
         api_id: int,
         topic: str | None = None,
@@ -700,7 +702,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         """
         try:
             # Create and send command
-            cmd = self._webrtc_msg_type()
+            cmd = self._webrtc_msg_type()  # type: ignore[misc]
             cmd.api_id = api_id
             cmd.topic = topic if topic is not None else self._webrtc_api_topic
             cmd.parameter = parameter
@@ -729,7 +731,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         print(f"Current RobotMode: {mode.name}")
         print(f"Mode enum: {mode}")
 
-    def queue_webrtc_req(
+    def queue_webrtc_req(  # type: ignore[no-untyped-def]
         self,
         api_id: int,
         topic: str | None = None,
@@ -782,7 +784,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         yaw = self._clamp_velocity(yaw, self.MAX_ANGULAR_VELOCITY)
 
         # Create and send command
-        cmd = Twist()
+        cmd = Twist()  # type: ignore[no-untyped-call]
         cmd.linear.x = float(x)
         cmd.linear.y = float(y)
         cmd.angular.z = float(yaw)
@@ -807,7 +809,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             bool: True if command was sent successfully
         """
         # Create the pose command message
-        cmd = Vector3()
+        cmd = Vector3()  # type: ignore[no-untyped-call]
         cmd.x = float(roll)  # Roll
         cmd.y = float(pitch)  # Pitch
         cmd.z = float(yaw)  # Yaw
@@ -820,7 +822,7 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
             logger.error(f"Failed to send pose command: {e}")
             return False
 
-    def get_position_stream(self):
+    def get_position_stream(self):  # type: ignore[no-untyped-def]
         """
         Get a stream of position updates from ROS.
 
@@ -838,13 +840,13 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
 
         return position_provider.get_position_stream()
 
-    def _goal_response_callback(self, future) -> None:
+    def _goal_response_callback(self, future) -> None:  # type: ignore[no-untyped-def]
         """Handle the goal response."""
         goal_handle = future.result()
         if not goal_handle.accepted:
             logger.warn("Goal was rejected!")
             print("[ROSControl] Goal was REJECTED by the action server")
-            self._action_success = False
+            self._action_success = False  # type: ignore[assignment]
             return
 
         logger.info("Goal accepted")
@@ -852,14 +854,14 @@ class ROSControl(ROSTransformAbility, ROSObservableTopicAbility, ConnectionInter
         result_future = goal_handle.get_result_async()
         result_future.add_done_callback(self._goal_result_callback)
 
-    def _goal_result_callback(self, future) -> None:
+    def _goal_result_callback(self, future) -> None:  # type: ignore[no-untyped-def]
         """Handle the goal result."""
         try:
             result = future.result().result
             logger.info("Goal completed")
             print(f"[ROSControl] Goal COMPLETED with result: {result}")
-            self._action_success = True
+            self._action_success = True  # type: ignore[assignment]
         except Exception as e:
             logger.error(f"Goal failed with error: {e}")
             print(f"[ROSControl] Goal FAILED with error: {e}")
-            self._action_success = False
+            self._action_success = False  # type: ignore[assignment]

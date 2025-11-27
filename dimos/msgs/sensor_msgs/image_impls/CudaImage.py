@@ -31,14 +31,14 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 
 try:
     import cupy as cp  # type: ignore
-    from cupyx.scipy import (
-        ndimage as cndimage,  # type: ignore
-        signal as csignal,  # type: ignore
+    from cupyx.scipy import (  # type: ignore[import-not-found]
+        ndimage as cndimage,
+        signal as csignal,
     )
 except Exception:  # pragma: no cover
-    cp = None  # type: ignore
-    cndimage = None  # type: ignore
-    csignal = None  # type: ignore
+    cp = None
+    cndimage = None
+    csignal = None
 
 
 _CUDA_SRC = r"""
@@ -267,7 +267,7 @@ if cp is not None:
     _pnp_kernel = _mod.get_function("pnp_gn_batch")
 
 
-def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1e-6):
+def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1e-6):  # type: ignore[no-untyped-def]
     if cp is None:
         raise RuntimeError("CuPy/CUDA not available")
 
@@ -291,7 +291,7 @@ def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1
     obj_cu = cp.ascontiguousarray(obj_cu)
     img_cu = cp.ascontiguousarray(img_cu)
 
-    K_np = np.asarray(_to_cpu(K), dtype=np.float32)
+    K_np = np.asarray(_to_cpu(K), dtype=np.float32)  # type: ignore[no-untyped-call]
     np_intri = np.empty((B, 4), dtype=np.float32)
     if K_np.ndim == 2:
         if K_np.shape != (3, 3):
@@ -344,42 +344,42 @@ def _solve_pnp_cuda_kernel(obj, img, K, iterations: int = 15, damping: float = 1
     return r_host, t_host
 
 
-def _bgr_to_rgb_cuda(img):
+def _bgr_to_rgb_cuda(img):  # type: ignore[no-untyped-def]
     return img[..., ::-1]
 
 
-def _rgb_to_bgr_cuda(img):
+def _rgb_to_bgr_cuda(img):  # type: ignore[no-untyped-def]
     return img[..., ::-1]
 
 
-def _bgra_to_rgba_cuda(img):
+def _bgra_to_rgba_cuda(img):  # type: ignore[no-untyped-def]
     out = img.copy()
     out[..., 0], out[..., 2] = img[..., 2], img[..., 0]
     return out
 
 
-def _rgba_to_bgra_cuda(img):
+def _rgba_to_bgra_cuda(img):  # type: ignore[no-untyped-def]
     out = img.copy()
     out[..., 0], out[..., 2] = img[..., 2], img[..., 0]
     return out
 
 
-def _gray_to_rgb_cuda(gray):
-    return cp.stack([gray, gray, gray], axis=-1)  # type: ignore
+def _gray_to_rgb_cuda(gray):  # type: ignore[no-untyped-def]
+    return cp.stack([gray, gray, gray], axis=-1)
 
 
-def _rgb_to_gray_cuda(rgb):
-    r = rgb[..., 0].astype(cp.float32)  # type: ignore
-    g = rgb[..., 1].astype(cp.float32)  # type: ignore
-    b = rgb[..., 2].astype(cp.float32)  # type: ignore
+def _rgb_to_gray_cuda(rgb):  # type: ignore[no-untyped-def]
+    r = rgb[..., 0].astype(cp.float32)
+    g = rgb[..., 1].astype(cp.float32)
+    b = rgb[..., 2].astype(cp.float32)
     # These come from the Rec.601 conversion for YUV. R = 0.299, G = 0.587, B = 0.114
     y = 0.299 * r + 0.587 * g + 0.114 * b
-    if rgb.dtype == cp.uint8:  # type: ignore
-        y = cp.clip(y, 0, 255).astype(cp.uint8)  # type: ignore
+    if rgb.dtype == cp.uint8:
+        y = cp.clip(y, 0, 255).astype(cp.uint8)
     return y
 
 
-def _resize_bilinear_hwc_cuda(img, out_h: int, out_w: int):
+def _resize_bilinear_hwc_cuda(img, out_h: int, out_w: int):  # type: ignore[no-untyped-def]
     if cp is None or cndimage is None:
         raise RuntimeError("CuPy/CUDA not available")
     if img.ndim not in (2, 3):
@@ -410,12 +410,11 @@ def _resize_bilinear_hwc_cuda(img, out_h: int, out_w: int):
     return out
 
 
-def _rodrigues(x, inverse: bool = False):
+def _rodrigues(x, inverse: bool = False):  # type: ignore[no-untyped-def]
     """Unified Rodrigues transform (vector<->matrix) for NumPy/CuPy arrays."""
 
     if cp is not None and (
-        isinstance(x, cp.ndarray)  # type: ignore[arg-type]
-        or getattr(x, "__cuda_array_interface__", None) is not None
+        isinstance(x, cp.ndarray) or getattr(x, "__cuda_array_interface__", None) is not None
     ):
         xp = cp
     else:
@@ -437,7 +436,7 @@ def _rodrigues(x, inverse: bool = False):
         theta = xp.linalg.norm(vec, axis=1)
         small = theta < 1e-12
 
-        def _skew(v):
+        def _skew(v):  # type: ignore[no-untyped-def]
             vx, vy, vz = v[:, 0], v[:, 1], v[:, 2]
             O = xp.zeros_like(vx)
             return xp.stack(
@@ -449,7 +448,7 @@ def _rodrigues(x, inverse: bool = False):
                 axis=-2,
             )
 
-        K = _skew(vec)
+        K = _skew(vec)  # type: ignore[no-untyped-call]
         theta2 = theta * theta
         theta4 = theta2 * theta2
         theta_safe = xp.where(small, 1.0, theta)
@@ -543,12 +542,12 @@ def _undistort_points_cuda(
 
 @dataclass
 class CudaImage(AbstractImage):
-    data: any  # cupy.ndarray
+    data: any  # type: ignore[valid-type]  # cupy.ndarray
     format: ImageFormat = field(default=ImageFormat.BGR)
     frame_id: str = field(default="")
     ts: float = field(default_factory=time.time)
 
-    def __post_init__(self):
+    def __post_init__(self):  # type: ignore[no-untyped-def]
         if not HAS_CUDA or cp is None:
             raise RuntimeError("CuPy/CUDA not available")
         if not _is_cu(self.data):
@@ -557,51 +556,57 @@ class CudaImage(AbstractImage):
                 self.data = cp.asarray(self.data)
             except Exception as e:
                 raise ValueError("CudaImage requires a CuPy array") from e
-        if self.data.ndim < 2:
+        if self.data.ndim < 2:  # type: ignore[attr-defined]
             raise ValueError("Image data must be at least 2D")
-        self.data = _ascontig(self.data)
+        self.data = _ascontig(self.data)  # type: ignore[no-untyped-call]
 
     @property
     def is_cuda(self) -> bool:
         return True
 
-    def to_opencv(self) -> np.ndarray:
+    def to_opencv(self) -> np.ndarray:  # type: ignore[type-arg]
         if self.format in (ImageFormat.BGR, ImageFormat.RGB, ImageFormat.RGBA, ImageFormat.BGRA):
-            return _to_cpu(self.to_bgr().data)
-        return _to_cpu(self.data)
+            return _to_cpu(self.to_bgr().data)  # type: ignore[no-any-return, no-untyped-call]
+        return _to_cpu(self.data)  # type: ignore[no-any-return, no-untyped-call]
 
     def to_rgb(self) -> CudaImage:
         if self.format == ImageFormat.RGB:
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
-            return CudaImage(_bgr_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)
+            return CudaImage(_bgr_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format == ImageFormat.RGBA:
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGRA:
             return CudaImage(
-                _bgra_to_rgba_cuda(self.data), ImageFormat.RGBA, self.frame_id, self.ts
+                _bgra_to_rgba_cuda(self.data),  # type: ignore[no-untyped-call]
+                ImageFormat.RGBA,
+                self.frame_id,
+                self.ts,
             )
         if self.format == ImageFormat.GRAY:
-            return CudaImage(_gray_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)
+            return CudaImage(_gray_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
-            return CudaImage(_gray_to_rgb_cuda(gray8), ImageFormat.RGB, self.frame_id, self.ts)
+            return CudaImage(_gray_to_rgb_cuda(gray8), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         return self.copy()  # type: ignore
 
     def to_bgr(self) -> CudaImage:
         if self.format == ImageFormat.BGR:
             return self.copy()  # type: ignore
         if self.format == ImageFormat.RGB:
-            return CudaImage(_rgb_to_bgr_cuda(self.data), ImageFormat.BGR, self.frame_id, self.ts)
+            return CudaImage(_rgb_to_bgr_cuda(self.data), ImageFormat.BGR, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format == ImageFormat.RGBA:
             return CudaImage(
-                _rgba_to_bgra_cuda(self.data)[..., :3], ImageFormat.BGR, self.frame_id, self.ts
+                _rgba_to_bgra_cuda(self.data)[..., :3],  # type: ignore[no-untyped-call]
+                ImageFormat.BGR,
+                self.frame_id,
+                self.ts,
             )
         if self.format == ImageFormat.BGRA:
-            return CudaImage(self.data[..., :3], ImageFormat.BGR, self.frame_id, self.ts)
+            return CudaImage(self.data[..., :3], ImageFormat.BGR, self.frame_id, self.ts)  # type: ignore[index]
         if self.format in (ImageFormat.GRAY, ImageFormat.DEPTH):
             return CudaImage(
-                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(self.data)),
+                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(self.data)),  # type: ignore[no-untyped-call]
                 ImageFormat.BGR,
                 self.frame_id,
                 self.ts,
@@ -609,7 +614,10 @@ class CudaImage(AbstractImage):
         if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
             gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
             return CudaImage(
-                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)), ImageFormat.BGR, self.frame_id, self.ts
+                _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)),  # type: ignore[no-untyped-call]
+                ImageFormat.BGR,
+                self.frame_id,
+                self.ts,
             )
         return self.copy()  # type: ignore
 
@@ -618,20 +626,20 @@ class CudaImage(AbstractImage):
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
             return CudaImage(
-                _rgb_to_gray_cuda(_bgr_to_rgb_cuda(self.data)),
+                _rgb_to_gray_cuda(_bgr_to_rgb_cuda(self.data)),  # type: ignore[no-untyped-call]
                 ImageFormat.GRAY,
                 self.frame_id,
                 self.ts,
             )
         if self.format == ImageFormat.RGB:
-            return CudaImage(_rgb_to_gray_cuda(self.data), ImageFormat.GRAY, self.frame_id, self.ts)
+            return CudaImage(_rgb_to_gray_cuda(self.data), ImageFormat.GRAY, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format in (ImageFormat.RGBA, ImageFormat.BGRA):
             rgb = (
-                self.data[..., :3]
+                self.data[..., :3]  # type: ignore[index]
                 if self.format == ImageFormat.RGBA
-                else _bgra_to_rgba_cuda(self.data)[..., :3]
+                else _bgra_to_rgba_cuda(self.data)[..., :3]  # type: ignore[no-untyped-call]
             )
-            return CudaImage(_rgb_to_gray_cuda(rgb), ImageFormat.GRAY, self.frame_id, self.ts)
+            return CudaImage(_rgb_to_gray_cuda(rgb), ImageFormat.GRAY, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         raise ValueError(f"Unsupported format: {self.format}")
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> CudaImage:
@@ -652,7 +660,7 @@ class CudaImage(AbstractImage):
             A new CudaImage containing the cropped region
         """
         # Get current image dimensions
-        img_height, img_width = self.data.shape[:2]
+        img_height, img_width = self.data.shape[:2]  # type: ignore[attr-defined]
 
         # Clamp the crop region to image bounds
         x = max(0, min(x, img_width))
@@ -661,12 +669,12 @@ class CudaImage(AbstractImage):
         y_end = min(y + height, img_height)
 
         # Perform the crop using array slicing
-        if self.data.ndim == 2:
+        if self.data.ndim == 2:  # type: ignore[attr-defined]
             # Grayscale image
-            cropped_data = self.data[y:y_end, x:x_end]
+            cropped_data = self.data[y:y_end, x:x_end]  # type: ignore[index]
         else:
             # Color image (HxWxC)
-            cropped_data = self.data[y:y_end, x:x_end, :]
+            cropped_data = self.data[y:y_end, x:x_end, :]  # type: ignore[index]
 
         # Return a new CudaImage with the cropped data
         return CudaImage(cropped_data, self.format, self.frame_id, self.ts)
@@ -675,17 +683,17 @@ class CudaImage(AbstractImage):
         if cp is None:
             return 0.0
         try:
-            from cupyx.scipy import ndimage as cndimage  # type: ignore
+            from cupyx.scipy import ndimage as cndimage
 
-            gray = self.to_grayscale().data.astype(cp.float32)
+            gray = self.to_grayscale().data.astype(cp.float32)  # type: ignore[attr-defined]
             deriv5 = cp.asarray([1, 2, 0, -2, -1], dtype=cp.float32)
             smooth5 = cp.asarray([1, 4, 6, 4, 1], dtype=cp.float32)
-            gx = cndimage.convolve1d(gray, deriv5, axis=1, mode="reflect")  # type: ignore
-            gx = cndimage.convolve1d(gx, smooth5, axis=0, mode="reflect")  # type: ignore
-            gy = cndimage.convolve1d(gray, deriv5, axis=0, mode="reflect")  # type: ignore
-            gy = cndimage.convolve1d(gy, smooth5, axis=1, mode="reflect")  # type: ignore
-            magnitude = cp.hypot(gx, gy)  # type: ignore
-            mean_mag = float(cp.asnumpy(magnitude.mean()))  # type: ignore
+            gx = cndimage.convolve1d(gray, deriv5, axis=1, mode="reflect")
+            gx = cndimage.convolve1d(gx, smooth5, axis=0, mode="reflect")
+            gy = cndimage.convolve1d(gray, deriv5, axis=0, mode="reflect")
+            gy = cndimage.convolve1d(gy, smooth5, axis=1, mode="reflect")
+            magnitude = cp.hypot(gx, gy)
+            mean_mag = float(cp.asnumpy(magnitude.mean()))
         except Exception:
             return 0.0
         if mean_mag <= 0:
@@ -700,38 +708,38 @@ class CudaImage(AbstractImage):
         w: int
         h: int
 
-    def create_csrt_tracker(self, bbox: BBox):
+    def create_csrt_tracker(self, bbox: BBox):  # type: ignore[no-untyped-def]
         if csignal is None:
             raise RuntimeError("cupyx.scipy.signal not available for CUDA tracker")
-        x, y, w, h = map(int, bbox)
-        gray = self.to_grayscale().data.astype(cp.float32)
+        x, y, w, h = map(int, bbox)  # type: ignore[call-overload]
+        gray = self.to_grayscale().data.astype(cp.float32)  # type: ignore[attr-defined]
         tmpl = gray[y : y + h, x : x + w]
         if tmpl.size == 0:
             raise ValueError("Invalid bbox for CUDA tracker")
         return _CudaTemplateTracker(tmpl, x0=x, y0=y)
 
-    def csrt_update(self, tracker) -> tuple[bool, tuple[int, int, int, int]]:
+    def csrt_update(self, tracker) -> tuple[bool, tuple[int, int, int, int]]:  # type: ignore[no-untyped-def]
         if not isinstance(tracker, _CudaTemplateTracker):
             raise TypeError("Expected CUDA tracker instance")
-        gray = self.to_grayscale().data.astype(cp.float32)
+        gray = self.to_grayscale().data.astype(cp.float32)  # type: ignore[attr-defined]
         x, y, w, h = tracker.update(gray)
         return True, (int(x), int(y), int(w), int(h))
 
     # PnP – Gauss–Newton (no distortion in batch), iterative per-instance
     def solve_pnp(
         self,
-        object_points: np.ndarray,
-        image_points: np.ndarray,
-        camera_matrix: np.ndarray,
-        dist_coeffs: np.ndarray | None = None,
+        object_points: np.ndarray,  # type: ignore[type-arg]
+        image_points: np.ndarray,  # type: ignore[type-arg]
+        camera_matrix: np.ndarray,  # type: ignore[type-arg]
+        dist_coeffs: np.ndarray | None = None,  # type: ignore[type-arg]
         flags: int = cv2.SOLVEPNP_ITERATIVE,
-    ) -> tuple[bool, np.ndarray, np.ndarray]:
+    ) -> tuple[bool, np.ndarray, np.ndarray]:  # type: ignore[type-arg]
         if not HAS_CUDA or cp is None or (dist_coeffs is not None and np.any(dist_coeffs)):
             obj = np.asarray(object_points, dtype=np.float32).reshape(-1, 3)
             img = np.asarray(image_points, dtype=np.float32).reshape(-1, 2)
             K = np.asarray(camera_matrix, dtype=np.float64)
             dist = None if dist_coeffs is None else np.asarray(dist_coeffs, dtype=np.float64)
-            ok, rvec, tvec = cv2.solvePnP(obj, img, K, dist, flags=flags)
+            ok, rvec, tvec = cv2.solvePnP(obj, img, K, dist, flags=flags)  # type: ignore[arg-type]
             return bool(ok), rvec.astype(np.float64), tvec.astype(np.float64)
 
         rvec, tvec = _solve_pnp_cuda_kernel(object_points, image_points, camera_matrix)
@@ -740,13 +748,13 @@ class CudaImage(AbstractImage):
 
     def solve_pnp_batch(
         self,
-        object_points_batch: np.ndarray,
-        image_points_batch: np.ndarray,
-        camera_matrix: np.ndarray,
-        dist_coeffs: np.ndarray | None = None,
+        object_points_batch: np.ndarray,  # type: ignore[type-arg]
+        image_points_batch: np.ndarray,  # type: ignore[type-arg]
+        camera_matrix: np.ndarray,  # type: ignore[type-arg]
+        dist_coeffs: np.ndarray | None = None,  # type: ignore[type-arg]
         iterations: int = 15,
         damping: float = 1e-6,
-    ) -> tuple[np.ndarray, np.ndarray]:
+    ) -> tuple[np.ndarray, np.ndarray]:  # type: ignore[type-arg]
         """Batched PnP (each block = one instance)."""
         if not HAS_CUDA or cp is None or (dist_coeffs is not None and np.any(dist_coeffs)):
             obj = np.asarray(object_points_batch, dtype=np.float32)
@@ -771,7 +779,11 @@ class CudaImage(AbstractImage):
                     else:
                         raise ValueError("dist_coeffs must be 1D or batched 2D")
                 ok, rvec, tvec = cv2.solvePnP(
-                    obj[b], img[b], K_b, dist_b, flags=cv2.SOLVEPNP_ITERATIVE
+                    obj[b],
+                    img[b],
+                    K_b,
+                    dist_b,  # type: ignore[arg-type]
+                    flags=cv2.SOLVEPNP_ITERATIVE,
                 )
                 if not ok:
                     raise RuntimeError(f"cv2.solvePnP failed for batch index {b}")
@@ -779,7 +791,7 @@ class CudaImage(AbstractImage):
                 t_list[b] = tvec.astype(np.float64)
             return r_list, t_list
 
-        return _solve_pnp_cuda_kernel(
+        return _solve_pnp_cuda_kernel(  # type: ignore[no-any-return]
             object_points_batch,
             image_points_batch,
             camera_matrix,
@@ -789,15 +801,15 @@ class CudaImage(AbstractImage):
 
     def solve_pnp_ransac(
         self,
-        object_points: np.ndarray,
-        image_points: np.ndarray,
-        camera_matrix: np.ndarray,
-        dist_coeffs: np.ndarray | None = None,
+        object_points: np.ndarray,  # type: ignore[type-arg]
+        image_points: np.ndarray,  # type: ignore[type-arg]
+        camera_matrix: np.ndarray,  # type: ignore[type-arg]
+        dist_coeffs: np.ndarray | None = None,  # type: ignore[type-arg]
         iterations_count: int = 100,
         reprojection_error: float = 3.0,
         confidence: float = 0.99,
         min_sample: int = 6,
-    ) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:  # type: ignore[type-arg]
         """RANSAC with CUDA PnP solver."""
         if not HAS_CUDA or cp is None or (dist_coeffs is not None and np.any(dist_coeffs)):
             obj = np.asarray(object_points, dtype=np.float32)
@@ -808,7 +820,7 @@ class CudaImage(AbstractImage):
                 obj,
                 img,
                 K,
-                dist,
+                dist,  # type: ignore[arg-type]
                 iterationsCount=int(iterations_count),
                 reprojectionError=float(reprojection_error),
                 confidence=float(confidence),
@@ -821,7 +833,7 @@ class CudaImage(AbstractImage):
 
         obj = cp.asarray(object_points, dtype=cp.float32)
         img = cp.asarray(image_points, dtype=cp.float32)
-        camera_matrix_np = np.asarray(_to_cpu(camera_matrix), dtype=np.float32)
+        camera_matrix_np = np.asarray(_to_cpu(camera_matrix), dtype=np.float32)  # type: ignore[no-untyped-call]
         fx = float(camera_matrix_np[0, 0])
         fy = float(camera_matrix_np[1, 1])
         cx = float(camera_matrix_np[0, 2])
@@ -877,7 +889,7 @@ class _CudaTemplateTracker:
         self.y = int(y0)
         self.x = int(x0)
 
-    def update(self, gray: cp.ndarray):
+    def update(self, gray: cp.ndarray):  # type: ignore[no-untyped-def]
         H, W = int(gray.shape[0]), int(gray.shape[1])
         r = self.search_radius
         x0 = max(0, self.x - r)
@@ -901,17 +913,17 @@ class _CudaTemplateTracker:
             tmpl_energy = cp.sqrt(cp.sum(tmpl_zm * tmpl_zm)) + 1e-6
             # NCC via correlate2d and local std
             ones = cp.ones((th, tw), dtype=cp.float32)
-            num = csignal.correlate2d(search, tmpl_zm, mode="valid")  # type: ignore
-            sumS = csignal.correlate2d(search, ones, mode="valid")  # type: ignore
-            sumS2 = csignal.correlate2d(search * search, ones, mode="valid")  # type: ignore
+            num = csignal.correlate2d(search, tmpl_zm, mode="valid")
+            sumS = csignal.correlate2d(search, ones, mode="valid")
+            sumS2 = csignal.correlate2d(search * search, ones, mode="valid")
             n = float(th * tw)
             meanS = sumS / n
             varS = cp.clip(sumS2 - n * meanS * meanS, 0.0, None)
             stdS = cp.sqrt(varS) + 1e-6
             res = num / (stdS * tmpl_energy)
             ij = cp.unravel_index(cp.argmax(res), res.shape)
-            dy, dx = int(ij[0].get()), int(ij[1].get())  # type: ignore
-            score = float(res[ij].get())  # type: ignore
+            dy, dx = int(ij[0].get()), int(ij[1].get())
+            score = float(res[ij].get())
             if score > best_score:
                 best_score = score
                 best = (x0 + dx, y0 + dy, tw, th)

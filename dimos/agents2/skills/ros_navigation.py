@@ -65,7 +65,7 @@ class RosNavigation(SkillModule):
         return "Failed to navigate."
 
     def _navigate_using_semantic_map(self, query: str) -> str:
-        results = self._robot.spatial_memory.query_by_text(query)
+        results = self._robot.spatial_memory.query_by_text(query)  # type: ignore[union-attr]
 
         if not results:
             return f"No matching location found in semantic map for '{query}'"
@@ -91,7 +91,7 @@ class RosNavigation(SkillModule):
         if not self._started:
             raise ValueError(f"{self} has not been started.")
 
-        self._robot.cancel_navigation()
+        self._robot.cancel_navigation()  # type: ignore[attr-defined]
 
         return "Stopped"
 

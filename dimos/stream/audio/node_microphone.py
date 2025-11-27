@@ -18,7 +18,7 @@ from typing import Any
 
 import numpy as np
 from reactivex import Observable, create, disposable
-import sounddevice as sd
+import sounddevice as sd  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import (
     AbstractAudioEmitter,
@@ -38,7 +38,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
-        dtype: np.dtype = np.float32,
+        dtype: np.dtype = np.float32,  # type: ignore[assignment, type-arg]
     ) -> None:
         """
         Initialize SounddeviceAudioSource.
@@ -59,7 +59,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
         self._stream = None
         self._running = False
 
-    def emit_audio(self) -> Observable:
+    def emit_audio(self) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits audio frames.
 
@@ -67,9 +67,9 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
             Observable emitting AudioEvent objects
         """
 
-        def on_subscribe(observer, scheduler):
+        def on_subscribe(observer, scheduler):  # type: ignore[no-untyped-def]
             # Callback function to process audio data
-            def audio_callback(indata, frames, time_info, status) -> None:
+            def audio_callback(indata, frames, time_info, status) -> None:  # type: ignore[no-untyped-def]
                 if status:
                     logger.warning(f"Audio callback status: {status}")
 
@@ -93,7 +93,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
                     dtype=self.dtype,
                     callback=audio_callback,
                 )
-                self._stream.start()
+                self._stream.start()  # type: ignore[attr-defined]
                 self._running = True
 
                 logger.info(
@@ -120,7 +120,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
     def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio input devices."""
-        return sd.query_devices()
+        return sd.query_devices()  # type: ignore[no-any-return]
 
 
 if __name__ == "__main__":

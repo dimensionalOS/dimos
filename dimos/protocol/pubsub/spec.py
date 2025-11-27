@@ -55,10 +55,10 @@ class PubSub(Generic[TopicT, MsgT], ABC):
             self._unsubscribe_fn()
 
         # context-manager helper
-        def __enter__(self):
+        def __enter__(self):  # type: ignore[no-untyped-def]
             return self
 
-        def __exit__(self, *exc) -> None:
+        def __exit__(self, *exc) -> None:  # type: ignore[no-untyped-def]
             self.unsubscribe()
 
     # public helper: returns disposable object
@@ -83,7 +83,7 @@ class PubSub(Generic[TopicT, MsgT], ABC):
         # async context manager returning a queue
 
     @asynccontextmanager
-    async def queue(self, topic: TopicT, *, max_pending: int | None = None):
+    async def queue(self, topic: TopicT, *, max_pending: int | None = None):  # type: ignore[no-untyped-def]
         q: asyncio.Queue[MsgT] = asyncio.Queue(maxsize=max_pending or 0)
 
         def _queue_cb(msg: MsgT, topic: TopicT) -> None:
@@ -114,13 +114,13 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
     @abstractmethod
     def decode(self, msg: bytes, topic: TopicT) -> MsgT: ...
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self._encode_callback_map: dict = {}
+        self._encode_callback_map: dict = {}  # type: ignore[type-arg]
 
     def publish(self, topic: TopicT, message: MsgT) -> None:
         """Encode the message and publish it."""
-        if getattr(self, "_stop_event", None) is not None and self._stop_event.is_set():
+        if getattr(self, "_stop_event", None) is not None and self._stop_event.is_set():  # type: ignore[attr-defined]
             return
         encoded_message = self.encode(message, topic)
         if encoded_message is None:
@@ -136,11 +136,11 @@ class PubSubEncoderMixin(Generic[TopicT, MsgT], ABC):
             decoded_message = self.decode(encoded_data, topic)
             callback(decoded_message, topic)
 
-        return super().subscribe(topic, wrapper_cb)  # type: ignore[misc]
+        return super().subscribe(topic, wrapper_cb)  # type: ignore[misc, no-any-return]
 
 
 class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT]):
-    def encode(self, msg: MsgT, *_: TopicT) -> bytes:
+    def encode(self, msg: MsgT, *_: TopicT) -> bytes:  # type: ignore[return]
         try:
             return pickle.dumps(msg)
         except Exception as e:
@@ -151,4 +151,4 @@ class PickleEncoderMixin(PubSubEncoderMixin[TopicT, MsgT]):
             print("Tried to pickle:", msg)
 
     def decode(self, msg: bytes, _: TopicT) -> MsgT:
-        return pickle.loads(msg)
+        return pickle.loads(msg)  # type: ignore[no-any-return]

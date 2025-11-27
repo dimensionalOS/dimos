@@ -154,9 +154,9 @@ class LLMAgent(Agent):
         system_query: str | None = None,
         max_output_tokens_per_request: int = 16384,
         max_input_tokens_per_request: int = 128000,
-        input_query_stream: Observable | None = None,
-        input_data_stream: Observable | None = None,
-        input_video_stream: Observable | None = None,
+        input_query_stream: Observable | None = None,  # type: ignore[type-arg]
+        input_data_stream: Observable | None = None,  # type: ignore[type-arg]
+        input_video_stream: Observable | None = None,  # type: ignore[type-arg]
     ) -> None:
         """
         Initializes a new instance of the LLMAgent.
@@ -189,10 +189,10 @@ class LLMAgent(Agent):
         os.makedirs(self.output_dir, exist_ok=True)
 
         # Subject for emitting responses
-        self.response_subject = Subject()
+        self.response_subject = Subject()  # type: ignore[var-annotated]
 
         # Conversation history for maintaining context between calls
-        self.conversation_history = []
+        self.conversation_history = []  # type: ignore[var-annotated]
 
         # Initialize input streams
         self.input_video_stream = input_video_stream
@@ -200,22 +200,22 @@ class LLMAgent(Agent):
             input_query_stream
             if (input_data_stream is None)
             else (
-                input_query_stream.pipe(
+                input_query_stream.pipe(  # type: ignore[misc, union-attr]
                     RxOps.with_latest_from(input_data_stream),
                     RxOps.map(
                         lambda combined: {
-                            "query": combined[0],
-                            "objects": combined[1]
-                            if len(combined) > 1
+                            "query": combined[0],  # type: ignore[index]
+                            "objects": combined[1]  # type: ignore[index]
+                            if len(combined) > 1  # type: ignore[arg-type]
                             else "No object data available",
                         }
                     ),
                     RxOps.map(
-                        lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"
+                        lambda data: f"{data['query']}\n\nCurrent objects detected:\n{data['objects']}"  # type: ignore[index]
                     ),
                     RxOps.do_action(
-                        lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m")
-                        or [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]
+                        lambda x: print(f"\033[34mEnriched query: {x.split(chr(10))[0]}\033[0m")  # type: ignore[arg-type]
+                        or [print(f"\033[34m{line}\033[0m") for line in x.split(chr(10))[1:]]  # type: ignore[var-annotated]
                     ),
                 )
             )
@@ -230,7 +230,7 @@ class LLMAgent(Agent):
             logger.info("Subscribing to merged input stream...")
 
             # Define a query extractor for the merged stream
-            def query_extractor(emission):
+            def query_extractor(emission):  # type: ignore[no-untyped-def]
                 return (emission[0], emission[1][0])
 
             self.disposables.add(
@@ -283,7 +283,7 @@ class LLMAgent(Agent):
         dimensions: tuple[int, int] | None,
         override_token_limit: bool,
         condensed_results: str,
-    ) -> list:
+    ) -> list:  # type: ignore[type-arg]
         """Builds a prompt message using the prompt builder.
 
         Args:
@@ -311,7 +311,7 @@ class LLMAgent(Agent):
             "rag": "truncate_end",
         }
 
-        return self.prompt_builder.build(
+        return self.prompt_builder.build(  # type: ignore[no-any-return, union-attr]
             user_query=self.query,
             override_token_limit=override_token_limit,
             base64_image=base64_image,
@@ -324,7 +324,7 @@ class LLMAgent(Agent):
             policies=policies,
         )
 
-    def _handle_tooling(self, response_message, messages):
+    def _handle_tooling(self, response_message, messages):  # type: ignore[no-untyped-def]
         """Handles tooling callbacks in the response message.
 
         If tool calls are present, the corresponding functions are executed and
@@ -340,7 +340,7 @@ class LLMAgent(Agent):
 
         # TODO: Make this more generic or move implementation to OpenAIAgent.
         # This is presently OpenAI-specific.
-        def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):
+        def _tooling_callback(message, messages, response_message, skill_library: SkillLibrary):  # type: ignore[no-untyped-def]
             has_called_tools = False
             new_messages = []
             for tool_call in message.tool_calls:
@@ -369,13 +369,16 @@ class LLMAgent(Agent):
 
         if response_message.tool_calls is not None:
             return _tooling_callback(
-                response_message, messages, response_message, self.skill_library
+                response_message,
+                messages,
+                response_message,
+                self.skill_library,  # type: ignore[attr-defined]
             )
         return None
 
-    def _observable_query(
+    def _observable_query(  # type: ignore[no-untyped-def]
         self,
-        observer: Observer,
+        observer: Observer,  # type: ignore[type-arg]
         base64_image: str | None = None,
         dimensions: tuple[int, int] | None = None,
         override_token_limit: bool = False,
@@ -409,8 +412,8 @@ class LLMAgent(Agent):
             # TODO: Make this more generic. The parsed tag and tooling handling may be OpenAI-specific.
             # If no skill library is provided or there are no tool calls, emit the response directly.
             if (
-                self.skill_library is None
-                or self.skill_library.get_tools() in (None, NOT_GIVEN)
+                self.skill_library is None  # type: ignore[attr-defined]
+                or self.skill_library.get_tools() in (None, NOT_GIVEN)  # type: ignore[attr-defined]
                 or response_message.tool_calls is None
             ):
                 final_msg = (
@@ -425,12 +428,12 @@ class LLMAgent(Agent):
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             else:
-                response_message_2 = self._handle_tooling(response_message, messages)
+                response_message_2 = self._handle_tooling(response_message, messages)  # type: ignore[no-untyped-call]
                 final_msg = (
                     response_message_2 if response_message_2 is not None else response_message
                 )
                 if isinstance(final_msg, BaseModel):  # TODO: Test
-                    final_msg = str(final_msg.content)
+                    final_msg = str(final_msg.content)  # type: ignore[attr-defined]
                 observer.on_next(final_msg)
                 self.response_subject.on_next(final_msg)
             observer.on_completed()
@@ -439,7 +442,7 @@ class LLMAgent(Agent):
             observer.on_error(e)
             self.response_subject.on_error(e)
 
-    def _send_query(self, messages: list) -> Any:
+    def _send_query(self, messages: list) -> Any:  # type: ignore[type-arg]
         """Sends the query to the LLM API.
 
         This method must be implemented by subclasses with specifics of the LLM API.
@@ -455,7 +458,7 @@ class LLMAgent(Agent):
         """
         raise NotImplementedError("Subclasses must implement _send_query method.")
 
-    def _log_response_to_file(self, response, output_dir: str | None = None) -> None:
+    def _log_response_to_file(self, response, output_dir: str | None = None) -> None:  # type: ignore[no-untyped-def]
         """Logs the LLM response to a file.
 
         Args:
@@ -471,8 +474,10 @@ class LLMAgent(Agent):
                     file.write(f"{self.dev_name}: {response}\n")
                 logger.info(f"LLM Response [{self.dev_name}]: {response}")
 
-    def subscribe_to_image_processing(
-        self, frame_observable: Observable, query_extractor=None
+    def subscribe_to_image_processing(  # type: ignore[no-untyped-def]
+        self,
+        frame_observable: Observable,  # type: ignore[type-arg]
+        query_extractor=None,
     ) -> Disposable:
         """Subscribes to a stream of video frames for processing.
 
@@ -496,7 +501,7 @@ class LLMAgent(Agent):
 
         print_emission_args = {"enabled": True, "dev_name": self.dev_name, "counts": {}}
 
-        def _process_frame(emission) -> Observable:
+        def _process_frame(emission) -> Observable:  # type: ignore[no-untyped-def, type-arg]
             """
             Processes a frame or (query, frame) tuple.
             """
@@ -506,65 +511,65 @@ class LLMAgent(Agent):
             else:
                 query = self.system_query
                 frame = emission
-            return just(frame).pipe(
-                MyOps.print_emission(id="B", **print_emission_args),
+            return just(frame).pipe(  # type: ignore[call-overload, no-any-return]
+                MyOps.print_emission(id="B", **print_emission_args),  # type: ignore[arg-type]
                 RxOps.observe_on(self.pool_scheduler),
-                MyOps.print_emission(id="C", **print_emission_args),
+                MyOps.print_emission(id="C", **print_emission_args),  # type: ignore[arg-type]
                 RxOps.subscribe_on(self.pool_scheduler),
-                MyOps.print_emission(id="D", **print_emission_args),
+                MyOps.print_emission(id="D", **print_emission_args),  # type: ignore[arg-type]
                 MyVidOps.with_jpeg_export(
-                    self.frame_processor,
+                    self.frame_processor,  # type: ignore[arg-type]
                     suffix=f"{self.dev_name}_frame_",
                     save_limit=_MAX_SAVED_FRAMES,
                 ),
-                MyOps.print_emission(id="E", **print_emission_args),
+                MyOps.print_emission(id="E", **print_emission_args),  # type: ignore[arg-type]
                 MyVidOps.encode_image(),
-                MyOps.print_emission(id="F", **print_emission_args),
+                MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
                 RxOps.filter(
                     lambda base64_and_dims: base64_and_dims is not None
-                    and base64_and_dims[0] is not None
-                    and base64_and_dims[1] is not None
+                    and base64_and_dims[0] is not None  # type: ignore[index]
+                    and base64_and_dims[1] is not None  # type: ignore[index]
                 ),
-                MyOps.print_emission(id="G", **print_emission_args),
+                MyOps.print_emission(id="G", **print_emission_args),  # type: ignore[arg-type]
                 RxOps.flat_map(
-                    lambda base64_and_dims: create(
+                    lambda base64_and_dims: create(  # type: ignore[arg-type, return-value]
                         lambda observer, _: self._observable_query(
-                            observer,
+                            observer,  # type: ignore[arg-type]
                             base64_image=base64_and_dims[0],
                             dimensions=base64_and_dims[1],
                             incoming_query=query,
                         )
                     )
                 ),  # Use the extracted query
-                MyOps.print_emission(id="H", **print_emission_args),
+                MyOps.print_emission(id="H", **print_emission_args),  # type: ignore[arg-type]
             )
 
         # Use a mutable flag to ensure only one frame is processed at a time.
         is_processing = [False]
 
-        def process_if_free(emission):
+        def process_if_free(emission):  # type: ignore[no-untyped-def]
             if not self.process_all_inputs and is_processing[0]:
                 # Drop frame if a request is in progress and process_all_inputs is False
                 return empty()
             else:
                 is_processing[0] = True
                 return _process_frame(emission).pipe(
-                    MyOps.print_emission(id="I", **print_emission_args),
+                    MyOps.print_emission(id="I", **print_emission_args),  # type: ignore[arg-type]
                     RxOps.observe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="J", **print_emission_args),
+                    MyOps.print_emission(id="J", **print_emission_args),  # type: ignore[arg-type]
                     RxOps.subscribe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="K", **print_emission_args),
+                    MyOps.print_emission(id="K", **print_emission_args),  # type: ignore[arg-type]
                     RxOps.do_action(
                         on_completed=lambda: is_processing.__setitem__(0, False),
                         on_error=lambda e: is_processing.__setitem__(0, False),
                     ),
-                    MyOps.print_emission(id="L", **print_emission_args),
+                    MyOps.print_emission(id="L", **print_emission_args),  # type: ignore[arg-type]
                 )
 
         observable = frame_observable.pipe(
-            MyOps.print_emission(id="A", **print_emission_args),
+            MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
             RxOps.flat_map(process_if_free),
-            MyOps.print_emission(id="M", **print_emission_args),
+            MyOps.print_emission(id="M", **print_emission_args),  # type: ignore[arg-type]
         )
 
         disposable = observable.subscribe(
@@ -573,9 +578,9 @@ class LLMAgent(Agent):
             on_completed=lambda: logger.info(f"Stream processing completed for {self.dev_name}"),
         )
         self.disposables.add(disposable)
-        return disposable
+        return disposable  # type: ignore[no-any-return]
 
-    def subscribe_to_query_processing(self, query_observable: Observable) -> Disposable:
+    def subscribe_to_query_processing(self, query_observable: Observable) -> Disposable:  # type: ignore[type-arg]
         """Subscribes to a stream of queries for processing.
 
         This method sets up a subscription to process incoming queries by directly
@@ -589,25 +594,25 @@ class LLMAgent(Agent):
         """
         print_emission_args = {"enabled": False, "dev_name": self.dev_name, "counts": {}}
 
-        def _process_query(query) -> Observable:
+        def _process_query(query) -> Observable:  # type: ignore[no-untyped-def, type-arg]
             """
             Processes a single query by logging it and passing it to _observable_query.
             Returns an observable that emits the LLM response.
             """
             return just(query).pipe(
-                MyOps.print_emission(id="Pr A", **print_emission_args),
+                MyOps.print_emission(id="Pr A", **print_emission_args),  # type: ignore[arg-type]
                 RxOps.flat_map(
-                    lambda query: create(
-                        lambda observer, _: self._observable_query(observer, incoming_query=query)
+                    lambda query: create(  # type: ignore[arg-type, return-value]
+                        lambda observer, _: self._observable_query(observer, incoming_query=query)  # type: ignore[arg-type]
                     )
                 ),
-                MyOps.print_emission(id="Pr B", **print_emission_args),
+                MyOps.print_emission(id="Pr B", **print_emission_args),  # type: ignore[arg-type]
             )
 
         # A mutable flag indicating whether a query is currently being processed.
         is_processing = [False]
 
-        def process_if_free(query):
+        def process_if_free(query):  # type: ignore[no-untyped-def]
             logger.info(f"Processing Query: {query}")
             if not self.process_all_inputs and is_processing[0]:
                 # Drop query if a request is already in progress and process_all_inputs is False
@@ -616,22 +621,22 @@ class LLMAgent(Agent):
                 is_processing[0] = True
                 logger.info("Processing Query.")
                 return _process_query(query).pipe(
-                    MyOps.print_emission(id="B", **print_emission_args),
+                    MyOps.print_emission(id="B", **print_emission_args),  # type: ignore[arg-type]
                     RxOps.observe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="C", **print_emission_args),
+                    MyOps.print_emission(id="C", **print_emission_args),  # type: ignore[arg-type]
                     RxOps.subscribe_on(self.pool_scheduler),
-                    MyOps.print_emission(id="D", **print_emission_args),
+                    MyOps.print_emission(id="D", **print_emission_args),  # type: ignore[arg-type]
                     RxOps.do_action(
                         on_completed=lambda: is_processing.__setitem__(0, False),
                         on_error=lambda e: is_processing.__setitem__(0, False),
                     ),
-                    MyOps.print_emission(id="E", **print_emission_args),
+                    MyOps.print_emission(id="E", **print_emission_args),  # type: ignore[arg-type]
                 )
 
         observable = query_observable.pipe(
-            MyOps.print_emission(id="A", **print_emission_args),
-            RxOps.flat_map(lambda query: process_if_free(query)),
-            MyOps.print_emission(id="F", **print_emission_args),
+            MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
+            RxOps.flat_map(lambda query: process_if_free(query)),  # type: ignore[no-untyped-call]
+            MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
         )
 
         disposable = observable.subscribe(
@@ -640,9 +645,9 @@ class LLMAgent(Agent):
             on_completed=lambda: logger.info(f"Stream processing completed for {self.dev_name}"),
         )
         self.disposables.add(disposable)
-        return disposable
+        return disposable  # type: ignore[no-any-return]
 
-    def get_response_observable(self) -> Observable:
+    def get_response_observable(self) -> Observable:  # type: ignore[type-arg]
         """Gets an observable that emits responses from this agent.
 
         Returns:
@@ -654,7 +659,7 @@ class LLMAgent(Agent):
             RxOps.share(),
         )
 
-    def run_observable_query(self, query_text: str, **kwargs) -> Observable:
+    def run_observable_query(self, query_text: str, **kwargs) -> Observable:  # type: ignore[no-untyped-def, type-arg]
         """Creates an observable that processes a one-off text query to Agent and emits the response.
 
         This method provides a simple way to send a text query and get an observable
@@ -672,7 +677,9 @@ class LLMAgent(Agent):
         """
         return create(
             lambda observer, _: self._observable_query(
-                observer, incoming_query=query_text, **kwargs
+                observer,  # type: ignore[arg-type]
+                incoming_query=query_text,
+                **kwargs,
             )
         )
 
@@ -701,9 +708,9 @@ class OpenAIAgent(LLMAgent):
         dev_name: str,
         agent_type: str = "Vision",
         query: str = "What do you see?",
-        input_query_stream: Observable | None = None,
-        input_data_stream: Observable | None = None,
-        input_video_stream: Observable | None = None,
+        input_query_stream: Observable | None = None,  # type: ignore[type-arg]
+        input_data_stream: Observable | None = None,  # type: ignore[type-arg]
+        input_video_stream: Observable | None = None,  # type: ignore[type-arg]
         output_dir: str = os.path.join(os.getcwd(), "assets", "agent"),
         agent_memory: AbstractAgentSemanticMemory | None = None,
         system_query: str | None = None,
@@ -831,9 +838,9 @@ class OpenAIAgent(LLMAgent):
             ),
         ]
         for doc_id, text in context_data:
-            self.agent_memory.add_vector(doc_id, text)
+            self.agent_memory.add_vector(doc_id, text)  # type: ignore[no-untyped-call]
 
-    def _send_query(self, messages: list) -> Any:
+    def _send_query(self, messages: list) -> Any:  # type: ignore[type-arg]
         """Sends the query to OpenAI's API.
 
         Depending on whether a response model is provided, the appropriate API
@@ -855,21 +862,21 @@ class OpenAIAgent(LLMAgent):
                 response = self.client.beta.chat.completions.parse(
                     model=self.model_name,
                     messages=messages,
-                    response_format=self.response_model,
+                    response_format=self.response_model,  # type: ignore[arg-type]
                     tools=(
-                        self.skill_library.get_tools()
+                        self.skill_library.get_tools()  # type: ignore[arg-type]
                         if self.skill_library is not None
                         else NOT_GIVEN
                     ),
                     max_tokens=self.max_output_tokens_per_request,
                 )
             else:
-                response = self.client.chat.completions.create(
+                response = self.client.chat.completions.create(  # type: ignore[assignment]
                     model=self.model_name,
                     messages=messages,
                     max_tokens=self.max_output_tokens_per_request,
                     tools=(
-                        self.skill_library.get_tools()
+                        self.skill_library.get_tools()  # type: ignore[arg-type]
                         if self.skill_library is not None
                         else NOT_GIVEN
                     ),
@@ -889,7 +896,7 @@ class OpenAIAgent(LLMAgent):
             logger.error(f"Unexpected error in API call: {e}")
             raise
 
-    def stream_query(self, query_text: str) -> Observable:
+    def stream_query(self, query_text: str) -> Observable:  # type: ignore[type-arg]
         """Creates an observable that processes a text query and emits the response.
 
         This method provides a simple way to send a text query and get an observable
@@ -903,7 +910,7 @@ class OpenAIAgent(LLMAgent):
             Observable: An observable that emits the response as a string.
         """
         return create(
-            lambda observer, _: self._observable_query(observer, incoming_query=query_text)
+            lambda observer, _: self._observable_query(observer, incoming_query=query_text)  # type: ignore[arg-type]
         )
 
 

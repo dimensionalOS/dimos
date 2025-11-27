@@ -28,7 +28,7 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.scheduler import ThreadPoolScheduler
-from rxpy_backpressure import BackPressure
+from rxpy_backpressure import BackPressure  # type: ignore[import-untyped]
 
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.types.vector import Vector
@@ -37,7 +37,7 @@ from dimos.utils.threadpool import get_scheduler
 
 __all__ = ["QOS", "ROSObservableTopicAbility"]
 
-TopicType = Union[OccupancyGrid, msg.OccupancyGrid, msg.Odometry]
+TopicType = Union[OccupancyGrid, msg.OccupancyGrid, msg.Odometry]  # type: ignore[name-defined]
 
 
 class QOS(enum.Enum):
@@ -46,14 +46,14 @@ class QOS(enum.Enum):
 
     def to_profile(self) -> QoSProfile:
         if self == QOS.SENSOR:
-            return QoSProfile(
+            return QoSProfile(  # type: ignore[no-untyped-call]
                 reliability=QoSReliabilityPolicy.BEST_EFFORT,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 durability=QoSDurabilityPolicy.VOLATILE,
                 depth=1,
             )
         if self == QOS.COMMAND:
-            return QoSProfile(
+            return QoSProfile(  # type: ignore[no-untyped-call]
                 reliability=QoSReliabilityPolicy.RELIABLE,
                 history=QoSHistoryPolicy.KEEP_LAST,
                 durability=QoSDurabilityPolicy.VOLATILE,
@@ -80,32 +80,32 @@ class ROSObservableTopicAbility:
     #                          ├──► observe_on(pool) ─► backpressure.latest ─► sub2 (slow)
     #                          └──► observe_on(pool) ─► backpressure.latest ─► sub3 (slower)
     #
-    def _maybe_conversion(self, msg_type: TopicType, callback) -> Callable[[TopicType], Any]:
+    def _maybe_conversion(self, msg_type: TopicType, callback) -> Callable[[TopicType], Any]:  # type: ignore[no-untyped-def]
         if msg_type == "Costmap":
-            return lambda msg: callback(OccupancyGrid.from_msg(msg))
+            return lambda msg: callback(OccupancyGrid.from_msg(msg))  # type: ignore[attr-defined]
         # just for test, not sure if this Vector auto-instantiation is used irl
         if msg_type == Vector:
             return lambda msg: callback(Vector.from_msg(msg))
-        return callback
+        return callback  # type: ignore[no-any-return]
 
-    def _sub_msg_type(self, msg_type):
+    def _sub_msg_type(self, msg_type):  # type: ignore[no-untyped-def]
         if msg_type == "Costmap":
-            return msg.OccupancyGrid
+            return msg.OccupancyGrid  # type: ignore[attr-defined]
 
         if msg_type == Vector:
-            return msg.Odometry
+            return msg.Odometry  # type: ignore[attr-defined]
 
         return msg_type
 
     @functools.cache
-    def topic(
+    def topic(  # type: ignore[no-untyped-def]
         self,
         topic_name: str,
         msg_type: TopicType,
         qos=QOS.SENSOR,
         scheduler: ThreadPoolScheduler | None = None,
         drop_unprocessed: bool = True,
-    ) -> rx.Observable:
+    ) -> rx.Observable:  # type: ignore[type-arg]
         if scheduler is None:
             scheduler = get_scheduler()
 
@@ -113,14 +113,14 @@ class ROSObservableTopicAbility:
         qos_profile = qos.to_profile()
 
         # upstream ROS callback
-        def _on_subscribe(obs, _):
-            ros_sub = self._node.create_subscription(
-                self._sub_msg_type(msg_type),
+        def _on_subscribe(obs, _):  # type: ignore[no-untyped-def]
+            ros_sub = self._node.create_subscription(  # type: ignore[attr-defined]
+                self._sub_msg_type(msg_type),  # type: ignore[no-untyped-call]
                 topic_name,
                 self._maybe_conversion(msg_type, obs.on_next),
                 qos_profile,
             )
-            return Disposable(lambda: self._node.destroy_subscription(ros_sub))
+            return Disposable(lambda: self._node.destroy_subscription(ros_sub))  # type: ignore[attr-defined]
 
         upstream = rx.create(_on_subscribe)
 
@@ -131,7 +131,7 @@ class ROSObservableTopicAbility:
         )
 
         # per-subscriber factory
-        def per_sub():
+        def per_sub():  # type: ignore[no-untyped-def]
             # hop off the ROS thread into the pool
             base = core.pipe(ops.observe_on(scheduler))
 
@@ -139,13 +139,13 @@ class ROSObservableTopicAbility:
             if not drop_unprocessed:
                 return base
 
-            def _subscribe(observer, sch=None):
+            def _subscribe(observer, sch=None):  # type: ignore[no-untyped-def]
                 return base.subscribe(BackPressure.LATEST(observer), scheduler=sch)
 
             return rx.create(_subscribe)
 
         # each `.subscribe()` call gets its own async backpressure chain
-        return rx.defer(lambda *_: per_sub())
+        return rx.defer(lambda *_: per_sub())  # type: ignore[no-untyped-call]
 
     # If you are not interested in processing streams, just want to fetch the latest stream
     # value use this function. It runs a subscription in the background.
@@ -160,7 +160,7 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    def topic_latest(
+    def topic_latest(  # type: ignore[no-untyped-def]
         self, topic_name: str, msg_type: TopicType, timeout: float | None = 100.0, qos=QOS.SENSOR
     ):
         """
@@ -181,7 +181,7 @@ class ROSObservableTopicAbility:
                 ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
             ).run()
         except Exception:
-            conn.dispose()
+            conn.dispose()  # type: ignore[union-attr]
             msg = f"{topic_name} message not received after {timeout} seconds. Is robot connected?"
             logger.error(msg)
             raise Exception(msg)
@@ -189,10 +189,10 @@ class ROSObservableTopicAbility:
         cache = {"val": first_val}
         sub = core.subscribe(lambda v: cache.__setitem__("val", v))
 
-        def reader():
+        def reader():  # type: ignore[no-untyped-def]
             return cache["val"]
 
-        reader.dispose = lambda: (sub.dispose(), conn.dispose())
+        reader.dispose = lambda: (sub.dispose(), conn.dispose())  # type: ignore[attr-defined, union-attr]
         return reader
 
     # If you are not interested in processing streams, just want to fetch the latest stream
@@ -210,7 +210,7 @@ class ROSObservableTopicAbility:
     # odom.dispose()  # clean up the subscription
     #
     # see test_ros_observable_topic.py test_topic_latest for more details
-    async def topic_latest_async(
+    async def topic_latest_async(  # type: ignore[no-untyped-def]
         self, topic_name: str, msg_type: TopicType, qos=QOS.SENSOR, timeout: float = 30.0
     ):
         loop = asyncio.get_running_loop()
@@ -219,7 +219,7 @@ class ROSObservableTopicAbility:
 
         core = self.topic(topic_name, msg_type, qos=qos)  # single ROS callback
 
-        def _on_next(v) -> None:
+        def _on_next(v) -> None:  # type: ignore[no-untyped-def]
             cache["val"] = v
             if not first.done():
                 loop.call_soon_threadsafe(first.set_result, v)
@@ -232,8 +232,8 @@ class ROSObservableTopicAbility:
             subscription.dispose()
             raise
 
-        def reader():
+        def reader():  # type: ignore[no-untyped-def]
             return cache["val"]
 
-        reader.dispose = subscription.dispose
+        reader.dispose = subscription.dispose  # type: ignore[attr-defined]
         return reader

@@ -51,7 +51,7 @@ class KeyRecorder(AbstractAudioTransform):
         self.max_recording_time = max_recording_time
         self.always_subscribe = always_subscribe
 
-        self._audio_buffer = []
+        self._audio_buffer = []  # type: ignore[var-annotated]
         self._is_recording = False
         self._recording_start_time = 0
         self._sample_rate = None  # Will be updated from incoming audio
@@ -59,8 +59,8 @@ class KeyRecorder(AbstractAudioTransform):
 
         self._audio_observable = None
         self._subscription = None
-        self._output_subject = Subject()  # For record-time passthrough
-        self._recording_subject = ReplaySubject(1)  # For full completed recordings
+        self._output_subject = Subject()  # type: ignore[var-annotated]  # For record-time passthrough
+        self._recording_subject = ReplaySubject(1)  # type: ignore[var-annotated]  # For full completed recordings
 
         # Start a thread to monitor for input
         self._running = True
@@ -69,7 +69,7 @@ class KeyRecorder(AbstractAudioTransform):
 
         logger.info("Started audio recorder (press any key to start/stop recording)")
 
-    def consume_audio(self, audio_observable: Observable) -> "KeyRecorder":
+    def consume_audio(self, audio_observable: Observable) -> "KeyRecorder":  # type: ignore[type-arg]
         """
         Set the audio observable to use when recording.
         If always_subscribe is True, subscribes immediately.
@@ -81,11 +81,11 @@ class KeyRecorder(AbstractAudioTransform):
         Returns:
             Self for method chaining
         """
-        self._audio_observable = audio_observable
+        self._audio_observable = audio_observable  # type: ignore[assignment]
 
         # If configured to always subscribe, do it now
         if self.always_subscribe and not self._subscription:
-            self._subscription = audio_observable.subscribe(
+            self._subscription = audio_observable.subscribe(  # type: ignore[assignment]
                 on_next=self._process_audio_event,
                 on_error=self._handle_error,
                 on_completed=self._handle_completion,
@@ -94,7 +94,7 @@ class KeyRecorder(AbstractAudioTransform):
 
         return self
 
-    def emit_audio(self) -> Observable:
+    def emit_audio(self) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits audio events in real-time (pass-through).
 
@@ -103,7 +103,7 @@ class KeyRecorder(AbstractAudioTransform):
         """
         return self._output_subject
 
-    def emit_recording(self) -> Observable:
+    def emit_recording(self) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits combined audio recordings when recording stops.
 
@@ -187,7 +187,7 @@ class KeyRecorder(AbstractAudioTransform):
         else:
             logger.warning("No audio was recorded")
 
-    def _process_audio_event(self, audio_event) -> None:
+    def _process_audio_event(self, audio_event) -> None:  # type: ignore[no-untyped-def]
         """Process incoming audio events."""
 
         # Only buffer if recording
@@ -215,7 +215,7 @@ class KeyRecorder(AbstractAudioTransform):
         """Combine multiple audio events into a single event."""
         if not audio_events:
             logger.warning("Attempted to combine empty audio events list")
-            return None
+            return None  # type: ignore[return-value]
 
         # Filter out any empty events that might cause broadcasting errors
         valid_events = [
@@ -227,7 +227,7 @@ class KeyRecorder(AbstractAudioTransform):
 
         if not valid_events:
             logger.warning("No valid audio events to combine")
-            return None
+            return None  # type: ignore[return-value]
 
         first_event = valid_events[0]
         channels = first_event.channels
@@ -239,7 +239,7 @@ class KeyRecorder(AbstractAudioTransform):
         # Safety check - if somehow we got no samples
         if total_samples <= 0:
             logger.warning(f"Combined audio would have {total_samples} samples - aborting")
-            return None
+            return None  # type: ignore[return-value]
 
         # For multichannel audio, data shape could be (samples,) or (samples, channels)
         if len(first_event.data.shape) == 1:
@@ -278,15 +278,15 @@ class KeyRecorder(AbstractAudioTransform):
         if combined_data.size > 0:
             return AudioEvent(
                 data=combined_data,
-                sample_rate=self._sample_rate,
+                sample_rate=self._sample_rate,  # type: ignore[arg-type]
                 timestamp=valid_events[0].timestamp,
                 channels=channels,
             )
         else:
             logger.warning("Failed to create valid combined audio event")
-            return None
+            return None  # type: ignore[return-value]
 
-    def _handle_error(self, error) -> None:
+    def _handle_error(self, error) -> None:  # type: ignore[no-untyped-def]
         """Handle errors from the observable."""
         logger.error(f"Error in audio observable: {error}")
 

@@ -37,6 +37,7 @@ all_blueprints = {
     "demo-google-maps-skill": "dimos.agents2.skills.demo_google_maps_skill:demo_google_maps_skill",
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
+    "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
 }
 
 
@@ -49,12 +50,12 @@ all_modules = {
     "detection_2d": "dimos.perception.detection2d.module2D",
     "foxglove_bridge": "dimos.robot.foxglove_bridge",
     "g1_connection": "dimos.robot.unitree_webrtc.unitree_g1",
-    "g1_joystick": "dimos.robot.unitree_webrtc.g1_joystick_module",
     "g1_skills": "dimos.robot.unitree_webrtc.unitree_g1_skill_container",
     "google_maps_skill": "dimos.agents2.skills.google_maps_skill_container",
     "gps_nav_skill": "dimos.agents2.skills.gps_nav_skill",
     "holonomic_local_planner": "dimos.navigation.local_planner.holonomic_local_planner",
     "human_input": "dimos.agents2.cli.human",
+    "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",
     "llm_agent": "dimos.agents2.agent",
     "mapper": "dimos.robot.unitree_webrtc.type.map",
     "navigation_skill": "dimos.agents2.skills.navigation",
@@ -74,11 +75,11 @@ def get_blueprint_by_name(name: str) -> ModuleBlueprintSet:
         raise ValueError(f"Unknown blueprint set name: {name}")
     module_path, attr = all_blueprints[name].split(":")
     module = __import__(module_path, fromlist=[attr])
-    return getattr(module, attr)
+    return getattr(module, attr)  # type: ignore[no-any-return]
 
 
 def get_module_by_name(name: str) -> ModuleBlueprintSet:
     if name not in all_modules:
         raise ValueError(f"Unknown module name: {name}")
     python_module = __import__(all_modules[name], fromlist=[name])
-    return getattr(python_module, name)()
+    return getattr(python_module, name)()  # type: ignore[no-any-return]

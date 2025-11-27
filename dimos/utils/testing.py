@@ -74,14 +74,14 @@ class SensorReplay(Generic[T]):
 
     @functools.cached_property
     def files(self) -> list[Path]:
-        def extract_number(filepath):
+        def extract_number(filepath):  # type: ignore[no-untyped-def]
             """Extract last digits before .pickle extension"""
             basename = os.path.basename(filepath)
             match = re.search(r"(\d+)\.pickle$", basename)
             return int(match.group(1)) if match else 0
 
         return sorted(
-            glob.glob(os.path.join(self.root_dir, "*")),
+            glob.glob(os.path.join(self.root_dir, "*")),  # type: ignore[arg-type]
             key=extract_number,
         )
 
@@ -136,19 +136,19 @@ class SensorStorage(Generic[T]):
 
     def consume_stream(self, observable: Observable[T | Any]) -> None:
         """Consume an observable stream of sensor data without saving."""
-        return observable.subscribe(self.save_one)
+        return observable.subscribe(self.save_one)  # type: ignore[arg-type, return-value]
 
     def save_stream(self, observable: Observable[T | Any]) -> Observable[int]:
         """Save an observable stream of sensor data to pickle files."""
         return observable.pipe(ops.map(lambda frame: self.save_one(frame)))
 
-    def save(self, *frames) -> int:
+    def save(self, *frames) -> int:  # type: ignore[no-untyped-def]
         """Save one or more frames to pickle files."""
         for frame in frames:
             self.save_one(frame)
         return self.cnt
 
-    def save_one(self, frame) -> int:
+    def save_one(self, frame) -> int:  # type: ignore[no-untyped-def]
         """Save a single frame to a pickle file."""
         file_name = f"{self.cnt:03d}.pickle"
         full_path = self.root_dir / file_name
@@ -254,7 +254,7 @@ class TimedSensorReplay(SensorReplay[T]):
             return None
 
     def iterate(self, loop: bool = False) -> Iterator[T | Any]:
-        return (x[1] for x in super().iterate(loop=loop))
+        return (x[1] for x in super().iterate(loop=loop))  # type: ignore[index]
 
     def iterate_ts(
         self,
@@ -270,14 +270,14 @@ class TimedSensorReplay(SensorReplay[T]):
                 return
 
         if seek is not None:
-            from_timestamp = first_ts + seek
+            from_timestamp = first_ts + seek  # type: ignore[operator]
 
         end_timestamp = None
         if duration is not None:
-            end_timestamp = (from_timestamp if from_timestamp else first_ts) + duration
+            end_timestamp = (from_timestamp if from_timestamp else first_ts) + duration  # type: ignore[operator]
 
         while True:
-            for ts, data in super().iterate():
+            for ts, data in super().iterate():  # type: ignore[misc]
                 if from_timestamp is None or ts >= from_timestamp:
                     if end_timestamp is not None and ts >= end_timestamp:
                         break
@@ -285,7 +285,7 @@ class TimedSensorReplay(SensorReplay[T]):
             if not loop:
                 break
 
-    def stream(
+    def stream(  # type: ignore[override]
         self,
         speed: float = 1.0,
         seek: float | None = None,
@@ -293,7 +293,7 @@ class TimedSensorReplay(SensorReplay[T]):
         from_timestamp: float | None = None,
         loop: bool = False,
     ) -> Observable[T | Any]:
-        def _subscribe(observer, scheduler=None):
+        def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
             from reactivex.disposable import CompositeDisposable, Disposable
 
             scheduler = scheduler or TimeoutScheduler()
@@ -325,7 +325,7 @@ class TimedSensorReplay(SensorReplay[T]):
                 observer.on_completed()
                 return disp
 
-            def schedule_emission(message) -> None:
+            def schedule_emission(message) -> None:  # type: ignore[no-untyped-def]
                 nonlocal next_message, is_disposed
 
                 if is_disposed:

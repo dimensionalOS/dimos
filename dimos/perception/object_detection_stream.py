@@ -16,10 +16,12 @@
 import numpy as np
 from reactivex import Observable, operators as ops
 
-from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
+from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector  # type: ignore[import-untyped]
 
 try:
-    from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
+    from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-untyped]
+        Detic2DDetector,
+    )
 
     DETIC_AVAILABLE = True
 except (ModuleNotFoundError, ImportError):
@@ -30,14 +32,14 @@ from typing import TYPE_CHECKING
 
 from dimos.models.depth.metric3d import Metric3D
 from dimos.perception.common.utils import draw_object_detection_visualization
-from dimos.perception.detection2d.utils import (
+from dimos.perception.detection2d.utils import (  # type: ignore[attr-defined]
     calculate_depth_from_bbox,
     calculate_object_size_from_bbox,
     calculate_position_rotation_from_bbox,
 )
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import transform_robot_to_map
+from dimos.utils.transform_utils import transform_robot_to_map  # type: ignore[attr-defined]
 
 if TYPE_CHECKING:
     from dimos.types.manipulation import ObjectData
@@ -58,16 +60,16 @@ class ObjectDetectionStream:
     Provides a stream of structured object data with position and rotation information.
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         camera_intrinsics=None,  # [fx, fy, cx, cy]
         device: str = "cuda",
         gt_depth_scale: float = 1000.0,
         min_confidence: float = 0.7,
         class_filter=None,  # Optional list of class names to filter (e.g., ["person", "car"])
-        get_pose: Callable | None = None,  # Optional function to transform coordinates to map frame
+        get_pose: Callable | None = None,  # type: ignore[type-arg]  # Optional function to transform coordinates to map frame
         detector: Detic2DDetector | Yolo2DDetector | None = None,
-        video_stream: Observable = None,
+        video_stream: Observable = None,  # type: ignore[assignment, type-arg]
         disable_depth: bool = False,  # Flag to disable monocular Metric3D depth estimation
         draw_masks: bool = False,  # Flag to enable drawing segmentation masks
     ) -> None:
@@ -117,7 +119,7 @@ class ObjectDetectionStream:
                 self.depth_model = Metric3D(gt_depth_scale)
 
                 if camera_intrinsics is not None:
-                    self.depth_model.update_intrinsic(camera_intrinsics)
+                    self.depth_model.update_intrinsic(camera_intrinsics)  # type: ignore[no-untyped-call]
 
                     # Create 3x3 camera matrix for calculations
                     fx, fy, cx, cy = camera_intrinsics
@@ -141,7 +143,7 @@ class ObjectDetectionStream:
         if video_stream is not None:
             self.stream = self.create_stream(video_stream)
 
-    def create_stream(self, video_stream: Observable) -> Observable:
+    def create_stream(self, video_stream: Observable) -> Observable:  # type: ignore[type-arg]
         """
         Create an Observable stream of object data from a video stream.
 
@@ -153,17 +155,17 @@ class ObjectDetectionStream:
             with position and rotation information
         """
 
-        def process_frame(frame):
+        def process_frame(frame):  # type: ignore[no-untyped-def]
             # TODO: More modular detector output interface
-            bboxes, track_ids, class_ids, confidences, names, *mask_data = (
+            bboxes, track_ids, class_ids, confidences, names, *mask_data = (  # type: ignore[misc]
                 *self.detector.process_image(frame),
                 [],
             )
 
             masks = (
-                mask_data[0]
-                if mask_data and len(mask_data[0]) == len(bboxes)
-                else [None] * len(bboxes)
+                mask_data[0]  # type: ignore[has-type]
+                if mask_data and len(mask_data[0]) == len(bboxes)  # type: ignore[has-type]
+                else [None] * len(bboxes)  # type: ignore[has-type]
             )
 
             # Create visualization
@@ -172,24 +174,24 @@ class ObjectDetectionStream:
             # Process detections
             objects = []
             if not self.disable_depth:
-                depth_map = self.depth_model.infer_depth(frame)
+                depth_map = self.depth_model.infer_depth(frame)  # type: ignore[union-attr]
                 depth_map = np.array(depth_map)
             else:
                 depth_map = None
 
-            for i, bbox in enumerate(bboxes):
+            for i, bbox in enumerate(bboxes):  # type: ignore[has-type]
                 # Skip if confidence is too low
-                if i < len(confidences) and confidences[i] < self.min_confidence:
+                if i < len(confidences) and confidences[i] < self.min_confidence:  # type: ignore[has-type]
                     continue
 
                 # Skip if class filter is active and class not in filter
-                class_name = names[i] if i < len(names) else None
+                class_name = names[i] if i < len(names) else None  # type: ignore[has-type]
                 if self.class_filter and class_name not in self.class_filter:
                     continue
 
                 if not self.disable_depth and depth_map is not None:
                     # Get depth for this object
-                    depth = calculate_depth_from_bbox(depth_map, bbox)
+                    depth = calculate_depth_from_bbox(depth_map, bbox)  # type: ignore[no-untyped-call]
                     if depth is None:
                         # Skip objects with invalid depth
                         continue
@@ -216,19 +218,19 @@ class ObjectDetectionStream:
 
                 else:
                     depth = -1
-                    position = Vector(0, 0, 0)
-                    rotation = Vector(0, 0, 0)
+                    position = Vector(0, 0, 0)  # type: ignore[arg-type]
+                    rotation = Vector(0, 0, 0)  # type: ignore[arg-type]
                     width = -1
                     height = -1
 
                 # Create a properly typed ObjectData instance
                 object_data: ObjectData = {
-                    "object_id": track_ids[i] if i < len(track_ids) else -1,
+                    "object_id": track_ids[i] if i < len(track_ids) else -1,  # type: ignore[has-type]
                     "bbox": bbox,
                     "depth": depth,
-                    "confidence": confidences[i] if i < len(confidences) else None,
-                    "class_id": class_ids[i] if i < len(class_ids) else None,
-                    "label": class_name,
+                    "confidence": confidences[i] if i < len(confidences) else None,  # type: ignore[has-type, typeddict-item]
+                    "class_id": class_ids[i] if i < len(class_ids) else None,  # type: ignore[has-type, typeddict-item]
+                    "label": class_name,  # type: ignore[typeddict-item]
                     "position": position,
                     "rotation": rotation,
                     "size": {"width": width, "height": height},
@@ -248,7 +250,7 @@ class ObjectDetectionStream:
 
         return self.stream
 
-    def get_stream(self):
+    def get_stream(self):  # type: ignore[no-untyped-def]
         """
         Returns the current detection stream if available.
         Creates a new one with the provided video_stream if not already created.
@@ -262,7 +264,7 @@ class ObjectDetectionStream:
             )
         return self.stream
 
-    def get_formatted_stream(self):
+    def get_formatted_stream(self):  # type: ignore[no-untyped-def]
         """
         Returns a formatted stream of object detection data for better readability.
         This is especially useful for LLMs like Claude that need structured text input.
@@ -275,7 +277,7 @@ class ObjectDetectionStream:
                 "Stream not initialized. Either provide a video_stream during initialization or call create_stream first."
             )
 
-        def format_detection_data(result):
+        def format_detection_data(result):  # type: ignore[no-untyped-def]
             # Extract objects from result
             objects = result.get("objects", [])
 

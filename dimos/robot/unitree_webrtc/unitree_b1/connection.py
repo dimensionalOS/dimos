@@ -52,13 +52,13 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    cmd_vel: In[TwistStamped] = None  # Timestamped velocity commands from ROS
-    mode_cmd: In[Int32] = None  # Mode changes
-    odom_in: In[Odometry] = None  # External odometry from ROS SLAM/lidar
+    cmd_vel: In[TwistStamped] = None  # type: ignore[assignment]  # Timestamped velocity commands from ROS
+    mode_cmd: In[Int32] = None  # type: ignore[assignment]  # Mode changes
+    odom_in: In[Odometry] = None  # type: ignore[assignment]  # External odometry from ROS SLAM/lidar
 
-    odom_pose: Out[PoseStamped] = None  # Converted pose for internal use
+    odom_pose: Out[PoseStamped] = None  # type: ignore[assignment]  # Converted pose for internal use
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs
     ) -> None:
         """Initialize B1 connection module.
@@ -95,7 +95,7 @@ class B1ConnectionModule(Module):
 
         # Setup UDP socket (unless in test mode)
         if not self.test_mode:
-            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)  # type: ignore[assignment]
             logger.info(f"B1 Connection started - UDP to {self.ip}:{self.port} at 50Hz")
         else:
             logger.info(f"[TEST MODE] B1 Connection started - would send to {self.ip}:{self.port}")
@@ -116,12 +116,12 @@ class B1ConnectionModule(Module):
         self.watchdog_running = True
 
         # Start 50Hz sending thread
-        self.send_thread = threading.Thread(target=self._send_loop, daemon=True)
-        self.send_thread.start()
+        self.send_thread = threading.Thread(target=self._send_loop, daemon=True)  # type: ignore[assignment]
+        self.send_thread.start()  # type: ignore[attr-defined]
 
         # Start watchdog thread
-        self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
-        self.watchdog_thread.start()
+        self.watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)  # type: ignore[assignment]
+        self.watchdog_thread.start()  # type: ignore[attr-defined]
 
     @rpc
     def stop(self) -> None:
@@ -282,7 +282,7 @@ class B1ConnectionModule(Module):
                 position=msg.pose.pose.position,
                 orientation=msg.pose.pose.orientation,
             )
-            self.odom_pose.publish(pose_stamped)
+            self.odom_pose.publish(pose_stamped)  # type: ignore[no-untyped-call]
 
     def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""
@@ -359,9 +359,9 @@ class B1ConnectionModule(Module):
 class MockB1ConnectionModule(B1ConnectionModule):
     """Test connection module that prints commands instead of sending UDP."""
 
-    def __init__(self, ip: str = "127.0.0.1", port: int = 9090, *args, **kwargs) -> None:
+    def __init__(self, ip: str = "127.0.0.1", port: int = 9090, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize test connection without creating socket."""
-        super().__init__(ip, port, test_mode=True, *args, **kwargs)
+        super().__init__(ip, port, test_mode=True, *args, **kwargs)  # type: ignore[misc]
 
     def _send_loop(self) -> None:
         """Override to provide better test output with timeout detection."""

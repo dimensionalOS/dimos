@@ -21,8 +21,8 @@ import os
 import time
 import warnings
 
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.std_msgs import Bool, String
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
 
@@ -86,7 +86,7 @@ warnings.filterwarnings("ignore", message="H264Decoder.*failed to decode")
 class ReplayRTC(Resource):
     """Replay WebRTC connection for testing with recorded data."""
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         get_data("unitree_office_walk")  # Preload data for testing
 
     def start(self) -> None:
@@ -102,19 +102,19 @@ class ReplayRTC(Resource):
         print("liedown suppressed")
 
     @functools.cache
-    def lidar_stream(self):
+    def lidar_stream(self):  # type: ignore[no-untyped-def]
         print("lidar stream start")
         lidar_store = TimedSensorReplay("unitree_office_walk/lidar", autocast=LidarMessage.from_msg)
         return lidar_store.stream()
 
     @functools.cache
-    def odom_stream(self):
+    def odom_stream(self):  # type: ignore[no-untyped-def]
         print("odom stream start")
         odom_store = TimedSensorReplay("unitree_office_walk/odom", autocast=Odometry.from_msg)
         return odom_store.stream()
 
     @functools.cache
-    def video_stream(self):
+    def video_stream(self):  # type: ignore[no-untyped-def]
         print("video stream start")
         video_store = TimedSensorReplay(
             "unitree_office_walk/video", autocast=lambda x: Image.from_numpy(x).to_rgb()
@@ -124,7 +124,7 @@ class ReplayRTC(Resource):
     def move(self, twist: Twist, duration: float = 0.0) -> None:
         pass
 
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Fake publish request for testing."""
         return {"status": "ok", "message": "Fake publish"}
 
@@ -132,22 +132,22 @@ class ReplayRTC(Resource):
 class ConnectionModule(Module):
     """Module that handles robot sensor data, movement commands, and camera information."""
 
-    cmd_vel: In[Twist] = None
-    odom: Out[PoseStamped] = None
-    gps_location: Out[LatLon] = None
-    lidar: Out[LidarMessage] = None
-    color_image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
-    camera_pose: Out[PoseStamped] = None
+    cmd_vel: In[Twist] = None  # type: ignore[assignment]
+    odom: Out[PoseStamped] = None  # type: ignore[assignment]
+    gps_location: Out[LatLon] = None  # type: ignore[assignment]
+    lidar: Out[LidarMessage] = None  # type: ignore[assignment]
+    color_image: Out[Image] = None  # type: ignore[assignment]
+    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
+    camera_pose: Out[PoseStamped] = None  # type: ignore[assignment]
     ip: str
     connection_type: str = "webrtc"
 
-    _odom: PoseStamped = None
-    _lidar: LidarMessage = None
-    _last_image: Image = None
+    _odom: PoseStamped = None  # type: ignore[assignment]
+    _lidar: LidarMessage = None  # type: ignore[assignment]
+    _last_image: Image = None  # type: ignore[assignment]
     _global_config: GlobalConfig
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         ip: str | None = None,
         connection_type: str | None = None,
@@ -157,7 +157,7 @@ class ConnectionModule(Module):
         **kwargs,
     ) -> None:
         self._global_config = global_config or GlobalConfig()
-        self.ip = ip if ip is not None else self._global_config.robot_ip
+        self.ip = ip if ip is not None else self._global_config.robot_ip  # type: ignore[assignment]
         self.connection_type = connection_type or self._global_config.unitree_connection_type
         self.rectify_image = not self._global_config.simulation
         self.tf = TF()
@@ -181,8 +181,8 @@ class ConnectionModule(Module):
                 self.lcm_camera_info.D
             )  # zero out distortion coefficients for rectification
         else:
-            self.camera_matrix = None
-            self.dist_coeffs = None
+            self.camera_matrix = None  # type: ignore[assignment]
+            self.dist_coeffs = None  # type: ignore[assignment]
 
         Module.__init__(self, *args, **kwargs)
 
@@ -193,30 +193,30 @@ class ConnectionModule(Module):
 
         match self.connection_type:
             case "webrtc":
-                self.connection = UnitreeWebRTCConnection(self.ip)
+                self.connection = UnitreeWebRTCConnection(self.ip)  # type: ignore[assignment]
             case "replay":
-                self.connection = ReplayRTC(self.ip)
+                self.connection = ReplayRTC(self.ip)  # type: ignore[assignment]
             case "mujoco":
                 from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
 
-                self.connection = MujocoConnection(self._global_config)
+                self.connection = MujocoConnection(self._global_config)  # type: ignore[assignment]
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
-        self.connection.start()
+        self.connection.start()  # type: ignore[attr-defined]
 
         # Connect sensor streams to outputs
-        unsub = self.connection.lidar_stream().subscribe(self._on_lidar)
+        unsub = self.connection.lidar_stream().subscribe(self._on_lidar)  # type: ignore[attr-defined]
         self._disposables.add(unsub)
 
-        unsub = self.connection.odom_stream().subscribe(self._publish_tf)
+        unsub = self.connection.odom_stream().subscribe(self._publish_tf)  # type: ignore[attr-defined]
         self._disposables.add(unsub)
 
-        unsub = self.connection.video_stream().subscribe(self._on_video)
+        unsub = self.connection.video_stream().subscribe(self._on_video)  # type: ignore[attr-defined]
         self._disposables.add(unsub)
 
         unsub = self.cmd_vel.subscribe(self.move)
-        self._disposables.add(unsub)
+        self._disposables.add(unsub)  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:
@@ -226,7 +226,7 @@ class ConnectionModule(Module):
 
     def _on_lidar(self, msg: LidarMessage) -> None:
         if self.lidar.transport:
-            self.lidar.publish(msg)
+            self.lidar.publish(msg)  # type: ignore[no-untyped-call]
 
     def _on_video(self, msg: Image) -> None:
         """Handle incoming video frames and publish synchronized camera data."""
@@ -235,21 +235,21 @@ class ConnectionModule(Module):
             rectified_msg = rectify_image(msg, self.camera_matrix, self.dist_coeffs)
             self._last_image = rectified_msg
             if self.color_image.transport:
-                self.color_image.publish(rectified_msg)
+                self.color_image.publish(rectified_msg)  # type: ignore[no-untyped-call]
         else:
             self._last_image = msg
             if self.color_image.transport:
-                self.color_image.publish(msg)
+                self.color_image.publish(msg)  # type: ignore[no-untyped-call]
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
         self._publish_camera_info(timestamp)
         self._publish_camera_pose(timestamp)
 
-    def _publish_tf(self, msg) -> None:
+    def _publish_tf(self, msg) -> None:  # type: ignore[no-untyped-def]
         self._odom = msg
         if self.odom.transport:
-            self.odom.publish(msg)
+            self.odom.publish(msg)  # type: ignore[no-untyped-call]
         self.tf.publish(Transform.from_pose("base_link", msg))
 
         # Publish camera_link transform
@@ -275,7 +275,7 @@ class ConnectionModule(Module):
         header = Header(timestamp, "camera_link")
         self.lcm_camera_info.header = header
         if self.camera_info.transport:
-            self.camera_info.publish(self.lcm_camera_info)
+            self.camera_info.publish(self.lcm_camera_info)  # type: ignore[no-untyped-call]
 
     def _publish_camera_pose(self, timestamp: float) -> None:
         """Publish camera pose from TF lookup."""
@@ -296,7 +296,7 @@ class ConnectionModule(Module):
                     orientation=transform.rotation,
                 )
                 if self.camera_pose.transport:
-                    self.camera_pose.publish(pose_msg)
+                    self.camera_pose.publish(pose_msg)  # type: ignore[no-untyped-call]
             else:
                 logger.debug("Could not find transform from world to camera_link")
 
@@ -315,20 +315,20 @@ class ConnectionModule(Module):
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
         """Send movement command to robot."""
-        self.connection.move(twist, duration)
+        self.connection.move(twist, duration)  # type: ignore[attr-defined]
 
     @rpc
-    def standup(self):
+    def standup(self):  # type: ignore[no-untyped-def]
         """Make the robot stand up."""
-        return self.connection.standup()
+        return self.connection.standup()  # type: ignore[attr-defined]
 
     @rpc
-    def liedown(self):
+    def liedown(self):  # type: ignore[no-untyped-def]
         """Make the robot lie down."""
-        return self.connection.liedown()
+        return self.connection.liedown()  # type: ignore[attr-defined]
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Publish a request to the WebRTC connection.
         Args:
             topic: The RTC topic to publish to
@@ -336,7 +336,7 @@ class ConnectionModule(Module):
         Returns:
             The result of the publish request
         """
-        return self.connection.publish_request(topic, data)
+        return self.connection.publish_request(topic, data)  # type: ignore[attr-defined]
 
 
 connection = ConnectionModule.blueprint
@@ -440,105 +440,105 @@ class UnitreeGo2(Resource):
 
     def _deploy_connection(self) -> None:
         """Deploy and configure the connection module."""
-        self.connection = self._dimos.deploy(
+        self.connection = self._dimos.deploy(  # type: ignore[assignment]
             ConnectionModule, self.ip, connection_type=self.connection_type
         )
 
-        self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)
-        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)
-        self.connection.gps_location.transport = core.pLCMTransport("/gps_location")
-        self.connection.color_image.transport = core.pSHMTransport(
+        self.connection.lidar.transport = core.LCMTransport("/lidar", LidarMessage)  # type: ignore[attr-defined]
+        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)  # type: ignore[attr-defined]
+        self.connection.gps_location.transport = core.pLCMTransport("/gps_location")  # type: ignore[attr-defined]
+        self.connection.color_image.transport = core.pSHMTransport(  # type: ignore[attr-defined]
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
-        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)
-        self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)
+        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)  # type: ignore[attr-defined]
+        self.connection.camera_info.transport = core.LCMTransport("/go2/camera_info", CameraInfo)  # type: ignore[attr-defined]
+        self.connection.camera_pose.transport = core.LCMTransport("/go2/camera_pose", PoseStamped)  # type: ignore[attr-defined]
 
     def _deploy_mapping(self) -> None:
         """Deploy and configure the mapping module."""
         min_height = 0.3 if self.connection_type == "mujoco" else 0.15
-        self.mapper = self._dimos.deploy(
+        self.mapper = self._dimos.deploy(  # type: ignore[assignment]
             Map, voxel_size=0.5, global_publish_interval=2.5, min_height=min_height
         )
 
-        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)
-        self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)
-        self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)
+        self.mapper.global_map.transport = core.LCMTransport("/global_map", LidarMessage)  # type: ignore[attr-defined]
+        self.mapper.global_costmap.transport = core.LCMTransport("/global_costmap", OccupancyGrid)  # type: ignore[attr-defined]
+        self.mapper.local_costmap.transport = core.LCMTransport("/local_costmap", OccupancyGrid)  # type: ignore[attr-defined]
 
-        self.mapper.lidar.connect(self.connection.lidar)
+        self.mapper.lidar.connect(self.connection.lidar)  # type: ignore[attr-defined]
 
     def _deploy_navigation(self) -> None:
         """Deploy and configure navigation modules."""
-        self.global_planner = self._dimos.deploy(AstarPlanner)
-        self.local_planner = self._dimos.deploy(HolonomicLocalPlanner)
-        self.navigator = self._dimos.deploy(
+        self.global_planner = self._dimos.deploy(AstarPlanner)  # type: ignore[assignment]
+        self.local_planner = self._dimos.deploy(HolonomicLocalPlanner)  # type: ignore[assignment]
+        self.navigator = self._dimos.deploy(  # type: ignore[assignment]
             BehaviorTreeNavigator,
-            reset_local_planner=self.local_planner.reset,
-            check_goal_reached=self.local_planner.is_goal_reached,
+            reset_local_planner=self.local_planner.reset,  # type: ignore[attr-defined]
+            check_goal_reached=self.local_planner.is_goal_reached,  # type: ignore[attr-defined]
         )
-        self.frontier_explorer = self._dimos.deploy(WavefrontFrontierExplorer)
+        self.frontier_explorer = self._dimos.deploy(WavefrontFrontierExplorer)  # type: ignore[assignment]
 
-        self.navigator.target.transport = core.LCMTransport("/navigation_goal", PoseStamped)
-        self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
-        self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)
-        self.navigator.global_costmap.transport = core.LCMTransport(
+        self.navigator.target.transport = core.LCMTransport("/navigation_goal", PoseStamped)  # type: ignore[attr-defined]
+        self.navigator.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)  # type: ignore[attr-defined]
+        self.navigator.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)  # type: ignore[attr-defined]
+        self.navigator.navigation_state.transport = core.LCMTransport("/navigation_state", String)  # type: ignore[attr-defined]
+        self.navigator.global_costmap.transport = core.LCMTransport(  # type: ignore[attr-defined]
             "/global_costmap", OccupancyGrid
         )
-        self.global_planner.path.transport = core.LCMTransport("/global_path", Path)
-        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.frontier_explorer.goal_request.transport = core.LCMTransport(
+        self.global_planner.path.transport = core.LCMTransport("/global_path", Path)  # type: ignore[attr-defined]
+        self.local_planner.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)  # type: ignore[attr-defined]
+        self.frontier_explorer.goal_request.transport = core.LCMTransport(  # type: ignore[attr-defined]
             "/goal_request", PoseStamped
         )
-        self.frontier_explorer.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.frontier_explorer.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
-        self.frontier_explorer.stop_explore_cmd.transport = core.LCMTransport(
+        self.frontier_explorer.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)  # type: ignore[attr-defined]
+        self.frontier_explorer.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)  # type: ignore[attr-defined]
+        self.frontier_explorer.stop_explore_cmd.transport = core.LCMTransport(  # type: ignore[attr-defined]
             "/stop_explore_cmd", Bool
         )
 
-        self.global_planner.target.connect(self.navigator.target)
+        self.global_planner.target.connect(self.navigator.target)  # type: ignore[attr-defined]
 
-        self.global_planner.global_costmap.connect(self.mapper.global_costmap)
-        self.global_planner.odom.connect(self.connection.odom)
+        self.global_planner.global_costmap.connect(self.mapper.global_costmap)  # type: ignore[attr-defined]
+        self.global_planner.odom.connect(self.connection.odom)  # type: ignore[attr-defined]
 
-        self.local_planner.path.connect(self.global_planner.path)
-        self.local_planner.local_costmap.connect(self.mapper.local_costmap)
-        self.local_planner.odom.connect(self.connection.odom)
+        self.local_planner.path.connect(self.global_planner.path)  # type: ignore[attr-defined]
+        self.local_planner.local_costmap.connect(self.mapper.local_costmap)  # type: ignore[attr-defined]
+        self.local_planner.odom.connect(self.connection.odom)  # type: ignore[attr-defined]
 
-        self.connection.cmd_vel.connect(self.local_planner.cmd_vel)
+        self.connection.cmd_vel.connect(self.local_planner.cmd_vel)  # type: ignore[attr-defined]
 
-        self.navigator.odom.connect(self.connection.odom)
+        self.navigator.odom.connect(self.connection.odom)  # type: ignore[attr-defined]
 
-        self.frontier_explorer.global_costmap.connect(self.mapper.global_costmap)
-        self.frontier_explorer.odom.connect(self.connection.odom)
+        self.frontier_explorer.global_costmap.connect(self.mapper.global_costmap)  # type: ignore[attr-defined]
+        self.frontier_explorer.odom.connect(self.connection.odom)  # type: ignore[attr-defined]
 
     def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
-        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)
-        self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
-        self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
-        self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)  # type: ignore[assignment]
+        self.websocket_vis.goal_request.transport = core.LCMTransport("/goal_request", PoseStamped)  # type: ignore[attr-defined]
+        self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")  # type: ignore[attr-defined]
+        self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)  # type: ignore[attr-defined]
+        self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)  # type: ignore[attr-defined]
+        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)  # type: ignore[attr-defined]
 
-        self.websocket_vis.odom.connect(self.connection.odom)
-        self.websocket_vis.gps_location.connect(self.connection.gps_location)
-        self.websocket_vis.path.connect(self.global_planner.path)
-        self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)
+        self.websocket_vis.odom.connect(self.connection.odom)  # type: ignore[attr-defined]
+        self.websocket_vis.gps_location.connect(self.connection.gps_location)  # type: ignore[attr-defined]
+        self.websocket_vis.path.connect(self.global_planner.path)  # type: ignore[attr-defined]
+        self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)  # type: ignore[attr-defined]
 
     def _deploy_foxglove_bridge(self) -> None:
-        self.foxglove_bridge = FoxgloveBridge(
+        self.foxglove_bridge = FoxgloveBridge(  # type: ignore[assignment]
             shm_channels=[
                 "/go2/color_image#sensor_msgs.Image",
                 "/go2/tracked_overlay#sensor_msgs.Image",
             ]
         )
-        self.foxglove_bridge.start()
+        self.foxglove_bridge.start()  # type: ignore[attr-defined]
 
     def _deploy_perception(self) -> None:
         """Deploy and configure perception modules."""
         # Deploy spatial memory
-        self.spatial_memory_module = self._dimos.deploy(
+        self.spatial_memory_module = self._dimos.deploy(  # type: ignore[assignment]
             SpatialMemory,
             collection_name=self.spatial_memory_collection,
             db_path=self.db_path,
@@ -546,14 +546,14 @@ class UnitreeGo2(Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.color_image.transport = core.pSHMTransport(
+        self.spatial_memory_module.color_image.transport = core.pSHMTransport(  # type: ignore[attr-defined]
             "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
 
         logger.info("Spatial memory module deployed and connected")
 
         # Deploy 2D object tracker
-        self.object_tracker = self._dimos.deploy(
+        self.object_tracker = self._dimos.deploy(  # type: ignore[assignment]
             ObjectTracker2D,
             frame_id="camera_link",
         )
@@ -561,13 +561,13 @@ class UnitreeGo2(Resource):
         # Deploy bbox navigation module
         self.bbox_navigator = self._dimos.deploy(BBoxNavigationModule, goal_distance=1.0)
 
-        self.utilization_module = self._dimos.deploy(UtilizationModule)
+        self.utilization_module = self._dimos.deploy(UtilizationModule)  # type: ignore[assignment]
 
         # Set up transports for object tracker
-        self.object_tracker.detection2darray.transport = core.LCMTransport(
+        self.object_tracker.detection2darray.transport = core.LCMTransport(  # type: ignore[attr-defined]
             "/go2/detection2d", Detection2DArray
         )
-        self.object_tracker.tracked_overlay.transport = core.pSHMTransport(
+        self.object_tracker.tracked_overlay.transport = core.pSHMTransport(  # type: ignore[attr-defined]
             "/go2/tracked_overlay", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
 
@@ -585,9 +585,9 @@ class UnitreeGo2(Resource):
 
         # Connect bbox navigator inputs
         if self.bbox_navigator:
-            self.bbox_navigator.detection2d.connect(self.object_tracker.detection2darray)
-            self.bbox_navigator.camera_info.connect(self.connection.camera_info)
-            self.bbox_navigator.goal_request.connect(self.navigator.goal_request)
+            self.bbox_navigator.detection2d.connect(self.object_tracker.detection2darray)  # type: ignore[attr-defined]
+            self.bbox_navigator.camera_info.connect(self.connection.camera_info)  # type: ignore[attr-defined]
+            self.bbox_navigator.goal_request.connect(self.navigator.goal_request)  # type: ignore[attr-defined]
             logger.info("BBox navigator connected")
 
     def _start_modules(self) -> None:
@@ -598,15 +598,15 @@ class UnitreeGo2(Resource):
         if self.skill_library is not None:
             for skill in self.skill_library:
                 if isinstance(skill, AbstractRobotSkill):
-                    self.skill_library.create_instance(skill.__name__, robot=self)
+                    self.skill_library.create_instance(skill.__name__, robot=self)  # type: ignore[attr-defined]
             if isinstance(self.skill_library, MyUnitreeSkills):
-                self.skill_library._robot = self
+                self.skill_library._robot = self  # type: ignore[assignment]
                 self.skill_library.init()
                 self.skill_library.initialize_skills()
 
     def move(self, twist: Twist, duration: float = 0.0) -> None:
         """Send movement command to robot."""
-        self.connection.move(twist, duration)
+        self.connection.move(twist, duration)  # type: ignore[attr-defined]
 
     def explore(self) -> bool:
         """Start autonomous frontier exploration.
@@ -614,7 +614,7 @@ class UnitreeGo2(Resource):
         Returns:
             True if exploration started successfully
         """
-        return self.frontier_explorer.explore()
+        return self.frontier_explorer.explore()  # type: ignore[attr-defined, no-any-return]
 
     def navigate_to(self, pose: PoseStamped, blocking: bool = True) -> bool:
         """Navigate to a target pose.
@@ -631,15 +631,15 @@ class UnitreeGo2(Resource):
         logger.info(
             f"Navigating to pose: ({pose.position.x:.2f}, {pose.position.y:.2f}, {pose.position.z:.2f})"
         )
-        self.navigator.set_goal(pose)
+        self.navigator.set_goal(pose)  # type: ignore[attr-defined]
         time.sleep(1.0)
 
         if blocking:
-            while self.navigator.get_state() == NavigationState.FOLLOWING_PATH:
+            while self.navigator.get_state() == NavigationState.FOLLOWING_PATH:  # type: ignore[attr-defined]
                 time.sleep(0.25)
 
             time.sleep(1.0)
-            if not self.navigator.is_goal_reached():
+            if not self.navigator.is_goal_reached():  # type: ignore[attr-defined]
                 logger.info("Navigation was cancelled or failed")
                 return False
             else:
@@ -654,11 +654,11 @@ class UnitreeGo2(Resource):
         Returns:
             True if exploration was stopped
         """
-        self.navigator.cancel_goal()
-        return self.frontier_explorer.stop_exploration()
+        self.navigator.cancel_goal()  # type: ignore[attr-defined]
+        return self.frontier_explorer.stop_exploration()  # type: ignore[attr-defined, no-any-return]
 
     def is_exploration_active(self) -> bool:
-        return self.frontier_explorer.is_exploration_active()
+        return self.frontier_explorer.is_exploration_active()  # type: ignore[attr-defined, no-any-return]
 
     def cancel_navigation(self) -> bool:
         """Cancel the current navigation goal.
@@ -666,7 +666,7 @@ class UnitreeGo2(Resource):
         Returns:
             True if goal was cancelled
         """
-        return self.navigator.cancel_goal()
+        return self.navigator.cancel_goal()  # type: ignore[attr-defined, no-any-return]
 
     @property
     def spatial_memory(self) -> SpatialMemory | None:
@@ -679,7 +679,7 @@ class UnitreeGo2(Resource):
 
     @functools.cached_property
     def gps_position_stream(self) -> Observable[LatLon]:
-        return self.connection.gps_location.transport.pure_observable()
+        return self.connection.gps_location.transport.pure_observable()  # type: ignore[attr-defined, no-any-return]
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry.
@@ -687,7 +687,7 @@ class UnitreeGo2(Resource):
         Returns:
             The robot's odometry
         """
-        return self.connection.get_odom()
+        return self.connection.get_odom()  # type: ignore[attr-defined, no-any-return]
 
 
 def main() -> None:
@@ -695,7 +695,7 @@ def main() -> None:
     ip = os.getenv("ROBOT_IP")
     connection_type = os.getenv("CONNECTION_TYPE", "webrtc")
 
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
     robot = UnitreeGo2(ip=ip, websocket_port=7779, connection_type=connection_type)
     robot.start()

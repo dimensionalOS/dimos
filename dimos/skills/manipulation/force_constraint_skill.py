@@ -16,7 +16,7 @@
 from pydantic import Field
 
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
-from dimos.types.manipulation import ForceConstraint, Vector
+from dimos.types.manipulation import ForceConstraint, Vector  # type: ignore[attr-defined]
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
@@ -53,7 +53,7 @@ class ForceConstraintSkill(AbstractManipulationSkill):
         # Create force direction vector if provided (convert 2D point to 3D vector with z=0)
         force_direction_vector = None
         if self.force_direction:
-            force_direction_vector = Vector(self.force_direction[0], self.force_direction[1], 0.0)
+            force_direction_vector = Vector(self.force_direction[0], self.force_direction[1], 0.0)  # type: ignore[arg-type]
 
         # Create and return the constraint
         constraint = ForceConstraint(
@@ -64,7 +64,7 @@ class ForceConstraintSkill(AbstractManipulationSkill):
         )
 
         # Add constraint to manipulation interface for Agent recall
-        self.manipulation_interface.add_constraint(constraint)
+        self.manipulation_interface.add_constraint(constraint)  # type: ignore[union-attr]
 
         # Log the constraint creation
         logger.info(f"Generated force constraint: {self.description}")

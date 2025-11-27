@@ -53,7 +53,7 @@ class ManipulationInterface:
         self,
         output_dir: str,
         new_memory: bool = False,
-        perception_stream: ObjectDetectionStream = None,
+        perception_stream: ObjectDetectionStream = None,  # type: ignore[assignment]
     ) -> None:
         """
         Initialize a new ManipulationInterface instance.
@@ -136,7 +136,7 @@ class ManipulationInterface:
 
         """
         # Add task to history
-        self.manipulation_history.add_entry(
+        self.manipulation_history.add_entry(  # type: ignore[call-arg]
             task=task, result=None, notes=None, manipulation_response=manipulation_response
         )
 
@@ -150,7 +150,7 @@ class ManipulationInterface:
         Returns:
             The task object or None if not found
         """
-        return self.history.get_manipulation_task(task_id)
+        return self.history.get_manipulation_task(task_id)  # type: ignore[attr-defined, no-any-return]
 
     def get_all_manipulation_tasks(self) -> list[ManipulationTask]:
         """
@@ -159,7 +159,7 @@ class ManipulationInterface:
         Returns:
             List of all manipulation tasks
         """
-        return self.history.get_all_manipulation_tasks()
+        return self.history.get_all_manipulation_tasks()  # type: ignore[attr-defined, no-any-return]
 
     def update_task_status(
         self, task_id: str, status: str, result: dict[str, Any] | None = None
@@ -175,7 +175,7 @@ class ManipulationInterface:
         Returns:
             The updated task or None if task not found
         """
-        return self.history.update_task_status(task_id, status, result)
+        return self.history.update_task_status(task_id, status, result)  # type: ignore[attr-defined, no-any-return]
 
     # === Perception stream methods ===
 
@@ -185,13 +185,13 @@ class ManipulationInterface:
         """
         if self.perception_stream:
             # Subscribe to the stream and update latest_objects
-            self.stream_subscription = self.perception_stream.get_stream().subscribe(
+            self.stream_subscription = self.perception_stream.get_stream().subscribe(  # type: ignore[no-untyped-call]
                 on_next=self._update_latest_objects,
                 on_error=lambda e: logger.error(f"Error in perception stream: {e}"),
             )
             logger.info("Subscribed to perception stream")
 
-    def _update_latest_objects(self, data) -> None:
+    def _update_latest_objects(self, data) -> None:  # type: ignore[no-untyped-def]
         """
         Update the latest detected objects.
 
@@ -237,7 +237,7 @@ class ManipulationInterface:
         """
         return [obj for obj in self.latest_objects if obj["label"] == label]
 
-    def set_perception_stream(self, perception_stream) -> None:
+    def set_perception_stream(self, perception_stream) -> None:  # type: ignore[no-untyped-def]
         """
         Set or update the perception stream.
 

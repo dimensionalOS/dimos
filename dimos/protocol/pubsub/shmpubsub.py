@@ -88,7 +88,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
             "thread",
         )
 
-        def __init__(self, channel, capacity: int, cp_mod) -> None:
+        def __init__(self, channel, capacity: int, cp_mod) -> None:  # type: ignore[no-untyped-def]
             self.channel = channel
             self.capacity = int(capacity)
             self.shape = (self.capacity + 20,)  # +20 for header: length(4) + uuid(16)
@@ -211,7 +211,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
 
     # ----- Capacity mgmt ----------------------------------------------------
 
-    def reconfigure(self, topic: str, *, capacity: int) -> dict:
+    def reconfigure(self, topic: str, *, capacity: int) -> dict:  # type: ignore[type-arg]
         """Change payload capacity (bytes) for a topic; returns new descriptor."""
         st = self._ensure_topic(topic)
         new_cap = int(capacity)
@@ -221,7 +221,7 @@ class SharedMemoryPubSubBase(PubSub[str, Any]):
         st.shape = new_shape
         st.dtype = np.uint8
         st.last_seq = -1
-        return desc
+        return desc  # type: ignore[no-any-return]
 
     # ----- Internals --------------------------------------------------------
 

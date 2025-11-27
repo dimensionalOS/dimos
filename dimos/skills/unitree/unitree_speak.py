@@ -19,11 +19,11 @@ import os
 import tempfile
 import time
 
-from go2_webrtc_driver.constants import RTC_TOPIC
+from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
 import numpy as np
 from openai import OpenAI
 from pydantic import Field
-import soundfile as sf
+import soundfile as sf  # type: ignore[import-untyped]
 
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
@@ -58,33 +58,33 @@ class UnitreeSpeak(AbstractRobotSkill):
         default=False, description="Use megaphone mode for lower latency (experimental)"
     )
 
-    def __init__(self, **data) -> None:
+    def __init__(self, **data) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**data)
         self._openai_client = None
 
-    def _get_openai_client(self):
+    def _get_openai_client(self):  # type: ignore[no-untyped-def]
         if self._openai_client is None:
-            self._openai_client = OpenAI()
+            self._openai_client = OpenAI()  # type: ignore[assignment]
         return self._openai_client
 
     def _generate_audio(self, text: str) -> bytes:
         try:
-            client = self._get_openai_client()
+            client = self._get_openai_client()  # type: ignore[no-untyped-call]
             response = client.audio.speech.create(
                 model="tts-1", voice=self.voice, input=text, speed=self.speed, response_format="mp3"
             )
-            return response.content
+            return response.content  # type: ignore[no-any-return]
         except Exception as e:
             logger.error(f"Error generating audio: {e}")
             raise
 
-    def _webrtc_request(self, api_id: int, parameter: dict | None = None):
+    def _webrtc_request(self, api_id: int, parameter: dict | None = None):  # type: ignore[no-untyped-def, type-arg]
         if parameter is None:
             parameter = {}
 
         request_data = {"api_id": api_id, "parameter": json.dumps(parameter) if parameter else "{}"}
 
-        return self._robot.connection.publish_request(RTC_TOPIC["AUDIO_HUB_REQ"], request_data)
+        return self._robot.connection.publish_request(RTC_TOPIC["AUDIO_HUB_REQ"], request_data)  # type: ignore[attr-defined]
 
     def _upload_audio_to_robot(self, audio_data: bytes, filename: str) -> str:
         try:
@@ -123,7 +123,7 @@ class UnitreeSpeak(AbstractRobotSkill):
 
                 for audio in audio_list:
                     if audio.get("CUSTOM_NAME") == filename:
-                        return audio.get("UNIQUE_ID")
+                        return audio.get("UNIQUE_ID")  # type: ignore[no-any-return]
 
             logger.warning(
                 f"Could not find uploaded audio '{filename}' in list, using filename as UUID"
@@ -134,7 +134,7 @@ class UnitreeSpeak(AbstractRobotSkill):
             logger.error(f"Error uploading audio to robot: {e}")
             raise
 
-    def _play_audio_on_robot(self, uuid: str):
+    def _play_audio_on_robot(self, uuid: str):  # type: ignore[no-untyped-def]
         try:
             self._webrtc_request(AUDIO_API["SET_PLAY_MODE"], {"play_mode": PLAY_MODES["NO_CYCLE"]})
             time.sleep(0.1)
@@ -155,7 +155,7 @@ class UnitreeSpeak(AbstractRobotSkill):
         except Exception as e:
             logger.warning(f"Error stopping audio playback: {e}")
 
-    def _upload_and_play_megaphone(self, audio_data: bytes, duration: float):
+    def _upload_and_play_megaphone(self, audio_data: bytes, duration: float):  # type: ignore[no-untyped-def]
         try:
             logger.debug("Entering megaphone mode")
             self._webrtc_request(AUDIO_API["ENTER_MEGAPHONE"], {})
@@ -204,7 +204,7 @@ class UnitreeSpeak(AbstractRobotSkill):
                 logger.warning(f"Error exiting megaphone mode: {e}")
 
     def __call__(self) -> str:
-        super().__call__()
+        super().__call__()  # type: ignore[no-untyped-call]
 
         if not self._robot:
             logger.error("No robot instance provided to UnitreeSpeak skill")
