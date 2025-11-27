@@ -8,6 +8,23 @@ description = "Powering agentive generalist robotics"
 
 [tool.ruff]
 line-length = 120
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "libs",
+    "external",
+    "src"
+]
 
 [tool.pytest.ini_options]
 testpaths = ["dimos/robot"]

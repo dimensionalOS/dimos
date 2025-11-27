@@ -15,6 +15,9 @@ RUN apt-get install -y \
     iputils-ping \
     wget
 
+COPY docker/dev/dev-requirements.txt /app/
+RUN --mount=type=cache,target=/root/.cache/pip pip install -r dev-requirements.txt
+
 # Copy files and add version to motd
 COPY motd /etc/motd
 COPY /docker/dev/bash.sh /root/.bash.sh

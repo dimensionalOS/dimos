@@ -1,7 +1,6 @@
 {
   "name": "dimos-dev",
-  "image": "ghcr.io/dimensionalos/dimos-dev:latest",
-  "postCreateCommand": "pre-commit install",
+  "image": "ghcr.io/dimensionalos/dev:dev",
   "customizations": {
     "vscode": {
       "extensions": [
@@ -9,5 +8,19 @@
         "ms-python.vscode-pylance"
       ]
     }
+  },
+
+  "settings": {
+    "notebook.formatOnSave.enabled": true,
+    "notebook.codeActionsOnSave": {
+      "notebook.source.fixAll": "explicit",
+      "notebook.source.organizeImports": "explicit"
+    },
+    "editor.codeActionsOnSave": {
+      "source.fixAll": "explicit",
+      "source.organizeImports": "explicit"
+    },
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true
   }
 }
