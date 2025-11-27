@@ -92,7 +92,7 @@ class CameraModule(Module, spec.Camera):
         yield from iter(_queue.get, None)
 
     def publish_info(self, camera_info: CameraInfo) -> None:
-        self.camera_info.publish(camera_info)  # type: ignore[no-untyped-call]
+        self.camera_info.publish(camera_info)
 
         if self.config.transform is None:  # type: ignore[attr-defined]
             return

@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from typing import Any
+
 from reactivex.disposable import Disposable
 
 from dimos import spec
@@ -27,19 +29,19 @@ logger = setup_logger(__file__)
 
 class G1Connection(Module):
     cmd_vel: In[Twist] = None  # type: ignore
-    ip: str
+    ip: str | None
     connection_type: str | None = None
     _global_config: GlobalConfig
 
-    connection: UnitreeWebRTCConnection
+    connection: UnitreeWebRTCConnection | None
 
     def __init__(
         self,
         ip: str | None = None,
         connection_type: str | None = None,
         global_config: GlobalConfig | None = None,
-        *args,
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         self._global_config = global_config or GlobalConfig()
         self.ip = ip if ip is not None else self._global_config.robot_ip
@@ -53,6 +55,7 @@ class G1Connection(Module):
 
         match self.connection_type:
             case "webrtc":
+                assert self.ip is not None, "IP address must be provided"
                 self.connection = UnitreeWebRTCConnection(self.ip)
             case "replay":
                 raise ValueError("Replay connection not implemented for G1 robot")
@@ -63,23 +66,27 @@ class G1Connection(Module):
             case _:
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
+        assert self.connection is not None
         self.connection.start()
 
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
     @rpc
     def stop(self) -> None:
+        assert self.connection is not None
         self.connection.stop()
         super().stop()
 
     @rpc
     def move(self, twist: Twist, duration: float = 0.0) -> None:
+        assert self.connection is not None
         self.connection.move(twist, duration)
 
     @rpc
-    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         logger.info(f"Publishing request to topic: {topic} with data: {data}")
-        return self.connection.publish_request(topic, data)
+        assert self.connection is not None
+        return self.connection.publish_request(topic, data)  # type: ignore[no-any-return]
 
 
 g1_connection = G1Connection.blueprint
