@@ -549,17 +549,20 @@ class CartesianMotionController(Module):
 
                 logger.debug(f"IK successful: {len(target_joints)} joints")
 
-                # IMPORTANT: xArm IK returns 7 values (6 joints + gripper) for xarm6
-                # We only want the first 6 joint angles, not the gripper
-                # TODO: Query arm_driver for its actual DOF instead of hardcoding
-                num_arm_joints = 6  # xarm6 has 6 joints (excluding gripper)
+                # Dynamically get joint count from actual joint_state (works for xarm5/6/7)
+                # IK may return extra values (e.g., gripper), so truncate to match actual DOF
+                num_arm_joints = len(joint_state.position)
                 if len(target_joints) > num_arm_joints:
                     if not hasattr(self, "_ik_truncation_logged"):
                         logger.info(
-                            f"IK returns {len(target_joints)} joints, using first {num_arm_joints} (excluding gripper)"
+                            f"IK returns {len(target_joints)} joints, using first {num_arm_joints} to match arm DOF"
                         )
                         self._ik_truncation_logged = True
                     target_joints = target_joints[:num_arm_joints]
+                elif len(target_joints) < num_arm_joints:
+                    logger.warning(
+                        f"IK returns {len(target_joints)} joints but arm has {num_arm_joints} - joint count mismatch!"
+                    )
 
                 # Publish joint command
                 joint_cmd = JointCommand(
