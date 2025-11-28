@@ -12,15 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import math
 import os
 import time
 
 import pytest
 
+from dimos.e2e_tests.dimos_cli_call import DimosCliCall
+from dimos.e2e_tests.lcm_spy import LcmSpy
+
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
-def test_spatial_memory_navigation(lcm_spy, start_blueprint, human_input, follow_points) -> None:
+def test_spatial_memory_navigation(
+    lcm_spy: LcmSpy,
+    start_blueprint: Callable[[str], DimosCliCall],
+    human_input: Callable[[str], None],
+    follow_points: Callable[..., None],
+) -> None:
     start_blueprint("unitree-go2-agentic")
 
     lcm_spy.save_topic("/rpc/HumanInput/start/res")
