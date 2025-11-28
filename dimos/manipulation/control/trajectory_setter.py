@@ -157,7 +157,7 @@ def preview_waypoints(waypoints: list[list[float]], num_joints: int):
         return
 
     # Dynamically generate header based on joint count
-    joint_headers = " ".join([f"{'J' + str(i+1):>7}" for i in range(num_joints)])
+    joint_headers = " ".join([f"{'J' + str(i + 1):>7}" for i in range(num_joints)])
     line_width = 6 + 3 + num_joints * 8 + 10
 
     print(f"\nWaypoints ({len(waypoints)}):")
@@ -173,7 +173,7 @@ def preview_waypoints(waypoints: list[list[float]], num_joints: int):
 def preview_trajectory(trajectory: JointTrajectory, num_joints: int):
     """Show generated trajectory preview."""
     # Dynamically generate header based on joint count
-    joint_headers = " ".join([f"{'J' + str(i+1):>7}" for i in range(num_joints)])
+    joint_headers = " ".join([f"{'J' + str(i + 1):>7}" for i in range(num_joints)])
     line_width = 9 + 3 + num_joints * 8 + 10
 
     print("\n" + "=" * line_width)
@@ -209,7 +209,7 @@ def preview_trajectory(trajectory: JointTrajectory, num_joints: int):
 def interactive_mode(setter: TrajectorySetter):
     """Interactive mode for creating trajectories."""
     # Generate dynamic joint list for help text
-    joint_args = " ".join([f"<j{i+1}>" for i in range(setter.num_joints)])
+    joint_args = " ".join([f"<j{i + 1}>" for i in range(setter.num_joints)])
 
     print("\n" + "=" * 80)
     print("Interactive Trajectory Setter")
@@ -246,7 +246,9 @@ def interactive_mode(setter: TrajectorySetter):
 
             # ADD waypoint
             if cmd == "add" and len(parts) >= setter.num_joints + 1:
-                joints = parse_joint_input(" ".join(parts[1 : setter.num_joints + 1]), setter.num_joints)
+                joints = parse_joint_input(
+                    " ".join(parts[1 : setter.num_joints + 1]), setter.num_joints
+                )
                 if joints:
                     waypoints.append(joints)
                     generated_trajectory = None  # Invalidate cached trajectory
