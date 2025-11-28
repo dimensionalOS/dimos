@@ -1,11 +1,15 @@
 # Skills
 
-## What is a Skill?
+## Motivation
 
-A Skill is the **bridge between AI reasoning and robot capabilities** - a method on a Module that agents can discover and invoke. Skills turn high-level intent ("navigate to the kitchen") into low-level execution (coordinate transformations, motor commands, sensor processing).
+Suppose your robot has certain capabilities -- e.g., it can move in certain ways, or play sounds through a speaker. How do you let an LLM agent control these capabilities?
 
-Think of skills as the robot's vocabulary: a catalog of actions that agents can discover, reason about, and invoke.
-<!-- Citation: dimos/core/module.py:77 - ModuleBase inherits from SkillContainer -->
+Skills are how you do that: skills get turned into *tools* that agents can call.
+
+Skills are often also defined at a *higher level of abstraction* than the robotic capabilities; e.g., a 'follow human' skill that uses computer vision data to control a robot. In this way, skills can be
+
+* easier for agents to work with and reason about
+* and hide or abstract over differences in the underlying hardware.
 
 ```python
 from dimos.core import Module
@@ -19,86 +23,152 @@ class NavigationModule(Module):
         self._set_navigation_goal(x, y, theta)
         return f"Navigating to {location}"
 ```
+<!-- Citation: dimos/core/module.py:77 - ModuleBase inherits from SkillContainer -->
 
-Instead of `PoseStamped(position=Vector3(3.5, -1.2, 0.0), orientation=Quaternion.from_euler(...))`, you write `navigate_to("kitchen")`.
+Finally, if there's information you want to get to an agent, you need to do that with skills -- more on this shortly.
 
-## Purpose
+## What is a skill?
 
-**High-level semantic control** - Work with natural actions (`wave_hello()`) not motor commands (`set_joint_velocity(3, 0.5)`).
+At a high level, skills are wrappers over lower-level robot capabilities. But at a more prosaic level, a skill is just a method on a Module decorated with `@skill` that:
 
-**Cross-platform portability** - Same skill interface (`pick_up()`) works across robots; implementations hide hardware differences.
+1. **Becomes an agent-callable tool** - The decorator generates an OpenAI-compatible function schema from the method signature and docstring
+2. **Executes in background threads** - Skills run concurrently without blocking the agent
+3. **Reports state via messages** - Each execution tracks state (pending → running → completed/error)
 
-**Composability** - Skills chain naturally: `navigate_to("kitchen")` → `detect_objects()` → `grasp("coffee_pot")`.
-
-**Observable execution** - Every skill creates an audit trail for debugging autonomous systems.
-<!-- Citation: dimos/protocol/skill/type.py:90-96 - MsgType enum defines message protocol for state tracking -->
-
-## How Skills Work
-
-**Every Module Can Have Skills** - Every Module can expose skills via `@skill`, because Modules inherit from SkillContainer.
-Skills automatically auto-register with agents when they inherit from `SkillModule`; they can then be invoked by agents as tool calls.
-<!-- Citation: dimos/core/README_BLUEPRINTS.md:208-240 - Registration patterns -->
-<!-- TODO: Add link to skills tutorial that explains this with examples -->
-<!-- Citation: dimos/core/module.py:77,278,351 - Module inheritance chain -->
-
-**The @skill Decorator** - Wraps methods with message protocol, state tracking (pending → started → completed), and automatic LLM schema generation.
 <!-- Citation: dimos/protocol/skill/skill.py:65-113 - @skill decorator implementation -->
-<!-- Citation: dimos/protocol/skill/type.py:90-96 - MsgType enum -->
 
-**Distributed Execution** - Skills execute in background threads with full Module capabilities (RPC, streams). System handles threading, messaging, and result aggregation.
-<!-- Citation: dimos/protocol/skill/skill.py:126-128,149-153 - ThreadPoolExecutor and SkillContainer -->
-<!-- Citation: dimos/protocol/skill/skill.py:177-227 - call_skill implementation showing message flow -->
+> [!TIP]
+> The docstring becomes the tool description LLMs see when choosing skills. Write it for an LLM audience: clear, concise, action-oriented.
 
-## Message Protocol and Execution Flow
+## Basic usage
 
-When an agent calls a skill, here's what happens:
+### Defining a simple skill
 
+For a method on a `Module` to be discoverable by agents, it has to be decorated with `@skill()` and registered on the agent -- [see the 'equip an agent with skills' tutorial for more details](../tutorials/skill_with_agent/tutorial.md).
+
+```python
+from dimos.core import Module
+from dimos.protocol.skill.skill import skill
+
+class RobotSkills(Module):
+    @skill()
+    def speak(self, text: str) -> str:
+        """Make the robot speak the given text aloud."""
+        self.audio.play_tts(text)
+        return f"Said: {text}"
+
+    @rpc
+    def set_LlmAgent_register_skills(self, register_skills: RpcCall) -> None:
+        """Called by framework when composing with llm_agent().
+
+        This method is discovered by convention during blueprint.build().
+        """
+        register_skills.set_rpc(self.rpc)
+        register_skills(RPCClient(self, self.__class__))
 ```
-1. Agent decides to call skill based on LLM reasoning
-2. SkillCoordinator creates SkillState tracking object
-3. Skill executes in background thread pool
-4. Skill publishes messages: start → [stream]* → ret/error
-5. Coordinator aggregates results (using Reducer if streaming)
-6. Agent receives final result and continues reasoning
+
+### How skills reach agents
+
+When you register a Module with an agent, the agent discovers its `@skill` methods and converts them into **tool schemas** that the LLM understands. Your method signature becomes the tool's parameters; your docstring becomes its description.
+
+See these tutorials for examples:
+
+* [Equip an agent with skills](../tutorials/skill_with_agent/tutorial.md).
+* [Build a RoboButler multi-agent system](../tutorials/multi_agent/tutorial.md)
+
+## Getting information to agents, in more detail
+
+We've seen how any robot action you want an LLM to invoke needs to be a skill (this is also covered in detail in the first two skills tutorials).
+
+But it's also worth stressing that agents -- or more precisely, `Module`s that subclass `Agent` -- can only "see" information that comes through skills. If you want the agent to know the current time, position, or sensor readings, expose that via a skill:
+
+```python
+@skill(stream=Stream.passive, reducer=Reducer.latest, hide_skill=True)
+def current_time(self):
+    """Provides current timestamp to the agent."""
+    while True:
+        yield str(datetime.datetime.now())
+        time.sleep(1)
+```
+<!-- Citation: dimos/robot/unitree_webrtc/unitree_skill_container.py:100-106 -->
+
+The `hide_skill=True` flag prevents the LLM from calling this directly, but the agent still receives timestamps whenever it processes responses. This pattern works for any background information: video streams, sensor telemetry, position tracking.
+
+## Streaming skills
+
+The `stream` parameter of the `@skill` decorator is worth being aware of, for long-running operations
+
+If you have a long-running operation, you can use `Stream.call_agent` for the `stream` parameter of the `@skill` decorator to stream updates to the agent. This notifies the agent every time there is an update from the skill.
+
+```python
+@skill(stream=Stream.call_agent)
+def navigate_to(self, location: str):
+    """Navigate to location with progress updates."""
+    yield f"Planning path to {location}..."
+    path = self._plan_path(location)
+
+    for i, waypoint in enumerate(path):
+        self._move_to(waypoint)
+        yield f"Reached waypoint {i+1}/{len(path)}"
+
+    return f"Arrived at {location}"
 ```
 
-<!-- Citation: dimos/protocol/skill/type.py:90-96 - MsgType enum: pending=0, start=1, stream=2, reduced_stream=3, ret=4, error=5 -->
-<!-- Citation: dimos/protocol/skill/skill.py:191-227 - State machine implementation: start → [stream]* → ret/error -->
+The agent is apprized of each `yield`, and can take action if something goes wrong.
 
-The message protocol enables:
+### Stream modes
 
-- **Non-blocking execution** - Agents don't wait, skills run concurrently
-- **Progress monitoring** - Long operations stream updates
-- **Distributed deployment** - Skills run on different machines/processes
-- **Audit trails** - Every execution is traceable
+* **`Stream.none`** (default): No streaming. Skill returns a single value.
+* **`Stream.call_agent`**: Wakes the agent on every `yield`. Use for progress updates.
+* **`Stream.passive`**: Accumulates values silently. See [Background data](#background-data-with-streamstreampassive).
 
-<!-- Citation: dimos/protocol/skill/skill.py:126-128 - Thread pool for non-blocking execution -->
+<!-- Citation: dimos/protocol/skill/type.py:36-85 -->
 
-## Best Practices
+## Background data with `stream=Stream.passive`
 
-**Focus each skill** - One skill, one purpose; compose them for complexity.
+Sometimes you want to continuously collect data *without interrupting the agent's reasoning*. A camera feed shouldn't wake the agent on every frame. Position telemetry shouldn't flood updates.
 
-**Return meaningful strings** - "Navigated to kitchen in 12 seconds" beats "ok" for LLM reasoning.
+In such cases, you probably want to use skills that have been initialized with `stream=Stream.passive` -- i.e., what the docs sometimes call *passive skills*. Such skills run in the background, and the agent only sees their data when it wakes for some other reason:
 
-**Stream long operations** - Use generators with `stream=Stream.call_agent` for operations over a few seconds.
-<!-- Citation: dimos/protocol/skill/type.py:34-41 - Stream enum for streaming support -->
+```python
+@skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
+def video_stream(self) -> Image:
+    """Continuous camera feed, doesn't wake agent on every frame."""
+    while True:
+        frame = self.camera.capture()
+        yield frame
+```
+<!-- Citation: dimos/hardware/camera/module.py:86-92 -->
 
-**Write clear docstrings** - They become function descriptions LLMs see when choosing skills.
+When the agent wakes (for an active skill, human input, etc.), its snapshot includes the latest video frame—without having been interrupted for every frame in between.
+
+> [!CAUTION]
+> **Passive skills alone cannot keep the agent loop alive.** If only passive skills are running, the loop exits immediately.
+> So, e.g., you might want to pair passive skills with other active skill(s):
+>
+> * Video stream (passive) + navigation task (active)
+> * Sensor telemetry (passive) + human_input (active)
+> * Position tracking (passive) + movement command (active)
+
+<!-- Citation: dimos/protocol/skill/type.py:64-69 -->
+
+## Best practices
+
+**Return meaningful strings** - `"Navigated to kitchen in 12 seconds"` beats `"ok"` for LLMs.
+
+**Write clear docstrings** - They become tool descriptions. Be specific about what the skill does and what parameters mean.
 <!-- Citation: dimos/protocol/skill/schema.py - function_to_schema() extracts docstrings -->
 
-**Handle errors gracefully** - Return contextual error messages for agent recovery, not exceptions.
+**Handle errors gracefully** - Return contextual error messages for agent recovery, not raw exceptions.
 
-**Test independently** - Skills are Module methods testable in isolation.
+**Monitor long-running skills** - Use `dimos skillspy` to watch skill execution in real-time. Skills are tracked in an execution database showing what's currently running and what has completed—invaluable for debugging navigation or other long operations. To see an example of this, check out the [skill basics tutorial](../tutorials/skill_basics/tutorial.md).
 
-## Summary
+> [!WARNING]
+> **Don't use both `@skill` and `@rpc` decorators on a single method** - The `@skill` wrapper can't be pickled for LCM transport. Use `@skill()` for agent tools, `@rpc` for module-to-module calls.
 
-Skills bridge the gap between what users want ("go to the kitchen") and what robots understand (velocity commands, joint angles). They enable semantic control, safety, portability, composability, and observability.
+## Related concepts
 
-Every Module can expose skills to Agents. Skills execute in background threads with message-based coordination for distributed execution.
-<!-- Citation: dimos/protocol/skill/type.py:90-96 - Message protocol with MsgType enum -->
-
-## Related Concepts
-
-- **[Agent](agent.md)** - LLM-based reasoning systems that invoke skills
-- **[Modules](modules.md)** - The distributed actors that provide skills
-<!-- Citation: docs/concepts/agent.md, docs/concepts/modules.md - Documentation exists -->
+* **[Agents](agent.md)** - LLM-based reasoning that invokes skills
+* **[Modules](modules.md)** - The distributed actors that provide skills
+* **[Blueprints](blueprints.md)** - Composing modules and skills into systems
+<!-- TODO: Add links to API reference pages for skill decorator etc -->
