@@ -14,6 +14,7 @@
 
 from enum import Enum
 import inspect
+import sys
 from typing import Optional, get_args, get_origin
 
 import typer
@@ -23,12 +24,15 @@ from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 
-RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})
+RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
 
-main = typer.Typer()
+main = typer.Typer(
+    help="Dimensional CLI",
+    no_args_is_help=True,
+)
 
 
-def create_dynamic_callback():
+def create_dynamic_callback():  # type: ignore[no-untyped-def]
     fields = GlobalConfig.model_fields
 
     # Build the function signature dynamically
@@ -82,34 +86,34 @@ def create_dynamic_callback():
             )
         params.append(param)
 
-    def callback(**kwargs) -> None:
+    def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         ctx.obj = GlobalConfig().model_copy(update=overrides)
 
-    callback.__signature__ = inspect.Signature(params)
+    callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
     return callback
 
 
-main.callback()(create_dynamic_callback())
+main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
 @main.command()
 def run(
     ctx: typer.Context,
     robot_type: RobotType = typer.Argument(..., help="Type of robot to run"),
-    extra_modules: list[str] = typer.Option(
+    extra_modules: list[str] = typer.Option(  # type: ignore[valid-type]
         [], "--extra-module", help="Extra modules to add to the blueprint"
     ),
 ) -> None:
-    """Run the robot with the specified configuration."""
+    """Start a robot blueprint"""
     config: GlobalConfig = ctx.obj
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     blueprint = get_blueprint_by_name(robot_type.value)
 
     if extra_modules:
-        loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]
+        loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]  # type: ignore[attr-defined]
         blueprint = autoconnect(blueprint, *loaded_modules)
 
     dimos = blueprint.build(global_config=config)
@@ -118,7 +122,7 @@ def run(
 
 @main.command()
 def show_config(ctx: typer.Context) -> None:
-    """Show current configuration status."""
+    """Show current config settings and their values."""
     config: GlobalConfig = ctx.obj
 
     for field_name, value in config.model_dump().items():
@@ -131,6 +135,42 @@ def list() -> None:
     blueprints = [name for name in all_blueprints.keys() if not name.startswith("demo-")]
     for blueprint_name in sorted(blueprints):
         typer.echo(blueprint_name)
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def lcmspy(ctx: typer.Context) -> None:
+    """LCM spy tool for monitoring LCM messages."""
+    from dimos.utils.cli.lcmspy.run_lcmspy import main as lcmspy_main
+
+    sys.argv = ["lcmspy", *ctx.args]
+    lcmspy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def skillspy(ctx: typer.Context) -> None:
+    """Skills spy tool for monitoring skills."""
+    from dimos.utils.cli.skillspy.skillspy import main as skillspy_main
+
+    sys.argv = ["skillspy", *ctx.args]
+    skillspy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def agentspy(ctx: typer.Context) -> None:
+    """Agent spy tool for monitoring agents."""
+    from dimos.utils.cli.agentspy.agentspy import main as agentspy_main
+
+    sys.argv = ["agentspy", *ctx.args]
+    agentspy_main()
+
+
+@main.command(context_settings={"allow_extra_args": True, "ignore_unknown_options": True})
+def humancli(ctx: typer.Context) -> None:
+    """Interface interacting with agents."""
+    from dimos.utils.cli.human.humanclianim import main as humancli_main
+
+    sys.argv = ["humancli", *ctx.args]
+    humancli_main()
 
 
 if __name__ == "__main__":

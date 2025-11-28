@@ -42,7 +42,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         control_frequency: Control loop frequency in Hz (default: 10.0)
     """
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         lookahead_dist: float = 1.0,
         k_rep: float = 0.5,
@@ -163,7 +163,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
             angular=Vector3(0.0, 0.0, v_filtered[2]),
         )
 
-    def _compute_path_following(self, pose: np.ndarray, path: np.ndarray) -> np.ndarray:
+    def _compute_path_following(self, pose: np.ndarray, path: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
         """
         Compute path following velocity using pure pursuit.
 
@@ -186,9 +186,9 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
 
         v_follow = self.v_max * direction / distance
 
-        return v_follow
+        return v_follow  # type: ignore[no-any-return]
 
-    def _compute_obstacle_repulsion(self, pose: np.ndarray, costmap: np.ndarray) -> np.ndarray:
+    def _compute_obstacle_repulsion(self, pose: np.ndarray, costmap: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
         """
         Compute obstacle repulsion velocity from costmap gradient.
 
@@ -199,7 +199,7 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         Returns:
             Repulsion velocity vector [vx, vy]
         """
-        grid_point = self.latest_costmap.world_to_grid(pose)
+        grid_point = self.latest_costmap.world_to_grid(pose)  # type: ignore[union-attr]
         grid_x = int(grid_point.x)
         grid_y = int(grid_point.y)
 
@@ -210,10 +210,10 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         # Compute gradient using central differences
         # Note: costmap is in row-major order (y, x)
         gx = (costmap[grid_y, grid_x + 1] - costmap[grid_y, grid_x - 1]) / (
-            2.0 * self.latest_costmap.resolution
+            2.0 * self.latest_costmap.resolution  # type: ignore[union-attr]
         )
         gy = (costmap[grid_y + 1, grid_x] - costmap[grid_y - 1, grid_x]) / (
-            2.0 * self.latest_costmap.resolution
+            2.0 * self.latest_costmap.resolution  # type: ignore[union-attr]
         )
 
         # Gradient points towards higher cost, so negate for repulsion
@@ -222,8 +222,10 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         return v_rep
 
     def _find_closest_point_on_path(
-        self, pose: np.ndarray, path: np.ndarray
-    ) -> tuple[int, np.ndarray]:
+        self,
+        pose: np.ndarray,  # type: ignore[type-arg]
+        path: np.ndarray,  # type: ignore[type-arg]
+    ) -> tuple[int, np.ndarray]:  # type: ignore[type-arg]
         """
         Find the closest point on the path to current pose.
 
@@ -236,9 +238,9 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
         """
         distances = np.linalg.norm(path - pose, axis=1)
         closest_idx = np.argmin(distances)
-        return closest_idx, path[closest_idx]
+        return closest_idx, path[closest_idx]  # type: ignore[return-value]
 
-    def _find_lookahead_point(self, path: np.ndarray, start_idx: int) -> np.ndarray:
+    def _find_lookahead_point(self, path: np.ndarray, start_idx: int) -> np.ndarray:  # type: ignore[type-arg]
         """
         Find look-ahead point on path at specified distance.
 
@@ -258,13 +260,13 @@ class HolonomicLocalPlanner(BaseLocalPlanner):
                 remaining_dist = self.lookahead_dist - accumulated_dist
                 t = remaining_dist / segment_dist
                 carrot = path[i] + t * (path[i + 1] - path[i])
-                return carrot
+                return carrot  # type: ignore[no-any-return]
 
-            accumulated_dist += segment_dist
+            accumulated_dist += segment_dist  # type: ignore[assignment]
 
-        return path[-1]
+        return path[-1]  # type: ignore[no-any-return]
 
-    def _clip(self, v: np.ndarray) -> np.ndarray:
+    def _clip(self, v: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
         """Instance method to clip velocity with access to v_max."""
         return np.clip(v, -self.v_max, self.v_max)
 

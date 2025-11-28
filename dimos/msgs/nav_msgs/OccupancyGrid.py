@@ -73,7 +73,7 @@ class OccupancyGrid(Timestamped):
 
     def __init__(
         self,
-        grid: np.ndarray | None = None,
+        grid: np.ndarray | None = None,  # type: ignore[type-arg]
         width: int | None = None,
         height: int | None = None,
         resolution: float = 0.05,
@@ -103,7 +103,7 @@ class OccupancyGrid(Timestamped):
                 raise ValueError("Grid must be a 2D array")
             height, width = grid.shape
             self.info = MapMetaData(
-                map_load_time=self._to_lcm_time(),
+                map_load_time=self._to_lcm_time(),  # type: ignore[no-untyped-call]
                 resolution=resolution,
                 width=width,
                 height=height,
@@ -113,7 +113,7 @@ class OccupancyGrid(Timestamped):
         elif width is not None and height is not None:
             # Initialize with dimensions
             self.info = MapMetaData(
-                map_load_time=self._to_lcm_time(),
+                map_load_time=self._to_lcm_time(),  # type: ignore[no-untyped-call]
                 resolution=resolution,
                 width=width,
                 height=height,
@@ -122,7 +122,7 @@ class OccupancyGrid(Timestamped):
             self.grid = np.full((height, width), -1, dtype=np.int8)
         else:
             # Initialize empty
-            self.info = MapMetaData(map_load_time=self._to_lcm_time())
+            self.info = MapMetaData(map_load_time=self._to_lcm_time())  # type: ignore[no-untyped-call]
             self.grid = np.array([], dtype=np.int8)
 
         self.robot_pose = robot_pose or self.info.origin
@@ -136,22 +136,22 @@ class OccupancyGrid(Timestamped):
     @property
     def width(self) -> int:
         """Width of the grid in cells."""
-        return self.info.width
+        return self.info.width  # type: ignore[no-any-return]
 
     @property
     def height(self) -> int:
         """Height of the grid in cells."""
-        return self.info.height
+        return self.info.height  # type: ignore[no-any-return]
 
     @property
     def resolution(self) -> float:
         """Grid resolution in meters/cell."""
-        return self.info.resolution
+        return self.info.resolution  # type: ignore[no-any-return]
 
     @property
     def origin(self) -> Pose:
         """Origin pose of the grid."""
-        return self.info.origin
+        return self.info.origin  # type: ignore[no-any-return]
 
     @property
     def total_cells(self) -> int:
@@ -513,7 +513,7 @@ class OccupancyGrid(Timestamped):
             lcm_msg.data_length = 0
             lcm_msg.data = []
 
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> OccupancyGrid:
@@ -711,7 +711,7 @@ class OccupancyGrid(Timestamped):
         distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
         # Convert to meters and clip to max distance
-        distance_meters = np.clip(distance_cells * self.resolution, 0, max_distance)
+        distance_meters = np.clip(distance_cells * self.resolution, 0, max_distance)  # type: ignore[operator]
 
         # Invert and scale to 0-100 range
         # Far from obstacles (max_distance) -> 0

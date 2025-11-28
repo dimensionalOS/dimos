@@ -29,7 +29,7 @@ class QwenVlModel(VlModel):
             api_key=api_key,
         )
 
-    def query(self, image: Image | np.ndarray, query: str) -> str:
+    def query(self, image: Image | np.ndarray, query: str) -> str:  # type: ignore[override, type-arg]
         if isinstance(image, np.ndarray):
             import warnings
 
@@ -59,4 +59,4 @@ class QwenVlModel(VlModel):
             ],
         )
 
-        return response.choices[0].message.content
+        return response.choices[0].message.content  # type: ignore[return-value]

@@ -23,12 +23,12 @@ class Accumulator(ABC, Generic[T]):
     """Base class for accumulating messages between rate-limited calls."""
 
     @abstractmethod
-    def add(self, *args, **kwargs) -> None:
+    def add(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Add args and kwargs to the accumulator."""
         pass
 
     @abstractmethod
-    def get(self) -> tuple[tuple, dict] | None:
+    def get(self) -> tuple[tuple, dict] | None:  # type: ignore[type-arg]
         """Get the accumulated args and kwargs and reset the accumulator."""
         pass
 
@@ -42,14 +42,14 @@ class LatestAccumulator(Accumulator[T]):
     """Simple accumulator that remembers only the latest args and kwargs."""
 
     def __init__(self) -> None:
-        self._latest: tuple[tuple, dict] | None = None
+        self._latest: tuple[tuple, dict] | None = None  # type: ignore[type-arg]
         self._lock = threading.Lock()
 
-    def add(self, *args, **kwargs) -> None:
+    def add(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         with self._lock:
             self._latest = (args, kwargs)
 
-    def get(self) -> tuple[tuple, dict] | None:
+    def get(self) -> tuple[tuple, dict] | None:  # type: ignore[type-arg]
         with self._lock:
             result = self._latest
             self._latest = None
@@ -70,10 +70,10 @@ class RollingAverageAccumulator(Accumulator[T]):
     def __init__(self) -> None:
         self._sum: float = 0.0
         self._count: int = 0
-        self._latest_kwargs: dict = {}
+        self._latest_kwargs: dict = {}  # type: ignore[type-arg]
         self._lock = threading.Lock()
 
-    def add(self, *args, **kwargs) -> None:
+    def add(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         if not args:
             raise ValueError("RollingAverageAccumulator requires at least one argument")
 
@@ -86,7 +86,7 @@ class RollingAverageAccumulator(Accumulator[T]):
             except (TypeError, ValueError):
                 raise TypeError(f"First argument must be numeric, got {type(args[0])}")
 
-    def get(self) -> tuple[tuple, dict] | None:
+    def get(self) -> tuple[tuple, dict] | None:  # type: ignore[type-arg]
         with self._lock:
             if self._count == 0:
                 return None

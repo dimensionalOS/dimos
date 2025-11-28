@@ -16,7 +16,7 @@ from collections.abc import Callable, Iterable
 import time
 from typing import Any, Protocol
 
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 from reactivex.observable import Observable
 
 color1 = [1, 0.706, 0]
@@ -50,13 +50,13 @@ O3dDrawable = (
 
 
 class ReturnsDrawable(Protocol):
-    def o3d_geometry(self) -> O3dDrawable: ...
+    def o3d_geometry(self) -> O3dDrawable: ...  # type: ignore[valid-type]
 
 
 Drawable = O3dDrawable | ReturnsDrawable
 
 
-def show3d(*components: Iterable[Drawable], title: str = "open3d") -> o3d.visualization.Visualizer:
+def show3d(*components: Iterable[Drawable], title: str = "open3d") -> o3d.visualization.Visualizer:  # type: ignore[valid-type]
     vis = o3d.visualization.Visualizer()
     vis.create_window(window_name=title)
     for component in components:
@@ -99,7 +99,7 @@ def show3d_stream(
     q: queue.Queue[Any] = queue.Queue()
     stop_flag = threading.Event()
 
-    def on_next(geometry: O3dDrawable) -> None:
+    def on_next(geometry: O3dDrawable) -> None:  # type: ignore[valid-type]
         q.put(geometry)
 
     def on_error(e: Exception) -> None:
@@ -116,9 +116,9 @@ def show3d_stream(
         on_completed=on_completed,
     )
 
-    def geom(geometry: Drawable) -> O3dDrawable:
+    def geom(geometry: Drawable) -> O3dDrawable:  # type: ignore[valid-type]
         """Extracts the Open3D geometry from the given object."""
-        return geometry.o3d_geometry if hasattr(geometry, "o3d_geometry") else geometry
+        return geometry.o3d_geometry if hasattr(geometry, "o3d_geometry") else geometry  # type: ignore[attr-defined, no-any-return]
 
     # Wait for the first geometry
     first_geometry = None

@@ -16,7 +16,7 @@ import time
 from typing import TypedDict
 
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
@@ -24,7 +24,7 @@ from dimos.types.timestamped import to_human_readable
 
 
 class RawLidarPoints(TypedDict):
-    points: np.ndarray  # Shape (N, 3) array of 3D points [x, y, z]
+    points: np.ndarray  # type: ignore[type-arg]  # Shape (N, 3) array of 3D points [x, y, z]
 
 
 class RawLidarData(TypedDict):
@@ -53,18 +53,18 @@ class LidarMessage(PointCloud2):
     raw_msg: RawLidarMsg | None
     # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(
             pointcloud=kwargs.get("pointcloud"),
             ts=kwargs.get("ts"),
             frame_id="world",
         )
 
-        self.origin = kwargs.get("origin")
+        self.origin = kwargs.get("origin")  # type: ignore[assignment]
         self.resolution = kwargs.get("resolution", 0.05)
 
     @classmethod
-    def from_msg(cls: type["LidarMessage"], raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
+    def from_msg(cls: type["LidarMessage"], raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":  # type: ignore[no-untyped-def]
         data = raw_message["data"]
         points = data["data"]["points"]
         pointcloud = o3d.geometry.PointCloud()
@@ -89,11 +89,11 @@ class LidarMessage(PointCloud2):
     def __repr__(self) -> str:
         return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"
 
-    def __iadd__(self, other: "LidarMessage") -> "LidarMessage":
+    def __iadd__(self, other: "LidarMessage") -> "LidarMessage":  # type: ignore[override]
         self.pointcloud += other.pointcloud
         return self
 
-    def __add__(self, other: "LidarMessage") -> "LidarMessage":
+    def __add__(self, other: "LidarMessage") -> "LidarMessage":  # type: ignore[override]
         # Determine which message is more recent
         if self.ts >= other.ts:
             ts = self.ts
@@ -105,7 +105,7 @@ class LidarMessage(PointCloud2):
             resolution = other.resolution
 
         # Return a new LidarMessage with combined data
-        return LidarMessage(
+        return LidarMessage(  # type: ignore[attr-defined, no-any-return]
             ts=ts,
             origin=origin,
             resolution=resolution,
@@ -113,7 +113,7 @@ class LidarMessage(PointCloud2):
         ).estimate_normals()
 
     @property
-    def o3d_geometry(self):
+    def o3d_geometry(self):  # type: ignore[no-untyped-def]
         return self.pointcloud
 
     # TODO: Fix after costmap migration

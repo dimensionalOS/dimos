@@ -14,14 +14,17 @@
 
 from __future__ import annotations
 
-from dimos_lcm.geometry_msgs import Twist as LCMTwist
+from dimos_lcm.geometry_msgs import Twist as LCMTwist  # type: ignore[import-untyped]
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import Twist as ROSTwist, Vector3 as ROSVector3
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        Twist as ROSTwist,
+        Vector3 as ROSVector3,
+    )
 except ImportError:
-    ROSTwist = None
-    ROSVector3 = None
+    ROSTwist = None  # type: ignore[assignment, misc]
+    ROSVector3 = None  # type: ignore[assignment, misc]
 
 # Import Quaternion at runtime for beartype compatibility
 # (beartype needs to resolve forward references at runtime)
@@ -29,7 +32,7 @@ from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 
 
-class Twist(LCMTwist):
+class Twist(LCMTwist):  # type: ignore[misc]
     linear: Vector3
     angular: Vector3
     msg_name = "geometry_msgs.Twist"
@@ -40,32 +43,32 @@ class Twist(LCMTwist):
         self.linear = Vector3()
         self.angular = Vector3()
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, linear: VectorLike, angular: VectorLike) -> None:
         """Initialize a twist from linear and angular velocities."""
 
         self.linear = Vector3(linear)
         self.angular = Vector3(angular)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, linear: VectorLike, angular: Quaternion) -> None:
         """Initialize a twist from linear velocity and angular as quaternion (converted to euler)."""
         self.linear = Vector3(linear)
         self.angular = angular.to_euler()
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, twist: Twist) -> None:
         """Initialize from another Twist (copy constructor)."""
         self.linear = Vector3(twist.linear)
         self.angular = Vector3(twist.angular)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_twist: LCMTwist) -> None:
         """Initialize from an LCM Twist."""
         self.linear = Vector3(lcm_twist.linear)
         self.angular = Vector3(lcm_twist.angular)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, **kwargs) -> None:
         """Handle keyword arguments for LCM compatibility."""
         linear = kwargs.get("linear", Vector3())
@@ -79,7 +82,7 @@ class Twist(LCMTwist):
     def __str__(self) -> str:
         return f"Twist:\n  Linear: {self.linear}\n  Angular: {self.angular}"
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two twists are equal."""
         if not isinstance(other, Twist):
             return False
@@ -127,9 +130,9 @@ class Twist(LCMTwist):
             ROS Twist message
         """
 
-        ros_msg = ROSTwist()
-        ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)
-        ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)
+        ros_msg = ROSTwist()  # type: ignore[no-untyped-call]
+        ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)  # type: ignore[no-untyped-call]
+        ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)  # type: ignore[no-untyped-call]
         return ros_msg
 
 

@@ -21,7 +21,7 @@ logger = setup_logger(__file__)
 
 
 class RobotDebugger(Resource):
-    def __init__(self, robot) -> None:
+    def __init__(self, robot) -> None:  # type: ignore[no-untyped-def]
         self._robot = robot
         self._threaded_server = None
 
@@ -30,8 +30,8 @@ class RobotDebugger(Resource):
             return
 
         try:
-            import rpyc
-            from rpyc.utils.server import ThreadedServer
+            import rpyc  # type: ignore[import-not-found]
+            from rpyc.utils.server import ThreadedServer  # type: ignore[import-not-found]
         except ImportError:
             return
 
@@ -41,8 +41,8 @@ class RobotDebugger(Resource):
 
         robot = self._robot
 
-        class RobotService(rpyc.Service):
-            def exposed_robot(self):
+        class RobotService(rpyc.Service):  # type: ignore[misc]
+            def exposed_robot(self):  # type: ignore[no-untyped-def]
                 return robot
 
         self._threaded_server = ThreadedServer(
@@ -52,7 +52,7 @@ class RobotDebugger(Resource):
                 "allow_all_attrs": True,
             },
         )
-        self._threaded_server.start()
+        self._threaded_server.start()  # type: ignore[attr-defined]
 
     def stop(self) -> None:
         if self._threaded_server:

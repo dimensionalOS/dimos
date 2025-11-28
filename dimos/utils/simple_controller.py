@@ -15,7 +15,7 @@
 import math
 
 
-def normalize_angle(angle: float):
+def normalize_angle(angle: float):  # type: ignore[no-untyped-def]
     """Normalize angle to the range [-pi, pi]."""
     return math.atan2(math.sin(angle), math.cos(angle))
 
@@ -24,7 +24,7 @@ def normalize_angle(angle: float):
 # PID Controller Class
 # ----------------------------
 class PIDController:
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         kp,
         ki: float = 0.0,
@@ -59,7 +59,7 @@ class PIDController:
         self.prev_error = 0.0
         self.inverse_output = inverse_output
 
-    def update(self, error, dt):
+    def update(self, error, dt):  # type: ignore[no-untyped-def]
         """Compute the PID output with anti-windup, output deadband compensation and output saturation."""
         # Update integral term with windup protection.
         self.integral += error * dt
@@ -78,7 +78,7 @@ class PIDController:
         output = self.kp * error + self.ki * self.integral + self.kd * derivative
 
         # Apply deadband compensation to the output
-        output = self._apply_output_deadband_compensation(output)
+        output = self._apply_output_deadband_compensation(output)  # type: ignore[no-untyped-call]
 
         # Apply output limits if specified.
         if self.max_output is not None:
@@ -91,7 +91,7 @@ class PIDController:
             return -output
         return output
 
-    def _apply_output_deadband_compensation(self, output):
+    def _apply_output_deadband_compensation(self, output):  # type: ignore[no-untyped-def]
         """
         Apply deadband compensation to the output.
 
@@ -110,7 +110,7 @@ class PIDController:
         else:
             return output
 
-    def _apply_deadband_compensation(self, error):
+    def _apply_deadband_compensation(self, error):  # type: ignore[no-untyped-def]
         """
         Apply deadband compensation to the error.
 
@@ -124,7 +124,7 @@ class PIDController:
 # Visual Servoing Controller Class
 # ----------------------------
 class VisualServoingController:
-    def __init__(self, distance_pid_params, angle_pid_params) -> None:
+    def __init__(self, distance_pid_params, angle_pid_params) -> None:  # type: ignore[no-untyped-def]
         """
         Initialize the visual servoing controller using enhanced PID controllers.
 
@@ -136,7 +136,7 @@ class VisualServoingController:
         self.angle_pid = PIDController(*angle_pid_params)
         self.prev_measured_angle = 0.0  # Used for angular feed-forward damping
 
-    def compute_control(
+    def compute_control(  # type: ignore[no-untyped-def]
         self, measured_distance, measured_angle, desired_distance, desired_angle, dt
     ):
         """
@@ -157,8 +157,8 @@ class VisualServoingController:
         error_angle = normalize_angle(measured_angle - desired_angle)
 
         # Get raw PID outputs.
-        forward_command_raw = self.distance_pid.update(error_distance, dt)
-        angular_command_raw = self.angle_pid.update(error_angle, dt)
+        forward_command_raw = self.distance_pid.update(error_distance, dt)  # type: ignore[no-untyped-call]
+        angular_command_raw = self.angle_pid.update(error_angle, dt)  # type: ignore[no-untyped-call]
 
         # print("forward: {} angular: {}".format(forward_command_raw, angular_command_raw))
 

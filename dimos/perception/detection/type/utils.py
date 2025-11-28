@@ -55,19 +55,19 @@ class TableStr:
 
         # Create a table for detections
         table = Table(
-            title=f"{self.__class__.__name__} [{len(self.detections)} detections @ {to_timestamp(self.image.ts):.3f}]",
+            title=f"{self.__class__.__name__} [{len(self.detections)} detections @ {to_timestamp(self.image.ts):.3f}]",  # type: ignore[attr-defined]
             show_header=True,
             show_edge=True,
         )
 
         # Dynamically build columns based on the first detection's dict keys
-        if not self.detections:
+        if not self.detections:  # type: ignore[attr-defined]
             return (
-                f"   {self.__class__.__name__} [0 detections @ {to_timestamp(self.image.ts):.3f}]"
+                f"   {self.__class__.__name__} [0 detections @ {to_timestamp(self.image.ts):.3f}]"  # type: ignore[attr-defined]
             )
 
         # Cache all repr_dicts to avoid double computation
-        detection_dicts = [det.to_repr_dict() for det in self]
+        detection_dicts = [det.to_repr_dict() for det in self]  # type: ignore[attr-defined]
 
         first_dict = detection_dicts[0]
         table.add_column("#", style="dim")
@@ -89,9 +89,9 @@ class TableStr:
                         if float(d[key]) > 0.5
                         else "red"
                     )
-                    row.append(Text(f"{d[key]}", style=conf_color))
+                    row.append(Text(f"{d[key]}", style=conf_color))  # type: ignore[arg-type]
                 elif key == "points" and d.get(key) == "None":
-                    row.append(Text(d.get(key, ""), style="dim"))
+                    row.append(Text(d.get(key, ""), style="dim"))  # type: ignore[arg-type]
                 else:
                     row.append(str(d.get(key, "")))
             table.add_row(*row)

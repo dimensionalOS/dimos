@@ -19,9 +19,13 @@ import threading
 import time
 from typing import Literal, TypeAlias
 
-from aiortc import MediaStreamTrack
-from go2_webrtc_driver.constants import RTC_TOPIC, SPORT_CMD, VUI_COLOR
-from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-not-found]
+from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
+from go2_webrtc_driver.constants import (  # type: ignore[import-untyped]
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+)
+from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-untyped]
     Go2WebRTCConnection,
     WebRTCConnectionMethod,
 )
@@ -40,14 +44,14 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure, callback_to_observable
 
-VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
+VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]  # type: ignore[type-var]
 
 
 @dataclass
 class SerializableVideoFrame:
     """Pickleable wrapper for av.VideoFrame with all metadata"""
 
-    data: np.ndarray
+    data: np.ndarray  # type: ignore[type-arg]
     pts: int | None = None
     time: float | None = None
     dts: int | None = None
@@ -56,7 +60,7 @@ class SerializableVideoFrame:
     format: str | None = None
 
     @classmethod
-    def from_av_frame(cls, frame):
+    def from_av_frame(cls, frame):  # type: ignore[no-untyped-def]
         return cls(
             data=frame.to_ndarray(format="rgb24"),
             pts=frame.pts,
@@ -67,7 +71,7 @@ class SerializableVideoFrame:
             format=frame.format.name if hasattr(frame, "format") and frame.format else None,
         )
 
-    def to_ndarray(self, format=None):
+    def to_ndarray(self, format=None):  # type: ignore[no-untyped-def]
         return self.data
 
 
@@ -174,9 +178,9 @@ class UnitreeWebRTCConnection(Resource):
             self.stop_timer.cancel()
 
         # Auto-stop after 0.5 seconds if no new commands
-        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)
-        self.stop_timer.daemon = True
-        self.stop_timer.start()
+        self.stop_timer = threading.Timer(self.cmd_vel_timeout, self.stop)  # type: ignore[assignment]
+        self.stop_timer.daemon = True  # type: ignore[attr-defined]
+        self.stop_timer.start()  # type: ignore[attr-defined]
 
         try:
             if duration > 0:
@@ -195,8 +199,8 @@ class UnitreeWebRTCConnection(Resource):
             return False
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
-    def unitree_sub_stream(self, topic_name: str):
-        def subscribe_in_thread(cb) -> None:
+    def unitree_sub_stream(self, topic_name: str):  # type: ignore[no-untyped-def]
+        def subscribe_in_thread(cb) -> None:  # type: ignore[no-untyped-def]
             # Run the subscription in the background thread that has the event loop
             def run_subscription() -> None:
                 self.conn.datachannel.pub_sub.subscribe(topic_name, cb)
@@ -204,7 +208,7 @@ class UnitreeWebRTCConnection(Resource):
             # Use call_soon_threadsafe to run in the background thread
             self.loop.call_soon_threadsafe(run_subscription)
 
-        def unsubscribe_in_thread(cb) -> None:
+        def unsubscribe_in_thread(cb) -> None:  # type: ignore[no-untyped-def]
             # Run the unsubscription in the background thread that has the event loop
             def run_unsubscription() -> None:
                 self.conn.datachannel.pub_sub.unsubscribe(topic_name)
@@ -218,7 +222,7 @@ class UnitreeWebRTCConnection(Resource):
         )
 
     # Generic sync API call (we jump into the client thread)
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         future = asyncio.run_coroutine_threadsafe(
             self.conn.datachannel.pub_sub.publish_request_new(topic, data), self.loop
         )
@@ -226,28 +230,28 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def raw_lidar_stream(self) -> Subject[LidarMessage]:
-        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))
+        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ULIDAR_ARRAY"]))  # type: ignore[return-value]
 
     @simple_mcache
     def raw_odom_stream(self) -> Subject[Pose]:
-        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))
+        return backpressure(self.unitree_sub_stream(RTC_TOPIC["ROBOTODOM"]))  # type: ignore[return-value]
 
     @simple_mcache
     def lidar_stream(self) -> Subject[LidarMessage]:
-        return backpressure(
+        return backpressure(  # type: ignore[return-value]
             self.raw_lidar_stream().pipe(
-                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))  # type: ignore[arg-type]
             )
         )
 
     @simple_mcache
     def tf_stream(self) -> Subject[Transform]:
         base_link = functools.partial(Transform.from_pose, "base_link")
-        return backpressure(self.odom_stream().pipe(ops.map(base_link)))
+        return backpressure(self.odom_stream().pipe(ops.map(base_link)))  # type: ignore[return-value]
 
     @simple_mcache
     def odom_stream(self) -> Subject[Pose]:
-        return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))
+        return backpressure(self.raw_odom_stream().pipe(ops.map(Odometry.from_msg)))  # type: ignore[return-value]
 
     @simple_mcache
     def video_stream(self) -> Observable[Image]:
@@ -257,7 +261,7 @@ class UnitreeWebRTCConnection(Resource):
                 ops.map(
                     lambda frame: Image.from_numpy(
                         # np.ascontiguousarray(frame.to_ndarray("rgb24")),
-                        frame.to_ndarray(format="rgb24"),
+                        frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
                         frame_id="camera_optical",
                     )
                 ),
@@ -266,9 +270,9 @@ class UnitreeWebRTCConnection(Resource):
 
     @simple_mcache
     def lowstate_stream(self) -> Subject[LowStateMsg]:
-        return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
+        return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))  # type: ignore[return-value]
 
-    def standup_ai(self):
+    def standup_ai(self):  # type: ignore[no-untyped-def]
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
 
     def standup_normal(self) -> bool:
@@ -278,17 +282,17 @@ class UnitreeWebRTCConnection(Resource):
         return True
 
     @rpc
-    def standup(self):
+    def standup(self):  # type: ignore[no-untyped-def]
         if self.mode == "ai":
-            return self.standup_ai()
+            return self.standup_ai()  # type: ignore[no-untyped-call]
         else:
             return self.standup_normal()
 
     @rpc
-    def liedown(self):
+    def liedown(self):  # type: ignore[no-untyped-def]
         return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
 
-    async def handstand(self):
+    async def handstand(self):  # type: ignore[no-untyped-def]
         return self.publish_request(
             RTC_TOPIC["SPORT_MOD"],
             {"api_id": SPORT_CMD["Standup"], "parameter": {"data": True}},
@@ -296,7 +300,7 @@ class UnitreeWebRTCConnection(Resource):
 
     @rpc
     def color(self, color: VUI_COLOR = VUI_COLOR.RED, colortime: int = 60) -> bool:
-        return self.publish_request(
+        return self.publish_request(  # type: ignore[no-any-return]
             RTC_TOPIC["VUI"],
             {
                 "api_id": 1001,
@@ -315,9 +319,9 @@ class UnitreeWebRTCConnection(Resource):
         async def accept_track(track: MediaStreamTrack) -> VideoMessage:
             while True:
                 if stop_event.is_set():
-                    return
+                    return  # type: ignore[return-value]
                 frame = await track.recv()
-                serializable_frame = SerializableVideoFrame.from_av_frame(frame)
+                serializable_frame = SerializableVideoFrame.from_av_frame(frame)  # type: ignore[no-untyped-call]
                 subject.on_next(serializable_frame)
 
         self.conn.video.add_track_callback(accept_track)
@@ -357,13 +361,13 @@ class UnitreeWebRTCConnection(Resource):
             stream = self.video_stream()
             if stream is None:
                 print("Warning: Video stream is not available")
-            return stream
+            return stream  # type: ignore[no-any-return]
 
         except Exception as e:
             print(f"Error getting video stream: {e}")
-            return None
+            return None  # type: ignore[return-value]
 
-    def stop(self) -> bool:
+    def stop(self) -> bool:  # type: ignore[no-redef]
         """Stop the robot's movement.
 
         Returns:

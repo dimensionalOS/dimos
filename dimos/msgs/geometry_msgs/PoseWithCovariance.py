@@ -16,14 +16,18 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, TypeAlias
 
-from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+    PoseWithCovariance as LCMPoseWithCovariance,
+)
 import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        PoseWithCovariance as ROSPoseWithCovariance,
+    )
 except ImportError:
-    ROSPoseWithCovariance = None
+    ROSPoseWithCovariance = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 
@@ -33,13 +37,13 @@ if TYPE_CHECKING:
 
 # Types that can be converted to/from PoseWithCovariance
 PoseWithCovarianceConvertable: TypeAlias = (
-    tuple[PoseConvertable, list[float] | np.ndarray]
+    tuple[PoseConvertable, list[float] | np.ndarray]  # type: ignore[type-arg]
     | LCMPoseWithCovariance
-    | dict[str, PoseConvertable | list[float] | np.ndarray]
+    | dict[str, PoseConvertable | list[float] | np.ndarray]  # type: ignore[type-arg]
 )
 
 
-class PoseWithCovariance(LCMPoseWithCovariance):
+class PoseWithCovariance(LCMPoseWithCovariance):  # type: ignore[misc]
     pose: Pose
     msg_name = "geometry_msgs.PoseWithCovariance"
 
@@ -49,9 +53,11 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         self.pose = Pose()
         self.covariance = np.zeros(36)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(
-        self, pose: Pose | PoseConvertable, covariance: list[float] | np.ndarray | None = None
+        self,
+        pose: Pose | PoseConvertable,
+        covariance: list[float] | np.ndarray | None = None,  # type: ignore[type-arg]
     ) -> None:
         """Initialize with pose and optional covariance."""
         self.pose = Pose(pose) if not isinstance(pose, Pose) else pose
@@ -60,20 +66,20 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         else:
             self.covariance = np.array(covariance, dtype=float).reshape(36)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, pose_with_cov: PoseWithCovariance) -> None:
         """Initialize from another PoseWithCovariance (copy constructor)."""
         self.pose = Pose(pose_with_cov.pose)
         self.covariance = np.array(pose_with_cov.covariance).copy()
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_pose_with_cov: LCMPoseWithCovariance) -> None:
         """Initialize from an LCM PoseWithCovariance."""
         self.pose = Pose(lcm_pose_with_cov.pose)
         self.covariance = np.array(lcm_pose_with_cov.covariance)
 
-    @dispatch
-    def __init__(self, pose_dict: dict[str, PoseConvertable | list[float] | np.ndarray]) -> None:
+    @dispatch  # type: ignore[no-redef]
+    def __init__(self, pose_dict: dict[str, PoseConvertable | list[float] | np.ndarray]) -> None:  # type: ignore[type-arg]
         """Initialize from a dictionary with 'pose' and 'covariance' keys."""
         self.pose = Pose(pose_dict["pose"])
         covariance = pose_dict.get("covariance")
@@ -82,13 +88,13 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         else:
             self.covariance = np.array(covariance, dtype=float).reshape(36)
 
-    @dispatch
-    def __init__(self, pose_tuple: tuple[PoseConvertable, list[float] | np.ndarray]) -> None:
+    @dispatch  # type: ignore[no-redef]
+    def __init__(self, pose_tuple: tuple[PoseConvertable, list[float] | np.ndarray]) -> None:  # type: ignore[type-arg]
         """Initialize from a tuple of (pose, covariance)."""
         self.pose = Pose(pose_tuple[0])
         self.covariance = np.array(pose_tuple[1], dtype=float).reshape(36)
 
-    def __getattribute__(self, name: str):
+    def __getattribute__(self, name: str):  # type: ignore[no-untyped-def]
         """Override to ensure covariance is always returned as numpy array."""
         if name == "covariance":
             cov = object.__getattribute__(self, "covariance")
@@ -97,7 +103,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
             return cov
         return super().__getattribute__(name)
 
-    def __setattr__(self, name: str, value) -> None:
+    def __setattr__(self, name: str, value) -> None:  # type: ignore[no-untyped-def]
         """Override to ensure covariance is stored as numpy array."""
         if name == "covariance":
             if not isinstance(value, np.ndarray):
@@ -145,17 +151,17 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         return self.pose.yaw
 
     @property
-    def covariance_matrix(self) -> np.ndarray:
+    def covariance_matrix(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get covariance as 6x6 matrix."""
-        return self.covariance.reshape(6, 6)
+        return self.covariance.reshape(6, 6)  # type: ignore[has-type, no-any-return]
 
     @covariance_matrix.setter
-    def covariance_matrix(self, value: np.ndarray) -> None:
+    def covariance_matrix(self, value: np.ndarray) -> None:  # type: ignore[type-arg]
         """Set covariance from 6x6 matrix."""
-        self.covariance = np.array(value).reshape(36)
+        self.covariance = np.array(value).reshape(36)  # type: ignore[has-type]
 
     def __repr__(self) -> str:
-        return f"PoseWithCovariance(pose={self.pose!r}, covariance=<{self.covariance.shape[0] if isinstance(self.covariance, np.ndarray) else len(self.covariance)} elements>)"
+        return f"PoseWithCovariance(pose={self.pose!r}, covariance=<{self.covariance.shape[0] if isinstance(self.covariance, np.ndarray) else len(self.covariance)} elements>)"  # type: ignore[has-type]
 
     def __str__(self) -> str:
         return (
@@ -164,22 +170,22 @@ class PoseWithCovariance(LCMPoseWithCovariance):
             f"cov_trace={np.trace(self.covariance_matrix):.3f})"
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two PoseWithCovariance are equal."""
         if not isinstance(other, PoseWithCovariance):
             return False
-        return self.pose == other.pose and np.allclose(self.covariance, other.covariance)
+        return self.pose == other.pose and np.allclose(self.covariance, other.covariance)  # type: ignore[has-type]
 
     def lcm_encode(self) -> bytes:
         """Encode to LCM binary format."""
         lcm_msg = LCMPoseWithCovariance()
         lcm_msg.pose = self.pose
         # LCM expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):
-            lcm_msg.covariance = self.covariance.tolist()
+        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
+            lcm_msg.covariance = self.covariance.tolist()  # type: ignore[has-type]
         else:
-            lcm_msg.covariance = list(self.covariance)
-        return lcm_msg.lcm_encode()
+            lcm_msg.covariance = list(self.covariance)  # type: ignore[has-type]
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> PoseWithCovariance:
@@ -217,11 +223,11 @@ class PoseWithCovariance(LCMPoseWithCovariance):
             ROS PoseWithCovariance message
         """
 
-        ros_msg = ROSPoseWithCovariance()
+        ros_msg = ROSPoseWithCovariance()  # type: ignore[no-untyped-call]
         ros_msg.pose = self.pose.to_ros_msg()
         # ROS expects list, not numpy array
-        if isinstance(self.covariance, np.ndarray):
-            ros_msg.covariance = self.covariance.tolist()
+        if isinstance(self.covariance, np.ndarray):  # type: ignore[has-type]
+            ros_msg.covariance = self.covariance.tolist()  # type: ignore[has-type]
         else:
-            ros_msg.covariance = list(self.covariance)
+            ros_msg.covariance = list(self.covariance)  # type: ignore[has-type]
         return ros_msg
