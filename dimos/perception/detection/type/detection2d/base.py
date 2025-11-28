@@ -13,9 +13,13 @@
 # limitations under the License.
 
 from abc import abstractmethod
+from collections.abc import Callable
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import PointsAnnotation, TextAnnotation
-from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    PointsAnnotation,
+    TextAnnotation,
+)
+from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D  # type: ignore[import-untyped]
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
@@ -49,3 +53,6 @@ class Detection2D(Timestamped):
     def to_ros_detection2d(self) -> ROSDetection2D:
         """Convert detection to ROS Detection2D message."""
         ...
+
+
+Filter2D = Callable[[Detection2D], bool]

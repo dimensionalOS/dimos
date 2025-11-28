@@ -1,0 +1,20 @@
+# Cloned repository
+ros-navigation-autonomy-stack/
+
+# Unity models (large binary files)
+unity_models/
+
+# ROS bag files
+bagfiles/
+
+# Config files (may contain local settings)
+config/
+
+# Docker volumes
+.docker/
+
+# Temporary files
+*.tmp
+*.log
+*.swp
+*~

@@ -18,9 +18,18 @@ from dataclasses import dataclass
 import functools
 from typing import TYPE_CHECKING, Any
 
-from lcm_msgs.builtin_interfaces import Duration
-from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, TextPrimitive
-from lcm_msgs.geometry_msgs import Point, Pose, Quaternion, Vector3 as LCMVector3
+from lcm_msgs.builtin_interfaces import Duration  # type: ignore[import-not-found]
+from lcm_msgs.foxglove_msgs import (  # type: ignore[import-not-found]
+    CubePrimitive,
+    SceneEntity,
+    TextPrimitive,
+)
+from lcm_msgs.geometry_msgs import (  # type: ignore[import-not-found]
+    Point,
+    Pose,
+    Quaternion,
+    Vector3 as LCMVector3,
+)
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
@@ -36,7 +45,7 @@ from dimos.perception.detection.type.detection3d.pointcloud_filters import (
 from dimos.types.timestamped import to_ros_stamp
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo
+    from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
     from dimos.perception.detection.type.detection2d import Detection2DBBox
 
@@ -63,11 +72,11 @@ class Detection3DPC(Detection3D):
             orientation=(0.0, 0.0, 0.0, 1.0),  # Identity quaternion
         )
 
-    def get_bounding_box(self):
+    def get_bounding_box(self):  # type: ignore[no-untyped-def]
         """Get axis-aligned bounding box of the detection's pointcloud."""
         return self.pointcloud.get_axis_aligned_bounding_box()
 
-    def get_oriented_bounding_box(self):
+    def get_oriented_bounding_box(self):  # type: ignore[no-untyped-def]
         """Get oriented bounding box of the detection's pointcloud."""
         return self.pointcloud.get_oriented_bounding_box()
 
@@ -112,7 +121,7 @@ class Detection3DPC(Detection3D):
         cube = CubePrimitive()
 
         # Get the axis-aligned bounding box
-        aabb = self.get_bounding_box()
+        aabb = self.get_bounding_box()  # type: ignore[no-untyped-call]
 
         # Set pose from axis-aligned bounding box
         cube.pose = Pose()

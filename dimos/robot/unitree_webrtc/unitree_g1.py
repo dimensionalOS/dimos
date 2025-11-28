@@ -22,19 +22,26 @@ import logging
 import os
 import time
 
-from dimos_lcm.foxglove_msgs import SceneUpdate
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped, TwistStamped as ROSTwistStamped
-from nav_msgs.msg import Odometry as ROSOdometry
+from dimos_lcm.foxglove_msgs import SceneUpdate  # type: ignore[import-untyped]
+from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    PoseStamped as ROSPoseStamped,
+    TwistStamped as ROSTwistStamped,
+)
+from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
 from reactivex.disposable import Disposable
-from sensor_msgs.msg import Joy as ROSJoy, PointCloud2 as ROSPointCloud2
-from tf2_msgs.msg import TFMessage as ROSTFMessage
+from sensor_msgs.msg import (  # type: ignore[attr-defined]
+    Joy as ROSJoy,
+    PointCloud2 as ROSPointCloud2,
+)
+from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 
 from dimos import core
-from dimos.agents2 import Agent
+from dimos.agents2 import Agent  # type: ignore[attr-defined]
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.agents2.spec import Model, Provider
 from dimos.core import In, Module, Out, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
 from dimos.hardware.camera import zed
@@ -62,13 +69,15 @@ from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree_webrtc.keyboard_teleop import KeyboardTeleop
 from dimos.robot.unitree_webrtc.rosnav import NavigationModule
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.odometry import Odometry as SimOdometry
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import UnitreeG1SkillContainer
 from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
-from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1", level=logging.INFO)
 
@@ -83,42 +92,91 @@ logging.getLogger("asyncio").setLevel(logging.ERROR)
 class G1ConnectionModule(Module):
     """Simplified connection module for G1 - uses WebRTC for control."""
 
-    movecmd: In[TwistStamped] = None
-    odom_in: In[Odometry] = None
-
-    odom_pose: Out[PoseStamped] = None
+    cmd_vel: In[Twist] = None  # type: ignore[assignment]
+    odom_in: In[Odometry] = None  # type: ignore[assignment]
+    lidar: Out[LidarMessage] = None  # type: ignore[assignment]
+    odom: Out[PoseStamped] = None  # type: ignore[assignment]
     ip: str
-    connection_type: str = "webrtc"
+    connection_type: str | None = None
+    _global_config: GlobalConfig
 
-    def __init__(
-        self, ip: str | None = None, connection_type: str = "webrtc", *args, **kwargs
+    def __init__(  # type: ignore[no-untyped-def]
+        self,
+        ip: str | None = None,
+        connection_type: str | None = None,
+        global_config: GlobalConfig | None = None,
+        *args,
+        **kwargs,
     ) -> None:
-        self.ip = ip
-        self.connection_type = connection_type
+        self._global_config = global_config or GlobalConfig()
+        self.ip = ip if ip is not None else self._global_config.robot_ip  # type: ignore[assignment]
+        self.connection_type = connection_type or self._global_config.unitree_connection_type
         self.connection = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
     def start(self) -> None:
-        """Start the connection and subscribe to sensor streams."""
-
         super().start()
 
-        # Use the exact same UnitreeWebRTCConnection as Go2
-        self.connection = UnitreeWebRTCConnection(self.ip)
-        self.connection.start()
-        unsub = self.movecmd.subscribe(self.move)
+        match self.connection_type:
+            case "webrtc":
+                self.connection = UnitreeWebRTCConnection(self.ip)  # type: ignore[assignment]
+            case "replay":
+                raise ValueError("Replay connection not implemented for G1 robot")
+            case "mujoco":
+                from dimos.robot.unitree_webrtc.mujoco_connection import MujocoConnection
+
+                self.connection = MujocoConnection(self._global_config)  # type: ignore[assignment]
+            case _:
+                raise ValueError(f"Unknown connection type: {self.connection_type}")
+
+        self.connection.start()  # type: ignore[attr-defined]
+
+        unsub = self.cmd_vel.subscribe(self.move)
         self._disposables.add(Disposable(unsub))
-        unsub = self.odom_in.subscribe(self._publish_odom_pose)
-        self._disposables.add(Disposable(unsub))
+
+        if self.connection_type == "mujoco":
+            unsub = self.connection.odom_stream().subscribe(self._publish_sim_odom)  # type: ignore[attr-defined]
+            self._disposables.add(unsub)
+
+            unsub = self.connection.lidar_stream().subscribe(self._on_lidar)  # type: ignore[attr-defined]
+            self._disposables.add(unsub)
+        else:
+            unsub = self.odom_in.subscribe(self._publish_odom)
+            self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:
-        self.connection.stop()
+        self.connection.stop()  # type: ignore[attr-defined]
         super().stop()
 
-    def _publish_odom_pose(self, msg: Odometry) -> None:
-        self.odom_pose.publish(
+    def _publish_tf(self, msg: PoseStamped) -> None:
+        if self.odom.transport:
+            self.odom.publish(msg)  # type: ignore[no-untyped-call]
+
+        self.tf.publish(Transform.from_pose("base_link", msg))
+
+        # Publish camera_link transform
+        camera_link = Transform(
+            translation=Vector3(0.3, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="base_link",
+            child_frame_id="camera_link",
+            ts=time.time(),
+        )
+
+        map_to_world = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id="map",
+            child_frame_id="world",
+            ts=time.time(),
+        )
+
+        self.tf.publish(camera_link, map_to_world)
+
+    def _publish_odom(self, msg: Odometry) -> None:
+        self._publish_tf(
             PoseStamped(
                 ts=msg.ts,
                 frame_id=msg.frame_id,
@@ -127,16 +185,33 @@ class G1ConnectionModule(Module):
             )
         )
 
-    @rpc
-    def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> None:
-        """Send movement command to robot."""
-        twist = Twist(linear=twist_stamped.linear, angular=twist_stamped.angular)
-        self.connection.move(twist, duration)
+    def _publish_sim_odom(self, msg: SimOdometry) -> None:
+        self._publish_tf(
+            PoseStamped(
+                ts=msg.ts,
+                frame_id=msg.frame_id,
+                position=msg.position,
+                orientation=msg.orientation,
+            )
+        )
+
+    def _on_lidar(self, msg: LidarMessage) -> None:
+        if self.lidar.transport:
+            self.lidar.publish(msg)  # type: ignore[no-untyped-call]
 
     @rpc
-    def publish_request(self, topic: str, data: dict):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
+        """Send movement command to robot."""
+        self.connection.move(twist, duration)  # type: ignore[attr-defined]
+
+    @rpc
+    def publish_request(self, topic: str, data: dict):  # type: ignore[no-untyped-def, type-arg]
         """Forward WebRTC publish requests to connection."""
-        return self.connection.publish_request(topic, data)
+        logger.info(f"Publishing request to topic: {topic} with data: {data}")
+        return self.connection.publish_request(topic, data)  # type: ignore[attr-defined]
+
+
+g1_connection = G1ConnectionModule.blueprint
 
 
 class UnitreeG1(Robot, Resource):
@@ -188,7 +263,7 @@ class UnitreeG1(Robot, Resource):
             from dimos.robot.unitree_webrtc.unitree_skills import MyUnitreeSkills
 
             skill_library = MyUnitreeSkills(robot_type="g1")
-        self.skill_library = skill_library
+        self.skill_library = skill_library  # type: ignore[assignment]
 
         # Set robot capabilities
         self.capabilities = [RobotCapability.LOCOMOTION]
@@ -224,12 +299,12 @@ class UnitreeG1(Robot, Resource):
         os.makedirs(self.spatial_memory_dir, exist_ok=True)
         os.makedirs(self.db_path, exist_ok=True)
 
-    def _deploy_detection(self, goto) -> None:
+    def _deploy_detection(self, goto) -> None:  # type: ignore[no-untyped-def]
         detection = self._dimos.deploy(
             ObjectDBModule, goto=goto, camera_info=zed.CameraInfo.SingleWebcam
         )
 
-        detection.image.connect(self.camera.image)
+        detection.image.connect(self.camera.image)  # type: ignore[attr-defined]
         detection.pointcloud.transport = core.LCMTransport("/map", PointCloud2)
 
         detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
@@ -289,7 +364,7 @@ class UnitreeG1(Robot, Resource):
         agent = Agent(
             system_prompt="You are a helpful assistant controlling a Unitree G1 humanoid robot. You can control the robot's arms, movement modes, and navigation.",
             model=Model.GPT_4O,
-            provider=Provider.OPENAI,
+            provider=Provider.OPENAI,  # type: ignore[attr-defined]
         )
 
         # Register G1-specific skill container
@@ -303,15 +378,15 @@ class UnitreeG1(Robot, Resource):
             agent.register_skills(self.detection)
 
         # Register ROS navigation
-        self._ros_nav = RosNavigation(self)
-        self._ros_nav.start()
+        self._ros_nav = RosNavigation(self)  # type: ignore[assignment]
+        self._ros_nav.start()  # type: ignore[attr-defined]
         agent.register_skills(self._ros_nav)
 
         agent.run_implicit_skill("human")
         agent.start()
 
         # For logging
-        skills = [tool.name for tool in agent.get_tools()]
+        skills = [tool.name for tool in agent.get_tools()]  # type: ignore[no-untyped-call]
         logger.info(f"Agent configured with {len(skills)} skills: {', '.join(skills)}")
 
         agent.loop_thread()
@@ -328,18 +403,18 @@ class UnitreeG1(Robot, Resource):
 
     def _deploy_connection(self) -> None:
         """Deploy and configure the connection module."""
-        self.connection = self._dimos.deploy(G1ConnectionModule, self.ip)
+        self.connection = self._dimos.deploy(G1ConnectionModule, self.ip)  # type: ignore[assignment]
 
         # Configure LCM transports
-        self.connection.movecmd.transport = core.LCMTransport("/cmd_vel", TwistStamped)
-        self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)
-        self.connection.odom_pose.transport = core.LCMTransport("/odom", PoseStamped)
+        self.connection.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)  # type: ignore[attr-defined]
+        self.connection.odom_in.transport = core.LCMTransport("/state_estimation", Odometry)  # type: ignore[attr-defined]
+        self.connection.odom.transport = core.LCMTransport("/odom", PoseStamped)  # type: ignore[attr-defined]
 
     def _deploy_camera(self) -> None:
         """Deploy and configure a standard webcam module."""
         logger.info("Deploying standard webcam module...")
 
-        self.camera = self._dimos.deploy(
+        self.camera = self._dimos.deploy(  # type: ignore[assignment]
             CameraModule,
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
@@ -355,29 +430,30 @@ class UnitreeG1(Robot, Resource):
             ),
         )
 
-        self.camera.image.transport = core.LCMTransport("/image", Image)
-        self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
+        self.camera.image.transport = core.LCMTransport("/image", Image)  # type: ignore[attr-defined]
+        self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)  # type: ignore[attr-defined]
         logger.info("Webcam module configured")
 
     def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
-        # Deploy WebSocket visualization module
-        self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
-        self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
+        # Deploy WebSocket visualization module - COMMENTED OUT DUE TO TRANSPORT ISSUES
+        # self.websocket_vis = self._dimos.deploy(WebsocketVisModule, port=self.websocket_port)
+        # self.websocket_vis.movecmd_stamped.transport = core.LCMTransport("/cmd_vel", TwistStamped)
 
-        # Note: robot_pose connection removed since odom was removed from G1ConnectionModule
+        # Connect odometry to websocket visualization
+        # self.websocket_vis.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         # Deploy Foxglove bridge
-        self.foxglove_bridge = FoxgloveBridge(
+        self.foxglove_bridge = FoxgloveBridge(  # type: ignore[assignment]
             shm_channels=[
                 "/zed/color_image#sensor_msgs.Image",
                 "/zed/depth_image#sensor_msgs.Image",
             ]
         )
-        self.foxglove_bridge.start()
+        self.foxglove_bridge.start()  # type: ignore[attr-defined]
 
     def _deploy_perception(self) -> None:
-        self.spatial_memory_module = self._dimos.deploy(
+        self.spatial_memory_module = self._dimos.deploy(  # type: ignore[assignment]
             SpatialMemory,
             collection_name=self.spatial_memory_collection,
             db_path=self.db_path,
@@ -385,57 +461,55 @@ class UnitreeG1(Robot, Resource):
             output_dir=self.spatial_memory_dir,
         )
 
-        self.spatial_memory_module.color_image.connect(self.camera.image)
-        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
+        self.spatial_memory_module.color_image.connect(self.camera.image)  # type: ignore[attr-defined]
+        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)  # type: ignore[attr-defined]
 
         logger.info("Spatial memory module deployed and connected")
 
     def _deploy_joystick(self) -> None:
         """Deploy joystick control module."""
-        from dimos.robot.unitree_webrtc.g1_joystick_module import G1JoystickModule
-
         logger.info("Deploying G1 joystick module...")
-        self.joystick = self._dimos.deploy(G1JoystickModule)
-        self.joystick.twist_out.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.joystick = self._dimos.deploy(KeyboardTeleop)  # type: ignore[assignment]
+        self.joystick.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)  # type: ignore[attr-defined]
         logger.info("Joystick module deployed - pygame window will open")
 
     def _deploy_ros_bridge(self) -> None:
         """Deploy and configure ROS bridge."""
-        self.ros_bridge = ROSBridge("g1_ros_bridge")
+        self.ros_bridge = ROSBridge("g1_ros_bridge")  # type: ignore[assignment]
 
         # Add /cmd_vel topic from ROS to DIMOS
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/cmd_vel", TwistStamped, ROSTwistStamped, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
         # Add /state_estimation topic from ROS to DIMOS
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/state_estimation", Odometry, ROSOdometry, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
         # Add /tf topic from ROS to DIMOS
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/tf", TFMessage, ROSTFMessage, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        from std_msgs.msg import Bool as ROSBool
+        from std_msgs.msg import Bool as ROSBool  # type: ignore[attr-defined]
 
         from dimos.msgs.std_msgs import Bool
 
         # Navigation control topics from autonomy stack
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/goal_pose", PoseStamped, ROSPoseStamped, direction=BridgeDirection.DIMOS_TO_ROS
         )
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/cancel_goal", Bool, ROSBool, direction=BridgeDirection.DIMOS_TO_ROS
         )
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/goal_reached", Bool, ROSBool, direction=BridgeDirection.ROS_TO_DIMOS
         )
 
-        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)
+        self.ros_bridge.add_topic("/joy", Joy, ROSJoy, direction=BridgeDirection.DIMOS_TO_ROS)  # type: ignore[attr-defined]
 
-        self.ros_bridge.add_topic(
+        self.ros_bridge.add_topic(  # type: ignore[attr-defined]
             "/registered_scan",
             PointCloud2,
             ROSPointCloud2,
@@ -443,7 +517,7 @@ class UnitreeG1(Robot, Resource):
             remap_topic="/map",
         )
 
-        self.ros_bridge.start()
+        self.ros_bridge.start()  # type: ignore[attr-defined]
 
         logger.info(
             "ROS bridge deployed: /cmd_vel, /state_estimation, /tf, /registered_scan (ROS → DIMOS)"
@@ -465,12 +539,12 @@ class UnitreeG1(Robot, Resource):
 
     def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> None:
         """Send movement command to robot."""
-        self.connection.move(twist_stamped, duration)
+        self.connection.move(twist_stamped, duration)  # type: ignore[attr-defined]
 
     def get_odom(self) -> PoseStamped:
         """Get the robot's odometry."""
         # Note: odom functionality removed from G1ConnectionModule
-        return None
+        return None  # type: ignore[return-value]
 
     @property
     def spatial_memory(self) -> SpatialMemory | None:
@@ -496,9 +570,9 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
-    robot = UnitreeG1(
+    robot = UnitreeG1(  # type: ignore[abstract]
         ip=args.ip,
         output_dir=args.output_dir,
         recording_path=args.record,

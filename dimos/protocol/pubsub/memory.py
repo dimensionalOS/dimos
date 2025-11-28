@@ -50,7 +50,7 @@ class Memory(PubSub[str, Any]):
             pass
 
 
-class MemoryWithJSONEncoder(PubSubEncoderMixin, Memory):
+class MemoryWithJSONEncoder(PubSubEncoderMixin, Memory):  # type: ignore[type-arg]
     """Memory PubSub with JSON encoding/decoding."""
 
     def encode(self, msg: Any, topic: str) -> bytes:

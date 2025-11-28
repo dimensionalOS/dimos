@@ -24,7 +24,7 @@ A lightweight framework for **recording, storing, and replaying binary data stre
 * **No repo bloat** – binaries live in Git LFS; the working tree stays trim.
 * **Symmetric API** – `SensorReplay` ↔︎ `SensorStorage`; same name, different direction.
 * **Format agnostic** – replay *anything* you can pickle (protobuf, numpy, JPEG, …).
-* **Data type agnostic** – with testData("raw_odometry_rotate_walk") you get a Path object back, can be a raw video file, whole codebase, ML model etc 
+* **Data type agnostic** – with testData("raw_odometry_rotate_walk") you get a Path object back, can be a raw video file, whole codebase, ML model etc
 
 
 ---
@@ -172,4 +172,3 @@ Either delete or run ./bin/lfs_push
 
 * `dimos/robot/unitree_webrtc/type/test_odometry.py`
 * `dimos/robot/unitree_webrtc/type/test_map.py`
-

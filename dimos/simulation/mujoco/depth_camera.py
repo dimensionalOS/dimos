@@ -15,21 +15,21 @@
 # limitations under the License.
 
 import math
+from typing import Any
 
 import numpy as np
-import open3d as o3d
+from numpy.typing import NDArray
+import open3d as o3d  # type: ignore[import-untyped]
 
-MAX_RANGE = 3
-MIN_RANGE = 0.2
-MAX_HEIGHT = 1.2
+from dimos.simulation.mujoco.constants import MAX_HEIGHT, MAX_RANGE, MIN_RANGE
 
 
 def depth_image_to_point_cloud(
-    depth_image: np.ndarray,
-    camera_pos: np.ndarray,
-    camera_mat: np.ndarray,
+    depth_image: NDArray[Any],
+    camera_pos: NDArray[Any],
+    camera_mat: NDArray[Any],
     fov_degrees: float = 120,
-) -> np.ndarray:
+) -> NDArray[Any]:
     """
     Convert a depth image from a camera to a 3D point cloud using perspective projection.
 
@@ -61,7 +61,7 @@ def depth_image_to_point_cloud(
     o3d_cloud = o3d.geometry.PointCloud.create_from_depth_image(o3d_depth, cam_intrinsics)
 
     # Convert Open3D point cloud to numpy array
-    camera_points = np.asarray(o3d_cloud.points)
+    camera_points: NDArray[Any] = np.asarray(o3d_cloud.points)
 
     if camera_points.size == 0:
         return np.array([]).reshape(0, 3)
@@ -83,6 +83,6 @@ def depth_image_to_point_cloud(
         return np.array([]).reshape(0, 3)
 
     # Transform to world coordinates
-    world_points = (camera_mat @ camera_points.T).T + camera_pos
+    world_points: NDArray[Any] = (camera_mat @ camera_points.T).T + camera_pos
 
     return world_points

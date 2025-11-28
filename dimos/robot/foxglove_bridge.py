@@ -17,16 +17,21 @@ import logging
 import threading
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
-from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
+from dimos_lcm.foxglove_bridge import (  # type: ignore[import-untyped]
+    FoxgloveBridge as LCMFoxgloveBridge,
+)
 
-from dimos.core import Module, rpc
+from dimos.core import DimosCluster, Module, rpc
+
+logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
+logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 
 
 class FoxgloveBridge(Module):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
 
-    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, **kwargs) -> None:
+    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
         self.jpeg_shm_channels = jpeg_shm_channels or []
@@ -40,9 +45,9 @@ class FoxgloveBridge(Module):
             asyncio.set_event_loop(self._loop)
             try:
                 for logger in ["lcm_foxglove_bridge", "FoxgloveServer"]:
-                    logger = logging.getLogger(logger)
-                    logger.setLevel(logging.ERROR)
-                    for handler in logger.handlers:
+                    logger = logging.getLogger(logger)  # type: ignore[assignment]
+                    logger.setLevel(logging.ERROR)  # type: ignore[attr-defined]
+                    for handler in logger.handlers:  # type: ignore[attr-defined]
                         handler.setLevel(logging.ERROR)
 
                 bridge = LCMFoxgloveBridge(
@@ -69,7 +74,25 @@ class FoxgloveBridge(Module):
         super().stop()
 
 
+def deploy(
+    dimos: DimosCluster,
+    shm_channels: list[str] | None = None,
+) -> FoxgloveBridge:
+    if shm_channels is None:
+        shm_channels = [
+            "/image#sensor_msgs.Image",
+            "/lidar#sensor_msgs.PointCloud2",
+            "/map#sensor_msgs.PointCloud2",
+        ]
+    foxglove_bridge = dimos.deploy(  # type: ignore[attr-defined]
+        FoxgloveBridge,
+        shm_channels=shm_channels,
+    )
+    foxglove_bridge.start()
+    return foxglove_bridge  # type: ignore[no-any-return]
+
+
 foxglove_bridge = FoxgloveBridge.blueprint
 
 
-__all__ = ["FoxgloveBridge", "foxglove_bridge"]
+__all__ = ["FoxgloveBridge", "deploy", "foxglove_bridge"]

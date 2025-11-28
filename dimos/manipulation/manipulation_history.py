@@ -256,7 +256,7 @@ class ManipulationHistory:
         self.add_entry(entry)
         return entry
 
-    def search(self, **kwargs) -> list[ManipulationHistoryEntry]:
+    def search(self, **kwargs) -> list[ManipulationHistoryEntry]:  # type: ignore[no-untyped-def]
         """Flexible search method that can search by any field in ManipulationHistoryEntry using dot notation.
 
         This method supports dot notation to access nested fields. String values automatically use
@@ -294,7 +294,7 @@ class ManipulationHistory:
 
         return results
 
-    def _check_field_match(self, entry, field_path, value) -> bool:
+    def _check_field_match(self, entry, field_path, value) -> bool:  # type: ignore[no-untyped-def]
         """Check if a field matches the value, with special handling for strings, collections and comparisons.
 
         For string values, we automatically use substring matching (contains).
@@ -315,19 +315,19 @@ class ManipulationHistory:
             True if the field matches the value, False otherwise
         """
         try:
-            field_value = self._get_value_by_path(entry, field_path)
+            field_value = self._get_value_by_path(entry, field_path)  # type: ignore[no-untyped-call]
 
             # Handle comparison operators for timestamps and numbers
             if isinstance(value, tuple) and len(value) == 2:
                 op, compare_value = value
                 if op == ">":
-                    return field_value > compare_value
+                    return field_value > compare_value  # type: ignore[no-any-return]
                 elif op == "<":
-                    return field_value < compare_value
+                    return field_value < compare_value  # type: ignore[no-any-return]
                 elif op == ">=":
-                    return field_value >= compare_value
+                    return field_value >= compare_value  # type: ignore[no-any-return]
                 elif op == "<=":
-                    return field_value <= compare_value
+                    return field_value <= compare_value  # type: ignore[no-any-return]
 
             # Handle lists (from collection searches)
             if isinstance(field_value, list):
@@ -346,12 +346,12 @@ class ManipulationHistory:
                 return value in field_value
             # All other types use exact matching
             else:
-                return field_value == value
+                return field_value == value  # type: ignore[no-any-return]
 
         except (AttributeError, KeyError):
             return False
 
-    def _get_value_by_path(self, obj, path):
+    def _get_value_by_path(self, obj, path):  # type: ignore[no-untyped-def]
         """Get a value from an object using a dot-separated path.
 
         This method handles three special cases:
@@ -385,7 +385,7 @@ class ManipulationHistory:
                     if not remaining_path:  # If * is the last part, return all values
                         return list(items)
                 elif isinstance(current, list):
-                    items = current
+                    items = current  # type: ignore[assignment]
                     if not remaining_path:  # If * is the last part, return all items
                         return items
                 else:  # Not a collection
@@ -398,7 +398,7 @@ class ManipulationHistory:
                 for item in items:
                     try:
                         # Recursively get values from each item
-                        value = self._get_value_by_path(item, remaining_path)
+                        value = self._get_value_by_path(item, remaining_path)  # type: ignore[no-untyped-call]
                         if isinstance(value, list):  # Flatten nested lists
                             results.extend(value)
                         else:
