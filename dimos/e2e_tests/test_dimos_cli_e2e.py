@@ -22,6 +22,8 @@ def test_dimos_skills(lcm_spy, start_blueprint, human_input) -> None:
     lcm_spy.save_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
     lcm_spy.save_topic("/rpc/HumanInput/start/res")
     lcm_spy.save_topic("/agent")
+    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/req")
+    lcm_spy.save_topic("/rpc/DemoCalculatorSkill/sum_numbers/res")
 
     start_blueprint("demo-skill")
 
