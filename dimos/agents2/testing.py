@@ -47,7 +47,7 @@ class MockModel(SimpleChatModel):
     real_model: Any | None = None
     recorded_messages: list[dict[str, Any]] = []
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         # Extract custom parameters before calling super().__init__
         responses = kwargs.pop("responses", [])
         json_path = kwargs.pop("json_path", None)
@@ -67,7 +67,7 @@ class MockModel(SimpleChatModel):
             self.real_model = init_chat_model(model_provider=model_provider, model=model_name)
             self.responses = []  # Initialize empty for record mode
         elif self.json_path:
-            self.responses = self._load_responses_from_json()
+            self.responses = self._load_responses_from_json()  # type: ignore[assignment]
         elif responses:
             self.responses = responses
         else:
@@ -78,7 +78,7 @@ class MockModel(SimpleChatModel):
         return "tool-call-fake-chat-model"
 
     def _load_responses_from_json(self) -> list[AIMessage]:
-        with open(self.json_path) as f:
+        with open(self.json_path) as f:  # type: ignore[arg-type]
             data = json.load(f)
 
         responses = []
@@ -183,7 +183,7 @@ class MockModel(SimpleChatModel):
         *,
         tool_choice: str | None = None,
         **kwargs: Any,
-    ) -> Runnable:
+    ) -> Runnable:  # type: ignore[type-arg]
         """Store tools and return self."""
         self._bound_tools = tools
         if self.record and self.real_model:

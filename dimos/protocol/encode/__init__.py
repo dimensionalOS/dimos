@@ -44,7 +44,7 @@ class JSON(Encoder[MsgT, bytes]):
 
     @staticmethod
     def decode(data: bytes) -> MsgT:
-        return json.loads(data.decode("utf-8"))
+        return json.loads(data.decode("utf-8"))  # type: ignore[no-any-return]
 
 
 class LCM(Encoder[LCMMsgT, bytes]):
@@ -64,7 +64,7 @@ class LCM(Encoder[LCMMsgT, bytes]):
         )
 
 
-class LCMTypedEncoder(LCM, Generic[LCMMsgT]):
+class LCMTypedEncoder(LCM, Generic[LCMMsgT]):  # type: ignore[type-arg]
     """Typed LCM encoder for specific message types."""
 
     def __init__(self, message_type: type[LCMMsgT]) -> None:
@@ -81,7 +81,7 @@ class LCMTypedEncoder(LCM, Generic[LCMMsgT]):
 def create_lcm_typed_encoder(message_type: type[LCMMsgT]) -> type[LCMTypedEncoder[LCMMsgT]]:
     """Factory function to create a typed LCM encoder for a specific message type."""
 
-    class SpecificLCMEncoder(LCMTypedEncoder):
+    class SpecificLCMEncoder(LCMTypedEncoder):  # type: ignore[type-arg]
         @staticmethod
         def decode(data: bytes) -> LCMMsgT:
             return message_type.decode(data)  # type: ignore[return-value]

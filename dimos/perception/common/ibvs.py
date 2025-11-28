@@ -16,7 +16,7 @@ import numpy as np
 
 
 class PersonDistanceEstimator:
-    def __init__(self, K, camera_pitch, camera_height) -> None:
+    def __init__(self, K, camera_pitch, camera_height) -> None:  # type: ignore[no-untyped-def]
         """
         Initialize the distance estimator using ground plane constraint.
 
@@ -49,7 +49,7 @@ class PersonDistanceEstimator:
         self.fx = K[0, 0]
         self.cx = K[0, 2]
 
-    def estimate_distance_angle(self, bbox: tuple, robot_pitch: float | None = None):
+    def estimate_distance_angle(self, bbox: tuple, robot_pitch: float | None = None):  # type: ignore[no-untyped-def, type-arg]
         """
         Estimate distance and angle to person using ground plane constraint.
 
@@ -123,7 +123,7 @@ class ObjectDistanceEstimator:
     camera's intrinsic parameters to estimate the distance to a detected object.
     """
 
-    def __init__(self, K, camera_pitch, camera_height) -> None:
+    def __init__(self, K, camera_pitch, camera_height) -> None:  # type: ignore[no-untyped-def]
         """
         Initialize the distance estimator using ground plane constraint.
 
@@ -158,7 +158,7 @@ class ObjectDistanceEstimator:
         self.cx = K[0, 2]
         self.estimated_object_size = None
 
-    def estimate_object_size(self, bbox: tuple, distance: float):
+    def estimate_object_size(self, bbox: tuple, distance: float):  # type: ignore[no-untyped-def, type-arg]
         """
         Estimate the physical size of an object based on its bbox and known distance.
 
@@ -188,9 +188,9 @@ class ObjectDistanceEstimator:
         Args:
             size: Estimated physical size of the object (in meters)
         """
-        self.estimated_object_size = size
+        self.estimated_object_size = size  # type: ignore[assignment]
 
-    def estimate_distance_angle(self, bbox: tuple):
+    def estimate_distance_angle(self, bbox: tuple):  # type: ignore[no-untyped-def, type-arg]
         """
         Estimate distance and angle to object using size-based estimation.
 

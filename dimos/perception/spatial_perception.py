@@ -19,24 +19,26 @@ Spatial Memory module for creating a semantic map of the environment.
 from datetime import datetime
 import os
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 import uuid
 
 import cv2
 import numpy as np
-from reactivex import Observable, disposable, interval, operators as ops
+from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
+from dimos import spec
 from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
 from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
-from dimos.core import In, Module, rpc
-from dimos.msgs.geometry_msgs import Pose, PoseStamped, Vector3
+from dimos.core import DimosCluster, In, Module, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.types.robot_location import RobotLocation
-from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import Vector3
 
 _OUTPUT_DIR = DIMOS_PROJECT_ROOT / "assets" / "output"
 _MEMORY_DIR = _OUTPUT_DIR / "memory"
@@ -59,8 +61,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None
-    odom: In[PoseStamped] = None
+    color_image: In[Image] = None  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -148,7 +149,8 @@ class SpatialMemory(Module):
                 try:
                     logger.info(f"Loading existing visual memory from {visual_memory_path}...")
                     self._visual_memory = VisualMemory.load(
-                        visual_memory_path, output_dir=output_dir
+                        visual_memory_path,  # type: ignore[arg-type]
+                        output_dir=output_dir,
                     )
                     logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
                 except Exception as e:
@@ -172,15 +174,11 @@ class SpatialMemory(Module):
         self.frame_count: int = 0
         self.stored_frame_count: int = 0
 
-        # For tracking stream subscription
-        self._subscription = None
-
         # List to store robot locations
         self.robot_locations: list[RobotLocation] = []
 
         # Track latest data for processing
-        self._latest_video_frame: np.ndarray | None = None
-        self._latest_odom: PoseStamped | None = None
+        self._latest_video_frame: np.ndarray | None = None  # type: ignore[type-arg]
         self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
@@ -199,23 +197,15 @@ class SpatialMemory(Module):
             else:
                 logger.warning("Received image message without data attribute")
 
-        def set_odom(odom_msg: PoseStamped) -> None:
-            self._latest_odom = odom_msg
-
         unsub = self.color_image.subscribe(set_video)
         self._disposables.add(Disposable(unsub))
 
-        unsub = self.odom.subscribe(set_odom)
-        self._disposables.add(Disposable(unsub))
-
         # Start periodic processing using interval
-        unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())  # type: ignore[assignment]
         self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:
-        self.stop_continuous_processing()
-
         # Save data before shutdown
         self.save()
 
@@ -226,17 +216,12 @@ class SpatialMemory(Module):
 
     def _process_frame(self) -> None:
         """Process the latest frame with pose data if available."""
-        if self._latest_video_frame is None or self._latest_odom is None:
+        tf = self.tf.get("map", "base_link")
+        if self._latest_video_frame is None or tf is None:
             return
 
-        # Extract position and rotation from odometry
-        position = self._latest_odom.position
-        orientation = self._latest_odom.orientation
-
         # Create Pose object with position and orientation
-        current_pose = Pose(
-            position=Vector3(position.x, position.y, position.z), orientation=orientation
-        )
+        current_pose = tf.to_pose()
 
         # Process the frame directly
         try:
@@ -272,9 +257,8 @@ class SpatialMemory(Module):
             frame_embedding = self.embedding_provider.get_embedding(self._latest_video_frame)
 
             frame_id = f"frame_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
-
             # Get euler angles from quaternion orientation for metadata
-            euler = orientation.to_euler()
+            euler = tf.rotation.to_euler()
 
             # Create metadata dictionary with primitive types only
             metadata = {
@@ -318,7 +302,7 @@ class SpatialMemory(Module):
     @rpc
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> list[dict]:
+    ) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images near the specified location.
 
@@ -332,72 +316,6 @@ class SpatialMemory(Module):
             List of results, each containing the image and its metadata
         """
         return self.vector_db.query_by_location(x, y, radius, limit)
-
-    def start_continuous_processing(
-        self, video_stream: Observable, get_pose: callable
-    ) -> disposable.Disposable:
-        """
-        Start continuous processing of video frames from an Observable stream.
-
-        Args:
-            video_stream: Observable of video frames
-            get_pose: Callable that returns position and rotation for each frame
-
-        Returns:
-            Disposable subscription that can be used to stop processing
-        """
-        # Stop any existing subscription
-        self.stop_continuous_processing()
-
-        # Map each video frame to include transform data
-        combined_stream = video_stream.pipe(
-            ops.map(lambda video_frame: {"frame": video_frame, **get_pose()}),
-            # Filter out bad transforms
-            ops.filter(
-                lambda data: data.get("position") is not None and data.get("rotation") is not None
-            ),
-        )
-
-        # Process with spatial memory
-        result_stream = self.process_stream(combined_stream)
-
-        # Subscribe to the result stream
-        self._subscription = result_stream.subscribe(
-            on_next=self._on_frame_processed,
-            on_error=lambda e: logger.error(f"Error in spatial memory stream: {e}"),
-            on_completed=lambda: logger.info("Spatial memory stream completed"),
-        )
-
-        logger.info("Continuous spatial memory processing started")
-        return self._subscription
-
-    def stop_continuous_processing(self) -> None:
-        """
-        Stop continuous processing of video frames.
-        """
-        if self._subscription is not None:
-            try:
-                self._subscription.dispose()
-                self._subscription = None
-                logger.info("Stopped continuous spatial memory processing")
-            except Exception as e:
-                logger.error(f"Error stopping spatial memory processing: {e}")
-
-    def _on_frame_processed(self, result: dict[str, Any]) -> None:
-        """
-        Handle updates from the spatial memory processing stream.
-        """
-        # Log successful frame storage (if stored)
-        position = result.get("position")
-        if position is not None:
-            logger.debug(
-                f"Spatial memory updated with frame at ({position[0]:.2f}, {position[1]:.2f}, {position[2]:.2f})"
-            )
-
-        # Periodically save visual memory to disk (e.g., every 100 frames)
-        if self._visual_memory is not None and self.visual_memory_path is not None:
-            if self.stored_frame_count % 100 == 0:
-                self.save()
 
     @rpc
     def save(self) -> bool:
@@ -416,7 +334,7 @@ class SpatialMemory(Module):
                 logger.error(f"Failed to save visual memory: {e}")
         return False
 
-    def process_stream(self, combined_stream: Observable) -> Observable:
+    def process_stream(self, combined_stream: Observable) -> Observable:  # type: ignore[type-arg]
         """
         Process a combined stream of video frames and positions.
 
@@ -431,7 +349,7 @@ class SpatialMemory(Module):
             Observable of processing results, including the stored frame and its metadata
         """
 
-        def process_combined_data(data):
+        def process_combined_data(data):  # type: ignore[no-untyped-def]
             self.frame_count += 1
 
             frame = data.get("frame")
@@ -510,7 +428,7 @@ class SpatialMemory(Module):
         )
 
     @rpc
-    def query_by_image(self, image: np.ndarray, limit: int = 5) -> list[dict]:
+    def query_by_image(self, image: np.ndarray, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images similar to the provided image.
 
@@ -525,7 +443,7 @@ class SpatialMemory(Module):
         return self.vector_db.query_by_embedding(embedding, limit)
 
     @rpc
-    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images matching the provided text description.
 
@@ -583,29 +501,21 @@ class SpatialMemory(Module):
         Returns:
             True if successfully added, False otherwise
         """
-        # Use current position/rotation if not provided
-        if position is None and self._latest_odom is not None:
-            pos = self._latest_odom.position
-            position = [pos.x, pos.y, pos.z]
-
-        if rotation is None and self._latest_odom is not None:
-            euler = self._latest_odom.orientation.to_euler()
-            rotation = [euler.x, euler.y, euler.z]
-
-        if position is None:
+        tf = self.tf.get("map", "base_link")
+        if not tf:
             logger.error("No position available for robot location")
             return False
 
         # Create RobotLocation object
-        location = RobotLocation(
+        location = RobotLocation(  # type: ignore[call-arg]
             name=name,
-            position=Vector(position),
-            rotation=Vector(rotation) if rotation else Vector([0, 0, 0]),
+            position=tf.translation,
+            rotation=tf.rotation.to_euler(),
             description=description or f"Location: {name}",
             timestamp=time.time(),
         )
 
-        return self.add_robot_location(location)
+        return self.add_robot_location(location)  # type: ignore[no-any-return]
 
     @rpc
     def get_robot_locations(self) -> list[RobotLocation]:
@@ -662,6 +572,16 @@ class SpatialMemory(Module):
         return None
 
 
+def deploy(  # type: ignore[no-untyped-def]
+    dimos: DimosCluster,
+    camera: spec.Camera,
+):
+    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
+    spatial_memory.color_image.connect(camera.image)
+    spatial_memory.start()
+    return spatial_memory
+
+
 spatial_memory = SpatialMemory.blueprint
 
-__all__ = ["SpatialMemory", "spatial_memory"]
+__all__ = ["SpatialMemory", "deploy", "spatial_memory"]

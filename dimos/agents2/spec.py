@@ -33,8 +33,8 @@ from rich.text import Text
 
 from dimos.core import Module, rpc
 from dimos.core.module import ModuleConfig
-from dimos.protocol.pubsub import PubSub, lcm
-from dimos.protocol.service import Service
+from dimos.protocol.pubsub import PubSub, lcm  # type: ignore[attr-defined]
+from dimos.protocol.service import Service  # type: ignore[attr-defined]
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.utils.generic import truncate_display_string
 from dimos.utils.logging_config import setup_logger
@@ -44,7 +44,7 @@ logger = setup_logger("dimos.agents.modules.base_agent")
 
 # Dynamically create ModelProvider enum from LangChain's supported providers
 _providers = {provider.upper(): provider for provider in _SUPPORTED_PROVIDERS}
-Provider = Enum("Provider", _providers, type=str)
+Provider = Enum("Provider", _providers, type=str)  # type: ignore[misc]
 
 
 class Model(str, Enum):
@@ -134,10 +134,10 @@ class AgentConfig(ModuleConfig):
 
     # we can provide model/provvider enums or instantiated model_instance
     model: Model = Model.GPT_4O
-    provider: Provider = Provider.OPENAI
+    provider: Provider = Provider.OPENAI  # type: ignore[attr-defined]
     model_instance: BaseChatModel | None = None
 
-    agent_transport: type[PubSub] = lcm.PickleLCM
+    agent_transport: type[PubSub] = lcm.PickleLCM  # type: ignore[type-arg]
     agent_topic: Any = field(default_factory=lambda: lcm.Topic("/agent"))
 
 
@@ -147,7 +147,7 @@ AnyMessage = Union[SystemMessage, ToolMessage, AIMessage, HumanMessage]
 class AgentSpec(Service[AgentConfig], Module, ABC):
     default_config: type[AgentConfig] = AgentConfig
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         Service.__init__(self, *args, **kwargs)
         Module.__init__(self, *args, **kwargs)
 
@@ -166,17 +166,17 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
     @rpc
     @abstractmethod
-    def clear_history(self): ...
+    def clear_history(self): ...  # type: ignore[no-untyped-def]
 
     @abstractmethod
-    def append_history(self, *msgs: list[AIMessage | HumanMessage]): ...
+    def append_history(self, *msgs: list[AIMessage | HumanMessage]): ...  # type: ignore[no-untyped-def]
 
     @abstractmethod
     def history(self) -> list[AnyMessage]: ...
 
     @rpc
     @abstractmethod
-    def query(self, query: str): ...
+    def query(self, query: str): ...  # type: ignore[no-untyped-def]
 
     def __str__(self) -> str:
         console = Console(force_terminal=True, legacy_windows=False)
@@ -196,11 +196,12 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
                 if hasattr(message, "metadata") and message.metadata.get("state"):
                     table.add_row(
                         Text("State Summary", style="blue"),
-                        Text(message.content, style="blue"),
+                        Text(message.content, style="blue"),  # type: ignore[arg-type]
                     )
                 else:
                     table.add_row(
-                        Text("Agent", style="magenta"), Text(message.content, style="magenta")
+                        Text("Agent", style="magenta"),
+                        Text(message.content, style="magenta"),  # type: ignore[arg-type]
                     )
 
                 for tool_call in message.tool_calls:
@@ -224,6 +225,6 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
         # Render to string with title above
         with console.capture() as capture:
-            console.print(Text(f"  Agent ({self._agent_id})", style="bold blue"))
+            console.print(Text(f"  Agent ({self._agent_id})", style="bold blue"))  # type: ignore[attr-defined]
             console.print(table)
         return capture.get().strip()

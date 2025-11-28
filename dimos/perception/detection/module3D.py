@@ -13,17 +13,20 @@
 # limitations under the License.
 
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from lcm_msgs.foxglove_msgs import SceneUpdate
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations,
+)
+from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents2 import skill
-from dimos.core import In, Out, rpc
-from dimos.msgs.geometry_msgs import Transform
+from dimos import spec
+from dimos.agents2 import skill  # type: ignore[attr-defined]
+from dimos.core import DimosCluster, In, Out, rpc
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.module2D import Config as Module2DConfig, Detection2DModule
+from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.type import (
     ImageDetections2D,
     ImageDetections3DPC,
@@ -31,9 +34,6 @@ from dimos.perception.detection.type import (
 from dimos.perception.detection.type.detection3d import Detection3DPC
 from dimos.types.timestamped import align_timestamped
 from dimos.utils.reactive import backpressure
-
-
-class Config(Module2DConfig): ...
 
 
 class Detection3DModule(Detection2DModule):
@@ -79,8 +79,46 @@ class Detection3DModule(Detection2DModule):
 
         return ImageDetections3DPC(detections.image, detection3d_list)
 
-    @skill  # type: ignore[arg-type]
-    def ask_vlm(self, question: str) -> str | ImageDetections3DPC:
+    def pixel_to_3d(
+        self,
+        pixel: tuple[int, int],
+        assumed_depth: float = 1.0,
+    ) -> Vector3:
+        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
+
+        Args:
+            camera_info: Camera calibration information
+            assumed_depth: Assumed depth in meters (default 1.0m from camera)
+
+        Returns:
+            Vector3 position in camera optical frame coordinates
+        """
+        # Extract camera intrinsics
+        fx, fy = self.config.camera_info.K[0], self.config.camera_info.K[4]
+        cx, cy = self.config.camera_info.K[2], self.config.camera_info.K[5]
+
+        # Unproject pixel to normalized camera coordinates
+        x_norm = (pixel[0] - cx) / fx
+        y_norm = (pixel[1] - cy) / fy
+
+        # Create 3D point at assumed depth in camera optical frame
+        # Camera optical frame: X right, Y down, Z forward
+        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
+
+    @skill()
+    def ask_vlm(self, question: str) -> str:
+        """asks a visual model about the view of the robot, for example
+        is the bannana in the trunk?
+        """
+        from dimos.models.vl.qwen import QwenVlModel
+
+        model = QwenVlModel()
+        image = self.image.get_next()
+        return model.query(image, question)
+
+    # @skill  # type: ignore[arg-type]
+    @rpc
+    def nav_vlm(self, question: str) -> str:
         """
         query visual model about the view in front of the camera
         you can ask to mark objects like:
@@ -92,28 +130,50 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        result = model.query(self.image.get_next(), question)
+        image = self.image.get_next()
+        result = model.query_detections(image, question)
+
+        print("VLM result:", result, "for", image, "and question", question)
 
         if isinstance(result, str) or not result or not len(result):
-            return "No detections"
+            return None  # type: ignore[return-value]
 
         detections: ImageDetections2D = result
+
+        print(detections)
+        if not len(detections):
+            print("No 2d detections")
+            return None  # type: ignore[return-value]
+
         pc = self.pointcloud.get_next()
         transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
-        return self.process_frame(detections, pc, transform)
+
+        detections3d = self.process_frame(detections, pc, transform)
+
+        if len(detections3d):
+            return detections3d[0].pose  # type: ignore[no-any-return]
+        print("No 3d detections, projecting 2d")
+
+        center = detections[0].get_bbox_center()
+        return PoseStamped(
+            ts=detections.image.ts,
+            frame_id="world",
+            position=self.pixel_to_3d(center, assumed_depth=1.5),
+            orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        )
 
     @rpc
     def start(self) -> None:
         super().start()
 
-        def detection2d_to_3d(args):
+        def detection2d_to_3d(args):  # type: ignore[no-untyped-def]
             detections, pc = args
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
         self.detection_stream_3d = align_timestamped(
             backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),
+            self.pointcloud.observable(),  # type: ignore[no-untyped-call]
             match_tolerance=0.25,
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))
@@ -131,3 +191,35 @@ class Detection3DModule(Detection2DModule):
         for index, detection in enumerate(detections[:3]):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
+
+        self.scene_update.publish(detections.to_foxglove_scene_update())  # type: ignore[no-untyped-call]
+
+
+def deploy(  # type: ignore[no-untyped-def]
+    dimos: DimosCluster,
+    lidar: spec.Pointcloud,
+    camera: spec.Camera,
+    prefix: str = "/detector3d",
+    **kwargs,
+) -> Detection3DModule:
+    from dimos.core import LCMTransport
+
+    detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
+
+    detector.image.connect(camera.image)
+    detector.pointcloud.connect(lidar.pointcloud)
+
+    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
+    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+    detector.scene_update.transport = LCMTransport(f"{prefix}/scene_update", SceneUpdate)
+
+    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
+    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
+    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
+
+    detector.detected_pointcloud_0.transport = LCMTransport(f"{prefix}/pointcloud/0", PointCloud2)
+    detector.detected_pointcloud_1.transport = LCMTransport(f"{prefix}/pointcloud/1", PointCloud2)
+    detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
+
+    detector.start()
+    return detector  # type: ignore[no-any-return]

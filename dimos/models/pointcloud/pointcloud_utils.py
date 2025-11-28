@@ -15,24 +15,24 @@
 import random
 
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 
 
-def save_pointcloud(pcd, file_path) -> None:
+def save_pointcloud(pcd, file_path) -> None:  # type: ignore[no-untyped-def]
     """
     Save a point cloud to a file using Open3D.
     """
     o3d.io.write_point_cloud(file_path, pcd)
 
 
-def restore_pointclouds(pointcloud_paths):
+def restore_pointclouds(pointcloud_paths):  # type: ignore[no-untyped-def]
     restored_pointclouds = []
     for path in pointcloud_paths:
         restored_pointclouds.append(o3d.io.read_point_cloud(path))
     return restored_pointclouds
 
 
-def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):
+def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):  # type: ignore[no-untyped-def]
     rgbd_image = o3d.geometry.RGBDImage.create_from_color_and_depth(
         o3d.geometry.Image(rgb_image),
         o3d.geometry.Image(depth_image),
@@ -53,7 +53,7 @@ def create_point_cloud_from_rgbd(rgb_image, depth_image, intrinsic_parameters):
     return pcd
 
 
-def canonicalize_point_cloud(pcd, canonicalize_threshold: float=0.3):
+def canonicalize_point_cloud(pcd, canonicalize_threshold: float=0.3):  # type: ignore[no-untyped-def]
     # Segment the largest plane, assumed to be the floor
     plane_model, inliers = pcd.segment_plane(
         distance_threshold=0.01, ransac_n=3, num_iterations=1000
@@ -96,7 +96,7 @@ def canonicalize_point_cloud(pcd, canonicalize_threshold: float=0.3):
 
 
 # Distance calculations
-def human_like_distance(distance_meters) -> str:
+def human_like_distance(distance_meters) -> str:  # type: ignore[no-untyped-def]
     # Define the choices with units included, focusing on the 0.1 to 10 meters range
     if distance_meters < 1:  # For distances less than 1 meter
         choices = [
@@ -139,7 +139,7 @@ def human_like_distance(distance_meters) -> str:
     cumulative_distribution = []
     cumulative_sum = 0
     for value, unit, probability in choices:
-        cumulative_sum += probability / total_probability  # Normalize probabilities
+        cumulative_sum += probability / total_probability  # type: ignore[assignment]  # Normalize probabilities
         cumulative_distribution.append((cumulative_sum, value, unit))
 
     # Randomly choose based on the cumulative distribution
@@ -152,7 +152,7 @@ def human_like_distance(distance_meters) -> str:
     return f"{choices[-1][0]} {choices[-1][1]}"
 
 
-def calculate_distances_between_point_clouds(A, B):
+def calculate_distances_between_point_clouds(A, B):  # type: ignore[no-untyped-def]
     dist_pcd1_to_pcd2 = np.asarray(A.compute_point_cloud_distance(B))
     dist_pcd2_to_pcd1 = np.asarray(B.compute_point_cloud_distance(A))
     combined_distances = np.concatenate((dist_pcd1_to_pcd2, dist_pcd2_to_pcd1))
@@ -160,14 +160,14 @@ def calculate_distances_between_point_clouds(A, B):
     return human_like_distance(avg_dist)
 
 
-def calculate_centroid(pcd):
+def calculate_centroid(pcd):  # type: ignore[no-untyped-def]
     """Calculate the centroid of a point cloud."""
     points = np.asarray(pcd.points)
     centroid = np.mean(points, axis=0)
     return centroid
 
 
-def calculate_relative_positions(centroids):
+def calculate_relative_positions(centroids):  # type: ignore[no-untyped-def]
     """Calculate the relative positions between centroids of point clouds."""
     num_centroids = len(centroids)
     relative_positions_info = []
@@ -184,7 +184,7 @@ def calculate_relative_positions(centroids):
     return relative_positions_info
 
 
-def get_bounding_box_height(pcd):
+def get_bounding_box_height(pcd):  # type: ignore[no-untyped-def]
     """
     Compute the height of the bounding box for a given point cloud.
 
@@ -198,7 +198,7 @@ def get_bounding_box_height(pcd):
     return aabb.get_extent()[1]  # Assuming the Y-axis is the up-direction
 
 
-def compare_bounding_box_height(pcd_i, pcd_j):
+def compare_bounding_box_height(pcd_i, pcd_j):  # type: ignore[no-untyped-def]
     """
     Compare the bounding box heights of two point clouds.
 
@@ -209,7 +209,7 @@ def compare_bounding_box_height(pcd_i, pcd_j):
     Returns:
     bool: True if the bounding box of pcd_i is taller than that of pcd_j, False otherwise.
     """
-    height_i = get_bounding_box_height(pcd_i)
-    height_j = get_bounding_box_height(pcd_j)
+    height_i = get_bounding_box_height(pcd_i)  # type: ignore[no-untyped-call]
+    height_j = get_bounding_box_height(pcd_j)  # type: ignore[no-untyped-call]
 
     return height_i > height_j

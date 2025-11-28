@@ -23,7 +23,7 @@ from dimos.types.ros_polyfill import Vector3
 T = TypeVar("T", bound="Vector")
 
 # Vector-like types that can be converted to/from Vector
-VectorLike = Union[Sequence[int | float], Vector3, "Vector", np.ndarray]
+VectorLike = Union[Sequence[int | float], Vector3, "Vector", np.ndarray]  # type: ignore[type-arg]
 
 
 class Vector:
@@ -42,7 +42,7 @@ class Vector:
             self._data = np.array(args[0], dtype=float)
 
         elif len(args) == 1:
-            self._data = np.array([args[0].x, args[0].y, args[0].z], dtype=float)
+            self._data = np.array([args[0].x, args[0].y, args[0].z], dtype=float)  # type: ignore[union-attr]
 
         else:
             self._data = np.array(args, dtype=float)
@@ -77,11 +77,11 @@ class Vector:
         return len(self._data)
 
     @property
-    def data(self) -> np.ndarray:
+    def data(self) -> np.ndarray:  # type: ignore[type-arg]
         """Get the underlying numpy array."""
         return self._data
 
-    def __getitem__(self, idx: int):
+    def __getitem__(self, idx: int):  # type: ignore[no-untyped-def]
         return self._data[idx]
 
     def __repr__(self) -> str:
@@ -91,7 +91,7 @@ class Vector:
         if self.dim < 2:
             return self.__repr__()
 
-        def getArrow():
+        def getArrow():  # type: ignore[no-untyped-def]
             repr = ["←", "↖", "↑", "↗", "→", "↘", "↓", "↙"]
 
             if self.x == 0 and self.y == 0:
@@ -104,13 +104,13 @@ class Vector:
             # Get directional arrow symbol
             return repr[dir_index]
 
-        return f"{getArrow()} Vector {self.__repr__()}"
+        return f"{getArrow()} Vector {self.__repr__()}"  # type: ignore[no-untyped-call]
 
-    def serialize(self) -> builtins.tuple:
+    def serialize(self) -> builtins.tuple:  # type: ignore[type-arg]
         """Serialize the vector to a tuple."""
-        return {"type": "vector", "c": self._data.tolist()}
+        return {"type": "vector", "c": self._data.tolist()}  # type: ignore[return-value]
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two vectors are equal using numpy's allclose for floating point comparison."""
         if not isinstance(other, Vector):
             return False
@@ -229,7 +229,7 @@ class Vector:
     # this is here to test ros_observable_topic
     # doesn't happen irl afaik that we want a vector from ros message
     @classmethod
-    def from_msg(cls: type[T], msg) -> T:
+    def from_msg(cls: type[T], msg) -> T:  # type: ignore[no-untyped-def]
         return cls(*msg)
 
     @classmethod
@@ -266,13 +266,13 @@ class Vector:
 
     def to_list(self) -> list[float]:
         """Convert the vector to a list."""
-        return self._data.tolist()
+        return self._data.tolist()  # type: ignore[no-any-return]
 
     def to_tuple(self) -> builtins.tuple[float, ...]:
         """Convert the vector to a tuple."""
         return tuple(self._data)
 
-    def to_numpy(self) -> np.ndarray:
+    def to_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
         """Convert the vector to a numpy array."""
         return self._data
 
@@ -296,7 +296,7 @@ class Vector:
         return not self.is_zero()
 
 
-def to_numpy(value: VectorLike) -> np.ndarray:
+def to_numpy(value: VectorLike) -> np.ndarray:  # type: ignore[type-arg]
     """Convert a vector-compatible value to a numpy array.
 
     Args:
@@ -361,13 +361,13 @@ def to_list(value: VectorLike) -> list[float]:
         List of floats
     """
     if isinstance(value, Vector):
-        return value.data.tolist()
+        return value.data.tolist()  # type: ignore[no-any-return]
     elif isinstance(value, np.ndarray):
-        return value.tolist()
+        return value.tolist()  # type: ignore[no-any-return]
     elif isinstance(value, list):
         return value
     else:
-        return list(value)
+        return list(value)  # type: ignore[arg-type]
 
 
 # Helper functions to check dimensionality
@@ -383,7 +383,7 @@ def is_2d(value: VectorLike) -> bool:
     if isinstance(value, Vector3):
         return False
     elif isinstance(value, Vector):
-        return len(value) == 2
+        return len(value) == 2  # type: ignore[arg-type]
     elif isinstance(value, np.ndarray):
         return value.shape[-1] == 2 or value.size == 2
     else:
@@ -400,7 +400,7 @@ def is_3d(value: VectorLike) -> bool:
         True if the value is 3D
     """
     if isinstance(value, Vector):
-        return len(value) == 3
+        return len(value) == 3  # type: ignore[arg-type]
     elif isinstance(value, Vector3):
         return True
     elif isinstance(value, np.ndarray):
@@ -422,7 +422,7 @@ def x(value: VectorLike) -> float:
     if isinstance(value, Vector):
         return value.x
     elif isinstance(value, Vector3):
-        return value.x
+        return value.x  # type: ignore[no-any-return]
     else:
         return float(to_numpy(value)[0])
 
@@ -439,7 +439,7 @@ def y(value: VectorLike) -> float:
     if isinstance(value, Vector):
         return value.y
     elif isinstance(value, Vector3):
-        return value.y
+        return value.y  # type: ignore[no-any-return]
     else:
         arr = to_numpy(value)
         return float(arr[1]) if len(arr) > 1 else 0.0
@@ -457,7 +457,7 @@ def z(value: VectorLike) -> float:
     if isinstance(value, Vector):
         return value.z
     elif isinstance(value, Vector3):
-        return value.z
+        return value.z  # type: ignore[no-any-return]
     else:
         arr = to_numpy(value)
         return float(arr[2]) if len(arr) > 2 else 0.0

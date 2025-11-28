@@ -115,7 +115,7 @@ export class SimulationManager {
 
     async requestSimulation(): Promise<SimulationConnection> {
         simulationStore.update(state => ({ ...state, isConnecting: true, error: null }));
-        
+
         try {
             // Request instance allocation
             const response = await this.fetchWithRetry(this.apiEndpoint, {
@@ -129,7 +129,7 @@ export class SimulationManager {
             });
 
             const instanceInfo = await response.json();
-            
+
             if (import.meta.env.DEV) {
                 console.log('API Response:', instanceInfo);
             }
@@ -175,11 +175,11 @@ export class SimulationManager {
                 isConnecting: false,
                 error: errorMessage
             }));
-            
+
             if (import.meta.env.DEV) {
                 console.error('Simulation request failed:', error);
             }
-            
+
             throw error;
         }
     }

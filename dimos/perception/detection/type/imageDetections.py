@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from dimos_lcm.vision_msgs import Detection2DArray
+from dimos_lcm.vision_msgs import Detection2DArray  # type: ignore[import-untyped]
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.std_msgs import Header
 from dimos.perception.detection.type.utils import TableStr
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from dimos.msgs.sensor_msgs import Image
     from dimos.perception.detection.type.detection2d.base import Detection2D
@@ -53,11 +53,27 @@ class ImageDetections(Generic[T], TableStr):
     def __len__(self) -> int:
         return len(self.detections)
 
-    def __iter__(self) -> Iterator:
+    def __iter__(self) -> Iterator:  # type: ignore[type-arg]
         return iter(self.detections)
 
-    def __getitem__(self, index):
+    def __getitem__(self, index):  # type: ignore[no-untyped-def]
         return self.detections[index]
+
+    def filter(self, *predicates: Callable[[T], bool]) -> ImageDetections[T]:
+        """Filter detections using one or more predicate functions.
+
+        Multiple predicates are applied in cascade (all must return True).
+
+        Args:
+            *predicates: Functions that take a detection and return True to keep it
+
+        Returns:
+            A new ImageDetections instance with filtered detections
+        """
+        filtered_detections = self.detections
+        for predicate in predicates:
+            filtered_detections = [det for det in filtered_detections if predicate(det)]
+        return ImageDetections(self.image, filtered_detections)
 
     def to_ros_detection2d_array(self) -> Detection2DArray:
         return Detection2DArray(
@@ -67,11 +83,11 @@ class ImageDetections(Generic[T], TableStr):
         )
 
     def to_foxglove_annotations(self) -> ImageAnnotations:
-        def flatten(xss):
+        def flatten(xss):  # type: ignore[no-untyped-def]
             return [x for xs in xss for x in xs]
 
-        texts = flatten(det.to_text_annotation() for det in self.detections)
-        points = flatten(det.to_points_annotation() for det in self.detections)
+        texts = flatten(det.to_text_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
+        points = flatten(det.to_points_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
 
         return ImageAnnotations(
             texts=texts,

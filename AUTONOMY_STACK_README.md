@@ -122,7 +122,7 @@ cd ~/autonomy_stack_mecanum_wheel_platform
 | `/goal_pose` | `geometry_msgs/PoseStamped` | Send goal with orientation |
 | `/cancel_goal` | `std_msgs/Bool` | Cancel current goal (data: true) |
 | `/joy` | `sensor_msgs/Joy` | Joystick input |
-| `/stop` | `std_msgs/Int8` | Soft Stop (2=stop all commmand, 0 = release) | 
+| `/stop` | `std_msgs/Int8` | Soft Stop (2=stop all commmand, 0 = release) |
 | `/navigation_boundary` | `geometry_msgs/PolygonStamped` | Set navigation boundaries |
 | `/added_obstacles` | `sensor_msgs/PointCloud2` | Virtual obstacles |
 

@@ -14,7 +14,7 @@
 
 import os
 
-import googlemaps
+import googlemaps  # type: ignore[import-untyped]
 
 from dimos.mapping.google_maps.types import (
     Coordinates,

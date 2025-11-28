@@ -17,17 +17,19 @@ from __future__ import annotations
 from datetime import datetime
 import time
 
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime  # type: ignore[import-untyped]
 from plum import dispatch
 
 # Import the actual LCM header type that's returned from decoding
 try:
-    from lcm_msgs.std_msgs.Header import Header as DecodedLCMHeader
+    from lcm_msgs.std_msgs.Header import (  # type: ignore[import-not-found]
+        Header as DecodedLCMHeader,
+    )
 except ImportError:
     DecodedLCMHeader = None
 
 
-class Header(LCMHeader):
+class Header(LCMHeader):  # type: ignore[misc]
     msg_name = "std_msgs.Header"
     ts: float
 
@@ -39,7 +41,7 @@ class Header(LCMHeader):
         nsec = int((self.ts - sec) * 1_000_000_000)
         super().__init__(seq=0, stamp=LCMTime(sec=sec, nsec=nsec), frame_id="")
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, frame_id: str) -> None:
         """Initialize a Header with current time and specified frame_id."""
         self.ts = time.time()
@@ -47,14 +49,14 @@ class Header(LCMHeader):
         nsec = int((self.ts - sec) * 1_000_000_000)
         super().__init__(seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, timestamp: float, frame_id: str = "", seq: int = 1) -> None:
         """Initialize a Header with Unix timestamp, frame_id, and optional seq."""
         sec = int(timestamp)
         nsec = int((timestamp - sec) * 1_000_000_000)
         super().__init__(seq=seq, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, timestamp: datetime, frame_id: str = "") -> None:
         """Initialize a Header with datetime object and frame_id."""
         self.ts = timestamp.timestamp()
@@ -62,17 +64,17 @@ class Header(LCMHeader):
         nsec = int((self.ts - sec) * 1_000_000_000)
         super().__init__(seq=1, stamp=LCMTime(sec=sec, nsec=nsec), frame_id=frame_id)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, seq: int, stamp: LCMTime, frame_id: str) -> None:
         """Initialize with explicit seq, stamp, and frame_id (LCM compatibility)."""
         super().__init__(seq=seq, stamp=stamp, frame_id=frame_id)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, header: LCMHeader) -> None:
         """Initialize from another Header (copy constructor)."""
         super().__init__(seq=header.seq, stamp=header.stamp, frame_id=header.frame_id)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, header: object) -> None:
         """Initialize from a decoded LCM header object."""
         # Handle the case where we get an lcm_msgs.std_msgs.Header.Header object
@@ -90,7 +92,7 @@ class Header(LCMHeader):
     @property
     def timestamp(self) -> float:
         """Get timestamp as Unix time (float)."""
-        return self.stamp.sec + (self.stamp.nsec / 1_000_000_000)
+        return self.stamp.sec + (self.stamp.nsec / 1_000_000_000)  # type: ignore[no-any-return]
 
     @property
     def datetime(self) -> datetime:
