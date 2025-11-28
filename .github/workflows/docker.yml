@@ -1,5 +1,5 @@
-name: docker-tree
-on: push
+name: docker
+on: workflow_call
 
 permissions:
   contents: read
@@ -56,7 +56,7 @@ jobs:
           echo "branch tag determined: ${branch_tag}"
           echo branch_tag="${branch_tag}" >> "$GITHUB_OUTPUT"
 
-  build-ros:
+  ros:
     needs: [check-changes]
     if: needs.check-changes.outputs.ros == 'true'
     uses: ./.github/workflows/_docker-build-template.yml
@@ -66,21 +66,21 @@ jobs:
 
   # just a debugger
   inspect-needs:
-    needs: [check-changes, build-ros]
+    needs: [check-changes, ros]
     runs-on: dimos-runner-ubuntu-2204
     if: always()
     steps:
       - run: |
           echo '${{ toJSON(needs) }}'
 
-  build-python:
-    needs: [check-changes, build-ros]
+  python:
+    needs: [check-changes, ros]
     if: |
       ${{
       always() && !cancelled() &&
       needs.check-changes.result == 'success' &&
-      ((needs.build-ros.result == 'success') ||
-      (needs.build-ros.result == 'skipped' &&
+      ((needs.ros.result == 'success') ||
+      (needs.ros.result == 'skipped' &&
       needs.check-changes.outputs.python == 'true'))
       }}
     uses: ./.github/workflows/_docker-build-template.yml
@@ -89,14 +89,14 @@ jobs:
       target:  base-ros-python
       freespace: true
 
-  build-dev:
-    needs: [check-changes, build-python]
+  dev:
+    needs: [check-changes, python]
     if: |
       ${{
       always() && !cancelled() &&
       needs.check-changes.result == 'success' &&
-      ((needs.build-python.result == 'success') ||
-      (needs.build-python.result == 'skipped' &&
+      ((needs.python.result == 'success') ||
+      (needs.python.result == 'skipped' &&
       needs.check-changes.outputs.dev == 'true'))
       }}
     uses: ./.github/workflows/_docker-build-template.yml
@@ -105,15 +105,15 @@ jobs:
       target: dev
 
   run-tests:
-    needs: [check-changes, build-dev]
+    needs: [check-changes, dev]
     if: |
       ${{
       always() && !cancelled() &&
       needs.check-changes.result == 'success' &&
-      ((needs.build-dev.result == 'success') ||
-      (needs.build-dev.result == 'skipped' &&
+      ((needs.dev.result == 'success') ||
+      (needs.dev.result == 'skipped' &&
       needs.check-changes.outputs.tests == 'true'))
       }}
-    uses: ./.github/workflows/pytest.yml
+    uses: ./.github/workflows/tests.yml
     with:
-      branch-tag: ${{ needs.build-dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}
+      branch-tag: ${{ needs.dev.result != 'success' && 'dev' || needs.check-changes.outputs.branch-tag }}

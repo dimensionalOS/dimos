@@ -21,12 +21,9 @@ from dimos.agents.claude_agent import ClaudeAgent
 load_dotenv()
 
 # Create a ClaudeAgent instance
-agent = ClaudeAgent(
-    dev_name="test_agent",
-    query="What is the capital of France?"
-)
+agent = ClaudeAgent(dev_name="test_agent", query="What is the capital of France?")
 
 # Use the stream_query method to get a response
 response = agent.run_observable_query("What is the capital of France?").run()
 
-print(f"Response from Claude Agent: {response}") 
+print(f"Response from Claude Agent: {response}")

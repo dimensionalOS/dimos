@@ -1,5 +1,6 @@
 import os
 import sys
+
 # Add the parent directory to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -11,9 +12,10 @@ import time
 import math
 
 # Initialize robot
-robot = UnitreeGo2(ip=os.getenv('ROBOT_IP'),
-                  ros_control=UnitreeROSControl(),
-                  skills=MyUnitreeSkills())
+robot = UnitreeGo2(
+    ip=os.getenv("ROBOT_IP"), ros_control=UnitreeROSControl(), skills=MyUnitreeSkills()
+)
+
 
 # Helper function to send pose commands continuously for a duration
 def send_pose_for_duration(roll, pitch, yaw, duration, hz=10):
@@ -21,7 +23,8 @@ def send_pose_for_duration(roll, pitch, yaw, duration, hz=10):
     start_time = time.time()
     while time.time() - start_time < duration:
         robot.pose_command(roll=roll, pitch=pitch, yaw=yaw)
-        time.sleep(1.0/hz)  # Sleep to achieve the desired frequency
+        time.sleep(1.0 / hz)  # Sleep to achieve the desired frequency
+
 
 # Test pose commands
 

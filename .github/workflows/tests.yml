@@ -1,4 +1,4 @@
-name: testing
+name: tests
 
 on:
  workflow_call:
@@ -21,6 +21,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
       - name: Run tests
         run: |
+          git config --global --add safe.directory '*'
           /entrypoint.sh bash -c "pytest"

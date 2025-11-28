@@ -15,6 +15,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 @pytest.mark.tool
 def test_record_lidar():
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
+
     load_dotenv()
     robot = UnitreeGo2(ip=os.getenv("ROBOT_IP"), mode="ai")
 
@@ -42,6 +43,7 @@ def test_record_lidar():
 @pytest.mark.tool
 def test_replay_recording():
     from dimos.robot.unitree_webrtc.type.odometry import position_from_odom
+
     odom_stream = Multimock("athens_odom").stream().pipe(ops.map(position_from_odom))
     odom_stream.subscribe(lambda x: print(x))
 

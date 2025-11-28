@@ -14,15 +14,16 @@
 
 import boto3
 import os
-from io import BytesIO
+
 try:
     import open3d as o3d
 except Exception as e:
     print(f"Open3D not importing, assuming to be running outside of docker. {e}")
 
+
 class S3Utils:
     def __init__(self, bucket_name):
-        self.s3 = boto3.client('s3')
+        self.s3 = boto3.client("s3")
         self.bucket_name = bucket_name
 
     def download_file(self, s3_key, local_path):
@@ -40,11 +41,10 @@ class S3Utils:
             print(f"Error uploading {local_path}: {e}")
 
     def save_pointcloud_to_s3(self, inlier_cloud, s3_key):
-
         try:
             temp_pcd_file = "/tmp/temp_pointcloud.pcd"
             o3d.io.write_point_cloud(temp_pcd_file, inlier_cloud)
-            with open(temp_pcd_file, 'rb') as pcd_file:
+            with open(temp_pcd_file, "rb") as pcd_file:
                 self.s3.put_object(Bucket=self.bucket_name, Key=s3_key, Body=pcd_file.read())
             os.remove(temp_pcd_file)
             print(f"Saved pointcloud to {s3_key}")
@@ -57,11 +57,11 @@ class S3Utils:
         for path in pointcloud_paths:
             # Download the point cloud file from S3 to memory
             pcd_obj = self.s3.get_object(Bucket=self.bucket_name, Key=path)
-            pcd_data = pcd_obj['Body'].read()
+            pcd_data = pcd_obj["Body"].read()
 
             # Save the point cloud data to a temporary file
             temp_pcd_file = "/tmp/temp_pointcloud.pcd"
-            with open(temp_pcd_file, 'wb') as f:
+            with open(temp_pcd_file, "wb") as f:
                 f.write(pcd_data)
 
             # Read the point cloud from the temporary file
@@ -72,19 +72,20 @@ class S3Utils:
             os.remove(temp_pcd_file)
 
         return restored_pointclouds
+
     @staticmethod
     def upload_text_file(bucket_name, local_path, s3_key):
-        s3 = boto3.client('s3')
+        s3 = boto3.client("s3")
         try:
-            with open(local_path, 'r') as file:
+            with open(local_path, "r") as file:
                 content = file.read()
 
             # Ensure the s3_key includes the file name
-            if not s3_key.endswith('/'):
-                s3_key = s3_key + '/'
+            if not s3_key.endswith("/"):
+                s3_key = s3_key + "/"
 
             # Extract the file name from the local_path
-            file_name = local_path.split('/')[-1]
+            file_name = local_path.split("/")[-1]
             full_s3_key = s3_key + file_name
 
             s3.put_object(Bucket=bucket_name, Key=full_s3_key, Body=content)

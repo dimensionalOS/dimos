@@ -27,14 +27,12 @@ class GenericSubscriber:
         if stream is not None:
             try:
                 self._subscription = stream.subscribe(
-                    on_next=self._on_next,
-                    on_error=self._on_error,
-                    on_completed=self._on_completed
+                    on_next=self._on_next, on_error=self._on_error, on_completed=self._on_completed
                 )
                 logger.debug(f"Subscribed to stream {stream}")
             except Exception as e:
                 logger.error(f"Error subscribing to stream {stream}: {e}")
-                self._stream_error = e # Store error if subscription fails immediately
+                self._stream_error = e  # Store error if subscription fails immediately
         else:
             logger.warning("Initialized GenericSubscriber with a None stream.")
 
@@ -49,7 +47,7 @@ class GenericSubscriber:
         logger.error(f"Stream error: {error}")
         with self._lock:
             self._stream_error = error
-        self._stream_completed.set() # Signal completion/error
+        self._stream_completed.set()  # Signal completion/error
 
     def _on_completed(self):
         """Callback for stream completion."""
@@ -86,7 +84,7 @@ class GenericSubscriber:
                 self._subscription = None
             except Exception as e:
                 logger.error(f"Error disposing subscription: {e}")
-        self._stream_completed.set() # Ensure completed flag is set on manual dispose
+        self._stream_completed.set()  # Ensure completed flag is set on manual dispose
 
     def __del__(self):
         """Ensure cleanup on object deletion."""

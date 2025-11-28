@@ -29,14 +29,14 @@ from dimos.utils.logging_config import logger
 from dimos.web.robot_web_interface import RobotWebInterface
 from dimos.utils.threadpool import make_single_thread_scheduler
 
+
 def main():
     # Get environment variables
     robot_ip = os.getenv("ROBOT_IP")
     if not robot_ip:
         raise ValueError("ROBOT_IP environment variable is required")
-    connection_method = os.getenv("CONN_TYPE") or 'webrtc'
-    output_dir = os.getenv("ROS_OUTPUT_DIR",
-                           os.path.join(os.getcwd(), "assets/output/ros"))
+    connection_method = os.getenv("CONN_TYPE") or "webrtc"
+    output_dir = os.getenv("ROS_OUTPUT_DIR", os.path.join(os.getcwd(), "assets/output/ros"))
     use_terminal = os.getenv("USE_TERMINAL", "").lower() == "true"
 
     use_terminal = True
@@ -49,10 +49,12 @@ def main():
     try:
         # Initialize robot
         logger.info("Initializing Unitree Robot")
-        robot = UnitreeGo2(ip=robot_ip,
-                           connection_method=connection_method,
-                           output_dir=output_dir,
-                           mock_connection=True)
+        robot = UnitreeGo2(
+            ip=robot_ip,
+            connection_method=connection_method,
+            output_dir=output_dir,
+            mock_connection=True,
+        )
 
         # Set up video stream
         logger.info("Starting video stream")
@@ -69,7 +71,7 @@ def main():
                 dev_name="TaskPlanner",
                 model_name="gpt-4o",
                 use_terminal=True,
-                skills=skills_instance
+                skills=skills_instance,
             )
         else:
             # Web interface mode
@@ -82,16 +84,16 @@ def main():
                 dev_name="TaskPlanner",
                 model_name="gpt-4o",
                 input_query_stream=web_interface.query_stream,
-                skills=skills_instance
+                skills=skills_instance,
             )
-        
+
         # Get planner's response observable
         logger.info("Setting up agent response streams")
         planner_responses = planner.get_response_observable()
-        
+
         # Initialize execution agent with robot skills
         logger.info("Starting execution agent")
-        system_query=dedent(
+        system_query = dedent(
             """
             You are a robot execution agent that can execute tasks on a virtual
             robot. You are given a task to execute and a list of skills that 
@@ -105,7 +107,7 @@ def main():
             output_dir=output_dir,
             skills=skills_instance,
             system_query=system_query,
-            pool_scheduler=make_single_thread_scheduler()
+            pool_scheduler=make_single_thread_scheduler(),
         )
 
         # Get executor's response observable
@@ -115,7 +117,7 @@ def main():
         executor_responses.subscribe(
             on_next=lambda x: logger.info(f"Executor response: {x}"),
             on_error=lambda e: logger.error(f"Executor error: {e}"),
-            on_completed=lambda: logger.info("Executor completed")
+            on_completed=lambda: logger.info("Executor completed"),
         )
 
         if use_terminal:

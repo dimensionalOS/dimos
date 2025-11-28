@@ -14,6 +14,7 @@ Mostly copy-paste from https://github.com/pytorch/vision/blob/edfd5a7/references
 The difference is that there is less copy-pasting from pycocotools
 in the end of the file, as python3 can suppress prints with contextlib
 """
+
 import os
 import contextlib
 import copy
@@ -49,7 +50,7 @@ class CocoEvaluator(object):
             results = self.prepare(predictions, iou_type)
 
             # suppress pycocotools prints
-            with open(os.devnull, 'w') as devnull:
+            with open(os.devnull, "w") as devnull:
                 with contextlib.redirect_stdout(devnull):
                     coco_dt = COCO.loadRes(self.coco_gt, results) if results else COCO()
             coco_eval = self.coco_eval[iou_type]
@@ -63,7 +64,9 @@ class CocoEvaluator(object):
     def synchronize_between_processes(self):
         for iou_type in self.iou_types:
             self.eval_imgs[iou_type] = np.concatenate(self.eval_imgs[iou_type], 2)
-            create_common_coco_eval(self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type])
+            create_common_coco_eval(
+                self.coco_eval[iou_type], self.img_ids, self.eval_imgs[iou_type]
+            )
 
     def accumulate(self):
         for coco_eval in self.coco_eval.values():
@@ -161,7 +164,7 @@ class CocoEvaluator(object):
                     {
                         "image_id": original_id,
                         "category_id": labels[k],
-                        'keypoints': keypoint,
+                        "keypoints": keypoint,
                         "score": scores[k],
                     }
                     for k, keypoint in enumerate(keypoints)
@@ -214,17 +217,17 @@ def create_common_coco_eval(coco_eval, img_ids, eval_imgs):
 
 
 def evaluate(self):
-    '''
+    """
     Run per image evaluation on given images and store results (a list of dict) in self.evalImgs
     :return: None
-    '''
+    """
     # tic = time.time()
     # print('Running per image evaluation...')
     p = self.params
     # add backward compatibility if useSegm is specified in params
     if p.useSegm is not None:
-        p.iouType = 'segm' if p.useSegm == 1 else 'bbox'
-        print('useSegm (deprecated) is not None. Running {} evaluation'.format(p.iouType))
+        p.iouType = "segm" if p.useSegm == 1 else "bbox"
+        print("useSegm (deprecated) is not None. Running {} evaluation".format(p.iouType))
     # print('Evaluate annotation type *{}*'.format(p.iouType))
     p.imgIds = list(np.unique(p.imgIds))
     if p.useCats:
@@ -236,14 +239,11 @@ def evaluate(self):
     # loop through images, area range, max detection number
     catIds = p.catIds if p.useCats else [-1]
 
-    if p.iouType == 'segm' or p.iouType == 'bbox':
+    if p.iouType == "segm" or p.iouType == "bbox":
         computeIoU = self.computeIoU
-    elif p.iouType == 'keypoints':
+    elif p.iouType == "keypoints":
         computeIoU = self.computeOks
-    self.ious = {
-        (imgId, catId): computeIoU(imgId, catId)
-        for imgId in p.imgIds
-        for catId in catIds}
+    self.ious = {(imgId, catId): computeIoU(imgId, catId) for imgId in p.imgIds for catId in catIds}
 
     evaluateImg = self.evaluateImg
     maxDet = p.maxDets[-1]
@@ -259,6 +259,7 @@ def evaluate(self):
     # toc = time.time()
     # print('DONE (t={:0.2f}s).'.format(toc-tic))
     return p.imgIds, evalImgs
+
 
 #################################################################
 # end of straight copy from pycocotools, just removing the prints

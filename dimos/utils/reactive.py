@@ -71,7 +71,9 @@ def getter_ondemand(observable: Observable[T], timeout: Optional[float] = 30.0) 
     def getter():
         try:
             # Wait for first value with optional timeout
-            value = observable.pipe(ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])).run()
+            value = observable.pipe(
+                ops.first(), *([ops.timeout(timeout)] if timeout is not None else [])
+            ).run()
             return value
         except Exception as e:
             raise Exception(f"No value received after {timeout} seconds") from e

@@ -17,7 +17,6 @@ MOCK_CONNECTION = True
 
 
 class UnitreeAgentDemo:
-
     def __init__(self):
         self.robot_ip = None
         self.connection_method = None
@@ -39,7 +38,8 @@ class UnitreeAgentDemo:
         self.connection_method = get_env_var("CONN_TYPE")
         self.serial_number = get_env_var("SERIAL_NUMBER")
         self.output_dir = get_env_var(
-            "ROS_OUTPUT_DIR", os.path.join(os.getcwd(), "assets/output/ros"))
+            "ROS_OUTPUT_DIR", os.path.join(os.getcwd(), "assets/output/ros")
+        )
 
     def _initialize_robot(self, with_video_stream=True):
         print(
@@ -83,12 +83,12 @@ class UnitreeAgentDemo:
         # This will cause listening agents to consume the queries and respond
         # to them via skill execution and provide 1-shot responses.
         query_provider.start_query_stream(
-            query_template=
-            "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            query_template="{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
             frequency=0.01,
             start_count=1,
             end_count=10000,
-            step=1)
+            step=1,
+        )
 
     def run_with_test_video(self):
         # Initialize robot
@@ -96,9 +96,9 @@ class UnitreeAgentDemo:
 
         # Initialize test video stream
         from dimos.stream.video_provider import VideoProvider
+
         self.video_stream = VideoProvider(
-            dev_name="UnitreeGo2",
-            video_source=f"{os.getcwd()}/assets/framecount.mp4"
+            dev_name="UnitreeGo2", video_source=f"{os.getcwd()}/assets/framecount.mp4"
         ).capture_video_as_observable(realtime=False, fps=1)
 
         # Get Skills
@@ -111,8 +111,7 @@ class UnitreeAgentDemo:
             agent_type="Perception",
             input_video_stream=self.video_stream,
             output_dir=self.output_dir,
-            query=
-            "Denote the number you see in the image as the 'reference number'. Only provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            query="Denote the number you see in the image as the 'reference number'. Only provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
             image_detail="high",
             skills=skills_instance,
             # frame_processor=frame_processor,
@@ -150,9 +149,8 @@ class UnitreeAgentDemo:
             agent_type="Perception",
             input_video_stream=self.video_stream,
             output_dir=self.output_dir,
-            query=
-            "Based on the image, execute the command seen in the image AND ONLY THE COMMAND IN THE IMAGE. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
-            #WORKING MOVEMENT DEMO VVV
+            query="Based on the image, execute the command seen in the image AND ONLY THE COMMAND IN THE IMAGE. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            # WORKING MOVEMENT DEMO VVV
             # query="Move() 5 meters foward. Then spin 360 degrees to the right, and then Reverse() 5 meters, and then Move forward 3 meters",
             image_detail="high",
             skills=skills_instance,
@@ -168,9 +166,9 @@ class UnitreeAgentDemo:
 
         # Initialize test video stream
         from dimos.stream.video_provider import VideoProvider
+
         self.video_stream = VideoProvider(
-            dev_name="UnitreeGo2",
-            video_source=f"{os.getcwd()}/assets/framecount.mp4"
+            dev_name="UnitreeGo2", video_source=f"{os.getcwd()}/assets/framecount.mp4"
         ).capture_video_as_observable(realtime=False, fps=1)
 
         # Create the skills available to the agent.
@@ -203,8 +201,7 @@ class UnitreeAgentDemo:
             agent_type="Perception",
             input_video_stream=self.video_stream,
             output_dir=self.output_dir,
-            query=
-            "Denote the number you see in the image as the 'reference number'. Only provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            query="Denote the number you see in the image as the 'reference number'. Only provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
             image_detail="high",
             skills=skills_instance,
             # frame_processor=frame_processor,
@@ -216,8 +213,7 @@ class UnitreeAgentDemo:
             agent_type="Perception",
             input_video_stream=self.video_stream,
             output_dir=self.output_dir,
-            query=
-            "Denote the number you see in the image as the 'reference number'. Only provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            query="Denote the number you see in the image as the 'reference number'. Only provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
             image_detail="high",
             skills=skills_instance,
             # frame_processor=frame_processor,
@@ -228,12 +224,12 @@ class UnitreeAgentDemo:
         # This will cause listening agents to consume the queries and respond
         # to them via skill execution and provide 1-shot responses.
         query_provider.start_query_stream(
-            query_template=
-            "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            query_template="{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
             frequency=0.01,
             start_count=1,
             end_count=10000000,
-            step=1)
+            step=1,
+        )
 
     def run_with_queries_and_fast_api(self):
         # Initialize robot

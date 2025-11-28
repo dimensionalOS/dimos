@@ -56,9 +56,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
             # Subscribe to the audio source
             def on_audio_event(event: AudioEvent):
                 try:
-                    result = self.model.transcribe(
-                        event.data.flatten(), **self.modelopts
-                    )
+                    result = self.model.transcribe(event.data.flatten(), **self.modelopts)
                     observer.on_next(result["text"].strip())
                 except Exception as e:
                     logger.error(f"Error processing audio event: {e}")

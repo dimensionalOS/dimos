@@ -124,7 +124,9 @@ class LidarMessage(Timestamped):
     def estimate_normals(self) -> "LidarMessage":
         # Check if normals already exist by testing if the normals attribute has data
         if not self.pointcloud.has_normals() or len(self.pointcloud.normals) == 0:
-            self.pointcloud.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+            self.pointcloud.estimate_normals(
+                search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30)
+            )
         return self
 
     def color(self, color_choice) -> "LidarMessage":

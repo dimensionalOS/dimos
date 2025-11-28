@@ -13,24 +13,13 @@
 # limitations under the License.
 
 from dimos.models.depth.metric3d import Metric3D
-import os
-import pickle
-import argparse
-import pandas as pd
 from PIL import Image
-from io import BytesIO
 import torch
-import sys
 import cv2
-import tarfile
 import logging
-import time
-import tempfile
-import gc
-import io
-import csv
 import numpy as np
 from dimos.types.depth_map import DepthMapType
+
 
 class DepthProcessor:
     def __init__(self, debug=False):
@@ -47,14 +36,13 @@ class DepthProcessor:
             print("Running in debug mode")
             self.logger.info("Running in debug mode")
 
-
     def process(self, frame: Image.Image, intrinsics=None):
         """Process a frame to generate a depth map.
-        
+
         Args:
             frame: PIL Image to process
             intrinsics: Optional camera intrinsics parameters
-        
+
         Returns:
             DepthMapType containing the depth map
         """
@@ -65,7 +53,7 @@ class DepthProcessor:
 
         # Convert frame to numpy array suitable for processing
         if isinstance(frame, Image.Image):
-            image = frame.convert('RGB')
+            image = frame.convert("RGB")
         elif isinstance(frame, np.ndarray):
             image = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         else:
@@ -85,7 +73,7 @@ class DepthProcessor:
             if is_depth_map_valid(np.array(depth_map)):
                 self.valid_depth_count += 1
             else:
-                self.logger.error(f"Invalid depth map for the provided frame.")
+                self.logger.error("Invalid depth map for the provided frame.")
                 print("Invalid depth map for the provided frame.")
                 return None
 

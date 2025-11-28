@@ -1,4 +1,3 @@
-
 class Colors:
     GREEN_PRINT_COLOR: str = "\033[32m"
     YELLOW_PRINT_COLOR: str = "\033[33m"

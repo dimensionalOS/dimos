@@ -25,7 +25,12 @@ def benchmark(calls: int, targetf: Callable[[], Union[int, None]]) -> float:
     return (end - start + timemod) * 1000 / calls
 
 
-O3dDrawable = o3d.geometry.Geometry | o3d.geometry.LineSet | o3d.geometry.TriangleMesh | o3d.geometry.PointCloud
+O3dDrawable = (
+    o3d.geometry.Geometry
+    | o3d.geometry.LineSet
+    | o3d.geometry.TriangleMesh
+    | o3d.geometry.PointCloud
+)
 
 
 class ReturnsDrawable(Protocol):

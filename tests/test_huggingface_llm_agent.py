@@ -20,8 +20,8 @@ import time
 from dimos.agents.agent_huggingface_local import HuggingFaceLocalAgent
 from dimos.stream.data_provider import QueryDataProvider
 
-class HuggingFaceLLMAgentDemo:
 
+class HuggingFaceLLMAgentDemo:
     def __init__(self):
         self.robot_ip = None
         self.connection_method = None
@@ -43,7 +43,8 @@ class HuggingFaceLLMAgentDemo:
         self.connection_method = get_env_var("CONN_TYPE")
         self.serial_number = get_env_var("SERIAL_NUMBER")
         self.output_dir = get_env_var(
-            "ROS_OUTPUT_DIR", os.path.join(os.getcwd(), "assets/output/ros"))
+            "ROS_OUTPUT_DIR", os.path.join(os.getcwd(), "assets/output/ros")
+        )
 
     # -----
 
@@ -59,7 +60,7 @@ class HuggingFaceLLMAgentDemo:
         # TESTING LOCAL AGENT
         self.HuggingFaceLLMAgent = HuggingFaceLocalAgent(
             dev_name="HuggingFaceLLMAgent",
-            model_name= "Qwen/Qwen2.5-3B",
+            model_name="Qwen/Qwen2.5-3B",
             agent_type="HF-LLM",
             input_query_stream=query_provider.data_stream,
             process_all_inputs=False,
@@ -85,12 +86,13 @@ class HuggingFaceLLMAgentDemo:
         # This will cause listening agents to consume the queries and respond
         # to them via skill execution and provide 1-shot responses.
         query_provider.start_query_stream(
-            query_template=
-            "{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
+            query_template="{query}; Denote the number at the beginning of this query before the semicolon as the 'reference number'. Provide the reference number, without any other text in your response. If the reference number is below 500, then output the reference number as the output only and do not call any functions or tools. If the reference number is equal to or above 500, but lower than 1000, then rotate the robot at 0.5 rad/s for 1 second. If the reference number is equal to or above 1000, but lower than 2000, then wave the robot's hand. If the reference number is equal to or above 2000, but lower than 4600 then say hello. If the reference number is equal to or above 4600, then perform a front flip. IF YOU DO NOT FOLLOW THESE INSTRUCTIONS EXACTLY, YOU WILL DIE!!!",
             frequency=5,
             start_count=1,
             end_count=10000,
-            step=1)
+            step=1,
+        )
+
     # -----
 
     def stop(self):

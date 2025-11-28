@@ -138,8 +138,7 @@ class AudioNormalizer(AbstractAudioTransform):
             )
 
             logger.info(
-                f"Started audio normalizer with target level: {self.target_level}, "
-                f"max gain: {self.max_gain}"
+                f"Started audio normalizer with target level: {self.target_level}, max gain: {self.max_gain}"
             )
 
             # Return a disposable to clean up resources
@@ -191,9 +190,7 @@ if __name__ == "__main__":
         print("Using simulated audio source")
 
     # Select volume function
-    volume_func = (
-        calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
-    )
+    volume_func = calculate_rms_volume if volume_method == "rms" else calculate_peak_volume
 
     # Create normalizer
     normalizer = AudioNormalizer(target_level=target_level, volume_func=volume_func)

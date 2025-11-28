@@ -116,7 +116,10 @@ def test_downsample():
     # framea_icp = framea.copy().icptransform(frameb)
     pcd = framea.copy().pointcloud
     newpcd, _, _ = pcd.voxel_down_sample_and_trace(
-        voxel_size=0.25, min_bound=pcd.get_min_bound(), max_bound=pcd.get_max_bound(), approximate_class=False
+        voxel_size=0.25,
+        min_bound=pcd.get_min_bound(),
+        max_bound=pcd.get_max_bound(),
+        approximate_class=False,
     )
 
     multivis(

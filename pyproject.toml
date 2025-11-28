@@ -7,10 +7,27 @@ version = "0.0.2"
 description = "Powering agentive generalist robotics"
 
 [tool.ruff]
-line-length = 120
+line-length = 100
+exclude = [
+    ".git",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "libs",
+    "external",
+    "src"
+]
 
 [tool.pytest.ini_options]
-testpaths = ["dimos/robot"]
+testpaths = ["dimos"]
 norecursedirs = ["dimos/robot/unitree/external"]
 markers = [
     "vis: marks tests that run visuals and require a visual check by dev",
