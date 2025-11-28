@@ -56,21 +56,13 @@ class TrajectorySetter:
         self.joint_state_sub = core.LCMTransport("/xarm/joint_states", JointState)
         self.latest_joint_state: JointState | None = None
 
-        self.num_joints = 6  # xarm6
-
-        # Trajectory generator with default limits
-        self.generator = JointTrajectoryGenerator(
-            num_joints=self.num_joints,
-            max_velocity=1.0,  # rad/s
-            max_acceleration=2.0,  # rad/s^2
-            points_per_segment=50,
-        )
+        # Will be set dynamically from joint_state (supports xarm5/6/7)
+        self.num_joints: int | None = None
+        self.generator: JointTrajectoryGenerator | None = None
 
         print("TrajectorySetter initialized")
         print("  Publishing to: /trajectory")
         print("  Subscribing to: /xarm/joint_states")
-        print(f"  Max velocity: {self.generator.max_velocity[0]:.2f} rad/s")
-        print(f"  Max acceleration: {self.generator.max_acceleration[0]:.2f} rad/s^2")
 
     def start(self) -> bool:
         """Start subscribing to joint state."""
@@ -79,11 +71,23 @@ class TrajectorySetter:
 
         for _ in range(50):  # 5 second timeout
             if self.latest_joint_state is not None:
-                print("  Current joint state received")
+                # Dynamically determine joint count from actual joint_state
+                self.num_joints = len(self.latest_joint_state.position)
+                print(f"  ✓ Joint state received ({self.num_joints} joints)")
+
+                # Now create generator with correct joint count
+                self.generator = JointTrajectoryGenerator(
+                    num_joints=self.num_joints,
+                    max_velocity=1.0,  # rad/s
+                    max_acceleration=2.0,  # rad/s^2
+                    points_per_segment=50,
+                )
+                print(f"  Max velocity: {self.generator.max_velocity[0]:.2f} rad/s")
+                print(f"  Max acceleration: {self.generator.max_acceleration[0]:.2f} rad/s^2")
                 return True
             time.sleep(0.1)
 
-        print("  Warning: No joint state received (timeout)")
+        print("  ⚠ Warning: No joint state received (timeout)")
         return False
 
     def _on_joint_state(self, msg: JointState) -> None:
@@ -146,32 +150,40 @@ def parse_joint_input(line: str, num_joints: int) -> list[float] | None:
     return positions
 
 
-def preview_waypoints(waypoints: list[list[float]]):
+def preview_waypoints(waypoints: list[list[float]], num_joints: int):
     """Show waypoints list."""
     if not waypoints:
         print("No waypoints")
         return
 
+    # Dynamically generate header based on joint count
+    joint_headers = " ".join([f"{'J' + str(i+1):>7}" for i in range(num_joints)])
+    line_width = 6 + 3 + num_joints * 8 + 10
+
     print(f"\nWaypoints ({len(waypoints)}):")
-    print("-" * 70)
-    print(f"  # | {'J1':>7} {'J2':>7} {'J3':>7} {'J4':>7} {'J5':>7} {'J6':>7} (degrees)")
-    print("-" * 70)
+    print("-" * line_width)
+    print(f"  # | {joint_headers} (degrees)")
+    print("-" * line_width)
     for i, joints in enumerate(waypoints):
         deg = [f"{math.degrees(j):7.1f}" for j in joints]
         print(f" {i + 1:2} | {' '.join(deg)}")
-    print("-" * 70)
+    print("-" * line_width)
 
 
-def preview_trajectory(trajectory: JointTrajectory):
+def preview_trajectory(trajectory: JointTrajectory, num_joints: int):
     """Show generated trajectory preview."""
-    print("\n" + "=" * 80)
+    # Dynamically generate header based on joint count
+    joint_headers = " ".join([f"{'J' + str(i+1):>7}" for i in range(num_joints)])
+    line_width = 9 + 3 + num_joints * 8 + 10
+
+    print("\n" + "=" * line_width)
     print("GENERATED TRAJECTORY")
-    print("=" * 80)
+    print("=" * line_width)
     print(f"Duration: {trajectory.duration:.3f}s")
     print(f"Points: {len(trajectory.points)}")
-    print("-" * 80)
-    print(f"{'Time':>6} | {'J1':>7} {'J2':>7} {'J3':>7} {'J4':>7} {'J5':>7} {'J6':>7} (degrees)")
-    print("-" * 80)
+    print("-" * line_width)
+    print(f"{'Time':>6} | {joint_headers} (degrees)")
+    print("-" * line_width)
 
     # Sample at regular intervals
     num_samples = min(15, max(len(trajectory.points) // 10, 5))
@@ -181,7 +193,7 @@ def preview_trajectory(trajectory: JointTrajectory):
         q_deg = [f"{math.degrees(q):7.1f}" for q in q_ref]
         print(f"{t:6.2f} | {' '.join(q_deg)}")
 
-    print("-" * 80)
+    print("-" * line_width)
 
     # Show velocity profile info
     if trajectory.points:
@@ -191,16 +203,20 @@ def preview_trajectory(trajectory: JointTrajectory):
                 max_vels[j] = max(max_vels[j], abs(v))
         vel_deg = [f"{math.degrees(v):5.1f}" for v in max_vels]
         print(f"Peak velocities (deg/s): [{', '.join(vel_deg)}]")
-    print("=" * 80)
+    print("=" * line_width)
 
 
 def interactive_mode(setter: TrajectorySetter):
     """Interactive mode for creating trajectories."""
+    # Generate dynamic joint list for help text
+    joint_args = " ".join([f"<j{i+1}>" for i in range(setter.num_joints)])
+
     print("\n" + "=" * 80)
     print("Interactive Trajectory Setter")
     print("=" * 80)
+    print(f"\nArm: {setter.num_joints} joints")
     print("\nCommands:")
-    print("  add <j1> <j2> <j3> <j4> <j5> <j6>   - Add waypoint (degrees)")
+    print(f"  add {joint_args}   - Add waypoint (degrees)")
     print("  here                                 - Add current position as waypoint")
     print("  current                              - Show current joints")
     print("  list                                 - List waypoints")
@@ -229,15 +245,15 @@ def interactive_mode(setter: TrajectorySetter):
             cmd = parts[0].lower()
 
             # ADD waypoint
-            if cmd == "add" and len(parts) >= 7:
-                joints = parse_joint_input(" ".join(parts[1:7]), setter.num_joints)
+            if cmd == "add" and len(parts) >= setter.num_joints + 1:
+                joints = parse_joint_input(" ".join(parts[1 : setter.num_joints + 1]), setter.num_joints)
                 if joints:
                     waypoints.append(joints)
                     generated_trajectory = None  # Invalidate cached trajectory
                     deg = [f"{math.degrees(j):.1f}" for j in joints]
                     print(f"Added waypoint {len(waypoints)}: [{', '.join(deg)}] deg")
                 else:
-                    print("Invalid joint values (need 6 values in degrees)")
+                    print(f"Invalid joint values (need {setter.num_joints} values in degrees)")
 
             # HERE - add current position
             elif cmd == "here":
@@ -261,7 +277,7 @@ def interactive_mode(setter: TrajectorySetter):
 
             # LIST
             elif cmd == "list":
-                preview_waypoints(waypoints)
+                preview_waypoints(waypoints, setter.num_joints)
 
             # DELETE
             elif cmd == "delete" and len(parts) >= 2:
@@ -284,7 +300,7 @@ def interactive_mode(setter: TrajectorySetter):
                     print("\nGenerating trajectory...")
                     try:
                         generated_trajectory = setter.generate_trajectory(waypoints)
-                        preview_trajectory(generated_trajectory)
+                        preview_trajectory(generated_trajectory, setter.num_joints)
                     except Exception as e:
                         print(f"Error generating trajectory: {e}")
 
@@ -303,7 +319,7 @@ def interactive_mode(setter: TrajectorySetter):
                         print(f"Error generating trajectory: {e}")
                         continue
 
-                preview_trajectory(generated_trajectory)
+                preview_trajectory(generated_trajectory, setter.num_joints)
                 confirm = input("\nPublish to robot? [y/N]: ").strip().lower()
                 if confirm == "y":
                     setter.publish_trajectory(generated_trajectory)
