@@ -155,8 +155,8 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
         else:
             self.device = "cpu"
 
-        print(f"Using device: {device}")
-        self.model = SentenceTransformer(self.model_name, device=device)  # type: ignore[name-defined]
+        print(f"Using device: {self.device}")
+        self.model = SentenceTransformer(self.model_name, device=self.device)  # type: ignore[name-defined]
 
         # Create a custom embedding class that implements the embed_query method
         class SentenceTransformerEmbeddings:
