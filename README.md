@@ -238,6 +238,8 @@ yarn dev # you may need to run sudo if previously built via Docker
 
 ## Building
 
+Get started in minutes with our [Quickstart](./docs/quickstart.md): build an agentic robot that can make greetings!
+
 ### Simple DimOS Application (OUT OF DATE)
 
 ```python

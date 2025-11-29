@@ -72,10 +72,7 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Quickstart:
-    - quickstart/index.md
-    - Installation: quickstart/installation.md
-    - Basic Usage: quickstart/basic-usage.md
+  - Quickstart: quickstart.md
   - Tutorials:
     - tutorials/index.md
     - Build your first skill: tutorials/skill_basics/tutorial.md
@@ -119,7 +116,7 @@ plugins:
         Home:
           - index.md: Introduction to DimOS
         Quickstart:
-          - quickstart/*.md
+          - quickstart.md
         Tutorials:
           - tutorials/*.md
         Concepts:
