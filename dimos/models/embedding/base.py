@@ -34,9 +34,9 @@ class Embedding(Timestamped):
     Embeddings are kept as torch.Tensor on device by default for efficiency.
     """
 
-    vector: torch.Tensor | np.ndarray
+    vector: torch.Tensor | np.ndarray  # type: ignore[type-arg]
 
-    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float | None = None) -> None:
+    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float | None = None) -> None:  # type: ignore[type-arg]
         self.vector = vector
         if timestamp:
             self.timestamp = timestamp
@@ -51,7 +51,7 @@ class Embedding(Timestamped):
             return result.item()
         return float(self.vector @ other.to_numpy())
 
-    def to_numpy(self) -> np.ndarray:
+    def to_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
         """Convert to numpy array (moves to CPU if needed)."""
         if isinstance(self.vector, torch.Tensor):
             return self.vector.detach().cpu().numpy()

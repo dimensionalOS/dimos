@@ -60,7 +60,7 @@ function tmpUmask
 {
     oldUmask=$(umask)
     newUmask=$1
-    
+
     shift
     umask $newUmask
     echo umask $(umask -S)
@@ -68,7 +68,7 @@ function tmpUmask
     eval $@
     umask $oldUmask
     echo umask $(umask -S)
-    
+
 }
 
 function newloginuser

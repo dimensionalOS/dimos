@@ -19,7 +19,7 @@ This module provides pre-configured blueprints for various G1 robot setups,
 from basic teleoperation to full autonomous agent configurations.
 """
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
@@ -54,7 +54,7 @@ from dimos.navigation.rosnav import ros_nav
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree_webrtc.g1_joystick_module import g1_joystick
+from dimos.robot.unitree_webrtc.keyboard_teleop import keyboard_teleop
 from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
@@ -185,12 +185,12 @@ agentic_bt_nav = autoconnect(
 # Configuration with joystick control for teleoperation
 with_joystick = autoconnect(
     basic_ros,
-    g1_joystick(),  # Pygame-based joystick control
+    keyboard_teleop(),  # Pygame-based joystick control
 )
 
 # Full featured configuration with everything
 full_featured = autoconnect(
     standard_with_shm,
     _agentic_skills,
-    g1_joystick(),
+    keyboard_teleop(),
 )

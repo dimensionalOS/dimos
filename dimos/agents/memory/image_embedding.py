@@ -56,35 +56,41 @@ class ImageEmbeddingProvider:
         self.processor = None
         self.model_path = None
 
-        self._initialize_model()
+        self._initialize_model()  # type: ignore[no-untyped-call]
 
         logger.info(f"ImageEmbeddingProvider initialized with model {model_name}")
 
-    def _initialize_model(self):
+    def _initialize_model(self):  # type: ignore[no-untyped-def]
         """Initialize the specified embedding model."""
         try:
-            import onnxruntime as ort
+            import onnxruntime as ort  # type: ignore[import-untyped]
             import torch
-            from transformers import AutoFeatureExtractor, AutoModel, CLIPProcessor
+            from transformers import (  # type: ignore[import-untyped]
+                AutoFeatureExtractor,
+                AutoModel,
+                CLIPProcessor,
+            )
 
             if self.model_name == "clip":
                 model_id = get_data("models_clip") / "model.onnx"
-                self.model_path = str(model_id)  # Store for pickling
+                self.model_path = str(model_id)  # type: ignore[assignment]  # Store for pickling
                 processor_id = "openai/clip-vit-base-patch32"
 
                 providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
                 if sys.platform == "darwin":
                     # 2025-11-17 12:36:47.877215 [W:onnxruntime:, helper.cc:82 IsInputSupported] CoreML does not support input dim > 16384. Input:text_model.embeddings.token_embedding.weight, shape: {49408,512}
                     # 2025-11-17 12:36:47.878496 [W:onnxruntime:, coreml_execution_provider.cc:107 GetCapability] CoreMLExecutionProvider::GetCapability, number of partitions supported by CoreML: 88 number of nodes in the graph: 1504 number of nodes supported by CoreML: 933
-                    providers = ["CoreMLExecutionProvider"] + [ each for each in providers if each != "CUDAExecutionProvider"]
+                    providers = ["CoreMLExecutionProvider"] + [
+                        each for each in providers if each != "CUDAExecutionProvider"
+                    ]
 
                 self.model = ort.InferenceSession(str(model_id), providers=providers)
 
-                actual_providers = self.model.get_providers()
+                actual_providers = self.model.get_providers()  # type: ignore[attr-defined]
                 self.processor = CLIPProcessor.from_pretrained(processor_id)
                 logger.info(f"Loaded CLIP model: {model_id} with providers: {actual_providers}")
             elif self.model_name == "resnet":
-                model_id = "microsoft/resnet-50"
+                model_id = "microsoft/resnet-50"  # type: ignore[assignment]
                 self.model = AutoModel.from_pretrained(model_id)
                 self.processor = AutoFeatureExtractor.from_pretrained(model_id)
                 logger.info(f"Loaded ResNet model: {model_id}")
@@ -98,7 +104,7 @@ class ImageEmbeddingProvider:
             self.processor = None
             raise
 
-    def get_embedding(self, image: np.ndarray | str | bytes) -> np.ndarray:
+    def get_embedding(self, image: np.ndarray | str | bytes) -> np.ndarray:  # type: ignore[type-arg]
         """
         Generate an embedding vector for the provided image.
 
@@ -171,7 +177,7 @@ class ImageEmbeddingProvider:
             logger.error(f"Error generating embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
 
-    def get_text_embedding(self, text: str) -> np.ndarray:
+    def get_text_embedding(self, text: str) -> np.ndarray:  # type: ignore[type-arg]
         """
         Generate an embedding vector for the provided text.
 
@@ -238,7 +244,7 @@ class ImageEmbeddingProvider:
             logger.error(f"Error generating text embedding: {e}")
             return np.random.randn(self.dimensions).astype(np.float32)
 
-    def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:
+    def _prepare_image(self, image: np.ndarray | str | bytes) -> Image.Image:  # type: ignore[type-arg]
         """
         Convert the input image to PIL format required by the models.
 

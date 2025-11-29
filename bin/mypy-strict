@@ -22,7 +22,6 @@ run_mypy() {
   export MYPYPATH=/opt/ros/jazzy/lib/python3.12/site-packages
 
   mypy_args=(
-    --config-file mypy_strict.ini
     --show-error-codes
     --hide-error-context
     --no-pretty

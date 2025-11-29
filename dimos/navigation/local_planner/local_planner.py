@@ -48,14 +48,14 @@ class BaseLocalPlanner(Module):
     """
 
     # LCM inputs
-    local_costmap: In[OccupancyGrid] = None
-    odom: In[PoseStamped] = None
-    path: In[Path] = None
+    local_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    path: In[Path] = None  # type: ignore[assignment]
 
     # LCM outputs
-    cmd_vel: Out[Twist] = None
+    cmd_vel: Out[Twist] = None  # type: ignore[assignment]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         goal_tolerance: float = 0.5,
         orientation_tolerance: float = 0.2,
@@ -132,7 +132,7 @@ class BaseLocalPlanner(Module):
             if self.is_goal_reached():
                 self.stop_planning.set()
                 stop_cmd = Twist()
-                self.cmd_vel.publish(stop_cmd)
+                self.cmd_vel.publish(stop_cmd)  # type: ignore[no-untyped-call]
                 break
 
             # Compute and publish velocity
@@ -145,7 +145,7 @@ class BaseLocalPlanner(Module):
         cmd_vel = self.compute_velocity()
 
         if cmd_vel is not None:
-            self.cmd_vel.publish(cmd_vel)
+            self.cmd_vel.publish(cmd_vel)  # type: ignore[no-untyped-call]
 
     @abstractmethod
     def compute_velocity(self) -> Twist | None:
@@ -206,4 +206,4 @@ class BaseLocalPlanner(Module):
             self.planning_thread.join(timeout=1.0)
             self.planning_thread = None
         stop_cmd = Twist()
-        self.cmd_vel.publish(stop_cmd)
+        self.cmd_vel.publish(stop_cmd)  # type: ignore[no-untyped-call]

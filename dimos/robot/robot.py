@@ -43,7 +43,7 @@ class Robot(ABC):
         """
         return capability in self.capabilities
 
-    def get_skills(self):
+    def get_skills(self):  # type: ignore[no-untyped-def]
         """Get the robot's skill library.
 
         Returns:

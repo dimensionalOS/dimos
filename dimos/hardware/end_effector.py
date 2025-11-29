@@ -14,8 +14,8 @@
 
 
 class EndEffector:
-    def __init__(self, effector_type=None) -> None:
+    def __init__(self, effector_type=None) -> None:  # type: ignore[no-untyped-def]
         self.effector_type = effector_type
 
-    def get_effector_type(self):
+    def get_effector_type(self):  # type: ignore[no-untyped-def]
         return self.effector_type

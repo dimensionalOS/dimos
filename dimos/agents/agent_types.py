@@ -95,15 +95,15 @@ class ConversationMessage:
             msg["content"] = self.content
         else:
             # Content is already a list of content blocks
-            msg["content"] = self.content
+            msg["content"] = self.content  # type: ignore[assignment]
 
         # Add tool calls if present
         if self.tool_calls:
             # Handle both ToolCall objects and dicts
             if isinstance(self.tool_calls[0], dict):
-                msg["tool_calls"] = self.tool_calls
+                msg["tool_calls"] = self.tool_calls  # type: ignore[assignment]
             else:
-                msg["tool_calls"] = [
+                msg["tool_calls"] = [  # type: ignore[assignment]
                     {
                         "id": tc.id,
                         "type": "function",

@@ -21,11 +21,11 @@ import logging
 from pathlib import Path
 from typing import Annotated, Any, Literal, Union, get_origin
 
-from datasets import Dataset
-from gymnasium import spaces
-from jsonref import replace_refs
-from mbodied.data.utils import to_features
-from mbodied.utils.import_utils import smart_import
+from datasets import Dataset  # type: ignore[import-not-found]
+from gymnasium import spaces  # type: ignore[import-not-found]
+from jsonref import replace_refs  # type: ignore[import-not-found]
+from mbodied.data.utils import to_features  # type: ignore[import-not-found]
+from mbodied.utils.import_utils import smart_import  # type: ignore[import-not-found]
 import numpy as np
 from pydantic import BaseModel, ConfigDict, ValidationError
 from pydantic.fields import FieldInfo
@@ -74,7 +74,7 @@ class Sample(BaseModel):
 
     __doc__ = "A base model class for serializing, recording, and manipulating arbitray data."
 
-    model_config: ConfigDict = ConfigDict(
+    model_config: ConfigDict = ConfigDict(  # type: ignore[misc]
         use_enum_values=False,
         from_attributes=True,
         validate_assignment=False,
@@ -82,7 +82,7 @@ class Sample(BaseModel):
         arbitrary_types_allowed=True,
     )
 
-    def __init__(self, datum=None, **data) -> None:
+    def __init__(self, datum=None, **data) -> None:  # type: ignore[no-untyped-def]
         """Accepts an arbitrary datum as well as keyword arguments."""
         if datum is not None:
             if isinstance(datum, Sample):
@@ -101,7 +101,7 @@ class Sample(BaseModel):
         """Return a string representation of the Sample instance."""
         return f"{self.__class__.__name__}({', '.join([f'{k}={v}' for k, v in self.dict().items() if v is not None])})"
 
-    def dict(self, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:
+    def dict(self, exclude_none: bool = True, exclude: set[str] | None = None) -> dict[str, Any]:  # type: ignore[override]
         """Return the Sample object as a dictionary with None values excluded.
 
         Args:
@@ -114,7 +114,7 @@ class Sample(BaseModel):
         return self.model_dump(exclude_none=exclude_none, exclude=exclude)
 
     @classmethod
-    def unflatten(cls, one_d_array_or_dict, schema=None) -> "Sample":
+    def unflatten(cls, one_d_array_or_dict, schema=None) -> "Sample":  # type: ignore[no-untyped-def]
         """Unflatten a one-dimensional array or dictionary into a Sample instance.
 
         If a dictionary is provided, its keys are ignored.
@@ -143,7 +143,7 @@ class Sample(BaseModel):
         else:
             flat_data = list(one_d_array_or_dict)
 
-        def unflatten_recursive(schema_part, index: int = 0):
+        def unflatten_recursive(schema_part, index: int = 0):  # type: ignore[no-untyped-def]
             if schema_part["type"] == "object":
                 result = {}
                 for prop, prop_schema in schema_part["properties"].items():
@@ -166,10 +166,10 @@ class Sample(BaseModel):
         self,
         output_type: Flattenable = "dict",
         non_numerical: Literal["ignore", "forbid", "allow"] = "allow",
-    ) -> builtins.dict[str, Any] | np.ndarray | torch.Tensor | list:
-        accumulator = {} if output_type == "dict" else []
+    ) -> builtins.dict[str, Any] | np.ndarray | torch.Tensor | list:  # type: ignore[type-arg]
+        accumulator = {} if output_type == "dict" else []  # type: ignore[var-annotated]
 
-        def flatten_recursive(obj, path: str = "") -> None:
+        def flatten_recursive(obj, path: str = "") -> None:  # type: ignore[no-untyped-def]
             if isinstance(obj, Sample):
                 for k, v in obj.dict().items():
                     flatten_recursive(v, path + k + "/")
@@ -183,20 +183,20 @@ class Sample(BaseModel):
                 flat_list = obj.flatten().tolist()
                 if output_type == "dict":
                     # Convert to list for dict storage
-                    accumulator[path[:-1]] = flat_list
+                    accumulator[path[:-1]] = flat_list  # type: ignore[index]
                 else:
-                    accumulator.extend(flat_list)
+                    accumulator.extend(flat_list)  # type: ignore[attr-defined]
             else:
                 if non_numerical == "ignore" and not isinstance(obj, int | float | bool):
                     return
                 final_key = path[:-1]  # Remove trailing slash
                 if output_type == "dict":
-                    accumulator[final_key] = obj
+                    accumulator[final_key] = obj  # type: ignore[index]
                 else:
-                    accumulator.append(obj)
+                    accumulator.append(obj)  # type: ignore[attr-defined]
 
         flatten_recursive(self)
-        accumulator = accumulator.values() if output_type == "dict" else accumulator
+        accumulator = accumulator.values() if output_type == "dict" else accumulator  # type: ignore[attr-defined]
         if non_numerical == "forbid" and any(
             not isinstance(v, int | float | bool) for v in accumulator
         ):
@@ -205,11 +205,11 @@ class Sample(BaseModel):
             return np.array(accumulator)
         if output_type == "pt":
             torch = smart_import("torch")
-            return torch.tensor(accumulator)
-        return accumulator
+            return torch.tensor(accumulator)  # type: ignore[no-any-return]
+        return accumulator  # type: ignore[return-value]
 
     @staticmethod
-    def obj_to_schema(value: Any) -> builtins.dict:
+    def obj_to_schema(value: Any) -> builtins.dict:  # type: ignore[type-arg]
         """Generates a simplified JSON schema from a dictionary.
 
         Args:
@@ -238,8 +238,10 @@ class Sample(BaseModel):
         return {}
 
     def schema(
-        self, resolve_refs: bool = True, include_descriptions: bool = False
-    ) -> builtins.dict:
+        self,
+        resolve_refs: bool = True,
+        include_descriptions: bool = False,  # type: ignore[override]
+    ) -> builtins.dict:  # type: ignore[type-arg]
         """Returns a simplified json schema.
 
         Removing additionalProperties,
@@ -315,8 +317,8 @@ class Sample(BaseModel):
         Returns:
             Any: The converted container.
         """
-        if isinstance(container, Sample) and not issubclass(container, Sample):
-            return container(**self.dict())
+        if isinstance(container, Sample) and not issubclass(container, Sample):  # type: ignore[arg-type]
+            return container(**self.dict())  # type: ignore[operator]
         if isinstance(container, type) and issubclass(container, Sample):
             return container.unflatten(self.flatten())
 
@@ -354,7 +356,7 @@ class Sample(BaseModel):
         cls,
         value: Any,
         max_text_length: int = 1000,
-        info: Annotated = None,
+        info: Annotated = None,  # type: ignore[valid-type]
     ) -> spaces.Space:
         """Default Gym space generation for a given value.
 
@@ -412,7 +414,7 @@ class Sample(BaseModel):
     def init_from(cls, d: Any, pack: bool = False) -> "Sample":
         if isinstance(d, spaces.Space):
             return cls.from_space(d)
-        if isinstance(d, Union[Sequence, np.ndarray]):
+        if isinstance(d, Union[Sequence, np.ndarray]):  # type: ignore[arg-type]
             if pack:
                 return cls.pack_from(d)
             return cls.unflatten(d)
@@ -431,7 +433,9 @@ class Sample(BaseModel):
 
     @classmethod
     def from_flat_dict(
-        cls, flat_dict: builtins.dict[str, Any], schema: builtins.dict | None = None
+        cls,
+        flat_dict: builtins.dict[str, Any],
+        schema: builtins.dict | None = None,  # type: ignore[type-arg]
     ) -> "Sample":
         """Initialize a Sample instance from a flattened dictionary."""
         """
@@ -445,7 +449,7 @@ class Sample(BaseModel):
             dict: The reconstructed JSON object.
         """
         schema = schema or replace_refs(cls.model_json_schema())
-        reconstructed = {}
+        reconstructed = {}  # type: ignore[var-annotated]
 
         for flat_key, value in flat_dict.items():
             keys = flat_key.split(".")
@@ -456,7 +460,7 @@ class Sample(BaseModel):
                 current = current[key]
             current[keys[-1]] = value
 
-        return reconstructed
+        return reconstructed  # type: ignore[return-value]
 
     @classmethod
     def from_space(cls, space: spaces.Space) -> "Sample":
@@ -467,11 +471,11 @@ class Sample(BaseModel):
         if hasattr(sampled, "__len__") and not isinstance(sampled, str):
             sampled = np.asarray(sampled)
             if len(sampled.shape) > 0 and isinstance(sampled[0], dict | Sample):
-                return cls.pack_from(sampled)
+                return cls.pack_from(sampled)  # type: ignore[arg-type]
         return cls(sampled)
 
     @classmethod
-    def pack_from(cls, samples: list[Union["Sample", builtins.dict]]) -> "Sample":
+    def pack_from(cls, samples: list[Union["Sample", builtins.dict]]) -> "Sample":  # type: ignore[type-arg]
         """Pack a list of samples into a single sample with lists for attributes.
 
         Args:
@@ -491,7 +495,7 @@ class Sample(BaseModel):
         else:
             attributes = ["item" + str(i) for i in range(len(samples))]
 
-        aggregated = {attr: [] for attr in attributes}
+        aggregated = {attr: [] for attr in attributes}  # type: ignore[var-annotated]
         for sample in samples:
             for attr in attributes:
                 # Handle both Sample instances and dictionaries
@@ -501,9 +505,9 @@ class Sample(BaseModel):
                     aggregated[attr].append(getattr(sample, attr, None))
         return cls(**aggregated)
 
-    def unpack(self, to_dicts: bool = False) -> list[Union["Sample", builtins.dict]]:
+    def unpack(self, to_dicts: bool = False) -> list[Union["Sample", builtins.dict]]:  # type: ignore[type-arg]
         """Unpack the packed Sample object into a list of Sample objects or dictionaries."""
-        attributes = list(self.model_extra.keys()) + list(self.model_fields.keys())
+        attributes = list(self.model_extra.keys()) + list(self.model_fields.keys())  # type: ignore[union-attr]
         attributes = [attr for attr in attributes if getattr(self, attr) is not None]
         if not attributes or getattr(self, attributes[0]) is None:
             return []
@@ -544,13 +548,13 @@ class Sample(BaseModel):
     def model_field_info(self, key: str) -> FieldInfo:
         """Get the FieldInfo for a given attribute key."""
         if self.model_extra and self.model_extra.get(key) is not None:
-            info = FieldInfo(metadata=self.model_extra[key])
+            info = FieldInfo(metadata=self.model_extra[key])  # type: ignore[call-arg]
         if self.model_fields.get(key) is not None:
-            info = FieldInfo(metadata=self.model_fields[key])
+            info = FieldInfo(metadata=self.model_fields[key])  # type: ignore[call-arg]
 
         if info and hasattr(info, "annotation"):
-            return info.annotation
-        return None
+            return info.annotation  # type: ignore[return-value]
+        return None  # type: ignore[return-value]
 
     def space(self) -> spaces.Dict:
         """Return the corresponding Gym space for the Sample instance based on its instance attributes. Omits None values.

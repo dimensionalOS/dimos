@@ -110,6 +110,41 @@ class ModuleBlueprintSet:
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
+    def _verify_no_name_conflicts(self) -> None:
+        name_to_types = defaultdict(set)
+        name_to_modules = defaultdict(list)
+
+        for blueprint in self.blueprints:
+            for conn in blueprint.connections:
+                connection_name = self.remapping_map.get((blueprint.module, conn.name), conn.name)
+                name_to_types[connection_name].add(conn.type)
+                name_to_modules[connection_name].append((blueprint.module, conn.type))
+
+        conflicts = {}
+        for conn_name, types in name_to_types.items():
+            if len(types) > 1:
+                modules_by_type = defaultdict(list)
+                for module, conn_type in name_to_modules[conn_name]:
+                    modules_by_type[conn_type].append(module)
+                conflicts[conn_name] = modules_by_type
+
+        if not conflicts:
+            return
+
+        error_lines = ["Blueprint cannot start because there are conflicting connections."]
+        for name, modules_by_type in conflicts.items():
+            type_entries = []
+            for conn_type, modules in modules_by_type.items():
+                for module in modules:
+                    type_str = f"{conn_type.__module__}.{conn_type.__name__}"
+                    module_str = module.__name__
+                    type_entries.append((type_str, module_str))
+            if len(type_entries) >= 2:
+                locations = ", ".join(f"{type_} in {module}" for type_, module in type_entries)
+                error_lines.append(f"    - '{name}' has conflicting types. {locations}")
+
+        raise ValueError("\n".join(error_lines))
+
     def _deploy_all_modules(
         self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
     ) -> None:
@@ -124,7 +159,7 @@ class ModuleBlueprintSet:
         # Gather all the In/Out connections with remapping applied.
         connections = defaultdict(list)
         # Track original name -> remapped name for each module
-        module_conn_mapping = defaultdict(dict)
+        module_conn_mapping = defaultdict(dict)  # type: ignore[var-annotated]
 
         for blueprint in self.blueprints:
             for conn in blueprint.connections:
@@ -140,7 +175,7 @@ class ModuleBlueprintSet:
             transport = self._get_transport_for(remapped_name, type)
             for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
-                instance.set_transport(original_name, transport)
+                instance.set_transport(original_name, transport)  # type: ignore[union-attr]
 
     def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
@@ -150,7 +185,7 @@ class ModuleBlueprintSet:
         interface_methods = defaultdict(list)  # interface_name.method -> [(module_class, method)]
 
         for blueprint in self.blueprints:
-            for method_name in blueprint.module.rpcs.keys():
+            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
                 method = getattr(module_coordinator.get_instance(blueprint.module), method_name)
                 # Register under concrete class name (backward compatibility)
                 rpc_methods[f"{blueprint.module.__name__}_{method_name}"] = method
@@ -176,14 +211,14 @@ class ModuleBlueprintSet:
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
             instance = module_coordinator.get_instance(blueprint.module)
-            for method_name in blueprint.module.rpcs.keys():
+            for method_name in blueprint.module.rpcs.keys():  # type: ignore[attr-defined]
                 if not method_name.startswith("set_"):
                     continue
                 linked_name = method_name.removeprefix("set_")
                 if linked_name not in rpc_methods:
                     continue
                 getattr(instance, method_name)(rpc_methods[linked_name])
-            for requested_method_name in instance.get_rpc_method_names():
+            for requested_method_name in instance.get_rpc_method_names():  # type: ignore[union-attr]
                 # Check if this is an ambiguous interface method
                 if (
                     requested_method_name in interface_methods
@@ -200,7 +235,7 @@ class ModuleBlueprintSet:
 
                 if requested_method_name not in rpc_methods_dot:
                     continue
-                instance.set_rpc_method(
+                instance.set_rpc_method(  # type: ignore[union-attr]
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
@@ -208,6 +243,8 @@ class ModuleBlueprintSet:
         if global_config is None:
             global_config = GlobalConfig()
         global_config = global_config.model_copy(update=self.global_config_overrides)
+
+        self._verify_no_name_conflicts()
 
         module_coordinator = ModuleCoordinator(global_config=global_config)
         module_coordinator.start()
@@ -233,11 +270,11 @@ def _make_module_blueprint(
 
     for name, annotation in all_annotations.items():
         origin = get_origin(annotation)
-        if origin not in (In, Out):
+        if origin not in (In, Out):  # type: ignore[comparison-overlap]
             continue
-        direction = "in" if origin == In else "out"
+        direction = "in" if origin == In else "out"  # type: ignore[comparison-overlap]
         type_ = get_args(annotation)[0]
-        connections.append(ModuleConnection(name=name, type=type_, direction=direction))
+        connections.append(ModuleConnection(name=name, type=type_, direction=direction))  # type: ignore[arg-type]
 
     return ModuleBlueprint(module=module, connections=tuple(connections), args=args, kwargs=kwargs)
 
@@ -249,13 +286,13 @@ def create_module_blueprint(module: type[Module], *args: Any, **kwargs: Any) -> 
 
 def autoconnect(*blueprints: ModuleBlueprintSet) -> ModuleBlueprintSet:
     all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
-    all_transports = dict(
+    all_transports = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.transport_map.items()) for x in blueprints], [])
     )
-    all_config_overrides = dict(
+    all_config_overrides = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.global_config_overrides.items()) for x in blueprints], [])
     )
-    all_remappings = dict(
+    all_remappings = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.remapping_map.items()) for x in blueprints], [])
     )
 

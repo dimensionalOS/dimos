@@ -16,6 +16,6 @@ from dimos.protocol.pubsub.redispubsub import Redis
 from dimos.protocol.rpc.pubsubrpc import PassThroughPubSubRPC
 
 
-class RedisRPC(PassThroughPubSubRPC, Redis):
+class RedisRPC(PassThroughPubSubRPC, Redis):  # type: ignore[type-arg]
     def topicgen(self, name: str, req_or_res: bool) -> str:
         return f"/rpc/{name}/{'res' if req_or_res else 'req'}"
