@@ -21,12 +21,12 @@ from basic teleoperation to full autonomous agent configurations.
 
 from dimos_lcm.foxglove_msgs import SceneUpdate
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.navigation import navigation_skill
-from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE, DEFAULT_CAPACITY_DEPTH_IMAGE
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.camera import zed
@@ -37,7 +37,6 @@ from dimos.msgs.geometry_msgs import (
     Quaternion,
     Transform,
     Twist,
-    TwistStamped,
     Vector3,
 )
 from dimos.msgs.nav_msgs import Odometry, Path
@@ -62,8 +61,7 @@ from dimos.perception.detection.person_tracker import PersonTracker, person_trac
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree_webrtc.depth_module import depth_module
-from dimos.robot.unitree_webrtc.g1_joystick_module import g1_joystick
+from dimos.robot.unitree_webrtc.keyboard_teleop import keyboard_teleop
 from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
@@ -71,7 +69,7 @@ from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
 # Basic configuration with navigation and visualization
-basic = (
+_basic_no_nav = (
     autoconnect(
         # Core connection module for G1
         g1_connection(),
@@ -95,9 +93,7 @@ basic = (
         # Navigation stack
         astar_planner(),
         holonomic_local_planner(),
-        behavior_tree_navigator(),
         wavefront_frontier_explorer(),
-        navigation_module(),  # G1-specific ROS navigation
         # Visualization
         websocket_vis(),
         foxglove_bridge(),
@@ -133,12 +129,30 @@ basic = (
     )
 )
 
-# Standard configuration with perception and memory
-standard = autoconnect(
-    basic,
+basic_ros = autoconnect(
+    _basic_no_nav,
+    navigation_module(),
+)
+
+basic_bt_nav = autoconnect(
+    _basic_no_nav,
+    behavior_tree_navigator(),
+)
+
+_perception_and_memory = autoconnect(
     spatial_memory(),
     object_tracking(frame_id="camera_link"),
     utilization(),
+)
+
+standard = autoconnect(
+    basic_ros,
+    _perception_and_memory,
+).global_config(n_dask_workers=8)
+
+standard_bt_nav = autoconnect(
+    basic_bt_nav,
+    _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
 # Optimized configuration using shared memory for images
@@ -157,19 +171,28 @@ standard_with_shm = autoconnect(
     ),
 )
 
-# Full agentic configuration with LLM and skills
-agentic = autoconnect(
-    standard,
+_agentic_skills = autoconnect(
     llm_agent(),
     human_input(),
     navigation_skill(),
-    g1_skills(),  # G1-specific arm and movement mode skills
+    g1_skills(),
+)
+
+# Full agentic configuration with LLM and skills
+agentic = autoconnect(
+    standard,
+    _agentic_skills,
+)
+
+agentic_bt_nav = autoconnect(
+    standard_bt_nav,
+    _agentic_skills,
 )
 
 # Configuration with joystick control for teleoperation
 with_joystick = autoconnect(
-    basic,
-    g1_joystick(),  # Pygame-based joystick control
+    basic_ros,
+    keyboard_teleop(),  # Pygame-based joystick control
 )
 
 # Detection configuration with person tracking and 3D detection
@@ -254,9 +277,6 @@ detection = (
 # Full featured configuration with everything
 full_featured = autoconnect(
     standard_with_shm,
-    llm_agent(),
-    human_input(),
-    navigation_skill(),
-    g1_skills(),
-    g1_joystick(),
+    _agentic_skills,
+    keyboard_teleop(),
 )

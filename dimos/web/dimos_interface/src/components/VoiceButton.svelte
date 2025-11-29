@@ -44,53 +44,53 @@
         if (!mediaRecorder) {
           const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
           mediaRecorder = new MediaRecorder(stream);
-          
+
           mediaRecorder.ondataavailable = (e) => chunks.push(e.data);
-          
+
           mediaRecorder.onstop = async () => {
             isProcessing = true;
             const blob = new Blob(chunks, { type: 'audio/webm' });
             chunks = [];
-            
+
             // Upload to backend
             const formData = new FormData();
             formData.append('file', blob, 'recording.webm');
-            
+
             try {
               const res = await fetch(`${getServerUrl()}/upload_audio`, {
                 method: 'POST',
                 body: formData
               });
-              
+
               const json = await res.json();
-              
+
               if (json.success) {
                 // Connect to agent_responses stream to see the output
                 connectTextStream('agent_responses');
                 dispatch('voiceCommand', { success: true });
               } else {
-                dispatch('voiceCommand', { 
-                  success: false, 
-                  error: json.message 
+                dispatch('voiceCommand', {
+                  success: false,
+                  error: json.message
                 });
               }
             } catch (err) {
-              dispatch('voiceCommand', { 
-                success: false, 
-                error: err instanceof Error ? err.message : 'Upload failed' 
+              dispatch('voiceCommand', {
+                success: false,
+                error: err instanceof Error ? err.message : 'Upload failed'
               });
             } finally {
               isProcessing = false;
             }
           };
         }
-        
+
         mediaRecorder.start();
         isRecording = true;
       } catch (err) {
-        dispatch('voiceCommand', { 
-          success: false, 
-          error: 'Microphone access denied' 
+        dispatch('voiceCommand', {
+          success: false,
+          error: 'Microphone access denied'
         });
       }
     }
@@ -197,15 +197,15 @@
   }
 
   @keyframes pulse {
-    0% { 
+    0% {
       transform: scale(1);
       box-shadow: 0 4px 12px rgba(255, 0, 0, 0.4);
     }
-    50% { 
+    50% {
       transform: scale(1.05);
       box-shadow: 0 4px 20px rgba(255, 0, 0, 0.6);
     }
-    100% { 
+    100% {
       transform: scale(1);
       box-shadow: 0 4px 12px rgba(255, 0, 0, 0.4);
     }
@@ -259,4 +259,4 @@
       font-size: 44px; /* Increased from 22px to 2x */
     }
   }
-</style> 
+</style>

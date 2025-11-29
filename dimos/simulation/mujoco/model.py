@@ -17,13 +17,13 @@
 
 import xml.etree.ElementTree as ET
 
-from etils import epath
-import mujoco
-from mujoco_playground._src import mjx_env
+from etils import epath  # type: ignore[import-untyped]
+import mujoco  # type: ignore[import-untyped]
+from mujoco_playground._src import mjx_env  # type: ignore[import-untyped]
 import numpy as np
 
+from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
-from dimos.simulation.mujoco.types import InputController
 
 DATA_DIR = epath.Path(__file__).parent / "../../../data/mujoco_sim"
 
@@ -40,7 +40,9 @@ def get_assets() -> dict[str, bytes]:
     return assets
 
 
-def load_model(input_device: InputController, robot: str, scene: str):
+def load_model(
+    input_device: InputController, robot: str, scene: str
+) -> tuple[mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
 
     xml_string = get_model_xml(robot, scene)
@@ -81,7 +83,7 @@ def load_model(input_device: InputController, robot: str, scene: str):
     return model, data
 
 
-def get_model_xml(robot: str, scene: str):
+def get_model_xml(robot: str, scene: str) -> str:
     xml_file = (DATA_DIR / f"scene_{scene}.xml").as_posix()
 
     tree = ET.parse(xml_file)

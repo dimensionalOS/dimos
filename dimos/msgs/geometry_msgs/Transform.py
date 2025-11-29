@@ -17,23 +17,23 @@ from __future__ import annotations
 import time
 from typing import BinaryIO
 
-from dimos_lcm.geometry_msgs import (
+from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
     Transform as LCMTransform,
     TransformStamped as LCMTransformStamped,
 )
 
 try:
-    from geometry_msgs.msg import (
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
         Quaternion as ROSQuaternion,
         Transform as ROSTransform,
         TransformStamped as ROSTransformStamped,
         Vector3 as ROSVector3,
     )
 except ImportError:
-    ROSTransformStamped = None
-    ROSTransform = None
-    ROSVector3 = None
-    ROSQuaternion = None
+    ROSTransformStamped = None  # type: ignore[assignment, misc]
+    ROSTransform = None  # type: ignore[assignment, misc]
+    ROSVector3 = None  # type: ignore[assignment, misc]
+    ROSQuaternion = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -49,7 +49,7 @@ class Transform(Timestamped):
     child_frame_id: str
     msg_name = "tf2_msgs.TFMessage"
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         translation: Vector3 | None = None,
         rotation: Quaternion | None = None,
@@ -80,7 +80,7 @@ class Transform(Timestamped):
     def __str__(self) -> str:
         return f"Transform:\n {self.frame_id} -> {self.child_frame_id} Translation: {self.translation}\n  Rotation: {self.rotation}"
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two transforms are equal."""
         if not isinstance(other, Transform):
             return False
@@ -209,7 +209,7 @@ class Transform(Timestamped):
             ROS TransformStamped message
         """
 
-        ros_msg = ROSTransformStamped()
+        ros_msg = ROSTransformStamped()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id
@@ -220,10 +220,10 @@ class Transform(Timestamped):
         ros_msg.child_frame_id = self.child_frame_id
 
         # Set transform
-        ros_msg.transform.translation = ROSVector3(
+        ros_msg.transform.translation = ROSVector3(  # type: ignore[no-untyped-call]
             x=self.translation.x, y=self.translation.y, z=self.translation.z
         )
-        ros_msg.transform.rotation = ROSQuaternion(
+        ros_msg.transform.rotation = ROSQuaternion(  # type: ignore[no-untyped-call]
             x=self.rotation.x, y=self.rotation.y, z=self.rotation.z, w=self.rotation.w
         )
 
@@ -234,7 +234,7 @@ class Transform(Timestamped):
         return self.inverse()
 
     @classmethod
-    def from_pose(cls, frame_id: str, pose: Pose | PoseStamped) -> Transform:
+    def from_pose(cls, frame_id: str, pose: Pose | PoseStamped) -> Transform:  # type: ignore[name-defined]
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -265,7 +265,7 @@ class Transform(Timestamped):
         else:
             raise TypeError(f"Expected Pose or PoseStamped, got {type(pose).__name__}")
 
-    def to_pose(self, **kwargs) -> PoseStamped:
+    def to_pose(self, **kwargs) -> PoseStamped:  # type: ignore[name-defined, no-untyped-def]
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -287,7 +287,7 @@ class Transform(Timestamped):
             **kwargs,
         )
 
-    def to_matrix(self) -> np.ndarray:
+    def to_matrix(self) -> np.ndarray:  # type: ignore[name-defined]
         """Convert Transform to a 4x4 transformation matrix.
 
         Returns a homogeneous transformation matrix that represents both
@@ -327,7 +327,7 @@ class Transform(Timestamped):
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> Transform:
         """Decode from LCM TFMessage bytes."""
-        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
+        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
 
         lcm_msg = LCMTFMessage.lcm_decode(data)
 

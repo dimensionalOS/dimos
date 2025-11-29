@@ -58,7 +58,7 @@ def main() -> None:
         logging.getLogger().setLevel(logging.DEBUG)
 
     # Initialize LCM
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
     # Start dimos
     logger.info("Starting dimos...")
@@ -66,7 +66,7 @@ def main() -> None:
 
     # Deploy the GStreamer camera module
     logger.info(f"Deploying GStreamer TCP camera module (connecting to {args.host}:{args.port})...")
-    camera = dimos.deploy(
+    camera = dimos.deploy(  # type: ignore[attr-defined]
         GstreamerCameraModule,
         host=args.host,
         port=args.port,
@@ -82,7 +82,7 @@ def main() -> None:
     last_log_time = [time.time()]
     first_timestamp = [None]
 
-    def on_frame(msg) -> None:
+    def on_frame(msg) -> None:  # type: ignore[no-untyped-def]
         frame_count[0] += 1
         current_time = time.time()
 

@@ -5,19 +5,19 @@ To avoid having so many runfiles, I created a common script to run any blueprint
 For example, to run the standard Unitree Go2 blueprint run:
 
 ```bash
-dimos-robot run unitree-go2
+dimos run unitree-go2
 ```
 
 For the one with agents run:
 
 ```bash
-dimos-robot run unitree-go2-agentic
+dimos run unitree-go2-agentic
 ```
 
 You can dynamically connect additional modules. For example:
 
 ```bash
-dimos-robot run unitree-go2 --extra-module llm_agent --extra-module human_input --extra-module navigation_skill
+dimos run unitree-go2 --extra-module llm_agent --extra-module human_input --extra-module navigation_skill
 ```
 
 ## Definitions
@@ -61,5 +61,5 @@ For environment variables/`.env` values, you have to prefix the name with `DIMOS
 For the command line, you call it like this:
 
 ```bash
-dimos-robot --simulation run unitree-go2
+dimos --simulation run unitree-go2
 ```
