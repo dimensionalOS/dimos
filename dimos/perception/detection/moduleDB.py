@@ -336,3 +336,8 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector.start()
     return detector  # type: ignore[no-any-return]
+
+
+detectionDB_module = ObjectDBModule.blueprint
+
+__all__ = ["ObjectDBModule", "deploy", "detectionDB_module"]
