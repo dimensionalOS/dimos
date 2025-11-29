@@ -318,7 +318,6 @@ class LCMService(Service[LCMConfig]):
         super().__init__(**kwargs)
 
         # we support passing an existing LCM instance
-        self.l = self.config.lcm
         if self.config.lcm:
             self.l = self.config.lcm
         else:
