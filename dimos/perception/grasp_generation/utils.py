@@ -20,13 +20,15 @@ import cv2
 from typing import List, Dict, Tuple, Optional, Union
 
 
-def project_3d_points_to_2d(points_3d: np.ndarray, camera_matrix: np.ndarray) -> np.ndarray:
+def project_3d_points_to_2d(
+    points_3d: np.ndarray, camera_intrinsics: Union[List[float], np.ndarray]
+) -> np.ndarray:
     """
     Project 3D points to 2D image coordinates using camera intrinsics.
 
     Args:
         points_3d: Nx3 array of 3D points (X, Y, Z)
-        camera_matrix: 3x3 camera intrinsic matrix
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
 
     Returns:
         Nx2 array of 2D image coordinates (u, v)
@@ -42,10 +44,14 @@ def project_3d_points_to_2d(points_3d: np.ndarray, camera_matrix: np.ndarray) ->
     valid_points = points_3d[valid_mask]
 
     # Extract camera parameters
-    fx = camera_matrix[0, 0]
-    fy = camera_matrix[1, 1]
-    cx = camera_matrix[0, 2]
-    cy = camera_matrix[1, 2]
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+    else:
+        camera_matrix = np.array(camera_intrinsics)
+        fx = camera_matrix[0, 0]
+        fy = camera_matrix[1, 1]
+        cx = camera_matrix[0, 2]
+        cy = camera_matrix[1, 2]
 
     # Project to image coordinates
     u = (valid_points[:, 0] * fx / valid_points[:, 2]) + cx
@@ -237,13 +243,13 @@ def create_all_gripper_geometries(
 def draw_grasps_on_image(
     image: np.ndarray,
     grasp_data: Union[dict, Dict[Union[int, str], List[dict]], List[dict]],
-    camera_matrix: np.ndarray,
+    camera_intrinsics: Union[List[float], np.ndarray],  # [fx, fy, cx, cy] or 3x3 matrix
     max_grasps: int = -1,  # -1 means show all grasps
-    finger_length: float = 0.04,
-    finger_thickness: float = 0.004,
+    finger_length: float = 0.08,  # Match 3D gripper
+    finger_thickness: float = 0.004,  # Match 3D gripper
 ) -> np.ndarray:
     """
-    Draw fork-like gripper visualizations on the image.
+    Draw fork-like gripper visualizations on the image matching 3D gripper design.
 
     Args:
         image: Base image to draw on
@@ -251,17 +257,22 @@ def draw_grasps_on_image(
             - A single grasp dict
             - A list of grasp dicts
             - A dictionary mapping object IDs or "scene" to list of grasps
-        camera_matrix: 3x3 camera intrinsic matrix
-        objects: List of detected objects (optional, for compatibility)
-        max_grasps: Maximum number of grasps to show (-1 for all)
-        finger_length: Length of gripper fingers
-        finger_thickness: Thickness of gripper fingers
-        base_height: Height of gripper base
+        camera_intrinsics: Camera parameters as [fx, fy, cx, cy] list or 3x3 matrix
+        max_grasps: Maximum number of grasps to visualize (-1 for all)
+        finger_length: Length of gripper fingers (matches 3D design)
+        finger_thickness: Thickness of gripper fingers (matches 3D design)
 
     Returns:
         Image with grasps drawn
     """
     result = image.copy()
+
+    # Convert camera intrinsics to 3x3 matrix if needed
+    if isinstance(camera_intrinsics, list) and len(camera_intrinsics) == 4:
+        fx, fy, cx, cy = camera_intrinsics
+        camera_matrix = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]])
+    else:
+        camera_matrix = np.array(camera_intrinsics)
 
     # Convert input to standard format
     if isinstance(grasp_data, dict) and not any(
@@ -271,7 +282,7 @@ def draw_grasps_on_image(
         grasps_to_draw = [(grasp_data, 0)]
     elif isinstance(grasp_data, list):
         # List of grasps
-        grasps_to_draw = [(g, i) for i, g in enumerate(grasp_data)]
+        grasps_to_draw = [(grasp, i) for i, grasp in enumerate(grasp_data)]
     else:
         # Dictionary of grasps by object ID
         grasps_to_draw = []
@@ -283,16 +294,10 @@ def draw_grasps_on_image(
     if max_grasps > 0:
         grasps_to_draw = grasps_to_draw[:max_grasps]
 
-    # Define grasp colors (gradient from bright to dark green)
+    # Define grasp colors (solid red to match 3D design)
     def get_grasp_color(index: int) -> tuple:
-        # Create a gradient of green colors
-        max_green = 255
-        min_green = 100
-        if index < 10:
-            green_value = int(max_green - (max_green - min_green) * index / 10)
-        else:
-            green_value = min_green
-        return (0, green_value, 0)
+        # Use solid red color for all grasps to match 3D design
+        return (0, 0, 255)  # Red in BGR format for OpenCV
 
     # Draw each grasp
     for grasp, index in grasps_to_draw:
@@ -300,107 +305,168 @@ def draw_grasps_on_image(
             color = get_grasp_color(index)
             thickness = max(1, 4 - index // 3)
 
-            # Extract grasp parameters
-            position = grasp["position"]
-            rotation = grasp["rotation"]
-            width = grasp.get("width", 0.08)
-            depth = grasp.get("depth", 0.02)
+            # Extract grasp parameters (using translation and rotation_matrix)
+            if "translation" not in grasp or "rotation_matrix" not in grasp:
+                continue
 
-            # Create gripper vertices in gripper frame
-            half_w = width / 2
-            half_d = depth / 2
+            translation = np.array(grasp["translation"])
+            rotation_matrix = np.array(grasp["rotation_matrix"])
+            width = grasp.get("width", 0.04)
 
-            # Define key points of the fork gripper
-            # Base rectangle
-            base_corners = np.array(
+            # Match 3D gripper dimensions
+            finger_width = 0.006  # Thickness of each finger (matches 3D)
+            handle_length = 0.05  # Length of handle extending backward (matches 3D)
+
+            # Create gripper geometry in local coordinate system matching 3D design:
+            # X-axis = width direction (left/right finger separation)
+            # Y-axis = finger length direction (fingers extend along +Y)
+            # Z-axis = approach direction (toward object, handle extends along -Z)
+            # IMPORTANT: Fingertips should be at origin (translation point)
+
+            # Left finger extending along +Y, positioned at +X
+            left_finger_points = np.array(
                 [
-                    [-half_w, -half_d, 0],
-                    [half_w, -half_d, 0],
-                    [half_w, half_d, 0],
-                    [-half_w, half_d, 0],
+                    [
+                        width / 2 - finger_width / 2,
+                        -finger_length,
+                        -finger_thickness / 2,
+                    ],  # Back left
+                    [
+                        width / 2 + finger_width / 2,
+                        -finger_length,
+                        -finger_thickness / 2,
+                    ],  # Back right
+                    [
+                        width / 2 + finger_width / 2,
+                        0,
+                        -finger_thickness / 2,
+                    ],  # Front right (at origin)
+                    [
+                        width / 2 - finger_width / 2,
+                        0,
+                        -finger_thickness / 2,
+                    ],  # Front left (at origin)
                 ]
             )
 
-            # Left finger outline
-            left_finger = np.array(
+            # Right finger extending along +Y, positioned at -X
+            right_finger_points = np.array(
                 [
-                    [-half_w + finger_thickness, half_d, 0],
-                    [-half_w, half_d, 0],
-                    [-half_w, half_d + finger_length, 0],
-                    [-half_w + finger_thickness, half_d + finger_length, 0],
+                    [
+                        -width / 2 - finger_width / 2,
+                        -finger_length,
+                        -finger_thickness / 2,
+                    ],  # Back left
+                    [
+                        -width / 2 + finger_width / 2,
+                        -finger_length,
+                        -finger_thickness / 2,
+                    ],  # Back right
+                    [
+                        -width / 2 + finger_width / 2,
+                        0,
+                        -finger_thickness / 2,
+                    ],  # Front right (at origin)
+                    [
+                        -width / 2 - finger_width / 2,
+                        0,
+                        -finger_thickness / 2,
+                    ],  # Front left (at origin)
                 ]
             )
 
-            # Right finger outline
-            right_finger = np.array(
+            # Base connecting fingers - flat rectangle behind fingers
+            base_points = np.array(
                 [
-                    [half_w - finger_thickness, half_d, 0],
-                    [half_w, half_d, 0],
-                    [half_w, half_d + finger_length, 0],
-                    [half_w - finger_thickness, half_d + finger_length, 0],
+                    [
+                        -width / 2 - finger_width / 2,
+                        -finger_length - finger_thickness,
+                        -finger_thickness / 2,
+                    ],  # Back left
+                    [
+                        width / 2 + finger_width / 2,
+                        -finger_length - finger_thickness,
+                        -finger_thickness / 2,
+                    ],  # Back right
+                    [
+                        width / 2 + finger_width / 2,
+                        -finger_length,
+                        -finger_thickness / 2,
+                    ],  # Front right
+                    [
+                        -width / 2 - finger_width / 2,
+                        -finger_length,
+                        -finger_thickness / 2,
+                    ],  # Front left
                 ]
             )
 
-            # Create rotation matrix from Euler angles
-            roll = rotation.get("roll", 0)
-            pitch = rotation.get("pitch", 0)
-            yaw = rotation.get("yaw", 0)
-
-            # Rotation matrices for each axis
-            Rx = np.array(
-                [[1, 0, 0], [0, np.cos(roll), -np.sin(roll)], [0, np.sin(roll), np.cos(roll)]]
+            # Handle extending backward - thin rectangle
+            handle_points = np.array(
+                [
+                    [
+                        -finger_width / 2,
+                        -finger_length - finger_thickness - handle_length,
+                        -finger_thickness / 2,
+                    ],  # Back left
+                    [
+                        finger_width / 2,
+                        -finger_length - finger_thickness - handle_length,
+                        -finger_thickness / 2,
+                    ],  # Back right
+                    [
+                        finger_width / 2,
+                        -finger_length - finger_thickness,
+                        -finger_thickness / 2,
+                    ],  # Front right
+                    [
+                        -finger_width / 2,
+                        -finger_length - finger_thickness,
+                        -finger_thickness / 2,
+                    ],  # Front left
+                ]
             )
 
-            Ry = np.array(
-                [[np.cos(pitch), 0, np.sin(pitch)], [0, 1, 0], [-np.sin(pitch), 0, np.cos(pitch)]]
-            )
+            # Transform all points to world frame
+            def transform_points(points):
+                # Apply rotation and translation
+                world_points = (rotation_matrix @ points.T).T + translation
+                return world_points
 
-            Rz = np.array(
-                [[np.cos(yaw), -np.sin(yaw), 0], [np.sin(yaw), np.cos(yaw), 0], [0, 0, 1]]
-            )
+            left_finger_world = transform_points(left_finger_points)
+            right_finger_world = transform_points(right_finger_points)
+            base_world = transform_points(base_points)
+            handle_world = transform_points(handle_points)
 
-            # Combined rotation matrix
-            R = Rz @ Ry @ Rx
-
-            # Transform to world frame
-            pos_array = np.array([position["x"], position["y"], position["z"]])
-
-            # Transform and project base
-            base_world = (R @ base_corners.T).T + pos_array
+            # Project to 2D
+            left_finger_2d = project_3d_points_to_2d(left_finger_world, camera_matrix)
+            right_finger_2d = project_3d_points_to_2d(right_finger_world, camera_matrix)
             base_2d = project_3d_points_to_2d(base_world, camera_matrix)
-
-            # Transform and project fingers
-            left_world = (R @ left_finger.T).T + pos_array
-            left_2d = project_3d_points_to_2d(left_world, camera_matrix)
-
-            right_world = (R @ right_finger.T).T + pos_array
-            right_2d = project_3d_points_to_2d(right_world, camera_matrix)
-
-            # Draw base rectangle
-            for i in range(4):
-                p1 = tuple(base_2d[i].astype(int))
-                p2 = tuple(base_2d[(i + 1) % 4].astype(int))
-                cv2.line(result, p1, p2, color, thickness)
+            handle_2d = project_3d_points_to_2d(handle_world, camera_matrix)
 
             # Draw left finger
-            for i in range(4):
-                p1 = tuple(left_2d[i].astype(int))
-                p2 = tuple(left_2d[(i + 1) % 4].astype(int))
-                cv2.line(result, p1, p2, color, thickness)
+            pts = left_finger_2d.astype(np.int32)
+            cv2.polylines(result, [pts], True, color, thickness)
 
             # Draw right finger
-            for i in range(4):
-                p1 = tuple(right_2d[i].astype(int))
-                p2 = tuple(right_2d[(i + 1) % 4].astype(int))
-                cv2.line(result, p1, p2, color, thickness)
+            pts = right_finger_2d.astype(np.int32)
+            cv2.polylines(result, [pts], True, color, thickness)
 
-            # Draw grasp center
-            center_2d = project_3d_points_to_2d(pos_array.reshape(1, -1), camera_matrix)[0]
+            # Draw base
+            pts = base_2d.astype(np.int32)
+            cv2.polylines(result, [pts], True, color, thickness)
+
+            # Draw handle
+            pts = handle_2d.astype(np.int32)
+            cv2.polylines(result, [pts], True, color, thickness)
+
+            # Draw grasp center (fingertips at origin)
+            center_2d = project_3d_points_to_2d(translation.reshape(1, -1), camera_matrix)[0]
             cv2.circle(result, tuple(center_2d.astype(int)), 3, color, -1)
 
         except Exception as e:
             # Skip this grasp if there's an error
-            pass
+            continue
 
     return result
 
