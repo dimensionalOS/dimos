@@ -61,7 +61,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None
+    color_image: In[Image] = None  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -149,7 +149,8 @@ class SpatialMemory(Module):
                 try:
                     logger.info(f"Loading existing visual memory from {visual_memory_path}...")
                     self._visual_memory = VisualMemory.load(
-                        visual_memory_path, output_dir=output_dir
+                        visual_memory_path,  # type: ignore[arg-type]
+                        output_dir=output_dir,
                     )
                     logger.info(f"Loaded {self._visual_memory.count()} images from previous runs")
                 except Exception as e:
@@ -177,7 +178,7 @@ class SpatialMemory(Module):
         self.robot_locations: list[RobotLocation] = []
 
         # Track latest data for processing
-        self._latest_video_frame: np.ndarray | None = None
+        self._latest_video_frame: np.ndarray | None = None  # type: ignore[type-arg]
         self._process_interval = 1
 
         logger.info(f"SpatialMemory initialized with model {embedding_model}")
@@ -200,7 +201,7 @@ class SpatialMemory(Module):
         self._disposables.add(Disposable(unsub))
 
         # Start periodic processing using interval
-        unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())
+        unsub = interval(self._process_interval).subscribe(lambda _: self._process_frame())  # type: ignore[assignment]
         self._disposables.add(Disposable(unsub))
 
     @rpc
@@ -301,7 +302,7 @@ class SpatialMemory(Module):
     @rpc
     def query_by_location(
         self, x: float, y: float, radius: float = 2.0, limit: int = 5
-    ) -> list[dict]:
+    ) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images near the specified location.
 
@@ -333,7 +334,7 @@ class SpatialMemory(Module):
                 logger.error(f"Failed to save visual memory: {e}")
         return False
 
-    def process_stream(self, combined_stream: Observable) -> Observable:
+    def process_stream(self, combined_stream: Observable) -> Observable:  # type: ignore[type-arg]
         """
         Process a combined stream of video frames and positions.
 
@@ -348,7 +349,7 @@ class SpatialMemory(Module):
             Observable of processing results, including the stored frame and its metadata
         """
 
-        def process_combined_data(data):
+        def process_combined_data(data):  # type: ignore[no-untyped-def]
             self.frame_count += 1
 
             frame = data.get("frame")
@@ -427,7 +428,7 @@ class SpatialMemory(Module):
         )
 
     @rpc
-    def query_by_image(self, image: np.ndarray, limit: int = 5) -> list[dict]:
+    def query_by_image(self, image: np.ndarray, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images similar to the provided image.
 
@@ -442,7 +443,7 @@ class SpatialMemory(Module):
         return self.vector_db.query_by_embedding(embedding, limit)
 
     @rpc
-    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:
+    def query_by_text(self, text: str, limit: int = 5) -> list[dict]:  # type: ignore[type-arg]
         """
         Query the vector database for images matching the provided text description.
 
@@ -506,7 +507,7 @@ class SpatialMemory(Module):
             return False
 
         # Create RobotLocation object
-        location = RobotLocation(
+        location = RobotLocation(  # type: ignore[call-arg]
             name=name,
             position=tf.translation,
             rotation=tf.rotation.to_euler(),
@@ -514,7 +515,7 @@ class SpatialMemory(Module):
             timestamp=time.time(),
         )
 
-        return self.add_robot_location(location)
+        return self.add_robot_location(location)  # type: ignore[no-any-return]
 
     @rpc
     def get_robot_locations(self) -> list[RobotLocation]:
@@ -571,11 +572,11 @@ class SpatialMemory(Module):
         return None
 
 
-def deploy(
+def deploy(  # type: ignore[no-untyped-def]
     dimos: DimosCluster,
     camera: spec.Camera,
 ):
-    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")
+    spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
     spatial_memory.color_image.connect(camera.image)
     spatial_memory.start()
     return spatial_memory

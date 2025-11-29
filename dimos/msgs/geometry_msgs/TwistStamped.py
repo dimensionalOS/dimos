@@ -17,13 +17,13 @@ from __future__ import annotations
 import time
 from typing import BinaryIO, TypeAlias
 
-from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
+from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped  # type: ignore[import-untyped]
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import TwistStamped as ROSTwistStamped
+    from geometry_msgs.msg import TwistStamped as ROSTwistStamped  # type: ignore[attr-defined]
 except ImportError:
-    ROSTwistStamped = None
+    ROSTwistStamped = None  # type: ignore[assignment, misc]
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import VectorConvertable
@@ -35,7 +35,7 @@ TwistConvertable: TypeAlias = (
 )
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
@@ -46,7 +46,7 @@ class TwistStamped(Twist, Timestamped):
     frame_id: str
 
     @dispatch
-    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:
+    def __init__(self, ts: float = 0.0, frame_id: str = "", **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.frame_id = frame_id
         self.ts = ts if ts != 0 else time.time()
         super().__init__(**kwargs)
@@ -54,9 +54,9 @@ class TwistStamped(Twist, Timestamped):
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMTwistStamped()
         lcm_msg.twist = self
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> TwistStamped:
@@ -75,7 +75,7 @@ class TwistStamped(Twist, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> TwistStamped:
+    def from_ros_msg(cls, ros_msg: ROSTwistStamped) -> TwistStamped:  # type: ignore[override]
         """Create a TwistStamped from a ROS geometry_msgs/TwistStamped message.
 
         Args:
@@ -98,14 +98,14 @@ class TwistStamped(Twist, Timestamped):
             angular=twist.angular,
         )
 
-    def to_ros_msg(self) -> ROSTwistStamped:
+    def to_ros_msg(self) -> ROSTwistStamped:  # type: ignore[override]
         """Convert to a ROS geometry_msgs/TwistStamped message.
 
         Returns:
             ROS TwistStamped message
         """
 
-        ros_msg = ROSTwistStamped()
+        ros_msg = ROSTwistStamped()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id

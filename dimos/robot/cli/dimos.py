@@ -24,7 +24,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 
-RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})
+RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
 
 main = typer.Typer(
     help="Dimensional CLI",
@@ -32,7 +32,7 @@ main = typer.Typer(
 )
 
 
-def create_dynamic_callback():
+def create_dynamic_callback():  # type: ignore[no-untyped-def]
     fields = GlobalConfig.model_fields
 
     # Build the function signature dynamically
@@ -86,34 +86,34 @@ def create_dynamic_callback():
             )
         params.append(param)
 
-    def callback(**kwargs) -> None:
+    def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
         ctx.obj = GlobalConfig().model_copy(update=overrides)
 
-    callback.__signature__ = inspect.Signature(params)
+    callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
     return callback
 
 
-main.callback()(create_dynamic_callback())
+main.callback()(create_dynamic_callback())  # type: ignore[no-untyped-call]
 
 
 @main.command()
 def run(
     ctx: typer.Context,
     robot_type: RobotType = typer.Argument(..., help="Type of robot to run"),
-    extra_modules: list[str] = typer.Option(
+    extra_modules: list[str] = typer.Option(  # type: ignore[valid-type]
         [], "--extra-module", help="Extra modules to add to the blueprint"
     ),
 ) -> None:
     """Start a robot blueprint"""
     config: GlobalConfig = ctx.obj
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     blueprint = get_blueprint_by_name(robot_type.value)
 
     if extra_modules:
-        loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]
+        loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]  # type: ignore[attr-defined]
         blueprint = autoconnect(blueprint, *loaded_modules)
 
     dimos = blueprint.build(global_config=config)

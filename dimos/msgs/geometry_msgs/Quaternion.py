@@ -19,7 +19,7 @@ from io import BytesIO
 import struct
 from typing import BinaryIO, TypeAlias
 
-from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
+from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion  # type: ignore[import-untyped]
 import numpy as np
 from plum import dispatch
 from scipy.spatial.transform import Rotation as R
@@ -27,10 +27,10 @@ from scipy.spatial.transform import Rotation as R
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
 # Types that can be converted to/from Quaternion
-QuaternionConvertable: TypeAlias = Sequence[int | float] | LCMQuaternion | np.ndarray
+QuaternionConvertable: TypeAlias = Sequence[int | float] | LCMQuaternion | np.ndarray  # type: ignore[type-arg]
 
 
-class Quaternion(LCMQuaternion):
+class Quaternion(LCMQuaternion):  # type: ignore[misc]
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
@@ -38,29 +38,29 @@ class Quaternion(LCMQuaternion):
     msg_name = "geometry_msgs.Quaternion"
 
     @classmethod
-    def lcm_decode(cls, data: bytes | BinaryIO):
+    def lcm_decode(cls, data: bytes | BinaryIO):  # type: ignore[no-untyped-def]
         if not hasattr(data, "read"):
             data = BytesIO(data)
         if data.read(8) != cls._get_packed_fingerprint():
             raise ValueError("Decode error")
-        return cls._lcm_decode_one(data)
+        return cls._lcm_decode_one(data)  # type: ignore[no-untyped-call]
 
     @classmethod
-    def _lcm_decode_one(cls, buf):
+    def _lcm_decode_one(cls, buf):  # type: ignore[no-untyped-def]
         return cls(struct.unpack(">dddd", buf.read(32)))
 
     @dispatch
     def __init__(self) -> None: ...
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, x: int | float, y: int | float, z: int | float, w: int | float) -> None:
         self.x = float(x)
         self.y = float(y)
         self.z = float(z)
         self.w = float(w)
 
-    @dispatch
-    def __init__(self, sequence: Sequence[int | float] | np.ndarray) -> None:
+    @dispatch  # type: ignore[no-redef]
+    def __init__(self, sequence: Sequence[int | float] | np.ndarray) -> None:  # type: ignore[type-arg]
         if isinstance(sequence, np.ndarray):
             if sequence.size != 4:
                 raise ValueError("Quaternion requires exactly 4 components [x, y, z, w]")
@@ -73,12 +73,12 @@ class Quaternion(LCMQuaternion):
         self.z = sequence[2]
         self.w = sequence[3]
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, quaternion: Quaternion) -> None:
         """Initialize from another Quaternion (copy constructor)."""
         self.x, self.y, self.z, self.w = quaternion.x, quaternion.y, quaternion.z, quaternion.w
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_quaternion: LCMQuaternion) -> None:
         """Initialize from an LCM Quaternion."""
         self.x, self.y, self.z, self.w = (
@@ -96,7 +96,7 @@ class Quaternion(LCMQuaternion):
         """List representation of the quaternion (x, y, z, w)."""
         return [self.x, self.y, self.z, self.w]
 
-    def to_numpy(self) -> np.ndarray:
+    def to_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
         """Numpy array representation of the quaternion (x, y, z, w)."""
         return np.array([self.x, self.y, self.z, self.w])
 
@@ -170,7 +170,7 @@ class Quaternion(LCMQuaternion):
     def __str__(self) -> str:
         return self.__repr__()
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         if not isinstance(other, Quaternion):
             return False
         return self.x == other.x and self.y == other.y and self.z == other.z and self.w == other.w

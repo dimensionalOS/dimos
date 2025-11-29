@@ -45,7 +45,7 @@ class ConnectionInterface(ABC):
         pass
 
     @abstractmethod
-    def get_video_stream(self, fps: int = 30) -> Observable | None:
+    def get_video_stream(self, fps: int = 30) -> Observable | None:  # type: ignore[type-arg]
         """Get the video stream from the robot's camera.
 
         Args:

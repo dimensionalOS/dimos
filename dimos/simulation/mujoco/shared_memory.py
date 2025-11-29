@@ -56,6 +56,14 @@ _shm_sizes = {
 }
 
 
+def _unregister(shm: SharedMemory) -> SharedMemory:
+    try:
+        resource_tracker.unregister(shm._name, "shared_memory")  # type: ignore[attr-defined]
+    except Exception:
+        pass
+    return shm
+
+
 @dataclass(frozen=True)
 class ShmSet:
     video: SharedMemory
@@ -71,11 +79,16 @@ class ShmSet:
 
     @classmethod
     def from_names(cls, shm_names: dict[str, str]) -> "ShmSet":
-        return cls(**{k: SharedMemory(name=shm_names[k]) for k in _shm_sizes.keys()})
+        return cls(**{k: _unregister(SharedMemory(name=shm_names[k])) for k in _shm_sizes.keys()})
 
     @classmethod
     def from_sizes(cls) -> "ShmSet":
-        return cls(**{k: SharedMemory(create=True, size=_shm_sizes[k]) for k in _shm_sizes.keys()})
+        return cls(
+            **{
+                k: _unregister(SharedMemory(create=True, size=_shm_sizes[k]))
+                for k in _shm_sizes.keys()
+            }
+        )
 
     def to_names(self) -> dict[str, str]:
         return {k: getattr(self, k).name for k in _shm_sizes.keys()}
@@ -174,20 +187,11 @@ class ShmReader:
         return int(seq_array[index])
 
     def cleanup(self) -> None:
-        # We're just connecting to existing shared memory, not creating it
-        # So we only close our reference, not unlink
         for shm in self.shm.as_list():
             try:
-                # Unregister from resource tracker before we manually close
-                # This prevents the tracker from trying to clean up after us
-                try:
-                    resource_tracker.unregister(shm.name, "shared_memory")
-                except (KeyError, ValueError):
-                    pass  # Already unregistered or not registered
-
                 shm.close()
             except Exception:
-                pass  # Ignore errors on cleanup
+                pass
 
 
 class ShmWriter:
@@ -272,22 +276,11 @@ class ShmWriter:
     def cleanup(self) -> None:
         for shm in self.shm.as_list():
             try:
-                # Unregister from resource tracker before we manually clean up
-                # This prevents the tracker from trying to clean up after us
-                try:
-                    resource_tracker.unregister(shm.name, "shared_memory")
-                except (KeyError, ValueError):
-                    pass  # Already unregistered or not registered
+                shm.unlink()
+            except Exception:
+                pass
 
-                # Unlink the shared memory (we're the creator)
-                try:
-                    shm.unlink()
-                except FileNotFoundError:
-                    pass  # Already unlinked
-                except Exception as e:
-                    logger.debug(f"Error unlinking {shm.name}: {e}")
-
-                # Always close (releases our reference)
+            try:
                 shm.close()
-            except Exception as e:
-                logger.debug(f"Error cleaning up {shm.name}: {e}")
+            except Exception:
+                pass

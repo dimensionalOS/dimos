@@ -25,21 +25,21 @@ from dimos.utils.testing import SensorReplay
 
 
 @pytest.fixture
-def dimos():
+def dimos():  # type: ignore[no-untyped-def]
     """Fixture to create a Dimos client for testing."""
     client = start(2)
     yield client
-    client.stop()
+    client.stop()  # type: ignore[attr-defined]
 
 
 class MockRobotClient(Module):
-    odometry: Out[Odometry] = None
-    lidar: Out[LidarMessage] = None
-    mov: In[Vector3] = None
+    odometry: Out[Odometry] = None  # type: ignore[assignment]
+    lidar: Out[LidarMessage] = None  # type: ignore[assignment]
+    mov: In[Vector3] = None  # type: ignore[assignment]
 
     mov_msg_count = 0
 
-    def mov_callback(self, msg) -> None:
+    def mov_callback(self, msg) -> None:  # type: ignore[no-untyped-def]
         self.mov_msg_count += 1
 
     def __init__(self) -> None:
@@ -51,8 +51,8 @@ class MockRobotClient(Module):
     def start(self) -> None:
         super().start()
 
-        self._thread = Thread(target=self.odomloop)
-        self._thread.start()
+        self._thread = Thread(target=self.odomloop)  # type: ignore[assignment]
+        self._thread.start()  # type: ignore[attr-defined]
         self.mov.subscribe(self.mov_callback)
 
     @rpc
@@ -75,9 +75,9 @@ class MockRobotClient(Module):
                     return
                 print(odom)
                 odom.pubtime = time.perf_counter()
-                self.odometry.publish(odom)
+                self.odometry.publish(odom)  # type: ignore[no-untyped-call]
 
                 lidarmsg = next(lidariter)
-                lidarmsg.pubtime = time.perf_counter()
-                self.lidar.publish(lidarmsg)
+                lidarmsg.pubtime = time.perf_counter()  # type: ignore[union-attr]
+                self.lidar.publish(lidarmsg)  # type: ignore[no-untyped-call]
                 time.sleep(0.1)

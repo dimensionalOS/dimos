@@ -86,7 +86,7 @@
           { vals.pkg=pkgs.jsoncpp; flags={}; }
           { vals.pkg=pkgs.libjpeg; flags={}; }
           { vals.pkg=pkgs.libpng;  flags={}; }
-          
+
           ### LCM (Lightweight Communications and Marshalling)
           { vals.pkg=pkgs.lcm; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           # lcm works on darwin, but only after two fixes (1. pkg-config, 2. fsync)

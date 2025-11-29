@@ -67,15 +67,15 @@ class ActorRegistry:
             pass
 
     @staticmethod
-    def _read_from_shm(shm) -> dict[str, str]:
+    def _read_from_shm(shm) -> dict[str, str]:  # type: ignore[no-untyped-def]
         """Read JSON data from shared memory."""
         raw = bytes(shm.buf[:]).rstrip(b"\x00")
         if not raw:
             return {}
-        return json.loads(raw.decode("utf-8"))
+        return json.loads(raw.decode("utf-8"))  # type: ignore[no-any-return]
 
     @staticmethod
-    def _write_to_shm(shm, data: dict[str, str]):
+    def _write_to_shm(shm, data: dict[str, str]):  # type: ignore[no-untyped-def]
         """Write JSON data to shared memory."""
         json_bytes = json.dumps(data).encode("utf-8")
         if len(json_bytes) > ActorRegistry.SHM_SIZE:

@@ -20,7 +20,7 @@ from dimos.utils.data import get_data
 
 
 @pytest.fixture(scope="session", params=["clip", "mobileclip", "treid"])
-def embedding_model(request):
+def embedding_model(request):  # type: ignore[no-untyped-def]
     """Load embedding model once for all tests. Parametrized for different models."""
     if request.param == "mobileclip":
         from dimos.models.embedding.mobileclip import MobileCLIPModel
@@ -30,11 +30,11 @@ def embedding_model(request):
     elif request.param == "clip":
         from dimos.models.embedding.clip import CLIPModel
 
-        model = CLIPModel(model_name="openai/clip-vit-base-patch32")
+        model = CLIPModel(model_name="openai/clip-vit-base-patch32")  # type: ignore[assignment]
     elif request.param == "treid":
         from dimos.models.embedding.treid import TorchReIDModel
 
-        model = TorchReIDModel(model_name="osnet_x1_0")
+        model = TorchReIDModel(model_name="osnet_x1_0")  # type: ignore[assignment]
     else:
         raise ValueError(f"Unknown model: {request.param}")
 
@@ -43,13 +43,13 @@ def embedding_model(request):
 
 
 @pytest.fixture(scope="session")
-def test_image():
+def test_image():  # type: ignore[no-untyped-def]
     """Load test image."""
-    return Image.from_file(get_data("cafe.jpg")).to_rgb()
+    return Image.from_file(get_data("cafe.jpg")).to_rgb()  # type: ignore[arg-type]
 
 
 @pytest.mark.heavy
-def test_single_image_embedding(embedding_model, test_image) -> None:
+def test_single_image_embedding(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test embedding a single image."""
     embedding = embedding_model.embed(test_image)
 
@@ -74,7 +74,7 @@ def test_single_image_embedding(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_batch_image_embedding(embedding_model, test_image) -> None:
+def test_batch_image_embedding(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test embedding multiple images at once."""
     embeddings = embedding_model.embed(test_image, test_image, test_image)
 
@@ -92,7 +92,7 @@ def test_batch_image_embedding(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_single_text_embedding(embedding_model) -> None:
+def test_single_text_embedding(embedding_model) -> None:  # type: ignore[no-untyped-def]
     """Test embedding a single text string."""
     import torch
 
@@ -117,7 +117,7 @@ def test_single_text_embedding(embedding_model) -> None:
 
 
 @pytest.mark.heavy
-def test_batch_text_embedding(embedding_model) -> None:
+def test_batch_text_embedding(embedding_model) -> None:  # type: ignore[no-untyped-def]
     """Test embedding multiple text strings at once."""
     import torch
 
@@ -137,7 +137,7 @@ def test_batch_text_embedding(embedding_model) -> None:
 
 
 @pytest.mark.heavy
-def test_text_image_similarity(embedding_model, test_image) -> None:
+def test_text_image_similarity(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test cross-modal text-image similarity using @ operator."""
     if not hasattr(embedding_model, "embed_text"):
         pytest.skip("Model does not support text embeddings")
@@ -161,7 +161,7 @@ def test_text_image_similarity(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_cosine_distance(embedding_model, test_image) -> None:
+def test_cosine_distance(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test cosine distance computation (1 - similarity)."""
     emb1 = embedding_model.embed(test_image)
     emb2 = embedding_model.embed(test_image)
@@ -180,7 +180,7 @@ def test_cosine_distance(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_query_functionality(embedding_model, test_image) -> None:
+def test_query_functionality(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test query method for top-k retrieval."""
     if not hasattr(embedding_model, "embed_text"):
         pytest.skip("Model does not support text embeddings")
@@ -206,7 +206,7 @@ def test_query_functionality(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_embedding_operator(embedding_model, test_image) -> None:
+def test_embedding_operator(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test that @ operator works on embeddings."""
     emb1 = embedding_model.embed(test_image)
     emb2 = embedding_model.embed(test_image)
@@ -220,7 +220,7 @@ def test_embedding_operator(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_warmup(embedding_model) -> None:
+def test_warmup(embedding_model) -> None:  # type: ignore[no-untyped-def]
     """Test that warmup runs without error."""
     # Warmup is already called in fixture, but test it explicitly
     embedding_model.warmup()
@@ -229,7 +229,7 @@ def test_warmup(embedding_model) -> None:
 
 
 @pytest.mark.heavy
-def test_compare_one_to_many(embedding_model, test_image) -> None:
+def test_compare_one_to_many(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test GPU-accelerated one-to-many comparison."""
     import torch
 
@@ -253,7 +253,7 @@ def test_compare_one_to_many(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_compare_many_to_many(embedding_model) -> None:
+def test_compare_many_to_many(embedding_model) -> None:  # type: ignore[no-untyped-def]
     """Test GPU-accelerated many-to-many comparison."""
     import torch
 
@@ -280,7 +280,7 @@ def test_compare_many_to_many(embedding_model) -> None:
 
 
 @pytest.mark.heavy
-def test_gpu_query_performance(embedding_model, test_image) -> None:
+def test_gpu_query_performance(embedding_model, test_image) -> None:  # type: ignore[no-untyped-def]
     """Test that query method uses GPU acceleration."""
     # Create a larger gallery
     gallery_size = 20
@@ -303,7 +303,7 @@ def test_gpu_query_performance(embedding_model, test_image) -> None:
 
 
 @pytest.mark.heavy
-def test_embedding_performance(embedding_model) -> None:
+def test_embedding_performance(embedding_model) -> None:  # type: ignore[no-untyped-def]
     """Measure embedding performance over multiple real video frames."""
     import time
 
@@ -313,7 +313,7 @@ def test_embedding_performance(embedding_model) -> None:
     data_dir = "unitree_go2_lidar_corrected"
     get_data(data_dir)
 
-    video_replay = TimedSensorReplay(f"{data_dir}/video")
+    video_replay = TimedSensorReplay(f"{data_dir}/video")  # type: ignore[var-annotated]
 
     # Collect 10 real frames from the video
     test_images = []

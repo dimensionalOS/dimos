@@ -16,7 +16,7 @@ from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torchreid import utils as torchreid_utils
+from torchreid import utils as torchreid_utils  # type: ignore[import-not-found]
 
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
@@ -46,7 +46,7 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
             device: Device to run on (cuda/cpu), auto-detects if None
             normalize: Whether to L2 normalize embeddings
         """
-        if not TORCHREID_AVAILABLE:
+        if not TORCHREID_AVAILABLE:  # type: ignore[name-defined]
             raise ImportError(
                 "torchreid is required for TorchReIDModel. Install it with: pip install torchreid"
             )
