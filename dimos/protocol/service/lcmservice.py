@@ -103,13 +103,12 @@ def check_multicast() -> list[str]:
 def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int) -> None:
     try:
         result = subprocess.run(["sysctl", name], capture_output=True, text=True)
-        current_max = (
-            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        )
+        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
         if not current_max or current_max < value:
             commands_needed.append(f"{sudo}sysctl -w {name}={value}")
     except:
         commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+
 
 def check_buffers() -> tuple[list[str], int | None]:
     """Check if buffer configuration is needed and return required commands and current size.

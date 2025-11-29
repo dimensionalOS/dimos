@@ -97,7 +97,9 @@ class MujocoConnection:
         def get_stderr():
             text = ""
             if self.process:
-                text = "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
+                text = (
+                    "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
+                )
             return text
 
         # Wait for process to be ready
@@ -126,7 +128,7 @@ class MujocoConnection:
             return
 
         self._is_cleaned_up = True
-        
+
         # clean up open file descriptors
         self.process.stderr.close()
         self.process.stdout.close()
