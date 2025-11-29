@@ -458,7 +458,9 @@ performing_agent = OpenAIAgent(
 
 ## Documentation
 
-For detailed documentation, please visit our [documentation site](#) (Coming Soon).
+For usage of the library, see our [documentation site](#) (Coming Soon).
+
+For understanding how DimOS works under the hood, see our [architecture guide](docs/architecture.md/index.md).
 
 ## Contributing
 
