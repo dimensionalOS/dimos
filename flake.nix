@@ -12,7 +12,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        
+
         # ------------------------------------------------------------
         # 1. Shared package list (tool-chain + project deps)
         # ------------------------------------------------------------
@@ -41,7 +41,7 @@
           { vals.pkg=pkgs.portaudio;                 flags={}; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
           { vals.pkg=pkgs.ffmpeg_6.dev;              flags={}; }
-          
+
           ### Graphics / X11 stack
           { vals.pkg=pkgs.libGL;              flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.libGLU;             flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
@@ -70,7 +70,7 @@
           { vals.pkg=pkgs.gtk3;                  flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.gdk-pixbuf;            flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           { vals.pkg=pkgs.gobject-introspection; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
-          
+
           ### GStreamer
           { vals.pkg=pkgs.gst_all_1.gstreamer;          flags.ldLibraryGroup=true; flags.giTypelibGroup=true; }
           { vals.pkg=pkgs.gst_all_1.gst-plugins-base;   flags.ldLibraryGroup=true; flags.giTypelibGroup=true; }
@@ -86,22 +86,22 @@
           { vals.pkg=pkgs.jsoncpp; flags={}; }
           { vals.pkg=pkgs.libjpeg; flags={}; }
           { vals.pkg=pkgs.libpng;  flags={}; }
-          
+
           ### LCM (Lightweight Communications and Marshalling)
           { vals.pkg=pkgs.lcm; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }
           # lcm works on darwin, but only after two fixes (1. pkg-config, 2. fsync)
           {
             onlyIf=pkgs.stdenv.isDarwin;
             flags.ldLibraryGroup=true;
-            vals.pkg=pkgs.lcm.overrideAttrs (old: 
-                let 
+            vals.pkg=pkgs.lcm.overrideAttrs (old:
+                let
                     # 1. fix pkg-config on darwin
                     pkgConfPackages = aggregation.getAll { hasAllFlags=[ "packageConfGroup" ]; attrPath=[ "pkg" ]; };
                     packageConfPackagesString = (aggregation.getAll {
                         hasAllFlags=[ "packageConfGroup" ];
                         attrPath=[ "pkg" ];
                         strAppend="/lib/pkgconfig";
-                        strJoin=":"; 
+                        strJoin=":";
                     });
                 in
                     {
@@ -114,10 +114,10 @@
                             (pkgs.writeText "lcm-darwin-fsync.patch" "--- ./lcm-logger/lcm_logger.c     2025-11-14 09:46:01.000000000 -0600\n+++ ./lcm-logger/lcm_logger.c  2025-11-14 09:47:05.000000000 -0600\n@@ -428,9 +428,13 @@\n         if (needs_flushed) {\n             fflush(logger->log->f);\n #ifndef WIN32\n+#ifdef __APPLE__\n+            fsync(fileno(logger->log->f));\n+#else\n             // Perform a full fsync operation after flush\n             fdatasync(fileno(logger->log->f));\n #endif\n+#endif\n             logger->last_fflush_time = log_event->timestamp;\n         }\n")
                         ];
                     }
-            ); 
+            );
           }
         ];
-        
+
         # ------------------------------------------------------------
         # 2. group / aggregate our packages
         # ------------------------------------------------------------
@@ -127,7 +127,7 @@
           hasAllFlags=[ "giTypelibGroup" ];
           attrPath=[ "pkg" ];
           strAppend="/lib/girepository-1.0";
-          strJoin=":"; 
+          strJoin=":";
         };
 
         # ------------------------------------------------------------
@@ -138,19 +138,19 @@
           shellHook = ''
             export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
             export DISPLAY=:0
-            export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH" 
-            
+            export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH"
+
             # without this alias, the pytest uses the non-venv python and fails
             alias pytest="python -m pytest"
-            
+
             PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
             [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
             [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
             cd "$PROJECT_ROOT"
-            
-            # 
+
+            #
             # python & setup
-            # 
+            #
             if [ -f "$PROJECT_ROOT/venv/bin/activate" ]; then
               # if there is a venv, load it
               _nix_python_path="$(realpath "$(which python)")"
@@ -165,18 +165,18 @@
                   echo "     This could happen if you made the venv before doing `nix develop`"
                   echo "     It could also happen if the nix-python was updated but the venv wasn't"
                   echo "     WHAT YOU NEED TO DO:"
-                  echo "     - If you're about to make/test a PR, delete/rename your venv and run `nix develop` again" 
-                  echo "     - If you're just trying to get the code working, you can continue but you might get bugs FYI" 
+                  echo "     - If you're about to make/test a PR, delete/rename your venv and run `nix develop` again"
+                  echo "     - If you're just trying to get the code working, you can continue but you might get bugs FYI"
                   echo
                   echo
                   echo "Got it? (press enter)"; read _
                   echo
               fi
             else
-              # 
+              #
               # automate the readme
-              # 
-              
+              #
+
               # helper
               confirm_ask() {
                 echo
@@ -202,20 +202,20 @@
                 echo
                 return 1 # failure
               }
-              
+
               macos_version="$(sw_vers -productVersion)"
               macos_major_version="''${macos_version%%.*}"
               if confirm_ask "Would you like me to set up the environment for you? [y/n]"; then
                 echo "Making sure git lfs is installed..."
                 git lfs install || true
-                
+
                 if confirm_ask "Should I donwload the models and data? (around 17Gb) this will be needed to run the simulation [y/n]"; then
                   echo "Downloading the models and data..."
                   git lfs fetch --all
                   git lfs pull
                   echo "Done!"
                 fi
-                
+
                 # check if no .env
                 if ! [ -f ".env" ]
                 then
@@ -225,14 +225,14 @@
                     echo "note: you might want to edit the .env file with your own settings"
                     echo
                 fi
-                
+
                 echo "Setting up virtualenv..."
                 python3 -m venv venv
                 echo "Activating virtualenv..."
                 . venv/bin/activate
                 echo "Installing python dependencies..."
                 pip install -e .
-                
+
                 # if really old MacOS then ignore the lcm dependency (it'll be supplied by nix)
                 if [ "$macos_major_version" -le 13 ]; then
                     echo "You're on a really old MacOS version. Ignore the errors above (and probably later below) about LCM"
@@ -250,27 +250,27 @@
                     rm -f pyproject.toml
                     mv pyproject.original.toml pyproject.toml
                 fi
-                
+
                 # CUDA/CPU dependencies
                 if ! [ "$(uname)" = "Darwin" ] && confirm_ask "Want me to install the cuda dependencies? [y/n]"; then
                     pip install -e .[cuda,dev]
                 else
                     pip install -e .[cpu,dev]
                 fi
-                
+
                 # Mujoco/Simulation dependencies
                 if confirm_ask "Want me to install the optional simulation (mujoco) dependencies? [y/n]"; then
                   pip install -e .[sim]
                 fi
-                
+
                 if confirm_ask "Would you like me to run the tests to make sure everything is working? [y/n]"; then
                   echo "Running tests..."
                   python -m pytest -s "$PROJECT_ROOT/dimos/"
                   echo "tests finished"
                 fi
-                
+
                 echo "here's the main command to run:"
-                echo      CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py 
+                echo      CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py
               fi
             fi
           '';

@@ -31,7 +31,7 @@ The server will start on `http://0.0.0.0:5555`.
 
 ## Integration with DIMOS Agents
 
-See DimOS Documentation for more info. 
+See DimOS Documentation for more info.
 
 ```python
 from dimos.agents.agent import OpenAIAgent
@@ -42,7 +42,7 @@ from dimos.web.robot_web_interface import RobotWebInterface
 robot_ip = os.getenv("ROBOT_IP")
 
 # Initialize robot
-logger.info("Initializing Unitree Robot")        
+logger.info("Initializing Unitree Robot")
 robot = UnitreeGo2(ip=robot_ip,
                     connection_method=connection_method,
                     output_dir=output_dir)
@@ -83,4 +83,4 @@ The frontend and backend are separate applications:
 3. Vite's development server proxies requests from `/unitree/*` to the FastAPI server
 4. The `unitree` command in the terminal interface sends requests to these endpoints
 
-This architecture allows the frontend and backend to be developed and run independently. 
+This architecture allows the frontend and backend to be developed and run independently.

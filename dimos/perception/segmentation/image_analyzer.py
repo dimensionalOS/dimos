@@ -40,7 +40,7 @@ class ImageAnalyzer:
         """
         self.client = OpenAI()
 
-    def encode_image(self, image):
+    def encode_image(self, image):  # type: ignore[no-untyped-def]
         """
         Encodes an image to Base64.
 
@@ -53,7 +53,7 @@ class ImageAnalyzer:
         _, buffer = cv2.imencode(".jpg", image)
         return base64.b64encode(buffer).decode("utf-8")
 
-    def analyze_images(self, images, detail: str = "auto", prompt_type: str = "normal"):
+    def analyze_images(self, images, detail: str = "auto", prompt_type: str = "normal"):  # type: ignore[no-untyped-def]
         """
         Takes a list of cropped images and returns descriptions from OpenAI's Vision model.
 
@@ -69,7 +69,7 @@ class ImageAnalyzer:
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/jpeg;base64,{self.encode_image(img)}",
+                    "url": f"data:image/jpeg;base64,{self.encode_image(img)}",  # type: ignore[no-untyped-call]
                     "detail": detail,
                 },
             }
@@ -86,7 +86,7 @@ class ImageAnalyzer:
         response = self.client.chat.completions.create(
             model="gpt-4o-mini",
             messages=[
-                {
+                {  # type: ignore[list-item, misc]
                     "role": "user",
                     "content": [{"type": "text", "text": prompt}, *image_data],
                 }
