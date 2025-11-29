@@ -222,4 +222,10 @@ def deploy(  # type: ignore[no-untyped-def]
     detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
 
     detector.start()
+
     return detector  # type: ignore[no-any-return]
+
+
+detection3d_module = Detection3DModule.blueprint
+
+__all__ = ["Detection3DModule", "deploy", "detection3d_module"]
