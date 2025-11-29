@@ -20,7 +20,7 @@ The result: cross-embodied *"Dimensional Applications"* exceptional at generaliz
 
     Get up and running with DimOS in minutes. Install dependencies, configure your environment, and run your first agent.
 
-    [:octicons-arrow-right-24: Get started](quickstart/index.md)
+    [:octicons-arrow-right-24: Get started](quickstart.md)
 
 - :material-school: **Tutorials**
 
