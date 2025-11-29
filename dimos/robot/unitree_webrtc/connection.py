@@ -75,10 +75,17 @@ class WebRTCRobot(AbstractRobot):
         self.connection_ready.wait()
 
     def move(self, vector: Vector):
-        self.conn.datachannel.pub_sub.publish_without_callback(
-            RTC_TOPIC["WIRELESS_CONTROLLER"],
-            data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
-        )
+        # x - Positive right, negative left
+        # y - positive forward, negative backwards
+        # z - Positive rotate right, negative rotate left
+        async def async_move():
+            self.conn.datachannel.pub_sub.publish_without_callback(
+                RTC_TOPIC["WIRELESS_CONTROLLER"],
+                data={"lx": vector.x, "ly": vector.y, "rx": vector.z, "ry": 0},
+            )
+
+        future = asyncio.run_coroutine_threadsafe(async_move(), self.loop)
+        return future.result()
 
     # Generic conversion of unitree subscription to Subject (used for all subs)
     def unitree_sub_stream(self, topic_name: str):
