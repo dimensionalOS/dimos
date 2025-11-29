@@ -148,12 +148,12 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
         
         # Use GPU if available, otherwise fall back to CPU
         if torch.cuda.is_available():
-            self.device = "cuda"
+            device = "cuda"
         # MacOS Metal performance shaders
         elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            self.device = "mps"
+            device = "mps"
         else:
-            self.device = "cpu"
+            device = "cpu"
         
         print(f"Using device: {device}")
         self.model = SentenceTransformer(self.model_name, device=device)
