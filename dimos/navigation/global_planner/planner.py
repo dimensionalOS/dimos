@@ -18,7 +18,7 @@ from reactivex.disposable import Disposable
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.navigation.global_planner.algo import astar
+from dimos.navigation.global_planner.general_astar import general_astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
@@ -208,7 +208,7 @@ class AstarPlanner(Module):
         costmap = self.latest_costmap.inflate(0.2).gradient(max_distance=1.5)
 
         # Run A* planning
-        path = astar(costmap, goal.position, robot_pos)
+        path = general_astar(costmap, goal.position, robot_pos)
 
         if path:
             path = resample_path(path, 0.1)
