@@ -26,7 +26,7 @@ class RpcCall:
     _rpc: LCMRPC | None
     _name: str
     _remote_name: str
-    _unsub_fns: list
+    _unsub_fns: list  # type: ignore[type-arg]
     _stop_rpc_client: Callable[[], None] | None = None
 
     def __init__(
@@ -35,7 +35,7 @@ class RpcCall:
         rpc: LCMRPC,
         name: str,
         remote_name: str,
-        unsub_fns: list,
+        unsub_fns: list,  # type: ignore[type-arg]
         stop_client: Callable[[], None] | None = None,
     ) -> None:
         self._original_method = original_method
@@ -53,7 +53,7 @@ class RpcCall:
     def set_rpc(self, rpc: LCMRPC) -> None:
         self._rpc = rpc
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
         if not self._rpc:
             logger.warning("RPC client not initialized")
             return None
@@ -61,19 +61,19 @@ class RpcCall:
         # For stop, use call_nowait to avoid deadlock
         # (the remote side stops its RPC service before responding)
         if self._name == "stop":
-            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))
+            self._rpc.call_nowait(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
 
-        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))
+        result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
         self._unsub_fns.append(unsub_fn)
         return result
 
-    def __getstate__(self):
+    def __getstate__(self):  # type: ignore[no-untyped-def]
         return (self._original_method, self._name, self._remote_name)
 
-    def __setstate__(self, state) -> None:
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
         self._original_method, self._name, self._remote_name = state
         self._unsub_fns = []
         self._rpc = None
@@ -81,14 +81,14 @@ class RpcCall:
 
 
 class RPCClient:
-    def __init__(self, actor_instance, actor_class) -> None:
+    def __init__(self, actor_instance, actor_class) -> None:  # type: ignore[no-untyped-def]
         self.rpc = LCMRPC()
         self.actor_class = actor_class
         self.remote_name = actor_class.__name__
         self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
         self.rpc.start()
-        self._unsub_fns = []
+        self._unsub_fns = []  # type: ignore[var-annotated]
 
     def stop_rpc_client(self) -> None:
         for unsub in self._unsub_fns:
@@ -101,9 +101,9 @@ class RPCClient:
 
         if self.rpc:
             self.rpc.stop()
-            self.rpc = None
+            self.rpc = None  # type: ignore[assignment]
 
-    def __reduce__(self):
+    def __reduce__(self):  # type: ignore[no-untyped-def]
         # Return the class and the arguments needed to reconstruct the object
         return (
             self.__class__,
@@ -111,7 +111,7 @@ class RPCClient:
         )
 
     # passthrough
-    def __getattr__(self, name: str):
+    def __getattr__(self, name: str):  # type: ignore[no-untyped-def]
         # Check if accessing a known safe attribute to avoid recursion
         if name in {
             "__class__",

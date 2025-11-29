@@ -60,7 +60,7 @@ stream.subscribe(lambda msg: print(f"接收到: {msg}"))
 # 启动模块以开始处理
 module.start()  # 如果定义了 @rpc start() 方法，则调用它
 
-# 检查模块 I/O 配置  
+# 检查模块 I/O 配置
 print(module.io().result())  # 显示输入、输出和 RPC 方法
 
 # 优雅关闭
@@ -141,7 +141,7 @@ cp default.env .env
 ```
 
 ### 测试安装
-```bash 
+```bash
 # 运行标准测试
 pytest -s dimos/
 
@@ -185,4 +185,4 @@ LCM 传输针对机器人应用进行了优化：
 
 - **零拷贝**：大型消息的高效内存使用
 - **低延迟**：微秒级的消息传递
-- **多播支持**：一对多的高效通信 
+- **多播支持**：一对多的高效通信

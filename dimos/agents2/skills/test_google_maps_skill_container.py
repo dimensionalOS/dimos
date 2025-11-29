@@ -15,9 +15,11 @@
 import re
 
 from dimos.mapping.google_maps.types import Coordinates, LocationContext, Position
+from dimos.mapping.types import LatLon
 
 
 def test_where_am_i(create_google_maps_agent, google_maps_skill_container) -> None:
+    google_maps_skill_container._latest_location = LatLon(lat=37.782654, lon=-122.413273)
     google_maps_skill_container._client.get_location_context.return_value = LocationContext(
         street="Bourbon Street", coordinates=Coordinates(lat=37.782654, lon=-122.413273)
     )
@@ -31,6 +33,7 @@ def test_where_am_i(create_google_maps_agent, google_maps_skill_container) -> No
 def test_get_gps_position_for_queries(
     create_google_maps_agent, google_maps_skill_container
 ) -> None:
+    google_maps_skill_container._latest_location = LatLon(lat=37.782654, lon=-122.413273)
     google_maps_skill_container._client.get_position.side_effect = [
         Position(lat=37.782601, lon=-122.413201, description="address 1"),
         Position(lat=37.782602, lon=-122.413202, description="address 2"),

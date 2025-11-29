@@ -21,27 +21,27 @@ from dimos.types.robot_capabilities import RobotCapability
 
 class YourRobot:
     """Your robot implementation."""
-    
+
     def __init__(self, robot_capabilities: Optional[List[RobotCapability]] = None):
         # Core components
         self.dimos = None
         self.modules = {}
         self.skill_library = SkillLibrary()
-        
+
         # Define capabilities
         self.capabilities = robot_capabilities or [
             RobotCapability.VISION,
             RobotCapability.MANIPULATION,
         ]
-    
+
     async def start(self):
         """Start the robot modules."""
         # Initialize DIMOS with worker count
         self.dimos = core.start(2)  # Number of workers needed
-        
+
         # Deploy modules
         # ... (see Module System section)
-        
+
     def stop(self):
         """Stop all modules and clean up."""
         # Stop modules
@@ -96,7 +96,7 @@ self.camera.color_image.transport = core.LCMTransport(
     Image                         # Message type
 )
 self.camera.depth_image.transport = core.LCMTransport(
-    "/camera/depth_image", 
+    "/camera/depth_image",
     Image
 )
 ```
@@ -142,23 +142,23 @@ def main():
     # 1. Create and start robot
     robot = YourRobot()
     asyncio.run(robot.start())
-    
+
     # 2. Set up skills
     skills = robot.get_skills()
     skills.add(YourSkill)
     skills.create_instance("YourSkill", robot=robot)
-    
+
     # 3. Set up reactive streams
     agent_response_subject = rx.subject.Subject()
     agent_response_stream = agent_response_subject.pipe(ops.share())
-    
+
     # 4. Create web interface
     web_interface = RobotWebInterface(
         port=5555,
         text_streams={"agent_responses": agent_response_stream},
         audio_subject=rx.subject.Subject()
     )
-    
+
     # 5. Create agent
     agent = ClaudeAgent(
         dev_name="your_agent",
@@ -167,12 +167,12 @@ def main():
         system_query="Your system prompt here",
         model_name="claude-3-5-haiku-latest"
     )
-    
+
     # 6. Connect agent responses
     agent.get_response_observable().subscribe(
         lambda x: agent_response_subject.on_next(x)
     )
-    
+
     # 7. Run interface
     web_interface.run()
 ```
@@ -205,51 +205,51 @@ class MyRobot:
         self.camera = None
         self.manipulation = None
         self.skill_library = SkillLibrary()
-        
+
         self.capabilities = robot_capabilities or [
             RobotCapability.VISION,
             RobotCapability.MANIPULATION,
         ]
-    
+
     async def start(self):
         # Start DIMOS
         self.dimos = core.start(2)
-        
+
         # Enable LCM
         pubsub.lcm.autoconf()
-        
+
         # Deploy camera
         self.camera = self.dimos.deploy(
             CameraModule,
             camera_id=0,
             fps=30
         )
-        
+
         # Configure camera LCM
         self.camera.color_image.transport = core.LCMTransport("/camera/rgb", Image)
         self.camera.depth_image.transport = core.LCMTransport("/camera/depth", Image)
         self.camera.camera_info.transport = core.LCMTransport("/camera/info", CameraInfo)
-        
+
         # Deploy manipulation
         self.manipulation = self.dimos.deploy(ManipulationModule)
-        
+
         # Connect modules
         self.manipulation.rgb_image.connect(self.camera.color_image)
         self.manipulation.depth_image.connect(self.camera.depth_image)
         self.manipulation.camera_info.connect(self.camera.camera_info)
-        
+
         # Configure manipulation output
         self.manipulation.viz_image.transport = core.LCMTransport("/viz/output", Image)
-        
+
         # Start modules
         self.camera.start()
         self.manipulation.start()
-        
+
         await asyncio.sleep(2)  # Allow initialization
-    
+
     def get_skills(self):
         return self.skill_library
-    
+
     def stop(self):
         if self.manipulation:
             self.manipulation.stop()
@@ -279,29 +279,29 @@ def main():
     if not os.getenv("ANTHROPIC_API_KEY"):
         print("Please set ANTHROPIC_API_KEY")
         return
-    
+
     # Create robot
     robot = MyRobot()
-    
+
     try:
         # Start robot
         asyncio.run(robot.start())
-        
+
         # Set up skills
         skills = robot.get_skills()
         skills.add(BasicSkill)
         skills.create_instance("BasicSkill", robot=robot)
-        
+
         # Set up streams
         agent_response_subject = rx.subject.Subject()
         agent_response_stream = agent_response_subject.pipe(ops.share())
-        
+
         # Create web interface
         web_interface = RobotWebInterface(
             port=5555,
             text_streams={"agent_responses": agent_response_stream}
         )
-        
+
         # Create agent
         agent = ClaudeAgent(
             dev_name="my_agent",
@@ -309,17 +309,17 @@ def main():
             skills=skills,
             system_query=SYSTEM_PROMPT
         )
-        
+
         # Connect responses
         agent.get_response_observable().subscribe(
             lambda x: agent_response_subject.on_next(x)
         )
-        
+
         print("Robot ready at http://localhost:5555")
-        
+
         # Run
         web_interface.run()
-        
+
     finally:
         robot.stop()
 
@@ -341,7 +341,7 @@ from dimos.skills import Skill, skill
 class BasicSkill(Skill):
     def __init__(self, robot):
         self.robot = robot
-    
+
     def run(self, action: str):
         # Implement skill logic
         return f"Performed: {action}"

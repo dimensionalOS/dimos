@@ -17,19 +17,13 @@ Unitree G1 skill container for the new agents2 framework.
 Dynamically generates skills for G1 humanoid robot including arm controls and movement modes.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
+import difflib
 
 from dimos.core.core import rpc
-from dimos.msgs.geometry_msgs import TwistStamped, Vector3
+from dimos.core.skill_module import SkillModule
+from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
-from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
-
-if TYPE_CHECKING:
-    from dimos.robot.unitree_webrtc.unitree_g1 import UnitreeG1
-    from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_g1_skill_container")
 
@@ -58,25 +52,20 @@ G1_MODE_CONTROLS = [
     ("RunMode", 801, "Switch to running mode."),
 ]
 
+_ARM_COMMANDS: dict[str, tuple[int, str]] = {
+    name: (id_, description) for name, id_, description in G1_ARM_CONTROLS
+}
 
-class UnitreeG1SkillContainer(UnitreeSkillContainer):
-    """Container for Unitree G1 humanoid robot skills.
+_MODE_COMMANDS: dict[str, tuple[int, str]] = {
+    name: (id_, description) for name, id_, description in G1_MODE_CONTROLS
+}
 
-    Inherits all Go2 skills and adds G1-specific arm controls and movement modes.
-    """
 
-    def __init__(self, robot: UnitreeG1 | UnitreeGo2 | None = None) -> None:
-        """Initialize the skill container with robot reference.
-
-        Args:
-            robot: The UnitreeG1 or UnitreeGo2 robot instance
-        """
-        # Initialize parent class to get all base Unitree skills
-        super().__init__(robot)
-
-        # Add G1-specific skills on top
-        self._generate_arm_skills()
-        self._generate_mode_skills()
+class UnitreeG1SkillContainer(SkillModule):
+    rpc_calls: list[str] = [
+        "G1ConnectionModule.move",
+        "G1ConnectionModule.publish_request",
+    ]
 
     @rpc
     def start(self) -> None:
@@ -86,89 +75,13 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
     def stop(self) -> None:
         super().stop()
 
-    def _generate_arm_skills(self) -> None:
-        """Dynamically generate arm control skills from G1_ARM_CONTROLS list."""
-        logger.info(f"Generating {len(G1_ARM_CONTROLS)} G1 arm control skills")
-
-        for name, data_value, description in G1_ARM_CONTROLS:
-            skill_name = self._convert_to_snake_case(name)
-            self._create_arm_skill(skill_name, data_value, description, name)
-
-    def _generate_mode_skills(self) -> None:
-        """Dynamically generate movement mode skills from G1_MODE_CONTROLS list."""
-        logger.info(f"Generating {len(G1_MODE_CONTROLS)} G1 movement mode skills")
-
-        for name, data_value, description in G1_MODE_CONTROLS:
-            skill_name = self._convert_to_snake_case(name)
-            self._create_mode_skill(skill_name, data_value, description, name)
-
-    def _create_arm_skill(
-        self, skill_name: str, data_value: int, description: str, original_name: str
-    ) -> None:
-        """Create a dynamic arm control skill method with the @skill decorator.
-
-        Args:
-            skill_name: Snake_case name for the method
-            data_value: The arm action data value
-            description: Human-readable description
-            original_name: Original CamelCase name for display
-        """
-
-        def dynamic_skill_func(self) -> str:
-            """Dynamic arm skill function."""
-            return self._execute_arm_command(data_value, original_name)
-
-        # Set the function's metadata
-        dynamic_skill_func.__name__ = skill_name
-        dynamic_skill_func.__doc__ = description
-
-        # Apply the @skill decorator
-        decorated_skill = skill()(dynamic_skill_func)
-
-        # Bind the method to the instance
-        bound_method = decorated_skill.__get__(self, self.__class__)
-
-        # Add it as an attribute
-        setattr(self, skill_name, bound_method)
-
-        logger.debug(f"Generated arm skill: {skill_name} (data={data_value})")
-
-    def _create_mode_skill(
-        self, skill_name: str, data_value: int, description: str, original_name: str
-    ) -> None:
-        """Create a dynamic movement mode skill method with the @skill decorator.
-
-        Args:
-            skill_name: Snake_case name for the method
-            data_value: The mode data value
-            description: Human-readable description
-            original_name: Original CamelCase name for display
-        """
-
-        def dynamic_skill_func(self) -> str:
-            """Dynamic mode skill function."""
-            return self._execute_mode_command(data_value, original_name)
-
-        # Set the function's metadata
-        dynamic_skill_func.__name__ = skill_name
-        dynamic_skill_func.__doc__ = description
-
-        # Apply the @skill decorator
-        decorated_skill = skill()(dynamic_skill_func)
-
-        # Bind the method to the instance
-        bound_method = decorated_skill.__get__(self, self.__class__)
-
-        # Add it as an attribute
-        setattr(self, skill_name, bound_method)
-
-        logger.debug(f"Generated mode skill: {skill_name} (data={data_value})")
-
-    # ========== Override Skills for G1 ==========
-
     @skill()
     def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
-        """Move the robot using direct velocity commands (G1 version with TwistStamped).
+        """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
+
+        Example call:
+            args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
+            move(**args)
 
         Args:
             x: Forward velocity (m/s)
@@ -176,60 +89,73 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             yaw: Rotational velocity (rad/s)
             duration: How long to move (seconds)
         """
-        if self._robot is None:
-            return "Error: Robot not connected"
 
-        # G1 uses TwistStamped instead of Twist
-        twist_stamped = TwistStamped(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
-        self._robot.move(twist_stamped, duration=duration)
+        move_rpc = self.get_rpc_calls("G1ConnectionModule.move")
+        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
+        move_rpc(twist, duration=duration)
         return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
 
-    # ========== Helper Methods ==========
+    @skill()
+    def execute_arm_command(self, command_name: str) -> str:
+        return self._execute_g1_command(_ARM_COMMANDS, 7106, command_name)
 
-    def _execute_arm_command(self, data_value: int, name: str) -> str:
-        """Execute an arm command through WebRTC interface.
+    @skill()
+    def execute_mode_command(self, command_name: str) -> str:
+        return self._execute_g1_command(_MODE_COMMANDS, 7101, command_name)
 
-        Args:
-            data_value: The arm action data value
-            name: Human-readable name of the command
-        """
-        if self._robot is None:
-            return f"Error: Robot not connected (cannot execute {name})"
+    def _execute_g1_command(
+        self, command_dict: dict[str, tuple[int, str]], api_id: int, command_name: str
+    ) -> str:
+        publish_request_rpc = self.get_rpc_calls("G1ConnectionModule.publish_request")
+
+        if command_name not in command_dict:
+            suggestions = difflib.get_close_matches(
+                command_name, command_dict.keys(), n=3, cutoff=0.6
+            )
+            return f"There's no '{command_name}' command. Did you mean: {suggestions}"
+
+        id_, _ = command_dict[command_name]
 
         try:
-            self._robot.connection.publish_request(
-                "rt/api/arm/request", {"api_id": 7106, "parameter": {"data": data_value}}
+            publish_request_rpc(
+                "rt/api/sport/request", {"api_id": api_id, "parameter": {"data": id_}}
             )
-            message = f"G1 arm action {name} executed successfully (data={data_value})"
-            logger.info(message)
-            return message
+            return f"'{command_name}' command executed successfully."
         except Exception as e:
-            error_msg = f"Failed to execute G1 arm action {name}: {e}"
-            logger.error(error_msg)
-            return error_msg
-
-    def _execute_mode_command(self, data_value: int, name: str) -> str:
-        """Execute a movement mode command through WebRTC interface.
-
-        Args:
-            data_value: The mode data value
-            name: Human-readable name of the command
-        """
-        if self._robot is None:
-            return f"Error: Robot not connected (cannot execute {name})"
-
-        try:
-            self._robot.connection.publish_request(
-                "rt/api/sport/request", {"api_id": 7101, "parameter": {"data": data_value}}
-            )
-            message = f"G1 mode {name} activated successfully (data={data_value})"
-            logger.info(message)
-            return message
-        except Exception as e:
-            error_msg = f"Failed to execute G1 mode {name}: {e}"
-            logger.error(error_msg)
-            return error_msg
+            logger.error(f"Failed to execute {command_name}: {e}")
+            return "Failed to execute the command."
 
 
-# Create blueprint function for easy instantiation
+_arm_commands = "\n".join(
+    [f'- "{name}": {description}' for name, (_, description) in _ARM_COMMANDS.items()]
+)
+
+UnitreeG1SkillContainer.execute_arm_command.__doc__ = f"""Execute a Unitree G1 arm command.
+
+Example usage:
+
+    execute_arm_command("ArmHeart")
+
+Here are all the command names and what they do.
+
+{_arm_commands}
+"""
+
+_mode_commands = "\n".join(
+    [f'- "{name}": {description}' for name, (_, description) in _MODE_COMMANDS.items()]
+)
+
+UnitreeG1SkillContainer.execute_mode_command.__doc__ = f"""Execute a Unitree G1 mode command.
+
+Example usage:
+
+    execute_mode_command("RunMode")
+
+Here are all the command names and what they do.
+
+{_mode_commands}
+"""
+
 g1_skills = UnitreeG1SkillContainer.blueprint
+
+__all__ = ["UnitreeG1SkillContainer", "g1_skills"]

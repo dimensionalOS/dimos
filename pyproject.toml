@@ -28,6 +28,7 @@ dependencies = [
     "openai",
     "anthropic>=0.19.0",
     "cerebras-cloud-sdk",
+    "moondream",
     "numpy>=1.26.4,<2.0.0",
     "colorlog==6.9.0",
     "yapf==0.40.2",
@@ -45,25 +46,25 @@ dependencies = [
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
     "tensorzero==2025.7.5",
-    
+
     # Web Extensions
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
-    
+
     # Agents
     "langchain>=0.3.27",
     "langchain-chroma>=0.2.5",
     "langchain-core>=0.3.72",
     "langchain-openai>=0.3.28",
-    "langchain-text-splitters>=0.3.9",  
-    
+    "langchain-text-splitters>=0.3.9",
+
     # Class Extraction
     "pydantic",
-    
+
     # Developer Specific
     "ipykernel",
-    
+
     # Unitree webrtc streaming
     "aiortc==1.9.0",
     "pycryptodome",
@@ -74,17 +75,17 @@ dependencies = [
 
     # Image
     "PyTurboJPEG==1.8.2",
-    
+
     # Audio
     "openai-whisper",
     "soundfile",
-    
+
     # Hugging Face
     "transformers[torch]==4.49.0",
-    
+
     # Vector Embedding
-    "sentence_transformers",    
-    
+    "sentence_transformers",
+
     # Perception Dependencies
     "ultralytics>=8.3.70",
     "filterpy>=1.4.5",
@@ -103,7 +104,7 @@ dependencies = [
     # Inference
     "onnx",
 
-    # Multiprocess 
+    # Multiprocess
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
@@ -119,8 +120,8 @@ lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
-human-cli = "dimos.utils.cli.human.humancli:main"
-dimos-robot = "dimos.robot.cli.dimos_robot:main"
+humancli = "dimos.utils.cli.human.humanclianim:main"
+dimos = "dimos.robot.cli.dimos:main"
 
 [project.optional-dependencies]
 manipulation = [
@@ -162,7 +163,7 @@ cuda = [
     "mmcv>=2.1.0",
     "xformers>=0.0.20",
 
-    # Detic GPU stack 
+    # Detic GPU stack
     "mss",
     "dataclasses",
     "ftfy",
@@ -179,7 +180,7 @@ cuda = [
 ]
 
 dev = [
-    "ruff==0.11.10",
+    "ruff==0.14.3",
     "mypy==1.18.2",
     "pre_commit==4.2.0",
     "pytest==8.3.5",
@@ -189,6 +190,7 @@ dev = [
     "pytest-timeout==2.4.0",
     "textual==3.7.1",
     "requests-mock==1.12.1",
+    "terminaltexteffects==0.12.2",
 
     # Types
     "lxml-stubs>=0.5.1,<1",
@@ -250,7 +252,10 @@ exclude = [
 [tool.ruff.lint]
 extend-select = ["E", "W", "F", "B", "UP", "N", "I", "C90", "A", "RUF", "TCH"]
 # TODO: All of these should be fixed, but it's easier commit autofixes first
-ignore = ["A001", "A002", "A004", "B008", "B017", "B018", "B019", "B023", "B024", "B026", "B027", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F401", "F403", "F405", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N812", "N813", "N813", "N816", "N817", "N999", "RUF001", "RUF002", "RUF003", "RUF006", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "TC010", "UP007", "UP035"]
+ignore = ["A001", "A002", "B008", "B017", "B019", "B023", "B024", "B026", "B904", "C901", "E402", "E501", "E721", "E722", "E741", "F401", "F403", "F811", "F821", "F821", "F821", "N801", "N802", "N803", "N806", "N812", "N813", "N813", "N816", "N817", "N999", "RUF002", "RUF003", "RUF006", "RUF009", "RUF012", "RUF034", "RUF043", "RUF059", "UP007"]
+
+[tool.ruff.lint.per-file-ignores]
+"dimos/models/Detic/*" = ["ALL"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["dimos"]
@@ -258,13 +263,10 @@ combine-as-imports = true
 force-sort-within-sections = true
 
 [tool.mypy]
-# mypy doesn't understand plum @dispatch decorator
-# so we gave up on this check globally
-disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
-files = [
-    "dimos/msgs/**/*.py",
-    "dimos/protocol/**/*.py"
-]
+python_version = "3.12"
+incremental = true
+strict = true
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
@@ -287,6 +289,3 @@ env = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-
-
-

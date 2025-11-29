@@ -1,0 +1,38 @@
+{
+  "responses": [
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "execute_sport_command",
+          "args": {
+            "args": [
+              "FrontPounce"
+            ]
+          },
+          "id": "call_Ukj6bCAnHQLj28RHRp697blZ",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "",
+      "tool_calls": [
+        {
+          "name": "speak",
+          "args": {
+            "args": [
+              "I have successfully performed a front pounce."
+            ]
+          },
+          "id": "call_FR9DtqEvJ9zSY85qVD2UFrll",
+          "type": "tool_call"
+        }
+      ]
+    },
+    {
+      "content": "I have successfully performed a front pounce.",
+      "tool_calls": []
+    }
+  ]
+}

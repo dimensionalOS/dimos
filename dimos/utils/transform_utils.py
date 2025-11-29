@@ -21,10 +21,10 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
 
 def normalize_angle(angle: float) -> float:
     """Normalize angle to [-pi, pi] range"""
-    return np.arctan2(np.sin(angle), np.cos(angle))
+    return np.arctan2(np.sin(angle), np.cos(angle))  # type: ignore[no-any-return]
 
 
-def pose_to_matrix(pose: Pose) -> np.ndarray:
+def pose_to_matrix(pose: Pose) -> np.ndarray:  # type: ignore[type-arg]
     """
     Convert pose to 4x4 homogeneous transform matrix.
 
@@ -57,7 +57,7 @@ def pose_to_matrix(pose: Pose) -> np.ndarray:
     return T
 
 
-def matrix_to_pose(T: np.ndarray) -> Pose:
+def matrix_to_pose(T: np.ndarray) -> Pose:  # type: ignore[type-arg]
     """
     Convert 4x4 transformation matrix to Pose object.
 
@@ -80,7 +80,7 @@ def matrix_to_pose(T: np.ndarray) -> Pose:
     return Pose(pos, orientation)
 
 
-def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:
+def apply_transform(pose: Pose, transform: np.ndarray | Transform) -> Pose:  # type: ignore[type-arg]
     """
     Apply a transformation matrix to a pose.
 
@@ -202,7 +202,7 @@ def robot_to_optical_frame(pose: Pose) -> Pose:
     )
 
 
-def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:
+def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:  # type: ignore[assignment]
     """
     Calculate yaw angle from target point to position (away from target).
     This is commonly used for object orientation in grasping applications.
@@ -219,10 +219,10 @@ def yaw_towards_point(position: Vector3, target_point: Vector3 = None) -> float:
         target_point = Vector3(0.0, 0.0, 0.0)
     direction_x = position.x - target_point.x
     direction_y = position.y - target_point.y
-    return np.arctan2(direction_y, direction_x)
+    return np.arctan2(direction_y, direction_x)  # type: ignore[no-any-return]
 
 
-def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:
+def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> np.ndarray:  # type: ignore[type-arg]
     """
     Create a 4x4 transformation matrix from 6DOF parameters.
 
@@ -247,7 +247,7 @@ def create_transform_from_6dof(translation: Vector3, euler_angles: Vector3) -> n
     return T
 
 
-def invert_transform(T: np.ndarray) -> np.ndarray:
+def invert_transform(T: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
     """
     Invert a 4x4 transformation matrix efficiently.
 
@@ -271,7 +271,7 @@ def invert_transform(T: np.ndarray) -> np.ndarray:
     return T_inv
 
 
-def compose_transforms(*transforms: np.ndarray) -> np.ndarray:
+def compose_transforms(*transforms: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
     """
     Compose multiple transformation matrices.
 
@@ -345,7 +345,7 @@ def get_distance(pose1: Pose | Vector3, pose2: Pose | Vector3) -> float:
     dy = pose1.y - pose2.y
     dz = pose1.z - pose2.z
 
-    return np.linalg.norm(np.array([dx, dy, dz]))
+    return np.linalg.norm(np.array([dx, dy, dz]))  # type: ignore[return-value]
 
 
 def offset_distance(

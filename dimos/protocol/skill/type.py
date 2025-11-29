@@ -59,15 +59,15 @@ class SkillConfig:
     ret: Return
     output: Output
     schema: dict[str, Any]
-    f: Callable | None = None
+    f: Callable | None = None  # type: ignore[type-arg]
     autostart: bool = False
     hide_skill: bool = False
 
-    def bind(self, f: Callable) -> SkillConfig:
+    def bind(self, f: Callable) -> SkillConfig:  # type: ignore[type-arg]
         self.f = f
         return self
 
-    def call(self, call_id, *args, **kwargs) -> Any:
+    def call(self, call_id, *args, **kwargs) -> Any:  # type: ignore[no-untyped-def]
         if self.f is None:
             raise ValueError(
                 "Function is not bound to the SkillConfig. This should be called only within AgentListener."
@@ -101,8 +101,8 @@ M = TypeVar("M", bound="MsgType")
 
 def maybe_encode(something: Any) -> str:
     if hasattr(something, "agent_encode"):
-        return something.agent_encode()
-    return something
+        return something.agent_encode()  # type: ignore[no-any-return]
+    return something  # type: ignore[no-any-return]
 
 
 class SkillMsg(Timestamped, Generic[M]):
@@ -110,7 +110,7 @@ class SkillMsg(Timestamped, Generic[M]):
     type: M
     call_id: str
     skill_name: str
-    content: str | int | float | dict | list
+    content: str | int | float | dict | list  # type: ignore[type-arg]
 
     def __init__(
         self,
@@ -136,7 +136,7 @@ class SkillMsg(Timestamped, Generic[M]):
     def start(self) -> bool:
         return self.type == MsgType.start
 
-    def __str__(self) -> str:
+    def __str__(self) -> str:  # type: ignore[return]
         time_ago = time.time() - self.ts
 
         if self.type == MsgType.start:
@@ -167,7 +167,7 @@ A = TypeVar("A")  # accumulator type
 SimpleReducerF = Callable[[A | None, C], A]
 
 
-def make_reducer(simple_reducer: SimpleReducerF) -> ReducerF:
+def make_reducer(simple_reducer: SimpleReducerF) -> ReducerF:  # type: ignore[type-arg]
     """
     Converts a naive reducer function into a standard reducer function.
     The naive reducer function should accept an accumulator and a message,
@@ -214,7 +214,7 @@ def sum_reducer(
 ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
     """Sum reducer that adds values together."""
     acc_value = accumulator.content if accumulator else None
-    new_value = acc_value + msg.content if acc_value else msg.content
+    new_value = acc_value + msg.content if acc_value else msg.content  # type: ignore[operator]
     return _make_skill_msg(msg, new_value)
 
 
@@ -232,7 +232,7 @@ def all_reducer(
 ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
     """All reducer that collects all values into a list."""
     acc_value = accumulator.content if accumulator else None
-    new_value = [*acc_value, msg.content] if acc_value else [msg.content]
+    new_value = [*acc_value, msg.content] if acc_value else [msg.content]  # type: ignore[misc]
     return _make_skill_msg(msg, new_value)
 
 
@@ -242,7 +242,7 @@ def accumulate_list(
 ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
     """All reducer that collects all values into a list."""
     acc_value = accumulator.content if accumulator else []
-    return _make_skill_msg(msg, acc_value + msg.content)
+    return _make_skill_msg(msg, acc_value + msg.content)  # type: ignore[operator]
 
 
 def accumulate_dict(
@@ -251,7 +251,7 @@ def accumulate_dict(
 ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
     """All reducer that collects all values into a list."""
     acc_value = accumulator.content if accumulator else {}
-    return _make_skill_msg(msg, {**acc_value, **msg.content})
+    return _make_skill_msg(msg, {**acc_value, **msg.content})  # type: ignore[dict-item]
 
 
 def accumulate_string(
@@ -260,7 +260,7 @@ def accumulate_string(
 ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
     """All reducer that collects all values into a list."""
     acc_value = accumulator.content if accumulator else ""
-    return _make_skill_msg(msg, acc_value + "\n" + msg.content)
+    return _make_skill_msg(msg, acc_value + "\n" + msg.content)  # type: ignore[operator]
 
 
 class Reducer:
