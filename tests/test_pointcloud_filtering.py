@@ -215,10 +215,9 @@ def main():
         # Set up web interface
         print("Initializing web interface...")
         web_interface = RobotWebInterface(
-            port=web_port,
-            zed_video=video_stream,
+            port=web_port, 
             object_detection=viz_stream,
-            depth_stream=depth_stream,  # Use the simplified depth stream that includes overlays
+            pointcloud_stream=depth_stream  # Use the simplified depth stream that includes overlays
         )
 
         print("\nZED Stream + Object Detection + Point Cloud Filtering Test Running:")
