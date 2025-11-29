@@ -21,7 +21,7 @@ import time
 from types import TracebackType
 from typing import Any
 
-import redis
+import redis  # type: ignore[import-not-found]
 
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.spec import Service
@@ -40,7 +40,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
 
     default_config = RedisConfig
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 
         # Redis connections
@@ -56,13 +56,13 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         """Start the Redis pub/sub service."""
         if self._running:
             return
-        self._connect()
+        self._connect()  # type: ignore[no-untyped-call]
 
     def stop(self) -> None:
         """Stop the Redis pub/sub service."""
         self.close()
 
-    def _connect(self):
+    def _connect(self):  # type: ignore[no-untyped-def]
         """Connect to Redis and set up pub/sub."""
         try:
             self._client = redis.Redis(
@@ -73,14 +73,14 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
                 **self.config.kwargs,
             )
             # Test connection
-            self._client.ping()
+            self._client.ping()  # type: ignore[attr-defined]
 
-            self._pubsub = self._client.pubsub()
+            self._pubsub = self._client.pubsub()  # type: ignore[attr-defined]
             self._running = True
 
             # Start listener thread
-            self._listener_thread = threading.Thread(target=self._listen_loop, daemon=True)
-            self._listener_thread.start()
+            self._listener_thread = threading.Thread(target=self._listen_loop, daemon=True)  # type: ignore[assignment]
+            self._listener_thread.start()  # type: ignore[attr-defined]
 
         except Exception as e:
             raise ConnectionError(
@@ -186,7 +186,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
 
         self._callbacks.clear()
 
-    def __enter__(self):
+    def __enter__(self):  # type: ignore[no-untyped-def]
         return self
 
     def __exit__(

@@ -35,7 +35,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
         self,
         threshold: float = 0.01,
         bar_length: int = 50,
-        volume_func: Callable = calculate_peak_volume,
+        volume_func: Callable = calculate_peak_volume,  # type: ignore[type-arg]
     ) -> None:
         """
         Initialize VolumeMonitorNode.
@@ -75,7 +75,7 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
         activity = "active" if active else "silent"
         return f"{bar} {percentage:3d}% {activity}"
 
-    def consume_audio(self, audio_observable: Observable) -> "VolumeMonitorNode":
+    def consume_audio(self, audio_observable: Observable) -> "VolumeMonitorNode":  # type: ignore[type-arg]
         """
         Set the audio source observable to consume.
 
@@ -85,10 +85,10 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
         Returns:
             Self for method chaining
         """
-        self.audio_observable = audio_observable
+        self.audio_observable = audio_observable  # type: ignore[assignment]
         return self
 
-    def emit_text(self) -> Observable:
+    def emit_text(self) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits volume text descriptions.
 
@@ -134,10 +134,10 @@ class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):
 
 
 def monitor(
-    audio_source: Observable,
+    audio_source: Observable,  # type: ignore[type-arg]
     threshold: float = 0.01,
     bar_length: int = 50,
-    volume_func: Callable = calculate_peak_volume,
+    volume_func: Callable = calculate_peak_volume,  # type: ignore[type-arg]
 ) -> VolumeMonitorNode:
     """
     Create a volume monitor node connected to a text output node.
@@ -168,8 +168,8 @@ def monitor(
 
 
 if __name__ == "__main__":
-    from audio.node_simulated import SimulatedAudioSource
-    from utils import keepalive
+    from audio.node_simulated import SimulatedAudioSource  # type: ignore[import-not-found]
+    from utils import keepalive  # type: ignore[import-untyped]
 
     # Use the monitor function to create and connect the nodes
     volume_monitor = monitor(SimulatedAudioSource().emit_audio())

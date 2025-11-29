@@ -28,10 +28,10 @@ logger = setup_logger(__file__)
 
 
 def main() -> None:
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     dimos = core.start(2)
 
-    ros_nav = dimos.deploy(ROSNav)
+    ros_nav = dimos.deploy(ROSNav)  # type: ignore[attr-defined]
 
     ros_nav.goal_req.transport = core.LCMTransport("/goal", PoseStamped)
     ros_nav.pointcloud.transport = core.LCMTransport("/pointcloud_map", PointCloud2)
@@ -64,7 +64,7 @@ def main() -> None:
         logger.info("\nShutting down...")
         ros_nav.stop()
 
-        if rclpy.ok():
+        if rclpy.ok():  # type: ignore[attr-defined]
             rclpy.shutdown()
 
 

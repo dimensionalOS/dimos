@@ -13,13 +13,15 @@
 # limitations under the License.
 
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
-from lcm_msgs.foxglove_msgs import SceneUpdate
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations,
+)
+from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.agents2 import skill
+from dimos.agents2 import skill  # type: ignore[attr-defined]
 from dimos.core import DimosCluster, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
@@ -134,14 +136,14 @@ class Detection3DModule(Detection2DModule):
         print("VLM result:", result, "for", image, "and question", question)
 
         if isinstance(result, str) or not result or not len(result):
-            return None
+            return None  # type: ignore[return-value]
 
         detections: ImageDetections2D = result
 
         print(detections)
         if not len(detections):
             print("No 2d detections")
-            return None
+            return None  # type: ignore[return-value]
 
         pc = self.pointcloud.get_next()
         transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
@@ -149,7 +151,7 @@ class Detection3DModule(Detection2DModule):
         detections3d = self.process_frame(detections, pc, transform)
 
         if len(detections3d):
-            return detections3d[0].pose
+            return detections3d[0].pose  # type: ignore[no-any-return]
         print("No 3d detections, projecting 2d")
 
         center = detections[0].get_bbox_center()
@@ -164,14 +166,14 @@ class Detection3DModule(Detection2DModule):
     def start(self) -> None:
         super().start()
 
-        def detection2d_to_3d(args):
+        def detection2d_to_3d(args):  # type: ignore[no-untyped-def]
             detections, pc = args
             transform = self.tf.get("camera_optical", pc.frame_id, detections.image.ts, 5.0)
             return self.process_frame(detections, pc, transform)
 
         self.detection_stream_3d = align_timestamped(
             backpressure(self.detection_stream_2d()),
-            self.pointcloud.observable(),
+            self.pointcloud.observable(),  # type: ignore[no-untyped-call]
             match_tolerance=0.25,
             buffer_size=20.0,
         ).pipe(ops.map(detection2d_to_3d))
@@ -190,10 +192,10 @@ class Detection3DModule(Detection2DModule):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
 
-        self.scene_update.publish(detections.to_foxglove_scene_update())
+        self.scene_update.publish(detections.to_foxglove_scene_update())  # type: ignore[no-untyped-call]
 
 
-def deploy(
+def deploy(  # type: ignore[no-untyped-def]
     dimos: DimosCluster,
     lidar: spec.Pointcloud,
     camera: spec.Camera,
@@ -202,7 +204,7 @@ def deploy(
 ) -> Detection3DModule:
     from dimos.core import LCMTransport
 
-    detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)
+    detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
 
     detector.image.connect(camera.image)
     detector.pointcloud.connect(lidar.pointcloud)
@@ -220,4 +222,4 @@ def deploy(
     detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
 
     detector.start()
-    return detector
+    return detector  # type: ignore[no-any-return]

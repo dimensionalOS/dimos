@@ -15,7 +15,7 @@
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
-from transformers import CLIPModel as HFCLIPModel, CLIPProcessor
+from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
 
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image

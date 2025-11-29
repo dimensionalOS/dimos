@@ -55,7 +55,7 @@ class PromptBuilder:
         self.max_tokens = max_tokens
         self.tokenizer: AbstractTokenizer = tokenizer or OpenAITokenizer(model_name=self.model_name)
 
-    def truncate_tokens(self, text: str, max_tokens, strategy):
+    def truncate_tokens(self, text: str, max_tokens, strategy):  # type: ignore[no-untyped-def]
         """
         Truncate text to fit within max_tokens using a specified strategy.
         Args:
@@ -82,9 +82,9 @@ class PromptBuilder:
         else:
             raise ValueError(f"Unknown truncation strategy: {strategy}")
 
-        return self.tokenizer.detokenize_text(truncated)
+        return self.tokenizer.detokenize_text(truncated)  # type: ignore[no-untyped-call]
 
-    def build(
+    def build(  # type: ignore[no-untyped-def]
         self,
         system_prompt=None,
         user_query=None,
@@ -207,7 +207,7 @@ class PromptBuilder:
             user_content.append(
                 {
                     "type": "image_url",
-                    "image_url": {
+                    "image_url": {  # type: ignore[dict-item]
                         "url": f"data:image/jpeg;base64,{base64_image}",
                         "detail": image_detail,
                     },
