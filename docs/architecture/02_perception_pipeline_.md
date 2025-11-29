@@ -23,10 +23,10 @@ The pipeline works in a series of stages, much like how our own brains process v
 
 ```mermaid
 graph TD
-    A[Raw Sensor Data<br/>(e.g., Camera Image)] --> B{Detection};
+    A[Raw Sensor Data e.g., Camera Image] --> B{Detection};
     B --> C{Segmentation};
     C --> D{Filtering};
-    D --> E[Structured Information<br/>(e.g., List of Objects with 3D Positions)];
+    D --> E[Structured Information<br/>e.g., List of Objects with 3D Positions];
 ```
 
 #### 1. Detection: Finding Objects
