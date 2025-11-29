@@ -82,7 +82,9 @@ class PointcloudFiltering:
         if not 0.0 <= color_weight <= 1.0:
             raise ValueError(f"color_weight must be between 0.0 and 1.0, got {color_weight}")
         if not 0.0 <= max_bbox_size_percent <= 100.0:
-            raise ValueError(f"max_bbox_size_percent must be between 0.0 and 100.0, got {max_bbox_size_percent}")
+            raise ValueError(
+                f"max_bbox_size_percent must be between 0.0 and 100.0, got {max_bbox_size_percent}"
+            )
 
         # Store settings
         self.color_weight = color_weight
@@ -160,21 +162,19 @@ class PointcloudFiltering:
     def _apply_filtering(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
         """Apply optional filtering to point cloud based on enabled flags."""
         current_pcd = pcd
-        
+
         # Apply statistical filtering if enabled
         if self.enable_statistical_filtering:
             current_pcd, _ = current_pcd.remove_statistical_outlier(
-                nb_neighbors=self.statistical_neighbors, 
-                std_ratio=self.statistical_std_ratio
+                nb_neighbors=self.statistical_neighbors, std_ratio=self.statistical_std_ratio
             )
-        
+
         # Apply radius filtering if enabled
         if self.enable_radius_filtering:
             current_pcd, _ = current_pcd.remove_radius_outlier(
-                nb_points=self.radius_filtering_min_neighbors, 
-                radius=self.radius_filtering_radius
+                nb_points=self.radius_filtering_min_neighbors, radius=self.radius_filtering_radius
             )
-        
+
         return current_pcd
 
     def _apply_subsampling(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
@@ -215,16 +215,18 @@ class PointcloudFiltering:
         if len(objects) > self.max_num_objects:
             # Sort objects by confidence (highest first), handle None confidences
             sorted_objects = sorted(
-                objects, 
-                key=lambda obj: obj.get("confidence", 0.0) if obj.get("confidence") is not None else 0.0,
-                reverse=True
+                objects,
+                key=lambda obj: obj.get("confidence", 0.0)
+                if obj.get("confidence") is not None
+                else 0.0,
+                reverse=True,
             )
-            objects = sorted_objects[:self.max_num_objects]
+            objects = sorted_objects[: self.max_num_objects]
 
         # Filter out objects with bboxes too large
         image_area = color_img.shape[0] * color_img.shape[1]
         max_bbox_area = image_area * (self.max_bbox_size_percent / 100.0)
-        
+
         filtered_objects = []
         for obj in objects:
             if "bbox" in obj and obj["bbox"] is not None:
@@ -235,7 +237,7 @@ class PointcloudFiltering:
                     filtered_objects.append(obj)
             else:
                 filtered_objects.append(obj)
-        
+
         objects = filtered_objects
 
         # Extract masks from ObjectData
@@ -248,7 +250,7 @@ class PointcloudFiltering:
         full_pcd, masked_pcds = create_point_cloud_and_extract_masks(
             color_img, depth_img, processed_masks, self.depth_camera_matrix, depth_scale=1.0
         )
-        
+
         # Process each object and update ObjectData
         updated_objects = []
 
