@@ -100,13 +100,24 @@ def check_multicast() -> list[str]:
     return commands_needed
 
 
+def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int) -> None:
+    try:
+        result = subprocess.run(["sysctl", name], capture_output=True, text=True)
+        current_max = (
+            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        )
+        if not current_max or current_max < value:
+            commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+    except:
+        commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+
 def check_buffers() -> tuple[list[str], int | None]:
     """Check if buffer configuration is needed and return required commands and current size.
 
     Returns:
         Tuple of (commands_needed, current_max_buffer_size)
     """
-    commands_needed = []
+    commands_needed: list[str] = []
     current_max = None
 
     sudo = "" if check_root() else "sudo "
@@ -114,66 +125,13 @@ def check_buffers() -> tuple[list[str], int | None]:
 
     if system == "Linux":
         # Linux buffer configuration
-        try:
-            result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
-            current_max = (
-                int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-            )
-            if not current_max or current_max < 2097152:
-                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
-        except:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
-
-        try:
-            result = subprocess.run(
-                ["sysctl", "net.core.rmem_default"], capture_output=True, text=True
-            )
-            current_default = (
-                int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-            )
-            if not current_default or current_default < 2097152:
-                commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
-        except:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
-
+        _set_net_value(commands_needed, sudo, "net.core.rmem_max", 2097152)
+        _set_net_value(commands_needed, sudo, "net.core.rmem_default", 2097152)
     elif system == "Darwin":  # macOS
         # macOS buffer configuration - check and set UDP buffer related sysctls
-        try:
-            result = subprocess.run(
-                ["sysctl", "kern.ipc.maxsockbuf"], capture_output=True, text=True
-            )
-            current_max = (
-                int(result.stdout.split(":")[1].strip()) if result.returncode == 0 else None
-            )
-            if not current_max or current_max < 8388608:
-                commands_needed.append(f"{sudo}sysctl -w kern.ipc.maxsockbuf=8388608")
-        except:
-            commands_needed.append(f"{sudo}sysctl -w kern.ipc.maxsockbuf=8388608")
-
-        try:
-            result = subprocess.run(
-                ["sysctl", "net.inet.udp.recvspace"], capture_output=True, text=True
-            )
-            current_recvspace = (
-                int(result.stdout.split(":")[1].strip()) if result.returncode == 0 else None
-            )
-            if not current_recvspace or current_recvspace < 2097152:
-                commands_needed.append(f"{sudo}sysctl -w net.inet.udp.recvspace=2097152")
-        except:
-            commands_needed.append(f"{sudo}sysctl -w net.inet.udp.recvspace=2097152")
-
-        try:
-            result = subprocess.run(
-                ["sysctl", "net.inet.udp.maxdgram"], capture_output=True, text=True
-            )
-            current_maxdgram = (
-                int(result.stdout.split(":")[1].strip()) if result.returncode == 0 else None
-            )
-            if not current_maxdgram or current_maxdgram < 65535:
-                commands_needed.append(f"{sudo}sysctl -w net.inet.udp.maxdgram=65535")
-        except:
-            commands_needed.append(f"{sudo}sysctl -w net.inet.udp.maxdgram=65535")
-
+        _set_net_value(commands_needed, sudo, "kern.ipc.maxsockbuf", 8388608)
+        _set_net_value(commands_needed, sudo, "net.inet.udp.recvspace", 2097152)
+        _set_net_value(commands_needed, sudo, "net.inet.udp.maxdgram", 65535)
     else:
         # For other systems, skip buffer configuration
         logger.warning(f"Buffer configuration not supported on {system}")
