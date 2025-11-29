@@ -94,9 +94,9 @@ class MujocoConnection:
             self.shm_data.cleanup()
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
 
-        def get_stderr():
+        def get_stderr() -> str:
             text = ""
-            if self.process:
+            if self.process and self.process.stderr:
                 text = (
                     "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
                 )
@@ -130,8 +130,11 @@ class MujocoConnection:
         self._is_cleaned_up = True
 
         # clean up open file descriptors
-        self.process.stderr.close()
-        self.process.stdout.close()
+        if self.process:
+            if self.process.stderr:
+                self.process.stderr.close()
+            if self.process.stdout:
+                self.process.stdout.close()
 
         # Cancel any pending timers
         if self._stop_timer:

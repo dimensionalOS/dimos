@@ -232,7 +232,7 @@ class LCMConfig:
     autoconf: bool = True
     lcm: lcm.LCM | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.url is None and platform.system() == "Darwin":
             # On macOS, use multicast with TTL=0 to keep traffic local
             self.url = "udpm://239.255.76.67:7667?ttl=0"
