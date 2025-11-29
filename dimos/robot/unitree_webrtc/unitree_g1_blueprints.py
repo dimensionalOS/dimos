@@ -42,7 +42,7 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.bt_navigator.navigator import (
     behavior_tree_navigator,
 )
