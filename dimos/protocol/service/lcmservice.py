@@ -100,14 +100,19 @@ def check_multicast() -> list[str]:
     return commands_needed
 
 
-def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int) -> None:
+def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int) -> int | None:
     try:
         result = subprocess.run(["sysctl", name], capture_output=True, text=True)
-        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        if not current_max or current_max < value:
+        if result.returncode == 0:
+            current = int(result.stdout.replace(":", "=").split("=")[1].strip())
+        else:
+            current = None
+        if not current or current < value:
             commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+        return current
     except:
         commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+        return None
 
 
 def check_buffers() -> tuple[list[str], int | None]:
@@ -124,11 +129,11 @@ def check_buffers() -> tuple[list[str], int | None]:
 
     if system == "Linux":
         # Linux buffer configuration
-        _set_net_value(commands_needed, sudo, "net.core.rmem_max", 2097152)
+        current_max = _set_net_value(commands_needed, sudo, "net.core.rmem_max", 2097152)
         _set_net_value(commands_needed, sudo, "net.core.rmem_default", 2097152)
     elif system == "Darwin":  # macOS
         # macOS buffer configuration - check and set UDP buffer related sysctls
-        _set_net_value(commands_needed, sudo, "kern.ipc.maxsockbuf", 8388608)
+        current_max = _set_net_value(commands_needed, sudo, "kern.ipc.maxsockbuf", 8388608)
         _set_net_value(commands_needed, sudo, "net.inet.udp.recvspace", 2097152)
         _set_net_value(commands_needed, sudo, "net.inet.udp.maxdgram", 65535)
     else:
