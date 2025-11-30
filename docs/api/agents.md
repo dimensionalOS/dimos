@@ -1,69 +1,78 @@
 # Agents API
 
-The LLM-based Agents system lets you command any robot with natural language.
+LLM-based reasoning systems that orchestrate robot behavior by invoking skills in response to natural-language commands. Agents manage long-running operations asynchronously and maintain conversation history across operations.
 
-## Module: dimos.agents2
+---
 
-::: dimos.agents2
+## Quick Start
 
-## Core Agent Function
+The blueprint factory for composing agents with other modules.
 
-The primary entry point for creating agent blueprints.
-
-### llm_agent()
+### llm_agent
 
 ::: dimos.agents2.agent.llm_agent
 
-## Agent Implementation
+---
+
+## Core Classes
 
 ### Agent
-
-The main agent class that handles LLM-based reasoning and skill orchestration.
 
 ::: dimos.agents2.agent.Agent
 
 ### LlmAgent
 
-Specialized Agent subclass that automatically starts its processing loop on startup, designed for blueprint composition pattern.
-
 ::: dimos.agents2.agent.LlmAgent
 
-## Base Classes
-
-### AgentSpec
-
-Abstract base class for implementing custom agents.
-
-::: dimos.agents2.spec.AgentSpec
-
-## Quick Deployment
-
-### deploy()
-
-::: dimos.agents2.agent.deploy
+---
 
 ## Configuration
 
-### AgentConfig
+### AgentSpec
 
-Configuration dataclass for agent initialization.
+::: dimos.agents2.spec.AgentSpec
+
+### AgentConfig
 
 ::: dimos.agents2.spec.AgentConfig
 
 ### Model
 
-Enum of supported LLM models across providers.
-
 ::: dimos.agents2.spec.Model
 
 ### Provider
 
-Enum of supported LLM providers.
-
 ::: dimos.agents2.spec.Provider
+
+---
+
+## Message Types
+
+### AnyMessage
+
+::: dimos.agents2.spec.AnyMessage
+
+---
+
+## Standalone Deployment
+
+For quick prototyping without blueprint composition.
+
+### deploy
+
+::: dimos.agents2.agent.deploy
+
+---
 
 ## Related
 
-- [Agent concept](../concepts/agent.md) - High-level overview of the agent system and neurosymbolic orchestration
-- [Skills API](./skills.md) - Methods that agents can discover and invoke
-- [Modules concept](../concepts/modules.md) - Module architecture that agents build upon
+**Tutorials:**
+
+- [Equip an agent with skills](../tutorials/skill_with_agent/tutorial.md) — Hands-on introduction to agents and skills
+- [Build a multi-agent system](../tutorials/multi_agent/tutorial.md) — Coordinating multiple agents
+
+**Concepts & API:**
+
+- [Agent concept](../concepts/agent.md) — High-level overview and neurosymbolic orchestration patterns
+- [Skills API](./skills.md) — Methods that agents discover and invoke
+- [Modules concept](../concepts/modules.md) — Module architecture agents build upon
