@@ -931,7 +931,7 @@ class BaseLocalPlanner(ABC):
             )
 
             # Check if maximum recovery attempts have been exceeded
-            if self.recovery_attempts >= self.max_recovery_attempts:
+            if self.recovery_attempts > self.max_recovery_attempts:
                 logger.error(
                     f"Maximum recovery attempts ({self.max_recovery_attempts}) exceeded. Navigation failed."
                 )
@@ -979,10 +979,11 @@ class BaseLocalPlanner(ABC):
 
         if new_path is not None:
             logger.info("Replanning successful. Setting new waypoints.")
+            attempts = self.recovery_attempts
             self.set_goal_waypoints(new_path, self.goal_theta)
+            self.recovery_attempts = attempts
             self.is_recovery_active = False
             self.last_recovery_end_time = current_time
-            logger.info("Recovery attempts reset after successful replanning")
         else:
             logger.error("Global planner could not find a path to the goal. Recovery failed.")
             self.navigation_failed = True
