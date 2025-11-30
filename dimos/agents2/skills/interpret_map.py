@@ -61,19 +61,27 @@ class InterpretMapSkill(SkillModule):
         """
         Identify goal position from map, based on description of location.
         Use the general description of location provided by user.
+
+        Example call:
+            args = {"description": "a clear area near a table on the left side of the room"}
+            get_goal_position(**args)
+
+        Args:
+            description: General description of desired goal location.
         """
 
         if description is None:
             return "Please provide a description of the goal location."
 
+        # grab latest costmap and robot pose
         costmap = self._latest_local_costmap
+        robot_pose = self._robot_pose
 
         if costmap is None:
             return "No map available."
 
-        # augment with robot position
-        if self._robot_pose:
-            costmap.robot_pose = self._robot_pose
+        if robot_pose:
+            costmap.robot_pose = robot_pose
 
         image = costmap.grid_to_image(size=(1024, 1024), flip_vertical=True)
 
@@ -98,8 +106,7 @@ class InterpretMapSkill(SkillModule):
         response = query_single_frame(image, prompt)
         x, y = parse_qwen_points_response(response)
 
-        debug_image_with_identified_point(image, (x, y), filepath="./debug_goal_position_1.png")
-        # TODO:guardrails to ensure point is in free space, or find nearest free space
+        # ensure point is in free space, else choose nearest free space
         if not costmap.is_free_space(x, y):
             logger.warning(
                 f"Identified goal position ({x}, {y}) is not in free space, choosing nearest free space instead."

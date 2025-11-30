@@ -125,7 +125,7 @@ class OccupancyGrid(Timestamped):
             self.info = MapMetaData(map_load_time=self._to_lcm_time())  # type: ignore[no-untyped-call]
             self.grid = np.array([], dtype=np.int8)
 
-        self.robot_pose = robot_pose or self.info.origin
+        self.robot_pose = robot_pose
 
     def _to_lcm_time(self):
         """Convert timestamp to LCM Time."""
@@ -454,7 +454,7 @@ class OccupancyGrid(Timestamped):
                     axis=1,
                 )
 
-        if self.robot_pose is not None:
+        if self.robot_pose:
             # logger.info(f"robot pose ground truth: {self.robot_pose}")
             robot_grid_pos = self.world_to_grid(self.robot_pose.position)
             rgx = round(robot_grid_pos.x)

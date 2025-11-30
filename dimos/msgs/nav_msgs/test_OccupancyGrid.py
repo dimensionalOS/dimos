@@ -321,64 +321,88 @@ def test_filter_below() -> None:
     assert filtered.frame_id == grid.frame_id
 
 
-def test_grid_to_ascii_basic() -> None:
-    """Verify that grid_to_ascii maps cell values to the expected characters."""
-    data = np.array([[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8)
+def test_grid_pixel_roundtrip_and_pixel_to_world():
+    # create a simple grid 10x20
+    width = 10
+    height = 20
+    grid = np.zeros((height, width), dtype=np.int8)
 
-    grid = OccupancyGrid(grid=data, resolution=1.0)
+    og = OccupancyGrid(grid=grid, resolution=0.5, origin=Pose(0, 0, 0))
 
-    grid.ascii_grid.step_col = 1
-    grid.ascii_grid.step_row = 1
+    size = (100, 200)
+    gx, gy = 5, 10
 
-    ascii_str = grid.grid_to_ascii()
+    px, py = og.grid_to_pixel(gx, gy, size=size, flip_vertical=True)
+    assert isinstance(px, int) and isinstance(py, int)
 
-    expected = ".#?.\n..#?\n#..."
-    assert ascii_str == expected
+    # pixel -> grid should invert when flip_vertical is True and sizes match
+    rgx, rgy = og.pixel_to_grid(px, py, size=size, flip_vertical=True)
+    assert (rgx, rgy) == (gx, gy)
 
-
-def test_augment_ascii_robot_pose() -> None:
-    """Verify that augment_ascii places an 'X' at the robot location in the ASCII grid."""
-    data = np.array([[0, 100, -1, 0], [0, 0, 100, -1], [100, 0, 0, 0]], dtype=np.int8)
-
-    # direct mapping to ascii chars, resolution 1
-    origin = Pose(Vector3(0.0, 0.0, 0.0))
-    grid = OccupancyGrid(grid=data, resolution=1.0, origin=origin)
-    grid.ascii_grid.step_col = 1
-    grid.ascii_grid.step_row = 1
-
-    grid.grid_to_ascii()
-
-    # place robot at (2,1) in world -> should map to ascii x=2,y=1
-    robot_pose = Pose(Vector3(2.0, 1.0, 0.0))
-    grid.augment_ascii(robot_pose=robot_pose)
-
-    ascii_lines = grid.ascii_grid.ascii_grid_str.split("\n")
-    assert ascii_lines[1][2] == "X"
+    # check pixel_to_world gives expected world coords (grid->world uses resolution)
+    world = og.pixel_to_world(px, py, size=size, flip_vertical=True)
+    assert pytest.approx(world.x, rel=1e-6) == gx * og.resolution
+    assert pytest.approx(world.y, rel=1e-6) == gy * og.resolution
 
 
-def test_ascii_to_world() -> None:
-    """Check that ascii_to_world returns expected world coordinates for given ASCII cell."""
-    data = np.zeros((15, 30), dtype=np.int8)
+def test_is_free_space_and_get_closest_free_point():
+    # 5x5 grid filled as occupied
+    width = 5
+    height = 5
+    grid = np.full((height, width), CostValues.OCCUPIED, dtype=np.int8)
 
-    origin = Pose(Vector3(10.0, 20.0, 0.0))
-    grid = OccupancyGrid(grid=data, resolution=0.5, origin=origin)
+    # one free cell at (4,4)
+    free_x, free_y = 4, 4
+    grid[free_y, free_x] = CostValues.FREE
 
-    grid.ascii_grid.step_col = 2
-    grid.ascii_grid.step_row = 3
+    og = OccupancyGrid(grid=grid, resolution=0.1, origin=Pose(0, 0, 0))
 
-    # verify roundtrip for few ascii coordinates
-    for ascii_x, ascii_y in [(0, 0), (3, 0), (12, 15)]:
-        world = grid.ascii_to_world(ascii_x, ascii_y)
+    size = (100, 100)
 
-        # expected grid coords (center of the sampled block)
-        grid_x = ascii_x * grid.ascii_grid.step_col + grid.ascii_grid.step_col // 2
-        grid_y = ascii_y * grid.ascii_grid.step_row + grid.ascii_grid.step_row // 2
+    # choose a pixel corresponding to an occupied cell (2,2)
+    occ_px, occ_py = og.grid_to_pixel(2, 2, size=size, flip_vertical=False)
+    assert og.is_free_space(occ_px, occ_py, size=size, flip_vertical=False) is False
 
-        expected_x = origin.position.x + grid_x * grid.resolution
-        expected_y = origin.position.y + grid_y * grid.resolution
+    # closest free point should be the free cell we set
+    closest = og.get_closest_free_point(
+        occ_px, occ_py, size=size, flip_vertical=False, max_search_radius=10
+    )
+    assert closest is not None
+    expected = og.grid_to_pixel(free_x, free_y, size=size, flip_vertical=False)
+    assert closest == expected
 
-        assert abs(world.x - expected_x) < 1e-6
-        assert abs(world.y - expected_y) < 1e-6
+    # with tiny search radius it should return None
+    none_closest = og.get_closest_free_point(
+        occ_px, occ_py, size=size, flip_vertical=False, max_search_radius=1
+    )
+    assert none_closest is None
+
+
+def test_grid_to_image_color_mapping():
+    # [ unknown, free ]
+    # [ occupied, free ]
+    grid = np.zeros((2, 2), dtype=np.int8)
+    grid[0, 0] = CostValues.UNKNOWN
+    grid[0, 1] = CostValues.FREE
+    grid[1, 0] = CostValues.OCCUPIED
+    grid[1, 1] = CostValues.FREE
+
+    og = OccupancyGrid(grid=grid, resolution=0.05, origin=Pose(0, 0, 0))
+
+    image = og.grid_to_image(size=(2, 2), flip_vertical=False)
+    arr = image.data
+
+    # unknown -> yellow [255,255,0]
+    assert (arr[0, 0] == np.array([255, 255, 0], dtype=np.uint8)).all()
+
+    # free -> blue-ish [0,0,200]
+    assert (arr[0, 1] == np.array([0, 0, 200], dtype=np.uint8)).all()
+
+    # occupied (100) -> red shade [100,0,0]
+    assert (arr[1, 0] == np.array([100, 0, 0], dtype=np.uint8)).all()
+
+    # another free
+    assert (arr[1, 1] == np.array([0, 0, 200], dtype=np.uint8)).all()
 
 
 def test_max() -> None:
