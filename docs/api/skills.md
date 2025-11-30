@@ -1,47 +1,88 @@
-# Skills
+# Skills API
 
-<!-- TODO: Add docstrings to dimos/protocol/skill/ (currently none exist):
-     - skill() function: Add function docstring with Args section describing each parameter
-     - Enum classes: Convert inline comments to proper docstrings on class and members
-     - Examples to add: "ret: When to notify agent. Use Return.call_agent for interactive skills."
-     - Could include: usage patterns, cross-references, performance notes (ThreadPoolExecutor, etc.)
--->
+Skills let agents control and monitor robot capabilities. They are methods on `Module` classes decorated with `@skill()` that become LLM-callable tools. Each skill executes in a background thread and communicates state through a message protocol (pending → running → completed/error), with optional streaming modes (`Stream.call_agent` for progress updates, `Stream.passive` for background data accumulation).
 
-API for defining robot skills that agents can invoke. Skills are methods on Modules decorated with `@skill` that become discoverable and callable by AI agents.
+---
 
-## Decorator
+## Core Decorator
+
+The entry point for defining skills.
+
+### skill
 
 ::: dimos.protocol.skill.skill.skill
-    options:
-      show_source: true
 
-## Configuration Types
+---
+
+## Skill Configuration
+
+Configuration attached to decorated methods, used by SkillCoordinator to control execution.
+
+### SkillConfig
+
+::: dimos.protocol.skill.type.SkillConfig
+
+---
+
+## Configuration Enums
+
+Values passed to the `@skill()` decorator to control behavior.
 
 ### Return
 
+Controls how skill return values are delivered and whether they wake the agent.
+
 ::: dimos.protocol.skill.type.Return
-    options:
-      show_source: true
 
 ### Stream
 
+Controls how streaming skill outputs (generators/iterators) are handled.
+
 ::: dimos.protocol.skill.type.Stream
-    options:
-      show_source: true
 
 ### Output
 
+Presentation hint for how the agent should interpret skill output.
+
 ::: dimos.protocol.skill.type.Output
-    options:
-      show_source: true
+
+---
+
+## Stream Processing
+
+Reducers aggregate streaming values when `stream=Stream.passive` or `stream=Stream.call_agent`.
 
 ### Reducer
 
 ::: dimos.protocol.skill.type.Reducer
-    options:
-      show_source: true
+
+### make_reducer
+
+Factory for creating custom reducer functions from simple aggregation logic.
+
+::: dimos.protocol.skill.type.make_reducer
+
+---
+
+## Infrastructure
+
+Base classes inherited by Modules. Most users don't interact with these directly.
+
+### SkillContainer
+
+::: dimos.protocol.skill.skill.SkillContainer
+
+---
 
 ## Related
 
-- [Skills Concept](../concepts/skills.md) - High-level overview of the skill system including execution model and best practices
-- [Modules Concept](../concepts/modules.md) - Module architecture that provides skills
+**Tutorials:**
+
+- [Build your first skill](../tutorials/skill_basics/tutorial.md) — Defining and testing skills
+- [Equip an agent with skills](../tutorials/skill_with_agent/tutorial.md) — Wiring skills to agents
+
+**Concepts & API:**
+
+- [Skills concept](../concepts/skills.md) — High-level overview including execution model and best practices
+- [Modules concept](../concepts/modules.md) — Module architecture that provides skills
+- [Agents API](./agents.md) — LLM agents that discover and invoke skills
