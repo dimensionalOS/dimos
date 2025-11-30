@@ -114,6 +114,32 @@ class NavigationSkillContainer(SkillModule):
         return f"Tagged '{location_name}': ({position.x},{position.y})."
 
     @skill()
+    def navigate_with_position(self, x: float, y: float, z: float = 0.0) -> str:
+        """Navifate to a specific position in world coordinates, obtained from map.
+
+        Args:
+            x: X coordinate
+            y: Y coordinate
+            z: Z coordinate
+
+        """
+
+        if not self._skill_started:
+            raise ValueError(f"{self} has not been started.")
+
+        goal_pose = PoseStamped(
+            position=make_vector3(x, y, z),
+            orientation=Quaternion.from_euler(make_vector3(0, 0, 0)),
+            frame_id="map",
+        )
+
+        result = self._navigate_to(goal_pose)
+        if not result:
+            return "Error: Failed to reach the specified position."
+
+        return f"Successfully arrived at position ({x}, {y}, {z})."
+
+    @skill()
     def navigate_with_text(self, query: str) -> str:
         """Navigate to a location by querying the existing semantic map using natural language.
 
