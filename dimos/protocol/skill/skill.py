@@ -80,7 +80,9 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
+
+from annotated_doc import Doc
 
 # from dimos.core.core import rpc
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
@@ -127,12 +129,180 @@ def rpc(fn: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def skill(
-    reducer: Reducer = Reducer.latest,  # type: ignore[assignment]
-    stream: Stream = Stream.none,
-    ret: Return = Return.call_agent,
-    output: Output = Output.standard,
-    hide_skill: bool = False,
-) -> Callable:  # type: ignore[type-arg]
+    reducer: Annotated[
+        Reducer,
+        Doc(
+            """Aggregation strategy for *passive* streams when multiple values are emitted.
+
+            Only relevant when `stream=Stream.passive`.
+            """
+        ),
+    ] = Reducer.latest,
+    stream: Annotated[
+        Stream,
+        Doc(
+            """
+            Controls how generator/iterator returns are handled.
+
+            Use `Stream.none` for non-streaming skills, `Stream.passive` for streaming without
+            triggering agent calls (values aggregated by reducer), or `Stream.call_agent` to
+            trigger an agent call for each yielded value.
+            """
+        ),
+    ] = Stream.none,
+    ret: Annotated[
+        Return,
+        Doc(
+            """
+            Controls how the final return value is delivered to the agent.
+
+            Use `Return.none` to suppress return value, `Return.passive` to make value available
+            when agent queries, or `Return.call_agent` to actively schedule an agent call with
+            the result.
+
+            Note: forced to `Return.passive` when `stream=Stream.passive` to maintain
+            consistent passive behavior.
+            """
+        ),
+    ] = Return.call_agent,
+    output: Annotated[
+        Output,
+        Doc(
+            """Presentation hint for how the agent should interpret the output.
+
+            Use `Output.standard` for normal text, `Output.human` for human-readable formatted
+            output, or `Output.image` for visual content.
+            """
+        ),
+    ] = Output.standard,
+    hide_skill: Annotated[
+        bool,
+        Doc(
+            """If True, prevents the skill from appearing in the agent's available skills list.
+
+            Hidden skills can still be called programmatically but won't be offered to LLMs during
+            tool selection. Useful for internal or administrative skills.
+            """
+        ),
+    ] = False,
+) -> Callable:
+    """Decorator that transforms `Module` methods into agent-callable skills.
+
+    The `@skill` decorator is what allows methods on a `Module` to be invoked as tool calls by LLM agents.
+    It does this by wrapping methods with execution routing, message protocol handling,
+    and automatic schema generation.
+
+    When an agent calls a skill through the SkillCoordinator, the skill executes in
+    a background thread pool and publishes messages tracking its execution state
+    (start → [stream]* → ret/error). This enables non-blocking execution, progress
+    monitoring, and distributed deployment across machines.
+
+    Examples:
+
+        >>> from dimos.core.module import Module
+        >>> from dimos.protocol.skill.type import Stream, Reducer, Return
+
+        Basic skill returning a string result:
+
+        >>> class NavigationSkills(Module):
+        ...     def __init__(self):
+        ...         super().__init__()
+        ...         self.goal = None
+        ...
+        ...     def _set_goal(self, location: str) -> None:
+        ...         self.goal = location
+        ...
+        ...     @skill()
+        ...     def navigate_to(self, location: str) -> str:
+        ...         '''Navigate to a named location.'''
+        ...         self._set_goal(location)
+        ...         return f"Navigating to {location}"
+
+        Streaming skill with progress updates:
+
+        >>> class MonitorSkills(Module):
+        ...     @skill(stream=Stream.call_agent, ret=Return.call_agent)
+        ...     def monitor_task(self, count: int) -> str:
+        ...         '''Monitor a long-running operation.'''
+        ...         for i in range(count):
+        ...             yield f"Progress: {i+1}/{count}"
+        ...         return "Task completed"
+
+        Passive skill with reducer aggregation:
+
+        >>> class RobotSkills(Module):
+        ...     def _get_frames(self):
+        ...         for i in range(5):
+        ...             yield f"frame_{i}"
+        ...
+        ...     @skill(stream=Stream.passive, reducer=Reducer.latest)
+        ...     def stream_camera(self) -> str:
+        ...         '''Stream camera frames in background.'''
+        ...         for frame in self._get_frames():
+        ...             yield frame
+        ...         return "Camera stopped"
+        ...
+        ...     @skill(ret=Return.call_agent)  # Active companion keeps loop alive
+        ...     def navigate_to(self, location: str) -> str:
+        ...         '''Navigate while camera streams.'''
+        ...         return f"Arrived at {location}"
+
+        Hidden administrative skill:
+
+        >>> class SystemSkills(Module):
+        ...     def _calibrate(self) -> None:
+        ...         pass  # Internal calibration logic
+        ...
+        ...     @skill(hide_skill=True)
+        ...     def internal_calibration(self) -> str:
+        ...         '''Internal calibration routine.'''
+        ...         self._calibrate()
+        ...         return "Calibration complete"
+
+        See also the tutorials and other examples of skills in the library.
+
+    Notes:
+
+        **Key Contracts:**
+
+        - Return strings for LLM compatibility (non-strings with `agent_encode()`
+          method are auto-encoded)
+        - Methods must be on subclasses of Module
+        - Parameters must be JSON-serializable for schema generation
+
+        **Passive Skill Warning:**
+
+        When using `stream=Stream.passive`:
+
+        - `ret` is forced to `Return.passive` automatically
+        - Passive skills NEVER wake the agent (except on errors)
+        - Data is only delivered when an active skill keeps the loop running
+        - If only passive skills are running, the loop exits and data from passive skills is lost
+        - So, pair passive skills with an active companion skill
+
+        See `Stream.passive` docstring for full semantics.
+
+        **Message Flow:**
+
+        When called via coordinator, skills follow this state machine:
+
+        Pending → Started (publish MsgType.start)
+               → [Streaming (publish MsgType.stream)]*
+               → Completed (publish MsgType.ret) OR Error (publish MsgType.error)
+
+        **RPC Discovery:**
+
+        This decorator automatically makes skills discoverable
+        via the RPC system without requiring a separate `@rpc` decorator.
+        Skills can be queried by agents through the SkillCoordinator.
+
+        **Best Practices:**
+
+        - Write clear docstrings - they become the skill descriptions LLMs see
+        - Return meaningful strings that help agents understand outcomes
+        - Handle errors gracefully with contextual messages for agent recovery
+    """
+
     def decorator(f: Callable[..., Any]) -> Any:
         def wrapper(self, *args, **kwargs):  # type: ignore[no-untyped-def]
             skill = f"{f.__name__}"
