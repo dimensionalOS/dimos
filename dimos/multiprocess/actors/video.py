@@ -19,8 +19,9 @@ from typing import TypedDict
 import cv2
 import numpy as np
 from dask.distributed import get_client
-from streamz import Stream
+from streamz.dask import Stream
 
+# from streamz import Stream
 from dimos.utils.testing import _get_data_dir
 
 logger = logging.getLogger(__name__)

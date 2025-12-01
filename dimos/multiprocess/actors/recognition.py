@@ -102,4 +102,5 @@ class FaceRecognitionActor:
         if not self.has_processors:
             return
 
+        #  print("EMIT FRAME", frame["frame_number"])
         await self.input_stream.emit(frame)
