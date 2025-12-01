@@ -16,11 +16,15 @@ import logging
 from typing import List, TypedDict
 
 import cv2
-from streamz import Stream
+from streamz.dask import Stream
 
+from dimos.multiprocess.actors.env import getenv
 from dimos.multiprocess.types import Frame
 
 logger = logging.getLogger(__name__)
+from dimos.multiprocess.utils.testing import dask_client
+
+print(dask_client)
 
 
 class Detection(TypedDict):
@@ -35,96 +39,67 @@ class RecognitionFrame(Frame):
     detections: List[Detection]  # List of detected objects/faces
 
 
-class FaceRecognitionActor:
-    """Simple face detection actor using OpenCV Haar cascades."""
-
-    def __init__(self, name="FaceRecognition", verbose=False, min_neighbors=5, scale_factor=1.1):
-        """
-        Initialize the face recognition actor.
-
-        Args:
-            name: Actor name for logging
-            verbose: Whether to print detection info
-            min_neighbors: Minimum neighbors required for detection (higher = fewer false positives)
-            scale_factor: How much the image size is reduced at each scale (closer to 1.0 = more thorough)
-        """
-        self.name = name
-        self.verbose = verbose
-        self.min_neighbors = min_neighbors
-        self.scale_factor = scale_factor
-
-        # Initialize the face cascade classifier
-        self.face_cascade = cv2.CascadeClassifier(
+def _detect_faces(frame: Frame) -> RecognitionFrame:
+    face_cascade = getenv(
+        "face_cascade",
+        lambda: cv2.CascadeClassifier(
             cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-        )
-        if self.face_cascade.empty():
-            raise RuntimeError("Failed to load face cascade classifier")
+        ),
+    )
 
-        # Create output stream - this is where processors will be connected
-        self.stream = Stream(asynchronous=True)
+    print("got", face_cascade)
+    # Convert to grayscale for face detection
+    gray = cv2.cvtColor(frame["frame"], cv2.COLOR_BGR2GRAY)
+
+    # Detect faces
+    faces = face_cascade.detectMultiScale(
+        gray,
+        scaleFactor=1.1,
+        minNeighbors=5,
+        minSize=(30, 30),  # Minimum face size
+    )
+
+    # Convert to our Detection format
+    detections: List[Detection] = []
+    for x, y, w, h in faces:
+        detection: Detection = {
+            "x": int(x),
+            "y": int(y),
+            "w": int(w),
+            "h": int(h),
+            "confidence": 1.0,  # Haar cascades don't provide confidence scores
+        }
+        detections.append(detection)
+
+    # Create recognition frame
+    recognition_frame: RecognitionFrame = {
+        "frame": frame["frame"],
+        "timestamp": frame["timestamp"],
+        "frame_number": frame["frame_number"],
+        "detections": detections,
+    }
+    print("returning frame", recognition_frame["frame_number"])
+    return recognition_frame
+
+
+class FaceRecognitionActor:
+    def __init__(self):
+        self.input_stream = Stream(asynchronous=True)
+        self.output_stream = Stream(asynchronous=True)
         self.has_processors = False
 
-        logger.info(f"FaceRecognitionActor '{name}' initialized")
-
-    def _detect_faces(self, frame: Frame) -> RecognitionFrame:
-        """Detect faces in the frame and return frame with detections."""
-        # Convert to grayscale for face detection
-        gray = cv2.cvtColor(frame["frame"], cv2.COLOR_BGR2GRAY)
-
-        # Detect faces
-        faces = self.face_cascade.detectMultiScale(
-            gray,
-            scaleFactor=self.scale_factor,
-            minNeighbors=self.min_neighbors,
-            minSize=(30, 30),  # Minimum face size
-        )
-
-        # Convert to our Detection format
-        detections: List[Detection] = []
-        for x, y, w, h in faces:
-            detection: Detection = {
-                "x": int(x),
-                "y": int(y),
-                "w": int(w),
-                "h": int(h),
-                "confidence": 1.0,  # Haar cascades don't provide confidence scores
-            }
-            detections.append(detection)
-
-        # Create recognition frame
-        recognition_frame: RecognitionFrame = {
-            "frame": frame["frame"],
-            "timestamp": frame["timestamp"],
-            "frame_number": frame["frame_number"],
-            "detections": detections,
-        }
-
-        if self.verbose:
-            print(f"{self.name}: Frame {frame['frame_number']} - {len(detections)} faces detected")
-
-        return recognition_frame
+        self.input_stream.map(_detect_faces).sink(self.output_stream.emit)
+        # self.input_stream.scatter().map(_detect_faces).gather().sink(self.output_stream.emit)
+        # self.input_stream.scatter().map(_detect_faces).buffer(3).gather().sink(
+        #    self.output_stream.emit
+        # )
 
     def add_processor(self, processor):
-        """Add a processor to receive recognition frames."""
-        self.stream.sink(processor.receive_frame)
+        self.output_stream.sink(processor.receive_frame)
         self.has_processors = True
-        logger.info(f"Added processor to {self.name}")
-
-    def add_processors(self, *processors):
-        """Add multiple processors to receive recognition frames."""
-        for processor in processors:
-            self.add_processor(processor)
 
     async def receive_frame(self, frame: Frame) -> None:
-        """Receive a frame from upstream (e.g., camera actor)."""
-        # Only process if we have processors registered
         if not self.has_processors:
-            if self.verbose:
-                logger.info(
-                    f"{self.name}: No processors registered, skipping frame {frame['frame_number']}"
-                )
             return
 
-        # Process the frame and emit recognition results
-        recognition_frame = self._detect_faces(frame)
-        await self.stream.emit(recognition_frame)
+        await self.input_stream.emit(frame)

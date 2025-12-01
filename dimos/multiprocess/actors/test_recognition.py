@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+
 import pytest
 from streamz import Stream
 
@@ -38,7 +40,7 @@ class RecognitionResultActor:
         detections = recognition_frame.get("detections", [])
         self.detection_count += len(detections)
 
-        if self.verbose and detections:
+        if detections:
             print(
                 f"{self.name}: Frame {recognition_frame['frame_number']} - {len(detections)} faces:"
             )
@@ -46,6 +48,8 @@ class RecognitionResultActor:
                 print(
                     f"  Face {i + 1}: ({detection['x']}, {detection['y']}) {detection['w']}x{detection['h']}"
                 )
+        else:
+            print(f"{self.name}: Frame {recognition_frame['frame_number']} - no faces")
 
     async def receive_frame(self, recognition_frame):
         """Receive recognition frame from upstream."""
@@ -60,8 +64,8 @@ async def test_face_recognition(dask_client):
     # Deploy actors
     print("Deploying actors...")
     camera_actor = deploy_actor(dask_client, VideoActor)
-    face_actor = deploy_actor(dask_client, FaceRecognitionActor, name="FaceDetector", verbose=True)
-    result_actor = deploy_actor(dask_client, RecognitionResultActor, name="Results", verbose=True)
+    face_actor = deploy_actor(dask_client, FaceRecognitionActor)
+    result_actor = deploy_actor(dask_client, RecognitionResultActor, verbose=True)
 
     print(f"Camera actor: {camera_actor}")
     print(f"Face recognition actor: {face_actor}")
@@ -73,7 +77,11 @@ async def test_face_recognition(dask_client):
 
     # Run for a limited number of frames
     print("Starting face recognition pipeline...")
-    camera_actor.run(110).result()  # Process 30 frames
+
+    start_time = time.time()
+    camera_actor.run(300).result()  # Process 300 frames
+    end_time = time.time()
+    print(f"Time taken: {end_time - start_time} seconds")
 
     print("\n=== Results ===")
     print("Face recognition pipeline completed successfully!")
@@ -85,28 +93,14 @@ async def test_no_processors_skip(dask_client):
     """Test that recognition actor skips processing when no processors are added."""
     print("\n=== Testing No Processors Behavior ===")
 
-    # Deploy actors but don't connect processors
     camera_actor = deploy_actor(dask_client, VideoActor)
-    face_actor = deploy_actor(dask_client, FaceRecognitionActor, name="FaceDetector", verbose=True)
+    face_actor = deploy_actor(dask_client, FaceRecognitionActor)
+    # face_actor = FaceRecognitionActor()
 
     # Connect camera to face actor, but face actor has no processors
     camera_actor.add_processor(face_actor)
 
     print("Running with no processors (should skip processing)...")
-    camera_actor.run(5).result()  # Process just 5 frames
+    camera_actor.run(300).result()  # Process just 5 frames
 
     print("No processors test completed - should have skipped processing!")
-
-
-if __name__ == "__main__":
-    # Run a quick manual test
-    import asyncio
-
-    from dask.distributed import Client
-
-    async def manual_test():
-        with Client() as client:
-            await test_face_recognition(client)
-            await test_no_processors_skip(client)
-
-    asyncio.run(manual_test())
