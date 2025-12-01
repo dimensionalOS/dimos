@@ -372,12 +372,77 @@ def threaded(f: Callable[..., Any]) -> Callable[..., None]:
 
 
 class SkillContainer:
+    """Infrastructure for hosting and executing agent-callable skills.
+
+    SkillContainer provides the foundational protocol layer inherited by all DimOS `Module`s,
+    enabling any `Module` to expose `@skill` decorated methods as LLM tool calls. This class
+    handles skill discovery, threaded execution, message publishing, and transport abstraction
+    for distributed skill communication.
+
+    Key capabilities:
+        - **Skill introspection**: Discovers all `@skill` decorated methods via `skills()` RPC
+        - **Threaded execution**: Runs skills in background thread pool (max 50 workers)
+        - **Message protocol**: Publishes lifecycle events for streaming and error handling
+        - **Transport abstraction**: Configurable communication layer (default: LCM-based)
+        - **Lazy initialization**: Transport and thread pool created on first use
+
+    Users typically don't interact with SkillContainer directly—it provides infrastructure
+    that makes the `@skill` decorator work seamlessly across distributed deployments.
+
+    See also:
+        `dimos.core.module.Module` : Base class that inherits SkillContainer capabilities
+        `dimos.protocol.skill.coordinator.SkillCoordinator` : Orchestrates skill execution for agents
+        `@skill` decorator : Transforms Module methods into agent-callable tools (see for message protocol details)
+        `dimos.protocol.skill.type.Stream` : Stream behavior configuration (passive vs. active)
+        `dimos.protocol.skill.type.Return` : Return value handling modes
+    """
+
     skill_transport_class: type[SkillCommsSpec] = LCMSkillComms
     _skill_thread_pool: ThreadPoolExecutor | None = None
     _skill_transport: SkillCommsSpec | None = None
 
     @rpc
     def dynamic_skills(self) -> bool:
+        """Indicate whether this container generates skills dynamically at runtime.
+
+        When False (the default), skills are cached at registration for performance.
+        Override to return True when skills depend on runtime context (e.g., attached
+        hardware, environment state)—this causes skills to be queried on each request.
+
+        Note: If the skills depend only on constructor parameters (configuration at init time),
+        static skills work just fine.
+
+        Examples:
+            Static skills (default behavior):
+
+            >>> from dimos.core.module import Module
+            >>> from dimos.protocol.skill.skill import skill, rpc
+            >>> from dimos.protocol.skill.type import SkillConfig
+            >>>
+            >>> class StaticSkills(Module):
+            ...     @skill()
+            ...     def fixed_skill(self) -> str:
+            ...         return "Always available"
+            ...     # dynamic_skills() not overridden, returns False
+
+            Dynamic skills based on runtime state:
+
+            >>> class DynamicSkills(Module):
+            ...     def __init__(self):
+            ...         super().__init__()
+            ...         self.gripper_attached = False
+            ...
+            ...     @rpc
+            ...     def dynamic_skills(self) -> bool:
+            ...         return True  # Skills change based on hardware state
+            ...
+            ...     def skills(self) -> dict[str, SkillConfig]:
+            ...         available = super().skills()
+            ...         if not self.gripper_attached:
+            ...             # Remove gripper-dependent skills
+            ...             available.pop("pick_object", None)
+            ...         return available
+        """
         return False
 
     def __str__(self) -> str:
@@ -385,6 +450,7 @@ class SkillContainer:
 
     @rpc
     def stop(self) -> None:
+        """Release skill execution resources and propagate cleanup to parent classes."""
         if self._skill_transport:
             self._skill_transport.stop()
             self._skill_transport = None
@@ -401,8 +467,41 @@ class SkillContainer:
     # use same interface as skill coordinator call_skill method
     @threaded
     def call_skill(
-        self, call_id: str, skill_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
+        self,
+        call_id: Annotated[
+            str, Doc("Unique identifier for this skill invocation, used for message correlation.")
+        ],
+        skill_name: Annotated[
+            str, Doc("Name of the skill method to invoke (must match a `@skill` decorated method).")
+        ],
+        args: Annotated[tuple[Any, ...], Doc("Positional arguments to pass to the skill method.")],
+        kwargs: Annotated[dict[str, Any], Doc("Keyword arguments to pass to the skill method.")],
     ) -> None:
+        """Execute a skill in the thread pool and publish lifecycle messages.
+
+        Core execution method invoked by the `@skill` decorator when a skill is called with
+        a `call_id` parameter. Executes the skill in a background thread pool and publishes
+        status messages according to the skill's configuration.
+
+        Message protocol:
+            1. Publish `MsgType.start` immediately upon entry
+            2. If skill returns an iterable (except strings):
+               - Publish `MsgType.stream` for each yielded/iterated value
+               - Publish `MsgType.ret` with the **last yielded value** after exhaustion
+            3. If skill returns a non-iterable (or string):
+               - Publish `MsgType.ret` with the return value
+            4. On exception:
+               - Publish `MsgType.error` with `{msg: str, traceback: str}` content
+
+        Notes:
+            **Threading:**
+            The `@threaded` decorator submits execution to `_skill_thread_pool`, returning
+            immediately.
+
+        See also:
+            `@skill` decorator : Wraps methods and routes calls with `call_id` to this method
+            `SkillCoordinator.call_skill` : Higher-level interface for skill invocation
+        """
         f = getattr(self, skill_name, None)
 
         if f is None:
@@ -452,7 +551,62 @@ class SkillContainer:
             )
 
     @rpc
-    def skills(self) -> dict[str, SkillConfig]:
+    def skills(
+        self,
+    ) -> Annotated[
+        dict[str, SkillConfig],
+        Doc(
+            """Dictionary mapping skill name to SkillConfig. Each SkillConfig contains the skill's
+            JSON schema, execution settings (stream/ret/reducer), and metadata for LLM tool calling."""
+        ),
+    ]:
+        """Discover all `@skill` decorated methods on this container.
+
+        Introspects the container's methods to find those decorated with `@skill`, returning
+        their configurations for registration with the SkillCoordinator. This method enables
+        automatic skill discovery without explicit registration lists.
+
+        Discovery algorithm:
+            1. Iterate over all public attribute names via `dir(self)`
+            2. Exclude: names starting with `_`, and names in exclusion list
+            3. Include: attributes with a `_skill_config` attribute (set by `@skill` decorator)
+
+        The exclusion list prevents recursion and avoids accessing problematic properties:
+        `{"skills", "tf", "rpc", "skill_transport"}`.
+
+        Examples:
+            Discovering skills from a container:
+
+            >>> from dimos.core.module import Module
+            >>> from dimos.protocol.skill.skill import skill
+            >>>
+            >>> class NavigationSkills(Module):
+            ...     @skill()
+            ...     def navigate_to(self, location: str) -> str:
+            ...         '''Navigate to a named location.'''
+            ...         return f"Navigating to {location}"
+            ...
+            ...     @skill()
+            ...     def cancel_navigation(self) -> str:
+            ...         '''Cancel current navigation.'''
+            ...         return "Navigation cancelled"
+            >>> skills = NavigationSkills()
+            >>> discovered = skills.skills()
+            >>> sorted(discovered.keys())
+            ['cancel_navigation', 'navigate_to']
+            >>> discovered['navigate_to'].schema['function']['description']
+            'Navigate to a named location.'
+
+        Notes:
+            This method is marked `@rpc` for remote queryability by SkillCoordinator during
+            skill registration. When `dynamic_skills()` returns True, this method is called
+            on each coordinator query to refresh the skill set.
+
+        See also:
+            `dynamic_skills()` : Controls whether skills are cached or queried dynamically
+            `@skill` decorator : Attaches `_skill_config` to methods for discovery
+            `SkillCoordinator.register_skills` : Uses this method during registration
+        """
         # Avoid recursion by excluding this property itself
         # Also exclude known properties that shouldn't be accessed
         excluded = {"skills", "tf", "rpc", "skill_transport"}
@@ -465,7 +619,57 @@ class SkillContainer:
         }
 
     @property
-    def skill_transport(self) -> SkillCommsSpec:
+    def skill_transport(
+        self,
+    ) -> Annotated[
+        SkillCommsSpec,
+        Doc(
+            """Transport instance for skill message publishing. Lazily initialized on first access
+            using `skill_transport_class` (default: `LCMSkillComms`)."""
+        ),
+    ]:
+        """Provide lazy access to the skill transport layer.
+
+        Creates and caches a transport instance on first access, using the class specified by
+        `skill_transport_class`. The transport handles publishing skill messages (start, stream,
+        ret, error) to `SkillCoordinator` via the configured communication layer.
+
+        Examples:
+            Custom transport class:
+
+            >>> from dimos.core.module import Module
+            >>> from dimos.protocol.skill.skill import skill
+            >>> from dimos.protocol.skill.comms import SkillCommsSpec
+            >>>
+            >>> class CustomTransport(SkillCommsSpec):
+            ...     def publish(self, msg):
+            ...         pass  # Custom implementation
+            ...     def subscribe(self, cb):
+            ...         pass
+            ...     def start(self):
+            ...         pass
+            ...     def stop(self):
+            ...         pass
+            >>> class CustomSkills(Module):
+            ...     skill_transport_class = CustomTransport
+            ...     @skill()
+            ...     def example(self) -> str:
+            ...         return "Done"
+            >>> skills = CustomSkills()
+            >>> skills.start()
+            >>> type(skills.skill_transport).__name__
+            'CustomTransport'
+            >>> skills.stop()
+
+        Notes:
+            The transport is shared across all skills in this container, ensuring consistent
+            message delivery.
+
+        See also:
+            `skill_transport_class` : Class attribute specifying which transport to instantiate
+            `SkillCommsSpec` : Interface defining transport contract (publish/subscribe/start/stop)
+            `LCMSkillComms` : Default transport implementation using LCM
+        """
         if self._skill_transport is None:
             self._skill_transport = self.skill_transport_class()
         return self._skill_transport
