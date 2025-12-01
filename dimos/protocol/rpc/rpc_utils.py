@@ -35,12 +35,12 @@ class RemoteError(Exception):
     Preserves the original exception type and full stack trace from the remote side.
     """
 
-    def __init__(self, type_name: str, type_module: str, args: tuple, traceback: str):
+    def __init__(self, type_name: str, type_module: str, args: tuple, traceback: str) -> None:
         super().__init__(*args if args else (f"Remote exception: {type_name}",))
         self.remote_type = f"{type_module}.{type_name}"
         self.remote_traceback = traceback
 
-    def __str__(self):
+    def __str__(self) -> str:
         base_msg = super().__str__()
         return (
             f"[Remote {self.remote_type}] {base_msg}\n\nRemote traceback:\n{self.remote_traceback}"
