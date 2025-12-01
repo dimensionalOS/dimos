@@ -132,9 +132,10 @@ def skill(
     reducer: Annotated[
         Reducer,
         Doc(
-            """Aggregation strategy for *passive* streams when multiple values are emitted.
+            """Aggregation strategy for streaming skills when multiple values are emitted.
 
-            Only relevant when `stream=Stream.passive`.
+            Applies to both `stream=Stream.passive` and `stream=Stream.call_agent`.
+            Has no effect when `stream=Stream.none`.
             """
         ),
     ] = Reducer.latest,
@@ -222,11 +223,11 @@ def skill(
 
         >>> class MonitorSkills(Module):
         ...     @skill(stream=Stream.call_agent, ret=Return.call_agent)
-        ...     def monitor_task(self, count: int) -> str:
+        ...     def monitor_task(self, count: int):
         ...         '''Monitor a long-running operation.'''
         ...         for i in range(count):
         ...             yield f"Progress: {i+1}/{count}"
-        ...         return "Task completed"
+        ...         yield "Task completed"
 
         Passive skill with reducer aggregation:
 
@@ -236,11 +237,11 @@ def skill(
         ...             yield f"frame_{i}"
         ...
         ...     @skill(stream=Stream.passive, reducer=Reducer.latest)
-        ...     def stream_camera(self) -> str:
+        ...     def stream_camera(self):
         ...         '''Stream camera frames in background.'''
         ...         for frame in self._get_frames():
         ...             yield frame
-        ...         return "Camera stopped"
+        ...         yield "Camera stopped"
         ...
         ...     @skill(ret=Return.call_agent)  # Active companion keeps loop alive
         ...     def navigate_to(self, location: str) -> str:
@@ -270,16 +271,9 @@ def skill(
         - Methods must be on subclasses of Module
         - Parameters must be JSON-serializable for schema generation
 
-        **Passive Skill Warning:**
+        **Passive Skill Warning:** When using `stream=Stream.passive`:
 
-        When using `stream=Stream.passive`:
-
-        - `ret` is forced to `Return.passive` automatically
-        - Passive skills NEVER wake the agent (except on errors)
-        - Data is only delivered when an active skill keeps the loop running
         - If only passive skills are running, the loop exits and data from passive skills is lost
-        - So, pair passive skills with an active companion skill
-
         See `Stream.passive` docstring for full semantics.
 
         **Message Flow:**
@@ -290,11 +284,8 @@ def skill(
                → [Streaming (publish MsgType.stream)]*
                → Completed (publish MsgType.ret) OR Error (publish MsgType.error)
 
-        **RPC Discovery:**
-
-        This decorator automatically makes skills discoverable
-        via the RPC system without requiring a separate `@rpc` decorator.
-        Skills can be queried by agents through the SkillCoordinator.
+        **Generator skills:** Use `yield` (not `return`) for your final message.
+        Only the last `yield` becomes `MsgType.ret`.
 
         **Best Practices:**
 
