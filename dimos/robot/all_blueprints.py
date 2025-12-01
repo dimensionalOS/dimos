@@ -22,6 +22,8 @@ all_blueprints = {
     "unitree-go2-jpegshm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpegshm",
     "unitree-go2-jpeglcm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpeglcm",
     "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
+    "unitree-go2-agentic-ollama": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_ollama",
+    "unitree-go2-agentic-huggingface": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic_huggingface",
     "unitree-g1": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard",
     "unitree-g1-bt-nav": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:standard_bt_nav",
     "unitree-g1-basic": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:basic_ros",
