@@ -4,7 +4,11 @@ on:
     branches:
       - main
       - dev
+    paths-ignore:
+      - '**.md'
   pull_request:
+    paths-ignore:
+      - '**.md'
 
 permissions:
   contents: read
