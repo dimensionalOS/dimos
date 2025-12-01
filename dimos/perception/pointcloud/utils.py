@@ -885,15 +885,15 @@ def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2):
 
 
 def visualize_pcd(
-    pcd: o3d.geometry.PointCloud, 
+    pcd: o3d.geometry.PointCloud,
     window_name: str = "Point Cloud Visualization",
     point_size: float = 1.0,
     show_coordinate_frame: bool = True,
-    coordinate_frame_size: float = 0.1
+    coordinate_frame_size: float = 0.1,
 ) -> None:
     """
     Visualize an Open3D point cloud using Open3D's visualization window.
-    
+
     Args:
         pcd: Open3D point cloud to visualize
         window_name: Name of the visualization window
@@ -904,21 +904,21 @@ def visualize_pcd(
     if pcd is None:
         print("Warning: Point cloud is None, nothing to visualize")
         return
-    
+
     if len(np.asarray(pcd.points)) == 0:
         print("Warning: Point cloud is empty, nothing to visualize")
         return
-    
+
     # Create list of geometries to visualize
     geometries = [pcd]
-    
+
     # Add coordinate frame if requested
     if show_coordinate_frame:
         coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
             size=coordinate_frame_size
         )
         geometries.append(coordinate_frame)
-    
+
     # Set up visualization options
     vis_options = {
         "window_name": window_name,
@@ -926,33 +926,30 @@ def visualize_pcd(
         "height": 720,
         "point_show_normal": False,
     }
-    
+
     print(f"Visualizing point cloud with {len(np.asarray(pcd.points))} points")
-    
+
     try:
         # Create visualizer
         vis = o3d.visualization.Visualizer()
         vis.create_window(window_name=window_name, width=1280, height=720)
-        
+
         # Add geometries
         for geom in geometries:
             vis.add_geometry(geom)
-        
+
         # Set render options
         render_option = vis.get_render_option()
         render_option.point_size = point_size
-        
+
         # Run visualization
         vis.run()
         vis.destroy_window()
-        
+
     except Exception as e:
         print(f"Failed to create interactive visualization: {e}")
         print("Falling back to simple visualization...")
         # Fallback to simple visualization
         o3d.visualization.draw_geometries(
-            geometries,
-            window_name=window_name,
-            width=1280, 
-            height=720
+            geometries, window_name=window_name, width=1280, height=720
         )
