@@ -93,7 +93,7 @@ dependencies = [
     # Perception Dependencies
     "ultralytics>=8.3.203,<9",
     "filterpy>=1.4.5,<2",
-    "scipy>=1.16.2,<2",
+    "scipy>=1.15.1,<2",
     "scikit-learn>=1.7.2,<2",
     "Pillow",
     "clip @ git+https://github.com/openai/CLIP.git",
