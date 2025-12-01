@@ -75,6 +75,86 @@ class ModuleConfig:
 
 
 class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
+    """Base class for distributed modules in DimOS.
+
+    ModuleBase provides core infrastructure for building distributed, communicating modules.
+    It integrates RPC communication, stream management, skill hosting, and lifecycle
+    management. For Dask cluster deployment, use `DaskModule` (aliased as `Module`), which
+    extends ModuleBase with Dask actor integration and distributed stream handling.
+
+    Inherits from `Configurable[ModuleConfig]`, `SkillContainer`, and `Resource` to provide
+    configuration management, AI-agent-callable skill hosting, and lifecycle management.
+
+    Core responsibilities:
+
+    - Lifecycle management: Initialize, start, and stop module resources
+    - RPC infrastructure: Expose methods for remote procedure calls via @rpc decorator
+    - Stream discovery: Expose In/Out streams for blueprint auto-wiring
+    - Skill hosting (via `SkillContainer`): Methods decorated with `@skill` are callable by AI agents
+    - Serialization: Support pickling for distributed deployment across Dask workers
+
+    Attributes:
+        _rpc: RPC transport instance for remote method calls.
+        _tf: Transform framework instance (lazy-initialized).
+        _loop: Event loop for async operations.
+        _loop_thread: Thread hosting the event loop (if created).
+        _disposables: Container for subscription cleanup.
+        _bound_rpc_calls: Bound external RPC methods.
+        rpc_calls: Declared RPC dependencies (subclass-defined).
+        default_config: Default configuration class (ModuleConfig or subclass).
+
+    Examples:
+        Create a custom module by subclassing `Module`:
+
+        >>> from dimos.core.module import Module
+        >>> from dimos.protocol.skill.skill import skill
+        >>> from dimos.msgs.sensor_msgs import Image
+        >>> from dimos.core.stream import In, Out
+        >>>
+        >>> class MyModule(Module):
+        ...     color_image: In[Image] = None
+        ...     processed: Out[Image] = None
+        ...     rpc_calls = ["NavigationInterface.set_goal"]
+        ...
+        ...     def __init__(self, threshold: float = 0.5, **kwargs):
+        ...         super().__init__(**kwargs)  # MUST call parent __init__
+        ...         self.threshold = threshold
+        ...
+        ...     def start(self):
+        ...         super().start()
+        ...         self.color_image.subscribe(self._process_image)
+        ...
+        ...     def _process_image(self, img: Image):
+        ...         self.processed.publish(img)
+        ...
+        ...     @skill()
+        ...     def get_status(self) -> str:
+        ...         return f"Processing at threshold {self.threshold}"
+        ...
+        ...     def stop(self):
+        ...         super().stop()  # MUST call parent stop
+
+        Deploy using blueprints:
+
+        >>> from dimos.core.blueprints import autoconnect
+        >>> blueprint = autoconnect(MyModule.blueprint(threshold=0.8))
+        >>> coordinator = blueprint.build()
+        >>> # ...do whatever you need to do
+        >>> coordinator.stop()  # to shut down gracefully
+
+    Notes:
+        Most applications use `DaskModule` (available as `Module` alias) rather than
+        `ModuleBase` directly.
+
+        When subclassing:
+
+        - Always call `super().__init__()` in your `__init__`
+        - Always call `super().stop()` in your `stop()`
+        - Use `@rpc` to expose methods for remote invocation
+        - Use `@skill()` to expose methods to AI agents
+        - Declare RPC dependencies in the `rpc_calls` class attribute
+    """
+
     _rpc: RPCSpec | None = None
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None

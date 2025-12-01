@@ -17,11 +17,13 @@ from __future__ import annotations
 import enum
 from typing import (
     TYPE_CHECKING,
+    Annotated,
     Any,
     Generic,
     TypeVar,
 )
 
+from annotated_doc import Doc
 from dask.distributed import Actor
 import reactivex as rx
 from reactivex import operators as ops
@@ -79,15 +81,98 @@ class State(enum.Enum):
     FLOWING = "flowing"  # runtime: data observed
 
 
+# TODO: Would be better to auto-generate the class inheritance diagram -- easy for this to get out of sync
 class Transport(ObservableMixin[T]):
-    # used by local Output
-    def broadcast(self, selfstream: Out[T], value: T) -> None: ...
+    """Abstraction layer for message passing between modules.
+
+    Transport decouples module communication from the underlying protocol (e.g. LCM,
+    SharedMemory, Dask RPC), enabling the same module code to deploy across
+    single-machine dev, robot+laptop test, or distributed cluster environments.
+    Transport selection happens at blueprint configuration time, not in module code.
+
+    Available concrete implementations:
+
+        Class Inheritance:
+            Transport[T]
+            └── PubSubTransport[T] (topic-based publish-subscribe)
+                ├── LCMTransport (network, typed)
+                │   └── JpegLcmTransport
+                ├── pLCMTransport (network, pickled)
+                ├── SHMTransport (local, typed)
+                ├── pSHMTransport (local, pickled)
+                ├── JpegShmTransport (local, JPEG)*
+                └── ZenohTransport (network, distributed)
+
+        * JpegShmTransport extends PubSubTransport directly (not SHMTransport)
+
+        Functional groups:
+            Network-capable: LCM*, pLCM*, JpegLcm*, Zenoh*
+            Local-only:      SHM*, pSHM*, JpegShm*
+
+    Requirements for concrete Transport implementations:
+        - **Serialization**: Must be serializable (via ``__reduce__``) for distributed
+          deployment across process boundaries.
+        - **Lazy Initialization**: Resources (sockets, shared memory, threads)
+          allocated on first broadcast() or subscribe().
+
+    Error handling contract:
+        - Errors in subscriber callbacks must not prevent delivery to other subscribers.
+        - Errors must not propagate to the publisher.
+        - Transport remains operational after subscriber errors.
+
+    Backpressure strategy (via observable()):
+        Uses latest-value semantics optimized for robotics where current sensor
+        state matters more than historical completeness. Slow consumers skip
+        intermediate values; producers are never blocked.
+
+    See also:
+        docs/concepts/transport.md: Guide to the Transport concept.
+    """
+
+    def broadcast(
+        self,
+        selfstream: Annotated[
+            Out[T] | None,
+            Doc(
+                """The originating output stream. Provides routing context
+                and debugging. Implementations may ignore this if not needed."""
+            ),
+        ],
+        value: Annotated[T, Doc("The message to deliver to all subscribers.")],
+    ) -> None:
+        """Deliver a value to all subscribers."""
+        ...
 
     def publish(self, msg: T) -> None:
+        """Broadcast a message without stream context."""
         self.broadcast(None, msg)  # type: ignore[arg-type]
 
     # used by local Input
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...  # type: ignore[valid-type]
+    def subscribe(
+        self,
+        selfstream: Annotated[
+            In[T] | None,
+            Doc(
+                """The subscribing input stream. Provides routing context and debugging.
+                Implementations may ignore this parameter."""
+            ),
+        ],
+        callback: Annotated[
+            Callable[[T], Any],
+            Doc(
+                """Invoked for each received value. Errors in the callback
+                do not affect other subscribers or the publisher."""
+            ),
+        ],
+    ) -> Annotated[
+        Callable[[], None] | None,
+        Doc("Unsubscribe function, or None (implementation-specific)."),
+    ]:
+        """Register a callback to receive broadcasted values.
+
+        Subscriptions persist until explicitly removed or the transport is destroyed.
+        """
+        ...
 
 
 class Stream(Generic[T]):

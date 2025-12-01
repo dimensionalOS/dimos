@@ -75,6 +75,24 @@ class Config(ModuleConfig):
 class ROSNav(
     Module, NavigationInterface, spec.Nav, spec.Global3DMap, spec.Pointcloud, spec.LocalPlanner
 ):
+    """Adapter translating between ROS2 navigation stack and Dimos' navigation interface.
+
+    Connects Dimos to ROS2 (Robot Operating System 2) with dual interfaces:
+    (i) `NavigationInterface` for other `Module`s to call navigation methods via RPC (see the `@rpc`-decorated methods) and
+    (ii) `@skill`-decorated methods for LLM agents.
+
+    Provides goal-based navigation with timeout/cancellation, point cloud streaming,
+    transform broadcasting (map/world/base_link/sensor frames), and thread-safe
+    state management.
+
+    Configuration:
+        `local_pointcloud_freq` (float): Rate at which *local* pointcloud is forwarded to downstream modules (default: 2.0 Hz).
+        `global_pointcloud_freq` (float): Rate at which *global* pointcloud is forwarded to downstream modules (default: 1.0 Hz).
+        `sensor_to_base_link_transform` (Transform): Static transform from sensor frame to
+          base_link. Required for coordinate frame lookups between map and base_link
+          (e.g., `tf.get("map", "base_link")`).
+    """
+
     config: Config
     default_config = Config
 

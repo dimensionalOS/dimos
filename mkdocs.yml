@@ -1,5 +1,8 @@
 site_name: DimOS Documentation
 site_author: Dimensional Team
+
+hooks:
+  - docs/hooks.py
 site_description: The universal framework for AI-native generalist robotics
 repo_name: dimensionalOS/dimos
 repo_url: https://github.com/dimensionalOS/dimos
@@ -64,18 +67,32 @@ markdown_extensions:
   - pymdownx.emoji:
       emoji_index: !!python/name:material.extensions.emoji.twemoji
       emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.snippets:
+      base_path: ['.']
 
 nav:
   - Home: index.md
-  - Quickstart:
-    - quickstart/index.md
-    - Installation: quickstart/installation.md
-    - Basic Usage: quickstart/basic-usage.md
+  - Quickstart: quickstart.md
+  - Tutorials:
+    - tutorials/index.md
+    - Build your first skill: tutorials/skill_basics/tutorial.md
+    - Equip an agent with skills: tutorials/skill_with_agent/tutorial.md
+    - Build a multi-agent RoboButler: tutorials/multi_agent/tutorial.md
+  - Concepts:
+    - concepts/index.md
+    - Modules: concepts/modules.md
+    - Skills: concepts/skills.md
+    - Agent: concepts/agent.md
+    - Transport: concepts/transport.md
+    - Blueprints: concepts/blueprints.md
   - API Reference:
     - api/index.md
+    - Agents: api/agents.md
+    - Skills: api/skills.md
 
 plugins:
   - search
+  - marimo
   - mkdocstrings:
       handlers:
         python:
@@ -101,7 +118,9 @@ plugins:
         Home:
           - index.md: Introduction to DimOS
         Quickstart:
-          - quickstart/*.md
+          - quickstart.md
+        Tutorials:
+          - tutorials/*.md
         Concepts:
           - concepts/*.md
         API Reference:

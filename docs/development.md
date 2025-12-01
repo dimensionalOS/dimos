@@ -205,3 +205,27 @@ mkdocs build
 The output (which includes the various `llm.tx`es) will be in the `site/` directory.
 
 <!-- TODO: Add deployment details later -->
+
+### Embedding Marimo Notebooks
+
+We embed marimo notebooks in the docs by **pre-rendering to HTML** and using an iframe, rather than using [mkdocs-marimo](https://github.com/marimo-team/mkdocs-marimo)'s native embedding.
+
+**Why?** mkdocs-marimo uses Pyodide/WASM to run notebooks in the browser. This only works for [packages available in Pyodide](https://pyodide.org/en/stable/usage/packages-in-pyodide.html) or pure Python wheels. Getting custom packages like `dimos` to work appears non-trivial—see [marimo#5488](https://github.com/marimo-team/marimo/issues/5488) and [marimo#5535](https://github.com/marimo-team/marimo/issues/5535). Pre-rendering sidesteps these complications.
+
+**How it works:**
+
+1. `docs/hooks.py` registers an mkdocs `on_pre_build` hook
+2. The hook runs `marimo export html` on each notebook listed in `MARIMO_NOTEBOOKS`
+3. The markdown file embeds the rendered HTML via iframe
+
+**Adding a new notebook:**
+
+1. Add an entry to `MARIMO_NOTEBOOKS` in `docs/hooks.py`
+2. Create a markdown file that embeds the output:
+
+   ```html
+   <!-- 85dvh (not 100dvh) leaves room for MkDocs header/nav -->
+   <iframe src="./notebook_rendered.html" width="100%" height="800px" frameborder="0" style="height: clamp(600px, 85dvh, 1200px); min-width: 50rem;"></iframe>
+   ```
+
+3. The `height="800px"` attribute is a fallback; the inline style uses `clamp()` with `dvh` for responsive sizing

@@ -12,6 +12,57 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Declarative module composition and automatic connection wiring.
+
+Instead of manually connecting modules, define blueprints that specify each module's
+data dependencies (`In[T]`, `Out[T]` streams) and RPC method requirements. The blueprint
+system automatically wires streams, selects transports, and links RPC methods between
+modules, when building the blueprint.
+
+Core components
+---------------
+`ModuleBlueprint`
+    Immutable specification for instantiating a single module with its stream
+    connections. Created via `Module.blueprint()`.
+
+`ModuleBlueprintSet`
+    Container for multiple blueprints with builder methods for configuration:
+    `transports()`, `global_config()`, `remappings()`, and `build()`.
+
+`autoconnect()`
+    Combine multiple `ModuleBlueprintSet` instances into one composed system.
+    Deduplicates blueprints, merging configuration with last-wins semantics.
+
+Basic usage
+-----------
+Streams match by name and type. Use `.remappings()` when names differ:
+
+    blueprint = autoconnect(
+        CameraModule.blueprint(),
+        ProcessorModule.blueprint()
+    ).remappings([
+        (CameraModule, "color_image", "rgb"),
+        (ProcessorModule, "rgb_input", "rgb"),
+    ])
+    coordinator = blueprint.build()
+    coordinator.loop()  # Run until interrupted
+
+For detailed explanation of connection matching, composition patterns, transport
+selection, and RPC wiring, see `/docs/concepts/blueprints.md`.
+
+See also
+--------
+`dimos.core.module`
+    Module base class with `In[T]`/`Out[T]` stream declarations.
+
+`dimos.core.module_coordinator`
+    Runtime manager for deployed modules. Returned by `ModuleBlueprintSet.build()`.
+
+`dimos.core.transport`
+    Transport implementations (`LCMTransport`, `pLCMTransport`) for inter-module
+    communication.
+"""
+
 from abc import ABC
 from collections import defaultdict
 from collections.abc import Callable, Mapping
@@ -21,7 +72,9 @@ import inspect
 import operator
 import sys
 from types import MappingProxyType
-from typing import Any, Literal, get_args, get_origin
+from typing import Annotated, Any, Literal, get_args, get_origin
+
+from annotated_doc import Doc
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
@@ -40,10 +93,36 @@ class ModuleConnection:
 
 @dataclass(frozen=True)
 class ModuleBlueprint:
-    module: type[Module]
-    connections: tuple[ModuleConnection, ...]
-    args: tuple[Any]
-    kwargs: dict[str, Any]
+    """Declarative specification for instantiating and wiring a module.
+
+    A ModuleBlueprint captures everything needed to instantiate and connect a module
+    in a distributed system without actually creating the module instance. This separation
+    enables composition, configuration, and deployment to be handled independently.
+
+    Blueprints are immutable and serve as the specification layer between
+    high-level system design and runtime deployment. They are typically created using
+    `Module.blueprint()`, combined into `ModuleBlueprintSet` containers via `autoconnect()`,
+    and deployed by `ModuleCoordinator.build()`.
+    """
+
+    module: Annotated[
+        type[Module],
+        Doc(
+            "The module class to instantiate. This is the constructor, not an instance, allowing late binding during deployment."
+        ),
+    ]
+    connections: Annotated[
+        tuple[ModuleConnection, ...],
+        Doc(
+            "Typed stream connections extracted from the module's type annotations. These specify how this module's streams should be wired to other modules during deployment."
+        ),
+    ]
+    args: Annotated[
+        tuple[Any], Doc("Positional arguments to pass to the module's `__init__` method.")
+    ]
+    kwargs: Annotated[
+        dict[str, Any], Doc("Keyword arguments to pass to the module's `__init__` method.")
+    ]
 
 
 @dataclass(frozen=True)
@@ -59,7 +138,26 @@ class ModuleBlueprintSet:
     )
     requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
 
-    def transports(self, transports: dict[tuple[str, type], Any]) -> "ModuleBlueprintSet":
+    def transports(
+        self,
+        transports: Annotated[
+            dict[tuple[str, type], Any],
+            Doc(
+                """Dictionary mapping (connection_name, data_type) to transport instances.
+                Both the connection name and data type must match for the override to apply."""
+            ),
+        ],
+    ) -> Annotated[
+        "ModuleBlueprintSet", Doc("New ModuleBlueprintSet with merged transport overrides.")
+    ]:
+        """Register explicit transport overrides for specific connections.
+
+        By default, dimos auto-selects transports based on whether the data type
+        has an `lcm_encode` method. Use this to override those defaults when you need:
+        - Shared memory (SHM) transports for high-bandwidth data like images
+        - Custom topic names
+        - Specific transport implementations for performance or compatibility
+        """
         return ModuleBlueprintSet(
             blueprints=self.blueprints,
             transport_map=MappingProxyType({**self.transport_map, **transports}),
@@ -68,7 +166,24 @@ class ModuleBlueprintSet:
             requirement_checks=self.requirement_checks,
         )
 
-    def global_config(self, **kwargs: Any) -> "ModuleBlueprintSet":
+    def global_config(
+        self,
+        **kwargs: Annotated[
+            Any,
+            Doc(
+                """Key-value pairs to override in GlobalConfig (e.g., n_dask_workers, log_level).
+                Values are validated during build()."""
+            ),
+        ],
+    ) -> Annotated[
+        "ModuleBlueprintSet", Doc("New ModuleBlueprintSet with merged configuration overrides.")
+    ]:
+        """Override GlobalConfig parameters for modules in this blueprint set.
+
+        These overrides take precedence over configuration from .env files or
+        environment variables. Useful for deployment-specific settings, debugging,
+        or testing without changing global configuration.
+        """
         return ModuleBlueprintSet(
             blueprints=self.blueprints,
             transport_map=self.transport_map,
@@ -77,7 +192,64 @@ class ModuleBlueprintSet:
             requirement_checks=self.requirement_checks,
         )
 
-    def remappings(self, remappings: list[tuple[type[Module], str, str]]) -> "ModuleBlueprintSet":
+    def remappings(
+        self,
+        remappings: Annotated[
+            list[tuple[type[Module], str, str]],
+            Doc(
+                """List of (module_class, old_name, new_name) tuples specifying
+                that the module's connection 'old_name' should be treated as 'new_name'."""
+            ),
+        ],
+    ) -> Annotated[
+        "ModuleBlueprintSet", Doc("New ModuleBlueprintSet with updated connection remappings.")
+    ]:
+        """Rename module connections to enable interoperability between modules.
+
+        Allows modules with different naming conventions to communicate. Remapping
+        is transparent to modules—they use their original names internally. Remapped
+        names are used only for connection matching (connections match if remapped
+        names and types both match) and topic generation.
+
+        Examples:
+            Connect modules with different naming conventions:
+
+            >>> class CameraModule(Module):
+            ...     color_image: Out[str] = None
+            >>> class ProcessorModule(Module):
+            ...     rgb_input: In[str] = None
+            >>>
+            >>> blueprint = autoconnect(
+            ...     CameraModule.blueprint(),
+            ...     ProcessorModule.blueprint()
+            ... )
+            >>> blueprint = blueprint.remappings([
+            ...     (CameraModule, "color_image", "rgb_image"),
+            ...     (ProcessorModule, "rgb_input", "rgb_image")
+            ... ])
+            >>> # Now both connections use "rgb_image" and will be connected
+
+            Broadcast to multiple consumers:
+
+            >>> class SensorModule(Module):
+            ...     output: Out[str] = None
+            >>> class ProcessorA(Module):
+            ...     input: In[str] = None
+            >>> class ProcessorB(Module):
+            ...     input_stream: In[str] = None
+            >>>
+            >>> blueprint = autoconnect(
+            ...     SensorModule.blueprint(),
+            ...     ProcessorA.blueprint(),
+            ...     ProcessorB.blueprint()
+            ... )
+            >>> blueprint = blueprint.remappings([
+            ...     (SensorModule, "output", "shared_data"),
+            ...     (ProcessorA, "input", "shared_data"),
+            ...     (ProcessorB, "input_stream", "shared_data")
+            ... ])
+            >>> # All three connections now share the same transport
+        """
         remappings_dict = dict(self.remapping_map)
         for module, old, new in remappings:
             remappings_dict[(module, old)] = new
@@ -99,7 +271,21 @@ class ModuleBlueprintSet:
             requirement_checks=self.requirement_checks + tuple(checks),
         )
 
-    def _get_transport_for(self, name: str, type: type) -> Any:
+    def _get_transport_for(
+        self,
+        name: Annotated[str, Doc("Connection name after remapping.")],
+        type: Annotated[type, Doc("Data type from the module's type annotations.")],
+    ) -> Annotated[Any, Doc("Transport instance for the connection.")]:
+        """Determine and create the appropriate transport for a connection.
+
+        Selection priority:
+        1. Explicit transport override in transport_map
+        2. Auto-select based on type: LCMTransport if type has lcm_encode, else pLCMTransport
+        3. Topic naming: /{name} if unique, else random ID
+
+        Connections with identical (remapped_name, type) pairs share the same
+        transport instance, enabling pub/sub communication.
+        """
         transport = self.transport_map.get((name, type), None)
         if transport:
             return transport
@@ -184,7 +370,27 @@ class ModuleBlueprintSet:
                 kwargs["global_config"] = global_config
             module_coordinator.deploy(blueprint.module, *blueprint.args, **kwargs)
 
-    def _connect_transports(self, module_coordinator: ModuleCoordinator) -> None:
+    def _connect_transports(
+        self,
+        module_coordinator: Annotated[
+            ModuleCoordinator,
+            Doc(
+                """Coordinator containing deployed module instances.
+                All modules in self.blueprints must have been deployed first."""
+            ),
+        ],
+    ) -> None:
+        """Establish transport connections between deployed modules.
+
+        Processes all stream connections, applies name remappings, groups connections
+        by (remapped_name, type), and assigns the same transport instance to all
+        connections within each group.
+
+        Key design decision: Connections with matching (remapped_name, type) share
+        the same transport instance, enabling pub/sub communication. Type mismatches
+        prevent sharing even with matching names, preserving type safety. Remapping
+        is transparent—modules use their original connection names internally.
+        """
         # Gather all the In/Out connections with remapping applied.
         connections = defaultdict(list)
         # Track original name -> remapped name for each module
@@ -206,7 +412,23 @@ class ModuleBlueprintSet:
                 instance = module_coordinator.get_instance(module)
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
 
-    def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
+    def _connect_rpc_methods(
+        self,
+        module_coordinator: Annotated[
+            ModuleCoordinator,
+            Doc("Coordinator containing deployed module instances with initialized RPC servers."),
+        ],
+    ) -> None:
+        """Wire up inter-module RPC method calls.
+
+        Processes two independent wiring mechanisms:
+        - Implicit: Calls `set_ClassName_method()` setters with bound methods
+        - Explicit: Populates `rpc_calls` requests via `set_rpc_method()`
+
+        Interface-based requests (e.g., `NavigationInterface.get_state`) resolve to a
+        single implementation or fail at build time if ambiguous. Missing methods are
+        skipped (error raised at call time via `get_rpc_calls()`).
+        """
         # Gather all RPC methods.
         rpc_methods = {}
         rpc_methods_dot = {}
@@ -268,7 +490,60 @@ class ModuleBlueprintSet:
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
-    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+    def build(
+        self,
+        global_config: Annotated[
+            GlobalConfig | None,
+            Doc(
+                """Base configuration for the system. Defaults to GlobalConfig().
+                Blueprint overrides take precedence."""
+            ),
+        ] = None,
+    ) -> Annotated[
+        ModuleCoordinator,
+        Doc(
+            """Fully initialized ModuleCoordinator. Call coordinator.loop() to run
+            or coordinator.stop() to shut down cleanly."""
+        ),
+    ]:
+        """Transform this blueprint specification into a running distributed system.
+
+        Terminal operation in the blueprint builder pattern. Creates a fully initialized
+        ModuleCoordinator with all modules deployed, connected, and ready to run.
+
+        Build process:
+        1. Merge global_config with blueprint-level overrides (overrides take precedence)
+        2. Create and start ModuleCoordinator with Dask cluster
+        3. Deploy all modules
+        4. Connect stream transports (In/Out with matching remapped names and types)
+        5. Link RPC methods between modules
+        6. Start all deployed modules
+
+        Raises:
+            ValueError: If an RPC method request is ambiguous (multiple modules
+              implement the same interface method). Use concrete class name instead.
+
+        Examples:
+            >>> class CameraModule(Module):
+            ...     color_image: Out[str] = None
+            >>> class ProcessorModule(Module):
+            ...     image_in: In[str] = None
+            >>>
+            >>> blueprint = (
+            ...     autoconnect(
+            ...         CameraModule.blueprint(),
+            ...         ProcessorModule.blueprint()
+            ...     )
+            ...     .remappings([
+            ...         (CameraModule, "color_image", "rgb_input"),
+            ...         (ProcessorModule, "image_in", "rgb_input"),
+            ...     ])
+            ...     .global_config(n_dask_workers=2)
+            ... )
+            >>> coordinator = blueprint.build()
+            >>> # ...do whatever you want to do with the coordinator
+            >>> coordinator.stop()
+        """
         if global_config is None:
             global_config = GlobalConfig()
         global_config = global_config.model_copy(update=self.global_config_overrides)
