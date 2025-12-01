@@ -424,7 +424,7 @@ class Agent(AgentSpec):
     def clear_history(self) -> None:
         self._history.clear()
 
-    def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
+    def append_history(self, *msgs: AIMessage | HumanMessage) -> None:
         for msg in msgs:
             self.publish(msg)  # type: ignore[arg-type]
 
@@ -557,7 +557,7 @@ class Agent(AgentSpec):
 
         self.state_messages = []
         if first_query:
-            self.append_history(HumanMessage(first_query))  # type: ignore[arg-type]
+            self.append_history(HumanMessage(first_query))
 
         def _get_state() -> str:
             # TODO: FIX THIS EXTREME HACK
@@ -591,7 +591,7 @@ class Agent(AgentSpec):
 
                 msg = self._llm.invoke(messages)
 
-                self.append_history(msg)  # type: ignore[arg-type]
+                self.append_history(msg)
 
                 logger.info(f"Agent response: {msg.content}")
 
