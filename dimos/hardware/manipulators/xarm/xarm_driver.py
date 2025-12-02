@@ -830,16 +830,28 @@ class XArmDriver(
                     # Check if data is nested (list of lists) or flat
                     if isinstance(data[0], (list, tuple)):
                         # Nested: [[positions], [velocities], [efforts]]
+                        # NOTE: SDK may return extra joints (e.g., gripper) - truncate to num_joints
                         position = (
-                            list(data[0]) if len(data) > 0 else [0.0] * self.config.num_joints
+                            list(data[0])[: self.config.num_joints]
+                            if len(data) > 0
+                            else [0.0] * self.config.num_joints
                         )
-                        velocity = list(data[1]) if len(data) > 1 else [0.0] * len(position)
-                        effort = list(data[2]) if len(data) > 2 else [0.0] * len(position)
+                        velocity = (
+                            list(data[1])[: self.config.num_joints]
+                            if len(data) > 1
+                            else [0.0] * self.config.num_joints
+                        )
+                        effort = (
+                            list(data[2])[: self.config.num_joints]
+                            if len(data) > 2
+                            else [0.0] * self.config.num_joints
+                        )
                     else:
                         # Flat: just positions
-                        position = list(data)
-                        velocity = [0.0] * len(position)
-                        effort = [0.0] * len(position)
+                        # NOTE: SDK may return extra joints (e.g., gripper) - truncate to num_joints
+                        position = list(data)[: self.config.num_joints]
+                        velocity = [0.0] * self.config.num_joints
+                        effort = [0.0] * self.config.num_joints
                 else:
                     # Older firmware: only get_servo_angle available
                     code, position = self.arm.get_servo_angle(is_radian=self.config.is_radian)
@@ -847,16 +859,20 @@ class XArmDriver(
                         logger.warning(f"get_servo_angle failed with code: {code}")
                         continue
 
+                    # NOTE: SDK may return extra joints (e.g., gripper) - truncate to num_joints
+                    position = position[: self.config.num_joints]
+
                     # Calculate velocity from position difference
-                    velocity = [0.0] * len(position)
+                    velocity = [0.0] * self.config.num_joints
                     if initialized:
                         dt = curr_time - prev_time
                         if dt > 0:
                             velocity = [
-                                (position[i] - prev_position[i]) / dt for i in range(len(position))
+                                (position[i] - prev_position[i]) / dt
+                                for i in range(self.config.num_joints)
                             ]
 
-                    effort = [0.0] * len(position)
+                    effort = [0.0] * self.config.num_joints
 
                 # Update joint state message
                 self._joint_state_msg.ts = curr_time
