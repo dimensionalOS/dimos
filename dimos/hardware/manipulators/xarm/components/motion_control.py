@@ -38,7 +38,7 @@ class MotionControlComponent:
     - self.arm: XArmAPI instance
     - self.config: XArmDriverConfig instance
     - self._joint_cmd_lock: threading.Lock
-    - self._joint_cmd_: Optional[List[float]]
+    - self._joint_cmd_: Optional[list[float]]
     """
 
     @rpc
