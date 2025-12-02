@@ -66,10 +66,12 @@ all_modules = {
     "osm_skill": "dimos.agents2.skills.osm",
     "ros_nav": "dimos.navigation.rosnav",
     "spatial_memory": "dimos.perception.spatial_perception",
+    "speak_skill": "dimos.agents2.skills.speak_skill",
     "unitree_skills": "dimos.robot.unitree_webrtc.unitree_skill_container",
     "utilization": "dimos.utils.monitoring",
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
     "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
+    "web_input": "dimos.agents2.cli.web",
 }
 
 
