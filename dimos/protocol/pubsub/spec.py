@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -87,19 +88,56 @@ class PubSub(ABC, Generic[TopicT, MsgT]):
             self.unsubscribe(topic, q.put_nowait)
 
 
-class PubSubEncoderMixin(PubSub, Generic[TopicT, MsgT]):
-    """Mixin that encodes messages before publishing. and decodes them after receiving."""
+class PubSubEncoderMixin(Generic[TopicT, MsgT]):
+    """Mixin that encodes messages before publishing and decodes them after receiving.
+
+    Usage: Just specify encoder and decoder as class attributes:
+
+    class MyPubSubWithJSON(PubSubEncoderMixin, MyPubSub):
+        encoder = lambda msg: json.dumps(msg).encode('utf-8')
+        decoder = lambda data: json.loads(data.decode('utf-8'))
+    """
 
     encoder: Callable[[MsgT], bytes]
     decoder: Callable[[bytes], MsgT]
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Track callback mappings for proper unsubscribe
+        self._encoder_callback_map: dict = {}
+
     def publish(self, topic: TopicT, message: MsgT) -> None:
+        """Encode the message and publish it."""
         encoded_message = self.encoder(message)
-        super().publish(topic, encoded_message)
+        super().publish(topic, encoded_message)  # type: ignore[misc]
 
     def subscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
-        def _cb(msg: bytes):
-            decoded_message = self.decoder(msg)
+        """Subscribe with automatic decoding."""
+
+        def wrapper_cb(encoded_data: bytes):
+            decoded_message = self.decoder(encoded_data)
             callback(decoded_message)
 
-        super().subscribe(topic, _cb)
+        # Store the wrapper callback for proper unsubscribe
+        callback_key = (topic, id(callback))
+        self._encoder_callback_map[callback_key] = wrapper_cb
+
+        super().subscribe(topic, wrapper_cb)  # type: ignore[misc]
+
+    def unsubscribe(self, topic: TopicT, callback: Callable[[MsgT], None]) -> None:
+        """Unsubscribe a callback."""
+        callback_key = (topic, id(callback))
+        if callback_key in self._encoder_callback_map:
+            wrapper_cb = self._encoder_callback_map[callback_key]
+            super().unsubscribe(topic, wrapper_cb)  # type: ignore[misc]
+            del self._encoder_callback_map[callback_key]
+
+
+class JSONEncoder(PubSubEncoderMixin[str, Any]):
+    @staticmethod
+    def encoder(msg: Any) -> bytes:
+        return json.dumps(msg).encode("utf-8")
+
+    @staticmethod
+    def decoder(data: bytes) -> Any:
+        return json.loads(data.decode("utf-8"))
