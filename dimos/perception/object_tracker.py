@@ -307,8 +307,8 @@ class ObjectTracking(Module):
         self._latest_detection2d = empty_2d
         self._latest_detection3d = empty_3d
         self._detection_event.clear()
-        self.detection2darray.publish(empty_2d)  # type: ignore[no-untyped-call]
-        self.detection3darray.publish(empty_3d)  # type: ignore[no-untyped-call]
+        self.detection2darray.publish(empty_2d)
+        self.detection3darray.publish(empty_3d)
 
     @rpc
     def stop_track(self) -> bool:

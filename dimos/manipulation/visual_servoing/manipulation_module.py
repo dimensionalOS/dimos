@@ -904,7 +904,7 @@ class ManipulationModule(Module):
         try:
             viz_rgb = cv2.cvtColor(viz_image, cv2.COLOR_BGR2RGB)
             msg = Image.from_numpy(viz_rgb)
-            self.viz_image.publish(msg)  # type: ignore[no-untyped-call]
+            self.viz_image.publish(msg)
         except Exception as e:
             logger.error(f"Error publishing visualization: {e}")
 

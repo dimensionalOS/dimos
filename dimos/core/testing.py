@@ -75,9 +75,9 @@ class MockRobotClient(Module):
                     return
                 print(odom)
                 odom.pubtime = time.perf_counter()
-                self.odometry.publish(odom)  # type: ignore[no-untyped-call]
+                self.odometry.publish(odom)
 
                 lidarmsg = next(lidariter)
                 lidarmsg.pubtime = time.perf_counter()  # type: ignore[union-attr]
-                self.lidar.publish(lidarmsg)  # type: ignore[no-untyped-call]
+                self.lidar.publish(lidarmsg)
                 time.sleep(0.1)

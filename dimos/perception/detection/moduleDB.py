@@ -174,7 +174,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         def scene_thread() -> None:
             while True:
                 scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)  # type: ignore[no-untyped-call]
+                self.scene_update.publish(scene_update)
                 time.sleep(1.0)
 
         threading.Thread(target=scene_thread, daemon=True).start()
@@ -319,7 +319,7 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info_stream, **kwargs)  # type: ignore[attr-defined]
 
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
