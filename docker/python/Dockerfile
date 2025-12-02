@@ -39,6 +39,7 @@ RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
 
 # Install UV for fast Python package management
 ENV UV_SYSTEM_PYTHON=1
+ENV UV_BREAK_SYSTEM_PACKAGES=1
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:$PATH"
 
