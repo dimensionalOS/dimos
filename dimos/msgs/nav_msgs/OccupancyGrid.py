@@ -423,8 +423,62 @@ class OccupancyGrid(Timestamped):
 
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
 
+    def augment_image_with_robot_pose(self, image_arr: np.ndarray) -> None:
+        """Augment the occupancy grid image with the robot's pose.
+
+        args:
+            image_arr: Numpy array representing the occupancy grid image
+        """
+
+        # robot position
+        robot_grid_pos = self.world_to_grid(self.robot_pose.position)
+        rgx = round(robot_grid_pos.x)
+        rgy = round(robot_grid_pos.y)
+
+        # yaw
+        yaw = self.quat_to_yaw(self.robot_pose.orientation)
+        halfarrow_length = 2  # pixels
+        arrow_dx = int(halfarrow_length * np.cos(yaw))
+        arrow_dy = -int(
+            halfarrow_length * np.sin(yaw)
+        )  # account for poisitive y down in image space
+
+        # draw on image
+        height, width = image_arr.shape[:2]
+        min_dimension = min(height, width)
+
+        robot_radius = max(3, int(min_dimension * 0.015))  # At least 2 pixels
+        arrow_length = max(7, int(min_dimension * 0.035))
+
+        line_thickness = max(1, int(min_dimension * 0.005))
+
+        # robot position marker
+        cv2.circle(image_arr, (rgx, rgy), robot_radius, (0, 255, 0), -1)
+
+        # orientation arrow
+        arrow_dx = int(arrow_length * np.cos(yaw))
+        arrow_dy = -int(arrow_length * np.sin(yaw))  # account for y + down in image space
+
+        cv2.arrowedLine(
+            image_arr,
+            (rgx, rgy),
+            (rgx + arrow_dx, rgy + arrow_dy),
+            (0, 255, 0),
+            line_thickness,
+            tipLength=0.4,
+        )
+
+        return image_arr
+
+    def quat_to_yaw(self, q: Quaternion) -> float:
+        """Convert quaternion to yaw angle in radians."""
+        return np.arctan2(
+            2.0 * (q.w * q.z + q.x * q.y),
+            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+        )
+
     def grid_to_image(
-        self, size: tuple[int, int] = (1024, 1024), flip_vertical: bool = True
+        self, size: tuple[int, int] | None = None, flip_vertical: bool = True
     ) -> Image:
         """Encode the occupancy grid as image."""
         # convert to RGB image:
@@ -447,34 +501,27 @@ class OccupancyGrid(Timestamped):
 
             # obstaceles as red shades
             if np.any(obstacle_mask):
-                # Map from [1..100] to red intensity [255..100]
+                # map cost values 1 - 100 from 255 to 100 (dark to bright red)
                 red_intensity = (255 - (self.grid[obstacle_mask] * 155 // 100)).astype(np.uint8)
                 image_arr[obstacle_mask] = np.stack(
                     [red_intensity, np.zeros_like(red_intensity), np.zeros_like(red_intensity)],
                     axis=1,
                 )
 
+        # add robot pose if available
         if self.robot_pose:
-            # logger.info(f"robot pose ground truth: {self.robot_pose}")
-            robot_grid_pos = self.world_to_grid(self.robot_pose.position)
-            rgx = round(robot_grid_pos.x)
-            rgy = round(robot_grid_pos.y)
-
-            # logger.info(f"robot pixel in grid_to_image: {rgx, rgy}")
-            box_size = 2
-            for dx in range(-box_size, box_size + 1):
-                for dy in range(-box_size, box_size + 1):
-                    x = rgx + dx
-                    y = rgy + dy
-                    if 0 <= x < self.width and 0 <= y < self.height:
-                        image_arr[y, x] = [0, 255, 0]
-
-        # resize
-        image_arr_resized = cv2.resize(image_arr, size, interpolation=cv2.INTER_NEAREST)
+            image_arr = self.augment_image_with_robot_pose(image_arr)
 
         # flip vertically for correct orientation
         if flip_vertical:
-            image_arr_resized = cv2.flip(image_arr_resized, 0)
+            image_arr = cv2.flip(image_arr, 0)
+
+        # keep original aspect ratio if size not specified
+        if size is None:
+            size = (1024, int(1024 * (self.height / self.width)))
+
+        # resize
+        image_arr_resized = cv2.resize(image_arr, size, interpolation=cv2.INTER_NEAREST)
 
         image = Image(
             data=image_arr_resized, format=ImageFormat.RGB, frame_id=self.frame_id, ts=self.ts

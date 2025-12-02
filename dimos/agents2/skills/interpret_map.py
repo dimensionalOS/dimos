@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+import os
 
 import cv2
 
@@ -21,11 +22,12 @@ from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
 from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In, Out
-from dimos.models.qwen.video_query import query_single_frame
+from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.protocol.skill.skill import rpc, skill
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.utils.generic import extract_json_from_llm_response
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.agents2.skills.interpret_map")
@@ -44,6 +46,7 @@ class InterpretMapSkill(SkillModule):
         super().start()
         self._disposables.add(self.local_costmap.subscribe(self._on_local_costmap))
         self._disposables.add(self.lidar.subscribe(self._on_lidar))
+        self.vl_model = QwenVlModel()
 
     @rpc
     def stop(self) -> None:
@@ -85,7 +88,7 @@ class InterpretMapSkill(SkillModule):
 
         image = costmap.grid_to_image(size=(1024, 1024), flip_vertical=True)
 
-        image = image.to_opencv()
+        image = image.to_bgr().to_opencv()
 
         prompt = (
             "Look at this image carefully \n"
@@ -103,8 +106,9 @@ class InterpretMapSkill(SkillModule):
             f"where x,y are the pixel coordinates of the goal position in the image. \n"
         )
 
-        response = query_single_frame(image, prompt)
-        x, y = parse_qwen_points_response(response)
+        response = self.vl_model.query(image, prompt)
+        point = extract_json_from_llm_response(response)
+        x, y = point["point"]
 
         # ensure point is in free space, else choose nearest free space
         if not costmap.is_free_space(x, y):
@@ -115,8 +119,12 @@ class InterpretMapSkill(SkillModule):
             if closest_free_point is not None:
                 x, y = closest_free_point
 
-        if x is not None and y is not None:
-            debug_image_with_identified_point(image, (x, y), filepath="./debug_goal_position.png")
+        if os.environ.get("DEBUG_INTERPRET_MAP_IMAGE"):
+            debug_image_with_identified_point(
+                image,
+                (x, y),
+                filepath=os.environ["DEBUG_INTERPRET_MAP_IMAGE"],
+            )
 
         # get world coordinates from pixel for navigation
         goal_pose = costmap.pixel_to_world(x, y, size=(1024, 1024), flip_vertical=True)
@@ -124,39 +132,12 @@ class InterpretMapSkill(SkillModule):
         return goal_pose
 
 
-def debug_image_with_identified_point(
-    image_frame, point: tuple[int, int], filepath: str = "./debug_goal_position.png"
-) -> None:
+def debug_image_with_identified_point(image_frame, point: tuple[int, int], filepath: str) -> None:
     """Utility to visualize identified points on the image for debugging."""
     debug_image = image_frame.copy()
     x, y = point
     cv2.drawMarker(debug_image, (x, y), (255, 255, 255), cv2.MARKER_CROSS, 15, 2)
     cv2.imwrite(filepath, debug_image)
-
-
-def parse_qwen_points_response(response: str) -> tuple[int, int] | None:
-    """Parse Qwen response to extract robot position.
-
-    Args:
-        response: Qwen response string
-
-    Returns:
-        Tuple of (x, y) pixel coordinates or None if parsing fails
-    """
-    try:
-        start_idx = response.find("{")
-        end_idx = response.rfind("}") + 1
-        if start_idx >= 0 and end_idx > start_idx:
-            json_str = response[start_idx:end_idx]
-            result = json.loads(json_str)
-
-            if "point" in result and len(result["point"]) == 2:
-                x, y = result["point"]
-                return (int(x), int(y))
-    except Exception as e:
-        logger.error(f"Error parsing Qwen response: {e}")
-        logger.error(f"Raw response: {response}")
-    return None
 
 
 interpret_map_skill = InterpretMapSkill.blueprint
