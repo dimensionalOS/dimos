@@ -24,7 +24,7 @@ RUN apt-get install -y \
     portaudio19-dev \
     git \
     mesa-utils \
-    libgl1-mesa-glx \
+    libgl1 \
     libgl1-mesa-dri \
     software-properties-common \
     libxcb1-dev \
