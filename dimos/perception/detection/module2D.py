@@ -82,7 +82,7 @@ class Detection2DModule(Module):
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
         return backpressure(
-            self.image.pure_observable().pipe(  # type: ignore[no-untyped-call]
+            self.image.pure_observable().pipe(
                 sharpness_barrier(self.config.max_freq),
             )
         )
