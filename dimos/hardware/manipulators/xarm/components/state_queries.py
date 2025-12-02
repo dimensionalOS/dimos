@@ -22,6 +22,8 @@ Provides RPC methods for querying robot state including:
 - Firmware version
 """
 
+from typing import Optional
+
 from dimos.core import rpc
 from dimos.msgs.sensor_msgs import JointState, RobotState
 from dimos.utils.logging_config import setup_logger
@@ -172,7 +174,7 @@ class StateQueryComponent:
             return (-1, None)
 
     @rpc
-    def get_servo_angle(self) -> Tuple[int, Optional[List[float]]]:
+    def get_servo_angle(self) -> tuple[int, list[float] | None]:
         """Get joint angles."""
         try:
             code, angles = self.arm.get_servo_angle(is_radian=self.config.is_radian)
@@ -182,7 +184,7 @@ class StateQueryComponent:
             return (-1, None)
 
     @rpc
-    def get_position_aa(self) -> Tuple[int, Optional[List[float]]]:
+    def get_position_aa(self) -> tuple[int, list[float] | None]:
         """Get TCP position in axis-angle format."""
         try:
             code, position = self.arm.get_position_aa(is_radian=self.config.is_radian)
@@ -196,31 +198,31 @@ class StateQueryComponent:
     # =========================================================================
 
     @rpc
-    def get_state(self) -> Tuple[int, Optional[int]]:
+    def get_state(self) -> tuple[int, int | None]:
         """Get robot state (0=ready, 3=pause, 4=stop)."""
         try:
             code, state = self.arm.get_state()
             return (code, state if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_cmdnum(self) -> Tuple[int, Optional[int]]:
+    def get_cmdnum(self) -> tuple[int, int | None]:
         """Get command queue length."""
         try:
             code, cmdnum = self.arm.get_cmdnum()
             return (code, cmdnum if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_err_warn_code(self) -> Tuple[int, Optional[List[int]]]:
+    def get_err_warn_code(self) -> tuple[int, list[int] | None]:
         """Get error and warning codes."""
         try:
             err_warn = [0, 0]
             code = self.arm.get_err_warn_code(err_warn)
             return (code, err_warn if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     # =========================================================================
@@ -228,7 +230,7 @@ class StateQueryComponent:
     # =========================================================================
 
     @rpc
-    def get_ft_sensor_data(self) -> Tuple[int, Optional[List[float]]]:
+    def get_ft_sensor_data(self) -> tuple[int, list[float] | None]:
         """Get force/torque sensor data [fx, fy, fz, tx, ty, tz]."""
         try:
             code, ft_data = self.arm.get_ft_sensor_data()
@@ -238,19 +240,19 @@ class StateQueryComponent:
             return (-1, None)
 
     @rpc
-    def get_ft_sensor_error(self) -> Tuple[int, Optional[int]]:
+    def get_ft_sensor_error(self) -> tuple[int, int | None]:
         """Get FT sensor error code."""
         try:
             code, error = self.arm.get_ft_sensor_error()
             return (code, error if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
 
     @rpc
-    def get_ft_sensor_mode(self) -> Tuple[int, Optional[int]]:
+    def get_ft_sensor_mode(self) -> tuple[int, int | None]:
         """Get FT sensor application mode."""
         try:
             code, mode = self.arm.get_ft_sensor_app_get()
             return (code, mode if code == 0 else None)
-        except Exception as e:
+        except Exception:
             return (-1, None)
