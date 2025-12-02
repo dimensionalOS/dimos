@@ -1021,7 +1021,7 @@ class XArmDriver(
                                     f"(state={self.curr_state}, mode={self.curr_mode})..."
                                 )
                                 self._last_recovery_attempt = current_time
-                                self._try_recover_from_error()
+                                self._attempt_error_recovery()
                                 self._consecutive_failures = 0
                         else:
                             logger.warning(f"Command failed with code: {code}")
