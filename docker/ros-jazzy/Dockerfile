@@ -72,9 +72,6 @@ RUN apt-get update && apt-get install -y \
     ros-${ROS_DISTRO}-slam-toolbox \
     ros-${ROS_DISTRO}-foxglove-bridge \
     python3-rosdep \
-    python3-rosinstall \
-    python3-rosinstall-generator \
-    python3-wstool \
     python3-colcon-common-extensions \
     python3-vcstool \
     build-essential \
