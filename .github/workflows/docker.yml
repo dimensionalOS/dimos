@@ -20,6 +20,7 @@ jobs:
     runs-on: [self-hosted, Linux]
     outputs:
       ros:    ${{ steps.filter.outputs.ros }}
+      ros-jazzy: ${{ steps.filter.outputs.ros-jazzy }}
       python: ${{ steps.filter.outputs.python }}
       dev:    ${{ steps.filter.outputs.dev }}
       tests:  ${{ steps.filter.outputs.tests }}
@@ -42,6 +43,11 @@ jobs:
               - .github/workflows/_docker-build-template.yml
               - .github/workflows/docker.yml
               - docker/ros/**
+
+            ros-jazzy:
+              - .github/workflows/_docker-build-template.yml
+              - .github/workflows/docker.yml
+              - docker/ros-jazzy/**
 
             python:
               - .github/workflows/_docker-build-template.yml
@@ -144,6 +150,46 @@ jobs:
       to-image: ghcr.io/dimensionalos/ros-dev:${{ needs.check-changes.outputs.branch-tag }}
       dockerfile: dev
 
+  # ROS Jazzy chain (Ubuntu 24.04 / Python 3.12)
+  ros-jazzy:
+    needs: [check-changes]
+    if: needs.check-changes.outputs.ros-jazzy == 'true'
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: true
+      from-image: ubuntu:24.04
+      to-image: ghcr.io/dimensionalos/ros-jazzy:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: ros-jazzy
+
+  ros-python-jazzy:
+    needs: [check-changes, ros-jazzy]
+    if: always()
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.outputs.python == 'true' &&
+        needs.check-changes.result != 'error' &&
+        needs.ros-jazzy.result != 'error'
+        }}
+
+      from-image: ghcr.io/dimensionalos/ros-jazzy:${{ needs.ros-jazzy.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/ros-python-jazzy:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: python
+
+  ros-dev-jazzy:
+    needs: [check-changes, ros-python-jazzy]
+    if: always()
+    uses: ./.github/workflows/_docker-build-template.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        (needs.check-changes.outputs.dev == 'true' ||
+         (needs.ros-python-jazzy.result == 'success' && (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.ros-jazzy == 'true')))
+        }}
+      from-image: ghcr.io/dimensionalos/ros-python-jazzy:${{ needs.ros-python-jazzy.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      to-image: ghcr.io/dimensionalos/ros-dev-jazzy:${{ needs.check-changes.outputs.branch-tag }}
+      dockerfile: dev
+
   run-ros-tests:
     needs: [check-changes, ros-dev]
     if: always()
@@ -205,21 +251,21 @@ jobs:
       cmd: "pytest -m lcm"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
-  # Run mypy type checking with ROS types
+  # Run mypy type checking with ROS types (uses Jazzy for Python 3.12)
   run-mypy:
-    needs: [check-changes, ros-dev]
+    needs: [check-changes, ros-dev-jazzy]
     if: always()
     uses: ./.github/workflows/tests.yml
     secrets: inherit
     with:
       should-run: ${{
         needs.check-changes.result == 'success' &&
-        ((needs.ros-dev.result == 'success') ||
-        (needs.ros-dev.result == 'skipped' &&
+        ((needs.ros-dev-jazzy.result == 'success') ||
+        (needs.ros-dev-jazzy.result == 'skipped' &&
         needs.check-changes.outputs.tests == 'true'))
         }}
-      cmd: "MYPYPATH=/opt/ros/humble/lib/python3.10/site-packages mypy dimos"
-      dev-image: ros-dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros == 'true') && needs.ros-dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+      cmd: "MYPYPATH=/opt/ros/jazzy/lib/python3.12/site-packages mypy dimos"
+      dev-image: ros-dev-jazzy:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true' || needs.check-changes.outputs.ros-jazzy == 'true') && needs.ros-dev-jazzy.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
   # Run module tests directly to avoid pytest forking issues
   # run-module-tests:
