@@ -30,7 +30,7 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import CameraModule, camera_module
+from dimos.hardware.camera.module import camera_module
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -42,7 +42,7 @@ from dimos.msgs.geometry_msgs import (
 from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
-from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.bt_navigator.navigator import (
     behavior_tree_navigator,
 )
@@ -53,7 +53,7 @@ from dimos.navigation.global_planner import astar_planner
 from dimos.navigation.local_planner.holonomic_local_planner import (
     holonomic_local_planner,
 )
-from dimos.navigation.rosnav import navigation_module
+from dimos.navigation.rosnav import ros_nav
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
@@ -61,19 +61,16 @@ from dimos.perception.detection.person_tracker import PersonTracker, person_trac
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
+from dimos.robot.unitree.connection.g1 import g1_connection
+from dimos.robot.unitree.connection.g1sim import g1_sim_connection
 from dimos.robot.unitree_webrtc.keyboard_teleop import keyboard_teleop
 from dimos.robot.unitree_webrtc.type.map import mapper
-from dimos.robot.unitree_webrtc.unitree_g1 import g1_connection
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
-# Basic configuration with navigation and visualization
 _basic_no_nav = (
     autoconnect(
-        # Core connection module for G1
-        g1_connection(),
-        # Camera module
         camera_module(
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
@@ -99,11 +96,6 @@ _basic_no_nav = (
         foxglove_bridge(),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_g1")
-    .remappings(
-        [
-            (CameraModule, "image", "color_image"),
-        ]
-    )
     .transports(
         {
             # G1 uses Twist for movement commands
@@ -131,11 +123,13 @@ _basic_no_nav = (
 
 basic_ros = autoconnect(
     _basic_no_nav,
-    navigation_module(),
+    g1_connection(),
+    ros_nav(),
 )
 
-basic_bt_nav = autoconnect(
+basic_sim = autoconnect(
     _basic_no_nav,
+    g1_sim_connection(),
     behavior_tree_navigator(),
 )
 
@@ -150,8 +144,8 @@ standard = autoconnect(
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
-standard_bt_nav = autoconnect(
-    basic_bt_nav,
+standard_sim = autoconnect(
+    basic_sim,
     _perception_and_memory,
 ).global_config(n_dask_workers=8)
 
@@ -184,8 +178,8 @@ agentic = autoconnect(
     _agentic_skills,
 )
 
-agentic_bt_nav = autoconnect(
-    standard_bt_nav,
+agentic_sim = autoconnect(
+    standard_sim,
     _agentic_skills,
 )
 

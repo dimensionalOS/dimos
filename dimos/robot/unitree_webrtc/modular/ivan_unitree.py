@@ -17,8 +17,6 @@ import time
 
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, start
-
-# from dimos.msgs.detection2d import Detection2DArray
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -43,38 +41,17 @@ def detection_unitree() -> None:
 
     detector = dimos.deploy(  # type: ignore[attr-defined]
         Detection2DModule,
-        # goto=goto,
         camera_info=ConnectionModule._camera_info(),
     )
 
     detector.image.connect(connection.video)
-    # detector.pointcloud.connect(mapper.global_map)
-    # detector.pointcloud.connect(connection.lidar)
 
     detector.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport("/detections", Detection2DArray)
 
-    # detector.detected_pointcloud_0.transport = LCMTransport("/detected/pointcloud/0", PointCloud2)
-    # detector.detected_pointcloud_1.transport = LCMTransport("/detected/pointcloud/1", PointCloud2)
-    # detector.detected_pointcloud_2.transport = LCMTransport("/detected/pointcloud/2", PointCloud2)
-
     detector.detected_image_0.transport = LCMTransport("/detected/image/0", Image)
     detector.detected_image_1.transport = LCMTransport("/detected/image/1", Image)
     detector.detected_image_2.transport = LCMTransport("/detected/image/2", Image)
-    # detector.scene_update.transport = LCMTransport("/scene_update", SceneUpdate)
-
-    # reidModule = dimos.deploy(ReidModule)
-
-    # reidModule.image.connect(connection.video)
-    # reidModule.detections.connect(detector.detections)
-    # reidModule.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
-
-    # nav = deploy_navigation(dimos, connection)
-
-    # person_tracker = dimos.deploy(PersonTracker, cameraInfo=ConnectionModule._camera_info())
-    # person_tracker.image.connect(connection.video)
-    # person_tracker.detections.connect(detector.detections)
-    # person_tracker.target.transport = LCMTransport("/goal_request", PoseStamped)
 
     reid = dimos.deploy(ReidModule)  # type: ignore[attr-defined]
 
@@ -83,7 +60,6 @@ def detection_unitree() -> None:
     reid.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
 
     detector.start()
-    # person_tracker.start()
     connection.start()
     reid.start()
 
@@ -98,7 +74,6 @@ def detection_unitree() -> None:
 
     human_input = dimos.deploy(HumanInput)  # type: ignore[attr-defined]
     agent.register_skills(human_input)
-    # agent.register_skills(connection)
     agent.register_skills(detector)
 
     bridge = FoxgloveBridge(
@@ -107,15 +82,8 @@ def detection_unitree() -> None:
             "/lidar#sensor_msgs.PointCloud2",
         ]
     )
-    # bridge = FoxgloveBridge()
     time.sleep(1)
     bridge.start()
-
-    # agent.run_implicit_skill("video_stream_tool")
-    # agent.run_implicit_skill("human")
-
-    # agent.start()
-    # agent.loop_thread()
 
     try:
         while True:
@@ -125,10 +93,6 @@ def detection_unitree() -> None:
         logger.info("Shutting down...")
 
 
-def main() -> None:
+if __name__ == "__main__":
     lcm.autoconf()
     detection_unitree()
-
-
-if __name__ == "__main__":
-    main()

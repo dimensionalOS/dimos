@@ -137,11 +137,11 @@ class Detection2DModule(Module):
         # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(
-            lambda det: self.detections.publish(det.to_ros_detection2d_array())  # type: ignore[no-untyped-call]
+            lambda det: self.detections.publish(det.to_ros_detection2d_array())
         )
 
         self.detection_stream_2d().subscribe(
-            lambda det: self.annotations.publish(det.to_foxglove_annotations())  # type: ignore[no-untyped-call]
+            lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
         def publish_cropped_images(detections: ImageDetections2D) -> None:
@@ -166,7 +166,7 @@ def deploy(  # type: ignore[no-untyped-def]
     from dimos.core import LCMTransport
 
     detector = Detection2DModule(**kwargs)
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)

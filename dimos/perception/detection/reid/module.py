@@ -109,4 +109,4 @@ class ReidModule(Module):
             points=[],
             points_length=0,
         )
-        self.annotations.publish(annotations)  # type: ignore[no-untyped-call]
+        self.annotations.publish(annotations)
