@@ -17,8 +17,8 @@ import math
 import numpy as np
 from typing import Optional
 from scipy import ndimage
+from dimos.types.ros_polyfill import OccupancyGrid
 from scipy.ndimage import binary_dilation
-from nav_msgs.msg import OccupancyGrid
 from dimos.types.vector import Vector, VectorLike, x, y, to_vector
 import open3d as o3d
 from matplotlib.path import Path

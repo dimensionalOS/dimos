@@ -25,7 +25,6 @@ from dimos.utils.transform_utils import normalize_angle
 from dimos.robot.local_planner.local_planner import BaseLocalPlanner, visualize_local_planner_state
 from dimos.types.costmap import Costmap
 from dimos.types.vector import Vector, VectorLike
-from nav_msgs.msg import OccupancyGrid
 
 logger = setup_logger("dimos.robot.unitree.vfh_local_planner", level=logging.DEBUG)
 
@@ -38,7 +37,7 @@ class VFHPurePursuitPlanner(BaseLocalPlanner):
 
     def __init__(
         self,
-        get_costmap: Callable[[], Optional[OccupancyGrid]],
+        get_costmap: Callable[[], Optional[Costmap]],
         get_robot_pose: Callable[[], Any],
         move: Callable[[Vector], None],
         safety_threshold: float = 0.8,
