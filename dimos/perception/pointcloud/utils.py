@@ -25,6 +25,7 @@ import os
 import cv2
 import open3d as o3d
 from typing import List, Optional, Tuple, Union, Dict
+from scipy.spatial import cKDTree
 
 
 def depth_to_point_cloud(depth_image, camera_intrinsics, subsample_factor=4):
@@ -882,6 +883,238 @@ def draw_3d_bounding_box_on_image(image, corners_2d, color, thickness=2):
         start_point = tuple(corners_2d[start_idx].astype(int))
         end_point = tuple(corners_2d[end_idx].astype(int))
         cv2.line(image, start_point, end_point, color, thickness)
+
+
+def extract_and_cluster_misc_points(
+    full_pcd: o3d.geometry.PointCloud,
+    all_objects: List[dict],
+    eps: float = 0.03,
+    min_points: int = 50,
+    enable_filtering: bool = True
+) -> List[o3d.geometry.PointCloud]:
+    """
+    Extract miscellaneous/background points and cluster them using DBSCAN.
+    
+    Args:
+        full_pcd: Complete scene point cloud
+        all_objects: List of objects with point clouds to subtract
+        eps: DBSCAN epsilon parameter (max distance between points in cluster)
+        min_points: DBSCAN min_samples parameter (min points to form cluster)
+        enable_filtering: Whether to apply statistical and radius filtering
+        
+    Returns:
+        List of clustered point clouds (each cluster as separate point cloud)
+    """
+    if full_pcd is None or len(np.asarray(full_pcd.points)) == 0:
+        return []
+        
+    if not all_objects:
+        # If no objects detected, cluster the full point cloud
+        return _cluster_point_cloud_dbscan(full_pcd, eps, min_points)
+        
+    try:
+        # Start with a copy of the full point cloud
+        misc_pcd = o3d.geometry.PointCloud(full_pcd)
+        
+        # Remove object points by combining all object point clouds
+        all_object_points = []
+        for obj in all_objects:
+            if "point_cloud" in obj and obj["point_cloud"] is not None:
+                obj_points = np.asarray(obj["point_cloud"].points)
+                if len(obj_points) > 0:
+                    all_object_points.append(obj_points)
+        
+        if not all_object_points:
+            # No object points to remove, cluster full point cloud
+            return _cluster_point_cloud_dbscan(misc_pcd, eps, min_points)
+        
+        # Combine all object points
+        combined_obj_points = np.vstack(all_object_points)
+        
+        # For efficiency, downsample both point clouds
+        misc_downsampled = misc_pcd.voxel_down_sample(voxel_size=0.005)
+        
+        # Create object point cloud for efficient operations
+        obj_pcd = o3d.geometry.PointCloud()
+        obj_pcd.points = o3d.utility.Vector3dVector(combined_obj_points)
+        obj_downsampled = obj_pcd.voxel_down_sample(voxel_size=0.005)
+        
+        misc_points = np.asarray(misc_downsampled.points)
+        obj_points_down = np.asarray(obj_downsampled.points)
+        
+        if len(misc_points) == 0 or len(obj_points_down) == 0:
+            return _cluster_point_cloud_dbscan(misc_downsampled, eps, min_points)
+        
+        # Build tree for object points
+        obj_tree = cKDTree(obj_points_down)
+        
+        # Find distances from misc points to nearest object points
+        distances, _ = obj_tree.query(misc_points, k=1)
+        
+        # Keep points that are far enough from any object point
+        threshold = 0.015  # 1.5cm threshold
+        keep_mask = distances > threshold
+        
+        if not np.any(keep_mask):
+            return []
+        
+        # Filter misc points
+        misc_indices = np.where(keep_mask)[0]
+        final_misc_pcd = misc_downsampled.select_by_index(misc_indices)
+        
+        if len(np.asarray(final_misc_pcd.points)) == 0:
+            return []
+        
+        # Apply additional filtering if enabled
+        if enable_filtering:
+            # Apply statistical outlier filtering
+            filtered_misc_pcd, _ = filter_point_cloud_statistical(
+                final_misc_pcd, 
+                nb_neighbors=30, 
+                std_ratio=2.0
+            )
+            
+            if len(np.asarray(filtered_misc_pcd.points)) == 0:
+                return []
+            
+            # Apply radius outlier filtering
+            final_filtered_misc_pcd, _ = filter_point_cloud_radius(
+                filtered_misc_pcd,
+                nb_points=20,
+                radius=0.03  # 3cm radius
+            )
+            
+            if len(np.asarray(final_filtered_misc_pcd.points)) == 0:
+                return []
+                
+            final_misc_pcd = final_filtered_misc_pcd
+        
+        # Cluster the misc points using DBSCAN
+        return _cluster_point_cloud_dbscan(final_misc_pcd, eps, min_points)
+        
+    except Exception as e:
+        print(f"Error in misc point extraction and clustering: {e}")
+        # Fallback: return downsampled full point cloud as single cluster
+        try:
+            downsampled = full_pcd.voxel_down_sample(voxel_size=0.02)
+            return [downsampled] if len(np.asarray(downsampled.points)) > 0 else []
+        except:
+            return []
+
+
+def _cluster_point_cloud_dbscan(
+    pcd: o3d.geometry.PointCloud,
+    eps: float = 0.05,
+    min_points: int = 50
+) -> List[o3d.geometry.PointCloud]:
+    """
+    Cluster a point cloud using DBSCAN and return list of clustered point clouds.
+    
+    Args:
+        pcd: Point cloud to cluster
+        eps: DBSCAN epsilon parameter
+        min_points: DBSCAN min_samples parameter
+        
+    Returns:
+        List of point clouds, one for each cluster
+    """
+    if len(np.asarray(pcd.points)) == 0:
+        return []
+    
+    try:
+        # Apply DBSCAN clustering
+        labels = np.array(pcd.cluster_dbscan(eps=eps, min_points=min_points))
+        
+        # Get unique cluster labels (excluding noise points labeled as -1)
+        unique_labels = np.unique(labels)
+        cluster_pcds = []
+        
+        for label in unique_labels:
+            if label == -1:  # Skip noise points
+                continue
+                
+            # Get indices for this cluster
+            cluster_indices = np.where(labels == label)[0]
+            
+            if len(cluster_indices) > 0:
+                # Create point cloud for this cluster
+                cluster_pcd = pcd.select_by_index(cluster_indices)
+                
+                # Assign a random color to this cluster
+                cluster_color = np.random.rand(3)  # Random RGB color
+                cluster_pcd.paint_uniform_color(cluster_color)
+                
+                cluster_pcds.append(cluster_pcd)
+        
+        print(f"DBSCAN clustering found {len(cluster_pcds)} clusters from {len(np.asarray(pcd.points))} points")
+        return cluster_pcds
+        
+    except Exception as e:
+        print(f"Error in DBSCAN clustering: {e}")
+        return [pcd]  # Return original point cloud as fallback
+
+
+def visualize_clustered_point_clouds(
+    clustered_pcds: List[o3d.geometry.PointCloud],
+    window_name: str = "Clustered Point Clouds",
+    point_size: float = 2.0,
+    show_coordinate_frame: bool = True,
+    coordinate_frame_size: float = 0.1
+) -> None:
+    """
+    Visualize multiple clustered point clouds with different colors.
+    
+    Args:
+        clustered_pcds: List of point clouds (already colored)
+        window_name: Name of the visualization window
+        point_size: Size of points in the visualization
+        show_coordinate_frame: Whether to show coordinate frame
+        coordinate_frame_size: Size of the coordinate frame
+    """
+    if not clustered_pcds:
+        print("Warning: No clustered point clouds to visualize")
+        return
+    
+    # Create list of geometries to visualize
+    geometries = list(clustered_pcds)
+    
+    # Add coordinate frame if requested
+    if show_coordinate_frame:
+        coordinate_frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
+            size=coordinate_frame_size
+        )
+        geometries.append(coordinate_frame)
+    
+    total_points = sum(len(np.asarray(pcd.points)) for pcd in clustered_pcds)
+    print(f"Visualizing {len(clustered_pcds)} clusters with {total_points} total points")
+    
+    try:
+        # Create visualizer
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(window_name=window_name, width=1280, height=720)
+        
+        # Add geometries
+        for geom in geometries:
+            vis.add_geometry(geom)
+        
+        # Set render options
+        render_option = vis.get_render_option()
+        render_option.point_size = point_size
+        
+        # Run visualization
+        vis.run()
+        vis.destroy_window()
+        
+    except Exception as e:
+        print(f"Failed to create interactive visualization: {e}")
+        print("Falling back to simple visualization...")
+        # Fallback to simple visualization
+        o3d.visualization.draw_geometries(
+            geometries,
+            window_name=window_name,
+            width=1280, 
+            height=720
+        )
 
 
 def visualize_pcd(
