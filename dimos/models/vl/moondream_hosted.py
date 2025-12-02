@@ -1,6 +1,6 @@
+from functools import cached_property
 import os
 import warnings
-from functools import cached_property
 
 import moondream as md  # type: ignore[import-untyped]
 import numpy as np
@@ -34,19 +34,19 @@ class MoondreamHostedVlModel(VlModel):
                 stacklevel=3,
             )
             image = Image.from_numpy(image)
-        
+
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
     def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
         pil_image = self._to_pil_image(image)
-        
+
         result = self._client.query(pil_image, query)
         return result.get("answer", str(result))  # type: ignore[no-any-return]
 
     def caption(self, image: Image | np.ndarray, length: str = "normal") -> str:  # type: ignore[type-arg]
         """Generate a caption for the image.
-        
+
         Args:
             image: Input image
             length: Caption length ("normal", "short", "long")
@@ -61,14 +61,14 @@ class MoondreamHostedVlModel(VlModel):
         Args:
             image: Input image
             query: Object query (e.g., "person", "car")
-            max_objects: Maximum number of objects to detect (not directly supported by hosted API args in docs, 
+            max_objects: Maximum number of objects to detect (not directly supported by hosted API args in docs,
                          but we handle the output)
 
         Returns:
             ImageDetections2D containing detected bounding boxes
         """
         pil_image = self._to_pil_image(image)
-        
+
         # API docs: detect(image, object) -> {"objects": [...]}
         result = self._client.detect(pil_image, query)
         objects = result.get("objects", [])
@@ -109,25 +109,25 @@ class MoondreamHostedVlModel(VlModel):
 
     def point(self, image: Image, query: str) -> list[tuple[float, float]]:
         """Get coordinates of specific objects in an image.
-        
+
         Args:
             image: Input image
             query: Object query
-            
+
         Returns:
             List of (x, y) pixel coordinates
         """
         pil_image = self._to_pil_image(image)
         result = self._client.point(pil_image, query)
         points = result.get("points", [])
-        
+
         pixel_points = []
         height, width = image.height, image.width
-        
+
         for p in points:
             x_norm = p.get("x", 0.0)
             y_norm = p.get("y", 0.0)
             pixel_points.append((x_norm * width, y_norm * height))
-            
+
         return pixel_points
 

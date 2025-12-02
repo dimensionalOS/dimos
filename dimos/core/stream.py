@@ -28,6 +28,7 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 import dimos.core.colors as colors
+from dimos.utils.logging_config import setup_logger
 import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
@@ -35,6 +36,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 T = TypeVar("T")
+
+
+logger = setup_logger(__file__)
 
 
 class ObservableMixin(Generic[T]):
@@ -162,9 +166,10 @@ class Out(Stream[T]):
             ),
         )
 
-    def publish(self, msg):  # type: ignore[no-untyped-def]
+    def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         if not hasattr(self, "_transport") or self._transport is None:
-            raise Exception(f"{self} transport for stream is not specified,")
+            logger.warning(f"Trying to publish on Out {self} without a transport")
+            return
         self._transport.broadcast(self, msg)
 
 

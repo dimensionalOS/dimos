@@ -192,7 +192,7 @@ class Detection3DModule(Detection2DModule):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
 
-        self.scene_update.publish(detections.to_foxglove_scene_update())  # type: ignore[no-untyped-call]
+        self.scene_update.publish(detections.to_foxglove_scene_update())
 
 
 def deploy(  # type: ignore[no-untyped-def]
@@ -206,7 +206,7 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
 
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
