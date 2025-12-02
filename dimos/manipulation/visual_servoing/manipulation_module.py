@@ -501,11 +501,11 @@ class ManipulationModule(Module):
         return False, 0.0
 
     def _check_if_stuck(self) -> bool:
-        """
-        Check if robot is stuck by analyzing pose history.
+        """Check if robot is stuck based on recent pose history.
 
         Returns:
-            Tuple of (is_stuck, max_std_dev_mm)
+            True if stuck. False if moving or
+            not enough history to figure this out.
         """
         if len(self.ee_pose_history) < self.ee_pose_history.maxlen:  # type: ignore[operator]
             return False
