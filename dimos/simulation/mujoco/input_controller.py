@@ -14,14 +14,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-<<<<<<<< HEAD:dimos/simulation/mujoco/input_controller.py
-
 from typing import Any, Protocol
 
 from numpy.typing import NDArray
-========
+
 from dimos.hardware.end_effectors.end_effector import EndEffector
->>>>>>>> 31fd8acb (restructured hardware folder):dimos/hardware/manipulators/xarm/ufactory.py
 
 
 class InputController(Protocol):
