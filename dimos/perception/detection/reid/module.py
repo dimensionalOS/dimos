@@ -59,8 +59,8 @@ class ReidModule(Module):
     def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
             align_timestamped(
-                self.image.pure_observable(),  # type: ignore[no-untyped-call]
-                self.detections.pure_observable().pipe(  # type: ignore[no-untyped-call]
+                self.image.pure_observable(),
+                self.detections.pure_observable().pipe(
                     ops.filter(lambda d: d.detections_length > 0)  # type: ignore[attr-defined]
                 ),
                 match_tolerance=0.0,
