@@ -117,6 +117,9 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+
+    # Hardware SDKs
+    "xarm-python-sdk>=1.17.0",
 ]
 
 [project.scripts]
