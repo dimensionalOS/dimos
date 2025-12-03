@@ -22,4 +22,12 @@
 
     [:octicons-arrow-right-24: View Skills API](skills.md)
 
+- :material-console: **CLI Tools**
+
+    ---
+
+    TUI utilities for debugging and interacting with agents and skills.
+
+    [:octicons-arrow-right-24: View CLI Tools](cli-tools.md)
+
 </div>
