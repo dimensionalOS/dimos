@@ -106,7 +106,7 @@ def _configure_structlog() -> Path:
     return _LOG_FILE_PATH
 
 
-def setup_logger(level: int | None = None) -> Any:
+def setup_logger(*, level: int | None = None) -> Any:
     """Set up a structured logger using structlog.
 
     Args:

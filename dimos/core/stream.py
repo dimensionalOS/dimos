@@ -40,7 +40,7 @@ if TYPE_CHECKING:
 T = TypeVar("T")
 
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class ObservableMixin(Generic[T]):
