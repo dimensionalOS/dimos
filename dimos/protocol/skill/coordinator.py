@@ -35,7 +35,7 @@ from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg
 from dimos.protocol.skill.utils import interpret_tool_call_args
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 @dataclass

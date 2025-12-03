@@ -25,7 +25,7 @@ from dimos.stream.audio.base import (
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.stt.node_whisper")
+logger = setup_logger()
 
 
 class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):

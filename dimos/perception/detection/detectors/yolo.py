@@ -21,7 +21,7 @@ from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.detection.yolo_2d_det")
+logger = setup_logger()
 
 
 class Yolo2DDetector(Detector):

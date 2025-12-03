@@ -36,7 +36,7 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class ObjectTracker2D(Module):
@@ -178,7 +178,7 @@ class ObjectTracker2D(Module):
             detections_length=0, header=Header(time.time(), self.frame_id), detections=[]
         )
         self._latest_detection2d = empty_2d
-        self.detection2darray.publish(empty_2d)  # type: ignore[no-untyped-call]
+        self.detection2darray.publish(empty_2d)
 
     @rpc
     def stop_track(self) -> bool:

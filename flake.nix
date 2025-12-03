@@ -38,7 +38,7 @@
 
           ### Runtime deps
           { vals.pkg=pkgs.python312Packages.pyaudio; flags={}; }
-          { vals.pkg=pkgs.portaudio;                 flags={}; }
+          { vals.pkg=pkgs.portaudio;                 flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
           { vals.pkg=pkgs.ffmpeg_6.dev;              flags={}; }
 
@@ -84,7 +84,7 @@
           { vals.pkg=pkgs.cmake;   flags={}; }
           { vals.pkg=pkgs.ninja;   flags={}; }
           { vals.pkg=pkgs.jsoncpp; flags={}; }
-          { vals.pkg=pkgs.libjpeg; flags={}; }
+          { vals.pkg=pkgs.libjpeg; flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.libpng;  flags={}; }
 
           ### LCM (Lightweight Communications and Marshalling)

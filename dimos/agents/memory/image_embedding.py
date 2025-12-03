@@ -31,7 +31,7 @@ from PIL import Image
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents.memory.image_embedding")
+logger = setup_logger()
 
 
 class ImageEmbeddingProvider:

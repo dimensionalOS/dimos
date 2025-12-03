@@ -23,7 +23,7 @@ from dimos.mapping.utils.distance import distance_in_meters
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class GpsNavSkillContainer(SkillModule):
@@ -84,7 +84,7 @@ class GpsNavSkillContainer(SkillModule):
         logger.info(f"Set travel points: {new_points}")
 
         if self.gps_goal._transport is not None:
-            self.gps_goal.publish(new_points)  # type: ignore[no-untyped-call]
+            self.gps_goal.publish(new_points)
 
         if self._set_gps_travel_goal_points:
             self._set_gps_travel_goal_points(new_points)

@@ -37,7 +37,7 @@ from dimos.utils.transform_utils import (
     yaw_towards_point,
 )
 
-logger = setup_logger("dimos.perception.object_tracker_3d")
+logger = setup_logger()
 
 
 class ObjectTracker3D(ObjectTracker2D):

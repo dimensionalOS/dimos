@@ -33,7 +33,7 @@ from dimos.perception.segmentation.utils import (
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
+logger = setup_logger()
 
 
 class Sam2DSegmenter:
