@@ -20,7 +20,7 @@ from basic teleoperation to full autonomous agent configurations.
 """
 
 from dimos_lcm.foxglove_msgs import SceneUpdate  # type: ignore[import-untyped]
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
     ImageAnnotations,
 )
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
