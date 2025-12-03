@@ -44,6 +44,19 @@ def load_costmap_from_pickle(pickle_path: str):
         raise
 
 
+def load_test_cases(filepath: str):
+    import yaml
+
+    with open(filepath) as f:
+        data = yaml.safe_load(f)
+    return data
+
+
+@pytest.fixture
+def vl_model():
+    return QwenVlModel()
+
+
 def test_get_goal_position(interpret_map_skill):
     mockdata_path = get_data("maps") / "mockdata_local_costmap.pkl"
     # Load test costmap and robot pose
@@ -126,126 +139,123 @@ def build_occupancygrid_from_image(image: Image, resolution: float = 0.05) -> "O
     return occupancy_grid
 
 
-@pytest.fixture
-def occupancy_grid_from_image() -> OccupancyGrid:
-    image_path = get_data("maps") / "floorplan.png"
+def occupancy_grid_from_image(image_path) -> OccupancyGrid:
+    image_path = get_data("maps") / image_path
     image = Image.from_file(str(image_path))
     occupancy_grid = build_occupancygrid_from_image(image, resolution=0.05)
     return occupancy_grid
 
 
-def test_goal_placement(occupancy_grid_from_image: OccupancyGrid):
-    vl_model = QwenVlModel()
-    occupancy_grid = occupancy_grid_from_image
-
-    # set robot pose for testing
-    occupancy_grid.robot_pose = Pose(
-        position=Vector3(51.0, 15.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 1.0, 0.0),
-    )
-
-    image = occupancy_grid.grid_to_image(flip_vertical=False)
-    qwen_image = image.to_bgr().to_opencv()
-
-    questions = {
-        "furthest room from the robot's current position": (
-            (274, 484),
-            (33, 266),
-        )
-    }
-
-    for question, expected_range in questions.items():
-        base_prompt = (
-            "Look at this image carefully \n"
-            "it represents a 2D occupancy grid map where,\n"
-            " - blue area is free space, \n"
-            " - yellow area is unknown space, \n"
-            " - red (and its shades) areas are obstacles/walls, \n"
-            " - green object represents the robot's position and points to the direction it is facing. \n"
-            f"Identify a goal position ONLY IN FREE SPACE that closely matches the following description: {question}\n"
-            "Prioritize selecting a goal position in free space (blue area) over exactly matching the description. \n"
-            "MAKE SURE there is a clear path from the robot's current position to the goal position without crossing any obstacles. \n"
-            "MAKE SURE the goal position is located in the blue area (free space) of the map and few pixels away from obstacles or objects. \n"
-            "Return ONLY a JSON object with this exact format:\n"
-            "{'point': [x, y]}\n"
-            "where x,y are the pixel coordinates of the goal position in the image. \n"
-        )
-
-        prompt = base_prompt
-        response = vl_model.query(qwen_image, prompt)
-        point = extract_json_from_llm_response(response)
-        x, y = point["point"]
-
-        # debug_image_with_identified_point(
-        #     qwen_image,
-        #     (x, y),
-        #     filepath=f"./debug_goal_placement_{question.replace(' ', '_')}.png",
-        # )
-
-        assert expected_range[0][0] <= x <= expected_range[0][1], (
-            f"Goal x {x} out of expected range {expected_range[0]} for question: {question}"
-        )
-        assert expected_range[1][0] <= y <= expected_range[1][1], (
-            f"Goal y {y} out of expected range {expected_range[1]} for question: {question}"
-        )
-
-
-def test_map_interpretability(occupancy_grid_from_image: OccupancyGrid):
-    vl_model = QwenVlModel()
-    occupancy_grid = occupancy_grid_from_image
-
-    # set robot pose for testing
-    occupancy_grid.robot_pose = Pose(
-        position=Vector3(51.0, 15.0, 0.0),
-        orientation=Quaternion(0.0, 0.0, 1.0, 0.0),
-    )
-
-    image = occupancy_grid.grid_to_image(flip_vertical=False)
-    qwen_image = image.to_bgr().to_opencv()
-
-    base_prompt = (
+def goal_placement_prompt(description: str) -> str:
+    prompt = (
         "Look at this image carefully \n"
         "it represents a 2D occupancy grid map where,\n"
         " - blue area is free space, \n"
         " - yellow area is unknown space, \n"
         " - red (and its shades) areas are obstacles/walls, \n"
         " - green object represents the robot's position and points to the direction it is facing. \n"
-        "Answer the following question based on this image: \n"
+        f"Identify a location in free space based on the following description: {description}\n"
+        "Return JSON object with this exact format:\n"
+        '{"point": [x, y]}\n'
+        "Give your step by step reasoning before answering.\n"
+    )
+    return prompt
+
+
+def interpretability_prompt(question: str) -> str:
+    prompt = (
+        "Look at this image carefully \n"
+        "it represents a 2D occupancy grid map where,\n"
+        " - blue area is free space, \n"
+        " - yellow area is unknown space, \n"
+        " - red (and its shades) areas are obstacles/walls, \n"
+        " - green object represents the robot's position and points to the direction it is facing. \n"
+        f"Answer the following question based on this image: {question}\n"
+    )
+    return prompt
+
+
+@pytest.mark.parametrize(
+    "test_map",
+    [
+        test_map
+        for test_map in load_test_cases(get_data("maps") / "test_map_interpretability.yaml")[
+            "point_placement_tests"
+        ]
+    ],
+)
+def test_point_placement(test_map, vl_model):
+    occupancy_grid = occupancy_grid_from_image(test_map["image_path"])
+
+    # set robot pose for testing
+    occupancy_grid.robot_pose = Pose(
+        position=test_map["robot_pose"]["position"],
+        orientation=test_map["robot_pose"]["orientation"],
     )
 
-    questions = {
-        # basic questions about the robot
-        "is there any open area for the robot to move behind itself, yes or no?": r"\b(no)\b",
-        "what direction is the robot facing in the map?": r"\b(left|west)\b",
-        "describe the layout of the environment shown in the map.": r".+",
-        # spatial understanding questions
-        "how many rooms can you identify in the map?": r"\b(3|three)\b",
-        "do all rooms have an entrance or doorway?": r"\b(yes)\b",
-        "how many doorways are there in the map?": r"\b(3|three)\b",
-        "how many corridors can you see in the map?": r"\b(2|two)\b",
-        "where is the furthest room from the robot's current position?": r"\b(top left|left)\b",
-        "which is the largest room in the map?": r"\b(top right|right)\b",
-        "is the robot currently in a doorway, room or a corridor?": r"\b(corridor|hallway|passage)\b",
-        "what is down the corridor in front of the robot?": r"\b(unknown)\b",
-        # spatial understanding + navigation
-        "if the robot wants to go to the top left room, what command should it send? available commands are: 'go forward', 'turn left', 'turn right', 'stop'": r"\b(|go forward|turn right|stop)\b",
-    }
+    image = occupancy_grid.grid_to_image(flip_vertical=False)
+
+    for qna in test_map["questions"]:
+        prompt = goal_placement_prompt(qna["query"])
+        response = vl_model.query(image, prompt)
+        point = extract_json_from_llm_response(response)
+        if point is None or "point" not in point:
+            raise ValueError(f"Failed to extract point from response: {response}")
+        x, y = point["point"]
+
+        # keep track of score
+        score = 0
+        expected_area = qna["expected_range"]
+        if (expected_area["x"][0] <= x <= expected_area["x"][1]) and (
+            expected_area["y"][0] <= y <= expected_area["y"][1]
+        ):
+            score += 1
+        else:
+            debug_image_with_identified_point(
+                image.to_opencv(),
+                (x, y),
+                filepath=f"./debug_goal_placement_{test_map['map_id']}_{qna['query'].replace(' ', '_')}.png",
+            )
+
+    # assert score >= len(test_map["questions"]) * 0.7, (
+    #     f"Goal placement score too low: {score}/{len(test_map['questions'])}"
+    # )
+
+
+@pytest.mark.parametrize(
+    "test_map",
+    [
+        test_map
+        for test_map in load_test_cases(get_data("maps") / "test_map_interpretability.yaml")[
+            "map_comprehension_tests"
+        ]
+    ],
+)
+def test_map_comprehension(test_map, vl_model):
+    occupancy_grid = occupancy_grid_from_image(test_map["image_path"])
+    # set robot pose for testing
+    occupancy_grid.robot_pose = Pose(
+        position=test_map["robot_pose"]["position"],
+        orientation=test_map["robot_pose"]["orientation"],
+    )
+
+    image = occupancy_grid.grid_to_image(flip_vertical=False)
 
     # query and score responses
     responses = {}
     score = 0
-    for question in questions.keys():
-        prompt = base_prompt + question
-        response = vl_model.query(qwen_image, prompt)
-        responses[question] = response
-        if re.search(questions[question], response, re.IGNORECASE):
+    for qna in test_map["questions"]:
+        prompt = interpretability_prompt(qna["question"])
+        response = vl_model.query(image, prompt)
+        responses[qna["question"]] = response
+        if re.search(qna["expected_pattern"], response, re.IGNORECASE):
             score += 1
         else:
-            print(f"Q: {question}\nA: {response}\n")
+            print(f"Q: {qna['question']}\nA: {response}\n")
 
-    print(f"Map interpretability score: {score}/{len(questions)}")
-    assert score >= len(questions) * 0.7, (
-        f"Map interpretability score too low: {score}/{len(questions)}. Responses: {responses}"
+    print(f"Map {test_map['map_id']} interpretability score: {score}/{len(test_map['questions'])}")
+    assert score >= len(test_map["questions"]) * 0.7, (
+        f"Map interpretability score too low: {score}/{len(test_map['questions'])}. Responses: {responses}"
     )
 
 
