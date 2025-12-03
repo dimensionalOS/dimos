@@ -27,7 +27,9 @@ from langchain_core.messages import (
     ToolCall,
     ToolMessage,
 )
+from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
+from dimos.agents2.ollama_agent import ensure_ollama_model
 from dimos.agents2.spec import AgentSpec, Model, Provider
 from dimos.agents2.system_prompt import get_system_prompt
 from dimos.core import DimosCluster, rpc
@@ -192,9 +194,25 @@ class Agent(AgentSpec):
         if self.config.model_instance:
             self._llm = self.config.model_instance
         else:
-            self._llm = init_chat_model(  # type: ignore[call-overload]
-                model_provider=self.config.provider, model=self.config.model
-            )
+            # For Ollama provider, ensure the model is available before initializing
+            if self.config.provider.value.lower() == "ollama":
+                ensure_ollama_model(self.config.model)
+
+            # For HuggingFace, we need to create a pipeline and wrap it in ChatHuggingFace
+            if self.config.provider.value.lower() == "huggingface":
+                llm = HuggingFacePipeline.from_model_id(
+                    model_id=self.config.model,
+                    task="text-generation",
+                    pipeline_kwargs={
+                        "max_new_tokens": 512,
+                        "temperature": 0.7,
+                    },
+                )
+                self._llm = ChatHuggingFace(llm=llm, model_id=self.config.model)
+            else:
+                self._llm = init_chat_model(  # type: ignore[call-overload]
+                    model_provider=self.config.provider, model=self.config.model
+                )
 
     @rpc
     def get_agent_id(self) -> str:
@@ -278,7 +296,19 @@ class Agent(AgentSpec):
 
                 # history() builds our message history dynamically
                 # ensures we include latest system state, but not old ones.
-                msg = self._llm.invoke(self.history())  # type: ignore[no-untyped-call]
+                messages = self.history()  # type: ignore[no-untyped-call]
+
+                # Some LLMs don't work without any human messages. Add an initial one.
+                if len(messages) == 1 and isinstance(messages[0], SystemMessage):
+                    messages.append(
+                        HumanMessage(
+                            "Everything is initialized. I'll let you know when you should act."
+                        )
+                    )
+                    self.append_history(messages[-1])
+
+                msg = self._llm.invoke(messages)
+
                 self.append_history(msg)  # type: ignore[arg-type]
 
                 logger.info(f"Agent response: {msg.content}")

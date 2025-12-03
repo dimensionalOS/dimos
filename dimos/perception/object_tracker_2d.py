@@ -178,7 +178,7 @@ class ObjectTracker2D(Module):
             detections_length=0, header=Header(time.time(), self.frame_id), detections=[]
         )
         self._latest_detection2d = empty_2d
-        self.detection2darray.publish(empty_2d)  # type: ignore[no-untyped-call]
+        self.detection2darray.publish(empty_2d)
 
     @rpc
     def stop_track(self) -> bool:

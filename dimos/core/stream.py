@@ -28,13 +28,19 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 import dimos.core.colors as colors
+from dimos.utils.logging_config import setup_logger
 import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from reactivex.observable import Observable
+
 T = TypeVar("T")
+
+
+logger = setup_logger(__file__)
 
 
 class ObservableMixin(Generic[T]):
@@ -53,7 +59,7 @@ class ObservableMixin(Generic[T]):
     def hot_latest(self) -> Callable[[], T]:
         return reactive.getter_streaming(self.observable())  # type: ignore[no-untyped-call]
 
-    def pure_observable(self):  # type: ignore[no-untyped-def]
+    def pure_observable(self) -> Observable[T]:
         def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
             unsubscribe = self.subscribe(observer.on_next)  # type: ignore[attr-defined]
             return Disposable(unsubscribe)
@@ -63,7 +69,7 @@ class ObservableMixin(Generic[T]):
     # default return is backpressured because most
     # use cases will want this by default
     def observable(self):  # type: ignore[no-untyped-def]
-        return backpressure(self.pure_observable())  # type: ignore[no-untyped-call]
+        return backpressure(self.pure_observable())
 
 
 class State(enum.Enum):
@@ -162,9 +168,10 @@ class Out(Stream[T]):
             ),
         )
 
-    def publish(self, msg):  # type: ignore[no-untyped-def]
+    def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         if not hasattr(self, "_transport") or self._transport is None:
-            raise Exception(f"{self} transport for stream is not specified,")
+            logger.warning(f"Trying to publish on Out {self} without a transport")
+            return
         self._transport.broadcast(self, msg)
 
 

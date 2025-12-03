@@ -203,10 +203,10 @@ class ROSNav(
             position=Vector3(msg.point.x, msg.point.y, msg.point.z),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
-        self.goal_active.publish(dimos_pose)  # type: ignore[no-untyped-call]
+        self.goal_active.publish(dimos_pose)
 
     def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
-        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))  # type: ignore[no-untyped-call]
+        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))
 
     def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
@@ -217,7 +217,7 @@ class ROSNav(
     def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = Path.from_ros_msg(msg)
         dimos_path.frame_id = "base_link"
-        self.path_active.publish(dimos_path)  # type: ignore[no-untyped-call]
+        self.path_active.publish(dimos_path)
 
     def _on_ros_tf(self, msg: ROSTFMessage) -> None:
         ros_tf = TFMessage.from_ros_msg(msg)

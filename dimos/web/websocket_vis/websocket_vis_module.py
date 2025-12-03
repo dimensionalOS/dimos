@@ -203,23 +203,23 @@ class WebsocketVisModule(Module):
                 orientation=(0, 0, 0, 1),  # Default orientation
                 frame_id="world",
             )
-            self.goal_request.publish(goal)  # type: ignore[no-untyped-call]
+            self.goal_request.publish(goal)
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
         @self.sio.event  # type: ignore[misc]
         async def gps_goal(sid, goal) -> None:  # type: ignore[no-untyped-def]
             logger.info(f"Set GPS goal: {goal}")
-            self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))  # type: ignore[no-untyped-call]
+            self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))
 
         @self.sio.event  # type: ignore[misc]
         async def start_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Starting exploration")
-            self.explore_cmd.publish(Bool(data=True))  # type: ignore[no-untyped-call]
+            self.explore_cmd.publish(Bool(data=True))
 
         @self.sio.event  # type: ignore[misc]
         async def stop_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Stopping exploration")
-            self.stop_explore_cmd.publish(Bool(data=True))  # type: ignore[no-untyped-call]
+            self.stop_explore_cmd.publish(Bool(data=True))
 
         @self.sio.event  # type: ignore[misc]
         async def move_command(sid, data) -> None:  # type: ignore[no-untyped-def]
@@ -231,7 +231,7 @@ class WebsocketVisModule(Module):
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.cmd_vel.publish(twist)  # type: ignore[no-untyped-call]
+                self.cmd_vel.publish(twist)
 
             # Publish TwistStamped if transport is configured
             if self.movecmd_stamped and self.movecmd_stamped.transport:
@@ -243,7 +243,7 @@ class WebsocketVisModule(Module):
                         data["angular"]["x"], data["angular"]["y"], data["angular"]["z"]
                     ),
                 )
-                self.movecmd_stamped.publish(twist_stamped)  # type: ignore[no-untyped-call]
+                self.movecmd_stamped.publish(twist_stamped)
 
     def _run_uvicorn_server(self) -> None:
         config = uvicorn.Config(

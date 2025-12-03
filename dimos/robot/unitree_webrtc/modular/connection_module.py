@@ -34,7 +34,7 @@ from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.std_msgs import Header
-from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
+from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
@@ -184,7 +184,7 @@ class ConnectionModule(Module):
                 raise ValueError(f"Unknown connection type: {self.connection_type}")
 
         unsub = self.connection.odom_stream().subscribe(  # type: ignore[union-attr]
-            lambda odom: self._publish_tf(odom) and self.odom.publish(odom)  # type: ignore[func-returns-value, no-untyped-call]
+            lambda odom: self._publish_tf(odom) and self.odom.publish(odom)  # type: ignore[func-returns-value]
         )
         self._disposables.add(unsub)
 
@@ -249,7 +249,7 @@ class ConnectionModule(Module):
         ]
 
     def _publish_tf(self, msg) -> None:  # type: ignore[no-untyped-def]
-        self.odom.publish(msg)  # type: ignore[no-untyped-call]
+        self.odom.publish(msg)
         self.tf.publish(*self._odom_to_tf(msg))
 
     @rpc

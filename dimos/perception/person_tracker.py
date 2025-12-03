@@ -130,7 +130,7 @@ class PersonTrackingStream(Module):
 
         # Publish result to LCM
         if result:
-            self.tracking_data.publish(result)  # type: ignore[no-untyped-call]
+            self.tracking_data.publish(result)
 
     def _process_tracking(self, frame):  # type: ignore[no-untyped-def]
         """Process a single frame for person tracking."""
