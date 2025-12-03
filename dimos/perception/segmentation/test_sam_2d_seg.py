@@ -14,15 +14,17 @@
 
 import os
 import time
-from dimos.stream import video_provider
-import pytest
+
 import cv2
 import numpy as np
+import pytest
 import reactivex as rx
 from reactivex import operators as ops
-from dimos.stream.video_provider import VideoProvider
+
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.segmentation.utils import extract_masks_bboxes_probs_names
+from dimos.stream import video_provider
+from dimos.stream.video_provider import VideoProvider
 
 
 class TestSam2DSegmenter:
@@ -39,11 +41,11 @@ class TestSam2DSegmenter:
 
     def test_sam_segmenter_process_image(self):
         """Test FastSAM segmenter can process video frames and return segmentation masks."""
-        # Import testData inside method to avoid pytest fixture confusion
-        from dimos.utils.testing import testData
+        # Import get data inside method to avoid pytest fixture confusion
+        from dimos.utils.data import get_data
 
         # Get test video path directly
-        video_path = testData("assets") / "trimmed_video_office.mov"
+        video_path = get_data("assets") / "trimmed_video_office.mov"
         try:
             # Initialize segmenter without analyzer for faster testing
             segmenter = Sam2DSegmenter(use_analyzer=False)

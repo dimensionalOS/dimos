@@ -12,19 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 import cv2
+import onnxruntime
 from ultralytics import YOLO
+
 from dimos.perception.detection2d.utils import (
     extract_detection_results,
-    plot_results,
     filter_detections,
+    plot_results,
 )
-import os
-import onnxruntime
+from dimos.utils.data import get_data
+from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.path_utils import get_project_root
-from dimos.utils.testing import testData
-from dimos.utils.gpu_utils import is_cuda_available
 
 logger = setup_logger("dimos.perception.detection2d.yolo_2d_det")
 
@@ -40,7 +42,7 @@ class Yolo2DDetector:
             device (str): Device to run inference on ('cuda' or 'cpu')
         """
         self.device = device
-        self.model = YOLO(testData(model_path) / model_name)
+        self.model = YOLO(get_data(model_path) / model_name)
 
         module_dir = os.path.dirname(__file__)
         self.tracker_config = os.path.join(module_dir, "config", "custom_tracker.yaml")
