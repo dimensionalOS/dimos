@@ -61,7 +61,7 @@ class KeyboardTeleop(Module):
         stop_twist = Twist()
         stop_twist.linear = Vector3(0, 0, 0)
         stop_twist.angular = Vector3(0, 0, 0)
-        self.cmd_vel.publish(stop_twist)  # type: ignore[no-untyped-call]
+        self.cmd_vel.publish(stop_twist)
 
         self._stop_event.set()
 
@@ -94,7 +94,7 @@ class KeyboardTeleop(Module):
                         stop_twist = Twist()
                         stop_twist.linear = Vector3(0, 0, 0)
                         stop_twist.angular = Vector3(0, 0, 0)
-                        self.cmd_vel.publish(stop_twist)  # type: ignore[no-untyped-call]
+                        self.cmd_vel.publish(stop_twist)
                         print("EMERGENCY STOP!")
                     elif event.key == pygame.K_ESCAPE:
                         # ESC quits
@@ -138,7 +138,7 @@ class KeyboardTeleop(Module):
             twist.angular.z *= speed_multiplier
 
             # Always publish twist at 50Hz
-            self.cmd_vel.publish(twist)  # type: ignore[no-untyped-call]
+            self.cmd_vel.publish(twist)
 
             self._update_display(twist)
 

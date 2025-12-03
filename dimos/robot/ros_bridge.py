@@ -35,7 +35,7 @@ from dimos.core.resource import Resource
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.ros_bridge", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class BridgeDirection(Enum):

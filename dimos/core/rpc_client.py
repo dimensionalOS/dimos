@@ -18,7 +18,7 @@ from typing import Any
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class RpcCall:

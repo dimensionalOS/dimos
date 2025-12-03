@@ -32,7 +32,7 @@ from dimos.core import Module, rpc
 from dimos.utils.actor_registry import ActorRegistry
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 def print_data_table(data) -> None:  # type: ignore[no-untyped-def]

@@ -32,7 +32,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from types import FunctionType
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")

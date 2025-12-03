@@ -31,7 +31,7 @@ from dimos.models.qwen.video_query import query_single_frame
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.skills.manipulation.pick_and_place")
+logger = setup_logger()
 
 
 def parse_qwen_points_response(response: str) -> tuple[tuple[int, int], tuple[int, int]] | None:

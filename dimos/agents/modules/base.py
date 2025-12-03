@@ -33,7 +33,7 @@ try:
 except ImportError:
     from dimos.agents.modules.gateway import UnifiedGatewayClient
 
-logger = setup_logger("dimos.agents.modules.base")
+logger = setup_logger()
 
 # Vision-capable models
 VISION_MODELS = {

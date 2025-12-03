@@ -34,7 +34,7 @@ from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
-logger = setup_logger("dimos.robot.unitree.frontier_exploration")
+logger = setup_logger()
 
 
 class PointClassification(IntFlag):
@@ -775,7 +775,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.frame_id = "world"
                 goal_msg.ts = self.latest_costmap.ts
 
-                self.goal_request.publish(goal_msg)  # type: ignore[no-untyped-call]
+                self.goal_request.publish(goal_msg)
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1
