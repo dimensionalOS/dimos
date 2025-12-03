@@ -60,7 +60,7 @@ from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
-logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 @dataclass

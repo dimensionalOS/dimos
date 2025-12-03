@@ -34,7 +34,7 @@ from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
-logger = setup_logger("dimos.robot.unitree.frontier_exploration")
+logger = setup_logger()
 
 
 class PointClassification(IntFlag):

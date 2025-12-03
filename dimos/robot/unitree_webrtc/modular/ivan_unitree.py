@@ -28,7 +28,7 @@ from dimos.robot.unitree_webrtc.modular import deploy_connection  # type: ignore
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 def detection_unitree() -> None:

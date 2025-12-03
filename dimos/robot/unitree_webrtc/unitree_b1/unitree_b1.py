@@ -53,7 +53,7 @@ except ImportError:
     ROSTFMessage = None  # type: ignore[assignment, misc]
     ROS_AVAILABLE = False
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class UnitreeB1(Robot, Resource):

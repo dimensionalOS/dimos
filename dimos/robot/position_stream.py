@@ -28,7 +28,7 @@ from reactivex import Observable, Subject, operators as ops
 
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.position_stream", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class PositionStreamProvider:

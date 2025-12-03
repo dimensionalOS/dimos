@@ -18,7 +18,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree.global_planner.astar")
+logger = setup_logger()
 
 
 def astar(

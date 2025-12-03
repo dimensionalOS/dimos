@@ -42,7 +42,7 @@ from dimos.utils.transform_utils import (
     yaw_towards_point,
 )
 
-logger = setup_logger("dimos.perception.object_tracker")
+logger = setup_logger()
 
 
 class ObjectTracking(Module):
