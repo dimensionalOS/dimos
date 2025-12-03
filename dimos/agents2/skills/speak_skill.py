@@ -24,7 +24,7 @@ from dimos.stream.audio.node_output import SounddeviceAudioOutput
 from dimos.stream.audio.tts.node_openai import OpenAITTSNode, Voice
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents2.skills.speak_skill")
+logger = setup_logger()
 
 
 class SpeakSkill(SkillModule):

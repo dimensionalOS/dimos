@@ -24,7 +24,7 @@ from dimos.msgs.geometry_msgs import Twist
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class G1Connection(Module):
