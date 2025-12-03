@@ -270,6 +270,7 @@ force-sort-within-sections = true
 python_version = "3.12"
 incremental = true
 strict = true
+warn_unused_ignores = false
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [tool.pytest.ini_options]
