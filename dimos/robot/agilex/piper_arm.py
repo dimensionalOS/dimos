@@ -28,7 +28,7 @@ from dimos.skills.skills import SkillLibrary
 from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.agilex.piper_arm")
+logger = setup_logger()
 
 
 class PiperArmRobot(Robot):

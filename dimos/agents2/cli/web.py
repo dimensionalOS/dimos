@@ -28,7 +28,7 @@ from dimos.web.robot_web_interface import RobotWebInterface
 if TYPE_CHECKING:
     from dimos.stream.audio.base import AudioEvent
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class WebInput(Module):

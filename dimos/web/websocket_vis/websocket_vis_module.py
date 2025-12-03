@@ -39,7 +39,7 @@ from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
 
-logger = setup_logger("dimos.web.websocket_vis")
+logger = setup_logger()
 
 
 class WebsocketVisModule(Module):

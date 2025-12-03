@@ -31,7 +31,7 @@ import uuid
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger for the ros command queue module
-logger = setup_logger("dimos.robot.ros_command_queue")
+logger = setup_logger()
 
 
 class CommandType(Enum):

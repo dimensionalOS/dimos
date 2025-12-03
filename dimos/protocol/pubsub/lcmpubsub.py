@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     import threading
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 @runtime_checkable

@@ -22,7 +22,7 @@ from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 # TODO: Remove, deprecated
