@@ -40,7 +40,7 @@ from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)

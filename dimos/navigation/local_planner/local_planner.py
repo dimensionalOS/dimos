@@ -31,7 +31,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class BaseLocalPlanner(Module):

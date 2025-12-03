@@ -35,7 +35,7 @@ gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
 from gi.repository import GLib, Gst  # type: ignore[import-not-found]
 
-logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 Gst.init(None)
 

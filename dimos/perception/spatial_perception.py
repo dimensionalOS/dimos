@@ -47,7 +47,7 @@ _DB_PATH = _SPATIAL_MEMORY_DIR / "chromadb_data"
 _VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
 
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class SpatialMemory(Module):

@@ -22,7 +22,7 @@ from dimos.navigation.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 import math
 
