@@ -15,7 +15,7 @@
 from typing import List, Tuple, TypeVar, Union, Sequence
 
 import numpy as np
-from geometry_msgs.msg import Vector3
+from dimos.types.ros_polyfill import Vector3
 
 T = TypeVar("T", bound="Vector")
 

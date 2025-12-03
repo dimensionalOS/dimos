@@ -1,9 +1,5 @@
 name: cleanup
-on:
-  pull_request:
-    branches:
-      - main
-      - dev
+on: push
 
 permissions:
   contents: write
