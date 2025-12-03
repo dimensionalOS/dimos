@@ -227,7 +227,7 @@ def _find_safe_goal_voronoi(
     - Requires scipy for efficient implementation
     """
 
-    from scipy import ndimage
+    from scipy import ndimage  # type: ignore[import-untyped]
     from skimage.morphology import skeletonize  # type: ignore[import-not-found]
 
     # Convert goal to grid coordinates

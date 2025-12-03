@@ -256,7 +256,7 @@ class RemoteIn(RemoteStream[T]):
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         self.transport.broadcast(self, msg)  # type: ignore[arg-type]
 
-    @transport.setter  # type: ignore[attr-defined, misc, no-redef]
+    @transport.setter  # type: ignore[attr-defined, misc, no-redef, untyped-decorator]
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value

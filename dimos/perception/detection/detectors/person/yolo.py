@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from ultralytics import YOLO
+from ultralytics import YOLO  # type: ignore[attr-defined]
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.detectors.types import Detector

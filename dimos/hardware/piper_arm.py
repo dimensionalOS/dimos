@@ -27,7 +27,7 @@ import numpy as np
 from piper_sdk import *  # type: ignore[import-not-found]  # from the official Piper SDK
 import pytest
 from reactivex.disposable import Disposable
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 import dimos.core as core
 from dimos.core import In, Module, rpc

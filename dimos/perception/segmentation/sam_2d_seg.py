@@ -20,7 +20,7 @@ import time
 
 import cv2
 import onnxruntime  # type: ignore[import-untyped]
-from ultralytics import FastSAM
+from ultralytics import FastSAM  # type: ignore[attr-defined]
 
 from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
 from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
