@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import math
+import struct
+import json
 from datetime import datetime
-from typing import Literal, TypedDict
+from typing import Literal, TypedDict, Union, Any
 
 from dimos.robot.unitree_webrtc.type.timeseries import (
     EpochLike,
@@ -111,3 +113,60 @@ class Odometry(Position):
 
     def __repr__(self) -> str:
         return f"Odom ts({to_human_readable(self.ts)}) pos({self.pos}), rot({self.rot}) yaw({math.degrees(self.rot.z):.1f}°)"
+
+    def to_zenoh_binary(self) -> bytes:
+        """High-performance binary serialization for Zenoh."""
+        # Pack timestamp as microseconds since epoch
+        timestamp_us = int(self.ts.timestamp() * 1_000_000)
+
+        # Pack: timestamp(8), pos_x(8), pos_y(8), pos_z(8), rot_x(8), rot_y(8), rot_z(8)
+        binary_data = struct.pack(
+            "!ddddddd",
+            timestamp_us / 1_000_000,  # Convert back to seconds for consistency
+            float(self.pos.x),
+            float(self.pos.y),
+            float(self.pos.z),
+            float(self.rot.x),
+            float(self.rot.y),
+            float(self.rot.z),
+        )
+
+        return binary_data
+
+    @classmethod
+    def from_zenoh_binary(cls, data: Union[bytes, Any]) -> "Odometry":
+        """Reconstruct Odometry from binary Zenoh data.
+
+        Args:
+            data: Binary data from Zenoh (can be bytes or ZBytes)
+
+        Returns:
+            Odometry instance reconstructed from binary data
+        """
+        # Handle ZBytes from Zenoh automatically
+        if hasattr(data, "to_bytes"):
+            # Zenoh ZBytes object
+            data_bytes = data.to_bytes()
+        elif hasattr(data, "__bytes__"):
+            # Object that can be converted to bytes
+            data_bytes = bytes(data)
+        else:
+            # Assume it's already bytes
+            data_bytes = data
+
+        # Unpack binary data
+        if len(data_bytes) != 56:  # 7 doubles * 8 bytes each
+            raise ValueError(f"Invalid binary data: expected 56 bytes, got {len(data_bytes)}")
+
+        timestamp_sec, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z = struct.unpack(
+            "!ddddddd", data_bytes
+        )
+
+        # Reconstruct timestamp
+        timestamp = datetime.fromtimestamp(timestamp_sec)
+
+        # Reconstruct position and rotation vectors
+        pos = Vector(pos_x, pos_y, pos_z)
+        rot = Vector(rot_x, rot_y, rot_z)
+
+        return cls(pos, rot, timestamp)
