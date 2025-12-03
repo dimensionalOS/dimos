@@ -12,6 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""A* global path planning for reactive navigation.
+
+This module provides `AstarPlanner`, a DimOS Module that computes
+obstacle-avoiding paths from the robot's current position to a target goal.
+"""
 
 from reactivex.disposable import Disposable
 
@@ -141,6 +146,15 @@ def resample_path(path: Path, spacing: float) -> Path:
 
 
 class AstarPlanner(Module):
+    """Compute collision-free paths using A* on the global costmap.
+
+    Publishes a path when target, costmap, and odometry are all available
+    and A* finds a valid route. No output published otherwise.
+
+    To control the robot's facing direction at the goal, pass a non-identity orientation in the target.
+    Otherwise, the robot faces the direction of travel.
+    """
+
     # LCM inputs
     target: In[PoseStamped] = None  # type: ignore[assignment]
     global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
