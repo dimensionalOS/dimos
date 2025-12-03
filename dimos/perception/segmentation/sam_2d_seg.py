@@ -21,26 +21,41 @@ from dimos.perception.segmentation.utils import (
     plot_results,
     crop_images_from_bboxes,
 )
+from dimos.utils.gpu_utils import is_cuda_available
 from dimos.perception.common.detection2d_tracker import target2dTracker, get_tracked_results
 from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
 import os
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from dimos.utils.logging_config import setup_logger
+from dimos.utils.path_utils import get_project_root
+import onnxruntime
+from dimos.utils.testing import testData
+
+logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
 
 
 class Sam2DSegmenter:
     def __init__(
         self,
-        model_path="FastSAM-s.pt",
-        device="cuda",
+        model_path="models_fastsam",
+        model_name="FastSAM-s.onnx",
+        device="cpu",
         min_analysis_interval=5.0,
         use_tracker=True,
         use_analyzer=True,
         use_rich_labeling=False,
     ):
-        # Core components
         self.device = device
-        self.model = FastSAM(model_path)
+        if is_cuda_available():
+            logger.info("Using CUDA for SAM 2d segmenter")
+            onnxruntime.preload_dlls(cuda=True, cudnn=True)
+            self.device = "cuda"
+        else:
+            logger.info("Using CPU for SAM 2d segmenter")
+            self.device = "cpu"
+        # Core components
+        self.model = FastSAM(testData(model_path) / model_name)
         self.use_tracker = use_tracker
         self.use_analyzer = use_analyzer
         self.use_rich_labeling = use_rich_labeling

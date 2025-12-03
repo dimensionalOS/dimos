@@ -27,6 +27,7 @@ import io
 import cv2
 import base64
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import testData
 
 logger = setup_logger("dimos.agents.memory.image_embedding")
 
@@ -60,12 +61,14 @@ class ImageEmbeddingProvider:
         """Initialize the specified embedding model."""
         try:
             import torch
-            from transformers import CLIPProcessor, CLIPModel, AutoFeatureExtractor, AutoModel
+            from transformers import CLIPProcessor, AutoFeatureExtractor, AutoModel
+            import onnxruntime as ort
 
             if self.model_name == "clip":
-                model_id = "openai/clip-vit-base-patch32"
-                self.model = CLIPModel.from_pretrained(model_id)
-                self.processor = CLIPProcessor.from_pretrained(model_id)
+                model_id = testData("models_clip") / "model.onnx"
+                processor_id = "openai/clip-vit-base-patch32"
+                self.model = ort.InferenceSession(model_id)
+                self.processor = CLIPProcessor.from_pretrained(processor_id)
                 logger.info(f"Loaded CLIP model: {model_id}")
             elif self.model_name == "resnet":
                 model_id = "microsoft/resnet-50"
@@ -103,13 +106,35 @@ class ImageEmbeddingProvider:
             import torch
 
             if self.model_name == "clip":
-                inputs = self.processor(images=pil_image, return_tensors="pt")
+                inputs = self.processor(images=pil_image, return_tensors="np")
 
                 with torch.no_grad():
-                    image_features = self.model.get_image_features(**inputs)
+                    ort_inputs = {
+                        inp.name: inputs[inp.name]
+                        for inp in self.model.get_inputs()
+                        if inp.name in inputs
+                    }
 
-                image_embedding = image_features / image_features.norm(dim=1, keepdim=True)
-                embedding = image_embedding.numpy()[0]
+                    # If required, add dummy text inputs
+                    input_names = [i.name for i in self.model.get_inputs()]
+                    batch_size = inputs["pixel_values"].shape[0]
+                    if "input_ids" in input_names:
+                        ort_inputs["input_ids"] = np.zeros((batch_size, 1), dtype=np.int64)
+                    if "attention_mask" in input_names:
+                        ort_inputs["attention_mask"] = np.ones((batch_size, 1), dtype=np.int64)
+
+                    # Run inference
+                    ort_outputs = self.model.run(None, ort_inputs)
+
+                    # Look up correct output name
+                    output_names = [o.name for o in self.model.get_outputs()]
+                    if "image_embeds" in output_names:
+                        image_embedding = ort_outputs[output_names.index("image_embeds")]
+                    else:
+                        raise RuntimeError(f"No 'image_embeds' found in outputs: {output_names}")
+
+                embedding = image_embedding / np.linalg.norm(image_embedding, axis=1, keepdims=True)
+                embedding = embedding[0]
 
             elif self.model_name == "resnet":
                 inputs = self.processor(images=pil_image, return_tensors="pt")
@@ -156,19 +181,45 @@ class ImageEmbeddingProvider:
         try:
             import torch
 
-            inputs = self.processor(text=[text], return_tensors="pt", padding=True)
+            inputs = self.processor(text=[text], return_tensors="np", padding=True)
 
             with torch.no_grad():
-                text_features = self.model.get_text_features(**inputs)
+                # Prepare ONNX input dict (handle only what's needed)
+                ort_inputs = {
+                    inp.name: inputs[inp.name]
+                    for inp in self.model.get_inputs()
+                    if inp.name in inputs
+                }
+                # Determine which inputs are expected by the ONNX model
+                input_names = [i.name for i in self.model.get_inputs()]
+                batch_size = inputs["input_ids"].shape[0]  # pulled from text input
 
-            # Normalize the features
-            text_embedding = text_features / text_features.norm(dim=1, keepdim=True)
-            embedding = text_embedding.numpy()[0]
+                # If the model expects pixel_values (i.e., fused model), add dummy vision input
+                if "pixel_values" in input_names:
+                    ort_inputs["pixel_values"] = np.zeros(
+                        (batch_size, 3, 224, 224), dtype=np.float32
+                    )
+
+                # Run inference
+                ort_outputs = self.model.run(None, ort_inputs)
+
+                # Determine correct output (usually 'last_hidden_state' or 'text_embeds')
+                output_names = [o.name for o in self.model.get_outputs()]
+                if "text_embeds" in output_names:
+                    text_embedding = ort_outputs[output_names.index("text_embeds")]
+                else:
+                    text_embedding = ort_outputs[0]  # fallback to first output
+
+                # Normalize
+                text_embedding = text_embedding / np.linalg.norm(
+                    text_embedding, axis=1, keepdims=True
+                )
+                text_embedding = text_embedding[0]  # shape: (512,)
 
             logger.debug(
-                f"Generated text embedding with shape {embedding.shape} for text: '{text}'"
+                f"Generated text embedding with shape {text_embedding.shape} for text: '{text}'"
             )
-            return embedding
+            return text_embedding
 
         except Exception as e:
             logger.error(f"Error generating text embedding: {e}")
