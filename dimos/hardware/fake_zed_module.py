@@ -214,7 +214,7 @@ class FakeZEDModule(Module):
         try:
             # Color image stream
             unsub = self._get_color_stream().subscribe(
-                lambda msg: self.color_image.publish(msg) if self._running else None  # type: ignore[no-untyped-call]
+                lambda msg: self.color_image.publish(msg) if self._running else None
             )
             self._disposables.add(unsub)
             logger.info("Started color image replay stream")
@@ -224,7 +224,7 @@ class FakeZEDModule(Module):
         try:
             # Depth image stream
             unsub = self._get_depth_stream().subscribe(
-                lambda msg: self.depth_image.publish(msg) if self._running else None  # type: ignore[no-untyped-call]
+                lambda msg: self.depth_image.publish(msg) if self._running else None
             )
             self._disposables.add(unsub)
             logger.info("Started depth image replay stream")
@@ -244,7 +244,7 @@ class FakeZEDModule(Module):
         try:
             # Camera info stream
             unsub = self._get_camera_info_stream().subscribe(
-                lambda msg: self.camera_info.publish(msg) if self._running else None  # type: ignore[no-untyped-call]
+                lambda msg: self.camera_info.publish(msg) if self._running else None
             )
             self._disposables.add(unsub)
             logger.info("Started camera info replay stream")
@@ -265,7 +265,7 @@ class FakeZEDModule(Module):
     def _publish_pose(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Publish pose and TF transform."""
         if msg:
-            self.pose.publish(msg)  # type: ignore[no-untyped-call]
+            self.pose.publish(msg)
 
             # Publish TF transform from world to camera
             import time

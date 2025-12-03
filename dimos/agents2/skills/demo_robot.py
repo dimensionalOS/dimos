@@ -31,7 +31,7 @@ class DemoRobot(Module):
         super().stop()
 
     def _publish_gps_location(self) -> None:
-        self.gps_location.publish(LatLon(lat=37.78092426217621, lon=-122.40682866540769))  # type: ignore[no-untyped-call]
+        self.gps_location.publish(LatLon(lat=37.78092426217621, lon=-122.40682866540769))
 
 
 demo_robot = DemoRobot.blueprint

@@ -282,7 +282,7 @@ class B1ConnectionModule(Module):
                 position=msg.pose.pose.position,
                 orientation=msg.pose.pose.orientation,
             )
-            self.odom_pose.publish(pose_stamped)  # type: ignore[no-untyped-call]
+            self.odom_pose.publish(pose_stamped)
 
     def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""

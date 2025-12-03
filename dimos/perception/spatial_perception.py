@@ -577,7 +577,7 @@ def deploy(  # type: ignore[no-untyped-def]
     camera: spec.Camera,
 ):
     spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
-    spatial_memory.color_image.connect(camera.image)
+    spatial_memory.color_image.connect(camera.color_image)
     spatial_memory.start()
     return spatial_memory
 

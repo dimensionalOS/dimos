@@ -286,7 +286,7 @@ class GstreamerCameraModule(Module):
 
             # Publish the image
             if self.video and self.running:
-                self.video.publish(image_msg)  # type: ignore[no-untyped-call]
+                self.video.publish(image_msg)
 
             # Log statistics periodically
             self.frame_count += 1

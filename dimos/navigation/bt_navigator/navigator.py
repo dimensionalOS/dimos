@@ -271,7 +271,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
         while not self.stop_event.is_set():
             with self.state_lock:
                 current_state = self.state
-                self.navigation_state.publish(String(data=current_state.value))  # type: ignore[no-untyped-call]
+                self.navigation_state.publish(String(data=current_state.value))
 
             if current_state == NavigationState.FOLLOWING_PATH:
                 with self.goal_lock:
@@ -305,7 +305,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                             frame_id=goal.frame_id,
                             ts=goal.ts,
                         )
-                        self.target.publish(safe_goal)  # type: ignore[no-untyped-call]
+                        self.target.publish(safe_goal)
                         self.current_goal = safe_goal
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
@@ -315,7 +315,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                     if self.check_goal_reached():  # type: ignore[misc]
                         reached_msg = Bool()
                         reached_msg.data = True
-                        self.goal_reached.publish(reached_msg)  # type: ignore[no-untyped-call]
+                        self.goal_reached.publish(reached_msg)
                         self.stop_navigation()
                         self._goal_reached = True
                         logger.info("Goal reached, resetting local planner")
