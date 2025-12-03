@@ -35,6 +35,8 @@ from dimos.utils.reactive import backpressure
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from reactivex.observable import Observable
+
 T = TypeVar("T")
 
 
@@ -57,7 +59,7 @@ class ObservableMixin(Generic[T]):
     def hot_latest(self) -> Callable[[], T]:
         return reactive.getter_streaming(self.observable())  # type: ignore[no-untyped-call]
 
-    def pure_observable(self):  # type: ignore[no-untyped-def]
+    def pure_observable(self) -> Observable[T]:
         def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
             unsubscribe = self.subscribe(observer.on_next)  # type: ignore[attr-defined]
             return Disposable(unsubscribe)
@@ -67,7 +69,7 @@ class ObservableMixin(Generic[T]):
     # default return is backpressured because most
     # use cases will want this by default
     def observable(self):  # type: ignore[no-untyped-def]
-        return backpressure(self.pure_observable())  # type: ignore[no-untyped-call]
+        return backpressure(self.pure_observable())
 
 
 class State(enum.Enum):

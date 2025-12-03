@@ -13,6 +13,8 @@
 # limitations under the License.
 
 
+from typing import Any
+
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -32,7 +34,7 @@ class PersonTracker(Module):
 
     camera_info: CameraInfo
 
-    def __init__(self, cameraInfo: CameraInfo, **kwargs) -> None:
+    def __init__(self, cameraInfo: CameraInfo, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self.camera_info = cameraInfo
 
@@ -80,7 +82,13 @@ class PersonTracker(Module):
                 ),
                 match_tolerance=0.0,
                 buffer_size=2.0,
-            ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))
+            ).pipe(
+                ops.map(
+                    lambda pair: ImageDetections2D.from_ros_detection2d_array(
+                        *pair  # type: ignore[misc]
+                    )
+                )
+            )
         )
 
     @rpc
@@ -95,8 +103,8 @@ class PersonTracker(Module):
         if len(detections2D) == 0:
             return
 
-        target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())
-        vector = self.center_to_3d(target.center_bbox, self.camera_info, 2.0)
+        target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())  # type: ignore[attr-defined]
+        vector = self.center_to_3d(target.center_bbox, self.camera_info, 2.0)  # type: ignore[attr-defined]
 
         pose_in_camera = PoseStamped(
             ts=detections2D.ts,
