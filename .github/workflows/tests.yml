@@ -3,10 +3,17 @@ name: tests
 on:
  workflow_call:
    inputs:
-     branch-tag:
+     should-run:
+       required: false
+       type: boolean
+       default: true
+     dev-image:
        required: true
        type: string
-       default: "latest"
+       default: "dev:dev"
+     cmd:
+       required: true
+       type: string
 
 permissions:
   contents: read
@@ -17,12 +24,17 @@ jobs:
     runs-on: dimos-runner-ubuntu-2204
 
     container:
-      image: ghcr.io/dimensionalos/dev:${{ inputs.branch-tag }}
+      image: ghcr.io/dimensionalos/${{ inputs.dev-image }}
 
     steps:
+      - name: exit early
+        if: ${{ !inputs.should-run }}
+        run: |
+          exit 0
+
       - uses: actions/checkout@v4
 
       - name: Run tests
         run: |
           git config --global --add safe.directory '*'
-          /entrypoint.sh bash -c "pytest"
+          /entrypoint.sh bash -c "${{ inputs.cmd }}"
