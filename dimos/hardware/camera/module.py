@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 import queue
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
