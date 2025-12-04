@@ -23,11 +23,11 @@ from dimos.perception.common.ibvs import ObjectDistanceEstimator
 
 class ObjectTrackingStreamLite:
     """Lightweight object tracking using OpenCV CSRT tracker without depth models.
-    
+
     This version doesn't use Metric3D for depth estimation, making it suitable
     for CPU-only environments.
     """
-    
+
     def __init__(
         self,
         camera_intrinsics=None,

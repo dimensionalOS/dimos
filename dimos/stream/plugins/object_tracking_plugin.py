@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 class ObjectTrackingPlugin(StreamInterface):
     """Plugin wrapper for ObjectTrackingStream.
-    
+
     This plugin provides object tracking capabilities using OpenCV CSRT tracker
     with optional depth estimation using Metric3D.
     """
-    
+
     def __init__(self, config: StreamConfig):
         """Initialize the object tracking plugin.
-        
+
         Args:
             config: StreamConfig with the following parameters:
                 - camera_intrinsics: List [fx, fy, cx, cy]
@@ -45,13 +45,13 @@ class ObjectTrackingPlugin(StreamInterface):
         """
         super().__init__(config)
         self.tracker = None
-        
+
     def initialize(self, dependencies: Dict[str, StreamInterface] = None) -> bool:
         """Initialize the object tracking stream.
-        
+
         Args:
             dependencies: Not used for this stream
-            
+
         Returns:
             bool: True if initialization successful
         """
@@ -64,16 +64,18 @@ class ObjectTrackingPlugin(StreamInterface):
             reid_fail_tolerance = self.config.parameters.get("reid_fail_tolerance", 10)
             gt_depth_scale = self.config.parameters.get("gt_depth_scale", 1000.0)
             use_depth_model = self.config.parameters.get("use_depth_model", True)
-            
+
             # Check if we should use depth model based on device availability
             if use_depth_model and self.config.device == "cpu":
-                logger.warning("Metric3D depth estimation may be slow on CPU. Consider disabling with use_depth_model=False")
-            
+                logger.warning(
+                    "Metric3D depth estimation may be slow on CPU. Consider disabling with use_depth_model=False"
+                )
+
             # Import here to avoid loading models at module import time
             if use_depth_model:
                 # Full ObjectTrackingStream with Metric3D
                 from dimos.perception.object_tracker import ObjectTrackingStream
-                
+
                 self.tracker = ObjectTrackingStream(
                     camera_intrinsics=camera_intrinsics,
                     camera_pitch=camera_pitch,
@@ -86,7 +88,7 @@ class ObjectTrackingPlugin(StreamInterface):
                 # Create a lightweight version without Metric3D
                 logger.info("Creating lightweight object tracker without depth estimation")
                 from dimos.perception.object_tracker_lite import ObjectTrackingStreamLite
-                
+
                 self.tracker = ObjectTrackingStreamLite(
                     camera_intrinsics=camera_intrinsics,
                     camera_pitch=camera_pitch,
@@ -94,11 +96,11 @@ class ObjectTrackingPlugin(StreamInterface):
                     reid_threshold=reid_threshold,
                     reid_fail_tolerance=reid_fail_tolerance,
                 )
-            
+
             self._initialized = True
             logger.info(f"Object tracking plugin initialized on {self.config.device}")
             return True
-            
+
         except ImportError as e:
             logger.error(f"Failed to import object tracking dependencies: {e}")
             if "ObjectTrackingStreamLite" in str(e):
@@ -109,50 +111,48 @@ class ObjectTrackingPlugin(StreamInterface):
         except Exception as e:
             logger.error(f"Failed to initialize object tracking: {e}")
             return False
-    
+
     def _create_lite_tracker(self) -> bool:
         """Create a lightweight tracker without heavy model dependencies."""
         try:
             # For now, we'll create a simple passthrough that doesn't do tracking
             # This ensures the robot can still run without GPU
             logger.info("Creating passthrough object tracker (no tracking)")
-            
+
             class PassthroughTracker:
                 def create_stream(self, input_stream):
                     def passthrough(frame):
-                        return {
-                            "frame": frame,
-                            "viz_frame": frame,
-                            "targets": []
-                        }
+                        return {"frame": frame, "viz_frame": frame, "targets": []}
+
                     return input_stream.pipe(ops.map(passthrough))
-                
+
                 def cleanup(self):
                     pass
-            
+
             from reactivex import operators as ops
+
             self.tracker = PassthroughTracker()
             self._initialized = True
             return True
-            
+
         except Exception as e:
             logger.error(f"Failed to create passthrough tracker: {e}")
             return False
-    
+
     def create_stream(self, input_stream: Observable) -> Observable:
         """Create the object tracking stream.
-        
+
         Args:
             input_stream: Observable that emits video frames
-            
+
         Returns:
             Observable that emits object tracking results
         """
         if not self._initialized or self.tracker is None:
             raise RuntimeError("Object tracking plugin not initialized")
-            
+
         return self.tracker.create_stream(input_stream)
-    
+
     def cleanup(self):
         """Clean up resources."""
         if self.tracker is not None:

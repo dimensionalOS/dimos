@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class StreamConfig:
     """Configuration for a stream plugin."""
-    
+
     name: str
     enabled: bool = True
     device: str = "cpu"  # "cpu", "cuda", "cuda:0", etc.
@@ -34,12 +34,12 @@ class StreamConfig:
     parameters: Dict[str, Any] = field(default_factory=dict)
     dependencies: List[str] = field(default_factory=list)  # List of required stream names
     priority: int = 0  # Higher priority streams are initialized first
-    
+
     def __post_init__(self):
         """Validate configuration after initialization."""
         if not self.name:
             raise ValueError("Stream name cannot be empty")
-        
+
         # Validate device string
         valid_devices = ["cpu", "cuda"]
         if not any(self.device.startswith(d) for d in valid_devices):
@@ -48,14 +48,14 @@ class StreamConfig:
 
 class StreamInterface(ABC):
     """Abstract base class for all perception and processing streams.
-    
+
     This interface defines the contract that all stream plugins must implement.
     Streams can depend on other streams and share data through the Observable pattern.
     """
-    
+
     def __init__(self, config: StreamConfig):
         """Initialize the stream with configuration.
-        
+
         Args:
             config: StreamConfig object containing stream configuration
         """
@@ -64,58 +64,58 @@ class StreamInterface(ABC):
         self._initialized = False
         self._dependencies_met = False
         self._stream = None
-        
+
     @abstractmethod
-    def initialize(self, dependencies: Dict[str, 'StreamInterface'] = None) -> bool:
+    def initialize(self, dependencies: Dict[str, "StreamInterface"] = None) -> bool:
         """Initialize the stream and any required models or resources.
-        
+
         This method is called after all dependencies are available.
-        
+
         Args:
             dependencies: Dictionary mapping dependency names to initialized stream instances
-            
+
         Returns:
             bool: True if initialization successful, False otherwise
         """
         pass
-    
+
     @abstractmethod
     def create_stream(self, input_stream: Observable) -> Observable:
         """Create the processing stream from an input video stream.
-        
+
         Args:
             input_stream: Observable that emits video frames
-            
+
         Returns:
             Observable: Stream that emits processed results
         """
         pass
-    
+
     @abstractmethod
     def cleanup(self):
         """Clean up any resources used by the stream.
-        
+
         This method is called when the stream is being shut down.
         """
         pass
-    
+
     @property
     def is_initialized(self) -> bool:
         """Check if the stream is initialized and ready to use."""
         return self._initialized
-    
+
     @property
     def requires_gpu(self) -> bool:
         """Check if this stream requires GPU resources."""
         return self.config.device.startswith("cuda")
-    
+
     def get_dependencies(self) -> List[str]:
         """Get list of stream names this stream depends on."""
         return self.config.dependencies
-    
+
     def get_info(self) -> Dict[str, Any]:
         """Get information about the stream.
-        
+
         Returns:
             Dictionary containing stream information
         """
@@ -128,6 +128,6 @@ class StreamInterface(ABC):
             "dependencies": self.config.dependencies,
             "priority": self.config.priority,
         }
-    
+
     def __repr__(self):
         return f"{self.__class__.__name__}(name='{self.name}', initialized={self._initialized})"

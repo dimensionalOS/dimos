@@ -19,7 +19,7 @@ from .stream_registry import StreamRegistry, stream_registry
 
 __all__ = [
     "StreamInterface",
-    "StreamConfig", 
+    "StreamConfig",
     "StreamRegistry",
     "stream_registry",
 ]

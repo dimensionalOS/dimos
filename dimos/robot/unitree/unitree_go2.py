@@ -170,19 +170,19 @@ class UnitreeGo2(Robot):
 
     def _initialize_perception_streams(self, stream_configs: Optional[List[StreamConfig]] = None):
         """Initialize perception streams using the plugin architecture.
-        
+
         Args:
             stream_configs: List of StreamConfig objects. If None, uses default configurations.
         """
         # Register available stream plugins
         stream_registry.register_stream_class("person_tracking", PersonTrackingPlugin)
         stream_registry.register_stream_class("object_tracking", ObjectTrackingPlugin)
-        
+
         # Use provided configs or create defaults
         if stream_configs is None:
             # Default configurations
             stream_configs = []
-            
+
             # Only add perception streams if video is available
             if self.video_stream is not None:
                 # Person tracking configuration
@@ -199,7 +199,7 @@ class UnitreeGo2(Robot):
                     priority=10,  # Higher priority for person tracking
                 )
                 stream_configs.append(person_config)
-                
+
                 # Object tracking configuration
                 object_config = StreamConfig(
                     name="object_tracking",
@@ -214,21 +214,21 @@ class UnitreeGo2(Robot):
                     priority=5,
                 )
                 stream_configs.append(object_config)
-        
+
         # Configure all streams
         for config in stream_configs:
             try:
                 stream_registry.configure_stream(config)
             except ValueError as e:
                 logger.warning(f"Failed to configure stream {config.name}: {e}")
-        
+
         # Initialize all configured streams
         self.perception_streams = stream_registry.initialize_streams(force_cpu=self.force_cpu)
-        
+
         # Create stream observables if video is available
         if self.video_stream is not None and self.perception_streams:
             self.video_stream_ros = self.get_ros_video_stream(fps=8)
-            
+
             # Get initialized stream instances and create observables
             person_tracker = stream_registry.get_stream("person_tracking")
             if person_tracker and person_tracker.is_initialized:
@@ -237,7 +237,7 @@ class UnitreeGo2(Robot):
             else:
                 self.person_tracking_stream = None
                 logger.warning("Person tracking stream not available")
-            
+
             object_tracker = stream_registry.get_stream("object_tracking")
             if object_tracker and object_tracker.is_initialized:
                 self.object_tracking_stream = object_tracker.create_stream(self.video_stream_ros)
@@ -266,10 +266,10 @@ class UnitreeGo2(Robot):
         [position, rotation] = self.ros_control.transform_euler("base_link")
 
         return position, rotation
-    
+
     def get_perception_streams(self) -> Dict[str, any]:
         """Get all available perception streams.
-        
+
         Returns:
             Dictionary mapping stream names to their observables
         """
@@ -279,11 +279,11 @@ class UnitreeGo2(Robot):
         if self.object_tracking_stream is not None:
             streams["object_tracking"] = self.object_tracking_stream
         return streams
-    
+
     def cleanup(self):
         """Clean up resources including perception streams."""
         # Clean up perception streams
         stream_registry.cleanup_all()
-        
+
         # Call parent cleanup
         super().cleanup()

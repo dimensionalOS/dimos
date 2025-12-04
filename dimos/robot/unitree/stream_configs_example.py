@@ -19,12 +19,12 @@ from dimos.stream import StreamConfig
 
 def get_gpu_full_config(camera_intrinsics, camera_pitch=0.0, camera_height=1.0):
     """Get full GPU configuration with all perception capabilities.
-    
+
     Args:
         camera_intrinsics: List [fx, fy, cx, cy]
         camera_pitch: Camera pitch angle in radians
         camera_height: Camera height in meters
-        
+
     Returns:
         List of StreamConfig objects
     """
@@ -60,12 +60,12 @@ def get_gpu_full_config(camera_intrinsics, camera_pitch=0.0, camera_height=1.0):
 
 def get_cpu_minimal_config(camera_intrinsics, camera_pitch=0.0, camera_height=1.0):
     """Get minimal CPU configuration for resource-constrained environments.
-    
+
     Args:
         camera_intrinsics: List [fx, fy, cx, cy]
         camera_pitch: Camera pitch angle in radians
         camera_height: Camera height in meters
-        
+
     Returns:
         List of StreamConfig objects
     """
@@ -102,15 +102,15 @@ def get_cpu_minimal_config(camera_intrinsics, camera_pitch=0.0, camera_height=1.
 
 def get_hybrid_config(camera_intrinsics, camera_pitch=0.0, camera_height=1.0):
     """Get hybrid configuration with selective GPU usage.
-    
+
     This configuration enables person tracking on GPU while keeping
     object tracking lightweight for CPU.
-    
+
     Args:
         camera_intrinsics: List [fx, fy, cx, cy]
         camera_pitch: Camera pitch angle in radians
         camera_height: Camera height in meters
-        
+
     Returns:
         List of StreamConfig objects
     """
@@ -146,7 +146,7 @@ def get_hybrid_config(camera_intrinsics, camera_pitch=0.0, camera_height=1.0):
 
 def get_custom_config_example():
     """Example of how to create a custom configuration.
-    
+
     Returns:
         List of StreamConfig objects
     """
@@ -154,10 +154,10 @@ def get_custom_config_example():
     camera_intrinsics = [819.553492, 820.646595, 625.284099, 336.808987]
     camera_pitch = 0.0  # radians
     camera_height = 0.44  # meters
-    
+
     # Create custom configuration
     configs = []
-    
+
     # Add only person tracking for a specific use case
     person_config = StreamConfig(
         name="person_tracking",
@@ -172,7 +172,7 @@ def get_custom_config_example():
         priority=10,
     )
     configs.append(person_config)
-    
+
     # You can add more custom streams here
     # For example, a future semantic segmentation stream:
     # seg_config = StreamConfig(
@@ -184,18 +184,19 @@ def get_custom_config_example():
     #     priority=1,
     # )
     # configs.append(seg_config)
-    
+
     return configs
 
 
 def check_cuda_available():
     """Check if CUDA is available on the system.
-    
+
     Returns:
         bool: True if CUDA is available
     """
     try:
         import torch
+
         return torch.cuda.is_available()
     except ImportError:
         return False
