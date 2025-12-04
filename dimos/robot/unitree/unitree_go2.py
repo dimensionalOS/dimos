@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import multiprocessing
-from typing import Optional, Union, Tuple
+from typing import Optional, Union, Tuple, Iterable, Callable, Dict, Any
 import numpy as np
 from dimos.robot.robot import Robot
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
@@ -26,8 +26,6 @@ import os
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from reactivex.scheduler import ThreadPoolScheduler
 from dimos.utils.logging_config import setup_logger
-from dimos.perception.person_tracker import PersonTrackingStream
-from dimos.perception.object_tracker import ObjectTrackingStream
 from dimos.robot.local_planner import VFHPurePursuitPlanner, navigate_path_local
 from dimos.robot.global_planner.planner import AstarPlanner
 from dimos.types.costmap import Costmap
@@ -53,6 +51,7 @@ class UnitreeGo2(Robot):
         disable_video_stream: bool = False,
         mock_connection: bool = False,
         skills: Optional[Union[MyUnitreeSkills, AbstractSkill]] = None,
+        perception_modules: Optional[Iterable[Callable[["UnitreeGo2"], Any]]] = None,
         new_memory: bool = False,
     ):
         """Initialize the UnitreeGo2 robot.
@@ -136,24 +135,47 @@ class UnitreeGo2(Robot):
         else:
             self.video_stream = None
 
-        # Initialize visual servoing if enabled
-        if self.video_stream is not None:
+        # ---------------------------------------------------
+        # OPTIONAL PERCEPTION MODULE INITIALIZATION
+        # ---------------------------------------------------
+        # `perception_modules` is an iterable of **factory callables**.
+        # Each callable receives the current `UnitreeGo2` instance and can
+        # attach any attributes/streams it requires on the robot object.
+        #
+        # Example usage (outside of this file):
+        #     from dimos.perception.person_tracker import PersonTrackingStream
+        #     def add_person_tracker(robot: UnitreeGo2):
+        #         tracker = PersonTrackingStream(
+        #             camera_intrinsics=robot.camera_intrinsics,
+        #             camera_pitch=robot.camera_pitch,
+        #             camera_height=robot.camera_height,
+        #         )
+        #         robot.person_tracking_stream = tracker.create_stream(robot.get_ros_video_stream())
+        #
+        #     go2 = UnitreeGo2(use_ros=True, perception_modules=[add_person_tracker])
+        #
+        # This keeps UnitreeGo2 completely free from heavy ML dependencies
+        # while still allowing downstream users to compose rich perception
+        # functionality when required.
+        if self.video_stream is not None and perception_modules:
+            # Lazily create the ROS video stream only if at least one module
+            # requires it (to avoid unnecessary GPU/CPU usage).
             self.video_stream_ros = self.get_ros_video_stream(fps=8)
-            self.person_tracker = PersonTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            self.object_tracker = ObjectTrackingStream(
-                camera_intrinsics=self.camera_intrinsics,
-                camera_pitch=self.camera_pitch,
-                camera_height=self.camera_height,
-            )
-            person_tracking_stream = self.person_tracker.create_stream(self.video_stream_ros)
-            object_tracking_stream = self.object_tracker.create_stream(self.video_stream_ros)
 
-            self.person_tracking_stream = person_tracking_stream
-            self.object_tracking_stream = object_tracking_stream
+            # Store a registry of perception streams attached for later cleanup
+            self._perception_streams: Dict[str, Any] = {}
+
+            for factory in perception_modules:
+                try:
+                    result = factory(self)
+                    # The factory can optionally return a mapping {name: stream}
+                    if isinstance(result, dict):
+                        self._perception_streams.update(result)
+                except Exception as exc:
+                    logger.warning(
+                        f"Failed to initialise perception module '{factory.__name__}': {exc}",
+                        exc_info=True,
+                    )
 
         # Initialize the local planner and create BEV visualization stream
         self.local_planner = VFHPurePursuitPlanner(
@@ -194,3 +216,31 @@ class UnitreeGo2(Robot):
         [position, rotation] = self.ros_control.transform_euler("base_link")
 
         return position, rotation
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def attach_perception_module(self, factory: Callable[["UnitreeGo2"], Any]):
+        """Dynamically attach a perception module at runtime.
+
+        The *factory* is a callable that accepts the current robot instance and
+        can optionally return a mapping of ``{name: stream}`` which will be
+        stored in ``self._perception_streams`` for later reference/cleanup.
+
+        This utility method allows downstream applications to remain backward
+        compatible without needing to supply the ``perception_modules`` list at
+        construction time.
+        """
+        if not hasattr(self, "_perception_streams"):
+            self._perception_streams = {}
+
+        try:
+            result = factory(self)
+            if isinstance(result, dict):
+                self._perception_streams.update(result)
+        except Exception as exc:
+            logger.warning(
+                f"Failed to attach perception module '{factory.__name__}': {exc}",
+                exc_info=True,
+            )
