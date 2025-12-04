@@ -35,7 +35,9 @@ class RemoteError(Exception):
     Preserves the original exception type and full stack trace from the remote side.
     """
 
-    def __init__(self, type_name: str, type_module: str, args: tuple, traceback: str) -> None:
+    def __init__(
+        self, type_name: str, type_module: str, args: tuple[Any, ...], traceback: str
+    ) -> None:
         super().__init__(*args if args else (f"Remote exception: {type_name}",))
         self.remote_type = f"{type_module}.{type_name}"
         self.remote_traceback = traceback
@@ -81,7 +83,7 @@ def deserialize_exception(exc_data: SerializedException) -> Exception:
     """
     type_name = exc_data.get("type_name", "Exception")
     type_module = exc_data.get("type_module", "builtins")
-    args = exc_data.get("args", ())
+    args: tuple[Any, ...] = exc_data.get("args", ())
     tb_str = exc_data.get("traceback", "")
 
     # Only reconstruct builtin exceptions
@@ -94,7 +96,7 @@ def deserialize_exception(exc_data: SerializedException) -> Exception:
                 exc = exc_class(*args)
                 # Add remote traceback as __cause__ for context
                 exc.__cause__ = RemoteError(type_name, type_module, args, tb_str)
-                return exc
+                return exc  # type: ignore[no-any-return]
         except (AttributeError, TypeError):
             pass
 
