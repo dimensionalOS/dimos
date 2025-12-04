@@ -25,7 +25,7 @@ class GenesisSimulator(SimulatorBase):
         self,
         headless: bool = True,
         open_usd: str | None = None,  # Keep for compatibility
-        entities: list[dict[str, str | dict]] | None = None,
+        entities: list[dict[str, str | dict]] | None = None,  # type: ignore[type-arg]
     ) -> None:
         """Initialize the Genesis simulation.
 
@@ -74,10 +74,10 @@ class GenesisSimulator(SimulatorBase):
         # Don't build scene yet - let stream add camera first
         self.is_built = False
 
-    def _load_entities(self, entities: list[dict[str, str | dict]]):
+    def _load_entities(self, entities: list[dict[str, str | dict]]):  # type: ignore[no-untyped-def, type-arg]
         """Load multiple entities into the scene."""
         for entity in entities:
-            entity_type = entity.get("type", "").lower()
+            entity_type = entity.get("type", "").lower()  # type: ignore[union-attr]
             path = entity.get("path", "")
             params = entity.get("params", {})
 
@@ -107,7 +107,7 @@ class GenesisSimulator(SimulatorBase):
                     print(f"[Genesis] Added MJCF model from {path}")
 
                 elif entity_type == "primitive":
-                    shape_type = params.pop("shape", "plane")
+                    shape_type = params.pop("shape", "plane")  # type: ignore[union-attr]
                     if shape_type == "plane":
                         morph = gs.morphs.Plane(**params)
                     elif shape_type == "box":
@@ -133,7 +133,7 @@ class GenesisSimulator(SimulatorBase):
             except Exception as e:
                 print(f"[Warning] Failed to load entity {entity}: {e!s}")
 
-    def add_entity(self, entity_type: str, path: str = "", **params) -> None:
+    def add_entity(self, entity_type: str, path: str = "", **params) -> None:  # type: ignore[no-untyped-def]
         """Add a single entity to the scene.
 
         Args:
@@ -143,7 +143,7 @@ class GenesisSimulator(SimulatorBase):
         """
         self._load_entities([{"type": entity_type, "path": path, "params": params}])
 
-    def get_stage(self):
+    def get_stage(self):  # type: ignore[no-untyped-def]
         """Get the current stage/scene."""
         return self.scene
 

@@ -22,17 +22,17 @@ from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 # TODO: Remove, deprecated
 class NavigationModule(Module):
-    goal_pose: Out[PoseStamped] = None
-    goal_reached: In[Bool] = None
-    cancel_goal: Out[Bool] = None
-    joy: Out[Joy] = None
+    goal_pose: Out[PoseStamped] = None  # type: ignore[assignment]
+    goal_reached: In[Bool] = None  # type: ignore[assignment]
+    cancel_goal: Out[Bool] = None  # type: ignore[assignment]
+    joy: Out[Joy] = None  # type: ignore[assignment]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize NavigationModule."""
         Module.__init__(self, *args, **kwargs)
         self.goal_reach = None
@@ -46,7 +46,7 @@ class NavigationModule(Module):
 
     def _on_goal_reached(self, msg: Bool) -> None:
         """Handle goal reached status messages."""
-        self.goal_reach = msg.data
+        self.goal_reach = msg.data  # type: ignore[assignment]
 
     def _set_autonomy_mode(self) -> None:
         """

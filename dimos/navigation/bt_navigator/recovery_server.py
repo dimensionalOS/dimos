@@ -22,7 +22,7 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
-logger = setup_logger("dimos.navigation.bt_navigator.recovery_server")
+logger = setup_logger()
 
 
 class RecoveryServer:
@@ -67,12 +67,12 @@ class RecoveryServer:
             return
 
         # Store current odom for checking stuck
-        self.current_odom = odom
+        self.current_odom = odom  # type: ignore[assignment]
 
         # Initialize on first update
         if self.last_moved_pose is None:
-            self.last_moved_pose = odom
-            self.last_moved_time = odom.ts
+            self.last_moved_pose = odom  # type: ignore[assignment]
+            self.last_moved_time = odom.ts  # type: ignore[assignment]
             return
 
         # Calculate distance from the reference position (last significant movement)

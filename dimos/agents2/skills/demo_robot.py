@@ -21,7 +21,7 @@ from dimos.mapping.types import LatLon
 
 
 class DemoRobot(Module):
-    gps_location: Out[LatLon] = None
+    gps_location: Out[LatLon] = None  # type: ignore[assignment]
 
     def start(self) -> None:
         super().start()

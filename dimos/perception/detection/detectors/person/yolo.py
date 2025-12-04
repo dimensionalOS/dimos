@@ -21,7 +21,7 @@ from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.detection.yolo.person")
+logger = setup_logger()
 
 
 class YoloPersonDetector(Detector):
@@ -39,7 +39,7 @@ class YoloPersonDetector(Detector):
             self.device = device
             return
 
-        if is_cuda_available():
+        if is_cuda_available():  # type: ignore[no-untyped-call]
             self.device = "cuda"
             logger.info("Using CUDA for YOLO person detector")
         else:

@@ -37,10 +37,10 @@ class JoystickModule(Module):
     This allows testing the same interface that navigation will use.
     """
 
-    twist_out: Out[TwistStamped] = None  # Timestamped velocity commands
-    mode_out: Out[Int32] = None  # Mode changes
+    twist_out: Out[TwistStamped] = None  # type: ignore[assignment]  # Timestamped velocity commands
+    mode_out: Out[Int32] = None  # type: ignore[assignment]  # Mode changes
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
@@ -58,7 +58,7 @@ class JoystickModule(Module):
             print("ERROR: pygame not installed. Install with: pip install pygame")
             return False
 
-        self.keys_held = set()
+        self.keys_held = set()  # type: ignore[var-annotated]
         self.pygame_ready = True
         self.running = True
 
@@ -224,7 +224,7 @@ class JoystickModule(Module):
         pygame.quit()
         print("JoystickModule stopped")
 
-    def _update_display(self, twist) -> None:
+    def _update_display(self, twist) -> None:  # type: ignore[no-untyped-def]
         """Update pygame window with current status."""
         import pygame
 

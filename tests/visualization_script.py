@@ -72,7 +72,7 @@ from dimos.perception.pointcloud.utils import (
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("visualization_script")
+logger = setup_logger()
 
 
 def create_point_cloud(color_img, depth_img, intrinsics):

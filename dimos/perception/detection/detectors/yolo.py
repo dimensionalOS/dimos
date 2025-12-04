@@ -21,7 +21,7 @@ from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.detection.yolo_2d_det")
+logger = setup_logger()
 
 
 class Yolo2DDetector(Detector):
@@ -40,7 +40,7 @@ class Yolo2DDetector(Detector):
             self.device = device
             return
 
-        if is_cuda_available():
+        if is_cuda_available():  # type: ignore[no-untyped-call]
             self.device = "cuda"
             logger.debug("Using CUDA for YOLO 2d detector")
         else:
