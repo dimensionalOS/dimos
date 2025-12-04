@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, TypeAlias
 
+import rerun as rr
+
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry  # type: ignore[import-untyped]
 import numpy as np
 from plum import dispatch
@@ -255,6 +257,22 @@ class Odometry(LCMOdometry, Timestamped):  # type: ignore[misc]
             and self.child_frame_id == other.child_frame_id
             and self.pose == other.pose
             and self.twist == other.twist
+        )
+
+    def to_rerun(self) -> rr.Transform3D:
+        """Convert odometry pose to a Rerun transform."""
+        return rr.Transform3D(
+            translation=np.array([self.x, self.y, self.z], dtype=np.float32),
+            quaternion=np.array(
+                [
+                    self.orientation.x,
+                    self.orientation.y,
+                    self.orientation.z,
+                    self.orientation.w,
+                ],
+                dtype=np.float32,
+            ),
+            from_parent=True,
         )
 
     def lcm_encode(self) -> bytes:

@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dimos_lcm.geometry_msgs import Twist as LCMTwist  # type: ignore[import-untyped]
 from plum import dispatch
+import rerun as rr
 
 try:
     from geometry_msgs.msg import (  # type: ignore[attr-defined]
@@ -134,6 +135,15 @@ class Twist(LCMTwist):  # type: ignore[misc]
         ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)  # type: ignore[no-untyped-call]
         ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)  # type: ignore[no-untyped-call]
         return ros_msg
+
+    def to_rerun(self) -> rr.Arrows3D:
+        """Visualize linear and angular velocity as arrows."""
+        origins = [(0.0, 0.0, 0.0), (0.0, 0.0, 0.0)]
+        vectors = [
+            (float(self.linear.x), float(self.linear.y), float(self.linear.z)),
+            (float(self.angular.x), float(self.angular.y), float(self.angular.z)),
+        ]
+        return rr.Arrows3D(origins=origins, vectors=vectors)
 
 
 __all__ = ["Quaternion", "Twist"]

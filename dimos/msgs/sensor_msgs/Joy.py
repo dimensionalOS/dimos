@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
+import rerun as rr
+
 from dimos_lcm.sensor_msgs import Joy as LCMJoy  # type: ignore[import-untyped]
 
 try:
@@ -140,6 +142,10 @@ class Joy(Timestamped):
             and self.buttons == other.buttons
             and self.frame_id == other.frame_id
         )
+
+    def to_rerun(self) -> rr.AnyValues:
+        """Convert joystick state to a generic Rerun bundle."""
+        return rr.AnyValues(axes=self.axes, buttons=self.buttons)
 
     @classmethod
     def from_ros_msg(cls, ros_msg: ROSJoy) -> Joy:

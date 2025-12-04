@@ -22,6 +22,7 @@ import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
+import rerun as rr
 import reactivex as rx
 from reactivex import operators as ops
 from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
@@ -372,6 +373,11 @@ class Image(Timestamped):
                 "image_url": {"url": f"data:image/jpeg;base64,{self.to_base64()}"},
             }
         ]
+
+    def to_rerun(self) -> rr.Image:
+        """Convert to a Rerun image (RGB numpy array)."""
+        rgb = self.to_rgb().to_opencv()
+        return rr.Image(rgb)
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: str | None = None) -> bytes:

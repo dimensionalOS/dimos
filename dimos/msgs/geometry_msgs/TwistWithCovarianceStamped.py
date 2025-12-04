@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
+import rerun as rr
+
 from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
     TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped,
 )
@@ -171,3 +173,7 @@ class TwistWithCovarianceStamped(TwistWithCovariance, Timestamped):
             ros_msg.twist.covariance = list(self.covariance)  # type: ignore[has-type]
 
         return ros_msg
+
+    def to_rerun(self) -> rr.Arrows3D:
+        """Visualize stamped twist ignoring covariance."""
+        return self.twist.to_rerun()

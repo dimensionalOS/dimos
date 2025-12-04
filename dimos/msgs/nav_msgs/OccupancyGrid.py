@@ -25,6 +25,7 @@ from dimos_lcm.nav_msgs import (  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
 import numpy as np
 from scipy import ndimage
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
@@ -328,6 +329,13 @@ class OccupancyGrid(Timestamped):
         )
         instance.info = lcm_msg.info
         return instance
+
+    def to_rerun(self) -> rr.SegmentationImage:
+        """Convert to a Rerun segmentation image."""
+        if self.grid.size == 0:
+            return rr.SegmentationImage(np.zeros((0, 0), dtype=np.uint16))
+        data = np.where(self.grid < 0, 0, self.grid).astype(np.uint16)
+        return rr.SegmentationImage(data)
 
     @classmethod
     def from_pointcloud(
