@@ -270,7 +270,7 @@
                 fi
 
                 echo "here's the main command to run:"
-                echo      CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py
+                echo      "CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py"
               fi
             fi
           '';
