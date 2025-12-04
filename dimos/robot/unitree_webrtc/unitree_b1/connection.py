@@ -52,11 +52,11 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    cmd_vel: In[TwistStamped] = None  # type: ignore[assignment]  # Timestamped velocity commands from ROS
-    mode_cmd: In[Int32] = None  # type: ignore[assignment]  # Mode changes
-    odom_in: In[Odometry] = None  # type: ignore[assignment]  # External odometry from ROS SLAM/lidar
+    cmd_vel: In[TwistStamped]  # Timestamped velocity commands from ROS
+    mode_cmd: In[Int32]  # Mode changes
+    odom_in: In[Odometry]  # External odometry from ROS SLAM/lidar
 
-    odom_pose: Out[PoseStamped] = None  # type: ignore[assignment]  # Converted pose for internal use
+    odom_pose: Out[PoseStamped]  # Converted pose for internal use
 
     def __init__(  # type: ignore[no-untyped-def]
         self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs

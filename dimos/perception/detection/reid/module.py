@@ -38,9 +38,9 @@ class Config(ModuleConfig):
 class ReidModule(Module):
     default_config = Config
 
-    detections: In[Detection2DArray] = None  # type: ignore
-    image: In[Image] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
+    detections: In[Detection2DArray]
+    image: In[Image]
+    annotations: Out[ImageAnnotations]
 
     def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)

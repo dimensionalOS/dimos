@@ -30,7 +30,7 @@ class GoogleMapsSkillContainer(SkillModule):
     _latest_location: LatLon | None = None
     _client: GoogleMaps
 
-    gps_location: In[LatLon] = None  # type: ignore[assignment]
+    gps_location: In[LatLon]
 
     def __init__(self) -> None:
         super().__init__()

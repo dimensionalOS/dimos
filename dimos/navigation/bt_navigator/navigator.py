@@ -54,14 +54,14 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
     """
 
     # LCM inputs
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    goal_request: In[PoseStamped] = None  # type: ignore[assignment]  # Input for receiving goal requests
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped]
+    goal_request: In[PoseStamped]  # Input for receiving goal requests
+    global_costmap: In[OccupancyGrid]
 
     # LCM outputs
-    target: Out[PoseStamped] = None  # type: ignore[assignment]
-    goal_reached: Out[Bool] = None  # type: ignore[assignment]
-    navigation_state: Out[String] = None  # type: ignore[assignment]
+    target: Out[PoseStamped]
+    goal_reached: Out[Bool]
+    navigation_state: Out[String]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

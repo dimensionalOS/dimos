@@ -32,10 +32,10 @@ class PersonTrackingStream(Module):
     """Module for person tracking with LCM input/output."""
 
     # LCM inputs
-    video: In[Image] = None  # type: ignore[assignment]
+    video: In[Image]
 
     # LCM outputs
-    tracking_data: Out[dict] = None  # type: ignore[assignment, type-arg]
+    tracking_data: Out[dict]  # type: ignore[type-arg]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

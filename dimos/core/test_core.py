@@ -35,10 +35,10 @@ assert dimos
 
 
 class Navigation(Module):
-    mov: Out[Vector3] = None
-    lidar: In[LidarMessage] = None
-    target_position: In[Vector3] = None
-    odometry: In[Odometry] = None
+    mov: Out[Vector3]
+    lidar: In[LidarMessage]
+    target_position: In[Vector3]
+    odometry: In[Odometry]
 
     odom_msg_count = 0
     lidar_msg_count = 0
