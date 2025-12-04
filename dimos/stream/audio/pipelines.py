@@ -22,7 +22,7 @@ from dimos.stream.audio.text.node_stdout import TextPrinterNode
 from dimos.stream.audio.tts.node_openai import OpenAITTSNode, Voice
 
 
-def stt():
+def stt():  # type: ignore[no-untyped-def]
     # Create microphone source, recorder, and audio output
     mic = SounddeviceAudioSource()
     normalizer = AudioNormalizer()
@@ -41,7 +41,7 @@ def stt():
     return whisper_node
 
 
-def tts():
+def tts():  # type: ignore[no-untyped-def]
     tts_node = OpenAITTSNode(speed=1.2, voice=Voice.ONYX)
     agent_text_printer = TextPrinterNode(prefix="AGENT: ")
     agent_text_printer.consume_text(tts_node.emit_text())

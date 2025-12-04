@@ -24,7 +24,7 @@ from ..base.stream_base import AnnotatorType, StreamBase, TransportType
 class GenesisStream(StreamBase):
     """Genesis stream implementation."""
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         simulator,
         width: int = 1920,
@@ -110,8 +110,8 @@ class GenesisStream(StreamBase):
                     frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
                 # Write to FFmpeg
-                self.proc.stdin.write(frame.tobytes())
-                self.proc.stdin.flush()
+                self.proc.stdin.write(frame.tobytes())  # type: ignore[attr-defined]
+                self.proc.stdin.flush()  # type: ignore[attr-defined]
 
                 # Log metrics
                 frame_time = time.time() - frame_start
@@ -134,8 +134,8 @@ class GenesisStream(StreamBase):
         """Cleanup resources."""
         print("[Cleanup] Stopping FFmpeg process...")
         if hasattr(self, "proc"):
-            self.proc.stdin.close()
-            self.proc.wait()
+            self.proc.stdin.close()  # type: ignore[attr-defined]
+            self.proc.wait()  # type: ignore[attr-defined]
         print("[Cleanup] Closing simulation...")
         try:
             self.simulator.close()

@@ -19,7 +19,7 @@ import time
 import cv2
 
 # Import LCM messages
-from dimos_lcm.vision_msgs import (
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
     BoundingBox2D,
     Detection2D,
     ObjectHypothesis,
@@ -36,16 +36,16 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class ObjectTracker2D(Module):
     """Pure 2D object tracking module using OpenCV's CSRT tracker."""
 
-    color_image: In[Image] = None
+    color_image: In[Image] = None  # type: ignore[assignment]
 
-    detection2darray: Out[Detection2DArray] = None
-    tracked_overlay: Out[Image] = None  # Visualization output
+    detection2darray: Out[Detection2DArray] = None  # type: ignore[assignment]
+    tracked_overlay: Out[Image] = None  # type: ignore[assignment]  # Visualization output
 
     def __init__(
         self,
@@ -73,7 +73,7 @@ class ObjectTracker2D(Module):
 
         # Frame management
         self._frame_lock = threading.Lock()
-        self._latest_rgb_frame: np.ndarray | None = None
+        self._latest_rgb_frame: np.ndarray | None = None  # type: ignore[type-arg]
         self._frame_arrival_time: float | None = None
 
         # Tracking thread control
@@ -109,7 +109,7 @@ class ObjectTracker2D(Module):
         super().stop()
 
     @rpc
-    def track(self, bbox: list[float]) -> dict:
+    def track(self, bbox: list[float]) -> dict:  # type: ignore[type-arg]
         """
         Initialize tracking with a bounding box.
 
@@ -130,14 +130,14 @@ class ObjectTracker2D(Module):
             logger.warning(f"Invalid initial bbox provided: {bbox}. Tracking not started.")
             return {"status": "invalid_bbox"}
 
-        self.tracking_bbox = (x1, y1, w, h)
-        self.tracker = cv2.legacy.TrackerCSRT_create()
+        self.tracking_bbox = (x1, y1, w, h)  # type: ignore[assignment]
+        self.tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
         self.tracking_initialized = False
         logger.info(f"Tracking target set with bbox: {self.tracking_bbox}")
 
         # Convert RGB to BGR for CSRT (OpenCV expects BGR)
         frame_bgr = cv2.cvtColor(self._latest_rgb_frame, cv2.COLOR_RGB2BGR)
-        init_success = self.tracker.init(frame_bgr, self.tracking_bbox)
+        init_success = self.tracker.init(frame_bgr, self.tracking_bbox)  # type: ignore[attr-defined]
         if init_success:
             self.tracking_initialized = True
             logger.info("Tracker initialized successfully.")
@@ -290,7 +290,7 @@ class ObjectTracker2D(Module):
         viz_msg = Image.from_numpy(viz_copy, format=ImageFormat.RGB)
         self.tracked_overlay.publish(viz_msg)
 
-    def _draw_visualization(self, image: np.ndarray, bbox: list[int]) -> np.ndarray:
+    def _draw_visualization(self, image: np.ndarray, bbox: list[int]) -> np.ndarray:  # type: ignore[type-arg]
         """Draw tracking visualization."""
         viz_image = image.copy()
         x1, y1, x2, y2 = bbox

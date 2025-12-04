@@ -23,9 +23,9 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
-import socketio
+import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse
 from starlette.routing import Route
@@ -39,7 +39,7 @@ from dimos.utils.logging_config import setup_logger
 
 from .optimized_costmap import OptimizedCostmapEncoder
 
-logger = setup_logger("dimos.web.websocket_vis")
+logger = setup_logger()
 
 
 class WebsocketVisModule(Module):
@@ -62,20 +62,20 @@ class WebsocketVisModule(Module):
     """
 
     # LCM inputs
-    odom: In[PoseStamped] = None
-    gps_location: In[LatLon] = None
-    path: In[Path] = None
-    global_costmap: In[OccupancyGrid] = None
+    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    gps_location: In[LatLon] = None  # type: ignore[assignment]
+    path: In[Path] = None  # type: ignore[assignment]
+    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
 
     # LCM outputs
-    goal_request: Out[PoseStamped] = None
-    gps_goal: Out[LatLon] = None
-    explore_cmd: Out[Bool] = None
-    stop_explore_cmd: Out[Bool] = None
-    cmd_vel: Out[Twist] = None
-    movecmd_stamped: Out[TwistStamped] = None
+    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
+    gps_goal: Out[LatLon] = None  # type: ignore[assignment]
+    explore_cmd: Out[Bool] = None  # type: ignore[assignment]
+    stop_explore_cmd: Out[Bool] = None  # type: ignore[assignment]
+    cmd_vel: Out[Twist] = None  # type: ignore[assignment]
+    movecmd_stamped: Out[TwistStamped] = None  # type: ignore[assignment]
 
-    def __init__(self, port: int = 7779, **kwargs) -> None:
+    def __init__(self, port: int = 7779, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize the WebSocket visualization module.
 
         Args:
@@ -91,7 +91,7 @@ class WebsocketVisModule(Module):
         self._broadcast_thread = None
         self._uvicorn_server: uvicorn.Server | None = None
 
-        self.vis_state = {}
+        self.vis_state = {}  # type: ignore[var-annotated]
         self.state_lock = threading.Lock()
 
         self.costmap_encoder = OptimizedCostmapEncoder(chunk_size=64)
@@ -100,17 +100,17 @@ class WebsocketVisModule(Module):
 
     def _start_broadcast_loop(self) -> None:
         def websocket_vis_loop() -> None:
-            self._broadcast_loop = asyncio.new_event_loop()
+            self._broadcast_loop = asyncio.new_event_loop()  # type: ignore[assignment]
             asyncio.set_event_loop(self._broadcast_loop)
             try:
-                self._broadcast_loop.run_forever()
+                self._broadcast_loop.run_forever()  # type: ignore[attr-defined]
             except Exception as e:
                 logger.error(f"Broadcast loop error: {e}")
             finally:
-                self._broadcast_loop.close()
+                self._broadcast_loop.close()  # type: ignore[attr-defined]
 
-        self._broadcast_thread = threading.Thread(target=websocket_vis_loop, daemon=True)
-        self._broadcast_thread.start()
+        self._broadcast_thread = threading.Thread(target=websocket_vis_loop, daemon=True)  # type: ignore[assignment]
+        self._broadcast_thread.start()  # type: ignore[attr-defined]
 
     @rpc
     def start(self) -> None:
@@ -177,7 +177,7 @@ class WebsocketVisModule(Module):
         # Create SocketIO server
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
-        async def serve_index(request):
+        async def serve_index(request):  # type: ignore[no-untyped-def]
             return HTMLResponse("<html><body>Use the extension.</body></html>")
 
         routes = [Route("/", serve_index)]
@@ -186,18 +186,18 @@ class WebsocketVisModule(Module):
         self.app = socketio.ASGIApp(self.sio, starlette_app)
 
         # Register SocketIO event handlers
-        @self.sio.event
-        async def connect(sid, environ) -> None:
+        @self.sio.event  # type: ignore[misc]
+        async def connect(sid, environ) -> None:  # type: ignore[no-untyped-def]
             with self.state_lock:
                 current_state = dict(self.vis_state)
 
             # Force full costmap update on new connection
             self.costmap_encoder.last_full_grid = None
 
-            await self.sio.emit("full_state", current_state, room=sid)
+            await self.sio.emit("full_state", current_state, room=sid)  # type: ignore[union-attr]
 
-        @self.sio.event
-        async def click(sid, position) -> None:
+        @self.sio.event  # type: ignore[misc]
+        async def click(sid, position) -> None:  # type: ignore[no-untyped-def]
             goal = PoseStamped(
                 position=(position[0], position[1], 0),
                 orientation=(0, 0, 0, 1),  # Default orientation
@@ -206,23 +206,23 @@ class WebsocketVisModule(Module):
             self.goal_request.publish(goal)
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
-        @self.sio.event
-        async def gps_goal(sid, goal) -> None:
+        @self.sio.event  # type: ignore[misc]
+        async def gps_goal(sid, goal) -> None:  # type: ignore[no-untyped-def]
             logger.info(f"Set GPS goal: {goal}")
             self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))
 
-        @self.sio.event
-        async def start_explore(sid) -> None:
+        @self.sio.event  # type: ignore[misc]
+        async def start_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event
-        async def stop_explore(sid) -> None:
+        @self.sio.event  # type: ignore[misc]
+        async def stop_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event
-        async def move_command(sid, data) -> None:
+        @self.sio.event  # type: ignore[misc]
+        async def move_command(sid, data) -> None:  # type: ignore[no-untyped-def]
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(
@@ -247,7 +247,7 @@ class WebsocketVisModule(Module):
 
     def _run_uvicorn_server(self) -> None:
         config = uvicorn.Config(
-            self.app,
+            self.app,  # type: ignore[arg-type]
             host="0.0.0.0",
             port=self.port,
             log_level="error",  # Reduce verbosity

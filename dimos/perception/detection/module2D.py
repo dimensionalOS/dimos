@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
     ImageAnnotations,
 )
 from reactivex import operators as ops
@@ -29,7 +29,7 @@ from dimos.msgs.geometry_msgs import Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.detectors import Detector
+from dimos.perception.detection.detectors import Detector  # type: ignore[attr-defined]
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
 from dimos.perception.detection.type import Filter2D, ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
@@ -67,17 +67,17 @@ class Detection2DModule(Module):
 
     cnt: int = 0
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self.detector = self.config.detector()
-        self.vlm_detections_subject = Subject()
+        self.detector = self.config.detector()  # type: ignore[call-arg, misc]
+        self.vlm_detections_subject = Subject()  # type: ignore[var-annotated]
         self.previous_detection_count = 0
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
         imageDetections = self.detector.process_image(image)
         if not self.config.filter:
             return imageDetections
-        return imageDetections.filter(*self.config.filter)
+        return imageDetections.filter(*self.config.filter)  # type: ignore[misc, return-value]
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
@@ -111,8 +111,10 @@ class Detection2DModule(Module):
             if index < current_count:
                 # Active detection - compute real position
                 detection = detections.detections[index]
-                position_3d = self.pixel_to_3d(
-                    detection.center_bbox, self.config.camera_info, assumed_depth=1.0
+                position_3d = self.pixel_to_3d(  # type: ignore[attr-defined]
+                    detection.center_bbox,  # type: ignore[attr-defined]
+                    self.config.camera_info,
+                    assumed_depth=1.0,
                 )
             else:
                 # No detection at this index - publish zero transform
@@ -152,10 +154,10 @@ class Detection2DModule(Module):
 
     @rpc
     def stop(self) -> None:
-        return super().stop()
+        return super().stop()  # type: ignore[no-any-return]
 
 
-def deploy(
+def deploy(  # type: ignore[no-untyped-def]
     dimos: DimosCluster,
     camera: spec.Camera,
     prefix: str = "/detector2d",
@@ -164,7 +166,7 @@ def deploy(
     from dimos.core import LCMTransport
 
     detector = Detection2DModule(**kwargs)
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)

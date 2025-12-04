@@ -19,7 +19,7 @@ import sys
 import threading
 import time
 
-from terminaltexteffects import Color
+from terminaltexteffects import Color  # type: ignore[attr-defined]
 
 from dimos.utils.cli import theme
 
@@ -30,7 +30,7 @@ _import_complete = threading.Event()
 print(theme.ACCENT)
 
 
-def import_cli_in_background():
+def import_cli_in_background() -> None:
     """Import the heavy CLI modules in the background"""
     global _humancli_main
     try:
@@ -43,7 +43,7 @@ def import_cli_in_background():
         _import_complete.set()
 
 
-def get_effect_config(effect_name):
+def get_effect_config(effect_name: str):  # type: ignore[no-untyped-def]
     """Get hardcoded configuration for a specific effect"""
     # Hardcoded configs for each effect
     global_config = {
@@ -76,10 +76,10 @@ def get_effect_config(effect_name):
         "highlight": {"highlight_brightness": 3},
     }
 
-    return {**configs.get(effect_name, {}), **global_config}
+    return {**configs.get(effect_name, {}), **global_config}  # type: ignore[dict-item]
 
 
-def run_banner_animation():
+def run_banner_animation() -> None:
     """Run the ASCII banner animation before launching Textual"""
 
     # Check if we should animate
@@ -90,7 +90,6 @@ def run_banner_animation():
         return  # Skip animation
     from terminaltexteffects.effects.effect_beams import Beams
     from terminaltexteffects.effects.effect_burn import Burn
-    from terminaltexteffects.effects.effect_colorshift import ColorShift
     from terminaltexteffects.effects.effect_decrypt import Decrypt
     from terminaltexteffects.effects.effect_expand import Expand
     from terminaltexteffects.effects.effect_highlight import Highlight
@@ -137,11 +136,11 @@ def run_banner_animation():
     # Create and run the effect with config
     effect = EffectClass(ascii_art)
     for key, value in effect_config.items():
-        setattr(effect.effect_config, key, value)
+        setattr(effect.effect_config, key, value)  # type: ignore[attr-defined]
 
     # Run the animation - terminal.print() handles all screen management
-    with effect.terminal_output() as terminal:
-        for frame in effect:
+    with effect.terminal_output() as terminal:  # type: ignore[attr-defined]
+        for frame in effect:  # type: ignore[attr-defined]
             terminal.print(frame)
 
     # Brief pause to see the final frame
@@ -151,7 +150,7 @@ def run_banner_animation():
     print("\033[2J\033[H", end="")
 
 
-def main():
+def main() -> None:
     """Main entry point - run animation then launch the real CLI"""
 
     # Start importing CLI in background (this is slow)

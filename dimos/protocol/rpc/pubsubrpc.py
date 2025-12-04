@@ -39,14 +39,14 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from types import FunctionType
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
 
 # (name, true_if_response_topic) -> TopicT
 TopicGen = Callable[[str, bool], TopicT]
-MsgGen = Callable[[str, list], MsgT]
+MsgGen = Callable[[str, list], MsgT]  # type: ignore[type-arg]
 
 
 class RPCReq(TypedDict):
@@ -140,13 +140,13 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         if hasattr(super(), "stop"):
             super().stop()
 
-    def call(self, name: str, arguments: Args, cb: Callable | None):
+    def call(self, name: str, arguments: Args, cb: Callable | None):  # type: ignore[no-untyped-def, type-arg]
         if cb is None:
             return self.call_nowait(name, arguments)
 
         return self.call_cb(name, arguments, cb)
 
-    def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:
+    def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:  # type: ignore[type-arg]
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
 
@@ -212,7 +212,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         req: RPCReq = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
 
-    def serve_rpc(self, f: FunctionType, name: str | None = None):
+    def serve_rpc(self, f: FunctionType, name: str | None = None):  # type: ignore[no-untyped-def, override]
         if not name:
             name = f.__name__
 

@@ -29,7 +29,7 @@ from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class NavigationSkillContainer(SkillModule):
@@ -54,8 +54,8 @@ class NavigationSkillContainer(SkillModule):
         "WavefrontFrontierExplorer.is_exploration_active",
     ]
 
-    color_image: In[Image] = None
-    odom: In[PoseStamped] = None
+    color_image: In[Image] = None  # type: ignore[assignment]
+    odom: In[PoseStamped] = None  # type: ignore[assignment]
 
     def __init__(self) -> None:
         super().__init__()
@@ -64,8 +64,8 @@ class NavigationSkillContainer(SkillModule):
 
     @rpc
     def start(self) -> None:
-        self._disposables.add(self.color_image.subscribe(self._on_color_image))
-        self._disposables.add(self.odom.subscribe(self._on_odom))
+        self._disposables.add(self.color_image.subscribe(self._on_color_image))  # type: ignore[arg-type]
+        self._disposables.add(self.odom.subscribe(self._on_odom))  # type: ignore[arg-type]
         self._skill_started = True
 
     @rpc
@@ -327,7 +327,7 @@ class NavigationSkillContainer(SkillModule):
             return
 
         cancel_goal_rpc()
-        return stop_exploration_rpc()
+        return stop_exploration_rpc()  # type: ignore[no-any-return]
 
     @skill()
     def start_exploration(self, timeout: float = 240.0) -> str:

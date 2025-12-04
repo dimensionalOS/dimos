@@ -33,7 +33,7 @@ class VideoOperators:
     @staticmethod
     def with_fps_sampling(
         fps: int = 25, *, sample_interval: timedelta | None = None, use_latest: bool = True
-    ) -> Callable[[Observable], Observable]:
+    ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         """Creates an operator that samples frames at a specified rate.
 
         Creates a transformation operator that samples frames either by taking
@@ -95,7 +95,7 @@ class VideoOperators:
                 raise ValueError("FPS must be positive")
             sample_interval = timedelta(microseconds=int(1_000_000 / fps))
 
-        def _operator(source: Observable) -> Observable:
+        def _operator(source: Observable) -> Observable:  # type: ignore[type-arg]
             return source.pipe(
                 ops.sample(sample_interval) if use_latest else ops.throttle_first(sample_interval)
             )
@@ -108,7 +108,7 @@ class VideoOperators:
         save_limit: int = 100,
         suffix: str = "",
         loop: bool = False,
-    ) -> Callable[[Observable], Observable]:
+    ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         """Creates an operator that saves video frames as JPEG files.
 
         Creates a transformation operator that saves each frame from the video
@@ -139,7 +139,7 @@ class VideoOperators:
             ... )
         """
 
-        def _operator(source: Observable) -> Observable:
+        def _operator(source: Observable) -> Observable:  # type: ignore[type-arg]
             return source.pipe(
                 ops.map(
                     lambda frame: frame_processor.export_to_jpeg(frame, save_limit, loop, suffix)
@@ -149,7 +149,7 @@ class VideoOperators:
         return _operator
 
     @staticmethod
-    def with_optical_flow_filtering(threshold: float = 1.0) -> Callable[[Observable], Observable]:
+    def with_optical_flow_filtering(threshold: float = 1.0) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         """Creates an operator that filters optical flow frames by relevancy score.
 
         Filters a stream of optical flow results (frame, relevancy_score) tuples,
@@ -184,40 +184,43 @@ class VideoOperators:
             None scores are filtered out.
         """
         return lambda source: source.pipe(
-            ops.filter(lambda result: result[1] is not None),
-            ops.filter(lambda result: result[1] > threshold),
-            ops.map(lambda result: result[0]),
+            ops.filter(lambda result: result[1] is not None),  # type: ignore[index]
+            ops.filter(lambda result: result[1] > threshold),  # type: ignore[index]
+            ops.map(lambda result: result[0]),  # type: ignore[index]
         )
 
     @staticmethod
     def with_edge_detection(
         frame_processor: "FrameProcessor",
-    ) -> Callable[[Observable], Observable]:
+    ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         return lambda source: source.pipe(
-            ops.map(lambda frame: frame_processor.edge_detection(frame))
+            ops.map(lambda frame: frame_processor.edge_detection(frame))  # type: ignore[no-untyped-call]
         )
 
     @staticmethod
     def with_optical_flow(
         frame_processor: "FrameProcessor",
-    ) -> Callable[[Observable], Observable]:
+    ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         return lambda source: source.pipe(
             ops.scan(
-                lambda acc, frame: frame_processor.compute_optical_flow(
-                    acc, frame, compute_relevancy=False
+                lambda acc, frame: frame_processor.compute_optical_flow(  # type: ignore[arg-type, return-value]
+                    acc,  # type: ignore[arg-type]
+                    frame,  # type: ignore[arg-type]
+                    compute_relevancy=False,
                 ),
                 (None, None, None),
             ),
-            ops.map(lambda result: result[1]),  # Extract flow component
+            ops.map(lambda result: result[1]),  # type: ignore[index]  # Extract flow component
             ops.filter(lambda flow: flow is not None),
             ops.map(frame_processor.visualize_flow),
         )
 
     @staticmethod
     def with_zmq_socket(
-        socket: zmq.Socket, scheduler: Any | None = None
-    ) -> Callable[[Observable], Observable]:
-        def send_frame(frame, socket) -> None:
+        socket: zmq.Socket,  # type: ignore[type-arg]
+        scheduler: Any | None = None,
+    ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
+        def send_frame(frame, socket) -> None:  # type: ignore[no-untyped-def]
             _, img_encoded = cv2.imencode(".jpg", frame)
             socket.send(img_encoded.tobytes())
             # print(f"Frame received: {frame.shape}")
@@ -234,7 +237,7 @@ class VideoOperators:
         )
 
     @staticmethod
-    def encode_image() -> Callable[[Observable], Observable]:
+    def encode_image() -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
         """
         Operator to encode an image to JPEG format and convert it to a Base64 string.
 
@@ -243,8 +246,8 @@ class VideoOperators:
             of tuples containing the Base64 string of the encoded image and its dimensions.
         """
 
-        def _operator(source: Observable) -> Observable:
-            def _encode_image(image: np.ndarray) -> tuple[str, tuple[int, int]]:
+        def _operator(source: Observable) -> Observable:  # type: ignore[type-arg]
+            def _encode_image(image: np.ndarray) -> tuple[str, tuple[int, int]]:  # type: ignore[type-arg]
                 try:
                     width, height = image.shape[:2]
                     _, buffer = cv2.imencode(".jpg", image)
@@ -268,15 +271,15 @@ from reactivex.disposable import Disposable
 
 class Operators:
     @staticmethod
-    def exhaust_lock(process_item):
+    def exhaust_lock(process_item):  # type: ignore[no-untyped-def]
         """
         For each incoming item, call `process_item(item)` to get an Observable.
         - If we're busy processing the previous one, skip new items.
         - Use a lock to ensure concurrency safety across threads.
         """
 
-        def _exhaust_lock(source: Observable) -> Observable:
-            def _subscribe(observer, scheduler=None):
+        def _exhaust_lock(source: Observable) -> Observable:  # type: ignore[type-arg]
+            def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
                 in_flight = False
                 lock = Lock()
                 upstream_done = False
@@ -290,7 +293,7 @@ class Operators:
                     if active_inner_disp:
                         active_inner_disp.dispose()
 
-                def on_next(value) -> None:
+                def on_next(value) -> None:  # type: ignore[no-untyped-def]
                     nonlocal in_flight, active_inner_disp
                     lock.acquire()
                     try:
@@ -310,10 +313,10 @@ class Operators:
                         observer.on_error(ex)
                         return
 
-                    def inner_on_next(ivalue) -> None:
+                    def inner_on_next(ivalue) -> None:  # type: ignore[no-untyped-def]
                         observer.on_next(ivalue)
 
-                    def inner_on_error(err) -> None:
+                    def inner_on_error(err) -> None:  # type: ignore[no-untyped-def]
                         nonlocal in_flight
                         with lock:
                             in_flight = False
@@ -335,7 +338,7 @@ class Operators:
                         scheduler=scheduler,
                     )
 
-                def on_error(err) -> None:
+                def on_error(err) -> None:  # type: ignore[no-untyped-def]
                     dispose_all()
                     observer.on_error(err)
 
@@ -357,15 +360,15 @@ class Operators:
         return _exhaust_lock
 
     @staticmethod
-    def exhaust_lock_per_instance(process_item, lock: Lock):
+    def exhaust_lock_per_instance(process_item, lock: Lock):  # type: ignore[no-untyped-def]
         """
         - For each item from upstream, call process_item(item) -> Observable.
         - If a frame arrives while one is "in flight", discard it.
         - 'lock' ensures we safely check/modify the 'in_flight' state in a multithreaded environment.
         """
 
-        def _exhaust_lock(source: Observable) -> Observable:
-            def _subscribe(observer, scheduler=None):
+        def _exhaust_lock(source: Observable) -> Observable:  # type: ignore[type-arg]
+            def _subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
                 in_flight = False
                 upstream_done = False
 
@@ -378,7 +381,7 @@ class Operators:
                     if active_inner_disp:
                         active_inner_disp.dispose()
 
-                def on_next(value) -> None:
+                def on_next(value) -> None:  # type: ignore[no-untyped-def]
                     nonlocal in_flight, active_inner_disp
                     with lock:
                         # If not busy, claim the slot
@@ -397,10 +400,10 @@ class Operators:
                         observer.on_error(ex)
                         return
 
-                    def inner_on_next(ivalue) -> None:
+                    def inner_on_next(ivalue) -> None:  # type: ignore[no-untyped-def]
                         observer.on_next(ivalue)
 
-                    def inner_on_error(err) -> None:
+                    def inner_on_error(err) -> None:  # type: ignore[no-untyped-def]
                         nonlocal in_flight
                         with lock:
                             in_flight = False
@@ -424,7 +427,7 @@ class Operators:
                         scheduler=scheduler,
                     )
 
-                def on_error(e) -> None:
+                def on_error(e) -> None:  # type: ignore[no-untyped-def]
                     dispose_all()
                     observer.on_error(e)
 
@@ -450,12 +453,12 @@ class Operators:
         return _exhaust_lock
 
     @staticmethod
-    def exhaust_map(project):
-        def _exhaust_map(source: Observable):
-            def subscribe(observer, scheduler=None):
+    def exhaust_map(project):  # type: ignore[no-untyped-def]
+        def _exhaust_map(source: Observable):  # type: ignore[no-untyped-def, type-arg]
+            def subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
                 is_processing = False
 
-                def on_next(item) -> None:
+                def on_next(item) -> None:  # type: ignore[no-untyped-def]
                     nonlocal is_processing
                     if not is_processing:
                         is_processing = True
@@ -490,10 +493,10 @@ class Operators:
         return _exhaust_map
 
     @staticmethod
-    def with_lock(lock: Lock):
-        def operator(source: Observable):
-            def subscribe(observer, scheduler=None):
-                def on_next(item) -> None:
+    def with_lock(lock: Lock):  # type: ignore[no-untyped-def]
+        def operator(source: Observable):  # type: ignore[no-untyped-def, type-arg]
+            def subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
+                def on_next(item) -> None:  # type: ignore[no-untyped-def]
                     if not lock.locked():  # Check if the lock is free
                         if lock.acquire(blocking=False):  # Non-blocking acquire
                             try:
@@ -506,7 +509,7 @@ class Operators:
                     else:
                         print("\033[34mLock busy, skipping item.\033[0m")
 
-                def on_error(error) -> None:
+                def on_error(error) -> None:  # type: ignore[no-untyped-def]
                     observer.on_error(error)
 
                 def on_completed() -> None:
@@ -524,10 +527,10 @@ class Operators:
         return operator
 
     @staticmethod
-    def with_lock_check(lock: Lock):  # Renamed for clarity
-        def operator(source: Observable):
-            def subscribe(observer, scheduler=None):
-                def on_next(item) -> None:
+    def with_lock_check(lock: Lock):  # type: ignore[no-untyped-def]  # Renamed for clarity
+        def operator(source: Observable):  # type: ignore[no-untyped-def, type-arg]
+            def subscribe(observer, scheduler=None):  # type: ignore[no-untyped-def]
+                def on_next(item) -> None:  # type: ignore[no-untyped-def]
                     if not lock.locked():  # Check if the lock is held WITHOUT acquiring
                         print(f"\033[32mLock is free, processing item: {item}\033[0m")
                         observer.on_next(item)
@@ -535,7 +538,7 @@ class Operators:
                         print(f"\033[34mLock is busy, skipping item: {item}\033[0m")
                         # observer.on_completed()
 
-                def on_error(error) -> None:
+                def on_error(error) -> None:  # type: ignore[no-untyped-def]
                     observer.on_error(error)
 
                 def on_completed() -> None:
@@ -564,11 +567,11 @@ class Operators:
         RESET = "\033[0m"
 
     @staticmethod
-    def print_emission(
+    def print_emission(  # type: ignore[no-untyped-def]
         id: str,
         dev_name: str = "NA",
-        counts: dict | None = None,
-        color: "Operators.PrintColor" = None,
+        counts: dict | None = None,  # type: ignore[type-arg]
+        color: "Operators.PrintColor" = None,  # type: ignore[assignment]
         enabled: bool = True,
     ):
         """
@@ -591,9 +594,9 @@ class Operators:
         if color is None:
             color = Operators.PrintColor.RED
 
-        def _operator(source: Observable) -> Observable:
-            def _subscribe(observer: Observer, scheduler=None):
-                def on_next(value) -> None:
+        def _operator(source: Observable) -> Observable:  # type: ignore[type-arg]
+            def _subscribe(observer: Observer, scheduler=None):  # type: ignore[no-untyped-def, type-arg]
+                def on_next(value) -> None:  # type: ignore[no-untyped-def]
                     if counts is not None:
                         # Initialize count if necessary
                         if id not in counts:
@@ -619,6 +622,6 @@ class Operators:
                     scheduler=scheduler,
                 )
 
-            return create(_subscribe)
+            return create(_subscribe)  # type: ignore[arg-type]
 
         return _operator

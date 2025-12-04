@@ -32,7 +32,7 @@ from dimos.robot.unitree.connection import g1
 from dimos.robot.unitree.connection.g1 import G1Connection
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class G1ZedDeployResult(TypedDict):
@@ -45,7 +45,7 @@ class G1ZedDeployResult(TypedDict):
 def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
     camera = cast(
         "CameraModule",
-        dimos.deploy(
+        dimos.deploy(  # type: ignore[attr-defined]
             CameraModule,
             frequency=4.0,
             transform=Transform(
@@ -63,14 +63,16 @@ def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
         ),
     )
 
-    camera.image.transport = pSHMTransport("/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE)
+    camera.color_image.transport = pSHMTransport(
+        "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    )
     camera.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
     camera.start()
     return camera
 
 
-def deploy(dimos: DimosCluster, ip: str):
-    nav = rosnav.deploy(
+def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
+    nav = rosnav.deploy(  # type: ignore[call-arg]
         dimos,
         sensor_to_base_link_transform=Transform(
             frame_id="sensor", child_frame_id="base_link", translation=Vector3(0.0, 0.0, 1.5)

@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.vision_msgs.BoundingBox2DArray import BoundingBox2DArray as LCMBoundingBox2DArray
+from dimos_lcm.vision_msgs.BoundingBox2DArray import (  # type: ignore[import-untyped]
+    BoundingBox2DArray as LCMBoundingBox2DArray,
+)
 
 
-class BoundingBox2DArray(LCMBoundingBox2DArray):
+class BoundingBox2DArray(LCMBoundingBox2DArray):  # type: ignore[misc]
     msg_name = "vision_msgs.BoundingBox2DArray"
