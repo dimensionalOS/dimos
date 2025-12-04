@@ -30,7 +30,7 @@ from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
-logger = setup_logger("test_spatial_memory_module")
+logger = setup_logger()
 
 pubsub.lcm.autoconf()
 

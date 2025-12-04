@@ -28,7 +28,7 @@ from dimos.agents.memory.visual_memory import VisualMemory
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents.memory.spatial_vector_db")
+logger = setup_logger()
 
 
 class SpatialVectorDB:

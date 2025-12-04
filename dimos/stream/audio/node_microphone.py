@@ -26,7 +26,7 @@ from dimos.stream.audio.base import (
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.audio.node_microphone")
+logger = setup_logger()
 
 
 class SounddeviceAudioSource(AbstractAudioEmitter):

@@ -14,7 +14,6 @@
 
 from __future__ import annotations
 
-import traceback
 from typing import Any, TypeVar
 
 import dimos.core.colors as colors
@@ -26,7 +25,7 @@ from typing import (
     TypeVar,
 )
 
-from dimos.core.stream import In, RemoteIn, Transport
+from dimos.core.stream import In, Transport
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory

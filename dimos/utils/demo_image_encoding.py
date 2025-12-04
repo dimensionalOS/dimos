@@ -65,7 +65,7 @@ class EmitterModule(Module):
             total = time.time() - start
             print("took", total)
             open_file.write(str(time.time()) + "\n")
-            self.image.publish(Image(data=data))  # type: ignore[no-untyped-call]
+            self.image.publish(Image(data=data))
         open_file.close()
 
 

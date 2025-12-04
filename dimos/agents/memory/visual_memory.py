@@ -25,7 +25,7 @@ import numpy as np
 
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents.memory.visual_memory")
+logger = setup_logger()
 
 
 class VisualMemory:
