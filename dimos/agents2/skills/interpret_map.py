@@ -26,7 +26,6 @@ from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.protocol.skill.skill import rpc, skill
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.generic import extract_json_from_llm_response
 from dimos.utils.logging_config import setup_logger
 
@@ -39,13 +38,11 @@ class InterpretMapSkill(SkillModule):
     # _queried_map: OccupancyGrid | None = None
 
     local_costmap: In[OccupancyGrid] = None
-    lidar: In[LidarMessage] = None
 
     @rpc
     def start(self) -> None:
         super().start()
         self._disposables.add(self.local_costmap.subscribe(self._on_local_costmap))
-        self._disposables.add(self.lidar.subscribe(self._on_lidar))
         self.vl_model = QwenVlModel()
 
     @rpc
@@ -54,10 +51,7 @@ class InterpretMapSkill(SkillModule):
 
     def _on_local_costmap(self, costmap: OccupancyGrid) -> None:
         self._latest_local_costmap = costmap
-
-    def _on_lidar(self, lidar: LidarMessage) -> None:
-        center = lidar.pointcloud.get_center()
-        self._robot_pose = Pose(Vector3(center[0], center[1], 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
+        self._robot_pose = self.tf.get("world", "base_link")
 
     @skill()
     def get_goal_position(self, description: str | None = None) -> Pose | None:
@@ -78,17 +72,20 @@ class InterpretMapSkill(SkillModule):
 
         # grab latest costmap and robot pose
         costmap = self._latest_local_costmap
-        robot_pose = self._robot_pose
+        robot_pose = None
+        if self._robot_pose:
+            robot_pose = Pose(
+                position=self._robot_pose.translation, orientation=self._robot_pose.rotation
+            )
 
         if costmap is None:
             return "No map available."
 
         if robot_pose:
+            logger.info(f"Robot pose: {robot_pose}")
             costmap.robot_pose = robot_pose
 
         image = costmap.grid_to_image(size=(1024, 1024), flip_vertical=True)
-
-        image = image.to_bgr().to_opencv()
 
         prompt = (
             "Look at this image carefully \n"
@@ -96,8 +93,8 @@ class InterpretMapSkill(SkillModule):
             " - blue area is free space, \n"
             " - yellow area is unknown space, \n"
             " - red (and its shades) areas are obstacles, \n"
-            " - green square is the robot's current position. \n"
-            f"Identify a goal position ONLY IN FREE SPACE that closely matches the following description: {description}\n"
+            " - green object represents the robot's position and points to the direction it is facing. \n"
+            f"Identify a location in free space based on the following description: {description}\n"
             "Prioritize selecting a goal position in free space (blue area) over exactly matching the description. \n"
             "MAKE SURE there is a clear path from the robot's current position to the goal position without crossing any obstacles. \n"
             "MAKE SURE the goal position is located in the blue area (free space) of the map and few pixels away from obstacles or objects. \n"
@@ -121,7 +118,7 @@ class InterpretMapSkill(SkillModule):
 
         if os.environ.get("DEBUG_INTERPRET_MAP_IMAGE"):
             debug_image_with_identified_point(
-                image,
+                image.to_opencv(),
                 (x, y),
                 filepath=os.environ["DEBUG_INTERPRET_MAP_IMAGE"],
             )

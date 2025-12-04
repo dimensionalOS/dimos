@@ -1,0 +1,89 @@
+point_placement_tests:
+  - map_id: "floorplan"
+    image_path: "floorplan.png"
+    resolution: 0.05
+    robot_pose:
+      position: [51.0, 15.0, 0.0]
+      orientation: [0.0, 0.0, 1.0, 0.0]
+    questions:
+      - query: "which room would be the second room to the robot's right along the corridor?"
+        expected_range:
+          x: [250, 500]
+          y: [25, 260]
+      - query: "which would be the furthest room from the robot's current position"
+        expected_range:
+          x: [250, 500]
+          y: [25, 260]
+      - query: "go to the largest room"
+        expected_range:
+          x: [550, 1040]
+          y: [25, 260]
+
+map_comprehension_tests:
+  - map_id: "floorplan"
+    image_path: "floorplan.png"
+    resolution: 0.05
+    robot_pose:
+      position: [51.0, 15.0, 0.0]
+      orientation: [0.0, 0.0, 1.0, 0.0]
+    questions:
+      # Basic robot awareness questions
+      - question: "is there any open area for the robot to move behind itself, yes or no?"
+        expected_pattern: '\b(no)\b'
+        category: "robot_awareness"
+        difficulty: "easy"
+
+      - question: "what direction is the robot facing in the map?"
+        expected_pattern: '\b(left|west)\b'
+        category: "robot_awareness"
+        difficulty: "easy"
+
+      - question: "is the robot currently in a doorway, room or a corridor?"
+        expected_pattern: '\b(corridor|hallway|passage)\b'
+        category: "robot_awareness"
+        difficulty: "medium"
+
+      - question: "describe the layout of the environment shown in the map."
+        expected_pattern: '.+'
+        category: "spatial_understanding"
+        difficulty: "medium"
+
+      - question: "how many rooms can you identify in the map?"
+        expected_pattern: '\b(3|three)\b'
+        category: "spatial_understanding"
+        difficulty: "medium"
+
+      - question: "do all rooms have an entrance or doorway?"
+        expected_pattern: '\b(yes)\b'
+        category: "spatial_understanding"
+        difficulty: "medium"
+
+      - question: "how many doorways are there in the map?"
+        expected_pattern: '\b(3|three)\b'
+        category: "spatial_understanding"
+        difficulty: "medium"
+
+      - question: "how many corridors can you see in the map?"
+        expected_pattern: '\b(2|two)\b'
+        category: "spatial_understanding"
+        difficulty: "medium"
+
+      - question: "where is the furthest room from the robot's current position?"
+        expected_pattern: '\b(top left|left|upper left)\b'
+        category: "spatial_understanding"
+        difficulty: "hard"
+
+      - question: "which is the largest room in the map?"
+        expected_pattern: '\b(top right|right|upper right)\b'
+        category: "spatial_understanding"
+        difficulty: "hard"
+
+      - question: "what is down the corridor in front of the robot?"
+        expected_pattern: '\b(unknown)\b'
+        category: "navigation_reasoning"
+        difficulty: "medium"
+
+      - question: "if the robot wants to go to the top left room, what command should it send? available commands are: 'go forward', 'turn left', 'turn right', 'stop'"
+        expected_pattern: '\b(go forward|turn right|stop)\b'
+        category: "navigation_reasoning"
+        difficulty: "hard"

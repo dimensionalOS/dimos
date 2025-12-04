@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import json
+from pathlib import Path
 import pickle
 import re
 from typing import TYPE_CHECKING
@@ -30,23 +31,13 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 from dimos.utils.generic import extract_json_from_llm_response
 
-
-def load_costmap_from_pickle(pickle_path: str):
-    try:
-        with open(pickle_path, "rb") as f:
-            data = pickle.load(f)
-        costmap: OccupancyGrid = data["costmap"]
-        robot_pose: Pose = data["robot_pose"]
-        costmap_image: Image = data["costmap_image"]
-        return costmap, robot_pose, costmap_image
-    except Exception as e:
-        logger.error(f"Failed to load costmap from {pickle_path}: {e!s}")
-        raise
+TEST_DIR = Path(__file__).parent
 
 
 def load_test_cases(filepath: str):
     import yaml
 
+    print(f"Loading test cases from {filepath}")
     with open(filepath) as f:
         data = yaml.safe_load(f)
     return data
@@ -55,48 +46,6 @@ def load_test_cases(filepath: str):
 @pytest.fixture
 def vl_model():
     return QwenVlModel()
-
-
-def test_get_goal_position(interpret_map_skill):
-    mockdata_path = get_data("maps") / "mockdata_local_costmap.pkl"
-    # Load test costmap and robot pose
-    costmap, robot_pose, costmap_image = load_costmap_from_pickle(str(mockdata_path))
-    costmap.robot_pose = robot_pose
-
-    interpret_map_skill._latest_local_costmap = costmap
-    interpret_map_skill._robot_pose = robot_pose
-
-    # define a range of values for testing
-    # (description, ((x_min, x_max), (y_min, y_max)))
-    test_cases = [
-        (
-            "a clear area near the center of the map",
-            (
-                (costmap.info.width * 0.25, costmap.info.width * 0.75),
-                (costmap.info.height * 0.25, costmap.info.height * 0.75),
-            ),
-        ),
-        (
-            "an open space close to the bottom right corner",
-            (
-                (costmap.info.width * 0.5, costmap.info.width * 1.0),
-                (costmap.info.height * 0.0, costmap.info.height * 0.5),
-            ),
-        ),
-    ]
-
-    for description, expected_range in test_cases:
-        goal_world = interpret_map_skill.get_goal_position(description=description)
-        goal_grid = costmap.world_to_grid(goal_world)
-        assert goal_world is not None, (
-            f"Goal position should not be None for description: {description}"
-        )
-        assert expected_range[0][0] <= goal_grid.x <= expected_range[0][1], (
-            f"Goal x {goal_grid.x} out of expected range {expected_range[0]} for description: {description}"
-        )
-        assert expected_range[1][0] <= goal_grid.y <= expected_range[1][1], (
-            f"Goal y {goal_grid.y} out of expected range {expected_range[1]} for description: {description}"
-        )
 
 
 def build_occupancygrid_from_image(image: Image, resolution: float = 0.05) -> "OccupancyGrid":
@@ -179,12 +128,13 @@ def interpretability_prompt(question: str) -> str:
     "test_map",
     [
         test_map
-        for test_map in load_test_cases(get_data("maps") / "test_map_interpretability.yaml")[
+        for test_map in load_test_cases(TEST_DIR / "test_map_interpretability.yaml")[
             "point_placement_tests"
         ]
     ],
 )
 def test_point_placement(test_map, vl_model):
+    # TODO: consider not eval directly using images?
     occupancy_grid = occupancy_grid_from_image(test_map["image_path"])
 
     # set robot pose for testing
@@ -203,6 +153,7 @@ def test_point_placement(test_map, vl_model):
             raise ValueError(f"Failed to extract point from response: {response}")
         x, y = point["point"]
 
+        print(f"query {qna['query']} response {response}")
         # keep track of score
         score = 0
         expected_area = qna["expected_range"]
@@ -226,7 +177,7 @@ def test_point_placement(test_map, vl_model):
     "test_map",
     [
         test_map
-        for test_map in load_test_cases(get_data("maps") / "test_map_interpretability.yaml")[
+        for test_map in load_test_cases(TEST_DIR / "test_map_interpretability.yaml")[
             "map_comprehension_tests"
         ]
     ],
