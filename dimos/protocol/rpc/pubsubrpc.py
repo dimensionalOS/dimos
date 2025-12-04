@@ -78,6 +78,34 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         self._msg_id_counter = 0
         self._msg_id_lock = threading.Lock()
 
+    def __getstate__(self) -> dict:
+        if hasattr(super(), "__getstate__"):
+            state = super().__getstate__()
+        else:
+            state = self.__dict__.copy()
+
+        # Exclude unpicklable attributes when serializing.
+        state.pop("_call_thread_pool", None)
+        state.pop("_call_thread_pool_lock", None)
+        state.pop("_response_subs", None)
+        state.pop("_response_subs_lock", None)
+        state.pop("_msg_id_lock", None)
+
+        return state
+
+    def __setstate__(self, state: dict) -> None:
+        if hasattr(super(), "__setstate__"):
+            super().__setstate__(state)
+        else:
+            self.__dict__.update(state)
+
+        # Restore unserializable attributes.
+        self._call_thread_pool = None
+        self._call_thread_pool_lock = threading.RLock()
+        self._response_subs = {}
+        self._response_subs_lock = threading.RLock()
+        self._msg_id_lock = threading.Lock()
+
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
 
