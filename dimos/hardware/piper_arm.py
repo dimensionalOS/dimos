@@ -349,7 +349,7 @@ class PiperArm:
 
 
 class VelocityController(Module):
-    cmd_vel: In[Twist] = None  # type: ignore[assignment]
+    cmd_vel: In[Twist]
 
     def __init__(self, arm, period: float = 0.01, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)

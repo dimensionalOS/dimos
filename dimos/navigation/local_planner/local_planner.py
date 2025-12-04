@@ -48,12 +48,12 @@ class BaseLocalPlanner(Module):
     """
 
     # LCM inputs
-    local_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    path: In[Path] = None  # type: ignore[assignment]
+    local_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
+    path: In[Path]
 
     # LCM outputs
-    cmd_vel: Out[Twist] = None  # type: ignore[assignment]
+    cmd_vel: Out[Twist]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

@@ -90,14 +90,14 @@ class WavefrontFrontierExplorer(Module):
     """
 
     # LCM inputs
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    goal_reached: In[Bool] = None  # type: ignore[assignment]
-    explore_cmd: In[Bool] = None  # type: ignore[assignment]
-    stop_explore_cmd: In[Bool] = None  # type: ignore[assignment]
+    global_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
+    goal_reached: In[Bool]
+    explore_cmd: In[Bool]
+    stop_explore_cmd: In[Bool]
 
     # LCM outputs
-    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
+    goal_request: Out[PoseStamped]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

@@ -31,8 +31,8 @@ class GpsNavSkillContainer(SkillModule):
     _max_valid_distance: int = 50000
     _set_gps_travel_goal_points: RpcCall | None = None
 
-    gps_location: In[LatLon] = None  # type: ignore[assignment]
-    gps_goal: Out[LatLon] = None  # type: ignore[assignment]
+    gps_location: In[LatLon]
+    gps_goal: Out[LatLon]
 
     def __init__(self) -> None:
         super().__init__()

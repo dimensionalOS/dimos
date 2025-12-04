@@ -28,9 +28,9 @@ from dimos.utils.reactive import backpressure
 
 
 class PersonTracker(Module):
-    detections: In[Detection2DArray] = None  # type: ignore
-    image: In[Image] = None  # type: ignore
-    target: Out[PoseStamped] = None  # type: ignore
+    detections: In[Detection2DArray]
+    image: In[Image]
+    target: Out[PoseStamped]
 
     camera_info: CameraInfo
 

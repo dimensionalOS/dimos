@@ -142,12 +142,12 @@ def resample_path(path: Path, spacing: float) -> Path:
 
 class AstarPlanner(Module):
     # LCM inputs
-    target: In[PoseStamped] = None  # type: ignore[assignment]
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    target: In[PoseStamped]
+    global_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
 
     # LCM outputs
-    path: Out[Path] = None  # type: ignore[assignment]
+    path: Out[Path]
 
     def __init__(self) -> None:
         super().__init__()

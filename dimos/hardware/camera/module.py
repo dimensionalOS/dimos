@@ -50,8 +50,8 @@ class CameraModuleConfig(ModuleConfig):
 
 
 class CameraModule(Module, spec.Camera):
-    color_image: Out[Image] = None  # type: ignore[assignment]
-    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
+    color_image: Out[Image]
+    camera_info: Out[CameraInfo]
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None  # type: ignore[assignment, type-arg]
     _skill_stream: Observable[Image] | None = None
