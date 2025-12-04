@@ -14,3 +14,5 @@
 
 from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
 from dimos.protocol.rpc.spec import RPCClient, RPCServer, RPCSpec
+
+__all__ = ["LCMRPC", "RPCClient", "RPCServer", "RPCSpec", "ShmRPC"]

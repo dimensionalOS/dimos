@@ -62,7 +62,7 @@ class RPCRes(TypedDict, total=False):
 
 
 class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
         self._call_thread_pool: ThreadPoolExecutor | None = None
@@ -71,16 +71,17 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         # Shared response subscriptions: one per RPC name instead of one per call
         # Maps str(topic_res) -> (subscription, {msg_id -> callback})
-        self._response_subs: dict[str, tuple[Any, dict[float, Callable]]] = {}
+        self._response_subs: dict[str, tuple[Any, dict[float, Callable[..., Any]]]] = {}
         self._response_subs_lock = threading.RLock()
 
         # Message ID counter for unique IDs even with concurrent calls
         self._msg_id_counter = 0
         self._msg_id_lock = threading.Lock()
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> dict[str, Any]:
+        state: dict[str, Any]
         if hasattr(super(), "__getstate__"):
-            state = super().__getstate__()
+            state = super().__getstate__()  # type: ignore[assignment]
         else:
             state = self.__dict__.copy()
 
@@ -93,9 +94,9 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         return state
 
-    def __setstate__(self, state: dict) -> None:
+    def __setstate__(self, state: dict[str, Any]) -> None:
         if hasattr(super(), "__setstate__"):
-            super().__setstate__(state)
+            super().__setstate__(state)  # type: ignore[misc]
         else:
             self.__dict__.update(state)
 
@@ -109,16 +110,16 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def topicgen(self, name: str, req_or_res: bool) -> TopicT: ...
 
-    def _encodeRPCReq(self, req: RPCReq) -> dict:
+    def _encodeRPCReq(self, req: RPCReq) -> dict[str, Any]:
         return dict(req)
 
-    def _decodeRPCRes(self, msg: dict) -> RPCRes:
+    def _decodeRPCRes(self, msg: dict[Any, Any]) -> RPCRes:
         return msg  # type: ignore[return-value]
 
-    def _encodeRPCRes(self, res: RPCRes) -> dict:
+    def _encodeRPCRes(self, res: RPCRes) -> dict[str, Any]:
         return dict(res)
 
-    def _decodeRPCReq(self, msg: dict) -> RPCReq:
+    def _decodeRPCReq(self, msg: dict[Any, Any]) -> RPCReq:
         return msg  # type: ignore[return-value]
 
     def _get_call_thread_pool(self) -> ThreadPoolExecutor:
@@ -166,7 +167,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         # Call parent stop if it exists
         if hasattr(super(), "stop"):
-            super().stop()
+            super().stop()  # type: ignore[misc]
 
     def call(self, name: str, arguments: Args, cb: Callable | None):  # type: ignore[no-untyped-def, type-arg]
         if cb is None:
@@ -174,7 +175,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         return self.call_cb(name, arguments, cb)
 
-    def call_cb(self, name: str, arguments: Args, cb: Callable) -> Any:  # type: ignore[type-arg]
+    def call_cb(self, name: str, arguments: Args, cb: Callable[..., Any]) -> Any:
         topic_req = self.topicgen(name, False)
         topic_res = self.topicgen(name, True)
 
@@ -190,10 +191,10 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         with self._response_subs_lock:
             if topic_res_key not in self._response_subs:
                 # Create shared handler that routes to callbacks by msg_id
-                callbacks_dict: dict[float, Callable] = {}
+                callbacks_dict: dict[float, Callable[..., Any]] = {}
 
                 def shared_response_handler(msg: MsgT, _: TopicT) -> None:
-                    res = self._decodeRPCRes(msg)
+                    res = self._decodeRPCRes(msg)  # type: ignore[arg-type]
                     res_id = res.get("id")
                     if res_id is None:
                         return
@@ -209,7 +210,11 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                     exc_data = res.get("exception")
                     if exc_data:
                         # Reconstruct the exception and pass it to the callback
-                        exc = deserialize_exception(exc_data)
+                        from typing import cast
+
+                        from dimos.protocol.rpc.rpc_utils import SerializedException
+
+                        exc = deserialize_exception(cast("SerializedException", exc_data))
                         callback(exc)
                     else:
                         # Normal response - pass the result
@@ -224,7 +229,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             callbacks_dict[msg_id] = cb
 
         # Publish request
-        self.publish(topic_req, self._encodeRPCReq(req))
+        self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
 
         # Return unsubscribe function that removes this callback from the dict
         def unsubscribe_callback() -> None:
@@ -238,7 +243,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     def call_nowait(self, name: str, arguments: Args) -> None:
         topic_req = self.topicgen(name, False)
         req: RPCReq = {"name": name, "args": arguments, "id": None}
-        self.publish(topic_req, self._encodeRPCReq(req))
+        self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
 
     def serve_rpc(self, f: FunctionType, name: str | None = None):  # type: ignore[no-untyped-def, override]
         if not name:
@@ -248,7 +253,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         topic_res = self.topicgen(name, True)
 
         def receive_call(msg: MsgT, _: TopicT) -> None:
-            req = self._decodeRPCReq(msg)
+            req = self._decodeRPCReq(msg)  # type: ignore[arg-type]
 
             if req.get("name") != name:
                 return
@@ -264,7 +269,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                     response = f(*args[0], **args[1])
                     req_id = req.get("id")
                     if req_id is not None:
-                        self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))
+                        self.publish(topic_res, self._encodeRPCRes({"id": req_id, "res": response}))  # type: ignore[arg-type]
 
                 except Exception as e:
                     logger.exception(f"Exception in RPC handler for {name}: {e}", exc_info=e)
@@ -272,8 +277,10 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                     req_id = req.get("id")
                     if req_id is not None:
                         exc_data = serialize_exception(e)
+                        # Type ignore: SerializedException is compatible with dict[str, Any]
                         self.publish(
-                            topic_res, self._encodeRPCRes({"id": req_id, "exception": exc_data})
+                            topic_res,
+                            self._encodeRPCRes({"id": req_id, "exception": exc_data}),  # type: ignore[typeddict-item, arg-type]
                         )
 
             # Always use thread pool to execute RPC handlers (prevents deadlock)
@@ -282,8 +289,8 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         return self.subscribe(topic_req, receive_call)
 
 
-class LCMRPC(PubSubRPCMixin, PickleLCM):
-    def __init__(self, **kwargs) -> None:
+class LCMRPC(PubSubRPCMixin[Topic, Any], PickleLCM):
+    def __init__(self, **kwargs: Any) -> None:
         # Need to ensure PickleLCM gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleLCM.__init__(self, **kwargs)
@@ -298,8 +305,8 @@ class LCMRPC(PubSubRPCMixin, PickleLCM):
         return Topic(topic=topic)
 
 
-class ShmRPC(PubSubRPCMixin, PickleSharedMemory):
-    def __init__(self, prefer: str = "cpu", **kwargs) -> None:
+class ShmRPC(PubSubRPCMixin[str, Any], PickleSharedMemory):
+    def __init__(self, prefer: str = "cpu", **kwargs: Any) -> None:
         # Need to ensure SharedMemory gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleSharedMemory.__init__(self, prefer=prefer, **kwargs)

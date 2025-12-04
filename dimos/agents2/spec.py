@@ -163,8 +163,8 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
     def stop(self) -> None:
         if hasattr(self, "transport") and self.transport:
-            self.transport.stop()
-            self.transport = None
+            self.transport.stop()  # type: ignore[attr-defined]
+            self.transport = None  # type: ignore[assignment]
         super().stop()
 
     @rpc

@@ -57,7 +57,7 @@ class RPCClient(Protocol):
             raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
 
         # Check if the result is an exception and raise it
-        result = event.result
+        result = event.result  # type: ignore[attr-defined]
         if isinstance(result, BaseException):
             raise result
 
