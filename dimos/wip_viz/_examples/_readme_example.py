@@ -42,9 +42,9 @@ class CameraListener(Module):
                 )
                 print(f"[camera-listener] publishing to /spatial2d")
                 # RUNS (should trigger ->)
-                # rr.log("/spatial2d", img.to_rerun()) # this is just running whats in the hook to bypass this testing issue
-                self.render_image.publish(RerunRender(img.to_rerun(), "/spatial2d"))
-                self.render_image.publish(img)
+                rr.log("/spatial2d", img.to_rerun()) # this is just running whats in the hook to bypass this testing issue
+                # self.render_image.publish(RerunRender([img.to_rerun(), "/spatial2d"]))
+                # self.render_image.publish(img)
         unsub = self.image.subscribe(_on_frame)
         self._disposables.add(Disposable(unsub))
 
