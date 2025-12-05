@@ -61,7 +61,7 @@ class CameraListener(Module):
                 # RUNS (should trigger ->)
                 # rr.log("/spatial2d", img.to_rerun()) # this is just running whats in the hook to bypass this testing issue
                 self.render_image.publish(RerunRender([img.to_rerun(), "/spatial2d"]))
-                self.render_image.publish(img)
+                # self.render_image.publish(img)
 
         unsub = self.image.subscribe(_on_frame)
         self._disposables.add(Disposable(unsub))
@@ -88,6 +88,7 @@ def main() -> None:
     # connect camera_listener to rerun_layout
     camera_listener.render_image.transport = core.pLCMTransport("/cam/render_image")
     rerun_layout.render_image.connect(camera_listener.render_image)
+
     # rerun_layout to dashboard
     rerun_layout.rerun_blueprint.transport = core.pLCMTransport("/rerun_layout/rerun_blueprint")
     dashboard.blueprint_record.connect(rerun_layout.rerun_blueprint)
