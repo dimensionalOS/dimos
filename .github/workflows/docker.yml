@@ -37,7 +37,6 @@ jobs:
       - id: filter
         uses: dorny/paths-filter@v3
         with:
-          base: ${{ github.event.before }}
           filters: |
             # ros and python are (alternative) root images
             # change to root stuff like docker.yml etc triggers rebuild of those
