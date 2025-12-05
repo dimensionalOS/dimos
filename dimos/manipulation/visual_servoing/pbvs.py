@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.vision_msgs import Detection3DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.manipulation.pbvs")
+logger = setup_logger()
 
 
 class PBVS:

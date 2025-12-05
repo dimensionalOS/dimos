@@ -40,7 +40,7 @@ from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
-logger = setup_logger(__file__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class Go2ConnectionProtocol(Protocol):

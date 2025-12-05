@@ -23,6 +23,7 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
+from dimos.utils.logging_config import setup_exception_handler
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
 
@@ -108,6 +109,8 @@ def run(
     ),
 ) -> None:
     """Start a robot blueprint"""
+    setup_exception_handler()
+
     config: GlobalConfig = ctx.obj
     pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     blueprint = get_blueprint_by_name(robot_type.value)

@@ -46,6 +46,7 @@ dependencies = [
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
     "tensorzero==2025.7.5",
+    "structlog>=25.5.0,<26",
 
     # Web Extensions
     "fastapi>=0.115.6",

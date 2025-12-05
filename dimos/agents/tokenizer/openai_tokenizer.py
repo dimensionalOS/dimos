@@ -57,7 +57,7 @@ class OpenAITokenizer(AbstractTokenizer):
         """
         Calculate the number of tokens in an image. Low detail is 85 tokens, high detail is 170 tokens per 512x512 square.
         """
-        logger = setup_logger("dimos.agents.tokenizer.openai.image_token_count")
+        logger = setup_logger()
 
         if image_detail == "low":
             return 85

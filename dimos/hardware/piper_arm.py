@@ -35,7 +35,7 @@ import dimos.protocol.service.lcmservice as lcmservice
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class PiperArm:

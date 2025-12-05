@@ -36,7 +36,7 @@ from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class ObjectTracker2D(Module):

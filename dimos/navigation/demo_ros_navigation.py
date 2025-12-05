@@ -24,7 +24,7 @@ from dimos.navigation.rosnav import ROSNav
 from dimos.protocol import pubsub
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 def main() -> None:

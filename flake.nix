@@ -44,7 +44,6 @@
 
           ### Open3D & build-time
           eigen cmake ninja jsoncpp libjpeg libjpeg_turbo libpng
-
           ### LCM (Lightweight Communications and Marshalling)
           lcm
         ];
@@ -62,9 +61,8 @@
               pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
               pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
               pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
-              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm
-              pkgs.gst_all_1.gstreamer pkgs.gst_all_1.gst-plugins-base
-              pkgs.libjpeg_turbo]}:$LD_LIBRARY_PATH"
+              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm pkgs.pcre2
+              pkgs.gst_all_1.gstreamer pkgs.gst_all_1.gst-plugins-base pkgs.libjpeg_turbo]}:$LD_LIBRARY_PATH"
 
             export DISPLAY=:0
             export GI_TYPELIB_PATH="${pkgs.gst_all_1.gstreamer}/lib/girepository-1.0:${pkgs.gst_all_1.gst-plugins-base}/lib/girepository-1.0:$GI_TYPELIB_PATH"

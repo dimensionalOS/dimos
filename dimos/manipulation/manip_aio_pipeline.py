@@ -37,7 +37,7 @@ from dimos.perception.pointcloud.pointcloud_filtering import PointcloudFiltering
 from dimos.perception.pointcloud.utils import create_point_cloud_overlay_visualization
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.manip_aio_pipeline")
+logger = setup_logger()
 
 
 class ManipulationPipeline:

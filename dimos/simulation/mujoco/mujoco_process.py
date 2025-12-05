@@ -45,7 +45,7 @@ from dimos.simulation.mujoco.model import load_model
 from dimos.simulation.mujoco.shared_memory import ShmReader
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class MockController:

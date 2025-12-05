@@ -31,7 +31,7 @@ from dimos.msgs.std_msgs import Header
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class ZEDCamera:
