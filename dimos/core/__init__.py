@@ -8,8 +8,11 @@ from rich.console import Console
 
 import dimos.core.colors as colors
 from dimos.core.core import In, Out, RemoteOut, rpc
-from dimos.core.module_dask import Module
+from dimos.core.module import Module, ModuleBase
 from dimos.core.transport import LCMTransport, ZenohTransport, pLCMTransport
+
+
+def patch_actor(actor, cls): ...
 
 
 def patchdask(dask_client: Client):
@@ -25,6 +28,11 @@ def patchdask(dask_client: Client):
 
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
+
+            for name, rpc in actor_class.rpcs.items():
+                print(f"binding rpc on {actor_class}, {name} to {rpc}")
+                setattr(actor, name, lambda: print("RPC CALLED", name, actor_class))
+
             return actor
 
     dask_client.deploy = deploy
