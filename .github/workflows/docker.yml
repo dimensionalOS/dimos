@@ -34,6 +34,8 @@ jobs:
           sudo chown -R $USER:$USER ${{ github.workspace }} || true
 
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - id: filter
         uses: dorny/paths-filter@v3
         with:
