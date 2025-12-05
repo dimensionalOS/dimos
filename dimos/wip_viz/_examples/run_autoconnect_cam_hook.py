@@ -11,8 +11,6 @@ from dimos.msgs.sensor_msgs import Image
 
 
 class CameraListener(Module):
-    """Simple sink that prints when it receives images."""
-
     image: In[Image] = None  # type: ignore[assignment]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
