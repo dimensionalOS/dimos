@@ -1022,7 +1022,7 @@ def run_proxy_server(config: dict, log: logging.Logger):
         log.error("Failed to start proxy: %s", exc)
         raise
 
-def start_proxy_server_in_thread(
+def dimos_dashboard_func(
     *,
     port: int = int(os.environ.get("PROXY_PORT", "4000")),
     proxy_host: str = os.environ.get("PROXY_HOST", "localhost"),
@@ -1161,7 +1161,7 @@ def start_proxy_server_in_thread(
 
 
 if __name__ == "__main__":
-    t = start_proxy_server_in_thread(terminal_commands={
+    t = dimos_dashboard_func(terminal_commands={
         "agent-spy": "dimos agentspy",
         "lcm-spy": "dimos lcmspy",
         # "skill-spy": "dimos skillspy",

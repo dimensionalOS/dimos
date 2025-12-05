@@ -16,7 +16,7 @@
 
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.msgs.sensor_msgs import CameraInfo
 from langchain_core.messages import AIMessage, HumanMessage
 import pytest
 

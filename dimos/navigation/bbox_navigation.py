@@ -14,7 +14,7 @@
 
 import logging
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc

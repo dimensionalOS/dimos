@@ -14,7 +14,7 @@
 
 
 # Import LCM messages
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
     Detection3D,
     ObjectHypothesisWithPose,

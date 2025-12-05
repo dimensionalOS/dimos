@@ -18,7 +18,7 @@
 import asyncio
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos.msgs.sensor_msgs import CameraInfo
 
 from dimos import core
 from dimos.hardware.zed_camera import ZEDModule

@@ -14,7 +14,7 @@
 
 import pickle
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header

@@ -17,7 +17,7 @@
 import threading
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 
 from dimos.core import In, Module, Out, rpc

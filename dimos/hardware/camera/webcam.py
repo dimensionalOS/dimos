@@ -14,12 +14,14 @@
 
 from dataclasses import dataclass, field
 from functools import cache
+import subprocess
+import sys
 import threading
 import time
 from typing import Literal
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex import create
 from reactivex.observable import Observable
 
@@ -78,10 +80,25 @@ class Webcam(CameraHardware[WebcamConfig]):
         if self._capture_thread and self._capture_thread.is_alive():
             return
 
-        # Open the video capture
-        self._capture = cv2.VideoCapture(self.config.camera_index)  # type: ignore[assignment]
-        if not self._capture.isOpened():  # type: ignore[attr-defined]
-            raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
+        def _open_capture() -> bool:
+            self._capture = cv2.VideoCapture(self.config.camera_index)  # type: ignore[assignment]
+            print(f'''self._capture = {self._capture}''')
+            return bool(self._capture.isOpened())  # type: ignore[attr-defined]
+
+        # Try once, and on macOS attempt tcc reset then retry once.
+        # this is a macos hardware permissions thing
+        if not _open_capture():
+            if sys.platform == "darwin":
+                try:
+                    subprocess.run(["tccutil", "reset", "Camera"], check=False)
+                except FileNotFoundError:
+                    pass
+                if not _open_capture():
+                    raise RuntimeError(
+                        f"Failed to open camera {self.config.camera_index} after tccutil reset"
+                    )
+            else:
+                raise RuntimeError(f"Failed to open camera {self.config.camera_index}")
 
         # Set camera properties
         self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, self.config.frame_width)  # type: ignore[attr-defined]
@@ -147,7 +164,7 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         while self._capture and not self._stop_event.is_set():
             image = self.capture_frame()
-
+            print(f'''image = {image}''')
             # Emit the image to the observer only if not stopping
             if self._observer and not self._stop_event.is_set():
                 self._observer.on_next(image)

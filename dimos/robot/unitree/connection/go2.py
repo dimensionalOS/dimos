@@ -17,7 +17,7 @@ from threading import Thread
 import time
 from typing import Protocol
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.observable import Observable
 
 from dimos import spec

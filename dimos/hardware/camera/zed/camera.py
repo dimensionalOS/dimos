@@ -16,7 +16,7 @@ from types import TracebackType
 from typing import Any
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import pyzed.sl as sl  # type: ignore[import-not-found]

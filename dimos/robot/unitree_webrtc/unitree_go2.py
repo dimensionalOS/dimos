@@ -21,7 +21,7 @@ import os
 import time
 import warnings
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos.msgs.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable

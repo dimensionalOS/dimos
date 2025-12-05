@@ -23,7 +23,7 @@ import cv2
 from dimos_lcm.geometry_msgs import PoseStamped
 
 # Import LCM message types
-from dimos_lcm.sensor_msgs import CameraInfo, Image as LCMImage
+from dimos.msgs.sensor_msgs import CameraInfo, Image as LCMImage
 import numpy as np
 
 from dimos import core
