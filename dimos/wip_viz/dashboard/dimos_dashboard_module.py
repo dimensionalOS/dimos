@@ -81,9 +81,10 @@ class Dashboard(Module):
                 self.active_blueprint = blueprint_record.blueprint
                 rr.send_blueprint(self.active_blueprint)
                 # could let name be custom in the future
+                # init makes it so that rr.log() actually does something (buffers in memory until serve_grpc is called and available)
                 rr.init("rerun_mega_blueprint", spawn=False)
-                # FIXME: figure out how to get the rrd_url situation (what does init do? what address does rr.log() send to? how do I get the rdd_url out of rr.serve_grpc? is that even where the url is coming from?)
-                rr.serve_grpc()
+                # get the rrd_url if it wasn't provided
+                self.kwargs_for_func["rrd_url"] = self.kwargs_for_func["rrd_url"] or rr.serve_grpc()  # e.g. "rerun+http://127.0.0.1:9876/proxy"
                 # start the custom server, zellij tools, etc
                 dimos_dashboard_func(**self.kwargs_for_func)
             else:
