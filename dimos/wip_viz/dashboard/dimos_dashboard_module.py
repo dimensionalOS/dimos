@@ -1,17 +1,13 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 import os
 
-
+from typing import Optional
+import logging
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 from dimos.wip_viz.rerun.types import BlueprintRecord
 from dimos.wip_viz.dashboard.dimos_dashboard_func import dimos_dashboard_func, normalize_path_prefix, env_bool
 from dimos.core import Module, In, rpc
-
-import secrets
-import string
 
 _dashboard_exists = False
 class Dashboard(Module):

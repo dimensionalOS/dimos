@@ -1,7 +1,4 @@
 """Manually deploy webcam module and log received images (no autoconnect)."""
-
-from __future__ import annotations
-
 import time
 
 from reactivex.disposable import Disposable

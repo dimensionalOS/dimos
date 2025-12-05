@@ -613,6 +613,11 @@ def html_code_gen(rrd_url, zellij_token: Optional[str], terminals) -> str:
                     }
                 }
             }
+            if (input) {
+                await new Promise(r=>setTimeout(r,300))
+            }
+            // to get past the startup "press enter"
+            dispatchStringAsKeyEvents(each,"\n")
         }
         
         """+iframe_js+"""

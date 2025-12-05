@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-from __future__ import annotations
-
 import argparse
 import json
 import os
@@ -205,9 +203,10 @@ class RerunAllTabsLayout(Module):
             self.render_video_stream.subscribe,
             self.render_view_coordinates.subscribe,
         ]
+        print("[RerunAllTabsLayout] here")
         for each in hooks:
             try:
                 self._disposables.add(Disposable(each(process_message)))
             except Exception as error:
                 # it'll fail if a transport wasn't hooked up most won't be
-                pass
+                print(error)
