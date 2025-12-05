@@ -64,7 +64,7 @@ class RerunAllTabsLayout(Module):
     render_graph_edges        : In[RerunRender[rr.GraphEdges       , None]]  = None
     render_graph_nodes        : In[RerunRender[rr.GraphNodes       , None]]  = None
     render_graph_type         : In[RerunRender[rr.GraphType        , None]]  = None
-    # render_image              : In[RerunRender[rr.Image            , None]]  = None
+    render_image              : In[RerunRender[rr.Image            , None]]  = None
     render_instance_poses3d   : In[RerunRender[rr.InstancePoses3D  , None]]  = None
     render_line_strips2d      : In[RerunRender[rr.LineStrips2D     , None]]  = None
     render_line_strips3d      : In[RerunRender[rr.LineStrips3D     , None]]  = None
@@ -149,19 +149,10 @@ class RerunAllTabsLayout(Module):
             collapse_panels=False,
         )
     
-    render_image : In[RerunRender[rr.Image            , None]]  = None
-    
     @rpc
     def start(self) -> None:
         # this runs (and the callback does too)
         self.rerun_blueprint.publish(BlueprintRecord(self.viewer_blueprint))
-        
-        # this callback never runs!
-        self.render_image.subscribe(lambda *args: print(f"[RerunAllTabsLayout] got a message! {args}"))
-        
-        
-        
-        
         
         # this tells the DimOsDashboard what blueprint to render
         # FIXME: need to eventually 1). publish what types can be rendered / not rendered 2). mention what targets are available (ex: multiple camera streams)
@@ -176,65 +167,47 @@ class RerunAllTabsLayout(Module):
             else:
                 # FIXME: guess an entity target based on the type
                 rr.log(None, message_value)
-        
-        # self._disposables.add(Disposable(self.render_arrows2d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_asset3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_bar_chart.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_boxes2d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_boxes3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_capsules3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_cylinders3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_depth_image.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_ellipsoids3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_encoded_image.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_geo_line_strings.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_geo_points.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_graph_edge.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_graph_edges.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_graph_nodes.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_graph_type.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_image.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_instance_poses3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_line_strips2d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_line_strips3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_mesh3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_pinhole.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_points2d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_points3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_quaternion.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_scalars.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_segmentation_image.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_series_lines.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_series_points.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_tensor.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_text_document.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_text_log.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_transform3d.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_video_stream.subscribe(process_message)))
-        # self._disposables.add(Disposable(self.render_view_coordinates.subscribe(process_message)))
-        
-# def main() -> None:
-#     parser = argparse.ArgumentParser(description="Display an image file in Rerun.")
-#     parser.add_argument(
-#         "--path",
-#         type=pathlib.Path,
-#         required=True,
-#         help="Path to a PNG/JPEG/etc. image.",
-#     )
-#     rr.script_add_args(parser)
-#     args = parser.parse_args()
-
-#     rr.script_setup(args, "rerun_example_image_from_file")
-
-#     # Ensure the viewer opens with a 2D view focused on the `image` entity.
-#     rr.send_blueprint(rrb.Spatial2DView(origin="image", name="Image"))
-
-#     pil_image = Image.open(args.path)
-#     rr.log("image", rr.Image(np.array(pil_image)))
-
-#     rr.script_teardown(args)
-
-
-# if __name__ == "__main__":
-#     rr.init("rerun_mega_blueprint", spawn=True)
-#     rr.send_blueprint(build_mega_blueprint())
+                
+        hooks = [
+            self.render_arrows2d.subscribe,
+            self.render_asset3d.subscribe,
+            self.render_bar_chart.subscribe,
+            self.render_boxes2d.subscribe,
+            self.render_boxes3d.subscribe,
+            self.render_capsules3d.subscribe,
+            self.render_cylinders3d.subscribe,
+            self.render_depth_image.subscribe,
+            self.render_ellipsoids3d.subscribe,
+            self.render_encoded_image.subscribe,
+            self.render_geo_line_strings.subscribe,
+            self.render_geo_points.subscribe,
+            self.render_graph_edge.subscribe,
+            self.render_graph_edges.subscribe,
+            self.render_graph_nodes.subscribe,
+            self.render_graph_type.subscribe,
+            self.render_image.subscribe,
+            self.render_instance_poses3d.subscribe,
+            self.render_line_strips2d.subscribe,
+            self.render_line_strips3d.subscribe,
+            self.render_mesh3d.subscribe,
+            self.render_pinhole.subscribe,
+            self.render_points2d.subscribe,
+            self.render_points3d.subscribe,
+            self.render_quaternion.subscribe,
+            self.render_scalars.subscribe,
+            self.render_segmentation_image.subscribe,
+            self.render_series_lines.subscribe,
+            self.render_series_points.subscribe,
+            self.render_tensor.subscribe,
+            self.render_text_document.subscribe,
+            self.render_text_log.subscribe,
+            self.render_transform3d.subscribe,
+            self.render_video_stream.subscribe,
+            self.render_view_coordinates.subscribe,
+        ]
+        for each in hooks:
+            try:
+                self._disposables.add(Disposable(each(process_message)))
+            except Exception as error:
+                # it'll fail if a transport wasn't hooked up most won't be
+                pass

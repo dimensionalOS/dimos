@@ -98,7 +98,7 @@ class Dashboard(Module):
                 # get the rrd_url if it wasn't provided
                 self.kwargs_for_func["rrd_url"] = self.kwargs_for_func["rrd_url"] or rr.serve_grpc()  # e.g. "rerun+http://127.0.0.1:9876/proxy"
                 # start the custom server, zellij tools, etc
-                # dimos_dashboard_func(**self.kwargs_for_func)
+                dimos_dashboard_func(**self.kwargs_for_func)
                 print(f"[Dashboard] started dimos_dashboard_func")
             else:
                 raise Exception(f'''Dashboard already has a blueprint, cannot set new blueprint.''')

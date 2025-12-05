@@ -35,15 +35,16 @@ class CameraListener(Module):
     def start(self) -> None:
         def _on_frame(img: Image) -> None:
             self._count += 1
-            if self._count % 100 == 0:
+            if self._count % 20 == 0:
                 print(
                     f"[camera-listener] frame={self._count} ts={img.ts:.3f} "
                     f"shape={img.height}x{img.width}"
                 )
                 print(f"[camera-listener] publishing to /spatial2d")
                 # RUNS (should trigger ->)
-                self.render_image.publish(RerunRender(img.to_rerun(), "/spatial2d"))
-                self.render_image.publish(img)
+                rr.log("/spatial2d", img.to_rerun()) # this is just running whats in the hook to bypass this testing issue
+                # self.render_image.publish(RerunRender(img.to_rerun(), "/spatial2d"))
+                # self.render_image.publish(img)
         unsub = self.image.subscribe(_on_frame)
         self._disposables.add(Disposable(unsub))
 
