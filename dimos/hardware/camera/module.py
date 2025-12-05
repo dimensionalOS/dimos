@@ -23,7 +23,8 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.camera.spec import CameraHardware
 from dimos.hardware.camera.webcam import Webcam

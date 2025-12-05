@@ -9,7 +9,8 @@ from pathlib import Path
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 from dimos.wip_viz.rerun.types import RerunRender, BlueprintRecord
-from dimos.core import Module
+from dimos.core import In, Out, Module, rpc
+from reactivex.disposable import Disposable
 
 import secrets
 import string
@@ -150,6 +151,7 @@ class RerunAllTabsLayout(Module):
     
     render_image : In[RerunRender[rr.Image            , None]]  = None
     
+    @rpc
     def start(self) -> None:
         # this runs (and the callback does too)
         self.rerun_blueprint.publish(BlueprintRecord(self.viewer_blueprint))
@@ -175,41 +177,41 @@ class RerunAllTabsLayout(Module):
                 # FIXME: guess an entity target based on the type
                 rr.log(None, message_value)
         
-        self._disposables.add(Disposable(self.render_arrows2d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_asset3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_bar_chart.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_boxes2d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_boxes3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_capsules3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_cylinders3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_depth_image.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_ellipsoids3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_encoded_image.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_geo_line_strings.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_geo_points.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_graph_edge.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_graph_edges.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_graph_nodes.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_graph_type.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_image.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_instance_poses3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_line_strips2d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_line_strips3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_mesh3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_pinhole.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_points2d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_points3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_quaternion.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_scalars.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_segmentation_image.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_series_lines.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_series_points.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_tensor.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_text_document.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_text_log.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_transform3d.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_video_stream.subscribe(process_message)))
-        self._disposables.add(Disposable(self.render_view_coordinates.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_arrows2d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_asset3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_bar_chart.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_boxes2d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_boxes3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_capsules3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_cylinders3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_depth_image.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_ellipsoids3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_encoded_image.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_geo_line_strings.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_geo_points.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_graph_edge.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_graph_edges.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_graph_nodes.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_graph_type.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_image.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_instance_poses3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_line_strips2d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_line_strips3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_mesh3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_pinhole.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_points2d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_points3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_quaternion.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_scalars.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_segmentation_image.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_series_lines.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_series_points.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_tensor.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_text_document.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_text_log.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_transform3d.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_video_stream.subscribe(process_message)))
+        # self._disposables.add(Disposable(self.render_view_coordinates.subscribe(process_message)))
         
 # def main() -> None:
 #     parser = argparse.ArgumentParser(description="Display an image file in Rerun.")

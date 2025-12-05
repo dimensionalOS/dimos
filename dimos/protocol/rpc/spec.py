@@ -16,6 +16,7 @@ import asyncio
 from collections.abc import Callable
 import threading
 from typing import Any, Protocol, overload
+from reactivex.disposable import Disposable
 
 
 class Empty: ...

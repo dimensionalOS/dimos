@@ -81,6 +81,7 @@ class Dashboard(Module):
         
         self.active_blueprint = None
 
+    @rpc
     def start(self) -> None:
         @self.blueprint_record.subscribe
         def handle_blueprint(blueprint_record: BlueprintRecord):

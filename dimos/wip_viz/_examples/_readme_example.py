@@ -3,7 +3,7 @@ import time
 from reactivex.disposable import Disposable
 
 from dimos import core
-from dimos.core import In, Out, Module
+from dimos.core import In, Out, Module, rpc
 from dimos.core.blueprints import autoconnect
 from dimos.msgs.sensor_msgs import Image
 from dimos.hardware.camera.module import CameraModule
@@ -31,6 +31,7 @@ class CameraListener(Module):
         super().__init__(*args, **kwargs)
         self._count = 0
 
+    @rpc
     def start(self) -> None:
         def _on_frame(img: Image) -> None:
             self._count += 1
@@ -59,8 +60,8 @@ def main() -> None:
 
     # Manually wire the transport: share the camera's Out[Image] to the camera_listener's In[Image].
     # Use shared-memory transport to avoid LCM setup.
-    cam.image.transport = core.pSHMTransport("/cam/image")
-    camera_listener.image.transport = cam.image.transport
+    cam.color_image.transport = core.pSHMTransport("/cam/image")
+    camera_listener.image.transport = cam.color_image.transport
     
     # connect camera_listener to rerun_layout
     camera_listener.render_image.transport = core.pSHMTransport("/cam/render_image")
