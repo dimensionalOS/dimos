@@ -96,8 +96,9 @@ class SkillContainerTest(Module):
 
 @pytest.mark.asyncio
 async def test_coordinator_parallel_calls() -> None:
+    container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()
-    skillCoordinator.register_skills(SkillContainerTest())
+    skillCoordinator.register_skills(container)
 
     skillCoordinator.start()
     skillCoordinator.call_skill("test-call-0", "add", {"args": [0, 2]})
@@ -129,6 +130,7 @@ async def test_coordinator_parallel_calls() -> None:
 
         await asyncio.sleep(0.1 * cnt)
 
+    container.stop()
     skillCoordinator.stop()
 
 

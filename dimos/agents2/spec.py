@@ -39,7 +39,7 @@ from dimos.protocol.skill.skill import SkillContainer
 from dimos.utils.generic import truncate_display_string
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents.modules.base_agent")
+logger = setup_logger()
 
 
 # Dynamically create ModelProvider enum from LangChain's supported providers
@@ -162,6 +162,9 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
         super().start()
 
     def stop(self) -> None:
+        if hasattr(self, "transport") and self.transport:
+            self.transport.stop()  # type: ignore[attr-defined]
+            self.transport = None  # type: ignore[assignment]
         super().stop()
 
     @rpc

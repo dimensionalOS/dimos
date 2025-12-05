@@ -22,7 +22,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__, level=logging.DEBUG)
+logger = setup_logger(level=logging.DEBUG)
 
 
 class BBoxNavigationModule(Module):

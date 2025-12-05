@@ -31,7 +31,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class BaseLocalPlanner(Module):
@@ -132,7 +132,7 @@ class BaseLocalPlanner(Module):
             if self.is_goal_reached():
                 self.stop_planning.set()
                 stop_cmd = Twist()
-                self.cmd_vel.publish(stop_cmd)  # type: ignore[no-untyped-call]
+                self.cmd_vel.publish(stop_cmd)
                 break
 
             # Compute and publish velocity
@@ -145,7 +145,7 @@ class BaseLocalPlanner(Module):
         cmd_vel = self.compute_velocity()
 
         if cmd_vel is not None:
-            self.cmd_vel.publish(cmd_vel)  # type: ignore[no-untyped-call]
+            self.cmd_vel.publish(cmd_vel)
 
     @abstractmethod
     def compute_velocity(self) -> Twist | None:
@@ -206,4 +206,4 @@ class BaseLocalPlanner(Module):
             self.planning_thread.join(timeout=1.0)
             self.planning_thread = None
         stop_cmd = Twist()
-        self.cmd_vel.publish(stop_cmd)  # type: ignore[no-untyped-call]
+        self.cmd_vel.publish(stop_cmd)

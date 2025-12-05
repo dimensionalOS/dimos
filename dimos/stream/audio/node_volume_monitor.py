@@ -23,7 +23,7 @@ from dimos.stream.audio.text.node_stdout import TextPrinterNode
 from dimos.stream.audio.volume import calculate_peak_volume
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.node_volume_monitor")
+logger = setup_logger()
 
 
 class VolumeMonitorNode(AbstractAudioConsumer, AbstractTextEmitter):

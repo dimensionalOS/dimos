@@ -50,7 +50,7 @@ class CameraModuleConfig(ModuleConfig):
 
 
 class CameraModule(Module, spec.Camera):
-    image: Out[Image] = None  # type: ignore[assignment]
+    color_image: Out[Image] = None  # type: ignore[assignment]
     camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None  # type: ignore[assignment, type-arg]
@@ -75,7 +75,7 @@ class CameraModule(Module, spec.Camera):
         self._disposables.add(self.camera_info_stream().subscribe(self.publish_info))
 
         stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))  # type: ignore[attr-defined, union-attr]
-        self._disposables.add(stream.subscribe(self.image.publish))
+        self._disposables.add(stream.subscribe(self.color_image.publish))
 
     @rpc
     def stop(self) -> None:
@@ -92,7 +92,7 @@ class CameraModule(Module, spec.Camera):
         yield from iter(_queue.get, None)
 
     def publish_info(self, camera_info: CameraInfo) -> None:
-        self.camera_info.publish(camera_info)  # type: ignore[no-untyped-call]
+        self.camera_info.publish(camera_info)
 
         if self.config.transform is None:  # type: ignore[attr-defined]
             return

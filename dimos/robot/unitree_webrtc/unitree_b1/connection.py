@@ -33,7 +33,7 @@ from dimos.utils.logging_config import setup_logger
 from .b1_command import B1Command
 
 # Setup logger with DEBUG level for troubleshooting
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1.connection", level=logging.DEBUG)
+logger = setup_logger(level=logging.DEBUG)
 
 
 class RobotMode:
@@ -282,7 +282,7 @@ class B1ConnectionModule(Module):
                 position=msg.pose.pose.position,
                 orientation=msg.pose.pose.orientation,
             )
-            self.odom_pose.publish(pose_stamped)  # type: ignore[no-untyped-call]
+            self.odom_pose.publish(pose_stamped)
 
     def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""

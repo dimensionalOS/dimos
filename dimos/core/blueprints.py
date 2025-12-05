@@ -14,11 +14,12 @@
 
 from abc import ABC
 from collections import defaultdict
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from functools import cached_property, reduce
 import inspect
 import operator
+import sys
 from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin
 
@@ -56,6 +57,7 @@ class ModuleBlueprintSet:
     remapping_map: Mapping[tuple[type[Module], str], str] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    requirement_checks: tuple[Callable[[], str | None], ...] = field(default_factory=tuple)
 
     def transports(self, transports: dict[tuple[str, type], Any]) -> "ModuleBlueprintSet":
         return ModuleBlueprintSet(
@@ -63,6 +65,7 @@ class ModuleBlueprintSet:
             transport_map=MappingProxyType({**self.transport_map, **transports}),
             global_config_overrides=self.global_config_overrides,
             remapping_map=self.remapping_map,
+            requirement_checks=self.requirement_checks,
         )
 
     def global_config(self, **kwargs: Any) -> "ModuleBlueprintSet":
@@ -71,6 +74,7 @@ class ModuleBlueprintSet:
             transport_map=self.transport_map,
             global_config_overrides=MappingProxyType({**self.global_config_overrides, **kwargs}),
             remapping_map=self.remapping_map,
+            requirement_checks=self.requirement_checks,
         )
 
     def remappings(self, remappings: list[tuple[type[Module], str, str]]) -> "ModuleBlueprintSet":
@@ -83,6 +87,16 @@ class ModuleBlueprintSet:
             transport_map=self.transport_map,
             global_config_overrides=self.global_config_overrides,
             remapping_map=MappingProxyType(remappings_dict),
+            requirement_checks=self.requirement_checks,
+        )
+
+    def requirements(self, *checks: Callable[[], str | None]) -> "ModuleBlueprintSet":
+        return ModuleBlueprintSet(
+            blueprints=self.blueprints,
+            transport_map=self.transport_map,
+            global_config_overrides=self.global_config_overrides,
+            remapping_map=self.remapping_map,
+            requirement_checks=self.requirement_checks + tuple(checks),
         )
 
     def _get_transport_for(self, name: str, type: type) -> Any:
@@ -109,6 +123,21 @@ class ModuleBlueprintSet:
 
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
+
+    def _check_requirements(self) -> None:
+        errors = []
+        red = "\033[31m"
+        reset = "\033[0m"
+
+        for check in self.requirement_checks:
+            error = check()
+            if error:
+                errors.append(error)
+
+        if errors:
+            for error in errors:
+                print(f"{red}Error: {error}{reset}", file=sys.stderr)
+            sys.exit(1)
 
     def _verify_no_name_conflicts(self) -> None:
         name_to_types = defaultdict(set)
@@ -244,6 +273,7 @@ class ModuleBlueprintSet:
             global_config = GlobalConfig()
         global_config = global_config.model_copy(update=self.global_config_overrides)
 
+        self._check_requirements()
         self._verify_no_name_conflicts()
 
         module_coordinator = ModuleCoordinator(global_config=global_config)
@@ -295,12 +325,14 @@ def autoconnect(*blueprints: ModuleBlueprintSet) -> ModuleBlueprintSet:
     all_remappings = dict(  # type: ignore[var-annotated]
         reduce(operator.iadd, [list(x.remapping_map.items()) for x in blueprints], [])
     )
+    all_requirement_checks = tuple(check for bs in blueprints for check in bs.requirement_checks)
 
     return ModuleBlueprintSet(
         blueprints=all_blueprints,
         transport_map=MappingProxyType(all_transports),
         global_config_overrides=MappingProxyType(all_config_overrides),
         remapping_map=MappingProxyType(all_remappings),
+        requirement_checks=all_requirement_checks,
     )
 
 

@@ -30,7 +30,7 @@ import lcm
 from dimos.protocol.service.spec import Service
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.protocol.service.lcmservice")
+logger = setup_logger()
 
 
 @cache
@@ -127,18 +127,24 @@ def check_buffers() -> tuple[list[str], int | None]:
     sudo = "" if check_root() else "sudo "
     system = platform.system()
 
-    if system == "Linux":
-        # Linux buffer configuration
-        current_max = _set_net_value(commands_needed, sudo, "net.core.rmem_max", 2097152)
-        _set_net_value(commands_needed, sudo, "net.core.rmem_default", 2097152)
-    elif system == "Darwin":  # macOS
-        # macOS buffer configuration - check and set UDP buffer related sysctls
-        current_max = _set_net_value(commands_needed, sudo, "kern.ipc.maxsockbuf", 8388608)
-        _set_net_value(commands_needed, sudo, "net.inet.udp.recvspace", 2097152)
-        _set_net_value(commands_needed, sudo, "net.inet.udp.maxdgram", 65535)
-    else:
-        # For other systems, skip buffer configuration
-        logger.warning(f"Buffer configuration not supported on {system}")
+    # Check current buffer settings
+    try:
+        result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
+        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        if not current_max or current_max < 67108864:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
+    except:
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
+
+    try:
+        result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
+        current_default = (
+            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+        )
+        if not current_default or current_default < 16777216:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
+    except:
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
 
     return commands_needed, current_max
 

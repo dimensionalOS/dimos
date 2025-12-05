@@ -33,9 +33,251 @@ def get_sudo_prefix() -> str:
 
 def test_check_multicast_all_configured() -> None:
     """Test check_multicast when system is properly configured."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock successful checks with realistic output format
+        mock_run.side_effect = [
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                    "returncode": 0,
+                },
+            )(),
+            type("MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0})(),
+        ]
+
+        result = check_multicast()
+        assert result == []
+
+
+def test_check_multicast_missing_multicast_flag() -> None:
+    """Test check_multicast when loopback interface lacks multicast."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock interface without MULTICAST flag (realistic current system state)
+        mock_run.side_effect = [
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                    "returncode": 0,
+                },
+            )(),
+            type("MockResult", (), {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0})(),
+        ]
+
+        result = check_multicast()
+        sudo = get_sudo_prefix()
+        assert result == [f"{sudo}ifconfig lo multicast"]
+
+
+def test_check_multicast_missing_route() -> None:
+    """Test check_multicast when multicast route is missing."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock missing route - interface has multicast but no route
+        mock_run.side_effect = [
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                    "returncode": 0,
+                },
+            )(),
+            type("MockResult", (), {"stdout": "", "returncode": 0})(),  # Empty output - no route
+        ]
+
+        result = check_multicast()
+        sudo = get_sudo_prefix()
+        assert result == [f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"]
+
+
+def test_check_multicast_all_missing() -> None:
+    """Test check_multicast when both multicast flag and route are missing (current system state)."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock both missing - matches actual current system state
+        mock_run.side_effect = [
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN mode DEFAULT group default qlen 1000\n    link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00",
+                    "returncode": 0,
+                },
+            )(),
+            type("MockResult", (), {"stdout": "", "returncode": 0})(),  # Empty output - no route
+        ]
+
+        result = check_multicast()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}ifconfig lo multicast",
+            f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+        ]
+        assert result == expected
+
+
+def test_check_multicast_subprocess_exception() -> None:
+    """Test check_multicast when subprocess calls fail."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock subprocess exceptions
+        mock_run.side_effect = Exception("Command failed")
+
+        result = check_multicast()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}ifconfig lo multicast",
+            f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo",
+        ]
+        assert result == expected
+
+
+def test_check_buffers_all_configured() -> None:
+    """Test check_buffers when system is properly configured."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock sufficient buffer sizes (64MB for max, 16MB for default)
+        mock_run.side_effect = [
+            type("MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0})(),
+            type(
+                "MockResult", (), {"stdout": "net.core.rmem_default = 16777216", "returncode": 0}
+            )(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        assert commands == []
+        assert buffer_size == 67108864
+
+
+def test_check_buffers_low_max_buffer() -> None:
+    """Test check_buffers when rmem_max is too low."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock low rmem_max (below 64MB minimum)
+        mock_run.side_effect = [
+            type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
+            type(
+                "MockResult", (), {"stdout": "net.core.rmem_default = 16777216", "returncode": 0}
+            )(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        assert commands == [f"{sudo}sysctl -w net.core.rmem_max=67108864"]
+        assert buffer_size == 1048576
+
+
+def test_check_buffers_low_default_buffer() -> None:
+    """Test check_buffers when rmem_default is too low."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock low rmem_default (below 16MB minimum)
+        mock_run.side_effect = [
+            type("MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0})(),
+            type(
+                "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
+            )(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        assert commands == [f"{sudo}sysctl -w net.core.rmem_default=16777216"]
+        assert buffer_size == 67108864
+
+
+def test_check_buffers_both_low() -> None:
+    """Test check_buffers when both buffer sizes are too low."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock both low (below minimums)
+        mock_run.side_effect = [
+            type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
+            type(
+                "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
+            )(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
+        ]
+        assert commands == expected
+        assert buffer_size == 1048576
+
+
+def test_check_buffers_subprocess_exception() -> None:
+    """Test check_buffers when subprocess calls fail."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock subprocess exceptions
+        mock_run.side_effect = Exception("Command failed")
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
+        ]
+        assert commands == expected
+        assert buffer_size is None
+
+
+def test_check_buffers_parsing_error() -> None:
+    """Test check_buffers when output parsing fails."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock malformed output
+        mock_run.side_effect = [
+            type("MockResult", (), {"stdout": "invalid output", "returncode": 0})(),
+            type("MockResult", (), {"stdout": "also invalid", "returncode": 0})(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
+        ]
+        assert commands == expected
+        assert buffer_size is None
+
+
+def test_check_buffers_dev_container() -> None:
+    """Test check_buffers in dev container where sysctl fails."""
+    with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+        # Mock dev container behavior - sysctl returns non-zero
+        mock_run.side_effect = [
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "sysctl: cannot stat /proc/sys/net/core/rmem_max: No such file or directory",
+                    "returncode": 255,
+                },
+            )(),
+            type(
+                "MockResult",
+                (),
+                {
+                    "stdout": "sysctl: cannot stat /proc/sys/net/core/rmem_default: No such file or directory",
+                    "returncode": 255,
+                },
+            )(),
+        ]
+
+        commands, buffer_size = check_buffers()
+        sudo = get_sudo_prefix()
+        expected = [
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
+        ]
+        assert commands == expected
+        assert buffer_size is None
+
+
+def test_autoconf_no_config_needed() -> None:
+    """Test autoconf when no configuration is needed."""
+    # Clear CI environment variable for this test
+    with patch.dict(os.environ, {"CI": ""}, clear=False):
         with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock successful checks with realistic output format
+            # Mock all checks passing with new buffer sizes (64MB and 16MB)
             mock_run.side_effect = [
                 type(
                     "MockResult",
@@ -175,10 +417,12 @@ def test_check_buffers_all_configured() -> None:
             # Mock sufficient buffer sizes
             mock_run.side_effect = [
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0}
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": "net.core.rmem_default = 16777216", "returncode": 0},
                 )(),
             ]
 
@@ -196,43 +440,8 @@ def test_check_buffers_low_max_buffer() -> None:
                 type(
                     "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
                 )(),
-                type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
-                )(),
-            ]
-
-            commands, buffer_size = check_buffers()
-            sudo = get_sudo_prefix()
-            assert commands == [f"{sudo}sysctl -w net.core.rmem_max=2097152"]
-            assert buffer_size == 1048576
-
-
-def test_check_buffers_low_default_buffer() -> None:
-    """Test check_buffers when rmem_default is too low."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock low rmem_default
-            mock_run.side_effect = [
-                type(
-                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
-                )(),
-                type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
-                )(),
-            ]
-
-            commands, buffer_size = check_buffers()
-            sudo = get_sudo_prefix()
-            assert commands == [f"{sudo}sysctl -w net.core.rmem_default=2097152"]
-            assert buffer_size == 2097152
-
-
-def test_check_buffers_both_low() -> None:
-    """Test check_buffers when both buffer sizes are too low."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock both low
-            mock_run.side_effect = [
+                type("MockResult", (), {"stdout": "", "returncode": 0})(),
+                # check_buffers calls (low buffer sizes)
                 type(
                     "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
                 )(),
@@ -251,158 +460,19 @@ def test_check_buffers_both_low() -> None:
             assert buffer_size == 1048576
 
 
-def test_check_buffers_subprocess_exception() -> None:
-    """Test check_buffers when subprocess calls fail."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock subprocess exceptions
-            mock_run.side_effect = Exception("Command failed")
-
-            commands, buffer_size = check_buffers()
-            sudo = get_sudo_prefix()
-            expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
-            ]
-            assert commands == expected
-            assert buffer_size is None
-
-
-def test_check_buffers_parsing_error() -> None:
-    """Test check_buffers when output parsing fails."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock malformed output
-            mock_run.side_effect = [
-                type("MockResult", (), {"stdout": "invalid output", "returncode": 0})(),
-                type("MockResult", (), {"stdout": "also invalid", "returncode": 0})(),
-            ]
-
-            commands, buffer_size = check_buffers()
-            sudo = get_sudo_prefix()
-            expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
-            ]
-            assert commands == expected
-            assert buffer_size is None
-
-
-def test_check_buffers_dev_container() -> None:
-    """Test check_buffers in dev container where sysctl fails."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock dev container behavior - sysctl returns non-zero
-            mock_run.side_effect = [
-                type(
-                    "MockResult",
-                    (),
-                    {
-                        "stdout": "sysctl: cannot stat /proc/sys/net/core/rmem_max: No such file or directory",
-                        "returncode": 255,
-                    },
-                )(),
-                type(
-                    "MockResult",
-                    (),
-                    {
-                        "stdout": "sysctl: cannot stat /proc/sys/net/core/rmem_default: No such file or directory",
-                        "returncode": 255,
-                    },
-                )(),
-            ]
-
-            commands, buffer_size = check_buffers()
-            sudo = get_sudo_prefix()
-            expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
-            ]
-            assert commands == expected
-            assert buffer_size is None
-
-
-def test_check_buffers_macos_all_configured() -> None:
-    """Test check_buffers on macOS when system is properly configured."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Darwin"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock sufficient buffer sizes for macOS
-            mock_run.side_effect = [
-                type(
-                    "MockResult", (), {"stdout": "kern.ipc.maxsockbuf: 8388608", "returncode": 0}
-                )(),
-                type(
-                    "MockResult", (), {"stdout": "net.inet.udp.recvspace: 2097152", "returncode": 0}
-                )(),
-                type(
-                    "MockResult", (), {"stdout": "net.inet.udp.maxdgram: 65535", "returncode": 0}
-                )(),
-            ]
-
-            commands, buffer_size = check_buffers()
-            assert commands == []
-            assert buffer_size == 8388608
-
-
-def test_check_buffers_macos_needs_config() -> None:
-    """Test check_buffers on macOS when configuration is needed."""
-    with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Darwin"):
-        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock low buffer sizes for macOS
-            mock_run.side_effect = [
-                type(
-                    "MockResult", (), {"stdout": "kern.ipc.maxsockbuf: 4194304", "returncode": 0}
-                )(),
-                type(
-                    "MockResult", (), {"stdout": "net.inet.udp.recvspace: 1048576", "returncode": 0}
-                )(),
-                type(
-                    "MockResult", (), {"stdout": "net.inet.udp.maxdgram: 32768", "returncode": 0}
-                )(),
-            ]
-
-            commands, buffer_size = check_buffers()
-            sudo = get_sudo_prefix()
-            expected = [
-                f"{sudo}sysctl -w kern.ipc.maxsockbuf=8388608",
-                f"{sudo}sysctl -w net.inet.udp.recvspace=2097152",
-                f"{sudo}sysctl -w net.inet.udp.maxdgram=65535",
-            ]
-            assert commands == expected
-            assert buffer_size == 4194304
-
-
-def test_autoconf_no_config_needed() -> None:
-    """Test autoconf when no configuration is needed."""
-    # Clear CI environment variable for this test
-    with patch.dict(os.environ, {"CI": ""}, clear=False):
-        with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-            with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-                # Mock all checks passing
-                mock_run.side_effect = [
-                    # check_multicast calls
-                    type(
-                        "MockResult",
-                        (),
-                        {
-                            "stdout": "1: lo: <LOOPBACK,UP,LOWER_UP,MULTICAST> mtu 65536",
-                            "returncode": 0,
-                        },
-                    )(),
-                    type(
-                        "MockResult",
-                        (),
-                        {"stdout": "224.0.0.0/4 dev lo scope link", "returncode": 0},
-                    )(),
-                    # check_buffers calls
-                    type(
-                        "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
-                    )(),
-                    type(
-                        "MockResult",
-                        (),
-                        {"stdout": "net.core.rmem_default = 2097152", "returncode": 0},
-                    )(),
+                sudo = get_sudo_prefix()
+                # Verify the expected log calls with new buffer sizes
+                expected_info_calls = [
+                    call("System configuration required. Executing commands..."),
+                    call(f"  Running: {sudo}ifconfig lo multicast"),
+                    call("  ✓ Success"),
+                    call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
+                    call("  ✓ Success"),
+                    call(f"  Running: {sudo}sysctl -w net.core.rmem_max=67108864"),
+                    call("  ✓ Success"),
+                    call(f"  Running: {sudo}sysctl -w net.core.rmem_default=16777216"),
+                    call("  ✓ Success"),
+                    call("System configuration completed."),
                 ]
 
                 with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
@@ -479,47 +549,46 @@ def test_autoconf_with_command_failures() -> None:
     """Test autoconf when some commands fail."""
     # Clear CI environment variable for this test
     with patch.dict(os.environ, {"CI": ""}, clear=False):
-        with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Linux"):
-            with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-                # Mock checks failing, then mock some commands failing
-                mock_run.side_effect = [
-                    # check_multicast calls
-                    type(
-                        "MockResult",
-                        (),
-                        {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
-                    )(),
-                    type("MockResult", (), {"stdout": "", "returncode": 0})(),
-                    # check_buffers calls (no buffer issues for simpler test)
-                    type(
-                        "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
-                    )(),
-                    type(
-                        "MockResult",
-                        (),
-                        {"stdout": "net.core.rmem_default = 2097152", "returncode": 0},
-                    )(),
-                    # Command execution calls - first succeeds, second fails
-                    type(
-                        "MockResult", (), {"stdout": "success", "returncode": 0}
-                    )(),  # ifconfig lo multicast
-                    subprocess.CalledProcessError(
-                        1,
-                        [
-                            *get_sudo_prefix().split(),
-                            "route",
-                            "add",
-                            "-net",
-                            "224.0.0.0",
-                            "netmask",
-                            "240.0.0.0",
-                            "dev",
-                            "lo",
-                        ],
-                        "Permission denied",
-                        "Operation not permitted",
-                    ),
-                ]
+        with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+            # Mock checks failing, then mock some commands failing
+            mock_run.side_effect = [
+                # check_multicast calls
+                type(
+                    "MockResult",
+                    (),
+                    {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
+                )(),
+                type("MockResult", (), {"stdout": "", "returncode": 0})(),
+                # check_buffers calls (no buffer issues for simpler test, use new minimums)
+                type(
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0}
+                )(),
+                type(
+                    "MockResult",
+                    (),
+                    {"stdout": "net.core.rmem_default = 16777216", "returncode": 0},
+                )(),
+                # Command execution calls - first succeeds, second fails
+                type(
+                    "MockResult", (), {"stdout": "success", "returncode": 0}
+                )(),  # ifconfig lo multicast
+                subprocess.CalledProcessError(
+                    1,
+                    [
+                        *get_sudo_prefix().split(),
+                        "route",
+                        "add",
+                        "-net",
+                        "224.0.0.0",
+                        "netmask",
+                        "240.0.0.0",
+                        "dev",
+                        "lo",
+                    ],
+                    "Permission denied",
+                    "Operation not permitted",
+                ),
+            ]
 
                 with patch("dimos.protocol.service.lcmservice.logger") as mock_logger:
                     # The function should raise on multicast/route failures

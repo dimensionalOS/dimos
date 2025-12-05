@@ -33,7 +33,7 @@ from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("test_zed_module")
+logger = setup_logger()
 
 
 class ZEDVisualizationNode:
