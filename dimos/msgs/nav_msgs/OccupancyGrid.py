@@ -35,7 +35,7 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 from dimos.types.timestamped import Timestamped
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.msgs.nav_msgs.occupancygrid")
+logger = setup_logger()
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import PointCloud2
@@ -81,7 +81,7 @@ class OccupancyGrid(Timestamped):
         height: int | None = None,
         resolution: float = 0.05,
         origin: Pose | None = None,
-        robot_pose: Pose | None = None,  # type: ignore[import-untyped]
+        robot_pose: Pose | None = None,  # type: ignore[type-arg]
         frame_id: str = "world",
         ts: float = 0.0,
     ) -> None:
@@ -128,9 +128,9 @@ class OccupancyGrid(Timestamped):
             self.info = MapMetaData(map_load_time=self._to_lcm_time())  # type: ignore[no-untyped-call]
             self.grid = np.array([], dtype=np.int8)
 
-        self.robot_pose = robot_pose
+        self.robot_pose = robot_pose  # type: ignore[assignment]
 
-    def _to_lcm_time(self):
+    def _to_lcm_time(self):  # type: ignore[no-untyped-def]
         """Convert timestamp to LCM Time."""
 
         s = int(self.ts)
@@ -298,7 +298,7 @@ class OccupancyGrid(Timestamped):
         pixel_y: int,
         size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool = True,
-    ):
+    ) -> bool:
         """Get the type of point (free, occupied, unknown) at given pixel coordinates in the occupancy grid image.
         args:
             pixel_x: X coordinate in pixels (image space)
@@ -322,7 +322,7 @@ class OccupancyGrid(Timestamped):
         size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool = True,
         max_search_radius: int = 10,
-    ):
+    ) -> tuple[int, int] | None:
         """Find the closest free point in the occupancy grid to the given grid coordinates.
 
         args:
@@ -362,7 +362,7 @@ class OccupancyGrid(Timestamped):
         grid_y: int,
         size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool = True,
-    ) -> Vector3:
+    ) -> tuple[int, int]:
         """Convert grid coordinates to pixel coordinates in the occupancy grid image.
 
         args:
@@ -385,7 +385,7 @@ class OccupancyGrid(Timestamped):
         pixel_y: int,
         size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool = True,
-    ) -> Vector3:
+    ) -> tuple[int, int]:
         """Convert pixel coordinates in the occupancy grid image to grid coordinates.
 
         args:
@@ -426,7 +426,7 @@ class OccupancyGrid(Timestamped):
 
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
 
-    def augment_image_with_robot_pose(self, image_arr: np.ndarray) -> None:
+    def augment_image_with_robot_pose(self, image_arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
         """Augment the occupancy grid image with the robot's pose.
 
         args:
@@ -473,7 +473,7 @@ class OccupancyGrid(Timestamped):
 
         return image_arr
 
-    def quat_to_yaw(self, q: Quaternion) -> float:
+    def quat_to_yaw(self, q: Quaternion) -> np.ndarray:
         """Convert quaternion to yaw angle in radians."""
         return np.arctan2(
             2.0 * (q.w * q.z + q.x * q.y),
@@ -532,7 +532,7 @@ class OccupancyGrid(Timestamped):
 
         return image
 
-    def agent_encode(self, prompt: str = ""):
+    def agent_encode(self, prompt: str = "") -> list[dict]:  # type: ignore[type-arg]
         image = self.grid_to_image()
         image_encoded = image.agent_encode()
 
@@ -761,7 +761,7 @@ class OccupancyGrid(Timestamped):
         distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
         # Convert to meters and clip to max distance
-        distance_meters = np.clip(distance_cells * self.resolution, 0, max_distance)  # type: ignore[operator]
+        distance_meters = np.clip(distance_cells * self.resolution, 0, max_distance)
 
         # Invert and scale to 0-100 range
         # Far from obstacles (max_distance) -> 0

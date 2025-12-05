@@ -16,8 +16,8 @@ import json
 import os
 
 import cv2
+import numpy as np
 
-from dimos.agents2 import Output
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
 from dimos.core.skill_module import SkillModule
@@ -29,7 +29,7 @@ from dimos.protocol.skill.skill import rpc, skill
 from dimos.utils.generic import extract_json_from_llm_response
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.agents2.skills.interpret_map")
+logger = setup_logger()
 
 
 class InterpretMapSkill(SkillModule):
@@ -37,12 +37,12 @@ class InterpretMapSkill(SkillModule):
     _robot_pose: Pose | None = None
     # _queried_map: OccupancyGrid | None = None
 
-    local_costmap: In[OccupancyGrid] = None
+    local_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
 
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(self.local_costmap.subscribe(self._on_local_costmap))
+        self._disposables.add(self.local_costmap.subscribe(self._on_local_costmap))  # type: ignore[arg-type]
         self.vl_model = QwenVlModel()
 
     @rpc
@@ -54,7 +54,7 @@ class InterpretMapSkill(SkillModule):
         self._robot_pose = self.tf.get("world", "base_link")
 
     @skill()
-    def get_goal_position(self, description: str | None = None) -> Pose | None:
+    def get_goal_position(self, description: str | None = None) -> Vector3 | str:
         """
         Identify goal position from map, based on description of location.
         Use the general description of location provided by user.
@@ -129,7 +129,9 @@ class InterpretMapSkill(SkillModule):
         return goal_pose
 
 
-def debug_image_with_identified_point(image_frame, point: tuple[int, int], filepath: str) -> None:
+def debug_image_with_identified_point(
+    image_frame: np.ndarray, point: tuple[int, int], filepath: str
+) -> None:
     """Utility to visualize identified points on the image for debugging."""
     debug_image = image_frame.copy()
     x, y = point

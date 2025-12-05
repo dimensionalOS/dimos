@@ -21,15 +21,10 @@ from reactivex.disposable import Disposable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3, VectorLike
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger("dimos.robot.unitree_webrtc.type.map")
 
 
 class Map(Module):
@@ -116,8 +111,6 @@ class Map(Module):
             return self
 
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-        center = frame.pointcloud.get_center()
-        self.robot_pose = Pose(Vector3(center[0], center[1], 0.0), Quaternion(0.0, 0.0, 0.0, 1.0))
         local_costmap = OccupancyGrid.from_pointcloud(
             frame,
             resolution=self.cost_resolution,
