@@ -21,7 +21,7 @@ from dimos.msgs.sensor_msgs.Joy                          import Joy             
 from dimos.msgs.sensor_msgs.CameraInfo                   import CameraInfo                 # — mapped to `rr.TextDocument` summary of intrinsics.
 from dimos.msgs.foxglove_msgs.Color                      import Color                      # — maps to `rr.Color`.
 
-AutoConvertableToRerunMsgType = TypeVar("AutoConvertableToRerunMsgType", bound=Union[PointCloud2, Path, Image, Transform, Odometry, OccupancyGrid, Twist, TwistStamped, TwistWithCovariance, TwistWithCovarianceStamped, Vector3, Quaternion, PoseWithCovarianceStamped, Joy, CameraInfo, Color])
+AutoConvertableToRerunMsgType = TypeVar("AutoConvertableToRerunMsgType", bound=Union[PointCloud2, Path, Image, Transform, Odometry, OccupancyGrid, Twist, TwistStamped, TwistWithCovariance, TwistWithCovarianceStamped, Vector3, Quaternion, Joy, CameraInfo, Color])
 RerunMsgType = TypeVar("RerunMsgType", bound=Union[rr.Arrows2D, rr.Asset3D, rr.BarChart, rr.Boxes2D, rr.Boxes3D, rr.Capsules3D, rr.Cylinders3D, rr.DepthImage, rr.Ellipsoids3D, rr.EncodedImage, rr.GeoLineStrings, rr.GeoPoints, rr.GraphEdge, rr.GraphEdges, rr.GraphNodes, rr.GraphType, rr.Image, rr.InstancePoses3D, rr.LineStrips2D, rr.LineStrips3D, rr.Mesh3D, rr.Pinhole, rr.Points2D, rr.Points3D, rr.Quaternion, rr.Scalars, rr.SegmentationImage, rr.SeriesLines, rr.SeriesPoints, rr.Tensor, rr.TextDocument, rr.TextLog, rr.Transform3D, rr.VideoStream, rr.ViewCoordinates, rr.AnyValues])
 RenderTarget = TypeVar("RenderTarget", bound=Union[str, None])
 
@@ -59,7 +59,8 @@ Used in two ways:
         )
     )
 """
-RerunRender = RerunTypeHelper()
+RerunRender = tuple
+# RerunTypeHelper()
 
 
 def _traceback_to_string(traceback):

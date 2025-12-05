@@ -9,6 +9,7 @@ from pathlib import Path
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 from dimos.wip_viz.rerun.types import RerunRender, BlueprintRecord
+from dimos.core import Module
 
 import secrets
 import string
@@ -41,46 +42,46 @@ import string
     #     ),
     # )
 
-class AllTabsLayout(Module):
+class RerunAllTabsLayout(Module):
     rerun_blueprint : Out[BlueprintRecord] = None
     
     # TODO: not sure that autoconnect is going to like the way the types are done here, especially the None vs "/entity/address" differences
     # Takes (basically) every possible rerun message type
-    render_arrows2d           : In[RerunRender[rr.Arrows2D         ]]  = None
-    render_asset3d            : In[RerunRender[rr.Asset3D          ]]  = None
-    render_bar_chart          : In[RerunRender[rr.BarChart         ]]  = None
-    render_boxes2d            : In[RerunRender[rr.Boxes2D          ]]  = None
-    render_boxes3d            : In[RerunRender[rr.Boxes3D          ]]  = None
-    render_capsules3d         : In[RerunRender[rr.Capsules3D       ]]  = None
-    render_cylinders3d        : In[RerunRender[rr.Cylinders3D      ]]  = None
-    render_depth_image        : In[RerunRender[rr.DepthImage       ]]  = None
-    render_ellipsoids3d       : In[RerunRender[rr.Ellipsoids3D     ]]  = None
-    render_encoded_image      : In[RerunRender[rr.EncodedImage     ]]  = None
-    render_geo_line_strings   : In[RerunRender[rr.GeoLineStrings   ]]  = None
-    render_geo_points         : In[RerunRender[rr.GeoPoints        ]]  = None
-    render_graph_edge         : In[RerunRender[rr.GraphEdge        ]]  = None
-    render_graph_edges        : In[RerunRender[rr.GraphEdges       ]]  = None
-    render_graph_nodes        : In[RerunRender[rr.GraphNodes       ]]  = None
-    render_graph_type         : In[RerunRender[rr.GraphType        ]]  = None
-    render_image              : In[RerunRender[rr.Image            ]]  = None
-    render_instance_poses3d   : In[RerunRender[rr.InstancePoses3D  ]]  = None
-    render_line_strips2d      : In[RerunRender[rr.LineStrips2D     ]]  = None
-    render_line_strips3d      : In[RerunRender[rr.LineStrips3D     ]]  = None
-    render_mesh3d             : In[RerunRender[rr.Mesh3D           ]]  = None
-    render_pinhole            : In[RerunRender[rr.Pinhole          ]]  = None
-    render_points2d           : In[RerunRender[rr.Points2D         ]]  = None
-    render_points3d           : In[RerunRender[rr.Points3D         ]]  = None
-    render_quaternion         : In[RerunRender[rr.Quaternion       ]]  = None
-    render_scalars            : In[RerunRender[rr.Scalars          ]]  = None
-    render_segmentation_image : In[RerunRender[rr.SegmentationImage]]  = None
-    render_series_lines       : In[RerunRender[rr.SeriesLines      ]]  = None
-    render_series_points      : In[RerunRender[rr.SeriesPoints     ]]  = None
-    render_tensor             : In[RerunRender[rr.Tensor           ]]  = None
-    render_text_document      : In[RerunRender[rr.TextDocument     ]]  = None
-    render_text_log           : In[RerunRender[rr.TextLog          ]]  = None
-    render_transform3d        : In[RerunRender[rr.Transform3D      ]]  = None
-    render_video_stream       : In[RerunRender[rr.VideoStream      ]]  = None
-    render_view_coordinates   : In[RerunRender[rr.ViewCoordinates  ]]  = None
+    render_arrows2d           : In[RerunRender[rr.Arrows2D         , None]]  = None
+    render_asset3d            : In[RerunRender[rr.Asset3D          , None]]  = None
+    render_bar_chart          : In[RerunRender[rr.BarChart         , None]]  = None
+    render_boxes2d            : In[RerunRender[rr.Boxes2D          , None]]  = None
+    render_boxes3d            : In[RerunRender[rr.Boxes3D          , None]]  = None
+    render_capsules3d         : In[RerunRender[rr.Capsules3D       , None]]  = None
+    render_cylinders3d        : In[RerunRender[rr.Cylinders3D      , None]]  = None
+    render_depth_image        : In[RerunRender[rr.DepthImage       , None]]  = None
+    render_ellipsoids3d       : In[RerunRender[rr.Ellipsoids3D     , None]]  = None
+    render_encoded_image      : In[RerunRender[rr.EncodedImage     , None]]  = None
+    render_geo_line_strings   : In[RerunRender[rr.GeoLineStrings   , None]]  = None
+    render_geo_points         : In[RerunRender[rr.GeoPoints        , None]]  = None
+    render_graph_edge         : In[RerunRender[rr.GraphEdge        , None]]  = None
+    render_graph_edges        : In[RerunRender[rr.GraphEdges       , None]]  = None
+    render_graph_nodes        : In[RerunRender[rr.GraphNodes       , None]]  = None
+    render_graph_type         : In[RerunRender[rr.GraphType        , None]]  = None
+    # render_image              : In[RerunRender[rr.Image            , None]]  = None
+    render_instance_poses3d   : In[RerunRender[rr.InstancePoses3D  , None]]  = None
+    render_line_strips2d      : In[RerunRender[rr.LineStrips2D     , None]]  = None
+    render_line_strips3d      : In[RerunRender[rr.LineStrips3D     , None]]  = None
+    render_mesh3d             : In[RerunRender[rr.Mesh3D           , None]]  = None
+    render_pinhole            : In[RerunRender[rr.Pinhole          , None]]  = None
+    render_points2d           : In[RerunRender[rr.Points2D         , None]]  = None
+    render_points3d           : In[RerunRender[rr.Points3D         , None]]  = None
+    render_quaternion         : In[RerunRender[rr.Quaternion       , None]]  = None
+    render_scalars            : In[RerunRender[rr.Scalars          , None]]  = None
+    render_segmentation_image : In[RerunRender[rr.SegmentationImage, None]]  = None
+    render_series_lines       : In[RerunRender[rr.SeriesLines      , None]]  = None
+    render_series_points      : In[RerunRender[rr.SeriesPoints     , None]]  = None
+    render_tensor             : In[RerunRender[rr.Tensor           , None]]  = None
+    render_text_document      : In[RerunRender[rr.TextDocument     , None]]  = None
+    render_text_log           : In[RerunRender[rr.TextLog          , None]]  = None
+    render_transform3d        : In[RerunRender[rr.Transform3D      , None]]  = None
+    render_video_stream       : In[RerunRender[rr.VideoStream      , None]]  = None
+    render_view_coordinates   : In[RerunRender[rr.ViewCoordinates  , None]]  = None
     
     types_to_entities : dict[type, str] = {
         rr.Arrows2D:          "/arrows2d",
@@ -121,6 +122,8 @@ class AllTabsLayout(Module):
         # rr.CoordinateFrame:   "/coordinate_frame", # this is kinda "/world/frame"
         
         # FIXME: finish wiring this up to picking an entity
+        
+        
     }
     
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -144,20 +147,33 @@ class AllTabsLayout(Module):
             ),
             collapse_panels=False,
         )
-
+    
+    render_image : In[RerunRender[rr.Image            , None]]  = None
+    
     def start(self) -> None:
+        # this runs (and the callback does too)
+        self.rerun_blueprint.publish(BlueprintRecord(self.viewer_blueprint))
+        
+        # this callback never runs!
+        self.render_image.subscribe(lambda *args: print(f"[RerunAllTabsLayout] got a message! {args}"))
+        
+        
+        
+        
+        
         # this tells the DimOsDashboard what blueprint to render
         # FIXME: need to eventually 1). publish what types can be rendered / not rendered 2). mention what targets are available (ex: multiple camera streams)
-        self.rerun_blueprint.publish(BlueprintRecord(self.viewer_blueprint))
         def process_message(message_value):
+            print(f"[RerunAllTabsLayout] got a message! {message_value}")
             # FIXME: we kinda need a way to know what module is sending the message. If we knew (ex: camera) then we could default to one entity per module instead of per message type
             # NOTE: we can kinda compensate for this by the inherited base class, using the class name as the entity name
             if isinstance(message_value, (RerunRender, tuple)): # TODO: debatable if tuple should be supported here
                 value, target = message_value
+                print(f"[RerunAllTabsLayout] sending {value} to {target}")
                 rr.log(target, value) # ex: rr.log("path", rr.GeoPoints(lat_lon=[some_coordinate], colors=[0xFF0000FF]))
             else:
-                # guess an entity target based on the type
-                rr.log(random_string(24), message_value)
+                # FIXME: guess an entity target based on the type
+                rr.log(None, message_value)
         
         self._disposables.add(Disposable(self.render_arrows2d.subscribe(process_message)))
         self._disposables.add(Disposable(self.render_asset3d.subscribe(process_message)))

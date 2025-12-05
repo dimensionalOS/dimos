@@ -62,4 +62,4 @@ def rr_viz_test(misc_datapoint):
 
 for unknown_msg in create_example_msgs():
     rr_message = dimos_msg_to_rr(unknown_msg)
-    # FIXME: send it to some kind of rerun viewer
+    # fix: send it to some kind of rerun viewer

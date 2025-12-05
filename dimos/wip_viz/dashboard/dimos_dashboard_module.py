@@ -7,13 +7,20 @@ import os
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 from dimos.wip_viz.rerun.types import BlueprintRecord
-from dimos.wip_viz.dashboard.dimos_dashboard_func import dimos_dashboard_func
+from dimos.wip_viz.dashboard.dimos_dashboard_func import dimos_dashboard_func, normalize_path_prefix, env_bool
+from dimos.core import Module, In, rpc
 
 import secrets
 import string
 
 _dashboard_exists = False
 class Dashboard(Module):
+    """
+    Internals Note:
+        The Dashboard handles rendering the terminals (Zellij) and the viewer (Rerun). 
+        The Layout (elsewhere) handles the layout of rerun.
+        The dimos_dashboard_func mostly handles the logic for Zellij, with only an iframe for rerun.
+    """
     blueprint_record : In[BlueprintRecord]  = None
     
     def __init__(
@@ -77,15 +84,20 @@ class Dashboard(Module):
     def start(self) -> None:
         @self.blueprint_record.subscribe
         def handle_blueprint(blueprint_record: BlueprintRecord):
+            print(f"[Dashboard] got blueprint! {blueprint_record}")
+            print(f'''self.active_blueprint = {self.active_blueprint}''')
             if self.active_blueprint == None:
                 self.active_blueprint = blueprint_record.blueprint
-                rr.send_blueprint(self.active_blueprint)
+                print(f"[Dashboard] init-ing rerun")
                 # could let name be custom in the future
                 # init makes it so that rr.log() actually does something (buffers in memory until serve_grpc is called and available)
                 rr.init("rerun_mega_blueprint", spawn=False)
+                rr.send_blueprint(self.active_blueprint) # needs to be after init
+                print(f"[Dashboard] sent blueprint")
                 # get the rrd_url if it wasn't provided
                 self.kwargs_for_func["rrd_url"] = self.kwargs_for_func["rrd_url"] or rr.serve_grpc()  # e.g. "rerun+http://127.0.0.1:9876/proxy"
                 # start the custom server, zellij tools, etc
-                dimos_dashboard_func(**self.kwargs_for_func)
+                # dimos_dashboard_func(**self.kwargs_for_func)
+                print(f"[Dashboard] started dimos_dashboard_func")
             else:
                 raise Exception(f'''Dashboard already has a blueprint, cannot set new blueprint.''')

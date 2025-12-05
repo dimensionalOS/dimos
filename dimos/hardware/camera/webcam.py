@@ -82,7 +82,6 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         def _open_capture() -> bool:
             self._capture = cv2.VideoCapture(self.config.camera_index)  # type: ignore[assignment]
-            print(f'''self._capture = {self._capture}''')
             return bool(self._capture.isOpened())  # type: ignore[attr-defined]
 
         # Try once, and on macOS attempt tcc reset then retry once.
@@ -164,7 +163,6 @@ class Webcam(CameraHardware[WebcamConfig]):
 
         while self._capture and not self._stop_event.is_set():
             image = self.capture_frame()
-            print(f'''image = {image}''')
             # Emit the image to the observer only if not stopping
             if self._observer and not self._stop_event.is_set():
                 self._observer.on_next(image)

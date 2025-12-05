@@ -1087,55 +1087,66 @@ def dimos_dashboard_func(
         "terminals": terminals,
     }
     
-    try:
-        process = subprocess.run(
-            ["zellij", "kill-session", session_name],
-            check=False,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-    except FileNotFoundError:
-        log.error("zellij executable not found; cannot manage session %s", session_name)
-        # break
-    except Exception as exc:
-        log.warning("Unable to kill session %s: %s", session_name, exc)
+    def launch_zellij_in_background(terminals_map: dict[str, str]) -> None:
+        try:
+            kill_proc = subprocess.Popen(
+                ["zellij", "kill-session", session_name],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            try:
+                kill_proc.communicate(timeout=2)
+            except subprocess.TimeoutExpired:
+                kill_proc.kill()
+        except FileNotFoundError:
+            log.error("zellij executable not found; cannot manage session %s", session_name)
+            return
+        except Exception as exc:
+            log.warning("Unable to kill session %s: %s", session_name, exc)
 
-    try:
-        files_to_run = []
-        for command in terminals.values():
-            sanitized_command = re.sub(r"[^A-Za-z\s_\-\=\*]", "", command)
-            file_path = f"/tmp/{sanitized_command}.sh"
-            with open(file_path, 'w') as the_file:
-                the_file.write(f"""
-                    source ./venv/bin/activate
-                    {command}
+        try:
+            files_to_run = []
+            for command in terminals_map.values():
+                sanitized_command = re.sub(r"[^A-Za-z\s_\-\=\*]", "", command)
+                file_path = f"/tmp/{sanitized_command}.sh"
+                with open(file_path, 'w') as the_file:
+                    the_file.write(f"""
+                        source ./venv/bin/activate
+                        {command}
+                    """)
+                files_to_run.append(file_path)
+            zellij_path = "/tmp/.zellij_layout.kdl"
+            with open(zellij_path, 'w') as the_file:
+                the_file.write("""
+                    layout {
+                        """+"\n".join(
+                            f"""pane command=\"zsh\" {{
+                                args "{file_path}"
+                            }}""" for file_path in files_to_run
+                        )+"""
+                    }
                 """)
-            files_to_run.append(file_path)
-        print(f'''files_to_run = {files_to_run}''')
-        zellij_path = "/tmp/.zellij_layout.kdl"
-        with open(zellij_path, 'w') as the_file:
-            the_file.write("""
-                layout {
-                    """+"\n".join(
-                        f"""pane command=\"zsh\" {{
-                            args "{file_path}"
-                        }}""" for file_path in files_to_run
-                    )+"""
-                }
-            """)
-        
-        proc = subprocess.Popen(
-            # zellij attach --create-background my-session-name options --default-layout
-            # ["zellij", "attach", "--create-background", session_name, "options", "--web-sharing=on",],
-            ["zellij", "attach", "--create-background", session_name, "options", "--web-sharing=on", "--default-layout", zellij_path],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-        print(f'''started: {session_name}''')
-    except Exception as exc:
-        log.error("Failed to start zellij session %s: %s", session_name, exc)
-        # continue
+            
+            subprocess.Popen(
+                # zellij attach --create-background my-session-name options --default-layout
+                # ["zellij", "attach", "--create-background", session_name, "options", "--web-sharing=on",],
+                ["zellij", "attach", "--create-background", session_name, "options", "--web-sharing=on", "--default-layout", zellij_path],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                start_new_session=True,
+            )
+            print(f'''started: {session_name} with panes {files_to_run}''')
+        except Exception as exc:
+            log.error("Failed to start zellij session %s: %s", session_name, exc)
+
+    threading.Thread(
+        target=launch_zellij_in_background,
+        args=(terminals,),
+        daemon=True,
+        name="zellij-launcher",
+    ).start()
         
     thread = threading.Thread(
         target=run_proxy_server,
