@@ -21,9 +21,9 @@ This module creates a reactive stream of position updates from ROS odometry or p
 import logging
 import time
 
-from geometry_msgs.msg import PoseStamped  # type: ignore[attr-defined]
-from nav_msgs.msg import Odometry  # type: ignore[attr-defined]
-from rclpy.node import Node
+from geometry_msgs.msg import PoseStamped  # type: ignore[attr-defined, import-untyped]
+from nav_msgs.msg import Odometry  # type: ignore[attr-defined, import-untyped]
+from rclpy.node import Node  # type: ignore[import-untyped]
 from reactivex import Observable, Subject, operators as ops
 
 from dimos.utils.logging_config import setup_logger
