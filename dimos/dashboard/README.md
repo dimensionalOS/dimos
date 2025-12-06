@@ -33,17 +33,29 @@ layout = layouts.AllTabs(collapse_panels=False)
 
 blueprint = (
     autoconnect(
-        CameraModule.blueprint(),
-        ManipulationModule.blueprint(),
+        CameraModule.blueprint(
+            hardware=lambda: Webcam(
+                camera_index=0,
+                frequency=15,
+                stereo_slice="left",
+                camera_info=zed.CameraInfo.SingleWebcam,
+            ),
+        ),
+        CameraListener.blueprint(),
         Dashboard(
             layout=layout,
+            terminal_commands={
+                "lcm-spy": "dimos lcmspy",
+                "skill-spy": "dimos skillspy",
+            },
         ).blueprint(),
         RerunHook(
             "color_image",
             Image,
-            target_entity=layout.entities.spatial2d
+            target_entity=layout.entities.spatial2d,
         ).blueprint(),
     )
+    .transports({("color_image", Image): pSHMTransport("/cam/image")})
     .global_config(n_dask_workers=1)
 )
 coordinator = blueprint.build()

@@ -20,6 +20,7 @@ def Dashboard(
     *,
     layout: Layout,
     # the following just get passed directly to start_dashboard_server_thread
+    auto_open: bool = False,
     port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
     dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
     terminal_commands: Optional[dict[str, str]] = None,
@@ -50,6 +51,7 @@ def Dashboard(
         layout=layout,
     ))
     dashboard_config.update(dict(
+        auto_open=auto_open,
         port=port,
         dashboard_host=dashboard_host,
         terminal_commands=terminal_commands,

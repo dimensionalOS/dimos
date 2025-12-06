@@ -54,8 +54,9 @@ blueprint = (
         CameraListener.blueprint(),
         Dashboard(
             layout=layout,
+            auto_open=True,
             terminal_commands={
-                "agent-spy": "dimos agentspy",
+                "agent-spy": "htop",
                 "lcm-spy": "dimos lcmspy",
                 # "skill-spy": "dimos skillspy",
             },

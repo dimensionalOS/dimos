@@ -4,6 +4,7 @@ import logging
 import os
 import ssl
 import threading
+import webbrowser
 
 import asyncio
 from aiohttp import web, ClientSession, WSMsgType
@@ -24,6 +25,7 @@ HOP_BY_HOP_HEADERS = {
 }
 
 def start_dashboard_server(config: dict, log: logging.Logger):
+    auto_open = config["auto_open"]
     port = config["port"]
     dashboard_host = config["dashboard_host"]
     zellij_port = config["zellij_port"]
@@ -37,7 +39,8 @@ def start_dashboard_server(config: dict, log: logging.Logger):
     zellij_token = config["zellij_token"]
     terminals = config["terminals"]
     
-    # NOTE: whatever name is picked for the frontend base path cannot be a zellij session name 
+    # NOTE: whatever name is picked for the frontend base path cannot be a zellij session name
+    # we pick/generate the session names so its not that big of a deal to avoid collisions
     frontend_base_path = "/zviewer"
     api_base_path = f"{frontend_base_path}/api"
     
@@ -220,6 +223,18 @@ def start_dashboard_server(config: dict, log: logging.Logger):
         )
         log.info("   ❤️  Health Check:         %s://%s:%s/health", protocol, dashboard_host, port)
         log.info("🚀 Ready to tunnel port %s!", port)
+        if auto_open:
+            target_url = f"{protocol}://{dashboard_host}:{port}{frontend_base_path}"
+
+            async def _open_browser():
+                try:
+                    # Small delay so the server is ready before opening the browser
+                    await asyncio.sleep(0.2)
+                    await asyncio.get_running_loop().run_in_executor(None, webbrowser.open, target_url)
+                except Exception as exc:  # pragma: no cover - environment dependent
+                    log.warning("Failed to auto-open browser at %s: %s", target_url, exc)
+
+            asyncio.create_task(_open_browser())
 
     async def on_cleanup(app: web.Application):
         client: ClientSession = app["client"]
@@ -267,6 +282,7 @@ def start_dashboard_server(config: dict, log: logging.Logger):
 
 def start_dashboard_server_thread(
     *,
+    auto_open: bool = False,
     port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
     dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
     terminal_commands: Optional[dict[str, str]] = None,
@@ -286,6 +302,7 @@ def start_dashboard_server_thread(
         target=start_dashboard_server,
         args=(
             dict(
+                auto_open=auto_open,
                 port=port,
                 dashboard_host=dashboard_host,
                 zellij_port=zellij_port,
