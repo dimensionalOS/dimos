@@ -167,7 +167,7 @@ def start_dashboard_server(config: dict, log: logging.Logger):
         is_ws = request.headers.get("upgrade", "").lower() == "websocket"
 
         if path in ("/", "", "/zviewer", "/zviewer/"):
-            html_code = html_code_gen(rrd_url, zellij_enabled=zellij_manager.enabled, zellij_token=zellij_token_holder["token"])
+            html_code = html_code_gen(rrd_url, zellij_enabled=zellij_manager.enabled, zellij_token=zellij_token_holder["token"], session_name=zellij_manager.session_name)
             return web.Response(text=html_code, content_type="text/html")
 
         if path == "/health":

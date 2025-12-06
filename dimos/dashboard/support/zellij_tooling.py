@@ -180,7 +180,9 @@ class ZellijManager:
                     file_path = f"/tmp/{sanitized_command}.sh"
                     with open(file_path, 'w') as file:
                         file.write(f"""
-                            source ./venv/bin/activate
+                            . .envrc
+                            . source.ignore.sh
+                            . ./venv/bin/activate
                             {command}
                         """)
                     files_to_run.append(file_path)
