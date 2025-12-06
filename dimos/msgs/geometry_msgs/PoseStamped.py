@@ -20,7 +20,9 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped  # type: ignore[import-untyped]
 
 try:
-    from geometry_msgs.msg import PoseStamped as ROSPoseStamped  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (
+        PoseStamped as ROSPoseStamped,  # type: ignore[attr-defined, import-untyped]
+    )
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
 
