@@ -21,8 +21,8 @@ from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped  # type: ign
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (
-        TwistStamped as ROSTwistStamped,  # type: ignore[attr-defined, import-untyped]
+    from geometry_msgs.msg import (  # type: ignore[import-untyped]
+        TwistStamped as ROSTwistStamped,  # type: ignore[attr-defined]
     )
 except ImportError:
     ROSTwistStamped = None  # type: ignore[assignment, misc]
