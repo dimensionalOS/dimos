@@ -78,12 +78,12 @@ class ConnectionModule(FakeRTC, Module):
     _odom: Callable[[], Odometry]
     _lidar: Callable[[], LidarMessage]
 
-    def __init__(self, ip: str):
-        Module.__init__(self)
+    def __init__(self, ip: str, *args, **kwargs):
+        Module.__init__(self, *args, **kwargs)
         self.ip = ip
 
     @rpc
-    async def start(self):
+    def start(self):
         # ensure that LFS data is available
         data = get_data("unitree_office_walk")
         # Since TimedSensorReplay is now non-blocking, we can subscribe directly
@@ -171,29 +171,31 @@ class Unitree:
         global_planner.target.connect(ctrl.plancmd)
 
         # we review the structure
-        # print("\n")
-        # for module in [connection, mapper, global_planner, ctrl]:
-        #    print(module.io().result(), "\n")
+        print("\n")
+        for module in [connection, mapper, local_planner, global_planner, ctrl]:
+            print(module.io().result(), "\n")
 
         print(colors.green("starting mapper"))
-        mapper.start().result()
+        mapper.start()
 
         print(colors.green("starting connection"))
-        connection.start().result()
+        connection.start()
 
         print(colors.green("local planner start"))
-        local_planner.start().result()
+        local_planner.start()
 
         print(colors.green("starting global planner"))
-        global_planner.start().result()
+        global_planner.start()
 
         print(colors.green("starting ctrl"))
-        ctrl.start().result()
+        ctrl.start()
 
         print(colors.red("READY"))
+
         await asyncio.sleep(3)
+
         print("querying system")
-        print(mapper.costmap().result())
+        print(mapper.costmap())
         # global_planner.dask_receive_msg("target", Vector3([0, 0, 0])).result()
         time.sleep(20)
 

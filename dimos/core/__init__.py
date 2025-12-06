@@ -20,13 +20,20 @@ def patch_actor(actor, cls): ...
 
 
 class RPCClient:
-    def __init__(self, rpc, actor_instance, actor_class):
-        self.rpc = rpc()
+    def __init__(self, actor_instance, actor_class):
+        self.rpc = LCMRPC()
+        self.actor_class = actor_class
         self.remote_name = actor_class.__name__
-        self.remote_instance = actor_instance
+        self.actor_instance = actor_instance
         self.rpcs = actor_class.rpcs.keys()
-
         self.rpc.start()
+
+    def __reduce__(self):
+        # Return the class and the arguments needed to reconstruct the object
+        return (
+            self.__class__,
+            (self.actor_instance, self.actor_class),
+        )
 
     # passthrough
     def __getattr__(self, name: str):
@@ -46,15 +53,14 @@ class RPCClient:
         if name in self.rpcs:
             return lambda *args: self.rpc.call_sync(f"{self.remote_name}/{name}", args)
 
+        # return super().__getattr__(name)
         # Try to avoid recursion by directly accessing attributes that are known
-        attribute = object.__getattribute__(self.actor_instance, name)
-        return attribute
+        return self.actor_instance.__getattr__(name)
 
 
 def patchdask(dask_client: Client):
     def deploy(
         actor_class,
-        rpc: RPC = LCMRPC,
         *args,
         **kwargs,
     ):
@@ -64,14 +70,13 @@ def patchdask(dask_client: Client):
                 actor_class,
                 *args,
                 **kwargs,
-                rpc=rpc,
                 actor=True,
             ).result()
 
             worker = actor.set_ref(actor).result()
             print((f"deployed: {colors.green(actor)} @ {colors.blue('worker ' + str(worker))}"))
 
-            return RPCClient(rpc, actor, actor_class)
+            return RPCClient(actor, actor_class)
 
     dask_client.deploy = deploy
     return dask_client

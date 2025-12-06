@@ -24,15 +24,14 @@ from dask.distributed import Actor, get_worker
 
 from dimos.core import colors
 from dimos.core.core import In, Out, RemoteIn, RemoteOut, T, Transport
-from dimos.protocol.rpc.spec import RPCServer
+from dimos.protocol.rpc.lcmrpc import LCMRPC
 
 
 class ModuleBase:
-    def __init__(self, rpc: RPCServer = None, *args, **kwargs):
-        if rpc:
-            self.rpc = rpc()
-            self.rpc.serve_module_rpc(self)
-            self.rpc.start()
+    def __init__(self, *args, **kwargs):
+        self.rpc = LCMRPC()
+        self.rpc.serve_module_rpc(self)
+        self.rpc.start()
 
     @property
     def outputs(self) -> dict[str, Out]:
