@@ -43,26 +43,39 @@ class TrajectorySetter:
     Creates and publishes JointTrajectory using trapezoidal velocity profiles.
 
     Uses JointTrajectoryGenerator to compute proper timing and velocities
-    from a list of waypoints. Subscribes to /xarm/joint_states to get
+    from a list of waypoints. Subscribes to arm-specific joint_states to get
     current joint positions.
+
+    Supports multiple arm types:
+    - xarm (xarm5/6/7)
+    - piper
+    - Any future arm that publishes joint_states
     """
 
-    def __init__(self):
-        """Initialize the trajectory setter."""
+    def __init__(self, arm_type: str = "xarm"):
+        """
+        Initialize the trajectory setter.
+
+        Args:
+            arm_type: Type of arm ("xarm", "piper", etc.)
+        """
+        self.arm_type = arm_type.lower()
+
         # Publisher for trajectories
         self.trajectory_pub = core.LCMTransport("/trajectory", JointTrajectory)
 
-        # Subscribe to current joint state
-        self.joint_state_sub = core.LCMTransport("/xarm/joint_states", JointState)
+        # Subscribe to arm-specific joint state topic
+        joint_state_topic = f"/{self.arm_type}/joint_states"
+        self.joint_state_sub = core.LCMTransport(joint_state_topic, JointState)
         self.latest_joint_state: JointState | None = None
 
-        # Will be set dynamically from joint_state (supports xarm5/6/7)
+        # Will be set dynamically from joint_state
         self.num_joints: int | None = None
         self.generator: JointTrajectoryGenerator | None = None
 
-        print("TrajectorySetter initialized")
+        print(f"TrajectorySetter initialized for {self.arm_type.upper()}")
         print("  Publishing to: /trajectory")
-        print("  Subscribing to: /xarm/joint_states")
+        print(f"  Subscribing to: {joint_state_topic}")
 
     def start(self) -> bool:
         """Start subscribing to joint state."""
@@ -380,16 +393,37 @@ def interactive_mode(setter: TrajectorySetter):
 
 def main():
     """Main entry point."""
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Interactive Trajectory Setter for robot arms")
+    parser.add_argument(
+        "--arm",
+        type=str,
+        default="xarm",
+        choices=["xarm", "piper"],
+        help="Type of arm to control (default: xarm)",
+    )
+    parser.add_argument(
+        "--custom-arm",
+        type=str,
+        help="Custom arm type (will subscribe to /<custom-arm>/joint_states)",
+    )
+    args = parser.parse_args()
+
+    arm_type = args.custom_arm if args.custom_arm else args.arm
+
     print("\n" + "=" * 80)
     print("Trajectory Setter")
     print("=" * 80)
-    print("\nGenerates joint trajectories using trapezoidal velocity profiles.")
+    print(f"\nArm Type: {arm_type.upper()}")
+    print("Generates joint trajectories using trapezoidal velocity profiles.")
     print("Run example_trajectory_control.py in another terminal first!")
     print("=" * 80)
 
-    setter = TrajectorySetter()
+    setter = TrajectorySetter(arm_type=arm_type)
     if not setter.start():
-        print("\nWarning: Could not get joint state - controller may not be running")
+        print(f"\nWarning: Could not get joint state from /{arm_type}/joint_states")
+        print("Controller may not be running or arm type may be incorrect.")
         response = input("Continue anyway? [y/N]: ").strip().lower()
         if response != "y":
             return 0
