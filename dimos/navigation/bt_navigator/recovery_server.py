@@ -22,7 +22,7 @@ from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance
 
-logger = setup_logger("dimos.navigation.bt_navigator.recovery_server")
+logger = setup_logger()
 
 
 class RecoveryServer:

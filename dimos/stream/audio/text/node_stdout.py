@@ -18,7 +18,7 @@ from reactivex import Observable
 from dimos.stream.audio.text.base import AbstractTextConsumer
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.text.node_stdout")
+logger = setup_logger()
 
 
 class TextPrinterNode(AbstractTextConsumer):
