@@ -163,10 +163,10 @@ class ZellijManager:
             # break
         except Exception as exc:
             log.warning("Unable to kill session %s: %s", session_name, exc)
-        
         # 
         # write layout to tmp file
         # 
+        zellij_path = f"/tmp/.zellij_layout.{session_name}.kdl"
         try:
             if not zellij_layout:
                 files_to_run = []
@@ -179,7 +179,6 @@ class ZellijManager:
                             {command}
                         """)
                     files_to_run.append(file_path)
-                zellij_path = f"/tmp/.zellij_layout.{session_name}.kdl"
                 zellij_layout = """
                     layout {
                         """+"\n".join(
