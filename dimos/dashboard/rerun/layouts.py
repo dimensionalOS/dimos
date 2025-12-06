@@ -4,7 +4,6 @@ import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 
 from dimos.dashboard.rerun.layouts_base import Layout
-from dimos.wip_viz.rerun.types import RerunRender, BlueprintRecord
 
 # example of rerun blueprint types: 
 # NOTES:
@@ -34,21 +33,23 @@ from dimos.wip_viz.rerun.types import RerunRender, BlueprintRecord
     #     ),
     # )
 
+from dataclasses import dataclass
+from typing import Literal
 
-entities_for_full = [
-    'spatial3d',
-    'spatial2d',
-    'bar_chart',
-    'dataframe',
-    'graph',
-    'map',
-    'tensor',
-    'text_doc',
-    'image',
-]
-RerunAllEntities = namedtuple('RerunAllEntities', entities_for_full)
+@dataclass(frozen=True)
+class LayoutAllTabsEntities:
+    spatial3d: Literal["spatial3d"] = "/spatial3d"
+    spatial2d: Literal["spatial2d"] = "/spatial2d"
+    bar_chart: Literal["bar_chart"] = "/bar_chart"
+    dataframe: Literal["dataframe"] = "/dataframe"
+    graph    : Literal["graph"]     = "/graph"
+    map      : Literal["map"]       = "/map"
+    tensor   : Literal["tensor"]    = "/tensor"
+    text_doc : Literal["text_doc"]  = "/text_doc"
+    image    : Literal["image"]     = "/image"
+
 class LayoutAllTabs(Layout):
-    entities: RerunAllEntities = RerunAllEntities(*[ f"/{each}" for each in entities_for_full])
+    entities = LayoutAllTabsEntities()
     def __init__(self, collapse_panels=False) -> None:  # type: ignore[no-untyped-def]
         self.rerun_blueprint = rrb.Blueprint(
             rrb.Tabs(
