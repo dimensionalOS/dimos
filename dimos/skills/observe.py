@@ -124,7 +124,7 @@ class Observe(AbstractRobotSkill):
         if self._video_stream is None:
             logger.error("Video stream is None")
             return None
-            
+
         frame = None
         frame_subject = rx.subject.Subject()
 
