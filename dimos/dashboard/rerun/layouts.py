@@ -70,3 +70,7 @@ class LayoutAllTabs(Layout):
             ),
             collapse_panels=collapse_panels,
         )
+
+@dataclass(frozen=True)
+class layouts:
+    AllTabs = LayoutAllTabs
