@@ -298,7 +298,7 @@ def test_gpu_query_performance(embedding_model, test_image) -> None:  # type: ig
 
     assert len(results) == 5, "Should return top-5 results"
     # All should be high similarity (same image, allow some variation for image preprocessing)
-    for idx, sim in results:
+    for _, sim in results:
         assert sim > 0.90, f"Same images should have high similarity, got {sim}"
 
 

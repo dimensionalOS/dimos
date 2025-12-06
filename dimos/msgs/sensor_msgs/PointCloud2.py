@@ -17,6 +17,8 @@ from __future__ import annotations
 import functools
 import struct
 
+import rerun as rr
+
 # Import LCM types
 from dimos_lcm.sensor_msgs.PointCloud2 import (  # type: ignore[import-untyped]
     PointCloud2 as LCMPointCloud2,
@@ -154,6 +156,10 @@ class PointCloud2(Timestamped):
             and min1[2] <= max2[2]
             and max1[2] >= min2[2]
         )
+
+    def to_rerun(self) -> rr.Points3D:
+        """Convert to a Rerun point cloud."""
+        return rr.Points3D(self.as_numpy())
 
     def lcm_encode(self, frame_id: str | None = None) -> bytes:
         """Convert to LCM PointCloud2 message."""

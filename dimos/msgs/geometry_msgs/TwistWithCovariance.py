@@ -31,6 +31,7 @@ except ImportError:
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
+import rerun as rr
 
 # Types that can be converted to/from TwistWithCovariance
 TwistWithCovarianceConvertable: TypeAlias = (
@@ -227,3 +228,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):  # type: ignore[misc]
         else:
             ros_msg.covariance = list(self.covariance)  # type: ignore[has-type]
         return ros_msg
+
+    def to_rerun(self) -> rr.Arrows3D:
+        """Visualize twist ignoring covariance."""
+        return self.twist.to_rerun()

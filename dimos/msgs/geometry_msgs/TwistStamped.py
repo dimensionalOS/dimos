@@ -17,6 +17,8 @@ from __future__ import annotations
 import time
 from typing import BinaryIO, TypeAlias
 
+import rerun as rr
+
 from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped  # type: ignore[import-untyped]
 from plum import dispatch
 
@@ -116,3 +118,7 @@ class TwistStamped(Twist, Timestamped):
         ros_msg.twist = Twist.to_ros_msg(self)
 
         return ros_msg
+
+    def to_rerun(self) -> rr.Arrows3D:
+        """Visualize stamped twist as arrows."""
+        return Twist.to_rerun(self)

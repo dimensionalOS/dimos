@@ -18,6 +18,42 @@
         "type": "github"
       }
     },
+    "lib": {
+      "inputs": {
+        "flakeUtils": [
+          "flake-utils"
+        ],
+        "libSource": "libSource"
+      },
+      "locked": {
+        "lastModified": 1763164848,
+        "narHash": "sha256-OlnnK3Iepi4As1onBrNfIiiQ0xIGzEWsJ16/TrLFcpY=",
+        "owner": "jeff-hykin",
+        "repo": "quick-nix-toolkits",
+        "rev": "3c820d33a0c4c8480a771484f99490243b3c6b5f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jeff-hykin",
+        "repo": "quick-nix-toolkits",
+        "type": "github"
+      }
+    },
+    "libSource": {
+      "locked": {
+        "lastModified": 1763255503,
+        "narHash": "sha256-7AL5rgcGVjhYgZFbZQt1IndGcY27h5B5xi9OWtLlm6c=",
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "rev": "56f74a2d6cd236c0ea3097b3df2e053fbb374b26",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "nixpkgs.lib",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1748929857,
@@ -37,6 +73,7 @@
     "root": {
       "inputs": {
         "flake-utils": "flake-utils",
+        "lib": "lib",
         "nixpkgs": "nixpkgs"
       }
     },

@@ -145,10 +145,18 @@ class LocalSemanticMemory(ChromaAgentSemanticMemory):
     def create(self) -> None:
         """Create local embedding model and initialize the ChromaDB client."""
         # Load the sentence transformer model
-        # Use CUDA if available, otherwise fall back to CPU
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {device}")
-        self.model = SentenceTransformer(self.model_name, device=device)  # type: ignore[name-defined]
+
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
+            self.device = "cuda"
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            self.device = "mps"
+        else:
+            self.device = "cpu"
+
+        print(f"Using device: {self.device}")
+        self.model = SentenceTransformer(self.model_name, device=self.device)  # type: ignore[name-defined]
 
         # Create a custom embedding class that implements the embed_query method
         class SentenceTransformerEmbeddings:
