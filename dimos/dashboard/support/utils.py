@@ -1,6 +1,8 @@
 from typing import Optional
 import os
 import logging
+import time
+from functools import wraps
 
 from yarl import URL
 
@@ -49,3 +51,22 @@ def ensure_logger(logger: Optional[logging.Logger], log_name: str = "proxy") -> 
         return logging.getLogger("proxy")
     else:
         return logger
+
+def rate_limit(min_interval: float):
+    """
+    Prevent the function from being called more often than once every `min_interval` seconds.
+    """
+    def decorator(func):
+        last_called = 0.0
+
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            nonlocal last_called
+            now = time.time()
+            if now - last_called < min_interval:
+                return  # skip call
+            last_called = now
+            return func(*args, **kwargs)
+
+        return wrapper
+    return decorator
