@@ -19,11 +19,12 @@ Real-time driver for Piper manipulator with CAN bus communication.
 """
 
 from .piper_blueprints import piper_cartesian, piper_servo, piper_trajectory
-from .piper_driver import PiperDriver, PiperDriverConfig, piper_driver
+from .piper_driver import PiperDriver, piper_driver
+from .piper_wrapper import PiperSDKWrapper
 
 __all__ = [
     "PiperDriver",
-    "PiperDriverConfig",
+    "PiperSDKWrapper",
     "piper_cartesian",
     "piper_driver",
     "piper_servo",
