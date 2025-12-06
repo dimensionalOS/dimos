@@ -188,8 +188,8 @@ class ZellijManager:
                         )+"""
                     }
                 """
-            with open(zellij_path, 'w') as file:
-                file.write(zellij_layout)
+                with open(zellij_path, 'w') as file:
+                    file.write(zellij_layout)
         except Exception as exc:
             log.error("Failed to write zellij layout: %s", exc)
             return
