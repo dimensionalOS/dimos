@@ -22,8 +22,6 @@ def RerunHook(attrname, input_type, target_entity: str, *, topic = None, publish
     # set default callback
     if publish_callback is None:
         def publish_callback(val: input_type):
-            print(f'''[RerunHook] got {val}''')
-            # convert to rerun value
             if hasattr(val, "to_rerun") and callable(val.to_rerun):
                 val = val.to_rerun()
             rr.log(target_entity, val)
@@ -34,7 +32,6 @@ def RerunHook(attrname, input_type, target_entity: str, *, topic = None, publish
     # FIXME: something really weird is stopping vars from being defined inside the In[input_type] scope  (global()[] is a workaround)
     globals()["input_type"] = input_type
     globals()["publish_callback"] = publish_callback
-    print(f'''input_type = {input_type}''')
     exec(f"""
     class RerunHookModule(Module):
         {attrname}: In[globals()["input_type"]] = None

@@ -40,12 +40,12 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
     if zellij_enabled:
         zellij_html = """
             <div id="terminal-side">
-                <iframe data-is-zellij="true" id="iframe-"""+ensure_session_name_valid(session_name)+"""}" src="/"""+ensure_session_name_valid(session_name)+"""}" frameborder="0" onload="this.style.opacity = '1'"> </iframe>
+                <iframe data-is-zellij="true" id="iframe-"""+ensure_session_name_valid(session_name)+"""" src="/"""+ensure_session_name_valid(session_name)+"""" frameborder="0" onload="this.style.opacity = '1'"> </iframe>
             </div>
         """
         zellij_js = """
             const zellijToken = """+escape_js_value(zellij_token)+""";
-            const iframes = document.querySelectorAll("iframe[data-is-zellij="true"]")
+            const iframes = document.querySelectorAll('iframe[data-is-zellij="true"]')
             await new Promise((r) => setTimeout(r, 200))
             for (let each of iframes) {
                 let input
@@ -75,8 +75,8 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
                         code: keyInfo.code,
                         keyCode: keyInfo.keyCode,
                         which: keyInfo.which,
-                        bubbles,
-                        cancelable,
+                        bubbles: true,
+                        cancelable: true,
                     })
 
                     target.dispatchEvent(evt)
@@ -146,18 +146,19 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
     </body>
     <script type="module">
         // 
+        // zellij
+        // 
+        """+zellij_js+"""
+        
+        // 
         // rerun
         // 
         import { WebViewer } from "https://esm.sh/@rerun-io/web-viewer@0.27.2";
         const rrdUrl = """+escape_js_value(rrd_url)+""";
         const parentElement = document.body;
         const viewer = new WebViewer();
+        console.log("Starting Rerun viewer")
         await viewer.start(rrdUrl, parentElement);
-        
-        // 
-        // zellij
-        // 
-        """+zellij_js+"""
     </script>
 </html>
 """

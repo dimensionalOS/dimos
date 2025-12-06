@@ -1,6 +1,7 @@
 import shutil
 import subprocess
 from typing import Optional
+import json
 
 import re
 import asyncio
@@ -13,7 +14,7 @@ class ZellijManager:
     def __init__(self, *, log: logging.Logger, session_name: str, port: str, terminal_commands: dict[str, str], zellij_layout: Optional[str] = None, token: Optional[str] = None):
         # TODO: add https_key_path and https_cert_path
         self.log = log
-        self.session_name = session_name
+        self.session_name = session_name+"-"+str(hash(json.dumps(terminal_commands)))
         self.port = port
         self.token = token
         self.terminal_commands = terminal_commands
@@ -26,8 +27,9 @@ class ZellijManager:
         if self.zellij_layout and terminal_commands:
             self.log.warning("Both zellij_layout and terminal_commands are set; ignoring terminal_commands in favor of zellij_layout")
             self.terminal_commands = {}
-        
-        ZellijManager.init_zellij_session(self.log, self.session_name, self.terminal_commands, self.zellij_layout)
+        self.log.info(f"Zellij enabled? {self.enabled}")
+        if self.enabled:
+            ZellijManager.init_zellij_session(self.log, self.session_name, self.terminal_commands, self.zellij_layout)
     
     @staticmethod
     def parse_zellij_sessions(output: str):
@@ -152,6 +154,7 @@ class ZellijManager:
         # stop old session (if any)
         # 
         try:
+            log.info(f"Killing old session {session_name}")
             process = subprocess.run(
                 ["zellij", "kill-session", session_name],
                 check=False,
@@ -166,8 +169,10 @@ class ZellijManager:
         # 
         # write layout to tmp file
         # 
-        zellij_path = f"/tmp/.zellij_layout.{session_name}.kdl"
+        zellij_path = f"/tmp/.zellij_layout.{session_name}.{hash(json.dumps(terminal_commands))}.kdl"
+        print(f'''zellij_path = {zellij_path}''')
         try:
+            log.info(f"Writing zellij layout {session_name}")
             if not zellij_layout:
                 files_to_run = []
                 for command in terminal_commands.values():
@@ -188,8 +193,8 @@ class ZellijManager:
                         )+"""
                     }
                 """
-                with open(zellij_path, 'w') as file:
-                    file.write(zellij_layout)
+            with open(zellij_path, 'w') as file:
+                file.write(zellij_layout)
         except Exception as exc:
             log.error("Failed to write zellij layout: %s", exc)
             return
@@ -206,6 +211,5 @@ class ZellijManager:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-            print(f'''started: {session_name}''')
         except Exception as exc:
             log.error("Failed to start zellij session %s: %s", session_name, exc)
