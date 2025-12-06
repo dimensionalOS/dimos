@@ -39,6 +39,7 @@ blueprint = (
             layout=layout,
         ).blueprint(),
         RerunHook(
+            "color_image",
             Image,
             target_entity=layout.entities.spatial2d
         ).blueprint(),
