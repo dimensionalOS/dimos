@@ -63,7 +63,7 @@ def test_robot_mapping():
     map.consume(lidar_stream.stream()).run()
 
     # we investigate built map
-    costmap = map.costmap
+    costmap = map.costmap()
 
     assert costmap.grid.shape == (404, 276)
 

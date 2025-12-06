@@ -12,20 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import pytest
-import numpy as np
 from typing import List, Optional
-from PIL import Image, ImageDraw
 
-from dimos.utils.testing import SensorReplay
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.robot.unitree_webrtc.type.map import Map
-from dimos.types.vector import Vector
+import numpy as np
+import pytest
+from PIL import Image, ImageDraw
+from reactivex import operators as ops
+
+from dimos.robot.frontier_exploration.utils import costmap_to_pil_image
 from dimos.robot.frontier_exploration.wavefront_frontier_goal_selector import (
     WavefrontFrontierExplorer,
 )
-from dimos.robot.frontier_exploration.utils import costmap_to_pil_image
-from reactivex import operators as ops
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.robot.unitree_webrtc.type.map import Map
+from dimos.types.vector import Vector
+from dimos.utils.testing import SensorReplay
 
 
 def get_office_lidar_costmap(take_frames: int = 1, voxel_size: float = 0.5) -> tuple:
@@ -61,7 +62,7 @@ def get_office_lidar_costmap(take_frames: int = 1, voxel_size: float = 0.5) -> t
     limited_stream.pipe(ops.map(capture_first_and_add)).run()
 
     # Get the resulting costmap
-    costmap = map_obj.costmap
+    costmap = map_obj.costmap()
 
     return costmap, first_lidar
 

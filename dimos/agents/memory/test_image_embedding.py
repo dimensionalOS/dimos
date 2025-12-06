@@ -28,6 +28,7 @@ from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 from dimos.stream.video_provider import VideoProvider
 
 
+@pytest.mark.heavy
 class TestImageEmbedding:
     """Test class for CLIP image embedding functionality."""
 

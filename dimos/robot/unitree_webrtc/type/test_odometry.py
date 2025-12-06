@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
-from operator import sub, add
 import os
 import threading
+from operator import add, sub
 from typing import Optional
-import reactivex.operators as ops
 
 import pytest
+import reactivex.operators as ops
 from dotenv import load_dotenv
 
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -60,7 +60,7 @@ def test_total_rotation_travel_iterate() -> None:
     prev_yaw: Optional[float] = None
 
     for odom in SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg).iterate():
-        yaw = odom.rot.z
+        yaw = odom.orientation.radians.z
         if prev_yaw is not None:
             diff = yaw - prev_yaw
             total_rad += diff
@@ -74,7 +74,7 @@ def test_total_rotation_travel_rxpy() -> None:
         SensorReplay(name="raw_odometry_rotate_walk", autocast=Odometry.from_msg)
         .stream()
         .pipe(
-            ops.map(lambda odom: odom.rot.z),
+            ops.map(lambda odom: odom.orientation.radians.z),
             ops.pairwise(),  # [1,2,3,4] -> [[1,2], [2,3], [3,4]]
             ops.starmap(sub),  # [sub(1,2), sub(2,3), sub(3,4)]
             ops.reduce(add),
