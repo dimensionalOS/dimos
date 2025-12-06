@@ -32,25 +32,55 @@ Usage:
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.manipulators.piper.piper_driver import piper_driver
+from dimos.hardware.manipulators.piper.piper_driver import piper_driver as piper_driver_blueprint
 from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 
+
+# Create a blueprint wrapper for the component-based driver
+def piper_driver(**config):
+    """Create a blueprint for PiperDriver.
+
+    Args:
+        **config: Configuration parameters passed to PiperDriver
+            - can_port: CAN interface name (default: "can0")
+            - has_gripper: Whether gripper is attached (default: True)
+            - enable_on_start: Whether to enable servos on start (default: True)
+            - state_reader_rate: State reading rate in Hz (default: 100)
+            - command_sender_rate: Command sending rate in Hz (default: 100)
+            - state_publisher_rate: State publishing rate in Hz (default: 50)
+
+    Returns:
+        Blueprint configuration for PiperDriver
+    """
+    # Set defaults
+    config.setdefault("can_port", "can0")
+    config.setdefault("has_gripper", True)
+    config.setdefault("enable_on_start", True)
+    config.setdefault("state_reader_rate", 100)
+    config.setdefault("command_sender_rate", 100)
+    config.setdefault("state_publisher_rate", 50)
+
+    # Return the piper_driver blueprint with the config
+    return piper_driver_blueprint(**config)
+
+
 # =============================================================================
 # Piper Servo Control Blueprint
 # =============================================================================
-# PiperDriver configured for servo control mode.
+# PiperDriver configured for servo control mode using component-based architecture.
 # Publishes joint states and robot state, listens for joint commands.
 # =============================================================================
 
 piper_servo = piper_driver(
-    can_name="can0",
+    can_port="can0",
+    has_gripper=True,
     enable_on_start=True,
-    control_frequency=100.0,
-    joint_state_rate=100.0,
-    robot_state_rate=10.0,
+    state_reader_rate=100,
+    command_sender_rate=100,
+    state_publisher_rate=50,
 ).transports(
     {
         # Joint state feedback (position, velocity, effort)
@@ -77,11 +107,12 @@ piper_servo = piper_driver(
 
 piper_cartesian = autoconnect(
     piper_driver(
-        can_name="can0",
+        can_port="can0",
+        has_gripper=True,
         enable_on_start=True,
-        control_frequency=100.0,
-        joint_state_rate=100.0,
-        robot_state_rate=10.0,
+        state_reader_rate=100,
+        command_sender_rate=100,
+        state_publisher_rate=50,
     ),
     cartesian_motion_controller(
         control_frequency=20.0,
@@ -114,11 +145,12 @@ piper_cartesian = autoconnect(
 
 piper_trajectory = autoconnect(
     piper_driver(
-        can_name="can0",
+        can_port="can0",
+        has_gripper=True,
         enable_on_start=True,
-        control_frequency=100.0,
-        joint_state_rate=100.0,
-        robot_state_rate=10.0,
+        state_reader_rate=100,
+        command_sender_rate=100,
+        state_publisher_rate=50,
     ),
     joint_trajectory_controller(
         control_frequency=100.0,
