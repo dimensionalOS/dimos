@@ -13,16 +13,16 @@
 # limitations under the License.
 
 """
-Blueprints for xArm manipulator control systems.
+Blueprints for xArm manipulator control using component-based architecture.
 
-This module provides declarative blueprints for configuring xArm servo control,
-following the same pattern used for Unitree robots and other hardware modules.
+This module provides declarative blueprints for configuring xArm with the new
+generalized component-based driver architecture.
 
 Usage:
     # Run via CLI:
     dimos run xarm-servo           # Driver only
-    dimos run xarm-cartesian       # Driver + Cartesian motion controller
     dimos run xarm-trajectory      # Driver + Joint trajectory controller
+    dimos run xarm-cartesian       # Driver + Cartesian motion controller
 
     # Or programmatically:
     from dimos.hardware.manipulators.xarm.xarm_blueprints import xarm_trajectory
@@ -32,25 +32,58 @@ Usage:
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
-from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver
+from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver as xarm_driver_blueprint
 from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.msgs.trajectory_msgs import JointTrajectory
 
+
+# Create a blueprint wrapper for the component-based driver
+def xarm_driver(**config):
+    """Create a blueprint for XArmDriver.
+
+    Args:
+        **config: Configuration parameters passed to XArmDriver
+            - ip: IP address of XArm controller (default: "192.168.1.210")
+            - dof: Degrees of freedom - 5, 6, or 7 (default: 6)
+            - has_gripper: Whether gripper is attached (default: False)
+            - has_force_torque: Whether F/T sensor is attached (default: False)
+            - state_reader_rate: State reading rate in Hz (default: 100)
+            - command_sender_rate: Command sending rate in Hz (default: 100)
+            - state_publisher_rate: State publishing rate in Hz (default: 50)
+
+    Returns:
+        Blueprint configuration for XArmDriver
+    """
+    # Set defaults
+    config.setdefault("ip", "192.168.1.210")
+    config.setdefault("dof", 6)
+    config.setdefault("has_gripper", False)
+    config.setdefault("has_force_torque", False)
+    config.setdefault("state_reader_rate", 100)
+    config.setdefault("command_sender_rate", 100)
+    config.setdefault("state_publisher_rate", 50)
+
+    # Return the xarm_driver blueprint with the config
+    return xarm_driver_blueprint(**config)
+
+
 # =============================================================================
-# xArm Servo Control Blueprint
+# xArm6 Servo Control Blueprint
 # =============================================================================
-# XArmDriver configured for servo control mode.
+# XArmDriver configured for servo control mode using component-based architecture.
 # Publishes joint states and robot state, listens for joint commands.
 # =============================================================================
 
 xarm_servo = xarm_driver(
-    ip_address="192.168.1.210",
-    xarm_type="xarm6",
-    report_type="dev",
-    enable_on_start=True,
-    control_frequency=100.0,
+    ip="192.168.1.210",
+    dof=6,  # XArm6
+    has_gripper=False,
+    has_force_torque=False,
+    state_reader_rate=100,
+    command_sender_rate=100,
+    state_publisher_rate=50,
 ).transports(
     {
         # Joint state feedback (position, velocity, effort)
@@ -73,11 +106,13 @@ xarm_servo = xarm_driver(
 # =============================================================================
 
 xarm7_servo = xarm_driver(
-    ip_address="192.168.1.210",
-    xarm_type="xarm7",
-    report_type="dev",
-    enable_on_start=True,
-    control_frequency=100.0,
+    ip="192.168.1.210",
+    dof=7,  # XArm7
+    has_gripper=False,
+    has_force_torque=False,
+    state_reader_rate=100,
+    command_sender_rate=100,
+    state_publisher_rate=50,
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
@@ -96,11 +131,13 @@ xarm7_servo = xarm_driver(
 # =============================================================================
 
 xarm5_servo = xarm_driver(
-    ip_address="192.168.1.210",
-    xarm_type="xarm5",
-    report_type="dev",
-    enable_on_start=True,
-    control_frequency=100.0,
+    ip="192.168.1.210",
+    dof=5,  # XArm5
+    has_gripper=False,
+    has_force_torque=False,
+    state_reader_rate=100,
+    command_sender_rate=100,
+    state_publisher_rate=50,
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
@@ -115,6 +152,67 @@ xarm5_servo = xarm_driver(
 )
 
 # =============================================================================
+# xArm Trajectory Control Blueprint (Driver + Trajectory Controller)
+# =============================================================================
+# Combines XArmDriver with JointTrajectoryController for trajectory execution.
+# The controller receives JointTrajectory messages and executes them at 100Hz.
+# =============================================================================
+
+xarm_trajectory = autoconnect(
+    xarm_driver(
+        ip="192.168.1.210",
+        dof=6,  # XArm6
+        has_gripper=False,
+        has_force_torque=False,
+        state_reader_rate=100,
+        command_sender_rate=100,
+        state_publisher_rate=50,
+    ),
+    joint_trajectory_controller(
+        control_frequency=100.0,
+    ),
+).transports(
+    {
+        # Shared topics between driver and controller
+        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+        ("robot_state", RobotState): LCMTransport("/xarm/robot_state", RobotState),
+        ("joint_position_command", JointCommand): LCMTransport(
+            "/xarm/joint_position_command", JointCommand
+        ),
+        # Trajectory input topic
+        ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
+    }
+)
+
+# =============================================================================
+# xArm7 Trajectory Control Blueprint
+# =============================================================================
+
+xarm7_trajectory = autoconnect(
+    xarm_driver(
+        ip="192.168.1.210",
+        dof=7,  # XArm7
+        has_gripper=False,
+        has_force_torque=False,
+        state_reader_rate=100,
+        command_sender_rate=100,
+        state_publisher_rate=50,
+    ),
+    joint_trajectory_controller(
+        control_frequency=100.0,
+    ),
+).transports(
+    {
+        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+        ("robot_state", RobotState): LCMTransport("/xarm/robot_state", RobotState),
+        ("joint_position_command", JointCommand): LCMTransport(
+            "/xarm/joint_position_command", JointCommand
+        ),
+        ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
+    }
+)
+
+# =============================================================================
 # xArm Cartesian Control Blueprint (Driver + Controller)
 # =============================================================================
 # Combines XArmDriver with CartesianMotionController for Cartesian space control.
@@ -123,14 +221,15 @@ xarm5_servo = xarm_driver(
 
 xarm_cartesian = autoconnect(
     xarm_driver(
-        ip_address="192.168.1.210",
-        xarm_type="xarm6",
-        report_type="dev",
-        enable_on_start=True,
-        control_frequency=100.0,
+        ip="192.168.1.210",
+        dof=6,  # XArm6
+        has_gripper=False,
+        has_force_torque=False,
+        state_reader_rate=100,
+        command_sender_rate=100,
+        state_publisher_rate=50,
     ),
     cartesian_motion_controller(
-        # Original working values from commit c5fd3ce6
         control_frequency=20.0,
         position_kp=5.0,
         position_ki=0.0,
@@ -152,35 +251,12 @@ xarm_cartesian = autoconnect(
     }
 )
 
-# =============================================================================
-# xArm Trajectory Control Blueprint (Driver + Trajectory Controller)
-# =============================================================================
-# Combines XArmDriver with JointTrajectoryController for trajectory execution.
-# The controller receives JointTrajectory messages and executes them at 100Hz.
-# =============================================================================
 
-xarm_trajectory = autoconnect(
-    xarm_driver(
-        ip_address="192.168.1.210",
-        xarm_type="xarm6",
-        report_type="dev",
-        enable_on_start=True,
-        control_frequency=100.0,
-    ),
-    joint_trajectory_controller(
-        control_frequency=100.0,
-    ),
-).transports(
-    {
-        # Shared topics between driver and controller
-        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
-        ("robot_state", RobotState): LCMTransport("/xarm/robot_state", RobotState),
-        ("joint_position_command", JointCommand): LCMTransport(
-            "/xarm/joint_position_command", JointCommand
-        ),
-        # Trajectory input topic
-        ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
-    }
-)
-
-__all__ = ["xarm5_servo", "xarm7_servo", "xarm_cartesian", "xarm_servo", "xarm_trajectory"]
+__all__ = [
+    "xarm5_servo",
+    "xarm7_servo",
+    "xarm7_trajectory",
+    "xarm_cartesian",
+    "xarm_servo",
+    "xarm_trajectory",
+]

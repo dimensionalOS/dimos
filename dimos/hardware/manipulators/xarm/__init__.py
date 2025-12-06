@@ -19,11 +19,11 @@ Real-time driver and components for xArm5/6/7 manipulators.
 """
 
 from dimos.hardware.manipulators.xarm.spec import ArmDriverSpec
-from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver, XArmDriverConfig, xarm_driver
+from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
+from dimos.hardware.manipulators.xarm.xarm_wrapper import XArmSDKWrapper
 
 __all__ = [
     "ArmDriverSpec",
     "XArmDriver",
-    "XArmDriverConfig",
-    "xarm_driver",
+    "XArmSDKWrapper",
 ]
