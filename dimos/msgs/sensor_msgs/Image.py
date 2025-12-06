@@ -377,7 +377,7 @@ class Image(Timestamped):
     def to_rerun(self) -> rr.Image:
         """Convert to a Rerun image (RGB numpy array)."""
         rgb = self.to_rgb().to_opencv()
-        return rr.Image(rgb)
+        return rr.Image(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: str | None = None) -> bytes:
