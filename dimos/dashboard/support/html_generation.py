@@ -1,11 +1,14 @@
+from typing import Optional
 from functools import lru_cache
 import json
 import os
 
+import re
+
 DEFAULT_SESSION_NAME = "dimos-dashboard"
 
 path_to_baseline_css = os.path.join(os.path.dirname(__file__), "css_baseline.css")
-with open(filepath,'r') as f:
+with open(path_to_baseline_css,'r') as f:
     css_baseline_contents = f.read()
 
 # prevent any kind of html injection (even accidental)

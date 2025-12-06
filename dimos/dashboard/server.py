@@ -195,7 +195,7 @@ def start_dashboard_server(config: dict, log: logging.Logger):
 
     async def on_startup(app: web.Application):
         app["client"] = ClientSession()
-        if zellij_manager.enabled
+        if zellij_manager.enabled:
             app["zellij_process"] = await zellij_manager.start_zellij_server(zellij_token_holder)
             log.info("🚀 Starting Zellij Session Viewer Reverse Proxy (Python)")
             log.info("🎯 Reverse Proxy Server running on %s://%s:%s", protocol, dashboard_host, port)

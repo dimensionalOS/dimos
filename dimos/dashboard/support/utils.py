@@ -3,6 +3,7 @@ import os
 import logging
 import time
 from functools import wraps
+from aiohttp import web
 
 from yarl import URL
 

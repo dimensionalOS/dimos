@@ -18,9 +18,9 @@ class ZellijManager:
         self.token = token
         self.terminal_commands = terminal_commands
         self.zellij_layout = zellij_layout
-        self.enabled = zellij_layout or len(terminal_commands.keys()) > 0
+        self.enabled = zellij_layout or (terminal_commands and len(terminal_commands.keys()) > 0)
         if self.enabled and shutil.which("zellij") is None:
-            self.log.error("zellij executable not found; cannot manage session %s", session_name)
+            self.log.error("zellij executable not found; cannot open terminals in Dashboard %s", session_name)
             self.enabled = False
         
         if self.zellij_layout and terminal_commands:

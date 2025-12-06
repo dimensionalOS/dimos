@@ -3,8 +3,7 @@ import time
 import rerun as rr # pip install rerun-sdk
 from reactivex.disposable import Disposable
 
-from dimos.core.stream import In, Out, rpc
-from dimos.dashboard.rerun.types import RerunRender
+from dimos.core import In, Out, rpc, Module
 from dimos.dashboard.support.utils import rate_limit as rate_limiter
 
 # TODO: it'd be nice to show that target_entity is its own class, not just "any" string
