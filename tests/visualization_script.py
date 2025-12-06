@@ -81,6 +81,7 @@ from pydrake.math import RigidTransform as DrakeRigidTransform
 from pydrake.common import MemoryFile
 
 from pydrake.all import MinimumDistanceLowerBoundConstraint, MultibodyPlant, Parser, DiagramBuilder, AddMultibodyPlantSceneGraph, MeshcatVisualizer, StartMeshcat, RigidTransform, Role, RollPitchYaw, RotationMatrix, Solve, InverseKinematics, MeshcatVisualizerParams, MinimumDistanceLowerBoundConstraint, DoDifferentialInverseKinematics, DifferentialInverseKinematicsStatus, DifferentialInverseKinematicsParameters, DepthImageToPointCloud
+from pydrake.geometry import QueryObject, SignedDistancePair
 
 logger = setup_logger("visualization_script")
 
@@ -420,6 +421,9 @@ class DrakeKinematicsEnv:
 
         # Set robot joint positions from pickle file data
         self._set_joint_positions_from_pickle()
+        
+        # Add meshcat sliders for joint control
+        self._add_joint_sliders()
         
         # Force initial visualization update
         self._update_visualization()
@@ -1064,6 +1068,41 @@ class DrakeKinematicsEnv:
         else:
             print("Warning: No joint indices found, using default configuration")
 
+    def _add_joint_sliders(self):
+        """Add meshcat sliders for joint control"""
+        try:
+            # Get joint limits for each joint
+            for i, joint_name in enumerate(self.kinematic_chain_joints):
+                try:
+                    joint = self.plant.GetJointByName(joint_name)
+                    if joint.num_positions() > 0:
+                        # Get joint limits
+                        lower_limit = joint.position_lower_limits()[0] if joint.position_lower_limits().size > 0 else -3.14159
+                        upper_limit = joint.position_upper_limits()[0] if joint.position_upper_limits().size > 0 else 3.14159
+                        
+                        # Get current position
+                        current_pos = self.plant.GetPositions(self.plant_context)[joint.position_start()]
+                        
+                        # Add slider to meshcat
+                        self.meshcat.AddSlider(
+                            name=f"joint_{joint_name}",
+                            min=lower_limit,
+                            max=upper_limit,
+                            step=0.01,
+                            value=current_pos,
+                            decrement_keycode="ArrowDown",
+                            increment_keycode="ArrowUp"
+                        )
+                        print(f"Added slider for {joint_name}: [{lower_limit:.2f}, {upper_limit:.2f}], current: {current_pos:.2f}")
+                except RuntimeError:
+                    print(f"Warning: Could not add slider for joint '{joint_name}'")
+                    
+            # Add collision detection display
+            self.meshcat.SetProperty("collision_status", "visible", True)
+            
+        except Exception as e:
+            print(f"Error adding joint sliders: {e}")
+
     def _update_visualization(self):
         """Force update the visualization"""
         try:
@@ -1073,6 +1112,137 @@ class DrakeKinematicsEnv:
             print("Visualization updated successfully")
         except Exception as e:
             print(f"Error updating visualization: {e}")
+            
+    def _check_collisions(self):
+        """Check for collisions and return collision information"""
+        try:
+            # Get the scene graph context
+            scene_graph_context = self.scene_graph.GetMyContextFromRoot(self.diagram_context)
+            
+            # Create collision checker
+            query_object = self.scene_graph.get_query_output_port().Eval(scene_graph_context)
+            
+            # Check for collisions
+            collision_pairs = query_object.ComputePointPairPenetration()
+            
+            colliding_links = set()
+            collision_info = []
+            
+            for pair in collision_pairs:
+                # PenetrationAsPointPair indicates collision (penetration > 0)
+                # Get geometry names
+                geom_A = query_object.inspector().GetName(pair.id_A)
+                geom_B = query_object.inspector().GetName(pair.id_B)
+                
+                # Get frame names (link names)
+                frame_A = query_object.inspector().GetFrameId(pair.id_A)
+                frame_B = query_object.inspector().GetFrameId(pair.id_B)
+                
+                try:
+                    frame_A_name = query_object.inspector().GetName(frame_A)
+                    frame_B_name = query_object.inspector().GetName(frame_B)
+                    
+                    colliding_links.add(frame_A_name)
+                    colliding_links.add(frame_B_name)
+                    
+                    collision_info.append({
+                        'frame_A': frame_A_name,
+                        'frame_B': frame_B_name,
+                        'geometry_A': geom_A,
+                        'geometry_B': geom_B,
+                        'depth': pair.depth  # Use depth instead of distance
+                    })
+                except:
+                    # If we can't get frame names, use geometry names
+                    colliding_links.add(geom_A)
+                    colliding_links.add(geom_B)
+                    
+                    collision_info.append({
+                        'frame_A': geom_A,
+                        'frame_B': geom_B,
+                        'geometry_A': geom_A,
+                        'geometry_B': geom_B,
+                        'depth': pair.depth  # Use depth instead of distance
+                    })
+            
+            return len(collision_pairs) > 0, list(colliding_links), collision_info
+            
+        except Exception as e:
+            print(f"Error checking collisions: {e}")
+            return False, [], []
+            
+    def _update_joint_from_sliders(self):
+        """Update joint positions based on slider values"""
+        try:
+            positions = self.plant.GetPositions(self.plant_context)
+            updated = False
+            
+            for joint_name in self.kinematic_chain_joints:
+                try:
+                    joint = self.plant.GetJointByName(joint_name)
+                    if joint.num_positions() > 0:
+                        # Get slider value
+                        slider_value = self.meshcat.GetSliderValue(f"joint_{joint_name}")
+                        
+                        # Update position
+                        start_index = joint.position_start()
+                        if abs(positions[start_index] - slider_value) > 0.001:  # Only update if changed
+                            positions[start_index] = slider_value
+                            updated = True
+                            
+                except RuntimeError:
+                    continue
+                    
+            if updated:
+                self.plant.SetPositions(self.plant_context, positions)
+                self._update_visualization()
+                
+        except Exception as e:
+            print(f"Error updating joints from sliders: {e}")
+            
+    def run_interactive_loop(self):
+        """Run the interactive loop with continuous collision checking"""
+        print("Starting interactive joint control...")
+        print("Use the sliders in the meshcat window to control joints")
+        print("Press Ctrl+C to exit")
+        
+        try:
+            while True:
+                # Update joints from sliders
+                self._update_joint_from_sliders()
+                
+                # Check for collisions
+                in_collision, colliding_links, collision_info = self._check_collisions()
+                
+                if in_collision:
+                    print(f"COLLISION DETECTED!")
+                    print(f"Colliding links: {colliding_links}")
+                    for info in collision_info:
+                        print(f"  {info['frame_A']} <-> {info['frame_B']}: depth = {info['depth']:.4f}")
+                    
+                    # Update meshcat with collision status
+                    self.meshcat.SetProperty("collision_status", "color", [1.0, 0.0, 0.0, 1.0])  # Red
+                    collision_text = f"COLLISION: {', '.join(colliding_links)}"
+                else:
+                    # Update meshcat with no collision status
+                    self.meshcat.SetProperty("collision_status", "color", [0.0, 1.0, 0.0, 1.0])  # Green
+                    collision_text = "No collisions"
+                
+                # Add text to meshcat (if supported)
+                try:
+                    self.meshcat.SetProperty("collision_text", "text", collision_text)
+                except:
+                    pass  # Text might not be supported in all meshcat versions
+                
+                # Small delay to prevent excessive computation
+                time.sleep(0.1)
+                
+        except KeyboardInterrupt:
+            print("\nExiting interactive loop...")
+        except Exception as e:
+            print(f"Error in interactive loop: {e}")
+            import traceback
+            traceback.print_exc()
 
     def set_joint_positions(self, joint_positions):
         """Set specific joint positions and update visualization"""
@@ -1351,10 +1521,8 @@ if __name__ == "__main__":
         print(transform.transform.translation.x, transform.transform.translation.y, transform.transform.translation.z)
         print(transform.transform.rotation.w, transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z)
         
-        # Keep the visualization alive
-        print("\nVisualization is running. Press Ctrl+C to exit.")
-        while True:
-            time.sleep(1)
+        # Start the interactive loop with joint sliders and collision detection
+        env.run_interactive_loop()
             
     except KeyboardInterrupt:
         print("\nExiting...")
