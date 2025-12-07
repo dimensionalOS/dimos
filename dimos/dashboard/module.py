@@ -53,7 +53,13 @@ class Dashboard(Module):
                 return
             dashboard_started = True
         
-        # start the rerun viewer
+        # there's basically 3 parts to rerun
+            # 1. some kind of python init that does local message aggregation
+            # 2. the actual (separate process) grpc message aggregator
+            # 3. the viewer/renderer
+        # init starts part 1 (needed before rr.log or rr.send_blueprint)
+        # we manually start the gprc here (part 2)
+        # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
         rr.init("rerun_main", spawn=False)
         rr.send_blueprint(self.layout.rerun_blueprint)
         # get the rrd_url if it wasn't provided
