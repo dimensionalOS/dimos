@@ -13,11 +13,12 @@ from dimos.dashboard.module import Dashboard
 from dimos.dashboard.rerun import layouts, RerunHook
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-
+from dimos.msgs.nav_msgs import Odometry
 
 class DataReplay(Module):
     color_image: Out[Image] = None  # type: ignore[assignment]
     lidar: Out[LidarMessage] = None  # type: ignore[assignment]
+    odom: Out[Odometry] = None  # type: ignore[assignment]
 
     def __init__(
         self,
@@ -42,52 +43,40 @@ class DataReplay(Module):
             return
 
         with file_path.open("r", encoding="utf-8") as f:
-            for line in f:
+            for line_number, line in enumerate(f):
+                print(f'''_iter_messages parsing line''')
                 if not line.strip():
                     continue
                 try:
-                    parsed = yaml.safe_load(line) or []
-                except Exception:
+                    parsed = yaml.unsafe_load(line) or []
+                except Exception as error:
+                    print(f'''warning: line:{line_number} could not be parsed: {error}''')
                     continue
+                
                 if isinstance(parsed, list):
                     for item in parsed:
                         yield item
                 else:
                     yield parsed
 
-    def _publish_stream(self, output_name: str, path: str) -> None:
-        # Resolve the output by attribute name (e.g., "color_image" or "lidar").
-        output: Out = getattr(self, output_name)
-        while not self._stop_event.is_set():
-            any_sent = False
-            for msg in self._iter_messages(path):
-                if self._stop_event.is_set():
-                    break
-                if output and output.transport:
-                    output.publish(msg)  # type: ignore[no-untyped-call]
-                time.sleep(self.interval_sec)
-                any_sent = True
-            if not self.loop or not any_sent:
-                break
-
     @rpc
     def start(self) -> None:
         super().start()
-
-        for output_name, path in self.replay_paths.items():
-            thread = threading.Thread(
-                target=self._publish_stream,
-                args=(output_name, path),
-                name=f"{output_name}-replay",
-                daemon=True,
-            )
-            self._threads.append(thread)
-            thread.start()
-
+        try:
+            print(f'''[DataReplay] starting {len(self.replay_paths)} threads''')
+            outputs = tuple(getattr(self, output_name) for output_name in self.replay_paths.keys())
+            print(f'''[DataReplay] outputs = {outputs}''')
+            iterer = iter(self._publish_stream("color_image", "/Users/jeffhykin/repos/dimos/dimos/dashboard/rerun/color_image.yaml"))
+            print(f'''[DataReplay] iterer = {iterer}''')
+            print(f'''[DataReplay] next(iterer) = {next(iterer)}''')
+            for msgs in zip(self._iter_messages(path) for output_name, path in self.replay_paths.items()):
+                for output, message in zip(outputs, msgs):
+                    if output and output.transport:
+                        output.publish(message)  # type: ignore[no-untyped-call]
+        except Exception as error:
+            print(f'''[DataReplay] Error in .start replay: {error}''')
+            
         self._disposables.add(Disposable(self._stop_event.set))
-        for thread in self._threads:
-            self._disposables.add(Disposable(thread.join))
-
 
 layout = layouts.AllTabs(collapse_panels=False)
 replay_paths = {
