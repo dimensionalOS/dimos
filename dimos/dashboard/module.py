@@ -38,6 +38,8 @@ class Dashboard(Module):
     https_key_path: Optional[str] = os.environ.get("HTTPS_KEY_PATH")
     https_cert_path: Optional[str] = os.environ.get("HTTPS_CERT_PATH")
     logger: Optional[logging.Logger] = None
+    rerun_grpc_port: int = os.environ.get("RERUN_GRPC_PORT", 9876)
+    rerun_server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
     rrd_url: Optional[str] = None
     
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -63,7 +65,12 @@ class Dashboard(Module):
         rr.init("rerun_main", spawn=False)
         rr.send_blueprint(self.layout.rerun_blueprint)
         # get the rrd_url if it wasn't provided
-        self.rrd_url = self.rrd_url or rr.serve_grpc()  # e.g. "rerun+http://127.0.0.1:9876/proxy"
+        # import code; code.interact(banner='',local={**globals(),**locals()})
+        self.rrd_url = self.rrd_url or rr.serve_grpc(
+            grpc_port=self.rerun_grpc_port,
+            default_blueprint=self.layout.rerun_blueprint,
+            server_memory_limit=self.rerun_server_memory_limit,
+        )
         thread = start_dashboard_server_thread(**self.__dict__)
         
         @self._disposables.add
