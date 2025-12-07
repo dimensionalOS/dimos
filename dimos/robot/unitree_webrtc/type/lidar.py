@@ -86,14 +86,6 @@ class LidarMessage(PointCloud2):
             raw_msg=raw_message,
         )
 
-    def to_pointcloud2(self) -> PointCloud2:
-        """Convert to PointCloud2 message format."""
-        return PointCloud2(
-            pointcloud=self.pointcloud,
-            frame_id=self.frame_id,
-            ts=self.ts,
-        )
-
     def __repr__(self):
         return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"
 
