@@ -201,6 +201,111 @@ jobs:
       cmd: "pytest -m lcm"
       dev-image: dev:${{ (needs.check-changes.outputs.python == 'true' || needs.check-changes.outputs.dev == 'true') && needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
 
+  # Prepare the various tarballs and other blobs from DimOS that will be baked
+  # into the Ubuntu installer image as preinstalled DimOS components (Docker images,
+  # source code archives, and APT repository data), then build the complete Ubuntu
+  # installer image (.img file) containing all these components.
+  build-installer:
+    needs: [check-changes, dev]
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.dev.result == 'success' }}
+    runs-on: [self-hosted, Linux]
+    outputs:
+      img-file: ${{ steps.build-img.outputs.img-file }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install required tools
+        run: |
+          bash scripts/installer/build-installer.sh install-tools
+
+      - name: Download ubuntu-image tool
+        run: |
+          bash scripts/installer/build-installer.sh download-ubuntu-image-tool \
+            --staging-dir "${{ runner.temp }}/dimos-installer-staging"
+
+      # Git LFS is needed for the source code archive.
+      # We do all of this on the runner server to ensure
+      # that the OS distro is fully offline and the user can
+      # use the source immediately upon booting.
+      - name: Install Git LFS files
+        run: |
+          bash scripts/installer/build-installer.sh install-git-lfs-files \
+            --workspace "${{ github.workspace }}"
+
+      # Same as above: the devcontainer CLI is needed for the
+      # dimos CLI.
+      - name: Install devcontainer CLI
+        run: |
+          bash scripts/installer/build-installer.sh install-devcontainer-cli \
+            --workspace "${{ github.workspace }}"
+
+      # This usually takes about 20min.
+      # Tar everything up for the installer image.
+      - name: Prepare installer components
+        run: |
+          bash scripts/installer/build-installer.sh prepare-dimos-img-components \
+            --docker-image-tag "${{ needs.check-changes.outputs.branch-tag }}" \
+            --staging-dir "${{ runner.temp }}/dimos-installer-staging" \
+            --workspace "${{ github.workspace }}"
+
+      - name: Substitute tokens in YAML file
+        run: |
+          # Calculate relative paths from YAML file location (scripts/installer/) to staging files
+          # YAML file is at: scripts/installer/ubuntu-desktop-installer-amd64.yaml
+          # Staging dir is at: ${{ runner.temp }}/dimos-installer-staging
+          # We need relative paths from scripts/installer/ to the staging files
+          # (Necessary because ubuntu-image's manualCopyFile always joins confDefPath with source,
+          # even for absolute paths.)
+
+          YAML_FILE="${{ github.workspace }}/scripts/installer/ubuntu-desktop-installer-amd64.yaml"
+          STAGING_DIR="${{ runner.temp }}/dimos-installer-staging"
+          WORKSPACE_DIR="${{ github.workspace }}"
+          DOCKER_TAG="${{ needs.check-changes.outputs.branch-tag }}"
+
+          DOCKER_IMAGES_FILE="$STAGING_DIR/docker-images/dimos-images-$DOCKER_TAG.tar.gz"
+
+          # Calculate relative paths using the action verb
+          DOCKER_REL_PATH=$(bash scripts/installer/build-installer.sh determine-path-relative-to \
+            --anchor-path "$YAML_FILE" \
+            --path-to-be-relativized "$DOCKER_IMAGES_FILE")
+
+          WORKSPACE_REL_PATH=$(bash scripts/installer/build-installer.sh determine-path-relative-to \
+            --anchor-path "$YAML_FILE" \
+            --path-to-be-relativized "$WORKSPACE_DIR")
+
+          # Substitute tokens
+          bash scripts/installer/build-installer.sh substitute-tokens \
+            --input-file "$YAML_FILE" \
+            --input-token "<{dimos-docker-images-tarball}>" \
+            --substitute-string "$DOCKER_REL_PATH"
+
+          bash scripts/installer/build-installer.sh substitute-tokens \
+            --input-file "$YAML_FILE" \
+            --input-token "<{dimos-completed-git-tree}>" \
+            --substitute-string "$WORKSPACE_REL_PATH"
+
+      # This usually takes between 2 & 2.5 hours.
+      - name: Build installer image
+        id: build-img
+        run: |
+          bash scripts/installer/build-installer.sh build-img \
+            --docker-image-tag "${{ needs.check-changes.outputs.branch-tag }}" \
+            --staging-dir "${{ runner.temp }}/dimos-installer-staging" \
+            --workspace "${{ github.workspace }}" \
+            --sha "${{ github.sha }}" \
+            --ubuntu-image-tool-dir "${{ runner.temp }}/dimos-installer-staging/ubuntu-image-tool-git" \
+            --log-file "${{ runner.temp }}/dimos-installer-staging/ubuntu-image-build.log" \
+            --clean-ubuntu-image-tool-staging-first
+
   # Run module tests directly to avoid pytest forking issues
   # run-module-tests:
   #   needs: [check-changes, dev]

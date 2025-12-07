@@ -1,0 +1,105 @@
+name: ubuntu-desktop-installer-amd64
+display-name: Dimensional OS Ubuntu Desktop Installer amd64
+revision: 1
+architecture: amd64
+series: noble
+class: installer
+kernel: linux-image-generic
+gadget:
+  url: "https://github.com/snapcore/pc-gadget.git"
+  branch: classic
+  type: "git"
+rootfs:
+  components:
+    - main
+    - restricted
+    - universe
+    - multiverse
+  sources-list-deb822: true
+  seed:
+    urls:
+      - "git://git.launchpad.net/~ubuntu-core-dev/ubuntu-seeds/+git/"
+    branch: noble
+    names:
+      - desktop
+      - standard
+      - minimal
+customization:
+  components:
+    - main
+    - restricted
+    - universe
+    - multiverse
+  pocket: updates
+  extra-packages:
+    - name: grub-pc-bin
+    - name: grub-efi-amd64-bin
+    - name: shim-signed
+    - name: net-tools
+    - name: docker.io
+    - name: docker-compose
+    - name: docker-buildx
+    - name: yarnpkg
+    - name: git
+    - name: python3
+    - name: python3-pip
+    - name: nano
+    - name: curl
+    - name: build-essential
+    - name: tmux
+    - name: npm
+    - name: git-lfs
+    - name: openssh-server
+    - name: gparted
+    - name: lynx
+    - name: xclip
+  extra-snaps:
+    - name: core
+    - name: core20
+    - name: gnome-42-2204
+    - name: gtk-common-themes
+    - name: bare
+    - name: snap-store
+    - name: code
+  manual:
+    # Create artifacts directory in chroot
+    make-dirs:
+      - path: /home/ubuntu/setup/artifacts
+        permissions: 0755
+    # Copy DimOS artifacts (Docker images tarball and source directory) into chroot
+    # Source paths must be relative to this YAML file's directory (due to an ubuntu-image bug).
+    # ubuntu-image's manualCopyFile always joins confDefPath with source, even for absolute paths
+    # Destination paths are relative to the chroot root.
+    #
+    # We implemented a simple token substitution mechanism to allow us to "pre-process"
+    # the yaml file so that we can fill in the correct paths when the runner is being
+    # executed. See the function action_substitute_tokens in build-installer.sh
+    # for more details.
+    #
+    # The substituter will replace any tokens in this file with the format:
+    #   <{ascii_identifier-with.underscores_periods-and-dots}>
+    # With a specified string value.
+    copy-file:
+      - source: <{dimos-docker-images-tarball}>
+        destination: /home/ubuntu/setup/artifacts/dimos-images.tar.gz
+      - source: <{dimos-completed-git-tree}>
+        destination: /home/ubuntu/dimos-git
+      - source: ../../assets/dimos-grub-4096p.png
+        destination: /usr/share/backgrounds/dimos-grub-4096.png
+      - source: load-docker-images.sh
+        destination: /home/ubuntu/setup/load-docker-images.sh
+      - source: configure-grub-background.sh
+        destination: /home/ubuntu/setup/configure-grub-background.sh
+      - source: configure-desktop-background.sh
+        destination: /home/ubuntu/setup/configure-desktop-background.sh
+    execute:
+      - path: /home/ubuntu/setup/configure-grub-background.sh
+      - path: /home/ubuntu/setup/configure-desktop-background.sh
+artifacts:
+  img:
+    - name: dimos-desktop-installer-amd64.img
+  manifest:
+    name: dimos-desktop-installer-amd64.manifest
+  filelist:
+    name: dimos-desktop-installer-amd64.filelist
+
