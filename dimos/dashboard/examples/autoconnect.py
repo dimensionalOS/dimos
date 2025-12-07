@@ -52,7 +52,7 @@ blueprint = (
             ),
         ),
         CameraListener.blueprint(),
-        Dashboard(
+        Dashboard().blueprint(
             layout=layout,
             auto_open=True,
             terminal_commands={
@@ -60,7 +60,7 @@ blueprint = (
                 "lcm-spy": "dimos lcmspy",
                 # "skill-spy": "dimos skillspy",
             },
-        ).blueprint(),
+        ),
         RerunHook(
             "color_image",
             Image,
