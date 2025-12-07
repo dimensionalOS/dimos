@@ -17,10 +17,11 @@ import time
 import numpy as np
 import pytest
 from dimos_lcm.geometry_msgs import TransformStamped
-from dimos_lcm.std_msgs import Header, Time
+from dimos_lcm.std_msgs import Time
 from dimos_lcm.tf2_msgs import TFMessage
 
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.std_msgs import Header
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
 
@@ -40,7 +41,7 @@ def test_tfmessage_single_transform():
     lcm.subscribe(topic, callback)
 
     # Create a transform from world to base_link
-    header = Header(seq=1, stamp=Time(sec=123, nsec=456789), frame_id="world")
+    header = Header(123.456789, "world")  # Much cleaner!
 
     # Create the transform - translation and 90 degree rotation around Z
     transform = Transform(
@@ -78,7 +79,7 @@ def test_tfmessage_single_transform():
     received_transform = received_tf_msg.transforms[0]
     assert received_transform.header.seq == 1
     assert received_transform.header.stamp.sec == 123
-    assert received_transform.header.stamp.nsec == 456789
+    assert received_transform.header.stamp.nsec == 456789000
     assert received_transform.header.frame_id == "world"
     assert received_transform.child_frame_id == "base_link"
 
@@ -107,14 +108,14 @@ def test_tfmessage_multiple_transforms():
     lcm.subscribe(topic, callback)
 
     # Create a kinematic chain: world -> base_link -> torso -> head
-    current_time = Time(sec=456, nsec=789012)
+    current_timestamp = 456.789012
 
     transforms = []
 
     # 1. world -> base_link (robot at position (1,2,0))
     transforms.append(
         TransformStamped(
-            header=Header(seq=1, stamp=current_time, frame_id="world"),
+            header=Header(current_timestamp, "world"),
             child_frame_id="base_link",
             transform=Transform(
                 translation=Vector3(1.0, 2.0, 0.0),
@@ -126,7 +127,7 @@ def test_tfmessage_multiple_transforms():
     # 2. base_link -> torso (torso 0.5m up from base)
     transforms.append(
         TransformStamped(
-            header=Header(seq=2, stamp=current_time, frame_id="base_link"),
+            header=Header(current_timestamp, "base_link"),
             child_frame_id="torso",
             transform=Transform(
                 translation=Vector3(0.0, 0.0, 0.5),
@@ -139,7 +140,7 @@ def test_tfmessage_multiple_transforms():
     angle = np.pi / 6  # 30 degrees
     transforms.append(
         TransformStamped(
-            header=Header(seq=3, stamp=current_time, frame_id="torso"),
+            header=Header(current_timestamp, "torso"),
             child_frame_id="head",
             transform=Transform(
                 translation=Vector3(0.0, 0.0, 0.3),
@@ -214,9 +215,9 @@ def test_tfmessage_dynamic_updates():
         # Robot orientation faces tangent to circle
         robot_angle = angle + np.pi / 2
 
-        # Create transform
+        # Create transform with current system time
         transform_stamped = TransformStamped(
-            header=Header(seq=step, stamp=Time(sec=100 + step, nsec=0), frame_id="odom"),
+            header=Header.now("odom", seq=step),  # Use current system timestamp with step as seq
             child_frame_id="base_link",
             transform=Transform(
                 translation=Vector3(x, y, 0.0),
@@ -275,7 +276,7 @@ def test_tfmessage_with_dimos_transforms():
 
     # Create TransformStamped
     transform_stamped = TransformStamped(
-        header=Header(seq=99, stamp=Time(sec=999, nsec=888777), frame_id="map"),
+        header=Header(999.000888777, "map", seq=99),
         child_frame_id="robot",
         transform=lcm_transform,
     )
