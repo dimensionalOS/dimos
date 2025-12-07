@@ -129,3 +129,23 @@ class LidarMessage(PointCloud2):
     #         self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
     #
     #     return self._costmap
+    
+    def to_rerun(self):
+        """
+        Convert this lidar message to a `rerun.Points3D` archetype.
+
+        Usage:
+            `rr.log(\"/lidar\", lidar_msg.to_rerun(), time=lidar_msg.ts)`
+        """
+
+        import rerun as rr  # type: ignore[import-untyped]
+
+        points = self.as_numpy()
+
+        # Use resolution as a reasonable visual radius when available.
+        radius = self.resolution if self.resolution is not None else None
+
+        if radius is not None:
+            return rr.Points3D(points, radii=radius)
+
+        return rr.Points3D(points)
