@@ -221,6 +221,8 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport:
+            if not self.connection:
+                raise Exception(f'''\n\nIt seems no connection/transport was setup for the {self.name} of {self.owner.__class__.__name__} module''')
             self._transport = self.connection.transport  # type: ignore[union-attr]
         return self._transport
 
