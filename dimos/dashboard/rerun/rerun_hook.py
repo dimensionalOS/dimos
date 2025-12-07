@@ -41,4 +41,4 @@ def RerunHook(attrname, input_type, target_entity: str, *, topic = None, publish
         "__module__": __name__,
     }
 
-    return type("RerunHookModule", (Module,), cls_dict)
+    return type(f"RerunHookModule_{input_type.__name__}", (Module,), cls_dict)
