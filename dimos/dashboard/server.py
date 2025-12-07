@@ -296,6 +296,7 @@ def start_dashboard_server_thread(
     https_cert_path: Optional[str] = os.environ.get("HTTPS_CERT_PATH"),
     logger: Optional[logging.Logger] = None,
     rrd_url: Optional[str] = None,
+    **kwargs,
 ) -> threading.Thread:
     protocol = "https" if https_enabled else "http"
     thread = threading.Thread(
