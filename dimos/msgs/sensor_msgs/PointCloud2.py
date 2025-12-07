@@ -33,7 +33,7 @@ from dimos.types.timestamped import Timestamped
 
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
 class PointCloud2(Timestamped):
-    name = "sensor_msgs.PointCloud2"
+    msg_name = "sensor_msgs.PointCloud2"
 
     def __init__(
         self,

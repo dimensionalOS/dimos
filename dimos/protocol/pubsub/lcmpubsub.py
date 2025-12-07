@@ -31,7 +31,7 @@ from dimos.protocol.service.spec import Service
 
 @runtime_checkable
 class LCMMsg(Protocol):
-    name: str
+    msg_name: str
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> "LCMMsg":
@@ -51,7 +51,7 @@ class Topic:
     def __str__(self) -> str:
         if self.lcm_type is None:
             return self.topic
-        return f"{self.topic}#{self.lcm_type.name}"
+        return f"{self.topic}#{self.lcm_type.msg_name}"
 
 
 class LCMPubSubBase(PubSub[Topic, Any], LCMService):
