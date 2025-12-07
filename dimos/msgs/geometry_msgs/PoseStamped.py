@@ -41,7 +41,7 @@ def sec_nsec(ts):
 
 
 class PoseStamped(Pose, Timestamped):
-    name = "geometry_msgs.PoseStamped"
+    msg_name = "geometry_msgs.PoseStamped"
     ts: float
     frame_id: str
 
