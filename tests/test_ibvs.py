@@ -161,7 +161,7 @@ def main():
         grasp_distance=0.01,
         direct_ee_control=DIRECT_EE_CONTROL,
     )
-    
+
     # Set custom grasp pitch (60 degrees - between level and top-down)
     GRASP_PITCH_DEGREES = 0  # 0° = level grasp, 90° = top-down grasp
     pbvs.set_grasp_pitch(GRASP_PITCH_DEGREES)
@@ -173,7 +173,7 @@ def main():
     # Control state for direct EE mode
     execute_target = False  # Only move when space is pressed
     last_valid_target = None
-    
+
     # Rate limiting for pose execution
     MIN_EXECUTION_PERIOD = 1.0  # Minimum seconds between pose executions
     last_execution_time = 0
@@ -197,21 +197,23 @@ def main():
             camera_pose = matrix_to_pose(camera_transform)
 
             # Process detections using camera transform
-            detection_3d_array, detection_2d_array = detector.process_frame(rgb, depth, camera_transform)
+            detection_3d_array, detection_2d_array = detector.process_frame(
+                rgb, depth, camera_transform
+            )
 
             # Handle click
             if mouse_click:
                 clicked_3d = find_clicked_detection(
-                    mouse_click, 
-                    detection_2d_array.detections, 
-                    detection_3d_array.detections
+                    mouse_click, detection_2d_array.detections, detection_3d_array.detections
                 )
                 if clicked_3d:
                     pbvs.set_target(clicked_3d)
                 mouse_click = None
 
             # Create visualization with position overlays
-            viz = detector.visualize_detections(rgb, detection_3d_array.detections, detection_2d_array.detections)
+            viz = detector.visualize_detections(
+                rgb, detection_3d_array.detections, detection_2d_array.detections
+            )
 
             # PBVS control
             vel_cmd, ang_vel_cmd, reached, target_tracked, target_pose = pbvs.compute_control(
@@ -248,14 +250,12 @@ def main():
             current_target = pbvs.get_current_target()
             if target_tracked and current_target:
                 det_2d = get_detection2d_for_detection3d(
-                    current_target,
-                    detection_3d_array.detections,
-                    detection_2d_array.detections
+                    current_target, detection_3d_array.detections, detection_2d_array.detections
                 )
                 if det_2d and det_2d.bbox:
                     x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
                     x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
-                    
+
                     cv2.rectangle(viz, (x1, y1), (x2, y2), (0, 255, 0), 3)
                     cv2.putText(
                         viz, "TARGET", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2
@@ -286,11 +286,22 @@ def main():
 
             # Add control status
             if DIRECT_EE_CONTROL:
-                status_text = "Target Ready - Press SPACE to execute" if target_pose else "No target selected"
+                status_text = (
+                    "Target Ready - Press SPACE to execute" if target_pose else "No target selected"
+                )
                 status_color = (0, 255, 255) if target_pose else (100, 100, 100)
-                cv2.putText(viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1)
-                cv2.putText(viz_bgr, "s=STOP | h=HOME | SPACE=EXECUTE | g=RELEASE",
-                            (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+                cv2.putText(
+                    viz_bgr, status_text, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.5, status_color, 1
+                )
+                cv2.putText(
+                    viz_bgr,
+                    "s=STOP | h=HOME | SPACE=EXECUTE | g=RELEASE",
+                    (10, 110),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.4,
+                    (255, 255, 255),
+                    1,
+                )
 
             # Display
             cv2.imshow("PBVS", viz_bgr)

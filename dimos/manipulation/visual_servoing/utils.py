@@ -229,7 +229,9 @@ def estimate_object_depth(
     else:
         return 0.05
 
+
 # ============= Visualization Functions =============
+
 
 def visualize_detections_3d(
     rgb_image: np.ndarray,
@@ -252,16 +254,21 @@ def visualize_detections_3d(
     if not detections:
         return rgb_image.copy()
 
-    # If no 2D bboxes provided, skip visualization 
+    # If no 2D bboxes provided, skip visualization
     if bboxes_2d is None:
         return rgb_image.copy()
-        
+
     # Extract data for plot_results function
     bboxes = bboxes_2d
     track_ids = [int(det.id) if det.id.isdigit() else i for i, det in enumerate(detections)]
     class_ids = [i for i in range(len(detections))]
-    confidences = [det.results[0].hypothesis.score if det.results_length > 0 else 0.0 for det in detections]
-    names = [det.results[0].hypothesis.class_id if det.results_length > 0 else "unknown" for det in detections]
+    confidences = [
+        det.results[0].hypothesis.score if det.results_length > 0 else 0.0 for det in detections
+    ]
+    names = [
+        det.results[0].hypothesis.class_id if det.results_length > 0 else "unknown"
+        for det in detections
+    ]
 
     # Use plot_results for basic visualization
     viz = plot_results(rgb_image, bboxes, track_ids, class_ids, confidences, names)
@@ -595,10 +602,10 @@ def create_pbvs_controller_overlay(
 def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> Tuple[float, float, float, float]:
     """
     Convert BoundingBox2D from center format to corner format.
-    
+
     Args:
         bbox_2d: BoundingBox2D with center and size
-        
+
     Returns:
         Tuple of (x1, y1, x2, y2) corner coordinates
     """
@@ -606,56 +613,52 @@ def bbox2d_to_corners(bbox_2d: BoundingBox2D) -> Tuple[float, float, float, floa
     center_y = bbox_2d.center.position.y
     half_width = bbox_2d.size_x / 2.0
     half_height = bbox_2d.size_y / 2.0
-    
+
     x1 = center_x - half_width
     y1 = center_y - half_height
     x2 = center_x + half_width
     y2 = center_y + half_height
-    
+
     return x1, y1, x2, y2
 
 
 def find_clicked_detection(
-    click_pos: Tuple[int, int],
-    detections_2d: List[Detection2D],
-    detections_3d: List[Detection3D]
+    click_pos: Tuple[int, int], detections_2d: List[Detection2D], detections_3d: List[Detection3D]
 ) -> Optional[Detection3D]:
     """
     Find which detection was clicked based on 2D bounding boxes.
-    
+
     Args:
         click_pos: (x, y) click position
         detections_2d: List of Detection2D objects
         detections_3d: List of Detection3D objects (must be 1:1 correspondence)
-        
+
     Returns:
         Corresponding Detection3D object if found, None otherwise
     """
     click_x, click_y = click_pos
-    
+
     for i, det_2d in enumerate(detections_2d):
         if det_2d.bbox and i < len(detections_3d):
             x1, y1, x2, y2 = bbox2d_to_corners(det_2d.bbox)
-            
+
             if x1 <= click_x <= x2 and y1 <= click_y <= y2:
                 return detections_3d[i]
-    
+
     return None
 
 
 def get_detection2d_for_detection3d(
-    detection_3d: Detection3D,
-    detections_3d: List[Detection3D],
-    detections_2d: List[Detection2D]
+    detection_3d: Detection3D, detections_3d: List[Detection3D], detections_2d: List[Detection2D]
 ) -> Optional[Detection2D]:
     """
     Find the corresponding Detection2D for a given Detection3D.
-    
+
     Args:
         detection_3d: The Detection3D to match
         detections_3d: List of all Detection3D objects
         detections_2d: List of all Detection2D objects (must be 1:1 correspondence)
-        
+
     Returns:
         Corresponding Detection2D if found, None otherwise
     """
