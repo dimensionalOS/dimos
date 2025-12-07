@@ -152,3 +152,19 @@ class PoseStamped(Pose, Timestamped):
         ros_msg.pose = Pose.to_ros_msg(self)
 
         return ros_msg
+    
+    def to_rerun(self):
+        """Convert to a Rerun Transform3D suitable for rr.log."""
+        import rerun as rr  # type: ignore[import-untyped]
+
+        translation = (float(self.position.x), float(self.position.y), float(self.position.z))
+        rotation = rr.Quaternion(
+            x=float(self.orientation.x),
+            y=float(self.orientation.y),
+            z=float(self.orientation.z),
+            w=float(self.orientation.w),
+        )
+
+        # Usage: rr.log(\"/frame\", pose_stamped.to_rerun(), time=pose_stamped.ts)
+        return rr.Transform3D(translation=translation, rotation=rotation)
+        pass

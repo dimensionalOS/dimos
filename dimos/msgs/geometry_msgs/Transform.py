@@ -229,6 +229,21 @@ class Transform(Timestamped):
 
         return ros_msg
 
+    def to_rerun(self):
+        """Convert to a Rerun Transform3D suitable for rr.log."""
+        import rerun as rr  # type: ignore[import-untyped]
+
+        translation = (float(self.translation.x), float(self.translation.y), float(self.translation.z))
+        rotation = rr.Quaternion(
+            x=float(self.rotation.x),
+            y=float(self.rotation.y),
+            z=float(self.rotation.z),
+            w=float(self.rotation.w),
+        )
+
+        # Usage: rr.log("/tf", transform.to_rerun(), time=transform.ts)
+        return rr.Transform3D(translation=translation, rotation=rotation)
+
     def __neg__(self) -> Transform:
         """Unary minus operator returns the inverse transform."""
         return self.inverse()
