@@ -58,7 +58,6 @@ class Dashboard(Module):
         rr.send_blueprint(self.layout.rerun_blueprint)
         # get the rrd_url if it wasn't provided
         self.rrd_url = self.rrd_url or rr.serve_grpc()  # e.g. "rerun+http://127.0.0.1:9876/proxy"
-        # TODO: add cleanup (disposal of thread)
         thread = start_dashboard_server_thread(**self.__dict__)
         
         @self._disposables.add
