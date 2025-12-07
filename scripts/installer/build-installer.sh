@@ -883,19 +883,19 @@ cleanup_installer_files_by_age() {
     # Remove all files in ubuntu-image-tool-output subdirectory that match age criteria
     local outputdir="$staging_dir/ubuntu-image-tool-output"
     if [[ -d "$outputdir" ]]; then
-        find "$outputdir" -maxdepth 1 -type f $mtime_filter -delete 2>/dev/null || true
+        find "$outputdir" -maxdepth 1 -type f ${mtime_filter:+$mtime_filter} -delete 2>/dev/null || true
     fi
 
     # Clean ubuntu-image workdir
     local workdir="$staging_dir/ubuntu-image-tool-workdir"
     if [[ -d "$workdir" ]]; then
-        find "$workdir" -mindepth 1 $mtime_filter -delete 2>/dev/null || true
+        find "$workdir" -mindepth 1 ${mtime_filter:+$mtime_filter} -delete 2>/dev/null || true
     fi
 
     # Clean docker images directory
     local docker_images_dir="$staging_dir/docker-images"
     if [[ -d "$docker_images_dir" ]]; then
-        find "$docker_images_dir" -mindepth 1 $mtime_filter -delete 2>/dev/null || true
+        find "$docker_images_dir" -mindepth 1 ${mtime_filter:+$mtime_filter} -delete 2>/dev/null || true
     fi
 }
 
