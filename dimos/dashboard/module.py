@@ -5,6 +5,7 @@ from typing import Optional
 import logging
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
+from reactivex.disposable import Disposable
 from dimos.dashboard.server import start_dashboard_server_thread, env_bool
 from dimos.dashboard.rerun.layouts_base import Layout 
 from dimos.dashboard.rerun.layouts import LayoutAllTabs 
@@ -78,6 +79,7 @@ class DashboardModule(Module):
 
     @rpc
     def start(self) -> None:
+        # FIXME: because this is an RPC, stuff like "global dashboard_started" and dashboard_config is not going to work as-intended in prod
         global dashboard_started
         if dashboard_started:
             raise Exception(f'''Dashboard already started, cannot start again.''')
@@ -88,5 +90,13 @@ class DashboardModule(Module):
         rr.send_blueprint(rerun_config["layout"].rerun_blueprint)
         # get the rrd_url if it wasn't provided
         dashboard_config["rrd_url"] = dashboard_config["rrd_url"] or rr.serve_grpc()  # e.g. "rerun+http://127.0.0.1:9876/proxy"
-        # TODO: add cleanup (disposal of thread)
         thread = start_dashboard_server_thread(**dashboard_config)
+
+        @self._disposables.add
+        @Disposable
+        def _cleanup_dashboard_thread():
+            # Attempt to let the server thread shut down gracefully when the module stops.
+            global dashboard_started
+            dashboard_started = False
+            if thread.is_alive():
+                thread.join(timeout=1.0)
