@@ -100,10 +100,12 @@ class DataReplay(Module):
 
 
 layout = layouts.AllTabs(collapse_panels=False)
+
+# NOTE: this data was recorded with `from dimos.dashboard.support.utils import record_message`
 replay_paths = {
-    "color_image": "/Users/jeffhykin/repos/dimos/dimos/dashboard/rerun/color_image.yaml",
-    "lidar": "/Users/jeffhykin/repos/dimos/dimos/dashboard/rerun/lidar.yaml",
-    "odom": "/Users/jeffhykin/repos/dimos/dimos/dashboard/rerun/odom.yaml",
+    "color_image": "./dimos/dashboard/rerun/color_image.yaml",
+    "lidar": "./dimos/dashboard/rerun/lidar.yaml",
+    "odom": "./dimos/dashboard/rerun/odom.yaml",
 }
 blueprint = (
     autoconnect(
