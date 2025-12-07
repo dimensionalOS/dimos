@@ -71,3 +71,29 @@ def rate_limit(min_interval: float):
 
         return wrapper
     return decorator
+
+
+def record_message(path: str, val):
+    import base64
+    import pickle
+    from pathlib import Path
+    payload = base64.b64encode(pickle.dumps(val)).decode("ascii")
+    line = f"- !!python/object/apply:pickle.loads [!!binary \"{payload}\"]\n"
+    Path(path).parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(line)
+
+def load_messages(log_filepath: str) -> list:
+    """Read a YAML log created by RerunHook and return a list of depickled messages."""
+    import yaml  # PyYAML is a common dependency in the project
+    from pathlib import Path
+
+    path = Path(log_filepath)
+    if not path.exists():
+        return []
+
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or []
+
+    # Items are already restored by pickle.loads via the YAML tag
+    return list(data)
