@@ -86,7 +86,6 @@ def unitree_skills(mocker):
 def interpret_map_skill(mocker):
     container = InterpretMapSkill()
     container.local_costmap.connection = mocker.MagicMock()
-    container.lidar.connection = mocker.MagicMock()
     container.start()
     yield container
     container.stop()

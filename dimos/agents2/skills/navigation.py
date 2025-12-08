@@ -115,7 +115,7 @@ class NavigationSkillContainer(SkillModule):
 
     @skill()
     def navigate_with_position(self, x: float, y: float, z: float = 0.0) -> str:
-        """Navifate to a specific position in world coordinates, obtained from map.
+        """Navigate to a specific position in world coordinates, obtained from map.
 
         Args:
             x: X coordinate

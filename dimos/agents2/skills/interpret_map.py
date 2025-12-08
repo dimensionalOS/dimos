@@ -105,6 +105,8 @@ class InterpretMapSkill(SkillModule):
 
         response = self.vl_model.query(image, prompt)
         point = extract_json_from_llm_response(response)
+        if point is None or "point" not in point:
+            return "Failed to parse goal position from model response."
         x, y = point["point"]
 
         # ensure point is in free space, else choose nearest free space
