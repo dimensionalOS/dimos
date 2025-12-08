@@ -1,4 +1,5 @@
 import warnings
+from functools import cached_property
 
 import numpy as np
 from PIL import Image as PILImage
@@ -24,9 +25,14 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
     ) -> None:
         HuggingFaceModel.__init__(self, model_name=model_name, device=device, dtype=dtype, warmup=warmup)
 
-    def _load_model(self) -> AutoModelForCausalLM:
+    @cached_property
+    def _model(self) -> AutoModelForCausalLM:
         """Load model with compile() for optimization."""
-        model = super()._load_model()
+        model = AutoModelForCausalLM.from_pretrained(
+            self._model_name,
+            trust_remote_code=self._trust_remote_code,
+            torch_dtype=self._dtype,
+        ).to(self._device)
         model.compile()
         return model
 

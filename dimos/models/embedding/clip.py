@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
+
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
@@ -50,11 +52,13 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
         self.normalize = normalize
         HuggingFaceModel.__init__(self, model_name=model_name, device=device, warmup=warmup)
 
-    def _load_model(self) -> HFCLIPModel:
+    @cached_property
+    def _model(self) -> HFCLIPModel:
         self._ensure_cuda_initialized()
         return HFCLIPModel.from_pretrained(self._model_name).eval().to(self._device)
 
-    def _load_processor(self) -> CLIPProcessor:
+    @cached_property
+    def _processor(self) -> CLIPProcessor:
         return CLIPProcessor.from_pretrained(self._model_name)
 
     def embed(self, *images: Image) -> CLIPEmbedding | list[CLIPEmbedding]:

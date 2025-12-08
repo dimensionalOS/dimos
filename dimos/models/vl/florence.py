@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
+
 from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor  # type: ignore[import-untyped]
@@ -51,7 +53,8 @@ class Florence2Model(CaptioningModel, HuggingFaceModel):
             self, model_name=model_name, device=device, dtype=dtype, warmup=warmup
         )
 
-    def _load_processor(self) -> AutoProcessor:
+    @cached_property
+    def _processor(self) -> AutoProcessor:
         return AutoProcessor.from_pretrained(
             self._model_name, trust_remote_code=self._trust_remote_code
         )

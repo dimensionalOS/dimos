@@ -16,14 +16,11 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import torch
-
-if TYPE_CHECKING:
-    from transformers import ProcessorMixin
 
 
 class LocalModel(ABC):
@@ -32,8 +29,8 @@ class LocalModel(ABC):
     Provides common infrastructure for device management, dtype handling,
     lazy model loading, and warmup functionality.
 
-    Subclasses MUST implement:
-        - _load_model() -> Any: Return the loaded model
+    Subclasses MUST override:
+        - _model: @cached_property that loads and returns the model
 
     Subclasses MAY override:
         - warmup() for custom warmup logic
@@ -77,23 +74,8 @@ class LocalModel(ABC):
 
     @cached_property
     def _model(self) -> Any:
-        """Lazily loaded model. Access triggers loading."""
-        return self._load_model()
-
-    @abstractmethod
-    def _load_model(self) -> Any:
-        """Load and return the model. Called once on first access to _model.
-
-        Implementations should:
-        1. Load the model from disk/hub
-        2. Move to self._device
-        3. Apply self._dtype if applicable
-        4. Set to eval mode
-
-        Returns:
-            The loaded model object
-        """
-        ...
+        """Lazily loaded model. Subclasses must override this property."""
+        raise NotImplementedError(f"{self.__class__.__name__} must override _model property")
 
     def warmup(self) -> None:
         """Warmup the model by triggering lazy loading.
@@ -119,15 +101,14 @@ class LocalModel(ABC):
 class HuggingFaceModel(LocalModel):
     """Base class for HuggingFace transformers-based models.
 
-    Provides common patterns for loading models and processors from
-    the HuggingFace Hub using from_pretrained().
+    Provides common patterns for loading models from the HuggingFace Hub
+    using from_pretrained().
 
     Subclasses SHOULD set:
         - _model_class: The AutoModel class to use (e.g., AutoModelForCausalLM)
 
     Subclasses MAY override:
-        - _load_model() for custom loading logic
-        - _load_processor() for models with processors
+        - _model: @cached_property for custom model loading
     """
 
     _model_name: str
@@ -162,28 +143,14 @@ class HuggingFaceModel(LocalModel):
         return self._model_name
 
     @cached_property
-    def _processor(self) -> ProcessorMixin | None:
-        """Lazily loaded processor (tokenizer, image processor, etc.).
-
-        Returns None if the model doesn't use a separate processor.
-        """
-        return self._load_processor()
-
-    def _load_processor(self) -> ProcessorMixin | None:
-        """Load and return the processor. Override in subclasses that need one.
-
-        Default implementation returns None.
-        """
-        return None
-
-    def _load_model(self) -> Any:
+    def _model(self) -> Any:
         """Load the HuggingFace model using _model_class.
 
-        Override this method for custom loading logic (e.g., model.compile()).
+        Override this property for custom loading logic.
         """
         if self._model_class is None:
             raise NotImplementedError(
-                f"{self.__class__.__name__} must set _model_class or override _load_model()"
+                f"{self.__class__.__name__} must set _model_class or override _model property"
             )
         model = self._model_class.from_pretrained(
             self._model_name,
@@ -218,6 +185,5 @@ class HuggingFaceModel(LocalModel):
         return result
 
     def warmup(self) -> None:
-        """Warmup by loading model and processor."""
+        """Warmup by loading model."""
         _ = self._model
-        _ = self._processor

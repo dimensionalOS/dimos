@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -59,7 +60,8 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
         self.normalize = normalize
         LocalModel.__init__(self, device=device, warmup=warmup)
 
-    def _load_model(self) -> Any:
+    @cached_property
+    def _model(self) -> Any:
         pretrained = str(self._model_path) if self._model_path else None
         model, _, self._preprocess = open_clip.create_model_and_transforms(
             self._model_name, pretrained=pretrained

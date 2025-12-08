@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
 from pathlib import Path
 
 import torch
@@ -55,7 +56,8 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
         self.normalize = normalize
         LocalModel.__init__(self, device=device, warmup=warmup)
 
-    def _load_model(self) -> torchreid_utils.FeatureExtractor:
+    @cached_property
+    def _model(self) -> torchreid_utils.FeatureExtractor:
         self._ensure_cuda_initialized()
         model_path_str = str(self._model_path) if self._model_path else ""
         return torchreid_utils.FeatureExtractor(

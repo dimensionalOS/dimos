@@ -14,6 +14,8 @@
 
 """Tests for LocalModel and HuggingFaceModel base classes."""
 
+from functools import cached_property
+
 import torch
 
 from dimos.models.base import HuggingFaceModel, LocalModel
@@ -22,18 +24,17 @@ from dimos.models.base import HuggingFaceModel, LocalModel
 class ConcreteLocalModel(LocalModel):
     """Concrete implementation for testing."""
 
-    def _load_model(self) -> str:
+    @cached_property
+    def _model(self) -> str:
         return "loaded_model"
 
 
 class ConcreteHuggingFaceModel(HuggingFaceModel):
     """Concrete implementation for testing."""
 
-    def _load_model(self) -> str:
+    @cached_property
+    def _model(self) -> str:
         return f"hf_model:{self._model_name}"
-
-    def _load_processor(self) -> str:
-        return f"processor:{self._model_name}"
 
 
 def test_local_model_device_auto_detection() -> None:
@@ -107,23 +108,12 @@ def test_huggingface_model_trust_remote_code() -> None:
     assert model2._trust_remote_code is False
 
 
-def test_huggingface_processor_lazy_loading() -> None:
-    """Test that processor is lazily loaded."""
-    model = ConcreteHuggingFaceModel(model_name="test/model")
-    assert "_processor" not in model.__dict__
-    _ = model._processor
-    assert "_processor" in model.__dict__
-    assert model._processor == "processor:test/model"
-
-
-def test_huggingface_warmup_loads_both() -> None:
-    """Test that warmup() loads both model and processor."""
+def test_huggingface_warmup_loads_model() -> None:
+    """Test that warmup() loads model."""
     model = ConcreteHuggingFaceModel(model_name="test/model")
     assert "_model" not in model.__dict__
-    assert "_processor" not in model.__dict__
     model.warmup()
     assert "_model" in model.__dict__
-    assert "_processor" in model.__dict__
 
 
 def test_move_inputs_to_device() -> None:

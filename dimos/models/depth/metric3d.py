@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import cached_property
 from typing import Any
 
 import cv2
@@ -28,7 +29,6 @@ class Metric3D(LocalModel):
         device: str | None = None,
         warmup: bool = False,
     ) -> None:
-        # Default to CUDA for Metric3D (was hardcoded before)
         LocalModel.__init__(self, device=device or "cuda", warmup=warmup)
 
         self.intrinsic = camera_intrinsics
@@ -37,7 +37,8 @@ class Metric3D(LocalModel):
         self.pad_info: list[int] | None = None
         self.rgb_origin: Any = None
 
-    def _load_model(self) -> Any:
+    @cached_property
+    def _model(self) -> Any:
         model = torch.hub.load(  # type: ignore[no-untyped-call]
             "yvanyin/metric3d", "metric3d_vit_small", pretrain=True
         )
@@ -60,7 +61,7 @@ class Metric3D(LocalModel):
         self.intrinsic = intrinsic
         print(f"Intrinsics updated to: {self.intrinsic}")
 
-    def infer_depth(self, img, debug: bool=False):  # type: ignore[no-untyped-def]
+    def infer_depth(self, img, debug: bool = False):  # type: ignore[no-untyped-def]
         if debug:
             print(f"Input image: {img}")
         try:
@@ -144,7 +145,9 @@ class Metric3D(LocalModel):
 
         # upsample to original size
         pred_depth = torch.nn.functional.interpolate(
-            pred_depth[None, None, :, :], self.rgb_origin.shape[:2], mode="bilinear"  # type: ignore[attr-defined]
+            pred_depth[None, None, :, :],
+            self.rgb_origin.shape[:2],
+            mode="bilinear",  # type: ignore[attr-defined]
         ).squeeze()
         ###################### canonical camera space ######################
 
