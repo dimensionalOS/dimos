@@ -129,7 +129,6 @@ def main():
         pass
     finally:
         cv2.destroyAllWindows()
-        manipulation.cleanup()
         zed.close()
         arm.disable()
 
