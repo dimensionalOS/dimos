@@ -1,0 +1,270 @@
+[LCMPubSubBase] subscribing to /rpc/Dashboard/dynamic_skills/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/get_rpc_method_names/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/io/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/set_rpc_method/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/skills/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/start/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/stop/req
+Initialized dimos local cluster with 1 workers, memory limit: auto
+[2m2025-12-08T20:52:39.238279Z[0m [[32m[1minfo     [0m] [1mDeployed module.                                            [0m [[0m[1m[34mdimos/core/__init__.py[0m][0m [36mmodule[0m=[35mCameraModule[0m [36mworker_id[0m=[35m0[0m
+[2m2025-12-08T20:52:39.313681Z[0m [[32m[1minfo     [0m] [1mDeployed module.                                            [0m [[0m[1m[34mdimos/core/__init__.py[0m][0m [36mmodule[0m=[35mDashboard[0m [36mworker_id[0m=[35m0[0m
+Exception in thread Thread-8:
+Traceback (most recent call last):
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1433, in run
+    self.function(*self.args, **self.kwargs)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/scheduler/timeoutscheduler.py", line 89, in interval
+    sad.disposable = self.invoke_action(action, state)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/scheduler/scheduler.py", line 105, in invoke_action
+    ret = action(self, state)
+          ^^^^^^^^^^^^^^^^^^^
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/scheduler/periodicscheduler.py", line 49, in periodic
+    state = action(state)
+            ^^^^^^^^^^^^^
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/observable/timer.py", line 105, in action
+    observer.on_next(count)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/observer/autodetachobserver.py", line 28, in on_next
+    self._on_next(value)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/operators/_map.py", line 44, in on_next
+    obv.on_error(err)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/observer/autodetachobserver.py", line 36, in on_error
+    self._on_error(error)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/internal/basic.py", line 34, in default_error
+    raise err
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/reactivex/operators/_map.py", line 42, in on_next
+    result = _mapper(value)
+             ^^^^^^^^^^^^^^
+  File "/Users/jeffhykin/repos/dimos/dimos/hardware/camera/module.py", line 115, in camera_info
+    self.hardware.camera_info.ts = time.time()  # type: ignore[union-attr]
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'CameraInfo' object has no attribute 'ts'
+2025-12-08 14:52:49.499 python3[73155:8815903] Error loading /Library/CoreMediaIO/Plug-Ins/DAL/CamTwist.plugin/Contents/MacOS/CamTwist:  dlopen(/Library/CoreMediaIO/Plug-Ins/DAL/CamTwist.plugin/Contents/MacOS/CamTwist, 0x0106): tried: '/Library/CoreMediaIO/Plug-Ins/DAL/CamTwist.plugin/Contents/MacOS/CamTwist' (mach-o file, but is an incompatible architecture (have (x86_64), need (arm64e)))
+2025-12-08 14:52:49.499 python3[73155:8815903] Error loading /Library/CoreMediaIO/Plug-Ins/DAL/CamTwist.plugin/Contents/MacOS/CamTwist:  dlopen(/Library/CoreMediaIO/Plug-Ins/DAL/CamTwist.plugin/Contents/MacOS/CamTwist, 0x0106): tried: '/Library/CoreMediaIO/Plug-Ins/DAL/CamTwist.plugin/Contents/MacOS/CamTwist' (mach-o file, but is an incompatible architecture (have (x86_64), need (arm64e)))
+/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/blissful_basics/__init__.py:266: UserWarning: debug 302494
+  return real_warn_910932842088502(*args, **kwargs)
+      File "/Users/jeffhykin/repos/dimos/dimos/core/rpc_client.py", line 75, in __call__
+        warnings.warn(f'''debug 302494''')
+      File "/Users/jeffhykin/repos/dimos/dimos/core/module_coordinator.py", line 62, in start_all_modules
+        module.start()
+      File "/Users/jeffhykin/repos/dimos/dimos/core/blueprints.py", line 287, in build
+        module_coordinator.start_all_modules()
+      File "/Users/jeffhykin/repos/dimos/dimos/dashboard/examples/autoconnect.py", line 54, in main
+        coordinator = blueprint.build()
+                      ^^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/dimos/dashboard/examples/autoconnect.py", line 60, in <module>
+        main()
+    
+/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/blissful_basics/__init__.py:266: UserWarning: debug 4280249
+  return real_warn_910932842088502(*args, **kwargs)
+      File "/Users/jeffhykin/repos/dimos/dimos/dashboard/module.py", line 50, in start
+        warnings.warn(f'''debug 4280249''')
+      File "/Users/jeffhykin/repos/dimos/dimos/protocol/rpc/spec.py", line 94, in override_f
+        return getattr(module, fname)(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/dimos/protocol/rpc/pubsubrpc.py", line 274, in execute_and_respond
+        response = f(*args[0], **args[1])
+                   ^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+        result = self.fn(*self.args, **self.kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/concurrent/futures/thread.py", line 93, in _worker
+        work_item.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1012, in run
+        self._target(*self._args, **self._kwargs)
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+        self.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1032, in _bootstrap
+        self._bootstrap_inner()
+    
+/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/blissful_basics/__init__.py:266: UserWarning: debug 4280249
+  return real_warn_910932842088502(*args, **kwargs)
+      File "/Users/jeffhykin/repos/dimos/dimos/dashboard/module.py", line 50, in start
+        warnings.warn(f'''debug 4280249''')
+      File "/Users/jeffhykin/repos/dimos/dimos/protocol/rpc/spec.py", line 94, in override_f
+        return getattr(module, fname)(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/dimos/protocol/rpc/pubsubrpc.py", line 274, in execute_and_respond
+        response = f(*args[0], **args[1])
+                   ^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+        result = self.fn(*self.args, **self.kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/concurrent/futures/thread.py", line 93, in _worker
+        work_item.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1012, in run
+        self._target(*self._args, **self._kwargs)
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+        self.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1032, in _bootstrap
+        self._bootstrap_inner()
+    
+/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/blissful_basics/__init__.py:266: UserWarning: debug 4280249
+  return real_warn_910932842088502(*args, **kwargs)
+      File "/Users/jeffhykin/repos/dimos/dimos/dashboard/module.py", line 50, in start
+        warnings.warn(f'''debug 4280249''')
+      File "/Users/jeffhykin/repos/dimos/dimos/protocol/rpc/spec.py", line 94, in override_f
+        return getattr(module, fname)(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/dimos/protocol/rpc/pubsubrpc.py", line 274, in execute_and_respond
+        response = f(*args[0], **args[1])
+                   ^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+        result = self.fn(*self.args, **self.kwargs)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/concurrent/futures/thread.py", line 93, in _worker
+        work_item.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1012, in run
+        self._target(*self._args, **self._kwargs)
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+        self.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/threading.py", line 1032, in _bootstrap
+        self._bootstrap_inner()
+    
+[2025-12-08T20:52:51Z WARN  re_sdk::log_sink] Dropping data in BufferedSink
+[LCMPubSubBase] subscribing to /rpc/Dashboard/dynamic_skills/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/get_rpc_method_names/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/io/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/set_rpc_method/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/skills/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/start/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/stop/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/dynamic_skills/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/get_rpc_method_names/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/io/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/set_rpc_method/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/skills/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/start/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/stop/req
+[LCMPubSubBase] subscribing to /rpc/CameraModule/video_stream/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/dynamic_skills/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/get_rpc_method_names/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/io/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/set_rpc_method/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/skills/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/start/req
+[LCMPubSubBase] subscribing to /rpc/Dashboard/stop/req
+__name__ = dimos.dashboard.module
+id_test = 0.8967006439117655
+kwargs = {}
+__name__ = dimos.dashboard.module
+id_test = 0.8967006439117655
+kwargs = {}
+[2m2025-12-08T20:52:51.375731Z[0m [[32m[1minfo     [0m] [1mSharedMemory PubSub starting (backend=auto)                 [0m [[0m[1m[34mdimos/protocol/pubsub/shmpubsub.py[0m][0m
+rpc calling = CameraModule/get_rpc_method_names
+[PubSubRPCMixin] calling self.call_cb()
+[PubSubRPCMixin] subscribing to topic_res /rpc/CameraModule/get_rpc_method_names/res
+[LCMPubSubBase] subscribing to /rpc/CameraModule/get_rpc_method_names/res
+[PubSubRPCMixin] publishing topic_req /rpc/CameraModule/get_rpc_method_names/req
+[PubSubRPCMixin] shared_response_handler {'id': 1765227159.350376, 'res': []} /rpc/CameraModule/get_rpc_method_names/res
+rpc calling = Dashboard/get_rpc_method_names
+[PubSubRPCMixin] calling self.call_cb()
+[PubSubRPCMixin] subscribing to topic_res /rpc/Dashboard/get_rpc_method_names/res
+[LCMPubSubBase] subscribing to /rpc/Dashboard/get_rpc_method_names/res
+[PubSubRPCMixin] publishing topic_req /rpc/Dashboard/get_rpc_method_names/req
+[PubSubRPCMixin] shared_response_handler {'id': 1765227159.3513498, 'res': []} /rpc/Dashboard/get_rpc_method_names/res
+[PubSubRPCMixin] shared_response_handler {'id': 1765227159.3513498, 'res': []} /rpc/Dashboard/get_rpc_method_names/res
+[PubSubRPCMixin] shared_response_handler {'id': 1765227159.3513498, 'res': []} /rpc/Dashboard/get_rpc_method_names/res
+[ModuleBlueprint] calling module_coordinator.start_all_modules()
+[ModuleCoordinator] calling module.start()
+rpc calling = CameraModule/start
+[PubSubRPCMixin] calling self.call_cb()
+[PubSubRPCMixin] subscribing to topic_res /rpc/CameraModule/start/res
+[LCMPubSubBase] subscribing to /rpc/CameraModule/start/res
+[PubSubRPCMixin] publishing topic_req /rpc/CameraModule/start/req
+[PubSubRPCMixin] shared_response_handler {'id': 1765227159.3520408, 'res': None} /rpc/CameraModule/start/res
+[ModuleCoordinator] calling module.start()
+rpc calling = Dashboard/start
+[PubSubRPCMixin] calling self.call_cb()
+[PubSubRPCMixin] subscribing to topic_res /rpc/Dashboard/start/res
+[LCMPubSubBase] subscribing to /rpc/Dashboard/start/res
+[PubSubRPCMixin] publishing topic_req /rpc/Dashboard/start/req
+__name__ = dimos.dashboard.module
+id_test = 0.693876996537932
+kwargs = {}
+[PubSubRPCMixin] shared_response_handler {'id': 1765227171.2732599, 'res': None} /rpc/Dashboard/start/res
+Webcam pipeline running. Press Ctrl+C to stop.
+[PubSubRPCMixin] shared_response_handler {'id': 1765227171.2732599, 'res': None} /rpc/Dashboard/start/res
+[PubSubRPCMixin] shared_response_handler {'id': 1765227171.2732599, 'res': None} /rpc/Dashboard/start/res
+Shutting down (signal 2)...
+/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/core.py:1271: DeprecationWarning: the rpc synchronous context manager is deprecated
+  warnings.warn(
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/core.py", line 1271, in __enter__
+        warnings.warn(
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/worker.py", line 1574, in close
+        with self.rpc(self.nanny) as r:
+             ^^^^^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/utils.py", line 818, in wrapper
+        return await func(*args, **kwargs)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/core.py", line 546, in __aexit__
+        await self.close()
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/nanny.py", line 969, in run
+        async with worker:
+                   ^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/events.py", line 88, in _run
+        self._context.run(self._callback, *self._args)
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/base_events.py", line 1999, in _run_once
+        handle._run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/base_events.py", line 645, in run_forever
+        self._run_once()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/base_events.py", line 678, in run_until_complete
+        self.run_forever()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/runners.py", line 118, in run
+        return self._loop.run_until_complete(task)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/runners.py", line 195, in run
+        return runner.run(main)
+               ^^^^^^^^^^^^^^^^
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/nanny.py", line 1023, in _run
+        asyncio_run(run(), loop_factory=get_loop_factory())
+      File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/process.py", line 202, in _run
+        target(*args, **kwargs)
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/process.py", line 108, in run
+        self._target(*self._args, **self._kwargs)
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+        self.run()
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/spawn.py", line 135, in _main
+        return self._bootstrap(parent_sentinel)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+      File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/spawn.py", line 122, in spawn_main
+        exitcode = _main(fd, parent_sentinel)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+    
+[2m2025-12-08T20:53:22.228346Z[0m [[32m[1minfo     [0m] [1mSharedMemory PubSub stopped.                                [0m [[0m[1m[34mdimos/protocol/pubsub/shmpubsub.py[0m][0m
+Process Dask Worker process (from Nanny):
+Traceback (most recent call last):
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/nanny.py", line 985, in run
+    await worker.finished()
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/core.py", line 494, in finished
+    await self._event_finished.wait()
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/locks.py", line 212, in wait
+    await fut
+asyncio.exceptions.CancelledError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/process.py", line 202, in _run
+    target(*args, **kwargs)
+  File "/Users/jeffhykin/repos/dimos/venv/lib/python3.12/site-packages/distributed/nanny.py", line 1023, in _run
+    asyncio_run(run(), loop_factory=get_loop_factory())
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/asyncio/runners.py", line 123, in run
+    raise KeyboardInterrupt()
+KeyboardInterrupt
+/nix/store/v0vy1c59f0vf71h64caw17hzymvg0zms-python3-3.12.10/lib/python3.12/multiprocessing/resource_tracker.py:279: UserWarning: resource_tracker: There appear to be 2 leaked shared_memory objects to clean up at shutdown
+  warnings.warn('resource_tracker: There appear to be %d '
