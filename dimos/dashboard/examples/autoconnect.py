@@ -31,12 +31,10 @@ class CameraListener(Module):
                 )
 
 
-layout = layouts.AllTabs(collapse_panels=False)
 blueprint = (
     autoconnect(
         CameraModule.blueprint(),
         Dashboard().blueprint(
-            layout=layout,
             auto_open=True,
             terminal_commands={
                 "agent-spy": "htop",
