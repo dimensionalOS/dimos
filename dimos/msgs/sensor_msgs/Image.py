@@ -38,6 +38,8 @@ from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to
 from dimos.utils.reactive import quality_barrier
 
 if TYPE_CHECKING:
+    import os
+
     from reactivex.observable import Observable
 
     from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
@@ -158,11 +160,15 @@ class Image(Timestamped):
 
     @classmethod
     def from_file(  # type: ignore[no-untyped-def]
-        cls, filepath: str, format: ImageFormat = ImageFormat.RGB, to_cuda: bool = False, **kwargs
+        cls,
+        filepath: str | os.PathLike[str],
+        format: ImageFormat = ImageFormat.RGB,
+        to_cuda: bool = False,
+        **kwargs,
     ) -> Image:
         if kwargs.pop("to_gpu", False):
             to_cuda = True
-        arr = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+        arr = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
         if arr is None:
             raise ValueError(f"Could not load image from {filepath}")
         if arr.ndim == 2:

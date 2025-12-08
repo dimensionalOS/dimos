@@ -19,11 +19,11 @@ import torch
 from transformers import AutoModelForCausalLM, AutoProcessor  # type: ignore[import-untyped]
 
 from dimos.models.base import HuggingFaceModel
-from dimos.models.vl.base import CaptioningModel
+from dimos.models.vl.base import Captioner
 from dimos.msgs.sensor_msgs import Image
 
 
-class Florence2Model(CaptioningModel, HuggingFaceModel):
+class Florence2Model(Captioner, HuggingFaceModel):
     """Florence-2 captioning model from Microsoft.
 
     A lightweight, fast captioning model optimized for generating image descriptions

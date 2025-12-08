@@ -59,7 +59,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
 
         return str(result)
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's native detect method.
 
         Args:

@@ -40,37 +40,33 @@ class Captioner(ABC):
         """
         return [self.caption(img) for img in images]
 
-
-class CaptioningModel(Captioner):
-    """Base class for lightweight caption-only models (no prompting).
-
-    Use this for dedicated captioning models like Florence-2, BLIP, GIT, etc.
-    that are optimized for captioning without requiring a text prompt.
-    """
-
-    device: str
-
     def warmup(self) -> None:
         """Optional warmup method to pre-load model."""
         pass
 
 
+# Type alias for VLM detection format: [label, x1, y1, x2, y2]
+VlmDetection = tuple[str, float, float, float, float]
+
+
 def vlm_detection_to_detection2d(
-    vlm_detection: list, track_id: int, image: Image  # type: ignore[type-arg]
+    vlm_detection: VlmDetection | list[str | float],
+    track_id: int,
+    image: Image,
 ) -> Detection2DBBox | None:
     """Convert a single VLM detection [label, x1, y1, x2, y2] to Detection2DBBox.
 
     Args:
-        vlm_detection: Single detection list containing [label, x1, y1, x2, y2]
+        vlm_detection: Single detection tuple/list containing [label, x1, y1, x2, y2]
         track_id: Track ID to assign to this detection
         image: Source image for the detection
 
     Returns:
         Detection2DBBox instance or None if invalid
     """
-    # Validate list structure
-    if not isinstance(vlm_detection, list):
-        logger.debug(f"VLM detection is not a list: {type(vlm_detection)}")
+    # Validate list/tuple structure
+    if not isinstance(vlm_detection, (list, tuple)):
+        logger.debug(f"VLM detection is not a list/tuple: {type(vlm_detection)}")
         return None
 
     if len(vlm_detection) != 5:
@@ -84,17 +80,17 @@ def vlm_detection_to_detection2d(
 
     # Validate and convert coordinates
     try:
-        coords = [float(x) for x in vlm_detection[1:]]
+        coords = [float(vlm_detection[i]) for i in range(1, 5)]
     except (ValueError, TypeError) as e:
         logger.debug(f"Invalid VLM detection coordinates: {vlm_detection[1:]}. Error: {e}")
         return None
 
-    bbox = tuple(coords)
+    bbox = (coords[0], coords[1], coords[2], coords[3])
 
     # Use -1 for class_id since VLM doesn't provide it
     # confidence defaults to 1.0 for VLM
     return Detection2DBBox(
-        bbox=bbox,  # type: ignore[arg-type]
+        bbox=bbox,
         track_id=track_id,
         class_id=-1,
         confidence=1.0,
@@ -121,7 +117,7 @@ class VlModel(Captioner):
     def warmup(self) -> None:
         """Warmup by running a simple query."""
         try:
-            image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()  # type: ignore[arg-type]
+            image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
             self.query(image, "What is this?")
         except Exception:
             pass
@@ -132,7 +128,9 @@ class VlModel(Captioner):
         response = self.query(image, query)
         return extract_json(response)  # type: ignore[return-value]
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
         format should be:

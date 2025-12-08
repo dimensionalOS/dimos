@@ -1,7 +1,7 @@
 import time
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
+from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations  # type: ignore[import-untyped]
 import pytest
 
 from dimos.core import LCMTransport
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     ids=["moondream", "qwen"],
 )
 @pytest.mark.gpu
-def test_vlm(model_class, model_name: str) -> None:
+def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name}")

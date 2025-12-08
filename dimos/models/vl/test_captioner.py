@@ -21,7 +21,7 @@ if TYPE_CHECKING:
     ids=["florence2", "moondream"],
 )
 @pytest.mark.gpu
-def test_captioner(model_class, model_name: str) -> None:
+def test_captioner(model_class: "type[Captioner]", model_name: str) -> None:
     """Test captioning functionality across different model types."""
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
@@ -29,7 +29,7 @@ def test_captioner(model_class, model_name: str) -> None:
 
     # Initialize model
     print(f"Loading {model_name} model...")
-    model: Captioner = model_class()
+    model = model_class()
     model.warmup()
 
     # Test single caption
