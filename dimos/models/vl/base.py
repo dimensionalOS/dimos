@@ -11,6 +11,50 @@ from dimos.utils.llm_utils import extract_json
 logger = logging.getLogger(__name__)
 
 
+class Captioner(ABC):
+    """Interface for models that can generate image captions."""
+
+    @abstractmethod
+    def caption(self, image: Image) -> str:
+        """Generate a text description of the image.
+
+        Args:
+            image: Input image to caption
+
+        Returns:
+            Text description of the image
+        """
+        ...
+
+    def caption_batch(self, *images: Image) -> list[str]:
+        """Generate captions for multiple images.
+
+        Default implementation calls caption() for each image.
+        Subclasses may override for more efficient batching.
+
+        Args:
+            images: Input images to caption
+
+        Returns:
+            List of text descriptions
+        """
+        return [self.caption(img) for img in images]
+
+
+class CaptioningModel(Captioner):
+    """Base class for lightweight caption-only models (no prompting).
+
+    Use this for dedicated captioning models like Florence-2, BLIP, GIT, etc.
+    that are optimized for captioning without requiring a text prompt.
+    """
+
+    device: str
+
+    def warmup(self) -> None:
+        """Optional warmup method to pre-load model."""
+        pass
+
+
 def vlm_detection_to_detection2d(
     vlm_detection: list, track_id: int, image: Image  # type: ignore[type-arg]
 ) -> Detection2DBBox | None:
@@ -60,9 +104,19 @@ def vlm_detection_to_detection2d(
     )
 
 
-class VlModel(ABC):
+class VlModel(Captioner):
+    """Vision-language model that can answer questions about images.
+
+    Inherits from Captioner, providing a default caption() implementation
+    that uses query() with a standard captioning prompt.
+    """
+
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
+
+    def caption(self, image: Image) -> str:
+        """Generate a caption by querying the VLM with a standard prompt."""
+        return self.query(image, "Describe this image concisely.")
 
     def warmup(self) -> None:
         try:

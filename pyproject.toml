@@ -108,7 +108,7 @@ dependencies = [
 
     # Inference
     "onnx",
-
+    "einops==0.8.1",
     # Multiprocess
     "dask[complete]==2025.5.1",
 
