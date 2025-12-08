@@ -106,7 +106,8 @@ class Florence2Model(CaptioningModel, HuggingFaceModel):
         )
 
         # Extract caption from parsed output
-        return parsed.get(task_prompt, generated_text).strip()
+        caption: str = parsed.get(task_prompt, generated_text)
+        return caption.strip()
 
     def caption_batch(self, *images: Image) -> list[str]:
         """Generate captions for multiple images efficiently.
