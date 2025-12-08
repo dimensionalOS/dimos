@@ -17,23 +17,26 @@ import torch
 import torch.nn.functional as F
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
 
+from dimos.models.base import HuggingFaceModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
-
-_CUDA_INITIALIZED = False
 
 
 class CLIPEmbedding(Embedding): ...
 
 
-class CLIPModel(EmbeddingModel[CLIPEmbedding]):
+class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
+
+    _model_class = HFCLIPModel
+    _default_dtype: torch.dtype = torch.float32  # CLIP typically uses float32
 
     def __init__(
         self,
         model_name: str = "openai/clip-vit-base-patch32",
         device: str | None = None,
         normalize: bool = False,
+        warmup: bool = False,
     ) -> None:
         """
         Initialize CLIP model.
@@ -42,13 +45,17 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
             model_name: HuggingFace model name (e.g., "openai/clip-vit-base-patch32")
             device: Device to run on (cuda/cpu), auto-detects if None
             normalize: Whether to L2 normalize embeddings
+            warmup: If True, immediately load and warmup the model.
         """
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.normalize = normalize
+        HuggingFaceModel.__init__(self, model_name=model_name, device=device, warmup=warmup)
 
-        # Load model and processor
-        self.model = HFCLIPModel.from_pretrained(model_name).eval().to(self.device)
-        self.processor = CLIPProcessor.from_pretrained(model_name)
+    def _load_model(self) -> HFCLIPModel:
+        self._ensure_cuda_initialized()
+        return HFCLIPModel.from_pretrained(self._model_name).eval().to(self._device)
+
+    def _load_processor(self) -> CLIPProcessor:
+        return CLIPProcessor.from_pretrained(self._model_name)
 
     def embed(self, *images: Image) -> CLIPEmbedding | list[CLIPEmbedding]:
         """Embed one or more images.
@@ -60,8 +67,8 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
 
         # Process images
         with torch.inference_mode():
-            inputs = self.processor(images=pil_images, return_tensors="pt").to(self.device)
-            image_features = self.model.get_image_features(**inputs)
+            inputs = self._processor(images=pil_images, return_tensors="pt").to(self._device)
+            image_features = self._model.get_image_features(**inputs)
 
             if self.normalize:
                 image_features = F.normalize(image_features, dim=-1)
@@ -80,10 +87,10 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            inputs = self.processor(text=list(texts), return_tensors="pt", padding=True).to(
-                self.device
+            inputs = self._processor(text=list(texts), return_tensors="pt", padding=True).to(
+                self._device
             )
-            text_features = self.model.get_text_features(**inputs)
+            text_features = self._model.get_text_features(**inputs)
 
             if self.normalize:
                 text_features = F.normalize(text_features, dim=-1)
@@ -97,26 +104,13 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
 
     def warmup(self) -> None:
         """Warmup the model with a dummy forward pass."""
-        # WORKAROUND: HuggingFace CLIP fails with CUBLAS_STATUS_ALLOC_FAILED when it's
-        # the first model to use CUDA. Initialize CUDA context with a dummy operation.
-        # This only needs to happen once per process.
-        global _CUDA_INITIALIZED
-        if self.device == "cuda" and not _CUDA_INITIALIZED:
-            try:
-                # Initialize CUDA with a small matmul operation to setup cuBLAS properly
-                _ = torch.zeros(1, 1, device="cuda") @ torch.zeros(1, 1, device="cuda")
-                torch.cuda.synchronize()
-                _CUDA_INITIALIZED = True
-            except Exception:
-                # If initialization fails, continue anyway - the warmup might still work
-                pass
+        super().warmup()
 
-        dummy_image = torch.randn(1, 3, 224, 224).to(self.device)
-        dummy_text_inputs = self.processor(text=["warmup"], return_tensors="pt", padding=True).to(
-            self.device
+        dummy_image = torch.randn(1, 3, 224, 224).to(self._device)
+        dummy_text_inputs = self._processor(text=["warmup"], return_tensors="pt", padding=True).to(
+            self._device
         )
 
         with torch.inference_mode():
-            # Use pixel_values directly for image warmup
-            self.model.get_image_features(pixel_values=dummy_image)
-            self.model.get_text_features(**dummy_text_inputs)
+            self._model.get_image_features(pixel_values=dummy_image)
+            self._model.get_text_features(**dummy_text_inputs)

@@ -13,12 +13,14 @@
 # limitations under the License.
 
 from pathlib import Path
+from typing import Any
 
 import open_clip  # type: ignore[import-not-found]
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
 
+from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel
 from dimos.msgs.sensor_msgs import Image
 
@@ -26,8 +28,13 @@ from dimos.msgs.sensor_msgs import Image
 class MobileCLIPEmbedding(Embedding): ...
 
 
-class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
+class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
     """MobileCLIP embedding model for vision-language re-identification."""
+
+    _model_name: str
+    _model_path: Path | str | None
+    _preprocess: Any
+    _tokenizer: Any
 
     def __init__(
         self,
@@ -35,6 +42,7 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         model_path: Path | str | None = None,
         device: str | None = None,
         normalize: bool = True,
+        warmup: bool = False,
     ) -> None:
         """
         Initialize MobileCLIP model.
@@ -44,23 +52,20 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
             model_path: Path to pretrained weights
             device: Device to run on (cuda/cpu), auto-detects if None
             normalize: Whether to L2 normalize embeddings
+            warmup: If True, immediately load and warmup the model.
         """
-        if not OPEN_CLIP_AVAILABLE:  # type: ignore[name-defined]
-            raise ImportError(
-                "open_clip is required for MobileCLIPModel. "
-                "Install it with: pip install open-clip-torch"
-            )
-
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self._model_name = model_name
+        self._model_path = model_path
         self.normalize = normalize
+        LocalModel.__init__(self, device=device, warmup=warmup)
 
-        # Load model
-        pretrained = str(model_path) if model_path else None
-        self.model, _, self.preprocess = open_clip.create_model_and_transforms(
-            model_name, pretrained=pretrained
+    def _load_model(self) -> Any:
+        pretrained = str(self._model_path) if self._model_path else None
+        model, _, self._preprocess = open_clip.create_model_and_transforms(
+            self._model_name, pretrained=pretrained
         )
-        self.tokenizer = open_clip.get_tokenizer(model_name)
-        self.model = self.model.eval().to(self.device)
+        self._tokenizer = open_clip.get_tokenizer(self._model_name)
+        return model.eval().to(self._device)
 
     def embed(self, *images: Image) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
         """Embed one or more images.
@@ -72,8 +77,8 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
 
         # Preprocess and batch
         with torch.inference_mode():
-            batch = torch.stack([self.preprocess(img) for img in pil_images]).to(self.device)
-            feats = self.model.encode_image(batch)
+            batch = torch.stack([self._preprocess(img) for img in pil_images]).to(self._device)
+            feats = self._model.encode_image(batch)
             if self.normalize:
                 feats = F.normalize(feats, dim=-1)
 
@@ -91,8 +96,8 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            text_tokens = self.tokenizer(list(texts)).to(self.device)
-            feats = self.model.encode_text(text_tokens)
+            text_tokens = self._tokenizer(list(texts)).to(self._device)
+            feats = self._model.encode_text(text_tokens)
             if self.normalize:
                 feats = F.normalize(feats, dim=-1)
 
@@ -105,8 +110,9 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
 
     def warmup(self) -> None:
         """Warmup the model with a dummy forward pass."""
-        dummy_image = torch.randn(1, 3, 224, 224).to(self.device)
-        dummy_text = self.tokenizer(["warmup"]).to(self.device)
+        super().warmup()
+        dummy_image = torch.randn(1, 3, 224, 224).to(self._device)
+        dummy_text = self._tokenizer(["warmup"]).to(self._device)
         with torch.inference_mode():
-            self.model.encode_image(dummy_image)
-            self.model.encode_text(dummy_text)
+            self._model.encode_image(dummy_image)
+            self._model.encode_text(dummy_text)

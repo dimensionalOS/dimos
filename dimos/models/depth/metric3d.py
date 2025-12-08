@@ -12,32 +12,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import cv2
 import torch
 
-# May need to add this back for import to work
-# external_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'external', 'Metric3D'))
-# if external_path not in sys.path:
-#     sys.path.append(external_path)
+from dimos.models.base import LocalModel
 
 
-class Metric3D:
-    def __init__(self, camera_intrinsics=None, gt_depth_scale: float=256.0) -> None:  # type: ignore[no-untyped-def]
-        # self.conf = get_config("zoedepth", "infer")
-        # self.depth_model = build_model(self.conf)
-        self.depth_model = torch.hub.load(  # type: ignore[no-untyped-call]
-            "yvanyin/metric3d", "metric3d_vit_small", pretrain=True
-        ).cuda()
-        if torch.cuda.device_count() > 1:
-            print(f"Using {torch.cuda.device_count()} GPUs!")
-            # self.depth_model = torch.nn.DataParallel(self.depth_model)
-        self.depth_model.eval()
+class Metric3D(LocalModel):
+    def __init__(
+        self,
+        camera_intrinsics: list[float] | None = None,
+        gt_depth_scale: float = 256.0,
+        device: str | None = None,
+        warmup: bool = False,
+    ) -> None:
+        # Default to CUDA for Metric3D (was hardcoded before)
+        LocalModel.__init__(self, device=device or "cuda", warmup=warmup)
 
         self.intrinsic = camera_intrinsics
-        self.intrinsic_scaled = None
-        self.gt_depth_scale = gt_depth_scale  # And this
-        self.pad_info = None
-        self.rgb_origin = None
+        self.intrinsic_scaled: list[float] | None = None
+        self.gt_depth_scale = gt_depth_scale
+        self.pad_info: list[int] | None = None
+        self.rgb_origin: Any = None
+
+    def _load_model(self) -> Any:
+        model = torch.hub.load(  # type: ignore[no-untyped-call]
+            "yvanyin/metric3d", "metric3d_vit_small", pretrain=True
+        )
+        model = model.to(self._device)
+        model.eval()
+        return model
 
     """
     Input: Single image in RGB format
@@ -70,7 +76,7 @@ class Metric3D:
         img = self.rescale_input(img, self.rgb_origin)  # type: ignore[no-untyped-call]
 
         with torch.no_grad():
-            pred_depth, confidence, output_dict = self.depth_model.inference({"input": img})
+            pred_depth, confidence, output_dict = self._model.inference({"input": img})
 
         # Convert to PIL format
         depth_image = self.unpad_transform_depth(pred_depth)  # type: ignore[no-untyped-call]
@@ -125,7 +131,7 @@ class Metric3D:
         std = torch.tensor([58.395, 57.12, 57.375]).float()[:, None, None]
         rgb = torch.from_numpy(rgb.transpose((2, 0, 1))).float()
         rgb = torch.div((rgb - mean), std)
-        rgb = rgb[None, :, :, :].cuda()
+        rgb = rgb[None, :, :, :].to(self._device)
         return rgb
 
     def unpad_transform_depth(self, pred_depth):  # type: ignore[no-untyped-def]
@@ -159,7 +165,7 @@ class Metric3D:
         if depth_file is not None:
             gt_depth = cv2.imread(depth_file, -1)
             gt_depth = gt_depth / self.gt_depth_scale
-            gt_depth = torch.from_numpy(gt_depth).float().cuda()  # type: ignore[assignment]
+            gt_depth = torch.from_numpy(gt_depth).float().to(self._device)  # type: ignore[assignment]
             assert gt_depth.shape == pred_depth.shape
 
             mask = gt_depth > 1e-8

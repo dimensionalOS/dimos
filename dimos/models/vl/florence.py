@@ -12,32 +12,30 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import cached_property
-
 from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM, AutoProcessor  # type: ignore[import-untyped]
 
+from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import CaptioningModel
 from dimos.msgs.sensor_msgs import Image
 
 
-class Florence2Model(CaptioningModel):
+class Florence2Model(CaptioningModel, HuggingFaceModel):
     """Florence-2 captioning model from Microsoft.
 
     A lightweight, fast captioning model optimized for generating image descriptions
     without requiring a text prompt. Supports multiple caption detail levels.
     """
 
-    _model_name: str
-    _device: str
-    _dtype: torch.dtype
+    _model_class = AutoModelForCausalLM
 
     def __init__(
         self,
-        model_name: str = "microsoft/Florence-2-large",
+        model_name: str = "microsoft/Florence-2-base",
         device: str | None = None,
         dtype: torch.dtype = torch.float16,
+        warmup: bool = False,
     ) -> None:
         """Initialize Florence-2 model.
 
@@ -47,27 +45,16 @@ class Florence2Model(CaptioningModel):
                 - "microsoft/Florence-2-large" (~0.8B, better quality)
             device: Device to run on (cuda/cpu), auto-detects if None
             dtype: Model dtype (float16 recommended for GPU)
+            warmup: If True, immediately load and warmup the model.
         """
-        self._model_name = model_name
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._dtype = dtype
-
-    @cached_property
-    def _model(self) -> AutoModelForCausalLM:
-        model = AutoModelForCausalLM.from_pretrained(
-            self._model_name,
-            trust_remote_code=True,
-            torch_dtype=self._dtype,
+        HuggingFaceModel.__init__(
+            self, model_name=model_name, device=device, dtype=dtype, warmup=warmup
         )
-        return model.to(self._device)
 
-    @cached_property
-    def _processor(self) -> AutoProcessor:
-        return AutoProcessor.from_pretrained(self._model_name, trust_remote_code=True)
-
-    @property
-    def device(self) -> str:
-        return self._device
+    def _load_processor(self) -> AutoProcessor:
+        return AutoProcessor.from_pretrained(
+            self._model_name, trust_remote_code=self._trust_remote_code
+        )
 
     def caption(self, image: Image, detail: str = "normal") -> str:
         """Generate a caption for the image.
@@ -96,10 +83,7 @@ class Florence2Model(CaptioningModel):
 
         # Process inputs
         inputs = self._processor(text=task_prompt, images=pil_image, return_tensors="pt")
-        inputs = {
-            k: v.to(self._device, dtype=self._dtype if v.is_floating_point() else None)
-            for k, v in inputs.items()
-        }
+        inputs = self._move_inputs_to_device(inputs)
 
         # Generate
         with torch.inference_mode():
@@ -142,10 +126,7 @@ class Florence2Model(CaptioningModel):
         inputs = self._processor(
             text=[task_prompt] * len(images), images=pil_images, return_tensors="pt", padding=True
         )
-        inputs = {
-            k: v.to(self._device, dtype=self._dtype if v.is_floating_point() else None)
-            for k, v in inputs.items()
-        }
+        inputs = self._move_inputs_to_device(inputs)
 
         # Generate
         with torch.inference_mode():
@@ -171,17 +152,13 @@ class Florence2Model(CaptioningModel):
 
     def warmup(self) -> None:
         """Warmup the model with a dummy forward pass."""
-        # Access cached properties to load model
-        _ = self._model
-        _ = self._processor
+        # Load model and processor via base class
+        super().warmup()
 
         # Run a small inference
         dummy = PILImage.new("RGB", (224, 224), color="gray")
         inputs = self._processor(text="<CAPTION>", images=dummy, return_tensors="pt")
-        inputs = {
-            k: v.to(self._device, dtype=self._dtype if v.is_floating_point() else None)
-            for k, v in inputs.items()
-        }
+        inputs = self._move_inputs_to_device(inputs)
 
         with torch.inference_mode():
             self._model.generate(**inputs, max_new_tokens=10)

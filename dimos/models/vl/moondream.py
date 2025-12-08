@@ -1,4 +1,3 @@
-from functools import cached_property
 import warnings
 
 import numpy as np
@@ -6,36 +5,29 @@ from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 
+from dimos.models.base import HuggingFaceModel
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 
 
-class MoondreamVlModel(VlModel):
-    _model_name: str
-    _device: str
-    _dtype: torch.dtype
+class MoondreamVlModel(VlModel, HuggingFaceModel):
+    _model_class = AutoModelForCausalLM
+    _default_dtype: torch.dtype = torch.bfloat16
 
     def __init__(
         self,
         model_name: str = "vikhyatk/moondream2",
         device: str | None = None,
         dtype: torch.dtype = torch.bfloat16,
+        warmup: bool = False,
     ) -> None:
-        self._model_name = model_name
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._dtype = dtype
+        HuggingFaceModel.__init__(self, model_name=model_name, device=device, dtype=dtype, warmup=warmup)
 
-    @cached_property
-    def _model(self) -> AutoModelForCausalLM:
-        model = AutoModelForCausalLM.from_pretrained(
-            self._model_name,
-            trust_remote_code=True,
-            torch_dtype=self._dtype,
-        )
-        model = model.to(self._device)
+    def _load_model(self) -> AutoModelForCausalLM:
+        """Load model with compile() for optimization."""
+        model = super()._load_model()
         model.compile()
-
         return model
 
     def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
