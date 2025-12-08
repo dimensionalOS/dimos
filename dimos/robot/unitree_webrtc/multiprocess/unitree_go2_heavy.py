@@ -112,9 +112,10 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
             skill_library = MyUnitreeSkills()
         self.skill_library = skill_library
 
-        # Initialize spatial memory (will be created after connection is established)
-        self._spatial_memory = None
+        # Initialize spatial memory module (will be deployed after connection is established)
+        self.spatial_memory_module = None
         self._video_stream = None
+        self.new_memory = new_memory
 
         # Tracking streams (initialized after start)
         self.person_tracker = None
@@ -132,18 +133,25 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
         # Now we have connection publishing to LCM, initialize video stream
         self._video_stream = self.get_video_stream(fps=10)  # Lower FPS for processing
 
-        # Initialize spatial memory if perception is enabled
-        if self.enable_perception and self._video_stream is not None:
-            self._spatial_memory = SpatialMemory(
+        # Deploy Spatial Memory Module if perception is enabled
+        if self.enable_perception:
+            self.spatial_memory_module = self.dimos.deploy(
+                SpatialMemory,
                 collection_name=self.spatial_memory_collection,
                 db_path=self.db_path,
                 visual_memory_path=self.visual_memory_path,
-                new_memory=True,  # Always create new for now
+                new_memory=self.new_memory,
                 output_dir=self.spatial_memory_dir,
-                video_stream=self._video_stream,
-                get_pose=self.get_pose,
             )
-            logger.info("Spatial memory initialized")
+
+            # Connect video and odometry streams to spatial memory
+            self.spatial_memory_module.video.connect(self.connection.video)
+            self.spatial_memory_module.odom.connect(self.connection.odom)
+
+            # Start the spatial memory module
+            self.spatial_memory_module.start()
+
+            logger.info("Spatial memory module deployed and connected")
 
             # Initialize person and object tracking
             self.person_tracker = PersonTrackingStream(
@@ -179,12 +187,12 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
 
     @property
     def spatial_memory(self) -> Optional[SpatialMemory]:
-        """Get the robot's spatial memory.
+        """Get the robot's spatial memory module.
 
         Returns:
-            SpatialMemory instance or None if perception is disabled
+            SpatialMemory module instance or None if perception is disabled
         """
-        return self._spatial_memory
+        return self.spatial_memory_module
 
     @property
     def video_stream(self) -> Optional[Observable]:
