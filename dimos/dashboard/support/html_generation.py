@@ -95,6 +95,12 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
         <style>
             body {
                 --terminal-panel-width: 30vw;
+                display: flex;
+                justify-content: center;
+                flex-direction: row;
+                background-color: #0d1011;
+                color: whitesmoke;
+                font-family: sans-serif;
             }
             #terminal-side {
                 width: var(--terminal-panel-width);
@@ -141,7 +147,7 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
             }
     </style>
     </head>
-    <body style="display: flex; justify-content: center; flex-direction: row; background-color: #0d1011;">
+    <body>
         """+zellij_html+"""
     </body>
     <script type="module">

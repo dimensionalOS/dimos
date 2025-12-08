@@ -208,7 +208,7 @@ class ZellijManager:
             proc = subprocess.Popen(
                 # zellij attach --create-background my-session-name options --default-layout
                 # ["zellij", "attach", "--create-background", session_name, "options", "--web-sharing=on",],
-                ["zellij", "attach", "--create-background", session_name, "options", "--web-sharing=on", "--default-layout", zellij_path],
+                ["zellij", "attach", "--force-run-commands", "--create-background", session_name, "options", "--web-sharing=on", "--default-layout", zellij_path],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

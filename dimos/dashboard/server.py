@@ -327,11 +327,37 @@ def start_dashboard_server_thread(
 
 
 if __name__ == "__main__":
-    t = start_dashboard_server(terminal_commands={
-        "agent-spy": "dimos agentspy",
-        "lcm-spy": "dimos lcmspy",
-        # "skill-spy": "dimos skillspy",
-    })
+    import rerun as rr
+    import rerun.blueprint as rrb
+    # import rerun.blueprint as rrb
+    # there's basically 3 parts to rerun
+        # 1. some kind of python init that does local message aggregation
+        # 2. the actual (separate process) grpc message aggregator
+        # 3. the viewer/renderer
+    # init starts part 1 (needed before rr.log or rr.send_blueprint)
+    # we manually start the gprc here (part 2)
+    # we serve our own viewer via a webserver (part 3) which is why the init has spawn=False 
+    rr.init("rerun_main", spawn=False)
+    # send an empty blueprint to get the initial state
+    rr.send_blueprint(rrb.Blueprint(
+        rrb.Tabs(
+            rrb.Spatial3DView(
+                name="Spatial3D",
+                origin="/",
+                line_grid=rrb.LineGrid3D(spacing=1.0, stroke_width=1.0),
+            ),
+        )
+    ))
+    print("starting server")
+    t = start_dashboard_server_thread(
+        zellij_session_name="dimos-dashboard",
+        rrd_url=rr.serve_grpc(),
+        terminals={
+            "agent-spy": "dimos agentspy",
+            "lcm-spy": "dimos lcmspy",
+            # "skill-spy": "dimos skillspy",
+        },
+    )
     try:
         while t.is_alive():
             t.join(timeout=0.5)
