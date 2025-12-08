@@ -45,20 +45,16 @@ class Dashboard(Module):
 
     @rpc
     def start(self, **kwargs) -> None:
-        file_path = './dashboard_run_once_hack.ignore.txt'
-        try:
-            # if file exits, then we've already run this once
-            with open(file_path, 'r') as f:
-                output = f.read()
-            print(f'''output = {output}''')
+        import blissful_basics as bb
+        import warnings
+        warnings.warn(f'''debug 4280249''')
+        # tries to start several times for some reason 
+        print(f'''__name__ = {__name__}''')
+        print(f'''id_test = {id_test}''')
+        print(f'''kwargs = {kwargs}''')
+        rr.init("rerun_main", spawn=False)
+        if __name__ == "dimos.dashboard.module":
             return
-        except:
-            print("#")
-            print("# Starting Dashboard")
-            print("#")
-            with open(file_path, 'w') as the_file:
-                the_file.write(str("exists"))
-        
         # there's basically 3 parts to rerun
             # 1. some kind of python init that does local message aggregation
             # 2. the actual (separate process) grpc message aggregator
@@ -66,36 +62,29 @@ class Dashboard(Module):
         # init starts part 1 (needed before rr.log or rr.send_blueprint)
         # we manually start the gprc here (part 2)
         # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
-        rr.init("rerun_main", spawn=False, strict=True)
+        rr.init("rerun_main", spawn=False)
         # send an empty blueprint to get the initial state
         default_blueprint = rrb.Blueprint(
             rrb.Tabs(
                 rrb.Spatial3DView(
                     name="Spatial3D",
-                    origin="/spatial3d",
+                    origin=self.entities.spatial3d,
                     line_grid=rrb.LineGrid3D(spacing=1.0, stroke_width=1.0),
-                ),
-                rrb.Spatial2DView(
-                    name="Spatial2D",
-                    origin="/color_image",
                 ),
             )
         )
         rr.send_blueprint(default_blueprint)
-        
         # get the rrd_url if it wasn't provided
-        print("[Dashboard] serving grpc")
         self.rrd_url = self.rrd_url or rr.serve_grpc(
             grpc_port=self.rerun_grpc_port,
-            default_blueprint=default_blueprint,
+            default_blueprint=self.layout.rerun_blueprint,
             server_memory_limit=self.rerun_server_memory_limit,
         )
-        print(f'''[Dashboard] starting dashboard server with url = {self.rrd_url}''')
         thread = start_dashboard_server_thread(**self.__dict__)
+        
         @self._disposables.add
         @Disposable
         def _cleanup_dashboard_thread():
             # Attempt to let the server thread shut down gracefully when the module stops.
             if thread.is_alive():
                 thread.join(timeout=1.0)
-        
