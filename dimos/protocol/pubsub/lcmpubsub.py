@@ -78,6 +78,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     def subscribe(
         self, topic: Topic, callback: Callable[[bytes, Topic], Any]
     ) -> Callable[[], None]:
+        print("[LCMPubSubBase] subscribing to", topic)
         if self.l is None:
             logger.error("Tried to subscribe after LCM was closed")
 

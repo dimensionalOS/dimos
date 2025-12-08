@@ -29,6 +29,7 @@ class Memory(PubSub[str, Any]):
             cb(message, topic)
 
     def subscribe(self, topic: str, callback: Callable[[Any, str], None]) -> Callable[[], None]:
+        print("[Memory] subscribing to", topic)
         self._map[topic].append(callback)
 
         def unsubscribe() -> None:

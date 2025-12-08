@@ -282,7 +282,8 @@ class ModuleBlueprintSet:
         self._deploy_all_modules(module_coordinator, global_config)
         self._connect_transports(module_coordinator)
         self._connect_rpc_methods(module_coordinator)
-
+        
+        print("[ModuleBlueprint] calling module_coordinator.start_all_modules()")
         module_coordinator.start_all_modules()
 
         return module_coordinator

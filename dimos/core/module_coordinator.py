@@ -58,6 +58,7 @@ class ModuleCoordinator(Resource):
 
     def start_all_modules(self) -> None:
         for module in self._deployed_modules.values():
+            print("[ModuleCoordinator] calling module.start()")
             module.start()
 
     def get_instance(self, module: type[T]) -> T | None:

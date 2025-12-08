@@ -26,38 +26,41 @@ from dimos.core.blueprints import autoconnect
 from dimos.hardware.camera.module import CameraModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
 from dimos.dashboard.module import Dashboard
-from dimos.dashboard.rerun import layouts, RerunHook
 from dimos.msgs.sensor_msgs import Image
 
-layout = layouts.AllTabs(collapse_panels=False)
+class CameraListener(Module):
+    color_image: In[Image] = None  # type: ignore[assignment]
+    
+    @rpc
+    def start(self) -> None:
+        @self.color_image.subscribe
+        def _on_frame(img: Image) -> None:
+            self._count += 1
+            if self._count % 20 == 0:
+                rr.log(f"/color_image", img.to_rerun())
+                print(
+                    f"[camera-listener] frame={self._count} ts={img.ts:.3f} "
+                    f"shape={img.height}x{img.width}"
+                )
+
 
 blueprint = (
     autoconnect(
-        CameraModule.blueprint(
-            hardware=lambda: Webcam(
-                camera_index=0,
-                frequency=15,
-                stereo_slice="left",
-                camera_info=zed.CameraInfo.SingleWebcam,
-            ),
-        ),
-        CameraListener.blueprint(),
-        Dashboard(
+        CameraModule.blueprint(),
+        Dashboard().blueprint(
             layout=layout,
+            auto_open=True,
             terminal_commands={
+                "agent-spy": "htop",
                 "lcm-spy": "dimos lcmspy",
-                "skill-spy": "dimos skillspy",
+                # "skill-spy": "dimos skillspy",
             },
-        ).blueprint(),
-        RerunHook(
-            "color_image",
-            Image,
-            target_entity=layout.entities.spatial2d,
-        ).blueprint(),
+        ),
     )
     .transports({("color_image", Image): pSHMTransport("/cam/image")})
     .global_config(n_dask_workers=1)
 )
+
 coordinator = blueprint.build()
 print("Webcam pipeline running. Press Ctrl+C to stop.")
 coordinator.loop()

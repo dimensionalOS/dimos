@@ -132,6 +132,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
 
     def subscribe(self, topic: str, callback: Callable[[Any, str], None]) -> Callable[[], None]:
         """Subscribe to a topic with a callback."""
+        print("[Redis] subscribing to", topic)
         if not self._pubsub:
             raise RuntimeError("Redis pubsub not initialized")
 

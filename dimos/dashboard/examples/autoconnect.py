@@ -17,15 +17,10 @@ from dimos.msgs.sensor_msgs import Image
 
 class CameraListener(Module):
     color_image: In[Image] = None  # type: ignore[assignment]
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
-        self._count = 0
-
+    
     @rpc
     def start(self) -> None:
-        super().start()
-
+        @self.color_image.subscribe
         def _on_frame(img: Image) -> None:
             self._count += 1
             if self._count % 20 == 0:
@@ -35,22 +30,11 @@ class CameraListener(Module):
                     f"shape={img.height}x{img.width}"
                 )
 
-        print("camera subscribing")
-        unsub = self.color_image.subscribe(_on_frame)
-        self._disposables.add(Disposable(unsub))
-
 
 layout = layouts.AllTabs(collapse_panels=False)
 blueprint = (
     autoconnect(
-        CameraModule.blueprint(
-            hardware=lambda: Webcam(
-                camera_index=0,
-                frequency=15,
-                stereo_slice="left",
-                camera_info=zed.CameraInfo.SingleWebcam,
-            ),
-        ),
+        CameraModule.blueprint(),
         Dashboard().blueprint(
             layout=layout,
             auto_open=True,

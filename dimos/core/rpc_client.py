@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import warnings
 from collections.abc import Callable
 from typing import Any
 
@@ -65,7 +66,14 @@ class RpcCall:
             if self._stop_rpc_client:
                 self._stop_rpc_client()
             return None
-
+        
+        print(f'''rpc calling = {f"{self._remote_name}/{self._name}"}''')
+        if f"{self._remote_name}/{self._name}" == "Dashboard/start":
+            import blissful_basics as bb
+            # kwargs.update({"_call_id": random()})
+            # raise Exception(f'''kwargs = {kwargs}''')
+            warnings.warn(f'''debug 302494''')
+        
         result, unsub_fn = self._rpc.call_sync(f"{self._remote_name}/{self._name}", (args, kwargs))  # type: ignore[arg-type]
         self._unsub_fns.append(unsub_fn)
         return result

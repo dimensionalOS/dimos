@@ -171,8 +171,10 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
     def call(self, name: str, arguments: Args, cb: Callable | None):  # type: ignore[no-untyped-def, type-arg]
         if cb is None:
+            print("[PubSubRPCMixin] calling self.call_nowait()")
             return self.call_nowait(name, arguments)
 
+        print("[PubSubRPCMixin] calling self.call_cb()")
         return self.call_cb(name, arguments, cb)
 
     def call_cb(self, name: str, arguments: Args, cb: Callable[..., Any]) -> Any:
@@ -194,6 +196,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                 callbacks_dict: dict[float, Callable[..., Any]] = {}
 
                 def shared_response_handler(msg: MsgT, _: TopicT) -> None:
+                    print("[PubSubRPCMixin] shared_response_handler", msg, _)
                     res = self._decodeRPCRes(msg)  # type: ignore[arg-type]
                     res_id = res.get("id")
                     if res_id is None:
@@ -221,6 +224,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                         callback(res.get("res"))
 
                 # Create single shared subscription
+                print("[PubSubRPCMixin] subscribing to topic_res", topic_res)
                 unsub = self.subscribe(topic_res, shared_response_handler)
                 self._response_subs[topic_res_key] = (unsub, callbacks_dict)
 
@@ -229,6 +233,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
             callbacks_dict[msg_id] = cb
 
         # Publish request
+        print("[PubSubRPCMixin] publishing topic_req", topic_req)
         self.publish(topic_req, self._encodeRPCReq(req))  # type: ignore[arg-type]
 
         # Return unsubscribe function that removes this callback from the dict
