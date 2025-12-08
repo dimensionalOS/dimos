@@ -119,9 +119,10 @@ class VlModel(Captioner):
         return self.query(image, "Describe this image concisely.")
 
     def warmup(self) -> None:
+        """Warmup by running a simple query."""
         try:
             image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()  # type: ignore[arg-type]
-            self._model.detect(image, "person", settings={"max_objects": 1})  # type: ignore[attr-defined]
+            self.query(image, "What is this?")
         except Exception:
             pass
 
