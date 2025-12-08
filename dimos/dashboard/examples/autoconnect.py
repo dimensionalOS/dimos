@@ -40,7 +40,6 @@ class CameraListener(Module):
         self._disposables.add(Disposable(unsub))
 
 
-layout = layouts.AllTabs(collapse_panels=False)
 blueprint = (
     autoconnect(
         CameraModule.blueprint(
@@ -52,7 +51,6 @@ blueprint = (
             ),
         ),
         Dashboard().blueprint(
-            layout=layout,
             auto_open=True,
             terminal_commands={
                 "agent-spy": "htop",
