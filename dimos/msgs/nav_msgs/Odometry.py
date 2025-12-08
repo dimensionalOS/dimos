@@ -261,17 +261,18 @@ class Odometry(LCMOdometry, Timestamped):  # type: ignore[misc]
 
     def to_rerun(self) -> rr.Transform3D:
         """Convert odometry pose to a Rerun transform."""
+        quat = rr.Quaternion(xyzw=np.array(
+            [
+                self.pose.pose.orientation.x,
+                self.pose.pose.orientation.y,
+                self.pose.pose.orientation.z,
+                self.pose.pose.orientation.w,
+            ],
+            dtype=np.float32,
+        ))
         return rr.Transform3D(
             translation=np.array([self.x, self.y, self.z], dtype=np.float32),
-            quaternion=np.array(
-                [
-                    self.orientation.x,
-                    self.orientation.y,
-                    self.orientation.z,
-                    self.orientation.w,
-                ],
-                dtype=np.float32,
-            ),
+            rotation=quat,
             from_parent=True,
         )
 
