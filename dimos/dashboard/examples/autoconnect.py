@@ -12,7 +12,6 @@ from dimos.msgs.sensor_msgs import Image
 
 
 from dimos.dashboard.module import Dashboard
-from dimos.dashboard.rerun import layouts, RerunHook
 from dimos.msgs.sensor_msgs import Image
 
 
@@ -30,12 +29,13 @@ class CameraListener(Module):
         def _on_frame(img: Image) -> None:
             self._count += 1
             if self._count % 20 == 0:
+                rr.log(f"/color_image", img.to_rerun())
                 print(
                     f"[camera-listener] frame={self._count} ts={img.ts:.3f} "
                     f"shape={img.height}x{img.width}"
                 )
 
-        print("subscribing")
+        print("camera subscribing")
         unsub = self.color_image.subscribe(_on_frame)
         self._disposables.add(Disposable(unsub))
 
@@ -51,7 +51,6 @@ blueprint = (
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),
         ),
-        CameraListener.blueprint(),
         Dashboard().blueprint(
             layout=layout,
             auto_open=True,
@@ -61,11 +60,6 @@ blueprint = (
                 # "skill-spy": "dimos skillspy",
             },
         ),
-        RerunHook(
-            "color_image",
-            Image,
-            target_entity=layout.entities.spatial2d,
-        ).blueprint(),
     )
     .transports({("color_image", Image): pSHMTransport("/cam/image")})
     .global_config(n_dask_workers=1)
@@ -81,4 +75,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main() 
