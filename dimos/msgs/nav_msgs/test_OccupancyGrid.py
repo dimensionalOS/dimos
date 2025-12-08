@@ -23,6 +23,7 @@ import pytest
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues
+from dimos.msgs.nav_msgs.OccupancyGridImage import OccupancyGridImage
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.testing import get_data
@@ -333,15 +334,18 @@ def test_grid_pixel_roundtrip_and_pixel_to_world():
     size = (100, 200)
     gx, gy = 5, 10
 
-    px, py = og.grid_to_pixel(gx, gy, size=size, flip_vertical=True)
+    og_image = OccupancyGridImage(og, size=size, flip_vertical=True)
+    og_image.encode()
+
+    px, py = og_image.grid_to_pixel(gx, gy, size=size, flip_vertical=True)
     assert isinstance(px, int) and isinstance(py, int)
 
     # pixel -> grid should invert when flip_vertical is True and sizes match
-    rgx, rgy = og.pixel_to_grid(px, py, size=size, flip_vertical=True)
+    rgx, rgy = og_image.pixel_to_grid(px, py, size=size, flip_vertical=True)
     assert (rgx, rgy) == (gx, gy)
 
     # check pixel_to_world gives expected world coords (grid->world uses resolution)
-    world = og.pixel_to_world(px, py, size=size, flip_vertical=True)
+    world = og_image.pixel_to_world(px, py, size=size, flip_vertical=True)
     assert pytest.approx(world.x, rel=1e-6) == gx * og.resolution
     assert pytest.approx(world.y, rel=1e-6) == gy * og.resolution
 
@@ -360,20 +364,23 @@ def test_is_free_space_and_get_closest_free_point():
 
     size = (100, 100)
 
+    og_image = OccupancyGridImage(og, size=size, flip_vertical=False)
+    og_image.encode()
+
     # choose a pixel corresponding to an occupied cell (2,2)
-    occ_px, occ_py = og.grid_to_pixel(2, 2, size=size, flip_vertical=False)
-    assert og.is_free_space(occ_px, occ_py, size=size, flip_vertical=False) is False
+    occ_px, occ_py = og_image.grid_to_pixel(2, 2, size=size, flip_vertical=False)
+    assert og_image.is_free_space(occ_px, occ_py, size=size, flip_vertical=False) is False
 
     # closest free point should be the free cell we set
-    closest = og.get_closest_free_point(
+    closest = og_image.get_closest_free_point(
         occ_px, occ_py, size=size, flip_vertical=False, max_search_radius=10
     )
     assert closest is not None
-    expected = og.grid_to_pixel(free_x, free_y, size=size, flip_vertical=False)
+    expected = og_image.grid_to_pixel(free_x, free_y, size=size, flip_vertical=False)
     assert closest == expected
 
     # with tiny search radius it should return None
-    none_closest = og.get_closest_free_point(
+    none_closest = og_image.get_closest_free_point(
         occ_px, occ_py, size=size, flip_vertical=False, max_search_radius=1
     )
     assert none_closest is None
@@ -390,7 +397,9 @@ def test_grid_to_image_color_mapping():
 
     og = OccupancyGrid(grid=grid, resolution=0.05, origin=Pose(0, 0, 0))
 
-    image = og.grid_to_image(size=(2, 2), flip_vertical=False)
+    og_image = OccupancyGridImage(og, size=(2, 2), flip_vertical=False)
+    image = og_image.encode()
+
     arr = image.data
 
     # unknown -> yellow [255,255,0]

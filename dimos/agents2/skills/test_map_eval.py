@@ -27,6 +27,7 @@ from dimos.agents2.skills.interpret_map import InterpretMapSkill
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGridImage import OccupancyGridImage
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 from dimos.utils.generic import extract_json_from_llm_response
@@ -138,12 +139,13 @@ def test_point_placement(test_map, vl_model):
     occupancy_grid = occupancy_grid_from_image(test_map["image_path"])
 
     # set robot pose for testing
-    occupancy_grid.robot_pose = Pose(
+    robot_pose = Pose(
         position=test_map["robot_pose"]["position"],
         orientation=test_map["robot_pose"]["orientation"],
     )
 
-    image = occupancy_grid.grid_to_image(flip_vertical=False)
+    og_image = OccupancyGridImage(occupancy_grid, flip_vertical=False, robot_pose=robot_pose)
+    image = og_image.encode()
 
     for qna in test_map["questions"]:
         prompt = goal_placement_prompt(qna["query"])
@@ -184,13 +186,15 @@ def test_point_placement(test_map, vl_model):
 )
 def test_map_comprehension(test_map, vl_model):
     occupancy_grid = occupancy_grid_from_image(test_map["image_path"])
+
     # set robot pose for testing
-    occupancy_grid.robot_pose = Pose(
+    robot_pose = Pose(
         position=test_map["robot_pose"]["position"],
         orientation=test_map["robot_pose"]["orientation"],
     )
 
-    image = occupancy_grid.grid_to_image(flip_vertical=False)
+    og_image = OccupancyGridImage(occupancy_grid, flip_vertical=False, robot_pose=robot_pose)
+    image = og_image.encode()
 
     # query and score responses
     responses = {}

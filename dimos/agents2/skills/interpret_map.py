@@ -25,6 +25,7 @@ from dimos.core.stream import In, Out
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.nav_msgs.OccupancyGridImage import OccupancyGridImage
 from dimos.protocol.skill.skill import rpc, skill
 from dimos.utils.generic import extract_json_from_llm_response
 from dimos.utils.logging_config import setup_logger
@@ -85,7 +86,11 @@ class InterpretMapSkill(SkillModule):
             logger.info(f"Robot pose: {robot_pose}")
             costmap.robot_pose = robot_pose
 
-        image = costmap.grid_to_image(size=(1024, 1024), flip_vertical=True)
+        grid_encoder = OccupancyGridImage(
+            occupancy_grid=costmap, size=(1024, 1024), flip_vertical=True, robot_pose=robot_pose
+        )
+
+        image = grid_encoder.encode()
 
         prompt = (
             "Look at this image carefully \n"
@@ -110,11 +115,11 @@ class InterpretMapSkill(SkillModule):
         x, y = point["point"]
 
         # ensure point is in free space, else choose nearest free space
-        if not costmap.is_free_space(x, y):
+        if not grid_encoder.is_free_space(x, y):
             logger.warning(
                 f"Identified goal position ({x}, {y}) is not in free space, choosing nearest free space instead."
             )
-            closest_free_point = costmap.get_closest_free_point(x, y)
+            closest_free_point = grid_encoder.get_closest_free_point(x, y)
             if closest_free_point is not None:
                 x, y = closest_free_point
 
@@ -126,7 +131,7 @@ class InterpretMapSkill(SkillModule):
             )
 
         # get world coordinates from pixel for navigation
-        goal_pose = costmap.pixel_to_world(x, y, size=(1024, 1024), flip_vertical=True)
+        goal_pose = grid_encoder.pixel_to_world(x, y, size=(1024, 1024), flip_vertical=True)
 
         return goal_pose
 
