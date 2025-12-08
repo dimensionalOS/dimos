@@ -114,7 +114,7 @@ class Transform(Timestamped):
         )
 
     @classmethod
-    def from_pose(cls, pose: "Pose | PoseStamped") -> "Transform":
+    def from_pose(cls, frame_id: str, pose: "Pose | PoseStamped") -> "Transform":
         """Create a Transform from a Pose or PoseStamped.
 
         Args:
@@ -133,7 +133,7 @@ class Transform(Timestamped):
                 translation=pose.position,
                 rotation=pose.orientation,
                 frame_id=pose.frame_id,
-                child_frame_id="",  # PoseStamped doesn't have child_frame_id
+                child_frame_id=frame_id,
                 ts=pose.ts,
             )
         elif isinstance(pose, Pose):

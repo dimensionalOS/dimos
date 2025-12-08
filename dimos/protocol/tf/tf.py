@@ -23,6 +23,7 @@ from typing import Optional, TypeVar
 
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.tf2_msgs import TFMessage
+from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.service.lcmservice import Service
 from dimos.types.timestamped import TimestampedCollection
@@ -43,10 +44,10 @@ class TFSpec(Service[TFConfig]):
         super().__init__(**kwargs)
 
     @abstractmethod
-    def send(self, *args: Transform) -> None: ...
+    def publish(self, *args: Transform) -> None: ...
 
     @abstractmethod
-    def send_static(self, *args: Transform) -> None: ...
+    def publish_static(self, *args: Transform) -> None: ...
 
     @abstractmethod
     def get(
@@ -250,7 +251,12 @@ class PubSubTF(MultiTBuffer, TFSpec):
     def __init__(self, **kwargs) -> None:
         TFSpec.__init__(self, **kwargs)
         MultiTBuffer.__init__(self, self.config.buffer_size)
-        self.pubsub = self.config.pubsub
+
+        # Check if pubsub is a class (callable) or an instance
+        if callable(self.config.pubsub):
+            self.pubsub = self.config.pubsub()
+        else:
+            self.pubsub = self.config.pubsub
 
     def start(self, sub=True) -> None:
         self.pubsub.start()
@@ -260,7 +266,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
     def stop(self):
         self.pubsub.stop()
 
-    def send(self, *args: Transform) -> None:
+    def publish(self, *args: Transform) -> None:
         """Send transforms using the configured PubSub."""
         if not self.pubsub:
             raise ValueError("PubSub is not configured.")
@@ -268,7 +274,7 @@ class PubSubTF(MultiTBuffer, TFSpec):
         self.receive_transform(*args)
         self.pubsub.publish(self.config.topic, TFMessage(*args))
 
-    def send_static(self, *args: Transform) -> None:
+    def publish_static(self, *args: Transform) -> None:
         raise NotImplementedError("Static transforms not implemented in PubSubTF.")
 
     def get(
@@ -283,3 +289,16 @@ class PubSubTF(MultiTBuffer, TFSpec):
     def receive_msg(self, channel: str, data: bytes) -> None:
         msg = TFMessage.lcm_decode(data)
         self.receive_tfmessage(msg)
+
+
+@dataclass
+class LCMPubsubConfig(TFConfig):
+    topic = Topic("/tf", TFMessage)
+    pubsub = LCM
+
+
+class LCMTF(PubSubTF):
+    default_config = LCMPubsubConfig
+
+
+TF = LCMTF
