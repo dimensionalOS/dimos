@@ -159,11 +159,6 @@ class Metric3D(LocalModel):
         pred_depth = torch.clamp(pred_depth, 0, 1000)
         return pred_depth
 
-    """Set new intrinsic value."""
-
-    def update_intrinsic(self, intrinsic) -> None:  # type: ignore[no-redef, no-untyped-def]
-        self.intrinsic = intrinsic
-
     def eval_predicted_depth(self, depth_file, pred_depth) -> None:  # type: ignore[no-untyped-def]
         if depth_file is not None:
             gt_depth = cv2.imread(depth_file, -1)
