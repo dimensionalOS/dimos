@@ -591,7 +591,7 @@ class ZEDModule(Module):
         self.tf = TF()
 
         # Initialize storage for recording if path provided
-        self.storages = None
+        self.storages: dict[str, Any] | None = None
         if self.recording_path:
             from dimos.utils.testing import TimedSensorStorage
 

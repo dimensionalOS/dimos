@@ -14,7 +14,7 @@
 
 import argparse
 
-from ultralytics import YOLO, FastSAM
+from ultralytics import YOLO, FastSAM  # type: ignore[attr-defined]
 
 
 def parse_args():  # type: ignore[no-untyped-def]
@@ -46,7 +46,7 @@ def main() -> None:
     int8 = args.precision == "int8"
     # Load the appropriate model
     if args.model_type == "yolo":
-        model = YOLO(args.model_path)
+        model: YOLO | FastSAM = YOLO(args.model_path)
     else:
         model = FastSAM(args.model_path)
 
