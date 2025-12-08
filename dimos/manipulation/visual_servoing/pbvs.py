@@ -18,16 +18,12 @@ Supports both eye-in-hand and eye-to-hand configurations.
 """
 
 import numpy as np
-from typing import Optional, Tuple
+from typing import Optional, Tuple, List
+from collections import deque
 from scipy.spatial.transform import Rotation as R
 from dimos_lcm.geometry_msgs import Pose, Vector3, Quaternion, Point
 from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import (
-    yaw_towards_point,
-    pose_to_matrix,
-    euler_to_quaternion,
-)
 from dimos.manipulation.visual_servoing.utils import (
     update_target_grasp_pose,
     find_best_object_match,
@@ -59,7 +55,7 @@ class PBVS:
         max_velocity: float = 0.1,  # m/s
         max_angular_velocity: float = 0.5,  # rad/s
         target_tolerance: float = 0.01,  # 1cm
-        max_tracking_distance_threshold: float = 0.1,  # Max distance for target tracking (m)
+        max_tracking_distance_threshold: float = 0.15,  # Max distance for target tracking (m)
         min_size_similarity: float = 0.6,  # Min size similarity threshold (0.0-1.0)
         direct_ee_control: bool = True,  # If True, output target poses instead of velocities
     ):
@@ -95,13 +91,14 @@ class PBVS:
         self.max_tracking_distance_threshold = max_tracking_distance_threshold
         self.min_size_similarity = min_size_similarity
         self.direct_ee_control = direct_ee_control
-        self.grasp_pitch_degrees = (
-            45.0  # Default grasp pitch in degrees (45° between level and top-down)
-        )
 
         # Target state
         self.current_target = None
         self.target_grasp_pose = None
+
+        # Detection history for robust tracking
+        self.detection_history_size = 3
+        self.detection_history = deque(maxlen=self.detection_history_size)
 
         # For direct control mode visualization
         self.last_position_error = None
@@ -135,6 +132,7 @@ class PBVS:
         self.target_grasp_pose = None
         self.last_position_error = None
         self.last_target_reached = False
+        self.detection_history.clear()
         if self.controller:
             self.controller.clear_state()
         logger.info("Target cleared")
@@ -148,24 +146,9 @@ class PBVS:
         """
         return self.current_target
 
-    def set_grasp_pitch(self, pitch_degrees: float):
-        """
-        Set the grasp pitch angle in degrees.
-
-        Args:
-            pitch_degrees: Grasp pitch angle in degrees (0-90)
-                          0° = level grasp (horizontal)
-                          90° = top-down grasp (vertical)
-        """
-        # Clamp to valid range
-        pitch_degrees = max(0.0, min(90.0, pitch_degrees))
-        self.grasp_pitch_degrees = pitch_degrees
-        # Reset target grasp pose to recompute with new pitch
-        self.target_grasp_pose = None
-
     def update_tracking(self, new_detections: Optional[Detection3DArray] = None) -> bool:
         """
-        Update target tracking with new detections.
+        Update target tracking with new detections using a rolling window.
         If tracking is lost, keeps the old target pose.
 
         Args:
@@ -182,19 +165,31 @@ class PBVS:
         ):
             return False
 
-        # Try to update target tracking if new detections provided
-        # Continue with last known pose even if tracking is lost
-        if new_detections is None or new_detections.detections_length == 0:
-            logger.debug("No detections for target tracking - using last known pose")
+        # Add new detections to history if provided
+        if new_detections is not None and new_detections.detections_length > 0:
+            self.detection_history.append(new_detections)
+
+        # If no detection history, can't track
+        if not self.detection_history:
+            logger.debug("No detection history for target tracking - using last known pose")
+            return False
+
+        # Collect all candidates from detection history
+        all_candidates = []
+        for detection_array in self.detection_history:
+            all_candidates.extend(detection_array.detections)
+
+        if not all_candidates:
+            logger.debug("No candidates in detection history")
             return False
 
         # Use stage-dependent distance threshold
         max_distance = self.max_tracking_distance_threshold
 
-        # Find best match using standardized utility function
+        # Find best match across all recent detections
         match_result = find_best_object_match(
             target_obj=self.current_target,
-            candidates=new_detections.detections,
+            candidates=all_candidates,
             max_distance=max_distance,
             min_size_similarity=self.min_size_similarity,
         )
@@ -210,7 +205,8 @@ class PBVS:
             return True
 
         logger.debug(
-            f"Target tracking lost: distance={match_result.distance:.3f}m, "
+            f"Target tracking lost across {len(self.detection_history)} frames: "
+            f"distance={match_result.distance:.3f}m, "
             f"size_similarity={match_result.size_similarity:.2f}, "
             f"thresholds: distance={max_distance:.3f}m, size={self.min_size_similarity:.2f}"
         )
@@ -220,6 +216,7 @@ class PBVS:
         self,
         ee_pose: Pose,
         grasp_distance: float = 0.15,
+        grasp_pitch_degrees: float = 45.0,
     ) -> Tuple[Optional[Vector3], Optional[Vector3], bool, bool, Optional[Pose]]:
         """
         Compute PBVS control with position and orientation servoing.
@@ -240,9 +237,9 @@ class PBVS:
         if not self.current_target:
             return None, None, False, False, None
 
-        # Update target grasp pose with provided distance
+        # Update target grasp pose with provided distance and pitch
         self.target_grasp_pose = update_target_grasp_pose(
-            self.current_target.bbox.center, ee_pose, grasp_distance, self.grasp_pitch_degrees
+            self.current_target.bbox.center, ee_pose, grasp_distance, grasp_pitch_degrees
         )
 
         if self.target_grasp_pose is None:
