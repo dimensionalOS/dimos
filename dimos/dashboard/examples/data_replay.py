@@ -3,14 +3,15 @@
 import threading
 import time
 from pathlib import Path
+import sys
 
+import rerun.blueprint as rrb
 from reactivex.disposable import Disposable
 
 from dimos.core import Module, Out, pSHMTransport, pLCMTransport
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.dashboard.module import Dashboard
-from dimos.dashboard.rerun import layouts, RerunHook
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.msgs.nav_msgs import Odometry
@@ -40,6 +41,7 @@ class DataReplay(Module):
 
         file_path = Path(path)
         if not file_path.exists():
+            print(f'''[DataReplay] file {path} does not exist''', file=sys.stderr)
             return
 
         with file_path.open("r", encoding="utf-8") as f:
@@ -59,6 +61,8 @@ class DataReplay(Module):
                     yield parsed
 
     def _publish_stream(self, output_name: str, path: str) -> None:
+        import rerun as rr
+        rr.init("rerun_main", spawn=False, strict=True)
         print(f'''[DataReplay] _publish_stream started!''')
         # Resolve the output by attribute name (e.g., "color_image" or "lidar").
         output: Out = getattr(self, output_name)
@@ -70,8 +74,9 @@ class DataReplay(Module):
                 if output and output.transport:
                     if i % 20 == 0:
                         print(f"[DataReplay] publishing {output_name} message {i}")
+                    rr.log(f"/{output_name}", msg.to_rerun(), strict=True)
                     output.publish(msg)  # type: ignore[no-untyped-call]
-                time.sleep(self.interval_sec)
+                # time.sleep(self.interval_sec)
                 any_sent = True
             if not self.loop or not any_sent:
                 break
@@ -79,6 +84,10 @@ class DataReplay(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        import rerun as rr
+        # needs to be init-ed once per thread/process
+        rr.init("rerun_main", spawn=False, strict=True)
+        rr.log("logs", rr.TextLog("this entry has loglevel TRACE", level=rr.TextLogLevel.TRACE))
         try:
             for output_name, path in self.replay_paths.items():
                 thread = threading.Thread(
@@ -99,13 +108,11 @@ class DataReplay(Module):
             print(f'''[DataReplay] error = {error}''')
 
 
-layout = layouts.AllTabs(collapse_panels=False)
-
 # NOTE: this data was recorded with `from dimos.dashboard.support.utils import record_message`
 replay_paths = {
-    "color_image": "./dimos/dashboard/rerun/color_image.yaml",
-    "lidar": "./dimos/dashboard/rerun/lidar.yaml",
-    "odom": "./dimos/dashboard/rerun/odom.yaml",
+    "color_image": "./dimos/dashboard/support/color_image.ignore.yaml",
+    "lidar": "./dimos/dashboard/support/lidar.ignore.yaml",
+    # "odom": "./dimos/dashboard/support/odom.ignore.yaml",
 }
 blueprint = (
     autoconnect(
@@ -115,7 +122,6 @@ blueprint = (
             loop=True,
         ),
         Dashboard().blueprint(
-            layout=layout,
             auto_open=True,
             terminal_commands={
                 "agent-spy": "htop",
@@ -123,16 +129,6 @@ blueprint = (
                 # "skill-spy": "dimos skillspy",
             },
         ),
-        RerunHook(
-            "color_image",
-            Image,
-            target_entity=layout.entities.spatial2d,
-        ).blueprint(),
-        RerunHook(
-            "lidar",
-            LidarMessage,
-            target_entity=layout.entities.spatial3d,
-        ).blueprint(),
     )
     .transports(
         {
