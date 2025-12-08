@@ -180,3 +180,17 @@ jobs:
         }}
       cmd: "pytest -m heavy"
       dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
+
+  run-lcm-tests:
+    needs: [check-changes, dev]
+    if: always()
+    uses: ./.github/workflows/tests.yml
+    with:
+      should-run: ${{
+        needs.check-changes.result == 'success' &&
+        ((needs.dev.result == 'success') ||
+        (needs.dev.result == 'skipped' &&
+        needs.check-changes.outputs.tests == 'true'))
+        }}
+      cmd: "pytest -m lcm"
+      dev-image: dev:${{ needs.dev.result == 'success' && needs.check-changes.outputs.branch-tag || 'dev' }}
