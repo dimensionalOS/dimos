@@ -19,6 +19,9 @@ from unittest.mock import patch
 import pytest
 
 from dimos.protocol.service.lcmservice import (
+    TARGET_MAX_DGRAM_SIZE_MACOS,
+    TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS,
+    TARGET_RMEM_SIZE,
     autoconf,
     check_buffers,
     check_multicast,
@@ -175,16 +178,18 @@ def test_check_buffers_all_configured() -> None:
             # Mock sufficient buffer sizes
             mock_run.side_effect = [
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0}
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": "net.core.rmem_default = 16777216", "returncode": 0},
                 )(),
             ]
 
             commands, buffer_size = check_buffers()
             assert commands == []
-            assert buffer_size == 2097152
+            assert buffer_size >= TARGET_RMEM_SIZE
 
 
 def test_check_buffers_low_max_buffer() -> None:
@@ -197,13 +202,15 @@ def test_check_buffers_low_max_buffer() -> None:
                     "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": f"net.core.rmem_default = {TARGET_RMEM_SIZE}", "returncode": 0},
                 )(),
             ]
 
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
-            assert commands == [f"{sudo}sysctl -w net.core.rmem_max=2097152"]
+            assert commands == [f"{sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}"]
             assert buffer_size == 1048576
 
 
@@ -214,7 +221,9 @@ def test_check_buffers_low_default_buffer() -> None:
             # Mock low rmem_default
             mock_run.side_effect = [
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": f"net.core.rmem_max = {TARGET_RMEM_SIZE}", "returncode": 0},
                 )(),
                 type(
                     "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
@@ -223,8 +232,8 @@ def test_check_buffers_low_default_buffer() -> None:
 
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
-            assert commands == [f"{sudo}sysctl -w net.core.rmem_default=2097152"]
-            assert buffer_size == 2097152
+            assert commands == [f"{sudo}sysctl -w net.core.rmem_default={TARGET_RMEM_SIZE}"]
+            assert buffer_size == TARGET_RMEM_SIZE
 
 
 def test_check_buffers_both_low() -> None:
@@ -244,8 +253,8 @@ def test_check_buffers_both_low() -> None:
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
+                f"{sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}",
+                f"{sudo}sysctl -w net.core.rmem_default={TARGET_RMEM_SIZE}",
             ]
             assert commands == expected
             assert buffer_size == 1048576
@@ -261,8 +270,8 @@ def test_check_buffers_subprocess_exception() -> None:
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
+                f"{sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}",
+                f"{sudo}sysctl -w net.core.rmem_default={TARGET_RMEM_SIZE}",
             ]
             assert commands == expected
             assert buffer_size is None
@@ -281,8 +290,8 @@ def test_check_buffers_parsing_error() -> None:
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
+                f"{sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}",
+                f"{sudo}sysctl -w net.core.rmem_default={TARGET_RMEM_SIZE}",
             ]
             assert commands == expected
             assert buffer_size is None
@@ -315,8 +324,8 @@ def test_check_buffers_dev_container() -> None:
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}sysctl -w net.core.rmem_max=2097152",
-                f"{sudo}sysctl -w net.core.rmem_default=2097152",
+                f"{sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}",
+                f"{sudo}sysctl -w net.core.rmem_default={TARGET_RMEM_SIZE}",
             ]
             assert commands == expected
             assert buffer_size is None
@@ -329,29 +338,44 @@ def test_check_buffers_macos_all_configured() -> None:
             # Mock sufficient buffer sizes for macOS
             mock_run.side_effect = [
                 type(
-                    "MockResult", (), {"stdout": "kern.ipc.maxsockbuf: 8388608", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": f"kern.ipc.maxsockbuf: {TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS}",
+                        "returncode": 0,
+                    },
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.inet.udp.recvspace: 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": f"net.inet.udp.recvspace: {TARGET_RMEM_SIZE}", "returncode": 0},
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.inet.udp.maxdgram: 65535", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {
+                        "stdout": f"net.inet.udp.maxdgram: {TARGET_MAX_DGRAM_SIZE_MACOS}",
+                        "returncode": 0,
+                    },
                 )(),
             ]
 
             commands, buffer_size = check_buffers()
             assert commands == []
-            assert buffer_size == 8388608
+            assert buffer_size == TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS
 
 
 def test_check_buffers_macos_needs_config() -> None:
     """Test check_buffers on macOS when configuration is needed."""
     with patch("dimos.protocol.service.lcmservice.platform.system", return_value="Darwin"):
         with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
+            mock_max_sock_buf_size = 4194304
             # Mock low buffer sizes for macOS
             mock_run.side_effect = [
                 type(
-                    "MockResult", (), {"stdout": "kern.ipc.maxsockbuf: 4194304", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": f"kern.ipc.maxsockbuf: {mock_max_sock_buf_size}", "returncode": 0},
                 )(),
                 type(
                     "MockResult", (), {"stdout": "net.inet.udp.recvspace: 1048576", "returncode": 0}
@@ -364,12 +388,12 @@ def test_check_buffers_macos_needs_config() -> None:
             commands, buffer_size = check_buffers()
             sudo = get_sudo_prefix()
             expected = [
-                f"{sudo}sysctl -w kern.ipc.maxsockbuf=8388608",
-                f"{sudo}sysctl -w net.inet.udp.recvspace=2097152",
-                f"{sudo}sysctl -w net.inet.udp.maxdgram=65535",
+                f"{sudo}sysctl -w kern.ipc.maxsockbuf={TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS}",
+                f"{sudo}sysctl -w net.inet.udp.recvspace={TARGET_RMEM_SIZE}",
+                f"{sudo}sysctl -w net.inet.udp.maxdgram={TARGET_MAX_DGRAM_SIZE_MACOS}",
             ]
             assert commands == expected
-            assert buffer_size == 4194304
+            assert buffer_size == mock_max_sock_buf_size
 
 
 def test_autoconf_no_config_needed() -> None:
@@ -396,12 +420,14 @@ def test_autoconf_no_config_needed() -> None:
                     )(),
                     # check_buffers calls
                     type(
-                        "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                        "MockResult",
+                        (),
+                        {"stdout": f"net.core.rmem_max = {TARGET_RMEM_SIZE}", "returncode": 0},
                     )(),
                     type(
                         "MockResult",
                         (),
-                        {"stdout": "net.core.rmem_default = 2097152", "returncode": 0},
+                        {"stdout": f"net.core.rmem_default = {TARGET_RMEM_SIZE}", "returncode": 0},
                     )(),
                 ]
 
@@ -465,9 +491,11 @@ def test_autoconf_with_config_needed_success() -> None:
                         call("  ✓ Success"),
                         call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
                         call("  ✓ Success"),
-                        call(f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152"),
+                        call(f"  Running: {sudo}sysctl -w net.core.rmem_max={TARGET_RMEM_SIZE}"),
                         call("  ✓ Success"),
-                        call(f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152"),
+                        call(
+                            f"  Running: {sudo}sysctl -w net.core.rmem_default={TARGET_RMEM_SIZE}"
+                        ),
                         call("  ✓ Success"),
                         call("System configuration completed."),
                     ]
@@ -492,12 +520,14 @@ def test_autoconf_with_command_failures() -> None:
                     type("MockResult", (), {"stdout": "", "returncode": 0})(),
                     # check_buffers calls (no buffer issues for simpler test)
                     type(
-                        "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                        "MockResult",
+                        (),
+                        {"stdout": f"net.core.rmem_max = {TARGET_RMEM_SIZE}", "returncode": 0},
                     )(),
                     type(
                         "MockResult",
                         (),
-                        {"stdout": "net.core.rmem_default = 2097152", "returncode": 0},
+                        {"stdout": f"net.core.rmem_default = {TARGET_RMEM_SIZE}", "returncode": 0},
                     )(),
                     # Command execution calls - first succeeds, second fails
                     type(

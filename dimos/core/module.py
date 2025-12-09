@@ -33,7 +33,7 @@ from dimos.core.core import T, rpc
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.protocol.rpc import LCMRPC, RPCSpec  # type: ignore[attr-defined]
+from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec

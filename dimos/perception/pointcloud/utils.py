@@ -25,7 +25,7 @@ from typing import Any
 import cv2
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
-from scipy.spatial import cKDTree
+from scipy.spatial import cKDTree  # type: ignore[import-untyped]
 import yaml
 
 from dimos.perception.common.utils import project_3d_points_to_2d

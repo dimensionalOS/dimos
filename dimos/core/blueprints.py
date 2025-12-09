@@ -21,7 +21,7 @@ import inspect
 import operator
 import sys
 from types import MappingProxyType
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal, get_args, get_origin, get_type_hints
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
@@ -293,16 +293,21 @@ def _make_module_blueprint(
 ) -> ModuleBlueprint:
     connections: list[ModuleConnection] = []
 
-    all_annotations = {}
-    for base_class in reversed(module.__mro__):
-        if hasattr(base_class, "__annotations__"):
-            all_annotations.update(base_class.__annotations__)
+    # Use get_type_hints() to properly resolve string annotations.
+    try:
+        all_annotations = get_type_hints(module)
+    except Exception:
+        # Fallback to raw annotations if get_type_hints fails.
+        all_annotations = {}
+        for base_class in reversed(module.__mro__):
+            if hasattr(base_class, "__annotations__"):
+                all_annotations.update(base_class.__annotations__)
 
     for name, annotation in all_annotations.items():
         origin = get_origin(annotation)
-        if origin not in (In, Out):  # type: ignore[comparison-overlap]
+        if origin not in (In, Out):
             continue
-        direction = "in" if origin == In else "out"  # type: ignore[comparison-overlap]
+        direction = "in" if origin == In else "out"
         type_ = get_args(annotation)[0]
         connections.append(ModuleConnection(name=name, type=type_, direction=direction))  # type: ignore[arg-type]
 

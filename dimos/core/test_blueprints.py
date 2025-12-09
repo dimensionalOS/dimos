@@ -14,6 +14,11 @@
 
 import pytest
 
+from dimos.core._test_future_annotations_helper import (
+    FutureData,
+    FutureModuleIn,
+    FutureModuleOut,
+)
 from dimos.core.blueprints import (
     ModuleBlueprint,
     ModuleBlueprintSet,
@@ -314,6 +319,53 @@ def test_remapping() -> None:
 
         # The topic should be /remapped_data since that's the remapped name
         assert target_instance.remapped_data.transport.topic == "/remapped_data"
+
+    finally:
+        coordinator.stop()
+
+
+def test_future_annotations_support() -> None:
+    """Test that modules using `from __future__ import annotations` work correctly.
+
+    PEP 563 (future annotations) stores annotations as strings instead of actual types.
+    This test verifies that _make_module_blueprint properly resolves string annotations
+    to the actual In/Out types.
+    """
+
+    # Test that connections are properly extracted from modules with future annotations
+    out_blueprint = _make_module_blueprint(FutureModuleOut, args=(), kwargs={})
+    assert len(out_blueprint.connections) == 1
+    assert out_blueprint.connections[0] == ModuleConnection(
+        name="data", type=FutureData, direction="out"
+    )
+
+    in_blueprint = _make_module_blueprint(FutureModuleIn, args=(), kwargs={})
+    assert len(in_blueprint.connections) == 1
+    assert in_blueprint.connections[0] == ModuleConnection(
+        name="data", type=FutureData, direction="in"
+    )
+
+
+def test_future_annotations_autoconnect() -> None:
+    """Test that autoconnect works with modules using `from __future__ import annotations`."""
+
+    blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
+
+    coordinator = blueprint_set.build(GlobalConfig())
+
+    try:
+        out_instance = coordinator.get_instance(FutureModuleOut)
+        in_instance = coordinator.get_instance(FutureModuleIn)
+
+        assert out_instance is not None
+        assert in_instance is not None
+
+        # Both should have transports set
+        assert out_instance.data.transport is not None
+        assert in_instance.data.transport is not None
+
+        # They should be connected via the same transport
+        assert out_instance.data.transport.topic == in_instance.data.transport.topic
 
     finally:
         coordinator.stop()

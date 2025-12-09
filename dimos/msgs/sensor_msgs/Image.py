@@ -50,7 +50,7 @@ except Exception:
     cp = None
 
 try:
-    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined]
+    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSImage = None  # type: ignore[assignment, misc]
 
