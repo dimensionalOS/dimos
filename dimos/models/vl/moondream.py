@@ -34,19 +34,21 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         model.compile()
         return model
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def _to_pil(self, image: Image | np.ndarray) -> PILImage.Image:
+        """Convert dimos Image or numpy array to PIL Image."""
         if isinstance(image, np.ndarray):
             warnings.warn(
-                "MoondreamVlModel.query should receive standard dimos Image type, not a numpy array",
+                "MoondreamVlModel should receive standard dimos Image type, not a numpy array",
                 DeprecationWarning,
                 stacklevel=2,
             )
             image = Image.from_numpy(image)
 
-        # Convert dimos Image to PIL Image
-        # dimos Image stores data in RGB/BGR format, convert to RGB for PIL
         rgb_image = image.to_rgb()
-        pil_image = PILImage.fromarray(rgb_image.data)
+        return PILImage.fromarray(rgb_image.data)
+
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+        pil_image = self._to_pil(image)
 
         # Query the model
         result = self._model.query(image=pil_image, question=query, reasoning=False)
@@ -56,6 +58,71 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
             return result.get("answer", str(result))  # type: ignore[no-any-return]
 
         return str(result)
+
+    def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+        """Query multiple images with the same question.
+
+        Optimized implementation that pre-encodes all images before querying,
+        which allows for better GPU utilization.
+
+        Args:
+            images: List of input images
+            query: Question to ask about each image
+
+        Returns:
+            List of responses, one per image
+        """
+        if not images:
+            return []
+
+        # Convert all images to PIL format
+        pil_images = [self._to_pil(img) for img in images]
+
+        # Pre-encode all images (vision encoder + KV cache setup)
+        # This is the expensive part - doing it upfront allows better planning
+        encoded_images = [self._model.encode_image(pil_img) for pil_img in pil_images]
+
+        # Query each encoded image (text generation only, vision already cached)
+        results = []
+        for encoded_img in encoded_images:
+            result = self._model.query(image=encoded_img, question=query, reasoning=False)
+            if isinstance(result, dict):
+                results.append(result.get("answer", str(result)))
+            else:
+                results.append(str(result))
+
+        return results
+
+    def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+        """Query a single image with multiple different questions.
+
+        Optimized implementation that encodes the image once and reuses
+        the encoded representation for all queries.
+
+        Args:
+            image: Input image
+            queries: List of questions to ask about the image
+
+        Returns:
+            List of responses, one per query
+        """
+        if not queries:
+            return []
+
+        # Encode image once
+        pil_image = self._to_pil(image)
+        encoded_image = self._model.encode_image(pil_image)
+
+        # Query with each question, reusing the encoded image
+        results = []
+        for query in queries:
+            result = self._model.query(image=encoded_image, question=query, reasoning=False)
+            if isinstance(result, dict):
+                results.append(result.get("answer", str(result)))
+            else:
+                results.append(str(result))
+
+        return results
 
     def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's native detect method.
@@ -68,7 +135,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         Returns:
             ImageDetections2D containing detected bounding boxes
         """
-        pil_image = PILImage.fromarray(image.data)
+        pil_image = self._to_pil(image)
 
         settings = {"max_objects": kwargs.get("max_objects", 5)}
         result = self._model.detect(pil_image, query, settings=settings)

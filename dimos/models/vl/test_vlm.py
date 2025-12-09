@@ -1,7 +1,9 @@
 import time
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+    ImageAnnotations,  # type: ignore[import-untyped]
+)
 import pytest
 
 from dimos.core import LCMTransport
@@ -13,6 +15,10 @@ from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
     from dimos.models.vl.base import VlModel
+
+
+# For these tests you can run foxglove-bridge to visualize results
+# You can also run lcm-spy to confirm that messages are being published
 
 
 @pytest.mark.parametrize(
@@ -50,14 +56,6 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
     all_detections = ImageDetections2D(image)
     query_times = []
 
-    # # First, run YOLO detection
-    # print("\nRunning YOLO detection...")
-    # yolo_detector = Yolo2DDetector()
-    # yolo_detections = yolo_detector.process_image(image)
-    # print(f"  YOLO found {len(yolo_detections.detections)} objects")
-    # all_detections.detections.extend(yolo_detections.detections)
-    # annotations_transport.publish(all_detections.to_foxglove_annotations())
-
     # Publish to LCM with model-specific channel names
     annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
         "/annotations", ImageAnnotations
@@ -89,3 +87,50 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
 
     annotations_transport.lcm.stop()
     image_transport.lcm.stop()
+
+
+@pytest.mark.parametrize(
+    "model_class,model_name",
+    [
+        (MoondreamVlModel, "Moondream"),
+    ],
+    ids=["moondream"],
+)
+@pytest.mark.gpu
+def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
+    """Test query_multi optimization - single image, multiple queries."""
+    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+
+    print(f"\nTesting {model_name} query_multi optimization")
+
+    model: VlModel = model_class()
+    model.warmup()
+
+    queries = [
+        "How many people are in this image?",
+        "What color is the leftmost person's shirt?",
+        "Are there any glasses visible?",
+        "What's on the table?",
+    ]
+
+    # Sequential queries
+    print("\nSequential queries:")
+    start_time = time.time()
+    sequential_results = [model.query(image, q) for q in queries]
+    sequential_time = time.time() - start_time
+    print(f"  Time: {sequential_time:.3f}s")
+
+    # Batched queries (encode image once)
+    print("\nBatched queries (query_multi):")
+    start_time = time.time()
+    batch_results = model.query_multi(image, queries)
+    batch_time = time.time() - start_time
+    print(f"  Time: {batch_time:.3f}s")
+
+    print(f"\nSpeedup: {sequential_time / batch_time:.2f}x")
+
+    # Print results
+    for q, seq_r, batch_r in zip(queries, sequential_results, batch_results):
+        print(f"\nQ: {q}")
+        print(f"  Sequential: {seq_r[:100]}...")
+        print(f"  Batch:      {batch_r[:100]}...")

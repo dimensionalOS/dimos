@@ -110,6 +110,37 @@ class VlModel(Captioner):
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
 
+    def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+        """Query multiple images with the same question.
+
+        Default implementation calls query() for each image sequentially.
+        Subclasses may override for more efficient batched inference.
+
+        Args:
+            images: List of input images
+            query: Question to ask about each image
+
+        Returns:
+            List of responses, one per image
+        """
+        return [self.query(image, query, **kwargs) for image in images]
+
+    def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+        """Query a single image with multiple different questions.
+
+        Default implementation calls query() for each question sequentially.
+        Subclasses may override for more efficient inference (e.g., by
+        encoding the image once and reusing it for all queries).
+
+        Args:
+            image: Input image
+            queries: List of questions to ask about the image
+
+        Returns:
+            List of responses, one per query
+        """
+        return [self.query(image, q, **kwargs) for q in queries]
+
     def caption(self, image: Image) -> str:
         """Generate a caption by querying the VLM with a standard prompt."""
         return self.query(image, "Describe this image concisely.")
