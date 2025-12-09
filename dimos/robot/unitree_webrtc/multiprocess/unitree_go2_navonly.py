@@ -109,6 +109,17 @@ class ReplayRTC(UnitreeWebRTCConnection):
 # can be swapped in for UnitreeWebRTCConnection
 class SimRTC(UnitreeWebRTCConnection):
     _pos: PoseStamped = None
+    _velocity: Vector3 = None
+    _acceleration: Vector3 = None
+    _last_force: Vector3 = None
+    _last_force_time: float = None
+    _last_update_time: float = None
+    _mass: float = 12.0  # kg, approximate mass of Go2 robot
+    _friction_coefficient: float = 0.5  # friction/damping coefficient
+    _max_velocity: float = 1.0  # m/s, max velocity limit
+    _force_duration: float = 0.1  # seconds that force is applied
+    _physics_thread: threading.Thread = None
+    _running: bool = False
 
     def __init__(self, *args, **kwargs):
         # ensures we download msgs from lfs store
@@ -119,6 +130,16 @@ class SimRTC(UnitreeWebRTCConnection):
             position=Vector3(5.8, -9.3, 0.3),
             orientation=Quaternion(),
         )
+        self._velocity = Vector3(0.0, 0.0, 0.0)
+        self._acceleration = Vector3(0.0, 0.0, 0.0)
+        self._last_force = Vector3(0.0, 0.0, 0.0)
+        self._last_force_time = time.time()
+        self._last_update_time = time.time()
+
+        # Start physics simulation thread
+        self._running = True
+        self._physics_thread = threading.Thread(target=self._physics_loop, daemon=True)
+        self._physics_thread.start()
 
     def connect(self): ...
 
@@ -127,6 +148,9 @@ class SimRTC(UnitreeWebRTCConnection):
 
     def liedown(self):
         print("liedown supressed")
+        self._running = False
+        if self._physics_thread:
+            self._physics_thread.join(timeout=0.5)
 
     @functools.cache
     def lidar_stream(self):
@@ -146,8 +170,65 @@ class SimRTC(UnitreeWebRTCConnection):
     def video_stream(self):
         return Observable()
 
+    def _physics_loop(self):
+        """Physics simulation loop running at ~50Hz."""
+        dt = 0.05  # 25Hz update rate
+        while self._running:
+            current_time = time.time()
+
+            # Calculate actual dt to handle timing variations
+            actual_dt = current_time - self._last_update_time
+            if actual_dt < dt:
+                time.sleep(dt - actual_dt)
+                continue
+
+            self._last_update_time = current_time
+
+            # Check if force should still be applied (within 0.1s window)
+            if current_time - self._last_force_time < self._force_duration:
+                # Apply force: F = ma => a = F/m
+                self._acceleration = self._last_force / self._mass
+            else:
+                # No force applied, set acceleration to zero
+                self._acceleration = Vector3(0.0, 0.0, 0.0)
+
+            # Apply friction/damping force (proportional to velocity)
+            friction_force = self._velocity * (-self._friction_coefficient)
+            friction_acceleration = friction_force
+
+            # Total acceleration
+            total_acceleration = self._acceleration + friction_acceleration
+
+            # Update velocity: v = v0 + a*dt
+            self._velocity = self._velocity + total_acceleration * actual_dt
+
+            # Clamp velocity to max limits
+            vel_magnitude = self._velocity.length()
+            if vel_magnitude > self._max_velocity:
+                self._velocity = self._velocity.normalize() * self._max_velocity
+
+            # Stop if velocity is very small (to prevent drift)
+            if vel_magnitude < 0.001:
+                self._velocity = Vector3(0.0, 0.0, 0.0)
+
+            # Update position: p = p0 + v*dt
+            self._pos.position = self._pos.position + self._velocity * actual_dt
+            self._pos.ts = current_time
+
+            # Small sleep to prevent busy waiting
+            time.sleep(0.001)
+
     def move(self, vector: Vector):
-        self._pos.position = self._pos.position + vector
+        """Apply force to the robot for 0.1 seconds."""
+        # Convert Vector to Vector3 and scale it to force units (N)
+        # The input vector is interpreted as desired velocity, convert to force
+        force_scale = 2.0  # Scale factor to convert command to force
+        self._last_force = Vector3(
+            vector.x * force_scale,
+            vector.y * force_scale,
+            0.0,  # No vertical force
+        )
+        self._last_force_time = time.time()
 
 
 class ConnectionModule(SimRTC, Module):
@@ -220,7 +301,7 @@ class ControlModule(Module):
         def movcmd():
             while True:
                 time.sleep(0.1)
-                self.movecmd.publish(Vector3(-0.05, 0.05, 0))
+                self.movecmd.publish(Vector3(-1.0, 1.0, 0))
 
         thread1 = threading.Thread(target=plancmd, daemon=True)
         thread1.start()
