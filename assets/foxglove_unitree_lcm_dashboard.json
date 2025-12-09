@@ -21,18 +21,42 @@
           ],
           "order": 1,
           "size": 30,
-          "divisions": 30
+          "divisions": 30,
+          "color": "#248eff57"
+        },
+        "ff758451-8c06-4419-a995-e93c825eb8be": {
+          "visible": true,
+          "frameLocked": true,
+          "label": "Grid",
+          "instanceId": "ff758451-8c06-4419-a995-e93c825eb8be",
+          "layerId": "foxglove.Grid",
+          "frameId": "base_link",
+          "size": 3,
+          "divisions": 3,
+          "lineWidth": 1.5,
+          "color": "#24fff4ff",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "order": 2
         }
       },
       "cameraState": {
-        "perspective": true,
-        "distance": 22.16066481982733,
-        "phi": 34.816360162458444,
-        "thetaOffset": 110.38709006815255,
+        "perspective": false,
+        "distance": 25.847108697365048,
+        "phi": 32.532756465990374,
+        "thetaOffset": -179.288640038416,
         "targetOffset": [
-          0.6543165797799305,
-          -5.069343424147507,
-          5.603018248159094e-16
+          1.620731759058286,
+          -2.9069622235988986,
+          -0.09942375087215619
         ],
         "target": [
           0,
@@ -53,7 +77,10 @@
       "scene": {
         "enableStats": true,
         "ignoreColladaUpAxis": false,
-        "syncCamera": false
+        "syncCamera": false,
+        "transforms": {
+          "visible": true
+        }
       },
       "transforms": {},
       "topics": {
@@ -63,12 +90,13 @@
           "colorField": "z",
           "colorMode": "colormap",
           "colorMap": "turbo",
-          "pointShape": "square",
+          "pointShape": "circle",
           "pointSize": 10,
           "explicitAlpha": 1,
-          "minValue": -0.1,
           "decayTime": 0,
-          "cubeSize": 0.06
+          "cubeSize": 0.1,
+          "minValue": -0.3,
+          "cubeOutline": false
         },
         "/odom": {
           "visible": true,
@@ -83,16 +111,67 @@
           "colorMode": "colormap",
           "colorMap": "turbo",
           "pointSize": 10,
-          "minValue": -0.1,
           "decayTime": 0,
-          "pointShape": "square",
+          "pointShape": "cube",
           "cubeOutline": false,
-          "cubeSize": 0.05,
+          "cubeSize": 0.08,
           "gradient": [
             "#06011dff",
             "#d1e2e2ff"
           ],
-          "stixelsEnabled": false
+          "stixelsEnabled": false,
+          "explicitAlpha": 1,
+          "minValue": -0.2
+        },
+        "/global_path": {
+          "visible": true,
+          "type": "line",
+          "arrowScale": [
+            1,
+            0.15,
+            0.15
+          ],
+          "lineWidth": 0.132,
+          "gradient": [
+            "#6bff7cff",
+            "#0081ffff"
+          ]
+        },
+        "/global_target": {
+          "visible": true
+        },
+        "/pt": {
+          "visible": false
+        },
+        "/global_costmap": {
+          "visible": true,
+          "maxColor": "#8d3939ff",
+          "frameLocked": false,
+          "unknownColor": "#80808000",
+          "colorMode": "custom",
+          "alpha": 0.517,
+          "minColor": "#1e00ff00"
+        },
+        "/global_gradient": {
+          "visible": true,
+          "maxColor": "#690066ff",
+          "unknownColor": "#30b89a00",
+          "minColor": "#00000000",
+          "colorMode": "custom",
+          "alpha": 0.3662,
+          "frameLocked": false,
+          "drawBehind": false
+        },
+        "/global_cost_field": {
+          "visible": false,
+          "maxColor": "#ff0000ff",
+          "unknownColor": "#80808000"
+        },
+        "/global_passable": {
+          "visible": false,
+          "maxColor": "#ffffff00",
+          "minColor": "#ff0000ff",
+          "unknownColor": "#80808000"
         }
       },
       "publish": {
@@ -105,7 +184,8 @@
         "poseEstimateThetaDeviation": 0.26179939
       },
       "imageMode": {},
-      "foxglovePanelTitle": "test"
+      "foxglovePanelTitle": "test",
+      "followTf": "world"
     },
     "Image!3mnp456": {
       "cameraState": {
@@ -155,14 +235,6 @@
       },
       "foxglovePanelTitle": "/video"
     },
-    "RawMessages!os6rgs": {
-      "diffEnabled": true,
-      "diffMethod": "previous message",
-      "diffTopicPath": "/lidar",
-      "showFullMessageForDiff": false,
-      "topicPath": "/odom",
-      "fontSize": 12
-    },
     "Plot!a1gj37": {
       "paths": [
         {
@@ -206,16 +278,11 @@
     "first": "3D!18i6zy7",
     "second": {
       "first": "Image!3mnp456",
-      "second": {
-        "first": "RawMessages!os6rgs",
-        "second": "Plot!a1gj37",
-        "direction": "row",
-        "splitPercentage": 21.133036282622545
-      },
+      "second": "Plot!a1gj37",
       "direction": "column",
-      "splitPercentage": 45.83732057416268
+      "splitPercentage": 28.030303030303028
     },
     "direction": "row",
-    "splitPercentage": 61.01509144891709
+    "splitPercentage": 69.43271928754422
   }
 }
