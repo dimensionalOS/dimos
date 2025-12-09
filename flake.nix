@@ -160,7 +160,7 @@
         devShell = (xome.simpleMakeHomeFor {
           inherit pkgs;
           pure = true;
-          commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" ]; # e.g. use external nvim instead of nix's
+          commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" ]; # e.g. use external nvim instead of nix's
           # commonly needed for MacOS: [ "osascript" "otool" "hidutil" "logger" "codesign" ]
           homeSubpathPassthrough = [ "cache/nix/" ]; # share nix cache between projects
           homeModule = {
@@ -257,7 +257,7 @@
                       return 1 # failure
                     }
 
-                    macos_version="$(sw_vers -productVersion)"
+                    macos_version="$(sw_vers -productVersion 2>/dev/null || echo "0.0")"
                     macos_major_version="''${macos_version%%.*}"
                     if confirm_ask "Would you like me to set up the environment for you? [y/n]"; then
                       echo "Making sure git lfs is installed..."
@@ -288,7 +288,7 @@
                       pip install -e .
 
                       # if really old MacOS then ignore the lcm dependency (it'll be supplied by nix)
-                      if [ "$macos_major_version" -le 13 ]; then
+                      if [ "$(uname)" = "Darwin" ] && [ "$macos_major_version" -le 13 ]; then
                           echo "You're on a really old MacOS version. Ignore the errors above (and probably later below) about LCM"
                           echo "Got it? (press enter)";read _
                           rm -f pyproject.original.toml
