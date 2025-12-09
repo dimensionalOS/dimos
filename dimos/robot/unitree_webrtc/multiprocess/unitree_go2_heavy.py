@@ -154,6 +154,7 @@ class UnitreeGo2Heavy(UnitreeGo2Light):
             db_path=self.db_path,
             visual_memory_path=self.visual_memory_path,
             output_dir=self.spatial_memory_dir,
+            new_memory=True,
         )
 
         # Connect video and odometry streams to spatial memory

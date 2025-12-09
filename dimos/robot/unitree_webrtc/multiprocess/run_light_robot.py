@@ -105,6 +105,7 @@ async def main():
     agent = ClaudeAgent(
         dev_name="light_robot_agent",
         input_query_stream=web_interface.query_stream,
+        # input_query_stream=stt_node.emit_text(), # USE FOR VOICE CONTROL
         skills=skills,
         system_query="You are a helpful robot assistant. You can control a Unitree Go2 robot with limited capabilities (no GPU-based perception).",
         model_name="claude-3-5-haiku-latest",

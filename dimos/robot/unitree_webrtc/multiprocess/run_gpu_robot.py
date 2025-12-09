@@ -33,6 +33,7 @@ from dimos.skills.navigation import Explore
 from dimos.stream.audio.pipelines import stt
 from dimos.utils.reactive import backpressure
 from dimos.web.robot_web_interface import RobotWebInterface
+from dimos.skills.navigation import NavigateWithText
 
 
 async def main():
@@ -80,12 +81,13 @@ async def main():
     if robot.spatial_memory:
         print("Spatial memory initialized")
 
-    # Get skills
     skills = robot.get_skills()
 
-    # Add Explore skill
     skills.add(Explore)
+    skills.add(NavigateWithText)
+
     skills.create_instance("Explore", robot=robot)
+    skills.create_instance("NavigateWithText", robot=robot)
 
     print(f"Available skills: {[skill.__class__.__name__ for skill in skills]}")
 
@@ -153,6 +155,7 @@ async def main():
     agent = ClaudeAgent(
         dev_name="gpu_robot_agent",
         input_query_stream=web_interface.query_stream,
+        # input_query_stream=stt_node.emit_text(), # USE FOR VOICE CONTROL
         skills=skills,
         system_query="You are a helpful robot assistant. You can control a Unitree Go2 robot with full perception capabilities including object detection, person tracking, and spatial memory.",
         model_name="claude-3-5-haiku-latest",

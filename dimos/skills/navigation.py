@@ -191,9 +191,8 @@ class NavigateWithText(AbstractRobotSkill):
                 f"Navigating to target at local coordinates: ({goal_x_robot:.2f}, {goal_y_robot:.2f}), angle: {goal_angle:.2f}"
             )
 
-            # Use navigate_to_goal_local instead of directly controlling the local planner
-            success = navigate_to_goal_local(
-                robot=self._robot,
+            # Use the local planner's navigate_to_goal_local method
+            success = self._robot.local_planner.navigate_to_goal_local(
                 goal_xy_robot=(goal_x_robot, goal_y_robot),
                 goal_theta=goal_angle,
                 distance=0.0,  # We already accounted for desired distance
@@ -236,10 +235,10 @@ class NavigateWithText(AbstractRobotSkill):
         logger.info(f"Querying semantic map for: '{self.query}'")
 
         try:
-            self._spatial_memory = self._robot.get_spatial_memory()
+            self._spatial_memory = self._robot.spatial_memory
 
             # Run the query
-            results = self._spatial_memory.query_by_text(self.query, limit=self.limit)
+            results = self._spatial_memory.query_by_text(self.query, self.limit)
 
             if not results:
                 logger.warning(f"No results found for query: '{self.query}'")
@@ -306,9 +305,10 @@ class NavigateWithText(AbstractRobotSkill):
                         # Pass our stop_event to allow cancellation
                         result = False
                         try:
-                            result = self._robot.global_planner.set_goal(
-                                (pos_x, pos_y), goal_theta=theta, stop_event=self._stop_event
-                            )
+                            from dimos.msgs.geometry_msgs.Vector3 import Vector3
+
+                            goal_position = Vector3(pos_x, pos_y, 0)
+                            result = self._robot.global_planner.set_goal(goal_position, theta, None)
                         except Exception as e:
                             logger.error(f"Error calling global_planner.set_goal: {e}")
 
@@ -479,7 +479,7 @@ class GetPose(AbstractRobotSkill):
             # If location_name is provided, remember this location
             if self.location_name:
                 # Get the spatial memory instance
-                spatial_memory = self._robot.get_spatial_memory()
+                spatial_memory = self._robot.spatial_memory
 
                 # Create a RobotLocation object
                 location = RobotLocation(
