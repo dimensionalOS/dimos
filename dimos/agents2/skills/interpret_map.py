@@ -14,9 +14,11 @@
 
 import json
 import os
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
+from numpy.typing import NDArray
 
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall
@@ -99,15 +101,13 @@ class InterpretMapSkill(SkillModule):
             "MAKE SURE there is a clear path from the robot's current position to the goal position without crossing any obstacles. \n"
             "MAKE SURE the goal position is located in the blue area (free space) of the map and few pixels away from obstacles or objects. \n"
             "Return ONLY a JSON object with this exact format:\n"
-            "{'point': [x, y]}\n"
+            '{"point": [x, y]}\n'
             f"where x,y are the pixel coordinates of the goal position in the image. \n"
         )
 
         response = self.vl_model.query(image, prompt)
         point = extract_json_from_llm_response(response)
-        if point is None or "point" not in point:
-            return "Failed to parse goal position from model response."
-        x, y = point["point"]
+        x, y = extract_coordinates(point)
 
         # ensure point is in free space, else choose nearest free space
         if not costmap.is_free_space(x, y):
@@ -131,8 +131,18 @@ class InterpretMapSkill(SkillModule):
         return goal_pose
 
 
+def extract_coordinates(point: dict[str, list[int]] | None) -> list[int]:
+    if point is None:
+        raise ValueError("Failed to parse goal position: response is None.")
+    if "point" not in point:
+        raise ValueError("Failed to parse goal position: missing 'point' key.")
+    if not isinstance(point["point"], list):
+        raise ValueError("Failed to parse goal position: 'point' is not a list.")
+    return point["point"]
+
+
 def debug_image_with_identified_point(
-    image_frame: np.ndarray, point: tuple[int, int], filepath: str
+    image_frame: NDArray[np.uint8], point: tuple[int, int], filepath: str
 ) -> None:
     """Utility to visualize identified points on the image for debugging."""
     debug_image = image_frame.copy()

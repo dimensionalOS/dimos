@@ -38,6 +38,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from dimos.msgs.sensor_msgs import PointCloud2
 from dataclasses import dataclass
 from typing import Optional
@@ -71,8 +73,8 @@ class OccupancyGrid(Timestamped):
     ts: float
     frame_id: str
     info: MapMetaData
-    grid: np.ndarray
-    robot_pose: Pose
+    grid: NDArray[np.int8]
+    robot_pose: Pose | None
 
     def __init__(
         self,
@@ -81,7 +83,7 @@ class OccupancyGrid(Timestamped):
         height: int | None = None,
         resolution: float = 0.05,
         origin: Pose | None = None,
-        robot_pose: Pose | None = None,  # type: ignore[type-arg]
+        robot_pose: Pose | None = None,
         frame_id: str = "world",
         ts: float = 0.0,
     ) -> None:
@@ -128,7 +130,7 @@ class OccupancyGrid(Timestamped):
             self.info = MapMetaData(map_load_time=self._to_lcm_time())  # type: ignore[no-untyped-call]
             self.grid = np.array([], dtype=np.int8)
 
-        self.robot_pose = robot_pose  # type: ignore[assignment]
+        self.robot_pose = robot_pose
 
     def _to_lcm_time(self):  # type: ignore[no-untyped-def]
         """Convert timestamp to LCM Time."""
@@ -426,7 +428,7 @@ class OccupancyGrid(Timestamped):
 
         return self.grid_to_world(Vector3(grid_x, grid_y, 0.0))
 
-    def augment_image_with_robot_pose(self, image_arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+    def augment_image_with_robot_pose(self, image_arr: NDArray[np.uint8]) -> NDArray[np.uint8]:
         """Augment the occupancy grid image with the robot's pose.
 
         args:
@@ -434,12 +436,13 @@ class OccupancyGrid(Timestamped):
         """
 
         # robot position
+        assert self.robot_pose is not None
         robot_grid_pos = self.world_to_grid(self.robot_pose.position)
         rgx = round(robot_grid_pos.x)
         rgy = round(robot_grid_pos.y)
 
         # yaw
-        yaw = self.quat_to_yaw(self.robot_pose.orientation)
+        yaw = self.robot_pose.orientation.euler[2]
         halfarrow_length = 2  # pixels
         arrow_dx = int(halfarrow_length * np.cos(yaw))
         arrow_dy = -int(
@@ -472,13 +475,6 @@ class OccupancyGrid(Timestamped):
         )
 
         return image_arr
-
-    def quat_to_yaw(self, q: Quaternion) -> np.ndarray:
-        """Convert quaternion to yaw angle in radians."""
-        return np.arctan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
-        )
 
     def grid_to_image(
         self, size: tuple[int, int] | None = None, flip_vertical: bool = True
@@ -517,7 +513,7 @@ class OccupancyGrid(Timestamped):
 
         # flip vertically for correct orientation
         if flip_vertical:
-            image_arr = cv2.flip(image_arr, 0)
+            image_arr = cv2.flip(image_arr, 0).astype(np.uint8)
 
         # keep original aspect ratio if size not specified
         if size is None:
@@ -531,14 +527,6 @@ class OccupancyGrid(Timestamped):
         )
 
         return image
-
-    def agent_encode(self, prompt: str = "") -> list[dict]:  # type: ignore[type-arg]
-        image = self.grid_to_image()
-        image_encoded = image.agent_encode()
-
-        image_encoded.extend([{"type": "text", "text": str(prompt)}])
-
-        return image_encoded
 
     def lcm_encode(self) -> bytes:
         """Encode OccupancyGrid to LCM bytes."""

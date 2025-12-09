@@ -58,24 +58,20 @@ def build_occupancygrid_from_image(image: Image, resolution: float = 0.05) -> "O
         image_arr = image_arr[:, :, :3]
 
     # Define colors and threshold
-    RED = np.array([255, 0, 0])
-    BLUE = np.array([0, 0, 200])
+    RED = np.array([255, 0, 0], dtype=np.float32)
+    BLUE = np.array([0, 0, 200], dtype=np.float32)
     color_threshold = 20
 
-    for y in range(height):
-        for x in range(width):
-            pixel = image_arr[y, x]
+    # Convert to float32 for distance calculations
+    image_float = image_arr.astype(np.float32)
 
-            # calculate distances to target colors
-            red_dist = np.sqrt(np.sum((pixel.astype(np.float32) - RED) ** 2))
-            blue_dist = np.sqrt(np.sum((pixel.astype(np.float32) - BLUE) ** 2))
+    # Calculate distances to target colors using broadcasting
+    red_dist = np.sqrt(np.sum((image_float - RED) ** 2, axis=2))
+    blue_dist = np.sqrt(np.sum((image_float - BLUE) ** 2, axis=2))
 
-            # assign based on closest color within threshold
-            if red_dist <= color_threshold:
-                grid[y, x] = 100  # Obstacle
-            elif blue_dist <= color_threshold:
-                grid[y, x] = 0  # Free space
-            # else: remains -1 (unknown)
+    # Assign based on closest color within threshold
+    grid[red_dist <= color_threshold] = 100  # Obstacle
+    grid[blue_dist <= color_threshold] = 0  # Free space
 
     occupancy_grid = OccupancyGrid()
     occupancy_grid.info.width = width
@@ -95,19 +91,34 @@ def occupancy_grid_from_image(image_path) -> OccupancyGrid:
     return occupancy_grid
 
 
+def extract_coordinates(point: dict | None) -> list | str:
+    if point is None:
+        return "Failed to parse goal position: response is None."
+    if "point" not in point:
+        return "Failed to parse goal position: missing 'point' key."
+    if not isinstance(point["point"], list):
+        return "Failed to parse goal position: 'point' is not a list."
+
+    return point["point"]
+
+
 def goal_placement_prompt(description: str) -> str:
     prompt = (
         "Look at this image carefully \n"
         "it represents a 2D occupancy grid map where,\n"
         " - blue area is free space, \n"
         " - yellow area is unknown space, \n"
-        " - red (and its shades) areas are obstacles/walls, \n"
+        " - red (and its shades) areas are obstacles, \n"
         " - green object represents the robot's position and points to the direction it is facing. \n"
         f"Identify a location in free space based on the following description: {description}\n"
-        "Return JSON object with this exact format:\n"
+        "Prioritize selecting a goal position in free space (blue area) over exactly matching the description. \n"
+        "MAKE SURE there is a clear path from the robot's current position to the goal position without crossing any obstacles. \n"
+        "MAKE SURE the goal position is located in the blue area (free space) of the map and few pixels away from obstacles or objects. \n"
+        "Return ONLY a JSON object with this exact format:\n"
         '{"point": [x, y]}\n'
-        "Give your step by step reasoning before answering.\n"
+        f"where x,y are the pixel coordinates of the goal position in the image. \n"
     )
+
     return prompt
 
 
@@ -149,9 +160,7 @@ def test_point_placement(test_map, vl_model):
         prompt = goal_placement_prompt(qna["query"])
         response = vl_model.query(image, prompt)
         point = extract_json_from_llm_response(response)
-        if point is None or "point" not in point:
-            raise ValueError(f"Failed to extract point from response: {response}")
-        x, y = point["point"]
+        x, y = extract_coordinates(point)
 
         print(f"query {qna['query']} response {response}")
         # keep track of score
@@ -168,9 +177,10 @@ def test_point_placement(test_map, vl_model):
                 filepath=f"./debug_goal_placement_{test_map['map_id']}_{qna['query'].replace(' ', '_')}.png",
             )
 
-    # assert score >= len(test_map["questions"]) * 0.7, (
-    #     f"Goal placement score too low: {score}/{len(test_map['questions'])}"
-    # )
+    # TODO: adjust these thresholds after adding more qnas in dataset
+    assert score >= len(test_map["questions"]) * 0.25, (
+        f"Goal placement score too low: {score}/{len(test_map['questions'])}"
+    )
 
 
 @pytest.mark.parametrize(
