@@ -16,6 +16,9 @@ from functools import cached_property
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from dimos.mapping.occupancy.path_map import NavigationStrategy
+from dimos.navigation.global_planner.astar import AStarAlgorithm
+
 
 class GlobalConfig(BaseSettings):
     robot_ip: str | None = None
@@ -24,6 +27,9 @@ class GlobalConfig(BaseSettings):
     n_dask_workers: int = 2
     mujoco_room: str | None = None
     robot_model: str | None = None
+    robot_width: float = 0.4
+    planner_strategy: NavigationStrategy = "mixed"
+    astar_algorithm: AStarAlgorithm = "min_cost"
 
     model_config = SettingsConfigDict(
         env_file=".env",

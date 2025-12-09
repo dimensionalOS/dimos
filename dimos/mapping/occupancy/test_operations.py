@@ -16,16 +16,25 @@
 
 import cv2
 import numpy as np
-import pytest
 
+from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.utils.data import get_data
 
 
-@pytest.mark.parametrize("palette", ["rainbow", "turbo"])
-def test_visualize_occupancy_grid(occupancy_gradient, palette) -> None:
-    expected = cv2.imread(get_data(f"visualize_occupancy_{palette}.png"), cv2.IMREAD_COLOR)
+def test_smooth_occupied(occupancy) -> None:
+    expected = cv2.imread(get_data("smooth_occupied.png"), cv2.IMREAD_COLOR)
 
-    result = visualize_occupancy_grid(occupancy_gradient, palette)
+    result = visualize_occupancy_grid(smooth_occupied(occupancy), "rainbow")
+
+    np.testing.assert_array_equal(result.data, expected)
+
+
+def test_overlay_occupied(occupancy) -> None:
+    expected = cv2.imread(get_data("overlay_occupied.png"), cv2.IMREAD_COLOR)
+    overlay = occupancy.copy()
+    overlay.grid[50:100, 50:100] = 100
+
+    result = visualize_occupancy_grid(overlay_occupied(occupancy, overlay), "rainbow")
 
     np.testing.assert_array_equal(result.data, expected)

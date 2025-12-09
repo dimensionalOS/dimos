@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,19 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-
-import cv2
 import numpy as np
 import pytest
 
-from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.utils.data import get_data
 
 
-@pytest.mark.parametrize("palette", ["rainbow", "turbo"])
-def test_visualize_occupancy_grid(occupancy_gradient, palette) -> None:
-    expected = cv2.imread(get_data(f"visualize_occupancy_{palette}.png"), cv2.IMREAD_COLOR)
+@pytest.fixture
+def occupancy() -> OccupancyGrid:
+    return OccupancyGrid(np.load(get_data("occupancy_simple.npy")))
 
-    result = visualize_occupancy_grid(occupancy_gradient, palette)
 
-    np.testing.assert_array_equal(result.data, expected)
+@pytest.fixture
+def occupancy_gradient(occupancy) -> OccupancyGrid:
+    return occupancy.gradient(max_distance=1.5)

@@ -16,10 +16,11 @@
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
-from dimos.mapping.occupancy.inflation import simple_inflate
+from dimos.core.global_config import GlobalConfig
+from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.navigation.global_planner.general_astar import general_astar
+from dimos.navigation.global_planner.astar import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
@@ -150,12 +151,18 @@ class AstarPlanner(Module):
     # LCM outputs
     path: Out[Path] = None  # type: ignore[assignment]
 
-    def __init__(self) -> None:
+    _global_config: GlobalConfig
+
+    def __init__(
+        self,
+        global_config: GlobalConfig | None = None,
+    ) -> None:
         super().__init__()
 
-        # Latest data
         self.latest_costmap: OccupancyGrid | None = None
         self.latest_odom: PoseStamped | None = None
+
+        self._global_config = global_config or GlobalConfig()
 
     @rpc
     def start(self) -> None:
@@ -206,18 +213,22 @@ class AstarPlanner(Module):
 
         # Get current position from odometry
         robot_pos = self.latest_odom.position
-        costmap = simple_inflate(self.latest_costmap, 0.2).gradient(max_distance=1.5)
 
-        # Run A* planning
-        path = general_astar(costmap, goal.position, robot_pos)
+        costmap = make_navigation_map(
+            self.latest_costmap,
+            self._global_config.robot_width,
+            strategy=self._global_config.planner_strategy,
+        )
 
-        if path:
-            path = resample_path(path, 0.1)
-            logger.debug(f"Path found with {len(path.poses)} waypoints")
-            return path
+        path = astar(self._global_config.astar_algorithm, costmap, goal.position, robot_pos)
 
-        logger.warning("No path found to the goal.")
-        return None
+        if not path:
+            logger.warning("No path found to the goal.")
+            return None
+
+        path = resample_path(path, 0.1)
+        logger.debug(f"Path found with {len(path.poses)} waypoints")
+        return path
 
 
 astar_planner = AstarPlanner.blueprint

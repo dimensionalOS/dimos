@@ -18,14 +18,17 @@ import cv2
 import numpy as np
 import pytest
 
+from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.utils.data import get_data
 
 
-@pytest.mark.parametrize("palette", ["rainbow", "turbo"])
-def test_visualize_occupancy_grid(occupancy_gradient, palette) -> None:
-    expected = cv2.imread(get_data(f"visualize_occupancy_{palette}.png"), cv2.IMREAD_COLOR)
+@pytest.mark.parametrize("strategy", ["simple", "mixed"])
+def test_make_navigation_map(occupancy, strategy) -> None:
+    expected = cv2.imread(get_data(f"make_navigation_map_{strategy}.png"), cv2.IMREAD_COLOR)
+    robot_width = 0.4
 
-    result = visualize_occupancy_grid(occupancy_gradient, palette)
+    og = make_navigation_map(occupancy, robot_width, strategy=strategy)
 
+    result = visualize_occupancy_grid(og, "rainbow")
     np.testing.assert_array_equal(result.data, expected)

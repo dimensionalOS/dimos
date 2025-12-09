@@ -436,3 +436,17 @@ class OccupancyGrid(Timestamped):
         )
 
         return maxed
+
+    def copy(self) -> OccupancyGrid:
+        """Create a deep copy of the OccupancyGrid.
+
+        Returns:
+            A new OccupancyGrid instance with copied data.
+        """
+        return OccupancyGrid(
+            grid=self.grid.copy(),
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )

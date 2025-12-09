@@ -21,13 +21,13 @@ from dimos.navigation.global_planner.general_astar import general_astar
 from dimos.navigation.global_planner.min_cost_astar import min_cost_astar
 from dimos.utils.logging_config import setup_logger
 
-Algorithm: TypeAlias = Literal["general", "min_cost"]
+AStarAlgorithm: TypeAlias = Literal["general", "min_cost"]
 
 logger = setup_logger(__file__)
 
 
 def astar(
-    algorithm: Algorithm,
+    algorithm: AStarAlgorithm,
     costmap: OccupancyGrid,
     goal: VectorLike,
     start: VectorLike,
