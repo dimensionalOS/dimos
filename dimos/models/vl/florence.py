@@ -35,9 +35,7 @@ class Florence2Model(Captioner, HuggingFaceModel):
     def __init__(
         self,
         model_name: str = "microsoft/Florence-2-base",
-        device: str | None = None,
-        dtype: torch.dtype = torch.float16,
-        warmup: bool = False,
+        **kwargs: object,
     ) -> None:
         """Initialize Florence-2 model.
 
@@ -45,18 +43,14 @@ class Florence2Model(Captioner, HuggingFaceModel):
             model_name: HuggingFace model name. Options:
                 - "microsoft/Florence-2-base" (~0.2B, fastest)
                 - "microsoft/Florence-2-large" (~0.8B, better quality)
-            device: Device to run on (cuda/cpu), auto-detects if None
-            dtype: Model dtype (float16 recommended for GPU)
-            warmup: If True, immediately load and warmup the model.
+            **kwargs: Additional config options (device, dtype, warmup, etc.)
         """
-        HuggingFaceModel.__init__(
-            self, model_name=model_name, device=device, dtype=dtype, warmup=warmup
-        )
+        HuggingFaceModel.__init__(self, model_name=model_name, **kwargs)
 
     @cached_property
     def _processor(self) -> AutoProcessor:
         return AutoProcessor.from_pretrained(
-            self._model_name, trust_remote_code=self._trust_remote_code
+            self.config.model_name, trust_remote_code=self.config.trust_remote_code
         )
 
     def caption(self, image: Image, detail: str = "normal") -> str:

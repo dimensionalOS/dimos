@@ -14,25 +14,23 @@ from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 
 class MoondreamVlModel(VlModel, HuggingFaceModel):
     _model_class = AutoModelForCausalLM
-    _default_dtype: torch.dtype = torch.bfloat16
 
     def __init__(
         self,
         model_name: str = "vikhyatk/moondream2",
-        device: str | None = None,
         dtype: torch.dtype = torch.bfloat16,
-        warmup: bool = False,
+        **kwargs: object,
     ) -> None:
-        HuggingFaceModel.__init__(self, model_name=model_name, device=device, dtype=dtype, warmup=warmup)
+        HuggingFaceModel.__init__(self, model_name=model_name, dtype=dtype, **kwargs)
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
         """Load model with compile() for optimization."""
         model = AutoModelForCausalLM.from_pretrained(
-            self._model_name,
-            trust_remote_code=self._trust_remote_code,
-            torch_dtype=self._dtype,
-        ).to(self._device)
+            self.config.model_name,
+            trust_remote_code=self.config.trust_remote_code,
+            torch_dtype=self.config.dtype,
+        ).to(self.config.device)
         model.compile()
         return model
 

@@ -17,13 +17,25 @@
 from __future__ import annotations
 
 from abc import ABC
+from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
 import torch
 
+from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
-class LocalModel(ABC):
+type DeviceType = str  # e.g., 'cuda', 'cpu', 'cuda:0'
+
+
+@dataclass
+class LocalModelConfig:
+    device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
+    dtype: torch.dtype = torch.float32
+    warmup: bool = False
+
+
+class LocalModel(ABC, Configurable[LocalModelConfig]):
     """Base class for all local GPU/CPU models.
 
     Provides common infrastructure for device management, dtype handling,
@@ -37,16 +49,10 @@ class LocalModel(ABC):
         - _default_dtype for different default dtype
     """
 
-    _device: str
-    _dtype: torch.dtype
-    _default_dtype: torch.dtype = torch.float32
+    default_config = LocalModelConfig
+    config: LocalModelConfig
 
-    def __init__(
-        self,
-        device: str | None = None,
-        dtype: torch.dtype | None = None,
-        warmup: bool = False,
-    ) -> None:
+    def __init__(self, **kwargs: object) -> None:
         """Initialize local model with device and dtype configuration.
 
         Args:
@@ -57,20 +63,19 @@ class LocalModel(ABC):
             warmup: If True, immediately load and warmup the model.
                     If False (default), model loads lazily on first use.
         """
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        self._dtype = dtype if dtype is not None else self._default_dtype
-        if warmup:
+        super().__init__(**kwargs)
+        if self.config.warmup:
             self.warmup()
 
     @property
     def device(self) -> str:
         """The device this model runs on."""
-        return self._device
+        return self.config.device
 
     @property
     def dtype(self) -> torch.dtype:
         """The dtype used by this model."""
-        return self._dtype
+        return self.config.dtype
 
     @cached_property
     def _model(self) -> Any:
@@ -90,12 +95,19 @@ class LocalModel(ABC):
         Some models (CLIP, TorchReID) fail if they are the first to use CUDA.
         Call this before model loading if needed.
         """
-        if self._device.startswith("cuda") and torch.cuda.is_available():
+        if self.config.device.startswith("cuda") and torch.cuda.is_available():
             try:
                 _ = torch.zeros(1, 1, device="cuda") @ torch.zeros(1, 1, device="cuda")
                 torch.cuda.synchronize()
             except Exception:
                 pass
+
+
+@dataclass
+class HuggingFaceModelConfig(LocalModelConfig):
+    model_name: str = ""
+    trust_remote_code: bool = True
+    dtype: torch.dtype = torch.float16
 
 
 class HuggingFaceModel(LocalModel):
@@ -111,36 +123,14 @@ class HuggingFaceModel(LocalModel):
         - _model: @cached_property for custom model loading
     """
 
-    _model_name: str
-    _trust_remote_code: bool
-    _default_dtype: torch.dtype = torch.float16
-    _model_class: type | None = None  # e.g., AutoModelForCausalLM
-
-    def __init__(
-        self,
-        model_name: str,
-        device: str | None = None,
-        dtype: torch.dtype | None = None,
-        trust_remote_code: bool = True,
-        warmup: bool = False,
-    ) -> None:
-        """Initialize HuggingFace model.
-
-        Args:
-            model_name: HuggingFace model identifier (e.g., "microsoft/Florence-2-large")
-            device: Device to run on. Auto-detects if None.
-            dtype: Model dtype. Defaults to float16 for GPU efficiency.
-            trust_remote_code: Whether to trust remote code (needed for many vision models)
-            warmup: If True, immediately load and warmup the model.
-        """
-        self._model_name = model_name
-        self._trust_remote_code = trust_remote_code
-        super().__init__(device=device, dtype=dtype, warmup=warmup)
+    default_config = HuggingFaceModelConfig
+    config: HuggingFaceModelConfig
+    _model_class: Any = None  # e.g., AutoModelForCausalLM
 
     @property
     def model_name(self) -> str:
         """The HuggingFace model identifier."""
-        return self._model_name
+        return self.config.model_name
 
     @cached_property
     def _model(self) -> Any:
@@ -153,11 +143,11 @@ class HuggingFaceModel(LocalModel):
                 f"{self.__class__.__name__} must set _model_class or override _model property"
             )
         model = self._model_class.from_pretrained(
-            self._model_name,
-            trust_remote_code=self._trust_remote_code,
-            torch_dtype=self._dtype,
+            self.config.model_name,
+            trust_remote_code=self.config.trust_remote_code,
+            torch_dtype=self.config.dtype,
         )
-        return model.to(self._device)
+        return model.to(self.config.device)
 
     def _move_inputs_to_device(
         self,
@@ -168,7 +158,7 @@ class HuggingFaceModel(LocalModel):
 
         Args:
             inputs: Dictionary of input tensors
-            apply_dtype: Whether to apply self._dtype to floating point tensors
+            apply_dtype: Whether to apply model dtype to floating point tensors
 
         Returns:
             Dictionary with tensors moved to device
@@ -177,9 +167,9 @@ class HuggingFaceModel(LocalModel):
         for k, v in inputs.items():
             if isinstance(v, torch.Tensor):
                 if apply_dtype and v.is_floating_point():
-                    result[k] = v.to(self._device, dtype=self._dtype)
+                    result[k] = v.to(self.config.device, dtype=self.config.dtype)
                 else:
-                    result[k] = v.to(self._device)
+                    result[k] = v.to(self.config.device)
             else:
                 result[k] = v
         return result

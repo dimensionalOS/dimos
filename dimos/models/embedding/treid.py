@@ -12,58 +12,41 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import cached_property
-from pathlib import Path
 
 import torch
 import torch.nn.functional as F
-from torchreid import utils as torchreid_utils  # type: ignore[import-not-found]
+from torchreid import utils as torchreid_utils  # type: ignore[import-untyped]
 
 from dimos.models.base import LocalModel
-from dimos.models.embedding.base import Embedding, EmbeddingModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
 
 
 class TorchReIDEmbedding(Embedding): ...
 
 
+@dataclass
+class TorchReIDModelConfig(EmbeddingModelConfig):
+    model_name: str = "se_resnext101_32x4d"
+    model_path: str | None = None
+
+
 class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
     """TorchReID embedding model for person re-identification."""
 
-    _model_name: str
-    _model_path: Path | str | None
-
-    def __init__(
-        self,
-        model_name: str = "se_resnext101_32x4d",
-        model_path: Path | str | None = None,
-        device: str | None = None,
-        normalize: bool = False,
-        warmup: bool = False,
-    ) -> None:
-        """
-        Initialize TorchReID model.
-
-        Args:
-            model_name: Name of the model architecture (e.g., "osnet_x1_0", "osnet_x0_75")
-            model_path: Path to pretrained weights (.pth.tar file)
-            device: Device to run on (cuda/cpu), auto-detects if None
-            normalize: Whether to L2 normalize embeddings
-            warmup: If True, immediately load and warmup the model.
-        """
-        self._model_name = model_name
-        self._model_path = model_path
-        self.normalize = normalize
-        LocalModel.__init__(self, device=device, warmup=warmup)
+    default_config = TorchReIDModelConfig
+    config: TorchReIDModelConfig
 
     @cached_property
     def _model(self) -> torchreid_utils.FeatureExtractor:
         self._ensure_cuda_initialized()
-        model_path_str = str(self._model_path) if self._model_path else ""
+        model_path_str = self.config.model_path or ""
         return torchreid_utils.FeatureExtractor(
-            model_name=self._model_name,
+            model_name=self.config.model_name,
             model_path=model_path_str,
-            device=self._device,
+            device=self.config.device,
         )
 
     def embed(self, *images: Image) -> TorchReIDEmbedding | list[TorchReIDEmbedding]:
@@ -80,11 +63,11 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
 
             # torchreid may return either numpy array or torch tensor depending on configuration
             if isinstance(features, torch.Tensor):
-                features_tensor = features.to(self._device)
+                features_tensor = features.to(self.config.device)
             else:
-                features_tensor = torch.from_numpy(features).to(self._device)
+                features_tensor = torch.from_numpy(features).to(self.config.device)
 
-            if self.normalize:
+            if self.config.normalize:
                 features_tensor = F.normalize(features_tensor, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)

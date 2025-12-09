@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 from functools import cached_property
 
 from PIL import Image as PILImage
@@ -20,46 +21,34 @@ import torch.nn.functional as F
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
 
 from dimos.models.base import HuggingFaceModel
-from dimos.models.embedding.base import Embedding, EmbeddingModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
 
 
 class CLIPEmbedding(Embedding): ...
 
 
+@dataclass
+class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
+    model_name: str = "openai/clip-vit-base-patch32"
+    dtype: torch.dtype = torch.float32
+
+
 class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
 
+    default_config = CLIPModelConfig
+    config: CLIPModelConfig
     _model_class = HFCLIPModel
-    _default_dtype: torch.dtype = torch.float32  # CLIP typically uses float32
-
-    def __init__(
-        self,
-        model_name: str = "openai/clip-vit-base-patch32",
-        device: str | None = None,
-        normalize: bool = False,
-        warmup: bool = False,
-    ) -> None:
-        """
-        Initialize CLIP model.
-
-        Args:
-            model_name: HuggingFace model name (e.g., "openai/clip-vit-base-patch32")
-            device: Device to run on (cuda/cpu), auto-detects if None
-            normalize: Whether to L2 normalize embeddings
-            warmup: If True, immediately load and warmup the model.
-        """
-        self.normalize = normalize
-        HuggingFaceModel.__init__(self, model_name=model_name, device=device, warmup=warmup)
 
     @cached_property
     def _model(self) -> HFCLIPModel:
         self._ensure_cuda_initialized()
-        return HFCLIPModel.from_pretrained(self._model_name).eval().to(self._device)
+        return HFCLIPModel.from_pretrained(self.config.model_name).eval().to(self.config.device)
 
     @cached_property
     def _processor(self) -> CLIPProcessor:
-        return CLIPProcessor.from_pretrained(self._model_name)
+        return CLIPProcessor.from_pretrained(self.config.model_name)
 
     def embed(self, *images: Image) -> CLIPEmbedding | list[CLIPEmbedding]:
         """Embed one or more images.
@@ -71,10 +60,10 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
 
         # Process images
         with torch.inference_mode():
-            inputs = self._processor(images=pil_images, return_tensors="pt").to(self._device)
+            inputs = self._processor(images=pil_images, return_tensors="pt").to(self.config.device)
             image_features = self._model.get_image_features(**inputs)
 
-            if self.normalize:
+            if self.config.normalize:
                 image_features = F.normalize(image_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -92,11 +81,11 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
         """
         with torch.inference_mode():
             inputs = self._processor(text=list(texts), return_tensors="pt", padding=True).to(
-                self._device
+                self.config.device
             )
             text_features = self._model.get_text_features(**inputs)
 
-            if self.normalize:
+            if self.config.normalize:
                 text_features = F.normalize(text_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -110,9 +99,9 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
         """Warmup the model with a dummy forward pass."""
         super().warmup()
 
-        dummy_image = torch.randn(1, 3, 224, 224).to(self._device)
+        dummy_image = torch.randn(1, 3, 224, 224).to(self.config.device)
         dummy_text_inputs = self._processor(text=["warmup"], return_tensors="pt", padding=True).to(
-            self._device
+            self.config.device
         )
 
         with torch.inference_mode():
