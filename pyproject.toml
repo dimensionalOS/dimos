@@ -105,6 +105,7 @@ dependencies = [
     # embedding models
     "open_clip_torch==3.2.0",
     "torchreid==0.2.5",
+    "gdown==5.2.0",
 
     # Mapping
     "open3d",
