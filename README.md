@@ -115,27 +115,27 @@ pytest -s dimos/
 
 #### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
-CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py
+dimos --replay run unitree-go2
 ```
 
 #### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
 ```bash
 pip install -e '.[sim]'
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py
+dimos --simulation run unitree-go2
 ```
 
 #### Test Dimensional with a real UnitreeGo2 over WebRTC
 ```bash
 export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/unitree_go2.py
+dimos run unitree-go2
 ```
 
 #### Test Dimensional with a real UnitreeGo2 running Agents
 *OpenAI / Alibaba keys required*
 ```bash
 export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/run_agents2.py
+dimos run unitree-go2-agentic
 ```
 ---
 
