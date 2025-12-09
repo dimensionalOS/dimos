@@ -1,5 +1,6 @@
 import warnings
 from functools import cached_property
+from typing import Any
 
 import numpy as np
 from PIL import Image as PILImage
@@ -34,7 +35,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         model.compile()
         return model
 
-    def _to_pil(self, image: Image | np.ndarray) -> PILImage.Image:
+    def _to_pil(self, image: Image | np.ndarray[Any, Any]) -> PILImage.Image:
         """Convert dimos Image or numpy array to PIL Image."""
         if isinstance(image, np.ndarray):
             warnings.warn(
@@ -82,7 +83,8 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
 
         pil_images = [self._to_pil(img) for img in images]
         prompts = [query] * len(images)
-        return self._model.batch_answer(pil_images, prompts)
+        result: list[str] = self._model.batch_answer(pil_images, prompts)
+        return result
 
     def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query a single image with multiple different questions.

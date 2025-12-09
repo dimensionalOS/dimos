@@ -19,13 +19,14 @@ from __future__ import annotations
 from abc import ABC
 from dataclasses import dataclass
 from functools import cached_property
-from typing import Any
+from typing import Annotated, Any
 
 import torch
 
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
-type DeviceType = str  # e.g., 'cuda', 'cpu', 'cuda:0'
+# Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
+DeviceType = Annotated[str, "Device identifier (e.g., 'cuda', 'cpu', 'cuda:0')"]
 
 
 @dataclass

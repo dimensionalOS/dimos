@@ -144,6 +144,7 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     ],
     ids=["moondream"],
 )
+@pytest.mark.tool
 @pytest.mark.gpu
 def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     """Test query_batch optimization - multiple images, same query."""
