@@ -118,6 +118,7 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+    "plotext==5.3.2",
 ]
 
 [project.scripts]
