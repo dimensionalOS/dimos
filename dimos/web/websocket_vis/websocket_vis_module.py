@@ -32,6 +32,7 @@ from starlette.routing import Route
 import uvicorn
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -278,7 +279,7 @@ class WebsocketVisModule(Module):
 
     def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
-        costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
+        costmap = simple_inflate(costmap, 0.1).gradient(max_distance=1.0)
         grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
 
         return {

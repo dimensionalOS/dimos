@@ -29,6 +29,7 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.utils.logging_config import setup_logger
@@ -762,7 +763,7 @@ class WavefrontFrontierExplorer(Module):
             )
 
             # Get exploration goal
-            costmap = self.latest_costmap.inflate(0.25)
+            costmap = simple_inflate(self.latest_costmap, 0.25)
             goal = self.get_exploration_goal(robot_pose, costmap)
 
             if goal:

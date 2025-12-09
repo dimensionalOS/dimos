@@ -172,41 +172,6 @@ class OccupancyGrid(Timestamped):
         """Percentage of cells that are unknown."""
         return (self.unknown_cells / self.total_cells * 100) if self.total_cells > 0 else 0.0
 
-    def inflate(self, radius: float) -> OccupancyGrid:
-        """Inflate obstacles by a given radius (binary inflation).
-        Args:
-            radius: Inflation radius in meters
-        Returns:
-            New OccupancyGrid with inflated obstacles
-        """
-        # Convert radius to grid cells
-        cell_radius = int(np.ceil(radius / self.resolution))
-
-        # Get grid as numpy array
-        grid_array = self.grid
-
-        # Create circular kernel for binary inflation
-        2 * cell_radius + 1
-        y, x = np.ogrid[-cell_radius : cell_radius + 1, -cell_radius : cell_radius + 1]
-        kernel = (x**2 + y**2 <= cell_radius**2).astype(np.uint8)
-
-        # Find occupied cells
-        occupied_mask = grid_array >= CostValues.OCCUPIED
-
-        # Binary inflation
-        inflated = ndimage.binary_dilation(occupied_mask, structure=kernel)
-        result_grid = grid_array.copy()
-        result_grid[inflated] = CostValues.OCCUPIED
-
-        # Create new OccupancyGrid with inflated data using numpy constructor
-        return OccupancyGrid(
-            grid=result_grid,
-            resolution=self.resolution,
-            origin=self.origin,
-            frame_id=self.frame_id,
-            ts=self.ts,
-        )
-
     def world_to_grid(self, point: VectorLike) -> Vector3:
         """Convert world coordinates to grid coordinates.
 

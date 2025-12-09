@@ -20,6 +20,7 @@ import pickle
 import numpy as np
 import pytest
 
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs import OccupancyGrid
@@ -180,7 +181,7 @@ def test_from_pointcloud() -> None:
     # Convert pointcloud to occupancy grid
     occupancygrid = general_occupancy(pointcloud, resolution=0.05, min_height=0.1, max_height=2.0)
     # Apply inflation separately if needed
-    occupancygrid = occupancygrid.inflate(0.1)
+    occupancygrid = simple_inflate(occupancygrid, 0.1)
 
     # Check that grid was created with reasonable properties
     assert occupancygrid.width > 0
@@ -376,7 +377,7 @@ def test_lcm_broadcast() -> None:
     # Create occupancy grid from pointcloud
     occupancygrid = general_occupancy(pointcloud, resolution=0.05, min_height=0.1, max_height=2.0)
     # Apply inflation separately if needed
-    occupancygrid = occupancygrid.inflate(0.1)
+    occupancygrid = simple_inflate(occupancygrid, 0.1)
 
     # Create gradient field with larger max_distance for better visualization
     gradient_grid = occupancygrid.gradient(obstacle_threshold=70, max_distance=2.0)

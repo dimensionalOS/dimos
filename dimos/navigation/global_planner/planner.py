@@ -16,6 +16,7 @@
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.general_astar import general_astar
@@ -205,7 +206,7 @@ class AstarPlanner(Module):
 
         # Get current position from odometry
         robot_pos = self.latest_odom.position
-        costmap = self.latest_costmap.inflate(0.2).gradient(max_distance=1.5)
+        costmap = simple_inflate(self.latest_costmap, 0.2).gradient(max_distance=1.5)
 
         # Run A* planning
         path = general_astar(costmap, goal.position, robot_pos)
