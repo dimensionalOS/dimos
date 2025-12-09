@@ -101,7 +101,10 @@ dependencies = [
     "timm>=1.0.15",
     "lap>=0.5.12",
     "opencv-contrib-python==4.10.0.84",
-    "open_clip==3.2.0",
+
+    # embedding models
+    "open_clip_torch==3.2.0",
+    "torchreid==0.2.5",
 
     # Mapping
     "open3d",
@@ -179,10 +182,6 @@ cuda = [
     "nltk",
     "clip @ git+https://github.com/openai/CLIP.git",
     "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
-
-    # embedding models
-    "open_clip_torch>=3.0.0",
-    "torchreid==0.2.5",
 ]
 
 dev = [
