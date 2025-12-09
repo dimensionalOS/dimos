@@ -24,8 +24,8 @@ from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.nav_msgs import OccupancyGrid
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.types.costmap import Costmap, pointcloud_to_costmap
 
 
 class Map(Module):
@@ -62,13 +62,19 @@ class Map(Module):
                     max_height=2.0,
                 )
                 .inflate(0.1)
-                .gradient(obstacle_threshold=70, max_distance=2.0)
+                .gradient()
             )
 
             self.global_costmap.publish(occupancygrid)
 
         if self.global_publish_interval is not None:
             interval(self.global_publish_interval).subscribe(publish)
+
+    def to_PointCloud2(self) -> PointCloud2:
+        return PointCloud2(
+            pointcloud=self.pointcloud,
+            ts=time.time(),
+        )
 
     def to_lidar_message(self) -> LidarMessage:
         return LidarMessage(
@@ -93,16 +99,8 @@ class Map(Module):
         return self.pointcloud
 
     @rpc
-    def costmap(self) -> Costmap:
-        """Return a fully inflated cost-map in a `Costmap` wrapper."""
-        inflate_radius_m = 0.5 * self.voxel_size if self.voxel_size > self.cost_resolution else 0.0
-        grid, origin_xy = pointcloud_to_costmap(
-            self.pointcloud,
-            resolution=self.cost_resolution,
-            inflate_radius_m=inflate_radius_m,
-        )
-
-        return Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.cost_resolution)
+    def costmap(self) -> OccupancyGrid:
+        return OccupancyGrid.from_pointcloud(self.to_PointCloud2())
 
 
 def splice_sphere(

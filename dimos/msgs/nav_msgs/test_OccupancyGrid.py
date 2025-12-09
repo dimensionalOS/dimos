@@ -85,35 +85,14 @@ def test_world_grid_coordinate_conversion():
     grid = OccupancyGrid(data, 0.05, origin, "odom")
 
     # Test world to grid
-    grid_x, grid_y = grid.world_to_grid(2.5, 3.0)
-    assert grid_x == 30
-    assert grid_y == 20
+    grid_pos = grid.world_to_grid((2.5, 3.0))
+    assert int(grid_pos.x) == 30
+    assert int(grid_pos.y) == 20
 
     # Test grid to world
-    world_x, world_y = grid.grid_to_world(10, 5)
-    assert world_x == 1.5
-    assert world_y == 2.25
-
-
-def test_get_set_values():
-    """Test getting and setting values at world coordinates."""
-    data = np.zeros((20, 30), dtype=np.int8)
-    data[5, 10] = 100  # Place an obstacle
-    origin = Pose(1.0, 2.0, 0.0)
-    grid = OccupancyGrid(data, 0.05, origin, "odom")
-
-    # Test getting a value
-    value = grid.get_value(1.5, 2.25)
-    assert value == 100
-
-    # Test setting a value
-    success = grid.set_value(1.5, 2.25, 50)
-    assert success is True
-    assert grid.get_value(1.5, 2.25) == 50
-
-    # Test out of bounds
-    assert grid.get_value(10.0, 10.0) is None
-    assert grid.set_value(10.0, 10.0, 100) is False
+    world_pos = grid.grid_to_world((10, 5))
+    assert world_pos.x == 1.5
+    assert world_pos.y == 2.25
 
 
 def test_lcm_encode_decode():
@@ -125,7 +104,9 @@ def test_lcm_encode_decode():
     grid = OccupancyGrid(data, 0.05, origin, "odom")
 
     # Set a specific value for testing
-    grid.set_value(1.5, 2.25, 50)
+    # Convert world coordinates to grid indices
+    grid_pos = grid.world_to_grid((1.5, 2.25))
+    grid.grid[int(grid_pos.y), int(grid_pos.x)] = 50
 
     # Encode
     lcm_data = grid.lcm_encode()
