@@ -101,6 +101,7 @@ dependencies = [
     "timm>=1.0.15",
     "lap>=0.5.12",
     "opencv-contrib-python==4.10.0.84",
+    "open_clip==3.2.0",
 
     # Mapping
     "open3d",
@@ -131,7 +132,6 @@ dimos = "dimos.robot.cli.dimos:main"
 
 [project.optional-dependencies]
 manipulation = [
-
     # Contact Graspnet Dependencies
     "h5py>=3.7.0",
     "pyrender>=0.1.45",
