@@ -28,7 +28,6 @@ if TYPE_CHECKING:
         (MoondreamVlModel, "Moondream"),
         (QwenVlModel, "Qwen"),
     ],
-    ids=["moondream", "qwen"],
 )
 @pytest.mark.gpu
 def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
@@ -96,7 +95,6 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
     [
         (MoondreamVlModel, "Moondream"),
     ],
-    ids=["moondream"],
 )
 @pytest.mark.gpu
 def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
@@ -146,7 +144,6 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     [
         (MoondreamVlModel, "Moondream"),
     ],
-    ids=["moondream"],
 )
 @pytest.mark.tool
 @pytest.mark.gpu
@@ -201,7 +198,6 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
         (MoondreamVlModel, [None, (512, 512), (256, 256)]),
         (QwenVlModel, [None, (512, 512), (256, 256)]),
     ],
-    ids=["moondream", "qwen"],
 )
 @pytest.mark.gpu
 def test_vlm_resize(

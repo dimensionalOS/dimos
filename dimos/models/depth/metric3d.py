@@ -12,28 +12,39 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
 import cv2
 import torch
 
-from dimos.models.base import LocalModel
+from dimos.models.base import LocalModel, LocalModelConfig
+
+
+@dataclass
+class Metric3DConfig(LocalModelConfig):
+    """Configuration for Metric3D depth estimation model."""
+
+    camera_intrinsics: list[float] = field(default_factory=lambda: [500.0, 500.0, 320.0, 240.0])
+    """Camera intrinsics [fx, fy, cx, cy]."""
+
+    gt_depth_scale: float = 256.0
+    """Scale factor for ground truth depth."""
+
+    device: str = "cuda"
+    """Device to run the model on."""
 
 
 class Metric3D(LocalModel):
-    def __init__(
-        self,
-        camera_intrinsics: list[float] | None = None,
-        gt_depth_scale: float = 256.0,
-        device: str | None = None,
-        warmup: bool = False,
-    ) -> None:
-        LocalModel.__init__(self, device=device or "cuda", warmup=warmup)
+    default_config = Metric3DConfig
+    config: Metric3DConfig
 
-        self.intrinsic = camera_intrinsics
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self.intrinsic = self.config.camera_intrinsics
         self.intrinsic_scaled: list[float] | None = None
-        self.gt_depth_scale = gt_depth_scale
+        self.gt_depth_scale = self.config.gt_depth_scale
         self.pad_info: list[int] | None = None
         self.rgb_origin: Any = None
 
@@ -42,7 +53,7 @@ class Metric3D(LocalModel):
         model = torch.hub.load(  # type: ignore[no-untyped-call]
             "yvanyin/metric3d", "metric3d_vit_small", pretrain=True
         )
-        model = model.to(self._device)
+        model = model.to(self.device)
         model.eval()
         return model
 
@@ -132,7 +143,7 @@ class Metric3D(LocalModel):
         std = torch.tensor([58.395, 57.12, 57.375]).float()[:, None, None]
         rgb = torch.from_numpy(rgb.transpose((2, 0, 1))).float()
         rgb = torch.div((rgb - mean), std)
-        rgb = rgb[None, :, :, :].to(self._device)
+        rgb = rgb[None, :, :, :].to(self.device)
         return rgb
 
     def unpad_transform_depth(self, pred_depth):  # type: ignore[no-untyped-def]
@@ -163,7 +174,7 @@ class Metric3D(LocalModel):
         if depth_file is not None:
             gt_depth = cv2.imread(depth_file, -1)
             gt_depth = gt_depth / self.gt_depth_scale
-            gt_depth = torch.from_numpy(gt_depth).float().to(self._device)  # type: ignore[assignment]
+            gt_depth = torch.from_numpy(gt_depth).float().to(self.device)  # type: ignore[assignment]
             assert gt_depth.shape == pred_depth.shape
 
             mask = gt_depth > 1e-8
