@@ -186,7 +186,7 @@ cuda = [
 
 dev = [
     "ruff==0.14.3",
-    "mypy==1.18.2",
+    "mypy==1.19.0",
     "pre_commit==4.2.0",
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
@@ -271,6 +271,7 @@ force-sort-within-sections = true
 python_version = "3.12"
 incremental = true
 strict = true
+warn_unused_ignores = false
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [tool.pytest.ini_options]

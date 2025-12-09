@@ -19,7 +19,7 @@ from dimos.core.transport import (
     pLCMTransport,
     pSHMTransport,
 )
-from dimos.protocol.rpc.lcmrpc import LCMRPC
+from dimos.protocol.rpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 from dimos.utils.actor_registry import ActorRegistry

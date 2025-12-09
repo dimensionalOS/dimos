@@ -115,6 +115,11 @@ def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int)
         return None
 
 
+TARGET_RMEM_SIZE = 2097152  # prev was 67108864
+TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS = 8388608
+TARGET_MAX_DGRAM_SIZE_MACOS = 65535
+
+
 def check_buffers() -> tuple[list[str], int | None]:
     """Check if buffer configuration is needed and return required commands and current size.
 
@@ -129,13 +134,15 @@ def check_buffers() -> tuple[list[str], int | None]:
 
     if system == "Linux":
         # Linux buffer configuration
-        current_max = _set_net_value(commands_needed, sudo, "net.core.rmem_max", 2097152)
-        _set_net_value(commands_needed, sudo, "net.core.rmem_default", 2097152)
+        current_max = _set_net_value(commands_needed, sudo, "net.core.rmem_max", TARGET_RMEM_SIZE)
+        _set_net_value(commands_needed, sudo, "net.core.rmem_default", TARGET_RMEM_SIZE)
     elif system == "Darwin":  # macOS
         # macOS buffer configuration - check and set UDP buffer related sysctls
-        current_max = _set_net_value(commands_needed, sudo, "kern.ipc.maxsockbuf", 8388608)
-        _set_net_value(commands_needed, sudo, "net.inet.udp.recvspace", 2097152)
-        _set_net_value(commands_needed, sudo, "net.inet.udp.maxdgram", 65535)
+        current_max = _set_net_value(
+            commands_needed, sudo, "kern.ipc.maxsockbuf", TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS
+        )
+        _set_net_value(commands_needed, sudo, "net.inet.udp.recvspace", TARGET_RMEM_SIZE)
+        _set_net_value(commands_needed, sudo, "net.inet.udp.maxdgram", TARGET_MAX_DGRAM_SIZE_MACOS)
     else:
         # For other systems, skip buffer configuration
         logger.warning(f"Buffer configuration not supported on {system}")
@@ -230,6 +237,9 @@ def autoconf() -> None:
     logger.info("System configuration completed.")
 
 
+_DEFAULT_LCM_URL_MACOS = "udpm://239.255.76.67:7667?ttl=0"
+
+
 @dataclass
 class LCMConfig:
     ttl: int = 0
@@ -240,7 +250,7 @@ class LCMConfig:
     def __post_init__(self) -> None:
         if self.url is None and platform.system() == "Darwin":
             # On macOS, use multicast with TTL=0 to keep traffic local
-            self.url = "udpm://239.255.76.67:7667?ttl=0"
+            self.url = _DEFAULT_LCM_URL_MACOS
 
 
 @runtime_checkable
@@ -266,6 +276,9 @@ class Topic:
         if self.lcm_type is None:
             return self.topic
         return f"{self.topic}#{self.lcm_type.msg_name}"
+
+
+_LCM_LOOP_TIMEOUT = 50
 
 
 class LCMService(Service[LCMConfig]):
@@ -341,7 +354,7 @@ class LCMService(Service[LCMConfig]):
                 with self._l_lock:
                     if self.l is None:
                         break
-                    self.l.handle_timeout(50)
+                    self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 print(f"Error in LCM handling: {e}\n{stack_trace}")

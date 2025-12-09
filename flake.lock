@@ -18,6 +18,27 @@
         "type": "github"
       }
     },
+    "home-manager": {
+      "inputs": {
+        "nixpkgs": [
+          "xome",
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1753983724,
+        "narHash": "sha256-2vlAOJv4lBrE+P1uOGhZ1symyjXTRdn/mz0tZ6faQcg=",
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "rev": "7035020a507ed616e2b20c61491ae3eaa8e5462c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-community",
+        "repo": "home-manager",
+        "type": "github"
+      }
+    },
     "lib": {
       "inputs": {
         "flakeUtils": [
@@ -54,6 +75,21 @@
         "type": "github"
       }
     },
+    "libSource_2": {
+      "locked": {
+        "lastModified": 1753579242,
+        "narHash": "sha256-zvaMGVn14/Zz8hnp4VWT9xVnhc8vuL3TStRqwk22biA=",
+        "owner": "divnix",
+        "repo": "nixpkgs.lib",
+        "rev": "0f36c44e01a6129be94e3ade315a5883f0228a6e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "divnix",
+        "repo": "nixpkgs.lib",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1748929857,
@@ -74,7 +110,8 @@
       "inputs": {
         "flake-utils": "flake-utils",
         "lib": "lib",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "xome": "xome"
       }
     },
     "systems": {
@@ -89,6 +126,31 @@
       "original": {
         "owner": "nix-systems",
         "repo": "default",
+        "type": "github"
+      }
+    },
+    "xome": {
+      "inputs": {
+        "flake-utils": [
+          "flake-utils"
+        ],
+        "home-manager": "home-manager",
+        "libSource": "libSource_2",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1764452841,
+        "narHash": "sha256-uSMtf+3G904j4FGYUlTgPNPboh62SO44kSIxQGEWofA=",
+        "owner": "jeff-hykin",
+        "repo": "xome",
+        "rev": "390c8f2060e385c75cd1ea1dcb8950379a1ab1fa",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jeff-hykin",
+        "repo": "xome",
         "type": "github"
       }
     }
