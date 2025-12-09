@@ -120,12 +120,16 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     default_config = VlModelConfig
     config: VlModelConfig
 
-    def _prepare_image(self, image: Image) -> Image:
-        """Prepare image for inference, applying any configured transformations."""
+    def _prepare_image(self, image: Image) -> tuple[Image, float]:
+        """Prepare image for inference, applying any configured transformations.
+
+        Returns:
+            Tuple of (prepared_image, scale_factor). Scale factor is 1.0 if no resize.
+        """
         if self.config.auto_resize is not None:
             max_w, max_h = self.config.auto_resize
-            image = image.resize_to_fit(max_w, max_h)
-        return image
+            return image.resize_to_fit(max_w, max_h)
+        return image, 1.0
 
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
@@ -211,12 +215,24 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
 
         image_detections = ImageDetections2D(image)
 
+        # Get scale factor for coordinate rescaling
+        _, scale = self._prepare_image(image)
+
         try:
             detection_tuples = self.query_json(image, full_query)
         except Exception:
             return image_detections
 
         for track_id, detection_tuple in enumerate(detection_tuples):
+            # Scale coordinates back to original image size if resized
+            if scale != 1.0 and isinstance(detection_tuple, (list, tuple)) and len(detection_tuple) == 5:
+                detection_tuple = [
+                    detection_tuple[0],  # label
+                    detection_tuple[1] / scale,  # x1
+                    detection_tuple[2] / scale,  # y1
+                    detection_tuple[3] / scale,  # x2
+                    detection_tuple[4] / scale,  # y2
+                ]
             detection2d = vlm_detection_to_detection2d(detection_tuple, track_id, image)
             if detection2d is not None and detection2d.is_valid():
                 image_detections.detections.append(detection2d)

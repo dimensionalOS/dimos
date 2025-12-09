@@ -47,7 +47,7 @@ class QwenVlModel(VlModel):
             image = Image.from_numpy(image)
 
         # Apply auto_resize if configured
-        image = self._prepare_image(image)
+        image, _ = self._prepare_image(image)
 
         img_base64 = image.to_base64()
 

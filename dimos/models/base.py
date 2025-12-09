@@ -99,6 +99,16 @@ class LocalModel(Resource, Configurable[LocalModelConfig]):
 
         if "_model" in self.__dict__:
             del self.__dict__["_model"]
+
+        # Reset torch.compile caches to free memory from compiled models
+        # See: https://github.com/pytorch/pytorch/issues/105181
+        try:
+            import torch._dynamo
+
+            torch._dynamo.reset()
+        except (ImportError, AttributeError):
+            pass
+
         gc.collect()
         if self.config.device.startswith("cuda") and torch.cuda.is_available():
             torch.cuda.empty_cache()

@@ -57,7 +57,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
             )
             image = Image.from_numpy(image)
 
-        image = self._prepare_image(image)
+        image, _ = self._prepare_image(image)
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 

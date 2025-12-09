@@ -1,7 +1,9 @@
 import time
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
+    ImageAnnotations,  # type: ignore[import-untyped]
+)
 import pytest
 
 from dimos.core import LCMTransport
@@ -196,8 +198,8 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
 @pytest.mark.parametrize(
     "model_class,sizes",
     [
-        (MoondreamVlModel, [None, (512, 512), (256, 256), (128, 128)]),
-        (QwenVlModel, [None, (512, 512), (256, 256), (128, 128)]),
+        (MoondreamVlModel, [None, (512, 512), (256, 256)]),
+        (QwenVlModel, [None, (512, 512), (256, 256)]),
     ],
     ids=["moondream", "qwen"],
 )

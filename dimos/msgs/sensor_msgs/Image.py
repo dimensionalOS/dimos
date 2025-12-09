@@ -324,18 +324,21 @@ class Image(Timestamped):
 
     def resize_to_fit(
         self, max_width: int, max_height: int, interpolation: int = cv2.INTER_LINEAR
-    ) -> Image:
+    ) -> tuple[Image, float]:
         """Resize image to fit within max dimensions while preserving aspect ratio.
 
         Only scales down if image exceeds max dimensions. Returns self if already fits.
+
+        Returns:
+            Tuple of (resized_image, scale_factor). Scale factor is 1.0 if no resize needed.
         """
         if self.width <= max_width and self.height <= max_height:
-            return self
+            return self, 1.0
 
         scale = min(max_width / self.width, max_height / self.height)
         new_width = int(self.width * scale)
         new_height = int(self.height * scale)
-        return self.resize(new_width, new_height, interpolation)
+        return self.resize(new_width, new_height, interpolation), scale
 
     def crop(self, x: int, y: int, width: int, height: int) -> Image:
         return Image(self._impl.crop(x, y, width, height))  # type: ignore[attr-defined]
