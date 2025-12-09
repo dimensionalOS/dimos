@@ -43,8 +43,8 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
 
     @cached_property
     def _model_and_preprocess(self) -> tuple[Any, Any]:
-        model_path = get_data("models_mobileclip") / (self.config.model_name + ".pt")
         """Load model and transforms (open_clip returns them together)."""
+        model_path = get_data("models_mobileclip") / (self.config.model_name + ".pt")
         model, _, preprocess = open_clip.create_model_and_transforms(
             self.config.model_name, pretrained=str(model_path)
         )
