@@ -40,19 +40,26 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
 
     default_config = MobileCLIPModelConfig
     config: MobileCLIPModelConfig
-    _preprocess: Any
+
+    @cached_property
+    def _model_and_preprocess(self) -> tuple[Any, Any]:
+        """Load model and transforms (open_clip returns them together)."""
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            self.config.model_name, pretrained=self.config.model_path
+        )
+        return model.eval().to(self.config.device), preprocess
+
+    @cached_property
+    def _model(self) -> Any:
+        return self._model_and_preprocess[0]
+
+    @cached_property
+    def _preprocess(self) -> Any:
+        return self._model_and_preprocess[1]
 
     @cached_property
     def _tokenizer(self) -> Any:
         return open_clip.get_tokenizer(self.config.model_name)
-
-    @cached_property
-    def _model(self) -> Any:
-        pretrained = self.config.model_path
-        model, _, self._preprocess = open_clip.create_model_and_transforms(
-            self.config.model_name, pretrained=pretrained
-        )
-        return model.eval().to(self.config.device)
 
     def embed(self, *images: Image) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
         """Embed one or more images.
