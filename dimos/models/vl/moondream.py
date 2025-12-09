@@ -62,8 +62,8 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
     def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query multiple images with the same question.
 
-        Optimized implementation that pre-encodes all images before querying,
-        which allows for better GPU utilization.
+        Note: moondream2's batch_answer is not truly batched - it processes
+        images sequentially. No speedup over sequential calls.
 
         Args:
             images: List of input images
@@ -72,26 +72,17 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         Returns:
             List of responses, one per image
         """
+        warnings.warn(
+            "MoondreamVlModel.query_batch() uses moondream's batch_answer which is not "
+            "truly batched - images are processed sequentially with no speedup.",
+            stacklevel=2,
+        )
         if not images:
             return []
 
-        # Convert all images to PIL format
         pil_images = [self._to_pil(img) for img in images]
-
-        # Pre-encode all images (vision encoder + KV cache setup)
-        # This is the expensive part - doing it upfront allows better planning
-        encoded_images = [self._model.encode_image(pil_img) for pil_img in pil_images]
-
-        # Query each encoded image (text generation only, vision already cached)
-        results = []
-        for encoded_img in encoded_images:
-            result = self._model.query(image=encoded_img, question=query, reasoning=False)
-            if isinstance(result, dict):
-                results.append(result.get("answer", str(result)))
-            else:
-                results.append(str(result))
-
-        return results
+        prompts = [query] * len(images)
+        return self._model.batch_answer(pil_images, prompts)
 
     def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
         """Query a single image with multiple different questions.

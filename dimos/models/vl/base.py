@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import json
 import logging
+import warnings
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
@@ -123,6 +124,11 @@ class VlModel(Captioner):
         Returns:
             List of responses, one per image
         """
+        warnings.warn(
+            f"{self.__class__.__name__}.query_batch() is using default sequential implementation. "
+            "Override for efficient batched inference.",
+            stacklevel=2,
+        )
         return [self.query(image, query, **kwargs) for image in images]
 
     def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
@@ -139,6 +145,11 @@ class VlModel(Captioner):
         Returns:
             List of responses, one per query
         """
+        warnings.warn(
+            f"{self.__class__.__name__}.query_multi() is using default sequential implementation. "
+            "Override for efficient batched inference.",
+            stacklevel=2,
+        )
         return [self.query(image, q, **kwargs) for q in queries]
 
     def caption(self, image: Image) -> str:
