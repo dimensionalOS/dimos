@@ -95,9 +95,9 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
 
         return embeddings[0] if len(texts) == 1 else embeddings
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
-        super().warmup()
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
+        super().start()
 
         dummy_image = torch.randn(1, 3, 224, 224).to(self.config.device)
         dummy_text_inputs = self._processor(text=["warmup"], return_tensors="pt", padding=True).to(
@@ -107,3 +107,9 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
         with torch.inference_mode():
             self._model.get_image_features(pixel_values=dummy_image)
             self._model.get_text_features(**dummy_text_inputs)
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        if "_processor" in self.__dict__:
+            del self.__dict__["_processor"]
+        super().stop()

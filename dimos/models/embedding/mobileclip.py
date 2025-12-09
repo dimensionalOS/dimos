@@ -105,11 +105,18 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
 
         return embeddings[0] if len(texts) == 1 else embeddings
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
-        super().warmup()
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
+        super().start()
         dummy_image = torch.randn(1, 3, 224, 224).to(self.config.device)
         dummy_text = self._tokenizer(["warmup"]).to(self.config.device)
         with torch.inference_mode():
             self._model.encode_image(dummy_image)
             self._model.encode_text(dummy_text)
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        for attr in ("_model_and_preprocess", "_model", "_preprocess", "_tokenizer"):
+            if attr in self.__dict__:
+                del self.__dict__[attr]
+        super().stop()

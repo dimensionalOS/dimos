@@ -34,7 +34,7 @@ class ConcreteHuggingFaceModel(HuggingFaceModel):
 
     @cached_property
     def _model(self) -> str:
-        return f"hf_model:{self._model_name}"
+        return f"hf_model:{self.model_name}"
 
 
 def test_local_model_device_auto_detection() -> None:
@@ -74,11 +74,11 @@ def test_local_model_lazy_loading() -> None:
     assert model._model == "loaded_model"
 
 
-def test_local_model_warmup_triggers_loading() -> None:
-    """Test that warmup() triggers model loading."""
+def test_local_model_start_triggers_loading() -> None:
+    """Test that start() triggers model loading."""
     model = ConcreteLocalModel()
     assert "_model" not in model.__dict__
-    model.warmup()
+    model.start()
     assert "_model" in model.__dict__
 
 
@@ -102,17 +102,17 @@ def test_huggingface_model_name() -> None:
 def test_huggingface_model_trust_remote_code() -> None:
     """Test trust_remote_code defaults to True."""
     model = ConcreteHuggingFaceModel(model_name="test/model")
-    assert model._trust_remote_code is True
+    assert model.config.trust_remote_code is True
 
     model2 = ConcreteHuggingFaceModel(model_name="test/model", trust_remote_code=False)
-    assert model2._trust_remote_code is False
+    assert model2.config.trust_remote_code is False
 
 
-def test_huggingface_warmup_loads_model() -> None:
-    """Test that warmup() loads model."""
+def test_huggingface_start_loads_model() -> None:
+    """Test that start() loads model."""
     model = ConcreteHuggingFaceModel(model_name="test/model")
     assert "_model" not in model.__dict__
-    model.warmup()
+    model.start()
     assert "_model" in model.__dict__
 
 

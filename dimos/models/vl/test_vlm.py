@@ -11,6 +11,7 @@ from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import ImageDetections2D
+from dimos.utils.cli.plot import Plot, bar
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
     # Initialize model
     print(f"Loading {model_name} model...")
     model: VlModel = model_class()
-    model.warmup()
+    model.start()
 
     queries = [
         "glasses",
@@ -87,6 +88,7 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
 
     annotations_transport.lcm.stop()
     image_transport.lcm.stop()
+    model.stop()
 
 
 @pytest.mark.parametrize(
@@ -104,7 +106,7 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
     print(f"\nTesting {model_name} query_multi optimization")
 
     model: VlModel = model_class()
-    model.warmup()
+    model.start()
 
     queries = [
         "How many people are in this image?",
@@ -136,6 +138,8 @@ def test_vlm_query_multi(model_class: "type[VlModel]", model_name: str) -> None:
         print(f"  Sequential: {seq_r[:120]}...")
         print(f"  Batch:      {batch_r[:120]}...")
 
+    model.stop()
+
 
 @pytest.mark.parametrize(
     "model_class,model_name",
@@ -157,9 +161,9 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
 
     model: VlModel = model_class()
-    model.warmup()
+    model.start()
 
-    query = "What do you see in this image?"
+    query = "Describe this image in a short sentence"
 
     # Sequential queries (print as they come in)
     print("\nSequential queries:")
@@ -187,3 +191,53 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
     # Verify results are valid strings
     assert len(batch_results) == len(images)
     assert all(isinstance(r, str) and len(r) > 0 for r in batch_results)
+
+    model.stop()
+
+
+@pytest.mark.parametrize(
+    "model_class,sizes",
+    [
+        (MoondreamVlModel, [None, (512, 512), (256, 256)]),
+    ],
+    ids=["moondream"],
+)
+@pytest.mark.gpu
+def test_vlm_resize(
+    model_class: "type[VlModel]",
+    sizes: list[tuple[int, int] | None],
+) -> None:
+    """Test VLM auto_resize effect on performance."""
+    from dimos.utils.testing import TimedSensorReplay
+
+    replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
+    image = replay.find_closest_seek(0).to_rgb()
+
+    labels: list[str] = []
+    avg_times: list[float] = []
+
+    for auto_resize in sizes:
+        resize_str = f"{auto_resize[0]}x{auto_resize[1]}" if auto_resize else "full"
+        print(f"\nOriginal image: {image.width}x{image.height}, auto_resize: {resize_str}")
+
+        model: VlModel = model_class(auto_resize=auto_resize, warmup=True)
+
+        times = []
+        for i in range(3):
+            start = time.time()
+            result = model.query_detections(image, "box")
+            elapsed = time.time() - start
+            times.append(elapsed)
+            print(f"  [{i}] ({elapsed:.2f}s)", result)
+
+        avg = sum(times) / len(times)
+        print(f"Avg time: {avg:.2f}s")
+        labels.append(resize_str)
+        avg_times.append(avg)
+
+        # Free GPU memory before next model
+        model.stop()
+
+    # Plot results
+    print(f"\n{model_class.__name__} resize performance:")
+    bar(labels, avg_times, title=f"{model_class.__name__} Query Time", ylabel="seconds")

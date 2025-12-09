@@ -30,7 +30,7 @@ def test_embedding_model(model_class: type, model_name: str, supports_text: bool
     # Initialize model
     print(f"Loading {model_name} model...")
     model: Any = model_class()
-    model.warmup()
+    model.start()
 
     # Test single image embedding
     print("Embedding single image...")
@@ -102,7 +102,7 @@ def test_text_image_retrieval(model_class: type, model_name: str) -> None:
     print(f"\nTesting {model_name} text-image retrieval")
 
     model: Any = model_class(normalize=True)
-    model.warmup()
+    model.start()
 
     # Embed images
     image_embeddings = model.embed(image, image, image)

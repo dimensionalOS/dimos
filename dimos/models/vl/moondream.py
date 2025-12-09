@@ -1,28 +1,40 @@
-import warnings
+from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
+import warnings
 
 import numpy as np
 from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 
-from dimos.models.base import HuggingFaceModel
+from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 
+# Moondream works well with 512x512 max
+MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
+
+
+@dataclass
+class MoondreamConfig(HuggingFaceModelConfig):
+    """Configuration for MoondreamVlModel."""
+
+    model_name: str = "vikhyatk/moondream2"
+    dtype: torch.dtype = torch.bfloat16
+    auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
+
 
 class MoondreamVlModel(VlModel, HuggingFaceModel):
     _model_class = AutoModelForCausalLM
+    default_config = MoondreamConfig
+    config: MoondreamConfig
 
-    def __init__(
-        self,
-        model_name: str = "vikhyatk/moondream2",
-        dtype: torch.dtype = torch.bfloat16,
-        **kwargs: object,
-    ) -> None:
-        HuggingFaceModel.__init__(self, model_name=model_name, dtype=dtype, **kwargs)
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        # Call LocalModel.stop() which handles _model cleanup and cuda cache
+        HuggingFaceModel.stop(self)
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
@@ -36,7 +48,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         return model
 
     def _to_pil(self, image: Image | np.ndarray[Any, Any]) -> PILImage.Image:
-        """Convert dimos Image or numpy array to PIL Image."""
+        """Convert dimos Image or numpy array to PIL Image, applying auto_resize."""
         if isinstance(image, np.ndarray):
             warnings.warn(
                 "MoondreamVlModel should receive standard dimos Image type, not a numpy array",
@@ -45,6 +57,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
             )
             image = Image.from_numpy(image)
 
+        image = self._prepare_image(image)
         rgb_image = image.to_rgb()
         return PILImage.fromarray(rgb_image.data)
 
@@ -117,7 +130,9 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
 
         return results
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
+    def query_detections(
+        self, image: Image, query: str, **kwargs
+    ) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's native detect method.
 
         Args:

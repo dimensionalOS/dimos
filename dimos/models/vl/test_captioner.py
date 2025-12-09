@@ -30,7 +30,7 @@ def test_captioner(model_class: "type[Captioner]", model_name: str) -> None:
     # Initialize model
     print(f"Loading {model_name} model...")
     model = model_class()
-    model.warmup()
+    model.start()
 
     # Test single caption
     print("Generating caption...")
@@ -66,7 +66,7 @@ def test_florence2_detail_levels() -> None:
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     model = Florence2Model()
-    model.warmup()
+    model.start()
 
     detail_levels = ["brief", "normal", "detailed", "more_detailed"]
 

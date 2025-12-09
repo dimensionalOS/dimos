@@ -16,13 +16,13 @@
 
 from __future__ import annotations
 
-from abc import ABC
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Annotated, Any
 
 import torch
 
+from dimos.core.resource import Resource
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 # Device string type - 'cuda', 'cpu', 'cuda:0', 'cuda:1', etc.
@@ -34,20 +34,20 @@ class LocalModelConfig:
     device: DeviceType = "cuda" if torch.cuda.is_available() else "cpu"
     dtype: torch.dtype = torch.float32
     warmup: bool = False
+    autostart: bool = False
 
 
-class LocalModel(ABC, Configurable[LocalModelConfig]):
+class LocalModel(Resource, Configurable[LocalModelConfig]):
     """Base class for all local GPU/CPU models.
 
-    Provides common infrastructure for device management, dtype handling,
-    lazy model loading, and warmup functionality.
+    Implements Resource interface for lifecycle management.
 
     Subclasses MUST override:
         - _model: @cached_property that loads and returns the model
 
     Subclasses MAY override:
-        - warmup() for custom warmup logic
-        - _default_dtype for different default dtype
+        - start() for custom initialization logic
+        - stop() for custom cleanup logic
     """
 
     default_config = LocalModelConfig
@@ -61,12 +61,12 @@ class LocalModel(ABC, Configurable[LocalModelConfig]):
                     Auto-detects CUDA availability if None.
             dtype: Model dtype (torch.float16, torch.bfloat16, etc.).
                    Uses class _default_dtype if None.
-            warmup: If True, immediately load and warmup the model.
-                    If False (default), model loads lazily on first use.
+            autostart: If True, immediately load the model.
+                       If False (default), model loads lazily on first use.
         """
         super().__init__(**kwargs)
-        if self.config.warmup:
-            self.warmup()
+        if self.config.warmup or self.config.autostart:
+            self.start()
 
     @property
     def device(self) -> str:
@@ -83,12 +83,25 @@ class LocalModel(ABC, Configurable[LocalModelConfig]):
         """Lazily loaded model. Subclasses must override this property."""
         raise NotImplementedError(f"{self.__class__.__name__} must override _model property")
 
-    def warmup(self) -> None:
-        """Warmup the model by triggering lazy loading.
+    def start(self) -> None:
+        """Load the model (Resource interface).
 
-        Subclasses should override to add actual inference warmup.
+        Subclasses should override to add custom initialization.
         """
         _ = self._model
+
+    def stop(self) -> None:
+        """Release model and free GPU memory (Resource interface).
+
+        Subclasses should override and call super().stop() for custom cleanup.
+        """
+        import gc
+
+        if "_model" in self.__dict__:
+            del self.__dict__["_model"]
+        gc.collect()
+        if self.config.device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def _ensure_cuda_initialized(self) -> None:
         """Initialize CUDA context to prevent cuBLAS allocation failures.
@@ -174,7 +187,3 @@ class HuggingFaceModel(LocalModel):
             else:
                 result[k] = v
         return result
-
-    def warmup(self) -> None:
-        """Warmup by loading model."""
-        _ = self._model

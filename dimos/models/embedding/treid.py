@@ -91,9 +91,9 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
             "Use CLIP or MobileCLIP for text-image similarity."
         )
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
-        super().warmup()
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
+        super().start()
 
         # Create a dummy 256x128 image (typical person ReID input size) as numpy array
         import numpy as np
@@ -101,3 +101,7 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
         dummy_image = np.random.randint(0, 256, (256, 128, 3), dtype=np.uint8)
         with torch.inference_mode():
             _ = self._model([dummy_image])
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        super().stop()

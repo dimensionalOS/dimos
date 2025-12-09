@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import json
 import logging
 import warnings
 
+from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
 from dimos.utils.llm_utils import extract_json
@@ -40,10 +43,6 @@ class Captioner(ABC):
             List of text descriptions
         """
         return [self.caption(img) for img in images]
-
-    def warmup(self) -> None:
-        """Optional warmup method to pre-load model."""
-        pass
 
 
 # Type alias for VLM detection format: [label, x1, y1, x2, y2]
@@ -101,12 +100,32 @@ def vlm_detection_to_detection2d(
     )
 
 
-class VlModel(Captioner):
+@dataclass
+class VlModelConfig:
+    """Configuration for VlModel."""
+
+    auto_resize: tuple[int, int] | None = None
+    """Optional (width, height) tuple. If set, images are resized to fit."""
+
+
+class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
     """Vision-language model that can answer questions about images.
 
     Inherits from Captioner, providing a default caption() implementation
     that uses query() with a standard captioning prompt.
+
+    Implements Resource interface for lifecycle management.
     """
+
+    default_config = VlModelConfig
+    config: VlModelConfig
+
+    def _prepare_image(self, image: Image) -> Image:
+        """Prepare image for inference, applying any configured transformations."""
+        if self.config.auto_resize is not None:
+            max_w, max_h = self.config.auto_resize
+            image = image.resize_to_fit(max_w, max_h)
+        return image
 
     @abstractmethod
     def query(self, image: Image, query: str, **kwargs) -> str: ...  # type: ignore[no-untyped-def]
@@ -156,13 +175,17 @@ class VlModel(Captioner):
         """Generate a caption by querying the VLM with a standard prompt."""
         return self.query(image, "Describe this image concisely.")
 
-    def warmup(self) -> None:
-        """Warmup by running a simple query."""
+    def start(self) -> None:
+        """Start the model by running a simple query (Resource interface)."""
         try:
             image = Image.from_file(get_data("cafe-smol.jpg")).to_rgb()
             self.query(image, "What is this?")
         except Exception:
             pass
+
+    def stop(self) -> None:
+        """Stop the model (Resource interface). Override in subclasses for cleanup."""
+        pass
 
     # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[misc]

@@ -148,10 +148,10 @@ class Florence2Model(Captioner, HuggingFaceModel):
 
         return captions
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
         # Load model and processor via base class
-        super().warmup()
+        super().start()
 
         # Run a small inference
         dummy = PILImage.new("RGB", (224, 224), color="gray")
@@ -160,3 +160,11 @@ class Florence2Model(Captioner, HuggingFaceModel):
 
         with torch.inference_mode():
             self._model.generate(**inputs, max_new_tokens=10)
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        # Clean up processor cached property
+        if "_processor" in self.__dict__:
+            del self.__dict__["_processor"]
+        # Call parent which handles _model cleanup
+        super().stop()
