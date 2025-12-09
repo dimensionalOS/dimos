@@ -28,8 +28,8 @@ class MoondreamConfig(HuggingFaceModelConfig):
 
 class MoondreamVlModel(VlModel, HuggingFaceModel):
     _model_class = AutoModelForCausalLM
-    default_config = MoondreamConfig
-    config: MoondreamConfig
+    default_config = MoondreamConfig  # type: ignore[assignment]
+    config: MoondreamConfig  # type: ignore[assignment]
 
     def stop(self) -> None:
         """Release model and free GPU memory."""
@@ -131,8 +131,8 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         return results
 
     def query_detections(
-        self, image: Image, query: str, **kwargs
-    ) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         """Detect objects using Moondream's native detect method.
 
         Args:

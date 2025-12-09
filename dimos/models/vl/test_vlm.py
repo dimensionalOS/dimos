@@ -1,9 +1,7 @@
 import time
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,  # type: ignore[import-untyped]
-)
+from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations  # type: ignore[import-untyped]
 import pytest
 
 from dimos.core import LCMTransport
@@ -156,7 +154,7 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
 
     # Load 5 frames at 1-second intervals using TimedSensorReplay
     replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
-    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
+    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]  # type: ignore[union-attr]
 
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
 
@@ -198,9 +196,10 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
 @pytest.mark.parametrize(
     "model_class,sizes",
     [
-        (MoondreamVlModel, [None, (512, 512), (256, 256)]),
+        (MoondreamVlModel, [None, (512, 512), (256, 256), (128, 128)]),
+        (QwenVlModel, [None, (512, 512), (256, 256), (128, 128)]),
     ],
-    ids=["moondream"],
+    ids=["moondream", "qwen"],
 )
 @pytest.mark.gpu
 def test_vlm_resize(
@@ -211,7 +210,7 @@ def test_vlm_resize(
     from dimos.utils.testing import TimedSensorReplay
 
     replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
-    image = replay.find_closest_seek(0).to_rgb()
+    image = replay.find_closest_seek(0).to_rgb()  # type: ignore[union-attr]
 
     labels: list[str] = []
     avg_times: list[float] = []
@@ -220,7 +219,8 @@ def test_vlm_resize(
         resize_str = f"{auto_resize[0]}x{auto_resize[1]}" if auto_resize else "full"
         print(f"\nOriginal image: {image.width}x{image.height}, auto_resize: {resize_str}")
 
-        model: VlModel = model_class(auto_resize=auto_resize, warmup=True)
+        model: VlModel = model_class(auto_resize=auto_resize)
+        model.start()
 
         times = []
         for i in range(3):
