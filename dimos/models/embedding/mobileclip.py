@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
+from dimos.utils.data import get_data
 
 
 class MobileCLIPEmbedding(Embedding): ...
@@ -32,7 +33,6 @@ class MobileCLIPEmbedding(Embedding): ...
 @dataclass
 class MobileCLIPModelConfig(EmbeddingModelConfig):
     model_name: str = "MobileCLIP2-S4"
-    model_path: str | None = None
 
 
 class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
@@ -43,9 +43,10 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
 
     @cached_property
     def _model_and_preprocess(self) -> tuple[Any, Any]:
+        model_path = get_data("models_mobileclip") / (self.config.model_name + ".pt")
         """Load model and transforms (open_clip returns them together)."""
         model, _, preprocess = open_clip.create_model_and_transforms(
-            self.config.model_name, pretrained=self.config.model_path
+            self.config.model_name, pretrained=str(model_path)
         )
         return model.eval().to(self.config.device), preprocess
 
@@ -71,7 +72,9 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
 
         # Preprocess and batch
         with torch.inference_mode():
-            batch = torch.stack([self._preprocess(img) for img in pil_images]).to(self.config.device)
+            batch = torch.stack([self._preprocess(img) for img in pil_images]).to(
+                self.config.device
+            )
             feats = self._model.encode_image(batch)
             if self.config.normalize:
                 feats = F.normalize(feats, dim=-1)

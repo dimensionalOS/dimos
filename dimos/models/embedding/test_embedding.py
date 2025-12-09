@@ -15,8 +15,8 @@ from dimos.utils.data import get_data
     "model_class,model_name,supports_text",
     [
         (CLIPModel, "CLIP", True),
-        pytest.param(MobileCLIPModel, "MobileCLIP", True, marks=pytest.mark.skip(reason="Requires local weights")),
-        pytest.param(TorchReIDModel, "TorchReID", False, marks=pytest.mark.skip(reason="Requires model download")),
+        pytest.param(MobileCLIPModel, "MobileCLIP", True),
+        (TorchReIDModel, "TorchReID", False),
     ],
     ids=["clip", "mobileclip", "treid"],
 )
@@ -90,7 +90,7 @@ def test_embedding_model(model_class: type, model_name: str, supports_text: bool
     "model_class,model_name",
     [
         (CLIPModel, "CLIP"),
-        pytest.param(MobileCLIPModel, "MobileCLIP", marks=pytest.mark.skip(reason="Requires local weights")),
+        pytest.param(MobileCLIPModel, "MobileCLIP"),
     ],
     ids=["clip", "mobileclip"],
 )
