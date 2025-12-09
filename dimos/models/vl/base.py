@@ -215,11 +215,11 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
 
         image_detections = ImageDetections2D(image)
 
-        # Get scale factor for coordinate rescaling
-        _, scale = self._prepare_image(image)
+        # Get scaled image and scale factor for coordinate rescaling
+        scaled_image, scale = self._prepare_image(image)
 
         try:
-            detection_tuples = self.query_json(image, full_query)
+            detection_tuples = self.query_json(scaled_image, full_query)
         except Exception:
             return image_detections
 
