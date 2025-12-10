@@ -81,14 +81,14 @@ class ROSNav(
     config: Config
     default_config = Config
 
-    goal_req: In[PoseStamped] = None  # type: ignore
+    goal_req: In[PoseStamped]
 
-    pointcloud: Out[PointCloud2] = None  # type: ignore
-    global_pointcloud: Out[PointCloud2] = None  # type: ignore
+    pointcloud: Out[PointCloud2]
+    global_pointcloud: Out[PointCloud2]
 
-    goal_active: Out[PoseStamped] = None  # type: ignore
-    path_active: Out[Path] = None  # type: ignore
-    cmd_vel: Out[Twist] = None  # type: ignore
+    goal_active: Out[PoseStamped]
+    path_active: Out[Path]
+    cmd_vel: Out[Twist]
 
     # Using RxPY Subjects for reactive data flow instead of storing state
     _local_pointcloud_subject: Subject  # type: ignore[type-arg]

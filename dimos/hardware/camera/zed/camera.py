@@ -532,10 +532,10 @@ class ZEDModule(Module):
     """
 
     # Define LCM outputs
-    color_image: Out[Image] = None  # type: ignore[assignment]
-    depth_image: Out[Image] = None  # type: ignore[assignment]
-    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
-    pose: Out[PoseStamped] = None  # type: ignore[assignment]
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    camera_info: Out[CameraInfo]
+    pose: Out[PoseStamped]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

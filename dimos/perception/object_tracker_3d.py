@@ -44,11 +44,11 @@ class ObjectTracker3D(ObjectTracker2D):
     """3D object tracking module extending ObjectTracker2D with depth capabilities."""
 
     # Additional inputs (2D tracker already has color_image)
-    depth: In[Image] = None  # type: ignore[assignment]
-    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
+    depth: In[Image]
+    camera_info: In[CameraInfo]
 
     # Additional outputs (2D tracker already has detection2darray and tracked_overlay)
-    detection3darray: Out[Detection3DArray] = None  # type: ignore[assignment]
+    detection3darray: Out[Detection3DArray]
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """

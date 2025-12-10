@@ -62,18 +62,18 @@ class WebsocketVisModule(Module):
     """
 
     # LCM inputs
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    gps_location: In[LatLon] = None  # type: ignore[assignment]
-    path: In[Path] = None  # type: ignore[assignment]
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped]
+    gps_location: In[LatLon]
+    path: In[Path]
+    global_costmap: In[OccupancyGrid]
 
     # LCM outputs
-    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
-    gps_goal: Out[LatLon] = None  # type: ignore[assignment]
-    explore_cmd: Out[Bool] = None  # type: ignore[assignment]
-    stop_explore_cmd: Out[Bool] = None  # type: ignore[assignment]
-    cmd_vel: Out[Twist] = None  # type: ignore[assignment]
-    movecmd_stamped: Out[TwistStamped] = None  # type: ignore[assignment]
+    goal_request: Out[PoseStamped]
+    gps_goal: Out[LatLon]
+    explore_cmd: Out[Bool]
+    stop_explore_cmd: Out[Bool]
+    cmd_vel: Out[Twist]
+    movecmd_stamped: Out[TwistStamped]
 
     def __init__(self, port: int = 7779, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize the WebSocket visualization module.

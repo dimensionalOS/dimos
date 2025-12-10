@@ -33,9 +33,9 @@ def dimos():  # type: ignore[no-untyped-def]
 
 
 class MockRobotClient(Module):
-    odometry: Out[Odometry] = None  # type: ignore[assignment]
-    lidar: Out[LidarMessage] = None  # type: ignore[assignment]
-    mov: In[Vector3] = None  # type: ignore[assignment]
+    odometry: Out[Odometry]
+    lidar: Out[LidarMessage]
+    mov: In[Vector3]
 
     mov_msg_count = 0
 

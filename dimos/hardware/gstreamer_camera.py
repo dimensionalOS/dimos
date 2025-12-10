@@ -43,7 +43,7 @@ Gst.init(None)
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    video: Out[Image] = None  # type: ignore[assignment]
+    video: Out[Image]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
