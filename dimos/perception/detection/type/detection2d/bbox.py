@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
@@ -349,7 +349,7 @@ class Detection2DBBox(Detection2D):
         )
 
     @classmethod
-    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> Detection2D:  # type: ignore[no-untyped-def]
+    def from_ros_detection2d(cls, ros_det: ROSDetection2D, **kwargs) -> Self:  # type: ignore[no-untyped-def]
         """Convert from ROS Detection2D message to Detection2D object."""
         # Extract bbox from ROS format
         center_x = ros_det.bbox.center.position.x
