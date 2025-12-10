@@ -155,8 +155,10 @@ def test_point_placement(test_map, vl_model):
         orientation=test_map["robot_pose"]["orientation"],
     )
 
-    og_image = OccupancyGridImage(occupancy_grid, flip_vertical=False, robot_pose=robot_pose)
-    image = og_image.encode()
+    og_image = OccupancyGridImage.from_occupancygrid(
+        occupancy_grid, flip_vertical=False, robot_pose=robot_pose
+    )
+    image = og_image.image
 
     for qna in test_map["questions"]:
         prompt = goal_placement_prompt(qna["query"])
@@ -203,8 +205,10 @@ def test_map_comprehension(test_map, vl_model):
         orientation=test_map["robot_pose"]["orientation"],
     )
 
-    og_image = OccupancyGridImage(occupancy_grid, flip_vertical=False, robot_pose=robot_pose)
-    image = og_image.encode()
+    og_image = OccupancyGridImage.from_occupancygrid(
+        occupancy_grid, flip_vertical=False, robot_pose=robot_pose
+    )
+    image = og_image.image
 
     # query and score responses
     responses = {}

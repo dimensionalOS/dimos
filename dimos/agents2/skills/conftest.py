@@ -83,24 +83,6 @@ def unitree_skills(mocker):
 
 
 @pytest.fixture
-def interpret_map_skill(mocker):
-    container = InterpretMapSkill()
-    container.local_costmap.connection = mocker.MagicMock()
-    container.start()
-    yield container
-    container.stop()
-
-
-@pytest.fixture
-def create_interpret_map_agent(interpret_map_skill, create_fake_agent):
-    return partial(
-        create_fake_agent,
-        system_prompt=system_prompt,
-        skill_containers=[interpret_map_skill],
-    )
-
-
-@pytest.fixture
 def create_navigation_agent(navigation_skill_container, create_fake_agent):
     return partial(
         create_fake_agent,

@@ -12,17 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
 
-from enum import IntEnum
 import time
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
-from scipy import ndimage  # type: ignore[import-untyped]
 
-from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3, VectorLike
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
@@ -33,17 +30,15 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 import numpy as np
-
-if TYPE_CHECKING:
-    from numpy.typing import NDArray
+from numpy.typing import NDArray
 
 
 # Encode occupancy grid as image, with helper methods
 class OccupancyGridImage:
     def __init__(
         self,
-        image: Image | None = None,
-        occupancy_grid: OccupancyGrid | None = None,
+        image: Image,
+        occupancy_grid: OccupancyGrid,
         size: tuple[int, int] | None = None,
         robot_pose: Pose | None = None,
         flip_vertical: bool = True,
@@ -53,7 +48,7 @@ class OccupancyGridImage:
 
         self.size = size
         if self.size is None:
-            self.size = (1024, int(1024 * (self.occupancy_grid.height / self.occupancy_grid.width)))
+            self.size = (1024, int(1024 * (occupancy_grid.height / occupancy_grid.width)))
 
         self.flip_vertical = flip_vertical
         self.robot_pose = robot_pose
@@ -111,7 +106,7 @@ class OccupancyGridImage:
 
         # flip vertically for correct orientation
         if flip_vertical:
-            image_arr = cv2.flip(image_arr, 0)
+            image_arr = cv2.flip(image_arr, 0).astype(np.uint8)
 
         # keep original aspect ratio if size not specified
         if size is None:
@@ -134,8 +129,8 @@ class OccupancyGridImage:
 
     @staticmethod
     def _overlay_robot_pose(
-        image_arr: NDArray[np.int8], occupancy_grid: OccupancyGrid, robot_pose: Pose
-    ) -> NDArray[np.int8]:  # type: ignore[type-arg]
+        image_arr: NDArray[np.uint8], occupancy_grid: OccupancyGrid, robot_pose: Pose
+    ) -> NDArray[np.uint8]:
         """Augment the occupancy grid image with the robot's pose.
 
         args:
@@ -156,7 +151,7 @@ class OccupancyGridImage:
         min_dimension = min(height, width)
 
         robot_radius = max(3, int(min_dimension * 0.015))  # At least 3 pixels
-        arrow_length = max(7, int(min_dimension * 0.035))
+        arrow_length = max(10, int(min_dimension * 0.035))
 
         line_thickness = max(1, int(min_dimension * 0.005))
 
@@ -174,7 +169,7 @@ class OccupancyGridImage:
             (rgx + arrow_dx, rgy + arrow_dy),
             (0, 255, 0),
             line_thickness,
-            tipLength=0.4,
+            tipLength=0.5,
         )
 
         return image_arr
@@ -183,7 +178,7 @@ class OccupancyGridImage:
         self,
         pixel_x: int,
         pixel_y: int,
-        size: tuple[int, int] | None = None,
+        size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool | None = None,
     ) -> bool:
         """Get the type of point (free, occupied, unknown) at given pixel coordinates in the occupancy grid image.
@@ -210,7 +205,7 @@ class OccupancyGridImage:
         self,
         pixel_x: int,
         pixel_y: int,
-        size: tuple[int, int] | None = None,
+        size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool | None = None,
         max_search_radius: int = 10,
     ) -> tuple[int, int] | None:
@@ -254,7 +249,7 @@ class OccupancyGridImage:
         self,
         grid_x: int,
         grid_y: int,
-        size: tuple[int, int] | None = None,
+        size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool | None = None,
     ) -> tuple[int, int]:
         """Convert grid coordinates to pixel coordinates in the occupancy grid image.
@@ -280,7 +275,7 @@ class OccupancyGridImage:
         self,
         pixel_x: int,
         pixel_y: int,
-        size: tuple[int, int] | None = None,
+        size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool | None = None,
     ) -> tuple[int, int]:
         """Convert pixel coordinates in the occupancy grid image to grid coordinates.
@@ -306,7 +301,7 @@ class OccupancyGridImage:
         self,
         pixel_x: int,
         pixel_y: int,
-        size: tuple[int, int] | None = None,
+        size: tuple[int, int] = (1024, 1024),
         flip_vertical: bool | None = None,
     ) -> Vector3:
         """Convert pixel coordinates in the occupancy grid image to world coordinates.

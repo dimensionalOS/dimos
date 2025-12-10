@@ -84,15 +84,11 @@ class InterpretMapSkill(SkillModule):
         if costmap is None:
             return "No map available."
 
-        if robot_pose:
-            logger.info(f"Robot pose: {robot_pose}")
-            costmap.robot_pose = robot_pose
-
-        grid_encoder = OccupancyGridImage(
+        grid_image = OccupancyGridImage.from_occupancygrid(
             occupancy_grid=costmap, size=(1024, 1024), flip_vertical=True, robot_pose=robot_pose
         )
 
-        image = grid_encoder.encode()
+        image = grid_image.image
 
         prompt = (
             "Look at this image carefully \n"
@@ -115,11 +111,11 @@ class InterpretMapSkill(SkillModule):
         x, y = extract_coordinates(point)
 
         # ensure point is in free space, else choose nearest free space
-        if not grid_encoder.is_free_space(x, y):
+        if not grid_image.is_free_space(x, y):
             logger.warning(
                 f"Identified goal position ({x}, {y}) is not in free space, choosing nearest free space instead."
             )
-            closest_free_point = grid_encoder.get_closest_free_point(x, y)
+            closest_free_point = grid_image.get_closest_free_point(x, y)
             if closest_free_point is not None:
                 x, y = closest_free_point
 
@@ -131,7 +127,7 @@ class InterpretMapSkill(SkillModule):
             )
 
         # get world coordinates from pixel for navigation
-        goal_pose = grid_encoder.pixel_to_world(x, y, size=(1024, 1024), flip_vertical=True)
+        goal_pose = grid_image.pixel_to_world(x, y, size=(1024, 1024), flip_vertical=True)
 
         return goal_pose
 
