@@ -20,7 +20,7 @@ import time
 
 import cv2
 import onnxruntime  # type: ignore[import-untyped]
-from ultralytics import FastSAM
+from ultralytics import FastSAM  # type: ignore[attr-defined]
 
 from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
 from dimos.perception.segmentation.image_analyzer import ImageAnalyzer
@@ -34,7 +34,7 @@ from dimos.utils.data import get_data
 from dimos.utils.gpu_utils import is_cuda_available
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.segmentation.sam_2d_seg")
+logger = setup_logger()
 
 
 class Sam2DSegmenter:

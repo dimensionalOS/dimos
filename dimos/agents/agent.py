@@ -61,7 +61,7 @@ if TYPE_CHECKING:
 load_dotenv()
 
 # Initialize logger for the agent module
-logger = setup_logger("dimos.agents")
+logger = setup_logger()
 
 # Constants
 _TOKEN_BUDGET_PARTS = 4  # Number of parts to divide token budget

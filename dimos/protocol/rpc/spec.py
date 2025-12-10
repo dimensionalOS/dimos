@@ -55,7 +55,13 @@ class RPCClient(Protocol):
         unsub_fn = self.call(name, arguments, receive_value)
         if not event.wait(rpc_timeout):
             raise TimeoutError(f"RPC call to '{name}' timed out after {rpc_timeout} seconds")
-        return event.result, unsub_fn  # type: ignore[attr-defined]
+
+        # Check if the result is an exception and raise it
+        result = event.result  # type: ignore[attr-defined]
+        if isinstance(result, BaseException):
+            raise result
+
+        return result, unsub_fn
 
     async def call_async(self, name: str, arguments: Args) -> Any:
         loop = asyncio.get_event_loop()
@@ -63,7 +69,11 @@ class RPCClient(Protocol):
 
         def receive_value(val) -> None:  # type: ignore[no-untyped-def]
             try:
-                loop.call_soon_threadsafe(future.set_result, val)
+                # Check if the value is an exception
+                if isinstance(val, BaseException):
+                    loop.call_soon_threadsafe(future.set_exception, val)
+                else:
+                    loop.call_soon_threadsafe(future.set_result, val)
             except Exception as e:
                 loop.call_soon_threadsafe(future.set_exception, e)
 

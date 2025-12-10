@@ -27,7 +27,7 @@ import numpy as np
 from piper_sdk import *  # type: ignore[import-not-found]  # from the official Piper SDK
 import pytest
 from reactivex.disposable import Disposable
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 import dimos.core as core
 from dimos.core import In, Module, rpc
@@ -35,7 +35,7 @@ import dimos.protocol.service.lcmservice as lcmservice
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion, quaternion_to_euler
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class PiperArm:

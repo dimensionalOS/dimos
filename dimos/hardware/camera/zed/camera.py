@@ -31,7 +31,7 @@ from dimos.msgs.std_msgs import Header
 from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class ZEDCamera:
@@ -591,7 +591,7 @@ class ZEDModule(Module):
         self.tf = TF()
 
         # Initialize storage for recording if path provided
-        self.storages = None
+        self.storages: dict[str, Any] | None = None
         if self.recording_path:
             from dimos.utils.testing import TimedSensorStorage
 
@@ -738,7 +738,7 @@ class ZEDModule(Module):
                 ts=header.ts,
             )
 
-            self.color_image.publish(msg)  # type: ignore[no-untyped-call]
+            self.color_image.publish(msg)
 
         except Exception as e:
             logger.error(f"Error publishing color image: {e}")
@@ -753,7 +753,7 @@ class ZEDModule(Module):
                 frame_id=header.frame_id,
                 ts=header.ts,
             )
-            self.depth_image.publish(msg)  # type: ignore[no-untyped-call]
+            self.depth_image.publish(msg)
 
         except Exception as e:
             logger.error(f"Error publishing depth image: {e}")
@@ -831,7 +831,7 @@ class ZEDModule(Module):
                 binning_y=0,
             )
 
-            self.camera_info.publish(msg)  # type: ignore[no-untyped-call]
+            self.camera_info.publish(msg)
 
         except Exception as e:
             logger.error(f"Error publishing camera info: {e}")
@@ -844,7 +844,7 @@ class ZEDModule(Module):
 
             # Create PoseStamped message
             msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
-            self.pose.publish(msg)  # type: ignore[no-untyped-call]
+            self.pose.publish(msg)
 
             # Publish TF transform
             camera_tf = Transform(

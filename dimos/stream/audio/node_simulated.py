@@ -24,7 +24,7 @@ from dimos.stream.audio.abstract import (  # type: ignore[import-untyped]
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.node_simulated")
+logger = setup_logger()
 
 
 class SimulatedAudioSource(AbstractAudioEmitter):  # type: ignore[misc]

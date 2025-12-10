@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from dimos.types.manipulation import ObjectData
 
 # Initialize logger for the ObjectDetectionStream
-logger = setup_logger("dimos.perception.object_detection_stream")
+logger = setup_logger()
 
 
 class ObjectDetectionStream:
