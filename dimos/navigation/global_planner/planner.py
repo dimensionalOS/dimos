@@ -18,7 +18,7 @@ from reactivex.disposable import Disposable
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.path_map import make_navigation_map
-from dimos.mapping.occupancy.path_resampling import resample_path
+from dimos.mapping.occupancy.path_resampling import simple_resample_path
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.astar import astar
@@ -99,7 +99,7 @@ class AstarPlanner(Module):
             logger.warning("No path found to the goal.")
             return None
 
-        return resample_path(path, goal_pose, 0.1)
+        return simple_resample_path(path, goal_pose, 0.1)
 
 
 astar_planner = AstarPlanner.blueprint

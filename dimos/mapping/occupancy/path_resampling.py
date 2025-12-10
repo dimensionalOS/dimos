@@ -65,7 +65,7 @@ def _add_orientations_to_path(path: Path, goal_orientation: Quaternion) -> None:
         path.poses[-1].orientation = identity_quat
 
 
-def resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
+def simple_resample_path(path: Path, goal_pose: Pose, spacing: float) -> Path:
     """Resample a path to have approximately uniform spacing between poses.
 
     Args:
