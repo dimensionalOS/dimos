@@ -16,7 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
+
+from typing_extensions import Self
 
 if TYPE_CHECKING:
     from ultralytics.engine.results import Results
