@@ -17,7 +17,7 @@ from functools import cached_property
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.mapping.occupancy.path_map import NavigationStrategy
-from dimos.navigation.global_planner.astar import AStarAlgorithm
+from dimos.navigation.global_planner.types import AStarAlgorithm
 
 
 class GlobalConfig(BaseSettings):

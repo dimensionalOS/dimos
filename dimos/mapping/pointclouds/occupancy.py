@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 import numpy as np
-from scipy import ndimage
+from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid

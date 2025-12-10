@@ -51,7 +51,7 @@ from dimos.navigation.bt_navigator.navigator import (
 from dimos.navigation.frontier_exploration import (
     wavefront_frontier_explorer,
 )
-from dimos.navigation.global_planner import astar_planner
+from dimos.navigation.global_planner.planner import astar_planner
 from dimos.navigation.local_planner.holonomic_local_planner import (
     holonomic_local_planner,
 )

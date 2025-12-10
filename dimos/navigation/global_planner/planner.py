@@ -13,12 +13,14 @@
 # limitations under the License.
 
 
+import math
+
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.path_map import make_navigation_map
-from dimos.msgs.geometry_msgs import Pose, PoseStamped
+from dimos.msgs.geometry_msgs import Pose, PoseStamped, Quaternion, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.astar import astar
 from dimos.utils.logging_config import setup_logger
@@ -26,9 +28,6 @@ from dimos.utils.transform_utils import euler_to_quaternion
 
 logger = setup_logger()
 
-import math
-
-from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 
 def add_orientations_to_path(path: Path, goal_orientation: Quaternion = None) -> Path:  # type: ignore[assignment]

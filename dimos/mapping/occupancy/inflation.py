@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import numpy as np
-from scipy import ndimage
+from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
