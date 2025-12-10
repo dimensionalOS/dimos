@@ -143,23 +143,23 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     goto: Callable[[PoseStamped], Any] | None = None
 
-    image: In[Image] = None  # type: ignore
-    pointcloud: In[PointCloud2] = None  # type: ignore
+    image: In[Image]
+    pointcloud: In[PointCloud2]
 
-    detections: Out[Detection2DArray] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
+    detections: Out[Detection2DArray]
+    annotations: Out[ImageAnnotations]
 
-    detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
+    detected_pointcloud_0: Out[PointCloud2]
+    detected_pointcloud_1: Out[PointCloud2]
+    detected_pointcloud_2: Out[PointCloud2]
 
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
+    detected_image_0: Out[Image]
+    detected_image_1: Out[Image]
+    detected_image_2: Out[Image]
 
-    scene_update: Out[SceneUpdate] = None  # type: ignore
+    scene_update: Out[SceneUpdate]
 
-    target: Out[PoseStamped] = None  # type: ignore
+    target: Out[PoseStamped]
 
     remembered_locations: dict[str, PoseStamped]
 

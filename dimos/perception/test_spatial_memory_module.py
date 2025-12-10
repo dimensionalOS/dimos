@@ -38,7 +38,7 @@ pubsub.lcm.autoconf()
 class VideoReplayModule(Module):
     """Module that replays video data from TimedSensorReplay."""
 
-    video_out: Out[Image] = None
+    video_out: Out[Image]
 
     def __init__(self, video_path: str) -> None:
         super().__init__()
@@ -75,7 +75,7 @@ class VideoReplayModule(Module):
 class OdometryReplayModule(Module):
     """Module that replays odometry data from TimedSensorReplay."""
 
-    odom_out: Out[Odometry] = None
+    odom_out: Out[Odometry]
 
     def __init__(self, odom_path: str) -> None:
         super().__init__()

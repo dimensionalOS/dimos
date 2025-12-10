@@ -38,9 +38,9 @@ logger = setup_logger()
 
 
 class G1SimConnection(Module):
-    cmd_vel: In[Twist] = None  # type: ignore
-    lidar: Out[LidarMessage] = None  # type: ignore
-    odom: Out[PoseStamped] = None  # type: ignore
+    cmd_vel: In[Twist]
+    lidar: Out[LidarMessage]
+    odom: Out[PoseStamped]
     ip: str | None
     _global_config: GlobalConfig
 

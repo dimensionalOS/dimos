@@ -31,7 +31,7 @@ class KeyboardTeleop(Module):
     Outputs standard Twist messages on /cmd_vel for velocity control.
     """
 
-    cmd_vel: Out[Twist] = None  # type: ignore[assignment]  # Standard velocity commands
+    cmd_vel: Out[Twist]  # Standard velocity commands
 
     _stop_event: threading.Event
     _keys_held: set[int] | None = None
