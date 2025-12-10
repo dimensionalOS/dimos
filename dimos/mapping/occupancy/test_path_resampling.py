@@ -15,7 +15,7 @@
 import numpy as np
 import pytest
 
-from dimos.mapping.occupancy.path_resampling import simple_resample_path
+from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
 from dimos.mapping.occupancy.visualize_path import visualize_path
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -30,13 +30,20 @@ def costmap() -> OccupancyGrid:
     return OccupancyGrid(np.load(get_data("occupancy_simple.npy"))).gradient(max_distance=1.5)
 
 
-def test_resample_path(costmap) -> None:
+@pytest.mark.parametrize("method", ["simple", "smooth"])
+def test_resample_path(costmap, method) -> None:
     start = Vector3(4.0, 2.0, 0)
     goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
-    expected = Image.from_file(get_data("resample_path_simple.png"))
+    expected = Image.from_file(get_data(f"resample_path_{method}.png"))
     path = astar("min_cost", costmap, goal_pose.position, start)
 
-    resampled = simple_resample_path(path, goal_pose, 0.1)
+    match method:
+        case "simple":
+            resampled = simple_resample_path(path, goal_pose, 0.1)
+        case "smooth":
+            resampled = smooth_resample_path(path, goal_pose, 0.1)
+        case _:
+            raise ValueError(f"Unknown resampling method: {method}")
 
     actual = visualize_path(costmap, resampled, 0.2, 0.4)
     np.testing.assert_array_equal(actual.data, expected.data)
