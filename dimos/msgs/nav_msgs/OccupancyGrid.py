@@ -38,6 +38,8 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
     from dimos.msgs.sensor_msgs import PointCloud2
 from dataclasses import dataclass
 from typing import Optional
@@ -71,7 +73,7 @@ class OccupancyGrid(Timestamped):
     ts: float
     frame_id: str
     info: MapMetaData
-    grid: np.ndarray
+    grid: NDArray[np.int8]
 
     def __init__(
         self,
@@ -80,7 +82,7 @@ class OccupancyGrid(Timestamped):
         height: int | None = None,
         resolution: float = 0.05,
         origin: Pose | None = None,
-        robot_pose: Pose | None = None,  # type: ignore[type-arg]
+        robot_pose: Pose | None = None,
         frame_id: str = "world",
         ts: float = 0.0,
     ) -> None:
