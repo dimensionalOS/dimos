@@ -34,16 +34,21 @@ logger = setup_logger()
 
 import numpy as np
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
 
 # Encode occupancy grid as image, with helper methods
 class OccupancyGridImage:
     def __init__(
         self,
-        occupancy_grid: OccupancyGrid,
+        image: Image | None = None,
+        occupancy_grid: OccupancyGrid | None = None,
         size: tuple[int, int] | None = None,
-        flip_vertical: bool = True,
         robot_pose: Pose | None = None,
+        flip_vertical: bool = True,
     ):
+        self.image = image
         self.occupancy_grid = occupancy_grid
 
         self.size = size
@@ -53,17 +58,31 @@ class OccupancyGridImage:
         self.flip_vertical = flip_vertical
         self.robot_pose = robot_pose
 
-    def encode(self) -> Image:
-        """Encode the occupancy grid as image."""
-        return self._grid_to_image()
+    @classmethod
+    def from_occupancygrid(
+        cls,
+        occupancy_grid: OccupancyGrid,
+        size: tuple[int, int] | None = None,
+        flip_vertical: bool = True,
+        robot_pose: Pose | None = None,
+    ) -> OccupancyGridImage:
+        """
+        Create an OccupancyGridImage from OccupancyGrid
 
-    def _grid_to_image(self) -> Image:
-        """Convert the occupancy grid to Image."""
+        args:
+            occupancy_grid: OccupancyGrid message
+            size: Size of the image
+            flip_vertical: Flip image to account for orientation during grid building
+            robot_pose: Robot pose in world frame to be added on the image
+
+        returns:
+            OccupancyGridImage with occupancy grid encoded as image
+        """
         # convert to RGB image:
         # - unknown as yellow
         # - free space as blue
         # - obstacles as red shades
-        grid = self.occupancy_grid.grid
+        grid = occupancy_grid.grid
         image_arr = np.zeros((*grid.shape, 3), dtype=np.uint8)
 
         unknown_mask = grid == CostValues.UNKNOWN
@@ -87,49 +106,56 @@ class OccupancyGridImage:
                 )
 
         # add robot pose if available
-        if self.robot_pose:
-            image_arr = self._overlay_robot_pose(image_arr)
+        if robot_pose:
+            image_arr = cls._overlay_robot_pose(image_arr, occupancy_grid, robot_pose)
 
         # flip vertically for correct orientation
-        if self.flip_vertical:
+        if flip_vertical:
             image_arr = cv2.flip(image_arr, 0)
 
         # keep original aspect ratio if size not specified
-        if self.size is None:
-            (1024, int(1024 * (self.occupancy_grid.height / self.occupancy_grid.width)))
+        if size is None:
+            size = (1024, int(1024 * (occupancy_grid.height / occupancy_grid.width)))
 
         # resize
-        image_arr_resized = cv2.resize(image_arr, self.size, interpolation=cv2.INTER_NEAREST)
+        image_arr_resized = cv2.resize(image_arr, size, interpolation=cv2.INTER_NEAREST)
 
         image = Image(data=image_arr_resized, format=ImageFormat.RGB)
 
-        return image
+        occupancy_grid_image = cls(
+            image=image,
+            occupancy_grid=occupancy_grid,
+            size=size,
+            robot_pose=robot_pose,
+            flip_vertical=flip_vertical,
+        )
 
-    def _overlay_robot_pose(self, image_arr: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
+        return occupancy_grid_image
+
+    @staticmethod
+    def _overlay_robot_pose(
+        image_arr: NDArray[np.int8], occupancy_grid: OccupancyGrid, robot_pose: Pose
+    ) -> NDArray[np.int8]:  # type: ignore[type-arg]
         """Augment the occupancy grid image with the robot's pose.
 
         args:
             image_arr: Numpy array representing the occupancy grid image
+            occupancy_grid: OccupancyGrid instance used to generate this image
+            robot_pose: Robot pose in world frame as Pose
+        returns:
+            image array with robot pose overlayed
         """
 
         # robot position
-        robot_grid_pos = self.occupancy_grid.world_to_grid(self.robot_pose.position)
+        robot_grid_pos = occupancy_grid.world_to_grid(robot_pose.position)
         rgx = round(robot_grid_pos.x)
         rgy = round(robot_grid_pos.y)
-
-        # yaw
-        yaw = self.quat_to_yaw(self.robot_pose.orientation)
-        halfarrow_length = 2  # pixels
-        arrow_dx = int(halfarrow_length * np.cos(yaw))
-        arrow_dy = -int(
-            halfarrow_length * np.sin(yaw)
-        )  # account for poisitive y down in image space
 
         # draw on image
         height, width = image_arr.shape[:2]
         min_dimension = min(height, width)
 
-        robot_radius = max(3, int(min_dimension * 0.015))  # At least 2 pixels
+        robot_radius = max(3, int(min_dimension * 0.015))  # At least 3 pixels
         arrow_length = max(7, int(min_dimension * 0.035))
 
         line_thickness = max(1, int(min_dimension * 0.005))
@@ -138,6 +164,7 @@ class OccupancyGridImage:
         cv2.circle(image_arr, (rgx, rgy), robot_radius, (0, 255, 0), -1)
 
         # orientation arrow
+        yaw = robot_pose.orientation.euler[2]
         arrow_dx = int(arrow_length * np.cos(yaw))
         arrow_dy = -int(arrow_length * np.sin(yaw))  # account for y + down in image space
 
@@ -151,13 +178,6 @@ class OccupancyGridImage:
         )
 
         return image_arr
-
-    def quat_to_yaw(self, q: Quaternion) -> np.ndarray:
-        """Convert quaternion to yaw angle in radians."""
-        return np.arctan2(
-            2.0 * (q.w * q.z + q.x * q.y),
-            1.0 - 2.0 * (q.y * q.y + q.z * q.z),
-        )
 
     def is_free_space(
         self,
