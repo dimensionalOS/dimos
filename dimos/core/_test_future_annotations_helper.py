@@ -12,7 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.rpc.pubsubrpc import LCMRPC, ShmRPC
-from dimos.protocol.rpc.spec import RPCClient, RPCServer, RPCSpec
+"""
+Helper module for testing blueprint handling with PEP 563 (future annotations).
 
-__all__ = ["LCMRPC", "RPCClient", "RPCServer", "RPCSpec", "ShmRPC"]
+This file exists because `from __future__ import annotations` affects the entire file.
+"""
+
+from __future__ import annotations
+
+from dimos.core.module import Module
+from dimos.core.stream import In, Out  # noqa
+
+
+class FutureData:
+    pass
+
+
+class FutureModuleOut(Module):
+    data: Out[FutureData] = None  # type: ignore[assignment]
+
+
+class FutureModuleIn(Module):
+    data: In[FutureData] = None  # type: ignore[assignment]

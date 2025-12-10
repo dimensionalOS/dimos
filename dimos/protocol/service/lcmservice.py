@@ -84,20 +84,20 @@ def check_buffers() -> tuple[list[str], int | None]:
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
         current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        if not current_max or current_max < 2097152:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
+        if not current_max or current_max < 67108864:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
     except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=2097152")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
 
     try:
         result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
         current_default = (
             int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
         )
-        if not current_default or current_default < 2097152:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
+        if not current_default or current_default < 16777216:
+            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
     except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=2097152")
+        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
 
     return commands_needed, current_max
 

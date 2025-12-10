@@ -136,42 +136,42 @@ def test_check_multicast_subprocess_exception() -> None:
 def test_check_buffers_all_configured() -> None:
     """Test check_buffers when system is properly configured."""
     with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-        # Mock sufficient buffer sizes
+        # Mock sufficient buffer sizes (64MB for max, 16MB for default)
         mock_run.side_effect = [
-            type("MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0})(),
+            type("MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0})(),
             type(
-                "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                "MockResult", (), {"stdout": "net.core.rmem_default = 16777216", "returncode": 0}
             )(),
         ]
 
         commands, buffer_size = check_buffers()
         assert commands == []
-        assert buffer_size == 2097152
+        assert buffer_size == 67108864
 
 
 def test_check_buffers_low_max_buffer() -> None:
     """Test check_buffers when rmem_max is too low."""
     with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-        # Mock low rmem_max
+        # Mock low rmem_max (below 64MB minimum)
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
             type(
-                "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                "MockResult", (), {"stdout": "net.core.rmem_default = 16777216", "returncode": 0}
             )(),
         ]
 
         commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
-        assert commands == [f"{sudo}sysctl -w net.core.rmem_max=2097152"]
+        assert commands == [f"{sudo}sysctl -w net.core.rmem_max=67108864"]
         assert buffer_size == 1048576
 
 
 def test_check_buffers_low_default_buffer() -> None:
     """Test check_buffers when rmem_default is too low."""
     with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-        # Mock low rmem_default
+        # Mock low rmem_default (below 16MB minimum)
         mock_run.side_effect = [
-            type("MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0})(),
+            type("MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0})(),
             type(
                 "MockResult", (), {"stdout": "net.core.rmem_default = 1048576", "returncode": 0}
             )(),
@@ -179,14 +179,14 @@ def test_check_buffers_low_default_buffer() -> None:
 
         commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
-        assert commands == [f"{sudo}sysctl -w net.core.rmem_default=2097152"]
-        assert buffer_size == 2097152
+        assert commands == [f"{sudo}sysctl -w net.core.rmem_default=16777216"]
+        assert buffer_size == 67108864
 
 
 def test_check_buffers_both_low() -> None:
     """Test check_buffers when both buffer sizes are too low."""
     with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-        # Mock both low
+        # Mock both low (below minimums)
         mock_run.side_effect = [
             type("MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0})(),
             type(
@@ -197,8 +197,8 @@ def test_check_buffers_both_low() -> None:
         commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
-            f"{sudo}sysctl -w net.core.rmem_max=2097152",
-            f"{sudo}sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
         ]
         assert commands == expected
         assert buffer_size == 1048576
@@ -213,8 +213,8 @@ def test_check_buffers_subprocess_exception() -> None:
         commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
-            f"{sudo}sysctl -w net.core.rmem_max=2097152",
-            f"{sudo}sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
         ]
         assert commands == expected
         assert buffer_size is None
@@ -232,8 +232,8 @@ def test_check_buffers_parsing_error() -> None:
         commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
-            f"{sudo}sysctl -w net.core.rmem_max=2097152",
-            f"{sudo}sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
         ]
         assert commands == expected
         assert buffer_size is None
@@ -265,8 +265,8 @@ def test_check_buffers_dev_container() -> None:
         commands, buffer_size = check_buffers()
         sudo = get_sudo_prefix()
         expected = [
-            f"{sudo}sysctl -w net.core.rmem_max=2097152",
-            f"{sudo}sysctl -w net.core.rmem_default=2097152",
+            f"{sudo}sysctl -w net.core.rmem_max=67108864",
+            f"{sudo}sysctl -w net.core.rmem_default=16777216",
         ]
         assert commands == expected
         assert buffer_size is None
@@ -277,7 +277,7 @@ def test_autoconf_no_config_needed() -> None:
     # Clear CI environment variable for this test
     with patch.dict(os.environ, {"CI": ""}, clear=False):
         with patch("dimos.protocol.service.lcmservice.subprocess.run") as mock_run:
-            # Mock all checks passing
+            # Mock all checks passing with new buffer sizes (64MB and 16MB)
             mock_run.side_effect = [
                 # check_multicast calls
                 type(
@@ -293,10 +293,12 @@ def test_autoconf_no_config_needed() -> None:
                 )(),
                 # check_buffers calls
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0}
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": "net.core.rmem_default = 16777216", "returncode": 0},
                 )(),
             ]
 
@@ -322,7 +324,7 @@ def test_autoconf_with_config_needed_success() -> None:
                     {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
                 )(),
                 type("MockResult", (), {"stdout": "", "returncode": 0})(),
-                # check_buffers calls
+                # check_buffers calls (low buffer sizes)
                 type(
                     "MockResult", (), {"stdout": "net.core.rmem_max = 1048576", "returncode": 0}
                 )(),
@@ -346,16 +348,16 @@ def test_autoconf_with_config_needed_success() -> None:
                 autoconf()
 
                 sudo = get_sudo_prefix()
-                # Verify the expected log calls
+                # Verify the expected log calls with new buffer sizes
                 expected_info_calls = [
                     call("System configuration required. Executing commands..."),
                     call(f"  Running: {sudo}ifconfig lo multicast"),
                     call("  ✓ Success"),
                     call(f"  Running: {sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo"),
                     call("  ✓ Success"),
-                    call(f"  Running: {sudo}sysctl -w net.core.rmem_max=2097152"),
+                    call(f"  Running: {sudo}sysctl -w net.core.rmem_max=67108864"),
                     call("  ✓ Success"),
-                    call(f"  Running: {sudo}sysctl -w net.core.rmem_default=2097152"),
+                    call(f"  Running: {sudo}sysctl -w net.core.rmem_default=16777216"),
                     call("  ✓ Success"),
                     call("System configuration completed."),
                 ]
@@ -377,12 +379,14 @@ def test_autoconf_with_command_failures() -> None:
                     {"stdout": "1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536", "returncode": 0},
                 )(),
                 type("MockResult", (), {"stdout": "", "returncode": 0})(),
-                # check_buffers calls (no buffer issues for simpler test)
+                # check_buffers calls (no buffer issues for simpler test, use new minimums)
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_max = 2097152", "returncode": 0}
+                    "MockResult", (), {"stdout": "net.core.rmem_max = 67108864", "returncode": 0}
                 )(),
                 type(
-                    "MockResult", (), {"stdout": "net.core.rmem_default = 2097152", "returncode": 0}
+                    "MockResult",
+                    (),
+                    {"stdout": "net.core.rmem_default = 16777216", "returncode": 0},
                 )(),
                 # Command execution calls - first succeeds, second fails
                 type(

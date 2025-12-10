@@ -64,7 +64,6 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        LCMService.__init__(self, **kwargs)
         super().__init__(**kwargs)
         self._callbacks = {}
 
@@ -73,6 +72,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         if self.l is None:
             logger.error("Tried to publish after LCM was closed")
             return
+
         self.l.publish(str(topic), message)
 
     def subscribe(
@@ -87,6 +87,9 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
             return noop
 
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
+
+        # Set queue capacity to 10000 to handle high-volume bursts
+        lcm_subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
             if self.l is None:
