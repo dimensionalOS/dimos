@@ -352,6 +352,8 @@
         };
 
       in {
+        pkgs = pkgs;
+
         ## Local dev shell
         devShells.default = devShell;
 
