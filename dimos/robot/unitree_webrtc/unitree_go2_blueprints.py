@@ -56,20 +56,14 @@ basic = (
         behavior_tree_navigator(),
         wavefront_frontier_explorer(),
         websocket_vis(),
-        foxglove_bridge(
-            shm_channels=[
-                "/go2/color_image#sensor_msgs.Image",
-            ]
-        ),
+        foxglove_bridge(),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_go2")
     .transports(
         # These are kept the same so that we don't have to change foxglove configs.
         # Although we probably should.
         {
-            ("color_image", Image): pSHMTransport(
-                "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
-            ),
+            ("color_image", Image): LCMTransport("/go2/color_image", Image),
             ("camera_pose", PoseStamped): LCMTransport("/go2/camera_pose", PoseStamped),
             ("camera_info", CameraInfo): LCMTransport("/go2/camera_info", CameraInfo),
         }
@@ -82,6 +76,21 @@ standard = autoconnect(
     object_tracking(frame_id="camera_link"),
     utilization(),
 ).global_config(n_dask_workers=8)
+
+standard_with_shm = autoconnect(
+    standard.transports(
+        {
+            ("color_image", Image): pSHMTransport(
+                "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+            ),
+        }
+    ),
+    foxglove_bridge(
+        shm_channels=[
+            "/go2/color_image#sensor_msgs.Image",
+        ]
+    ),
+)
 
 standard_with_jpeglcm = standard.transports(
     {
