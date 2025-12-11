@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from functools import cache
 import os
+import platform
 import subprocess
 import sys
 import threading
@@ -48,25 +49,75 @@ def check_multicast() -> list[str]:
 
     sudo = "" if check_root() else "sudo "
 
-    # Check if loopback interface has multicast enabled
-    try:
-        result = subprocess.run(["ip", "link", "show", "lo"], capture_output=True, text=True)
-        if "MULTICAST" not in result.stdout:
-            commands_needed.append(f"{sudo}ifconfig lo multicast")
-    except Exception:
-        commands_needed.append(f"{sudo}ifconfig lo multicast")
+    system = platform.system()
 
-    # Check if multicast route exists
-    try:
-        result = subprocess.run(
-            ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
-        )
-        if not result.stdout.strip():
-            commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
-    except Exception:
-        commands_needed.append(f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev lo")
+    if system == "Linux":
+        # Linux commands
+        loopback_interface = "lo"
+        # Check if loopback interface has multicast enabled
+        try:
+            result = subprocess.run(
+                ["ip", "link", "show", loopback_interface], capture_output=True, text=True
+            )
+            if "MULTICAST" not in result.stdout:
+                commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+        except Exception:
+            commands_needed.append(f"{sudo}ifconfig {loopback_interface} multicast")
+
+        # Check if multicast route exists
+        try:
+            result = subprocess.run(
+                ["ip", "route", "show", "224.0.0.0/4"], capture_output=True, text=True
+            )
+            if not result.stdout.strip():
+                commands_needed.append(
+                    f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
+                )
+        except Exception:
+            commands_needed.append(
+                f"{sudo}route add -net 224.0.0.0 netmask 240.0.0.0 dev {loopback_interface}"
+            )
+
+    elif system == "Darwin":  # macOS
+        loopback_interface = "lo0"
+        # Check if multicast route exists
+        try:
+            result = subprocess.run(["netstat", "-nr"], capture_output=True, text=True)
+            route_exists = "224.0.0.0/4" in result.stdout or "224.0.0/4" in result.stdout
+            if not route_exists:
+                commands_needed.append(
+                    f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}"
+                )
+        except Exception:
+            commands_needed.append(
+                f"{sudo}route add -net 224.0.0.0/4 -interface {loopback_interface}"
+            )
+
+    else:
+        # For other systems, skip multicast configuration
+        logger.warning(f"Multicast configuration not supported on {system}")
 
     return commands_needed
+
+
+def _set_net_value(commands_needed: list[str], sudo: str, name: str, value: int) -> int | None:
+    try:
+        result = subprocess.run(["sysctl", name], capture_output=True, text=True)
+        if result.returncode == 0:
+            current = int(result.stdout.replace(":", "=").split("=")[1].strip())
+        else:
+            current = None
+        if not current or current < value:
+            commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+        return current
+    except:
+        commands_needed.append(f"{sudo}sysctl -w {name}={value}")
+        return None
+
+
+TARGET_RMEM_SIZE = 2097152  # prev was 67108864
+TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS = 8388608
+TARGET_MAX_DGRAM_SIZE_MACOS = 65535
 
 
 def check_buffers() -> tuple[list[str], int | None]:
@@ -75,29 +126,26 @@ def check_buffers() -> tuple[list[str], int | None]:
     Returns:
         Tuple of (commands_needed, current_max_buffer_size)
     """
-    commands_needed = []
+    commands_needed: list[str] = []
     current_max = None
 
     sudo = "" if check_root() else "sudo "
+    system = platform.system()
 
-    # Check current buffer settings
-    try:
-        result = subprocess.run(["sysctl", "net.core.rmem_max"], capture_output=True, text=True)
-        current_max = int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
-        if not current_max or current_max < 67108864:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
-    except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_max=67108864")
-
-    try:
-        result = subprocess.run(["sysctl", "net.core.rmem_default"], capture_output=True, text=True)
-        current_default = (
-            int(result.stdout.split("=")[1].strip()) if result.returncode == 0 else None
+    if system == "Linux":
+        # Linux buffer configuration
+        current_max = _set_net_value(commands_needed, sudo, "net.core.rmem_max", TARGET_RMEM_SIZE)
+        _set_net_value(commands_needed, sudo, "net.core.rmem_default", TARGET_RMEM_SIZE)
+    elif system == "Darwin":  # macOS
+        # macOS buffer configuration - check and set UDP buffer related sysctls
+        current_max = _set_net_value(
+            commands_needed, sudo, "kern.ipc.maxsockbuf", TARGET_MAX_SOCKET_BUFFER_SIZE_MACOS
         )
-        if not current_default or current_default < 16777216:
-            commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
-    except:
-        commands_needed.append(f"{sudo}sysctl -w net.core.rmem_default=16777216")
+        _set_net_value(commands_needed, sudo, "net.inet.udp.recvspace", TARGET_RMEM_SIZE)
+        _set_net_value(commands_needed, sudo, "net.inet.udp.maxdgram", TARGET_MAX_DGRAM_SIZE_MACOS)
+    else:
+        # For other systems, skip buffer configuration
+        logger.warning(f"Buffer configuration not supported on {system}")
 
     return commands_needed, current_max
 
@@ -145,6 +193,8 @@ def autoconf() -> None:
         logger.info("CI environment detected: Skipping automatic system configuration.")
         return
 
+    platform.system()
+
     commands_needed = []
 
     # Check multicast configuration
@@ -187,12 +237,20 @@ def autoconf() -> None:
     logger.info("System configuration completed.")
 
 
+_DEFAULT_LCM_URL_MACOS = "udpm://239.255.76.67:7667?ttl=0"
+
+
 @dataclass
 class LCMConfig:
     ttl: int = 0
     url: str | None = None
     autoconf: bool = True
     lcm: lcm.LCM | None = None
+
+    def __post_init__(self) -> None:
+        if self.url is None and platform.system() == "Darwin":
+            # On macOS, use multicast with TTL=0 to keep traffic local
+            self.url = _DEFAULT_LCM_URL_MACOS
 
 
 @runtime_checkable
@@ -220,6 +278,9 @@ class Topic:
         return f"{self.topic}#{self.lcm_type.msg_name}"
 
 
+_LCM_LOOP_TIMEOUT = 50
+
+
 class LCMService(Service[LCMConfig]):
     default_config = LCMConfig
     l: lcm.LCM | None
@@ -234,13 +295,11 @@ class LCMService(Service[LCMConfig]):
 
         # we support passing an existing LCM instance
         if self.config.lcm:
-            # TODO: If we pass LCM in, it's unsafe to use in this thread and the _loop thread.
             self.l = self.config.lcm
         else:
             self.l = lcm.LCM(self.config.url) if self.config.url else lcm.LCM()
 
         self._l_lock = threading.Lock()
-
         self._stop_event = threading.Event()
         self._thread = None
 
@@ -295,7 +354,7 @@ class LCMService(Service[LCMConfig]):
                 with self._l_lock:
                     if self.l is None:
                         break
-                    self.l.handle_timeout(50)
+                    self.l.handle_timeout(_LCM_LOOP_TIMEOUT)
             except Exception as e:
                 stack_trace = traceback.format_exc()
                 print(f"Error in LCM handling: {e}\n{stack_trace}")

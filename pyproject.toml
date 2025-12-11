@@ -61,7 +61,7 @@ dependencies = [
     "langchain-text-splitters>=0.3.11,<1",
     "langchain-huggingface>=0.3.1,<1",
     "langchain-ollama>=0.3.10,<1",
-    "bitsandbytes>=0.48.2,<1.0",
+    "bitsandbytes>=0.48.2,<1.0; sys_platform == 'linux'",
     "ollama>=0.6.0",
 
     # Class Extraction
@@ -125,6 +125,9 @@ dependencies = [
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
     "plotext==5.3.2",
+
+    # Teleop
+    "pygame>=2.6.1",
 ]
 
 [project.scripts]
@@ -224,7 +227,6 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
-    "pygame>=2.6.1",
 ]
 
 jetson-jp6-cuda126 = [

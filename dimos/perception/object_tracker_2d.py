@@ -42,10 +42,10 @@ logger = setup_logger(level=logging.INFO)
 class ObjectTracker2D(Module):
     """Pure 2D object tracking module using OpenCV's CSRT tracker."""
 
-    color_image: In[Image] = None  # type: ignore[assignment]
+    color_image: In[Image]
 
-    detection2darray: Out[Detection2DArray] = None  # type: ignore[assignment]
-    tracked_overlay: Out[Image] = None  # type: ignore[assignment]  # Visualization output
+    detection2darray: Out[Detection2DArray]
+    tracked_overlay: Out[Image]  # Visualization output
 
     def __init__(
         self,

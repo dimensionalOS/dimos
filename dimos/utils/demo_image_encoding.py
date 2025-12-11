@@ -40,7 +40,7 @@ from dimos.utils.fast_image_generator import random_image
 
 
 class EmitterModule(Module):
-    image: Out[Image] = None  # type: ignore[assignment]
+    image: Out[Image]
 
     _thread: threading.Thread | None = None
     _stop_event: threading.Event | None = None
@@ -70,7 +70,7 @@ class EmitterModule(Module):
 
 
 class ReceiverModule(Module):
-    image: In[Image] = None  # type: ignore[assignment]
+    image: In[Image]
 
     _open_file = None
 
