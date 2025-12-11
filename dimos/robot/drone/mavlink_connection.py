@@ -26,7 +26,7 @@ from reactivex import Subject
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class MavlinkConnection:

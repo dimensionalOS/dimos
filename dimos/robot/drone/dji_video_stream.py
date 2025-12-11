@@ -28,7 +28,7 @@ from reactivex import Subject
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class DJIDroneVideoStream:
