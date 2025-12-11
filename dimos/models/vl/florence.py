@@ -23,7 +23,7 @@ from dimos.models.vl.base import Captioner
 from dimos.msgs.sensor_msgs import Image
 
 
-class Florence2Model(Captioner, HuggingFaceModel):
+class Florence2Model(HuggingFaceModel, Captioner):
     """Florence-2 captioning model from Microsoft.
 
     A lightweight, fast captioning model optimized for generating image descriptions
@@ -45,7 +45,7 @@ class Florence2Model(Captioner, HuggingFaceModel):
                 - "microsoft/Florence-2-large" (~0.8B, better quality)
             **kwargs: Additional config options (device, dtype, warmup, etc.)
         """
-        HuggingFaceModel.__init__(self, model_name=model_name, **kwargs)
+        super().__init__(self, model_name=model_name, **kwargs)
 
     @cached_property
     def _processor(self) -> AutoProcessor:
