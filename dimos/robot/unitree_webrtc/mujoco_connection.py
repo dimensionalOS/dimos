@@ -103,7 +103,7 @@ class MujocoConnection:
             return text
 
         # Wait for process to be ready
-        ready_timeout = 10
+        ready_timeout = 300.0
         start_time = time.time()
         assert self.process is not None
         while time.time() - start_time < ready_timeout:

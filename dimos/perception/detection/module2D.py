@@ -56,14 +56,14 @@ class Detection2DModule(Module):
     config: Config
     detector: Detector
 
-    image: In[Image] = None  # type: ignore
+    image: In[Image]
 
-    detections: Out[Detection2DArray] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
+    detections: Out[Detection2DArray]
+    annotations: Out[ImageAnnotations]
 
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
+    detected_image_0: Out[Image]
+    detected_image_1: Out[Image]
+    detected_image_2: Out[Image]
 
     cnt: int = 0
 

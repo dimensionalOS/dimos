@@ -49,14 +49,14 @@ class ObjectTracking(Module):
     """Module for object tracking with LCM input/output."""
 
     # LCM inputs
-    color_image: In[Image] = None  # type: ignore[assignment]
-    depth: In[Image] = None  # type: ignore[assignment]
-    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
+    color_image: In[Image]
+    depth: In[Image]
+    camera_info: In[CameraInfo]
 
     # LCM outputs
-    detection2darray: Out[Detection2DArray] = None  # type: ignore[assignment]
-    detection3darray: Out[Detection3DArray] = None  # type: ignore[assignment]
-    tracked_overlay: Out[Image] = None  # type: ignore[assignment]  # Visualization output
+    detection2darray: Out[Detection2DArray]
+    detection3darray: Out[Detection3DArray]
+    tracked_overlay: Out[Image]  # Visualization output
 
     def __init__(
         self,
