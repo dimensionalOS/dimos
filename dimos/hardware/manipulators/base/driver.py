@@ -96,7 +96,7 @@ class BaseManipulatorDriver(Module):
         # Threading
         self.stop_event = Event()
         self.threads = []
-        self.command_queue = Queue(maxsize=100)
+        self.command_queue = Queue(maxsize=10)
 
         # RPC registry
         self.rpc_methods = {}
@@ -105,9 +105,8 @@ class BaseManipulatorDriver(Module):
         self.capabilities = self._get_capabilities()
 
         # Rate control
-        self.state_reader_rate = config.get("state_reader_rate", 100)  # Hz
-        self.command_sender_rate = config.get("command_sender_rate", 100)  # Hz
-        self.state_publisher_rate = config.get("state_publisher_rate", 50)  # Hz
+        self.control_rate = config.get("control_rate", 100)  # Hz - control loop + joint feedback
+        self.monitor_rate = config.get("monitor_rate", 10)  # Hz - robot state monitoring
 
         # Initialize components with shared resources
         self._initialize_components()
@@ -192,12 +191,16 @@ class BaseManipulatorDriver(Module):
         self.logger.info(f"Successfully connected to {self.name}")
 
         # Get initial state
-        self._update_state()
+        self._update_joint_state()
+        self._update_robot_state()
 
-    def _update_state(self):
-        """Update shared state from hardware."""
+    def _update_joint_state(self):
+        """Update joint state from hardware (high frequency - 100Hz).
+
+        Reads joint positions, velocities, efforts and publishes to LCM immediately.
+        """
         try:
-            # Get joint state
+            # Get joint state feedback
             positions = self.sdk.get_joint_positions()
             velocities = self.sdk.get_joint_velocities()
             efforts = self.sdk.get_joint_efforts()
@@ -206,7 +209,28 @@ class BaseManipulatorDriver(Module):
                 positions=positions, velocities=velocities, efforts=efforts
             )
 
-            # Get robot state
+            # Publish joint state immediately at control rate
+            if self.joint_state and hasattr(self.joint_state, "publish"):
+                joint_state_msg = JointState(
+                    ts=time.time(),
+                    frame_id="joint-state",
+                    name=[f"joint{i + 1}" for i in range(self.capabilities.dof)],
+                    position=positions or [0.0] * self.capabilities.dof,
+                    velocity=velocities or [0.0] * self.capabilities.dof,
+                    effort=efforts or [0.0] * self.capabilities.dof,
+                )
+                self.joint_state.publish(joint_state_msg)
+
+        except Exception as e:
+            self.logger.error(f"Error updating joint state: {e}")
+
+    def _update_robot_state(self):
+        """Update robot state from hardware (low frequency - 10Hz).
+
+        Reads robot mode, errors, warnings, optional states and publishes to LCM immediately.
+        """
+        try:
+            # Get robot state (mode, errors, warnings)
             robot_state = self.sdk.get_robot_state()
             self.shared_state.update_robot_state(
                 state=robot_state.get("state", 0),
@@ -219,7 +243,7 @@ class BaseManipulatorDriver(Module):
             self.shared_state.is_moving = robot_state.get("is_moving", False)
             self.shared_state.is_enabled = self.sdk.are_servos_enabled()
 
-            # Get optional states
+            # Get optional states (cartesian, force/torque, gripper)
             if self.capabilities.has_cartesian_control:
                 cart_pos = self.sdk.get_cartesian_position()
                 if cart_pos:
@@ -235,8 +259,32 @@ class BaseManipulatorDriver(Module):
                 if gripper_pos is not None:
                     self.shared_state.gripper_position = gripper_pos
 
+            # Publish robot state immediately at monitor rate
+            if self.robot_state and hasattr(self.robot_state, "publish"):
+                robot_state_msg = RobotState(
+                    state=self.shared_state.robot_state,
+                    mode=self.shared_state.control_mode,
+                    error_code=self.shared_state.error_code,
+                    warn_code=0,
+                )
+                self.robot_state.publish(robot_state_msg)
+
+            # Publish force/torque if available
+            if (
+                self.ft_sensor
+                and hasattr(self.ft_sensor, "publish")
+                and self.capabilities.has_force_torque
+            ):
+                if self.shared_state.force_torque:
+                    ft_msg = WrenchStamped.from_force_torque_array(
+                        ft_data=self.shared_state.force_torque,
+                        frame_id="ft_sensor",
+                        ts=time.time(),
+                    )
+                    self.ft_sensor.publish(ft_msg)
+
         except Exception as e:
-            self.logger.error(f"Error updating state: {e}")
+            self.logger.error(f"Error updating robot state: {e}")
             self.shared_state.update_robot_state(error_code=999, error_message=str(e))
 
     # ============= Threading =============
@@ -263,12 +311,11 @@ class BaseManipulatorDriver(Module):
             self.logger.debug(f"joint_velocity_command transport not configured: {e}")
 
         self.threads = [
-            Thread(target=self._state_reader_thread, name=f"{self.name}-StateReader", daemon=True),
+            Thread(target=self._control_loop_thread, name=f"{self.name}-ControlLoop", daemon=True),
             Thread(
-                target=self._command_sender_thread, name=f"{self.name}-CommandSender", daemon=True
-            ),
-            Thread(
-                target=self._state_publisher_thread, name=f"{self.name}-StatePublisher", daemon=True
+                target=self._robot_state_monitor_thread,
+                name=f"{self.name}-StateMonitor",
+                daemon=True,
             ),
         ]
 
@@ -278,53 +325,69 @@ class BaseManipulatorDriver(Module):
 
         self.logger.info(f"{self.name} driver started successfully")
 
-    def _state_reader_thread(self):
-        """Continuously read state from hardware."""
-        self.logger.debug("State reader thread started")
-        period = 1.0 / self.state_reader_rate
+    def _control_loop_thread(self):
+        """Control loop: send commands AND read joint feedback (100Hz).
+
+        This tight loop ensures synchronized command/feedback for real-time control.
+        """
+        self.logger.debug("Control loop thread started")
+        period = 1.0 / self.control_rate
+        next_time = time.time() + period
 
         while not self.stop_event.is_set():
-            start_time = time.time()
-
             try:
-                self._update_state()
+                # 1. Process command from queue (if available)
+                try:
+                    command = self.command_queue.get(timeout=0.001)
+                    self._process_command(command)
+                except Empty:
+                    # No command - that's fine, continue
+                    pass
+
+                # 2. Read joint state feedback (critical for control)
+                self._update_joint_state()
+
             except Exception as e:
-                self.logger.error(f"State reader error: {e}")
+                self.logger.error(f"Control loop error: {e}")
 
-            # Rate control
-            elapsed = time.time() - start_time
-            if elapsed < period:
-                time.sleep(period - elapsed)
+            # Rate control - maintain precise timing
+            next_time += period
+            sleep_time = next_time - time.time()
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            else:
+                # Fell behind - reset timing
+                next_time = time.time() + period
+                if sleep_time < -period:
+                    self.logger.warning(f"Control loop fell behind by {-sleep_time:.3f}s")
 
-        self.logger.debug("State reader thread stopped")
+        self.logger.debug("Control loop thread stopped")
 
-    def _command_sender_thread(self):
-        """Send commands from queue to hardware."""
-        self.logger.debug("Command sender thread started")
-        period = 1.0 / self.command_sender_rate
+    def _robot_state_monitor_thread(self):
+        """Monitor robot state: mode, errors, warnings (10-20Hz).
+
+        Lower frequency monitoring for high-level planning and error handling.
+        """
+        self.logger.debug("Robot state monitor thread started")
+        period = 1.0 / self.monitor_rate
+        next_time = time.time() + period
 
         while not self.stop_event.is_set():
-            start_time = time.time()
-
             try:
-                # Get command from queue (non-blocking)
-                command = self.command_queue.get(timeout=0.001)
-
-                # Process command based on type
-                self._process_command(command)
-
-            except Empty:
-                # No commands to process
-                pass
+                # Read robot state, mode, errors, optional states
+                self._update_robot_state()
             except Exception as e:
-                self.logger.error(f"Command sender error: {e}")
+                self.logger.error(f"Robot state monitor error: {e}")
 
             # Rate control
-            elapsed = time.time() - start_time
-            if elapsed < period:
-                time.sleep(period - elapsed)
+            next_time += period
+            sleep_time = next_time - time.time()
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            else:
+                next_time = time.time() + period
 
-        self.logger.debug("Command sender thread stopped")
+        self.logger.debug("Robot state monitor thread stopped")
 
     def _process_command(self, command: Command):
         """Process a command from the queue.
@@ -371,67 +434,6 @@ class BaseManipulatorDriver(Module):
 
         except Exception as e:
             self.logger.error(f"Error processing command {command.type}: {e}")
-
-    def _state_publisher_thread(self):
-        """Publish state to output topics."""
-        self.logger.debug("State publisher thread started")
-        period = 1.0 / self.state_publisher_rate
-
-        while not self.stop_event.is_set():
-            start_time = time.time()
-
-            try:
-                # Publish joint state
-                if self.joint_state and hasattr(self.joint_state, "publish"):
-                    joint_state_msg = JointState(
-                        ts=time.time(),
-                        frame_id="joint-state",
-                        name=[f"joint{i + 1}" for i in range(self.capabilities.dof)],
-                        position=self.shared_state.joint_positions or [0.0] * self.capabilities.dof,
-                        velocity=self.shared_state.joint_velocities
-                        or [0.0] * self.capabilities.dof,
-                        effort=self.shared_state.joint_efforts or [0.0] * self.capabilities.dof,
-                    )
-                    self.joint_state.publish(joint_state_msg)
-
-                # Publish robot state
-                if self.robot_state and hasattr(self.robot_state, "publish"):
-                    robot_state_msg = RobotState(
-                        state=self.shared_state.robot_state,
-                        mode=self.shared_state.control_mode,  # Fixed: was robot_mode
-                        error_code=self.shared_state.error_code,
-                        warn_code=0,
-                    )
-                    self.robot_state.publish(robot_state_msg)
-
-                # Publish force/torque if available
-                if (
-                    self.ft_sensor
-                    and hasattr(self.ft_sensor, "publish")
-                    and self.capabilities.has_force_torque
-                ):
-                    if self.shared_state.force_torque:
-                        ft_msg = WrenchStamped.from_force_torque_array(
-                            ft_data=self.shared_state.force_torque,
-                            frame_id="ft_sensor",
-                            ts=time.time(),
-                        )
-                        self.ft_sensor.publish(ft_msg)
-
-                # Publish to components that need state updates
-                for component in self.components:
-                    if hasattr(component, "publish_state"):
-                        component.publish_state()
-
-            except Exception as e:
-                self.logger.error(f"State publisher error: {e}")
-
-            # Rate control
-            elapsed = time.time() - start_time
-            if elapsed < period:
-                time.sleep(period - elapsed)
-
-        self.logger.debug("State publisher thread stopped")
 
     # ============= Input Callbacks =============
 
