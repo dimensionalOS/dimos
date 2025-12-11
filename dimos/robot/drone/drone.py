@@ -44,7 +44,7 @@ from dimos.types.robot_capabilities import RobotCapability
 from dimos.utils.logging_config import setup_logger
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class Drone(Robot):
@@ -364,7 +364,7 @@ def main() -> None:
     args = parser.parse_args()
 
     # Configure logging
-    setup_logger("dimos.robot.drone", level=logging.INFO)
+    setup_logger(level=logging.INFO)
 
     # Suppress verbose loggers
     logging.getLogger("distributed").setLevel(logging.WARNING)

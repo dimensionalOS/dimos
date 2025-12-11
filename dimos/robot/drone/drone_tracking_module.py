@@ -31,7 +31,7 @@ from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.robot.drone.drone_visual_servoing_controller import DroneVisualServoingController
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class DroneTrackingModule(Module):
