@@ -56,9 +56,8 @@ class XArmDriver(BaseManipulatorDriver):
             "dof",
             "has_gripper",
             "has_force_torque",
-            "state_reader_rate",
-            "command_sender_rate",
-            "state_publisher_rate",
+            "control_rate",
+            "monitor_rate",
         ]
         for param in driver_params:
             if param in kwargs:
@@ -109,9 +108,8 @@ def get_blueprint():
             "dof": 7,  # Default to 7-DOF
             "has_gripper": False,
             "has_force_torque": False,
-            "state_reader_rate": 100,  # Hz
-            "command_sender_rate": 100,  # Hz
-            "state_publisher_rate": 50,  # Hz
+            "control_rate": 100,  # Hz - control loop + joint feedback
+            "monitor_rate": 10,  # Hz - robot state monitoring
         },
         "inputs": {
             "joint_position_command": "JointCommand",
