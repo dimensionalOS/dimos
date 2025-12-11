@@ -123,11 +123,11 @@ class ConnectionModuleConfig(ModuleConfig):
 
 
 class ConnectionModule(Module):
-    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
-    odom: Out[PoseStamped] = None  # type: ignore[assignment]
-    lidar: Out[LidarMessage] = None  # type: ignore[assignment]
-    video: Out[Image] = None  # type: ignore[assignment]
-    movecmd: In[Twist] = None  # type: ignore[assignment]
+    camera_info: Out[CameraInfo]
+    odom: Out[PoseStamped]
+    lidar: Out[LidarMessage]
+    video: Out[Image]
+    movecmd: In[Twist]
 
     connection = None
 

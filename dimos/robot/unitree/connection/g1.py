@@ -28,7 +28,7 @@ logger = setup_logger()
 
 
 class G1Connection(Module):
-    cmd_vel: In[Twist] = None  # type: ignore
+    cmd_vel: In[Twist]
     ip: str | None
     connection_type: str | None = None
     _global_config: GlobalConfig

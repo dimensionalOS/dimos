@@ -62,8 +62,8 @@ class Data3:
 
 
 class ModuleA(Module):
-    data1: Out[Data1] = None
-    data2: Out[Data2] = None
+    data1: Out[Data1]
+    data2: Out[Data2]
 
     @rpc
     def get_name(self) -> str:
@@ -71,9 +71,9 @@ class ModuleA(Module):
 
 
 class ModuleB(Module):
-    data1: In[Data1] = None
-    data2: In[Data2] = None
-    data3: Out[Data3] = None
+    data1: In[Data1]
+    data2: In[Data2]
+    data3: Out[Data3]
 
     _module_a_get_name: callable = None
 
@@ -90,7 +90,7 @@ class ModuleB(Module):
 
 
 class ModuleC(Module):
-    data3: In[Data3] = None
+    data3: In[Data3]
 
 
 module_a = ModuleA.blueprint
@@ -194,10 +194,10 @@ def test_build_happy_path() -> None:
 
 def test_name_conflicts_are_reported() -> None:
     class ModuleA(Module):
-        shared_data: Out[Data1] = None
+        shared_data: Out[Data1]
 
     class ModuleB(Module):
-        shared_data: In[Data2] = None
+        shared_data: In[Data2]
 
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
 
@@ -214,12 +214,12 @@ def test_name_conflicts_are_reported() -> None:
 
 def test_multiple_name_conflicts_are_reported() -> None:
     class Module1(Module):
-        sensor_data: Out[Data1] = None
-        control_signal: Out[Data2] = None
+        sensor_data: Out[Data1]
+        control_signal: Out[Data2]
 
     class Module2(Module):
-        sensor_data: In[Data2] = None
-        control_signal: In[Data3] = None
+        sensor_data: In[Data2]
+        control_signal: In[Data3]
 
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint())
 
@@ -235,14 +235,14 @@ def test_multiple_name_conflicts_are_reported() -> None:
 
 def test_that_remapping_can_resolve_conflicts() -> None:
     class Module1(Module):
-        data: Out[Data1] = None
+        data: Out[Data1]
 
     class Module2(Module):
-        data: Out[Data2] = None  # Would conflict with Module1.data
+        data: Out[Data2]  # Would conflict with Module1.data
 
     class Module3(Module):
-        data1: In[Data1] = None
-        data2: In[Data2] = None
+        data1: In[Data1]
+        data2: In[Data2]
 
     # Without remapping, should raise conflict error
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
@@ -273,10 +273,10 @@ def test_remapping() -> None:
 
     # Define test modules with connections that will be remapped
     class SourceModule(Module):
-        color_image: Out[Data1] = None  # Will be remapped to 'remapped_data'
+        color_image: Out[Data1]  # Will be remapped to 'remapped_data'
 
     class TargetModule(Module):
-        remapped_data: In[Data1] = None  # Receives the remapped connection
+        remapped_data: In[Data1]  # Receives the remapped connection
 
     # Create blueprint with remapping
     blueprint_set = autoconnect(

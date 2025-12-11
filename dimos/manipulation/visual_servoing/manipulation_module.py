@@ -107,12 +107,12 @@ class ManipulationModule(Module):
     """
 
     # LCM inputs
-    rgb_image: In[Image] = None  # type: ignore[assignment]
-    depth_image: In[Image] = None  # type: ignore[assignment]
-    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
+    rgb_image: In[Image]
+    depth_image: In[Image]
+    camera_info: In[CameraInfo]
 
     # LCM outputs
-    viz_image: Out[Image] = None  # type: ignore[assignment]
+    viz_image: Out[Image]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

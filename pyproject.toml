@@ -118,6 +118,9 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+
+    # Teleop
+    "pygame>=2.6.1",
 ]
 
 [project.scripts]
@@ -222,7 +225,6 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
-    "pygame>=2.6.1",
 ]
 
 jetson-jp6-cuda126 = [
