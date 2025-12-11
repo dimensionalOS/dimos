@@ -56,9 +56,8 @@ class PiperDriver(BaseManipulatorDriver):
             "can_port",
             "has_gripper",
             "enable_on_start",
-            "state_reader_rate",
-            "command_sender_rate",
-            "state_publisher_rate",
+            "control_rate",
+            "monitor_rate",
         ]
         for param in driver_params:
             if param in kwargs:
@@ -130,7 +129,7 @@ class PiperDriver(BaseManipulatorDriver):
             if self._last_velocity_time > 0:
                 dt = current_time - self._last_velocity_time
             else:
-                dt = 1.0 / self.command_sender_rate  # Use nominal period for first command
+                dt = 1.0 / self.control_rate  # Use nominal period for first command
 
             self._last_velocity_time = current_time
 
@@ -175,9 +174,8 @@ def get_blueprint():
             "can_port": "can0",  # Default CAN interface
             "has_gripper": True,  # Piper usually has gripper
             "enable_on_start": True,  # Enable servos on startup
-            "state_reader_rate": 100,  # Hz
-            "command_sender_rate": 100,  # Hz
-            "state_publisher_rate": 50,  # Hz
+            "control_rate": 100,  # Hz - control loop + joint feedback
+            "monitor_rate": 10,  # Hz - robot state monitoring
         },
         "inputs": {
             "joint_position_command": "JointCommand",

@@ -49,9 +49,8 @@ def xarm_driver(**config):
             - dof: Degrees of freedom - 5, 6, or 7 (default: 6)
             - has_gripper: Whether gripper is attached (default: False)
             - has_force_torque: Whether F/T sensor is attached (default: False)
-            - state_reader_rate: State reading rate in Hz (default: 100)
-            - command_sender_rate: Command sending rate in Hz (default: 100)
-            - state_publisher_rate: State publishing rate in Hz (default: 50)
+            - control_rate: Control loop + joint feedback rate in Hz (default: 100)
+            - monitor_rate: Robot state monitoring rate in Hz (default: 10)
 
     Returns:
         Blueprint configuration for XArmDriver
@@ -61,9 +60,8 @@ def xarm_driver(**config):
     config.setdefault("dof", 6)
     config.setdefault("has_gripper", False)
     config.setdefault("has_force_torque", False)
-    config.setdefault("state_reader_rate", 100)
-    config.setdefault("command_sender_rate", 100)
-    config.setdefault("state_publisher_rate", 50)
+    config.setdefault("control_rate", 100)
+    config.setdefault("monitor_rate", 10)
 
     # Return the xarm_driver blueprint with the config
     return xarm_driver_blueprint(**config)
@@ -81,9 +79,8 @@ xarm_servo = xarm_driver(
     dof=6,  # XArm6
     has_gripper=False,
     has_force_torque=False,
-    state_reader_rate=100,
-    command_sender_rate=100,
-    state_publisher_rate=50,
+    control_rate=100,
+    monitor_rate=10,
 ).transports(
     {
         # Joint state feedback (position, velocity, effort)
@@ -110,9 +107,8 @@ xarm7_servo = xarm_driver(
     dof=7,  # XArm7
     has_gripper=False,
     has_force_torque=False,
-    state_reader_rate=100,
-    command_sender_rate=100,
-    state_publisher_rate=50,
+    control_rate=100,
+    monitor_rate=10,
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
@@ -135,9 +131,8 @@ xarm5_servo = xarm_driver(
     dof=5,  # XArm5
     has_gripper=False,
     has_force_torque=False,
-    state_reader_rate=100,
-    command_sender_rate=100,
-    state_publisher_rate=50,
+    control_rate=100,
+    monitor_rate=10,
 ).transports(
     {
         ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
@@ -164,9 +159,8 @@ xarm_trajectory = autoconnect(
         dof=6,  # XArm6
         has_gripper=False,
         has_force_torque=False,
-        state_reader_rate=100,
-        command_sender_rate=100,
-        state_publisher_rate=50,
+        control_rate=100,
+        monitor_rate=10,
     ),
     joint_trajectory_controller(
         control_frequency=100.0,
@@ -194,9 +188,8 @@ xarm7_trajectory = autoconnect(
         dof=7,  # XArm7
         has_gripper=False,
         has_force_torque=False,
-        state_reader_rate=100,
-        command_sender_rate=100,
-        state_publisher_rate=50,
+        control_rate=100,
+        monitor_rate=10,
     ),
     joint_trajectory_controller(
         control_frequency=100.0,
@@ -225,9 +218,8 @@ xarm_cartesian = autoconnect(
         dof=6,  # XArm6
         has_gripper=False,
         has_force_torque=False,
-        state_reader_rate=100,
-        command_sender_rate=100,
-        state_publisher_rate=50,
+        control_rate=100,
+        monitor_rate=10,
     ),
     cartesian_motion_controller(
         control_frequency=20.0,
