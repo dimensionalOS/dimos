@@ -48,9 +48,8 @@ def piper_driver(**config):
             - can_port: CAN interface name (default: "can0")
             - has_gripper: Whether gripper is attached (default: True)
             - enable_on_start: Whether to enable servos on start (default: True)
-            - state_reader_rate: State reading rate in Hz (default: 100)
-            - command_sender_rate: Command sending rate in Hz (default: 100)
-            - state_publisher_rate: State publishing rate in Hz (default: 50)
+            - control_rate: Control loop + joint feedback rate in Hz (default: 100)
+            - monitor_rate: Robot state monitoring rate in Hz (default: 10)
 
     Returns:
         Blueprint configuration for PiperDriver
@@ -59,9 +58,8 @@ def piper_driver(**config):
     config.setdefault("can_port", "can0")
     config.setdefault("has_gripper", True)
     config.setdefault("enable_on_start", True)
-    config.setdefault("state_reader_rate", 100)
-    config.setdefault("command_sender_rate", 100)
-    config.setdefault("state_publisher_rate", 50)
+    config.setdefault("control_rate", 100)
+    config.setdefault("monitor_rate", 10)
 
     # Return the piper_driver blueprint with the config
     return piper_driver_blueprint(**config)
@@ -78,9 +76,8 @@ piper_servo = piper_driver(
     can_port="can0",
     has_gripper=True,
     enable_on_start=True,
-    state_reader_rate=100,
-    command_sender_rate=100,
-    state_publisher_rate=50,
+    control_rate=100,
+    monitor_rate=10,
 ).transports(
     {
         # Joint state feedback (position, velocity, effort)
@@ -110,9 +107,8 @@ piper_cartesian = autoconnect(
         can_port="can0",
         has_gripper=True,
         enable_on_start=True,
-        state_reader_rate=100,
-        command_sender_rate=100,
-        state_publisher_rate=50,
+        control_rate=100,
+        monitor_rate=10,
     ),
     cartesian_motion_controller(
         control_frequency=20.0,
@@ -148,9 +144,8 @@ piper_trajectory = autoconnect(
         can_port="can0",
         has_gripper=True,
         enable_on_start=True,
-        state_reader_rate=100,
-        command_sender_rate=100,
-        state_publisher_rate=50,
+        control_rate=100,
+        monitor_rate=10,
     ),
     joint_trajectory_controller(
         control_frequency=100.0,
