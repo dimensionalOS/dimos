@@ -78,15 +78,15 @@ routing = ["anthropic"]
 type = "anthropic"
 model_name = "claude-3-opus-20240229"
 
-# Cerebras Models
-[models.llama_3_3_70b]
-routing = ["cerebras"]
-
-[models.llama_3_3_70b.providers.cerebras]
-type = "openai"
-model_name = "llama-3.3-70b"
-api_base = "https://api.cerebras.ai/v1"
-api_key_location = "env::CEREBRAS_API_KEY"
+# Cerebras Models - disabled for CI (no API key)
+# [models.llama_3_3_70b]
+# routing = ["cerebras"]
+# 
+# [models.llama_3_3_70b.providers.cerebras]
+# type = "openai"
+# model_name = "llama-3.3-70b"
+# api_base = "https://api.cerebras.ai/v1"
+# api_key_location = "env::CEREBRAS_API_KEY"
 
 # Qwen Models
 [models.qwen_plus]
@@ -126,10 +126,11 @@ type = "chat_completion"
 model = "claude_3_haiku"
 weight = 0.5
 
-[functions.chat.variants.cerebras]
-type = "chat_completion"
-model = "llama_3_3_70b"
-weight = 0.0
+# Cerebras disabled for CI (no API key)
+# [functions.chat.variants.cerebras]
+# type = "chat_completion"
+# model = "llama_3_3_70b"
+# weight = 0.0
 
 [functions.chat.variants.qwen]
 type = "chat_completion"
