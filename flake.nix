@@ -210,6 +210,9 @@
           PROJECT_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
           [ -f "$PROJECT_ROOT/motd" ] && cat "$PROJECT_ROOT/motd"
           [ -f "$PROJECT_ROOT/.pre-commit-config.yaml" ] && pre-commit install --install-hooks
+          if [ -f "$PROJECT_ROOT/env/bin/activate" ]; then
+            . "$PROJECT_ROOT/env/bin/activate"
+          fi
           cd "$PROJECT_ROOT"
 
           # helper
