@@ -31,8 +31,6 @@ from dimos.protocol.skill.agent_interface import AgentInterface, SkillState, Ski
 from dimos.protocol.skill.comms import AgentMsg, LCMSkillComms
 from dimos.protocol.skill.types import MsgType
 
-logger = logging.getLogger(__name__)
-
 
 class AgentSpy:
     """Spy on agent skill executions via LCM messages."""
@@ -50,7 +48,6 @@ class AgentSpy:
 
         # Subscribe to the agent interface's comms
         self.agent_interface.agent_comms.subscribe(self._handle_message)
-        logger.info("AgentSpy started, subscribed to agent messages")
 
     def stop(self):
         """Stop spying."""
@@ -59,16 +56,13 @@ class AgentSpy:
 
     def _handle_message(self, msg: AgentMsg):
         """Handle incoming agent messages."""
-        logger.debug(f"AgentSpy received message: {msg}")
 
         # Small delay to ensure agent_interface has processed the message
         def delayed_update():
             time.sleep(0.1)
             with self._lock:
                 self._latest_state = self.agent_interface.state_snapshot(clear=False)
-                logger.debug(f"State snapshot has {len(self._latest_state)} skills")
                 for callback in self.message_callbacks:
-                    logger.debug(f"Calling callback with state")
                     callback(self._latest_state)
 
         # Run in separate thread to not block LCM
@@ -90,7 +84,7 @@ def state_color(state: SkillStateEnum) -> str:
         return "yellow"
     elif state == SkillStateEnum.running:
         return "cyan"
-    elif state == SkillStateEnum.ret:
+    elif state == SkillStateEnum.returned:
         return "green"
     elif state == SkillStateEnum.error:
         return "red"
@@ -109,12 +103,28 @@ def format_duration(duration: float) -> str:
         return f"{duration / 3600:.1f}h"
 
 
+class AgentSpyLogFilter(logging.Filter):
+    """Filter to suppress specific log messages in agentspy."""
+
+    def filter(self, record):
+        # Suppress the "Skill state not found" warning as it's expected in agentspy
+        if (
+            record.levelname == "WARNING"
+            and "Skill state for" in record.getMessage()
+            and "not found" in record.getMessage()
+        ):
+            return False
+        return True
+
+
 class TextualLogHandler(logging.Handler):
     """Custom log handler that sends logs to a Textual RichLog widget."""
 
     def __init__(self, log_widget: RichLog):
         super().__init__()
         self.log_widget = log_widget
+        # Add filter to suppress expected warnings
+        self.addFilter(AgentSpyLogFilter())
 
     def emit(self, record):
         """Emit a log record to the RichLog widget."""
@@ -176,12 +186,12 @@ class AgentSpyApp(App):
 
     def compose(self) -> ComposeResult:
         self.table = DataTable(zebra_stripes=False, cursor_type=None)
-        self.table.add_column("Skill Name", width=30)
-        self.table.add_column("State", width=10)
-        self.table.add_column("Duration", width=10)
-        self.table.add_column("Start Time", width=12)
-        self.table.add_column("Messages", width=10)
-        self.table.add_column("Details", width=40)
+        self.table.add_column("Skill Name")
+        self.table.add_column("State")
+        self.table.add_column("Duration")
+        self.table.add_column("Start Time")
+        self.table.add_column("Messages")
+        self.table.add_column("Details")
 
         self.log_view = RichLog(markup=True, wrap=True)
 
@@ -195,11 +205,30 @@ class AgentSpyApp(App):
         """Start the spy when app mounts."""
         self.theme = "flexoki"
 
+        # Remove ALL existing handlers from ALL loggers to prevent console output
+        # This is needed because setup_logger creates loggers with propagate=False
+        for name in logging.root.manager.loggerDict:
+            logger = logging.getLogger(name)
+            logger.handlers.clear()
+            logger.propagate = True
+
+        # Clear root logger handlers too
+        logging.root.handlers.clear()
+
         # Set up custom log handler to show logs in the UI
         if self.log_view:
             self.log_handler = TextualLogHandler(self.log_view)
+
+            # Custom formatter that shortens the logger name
+            class ShortNameFormatter(logging.Formatter):
+                def format(self, record):
+                    # Remove the common prefix from logger names
+                    if record.name.startswith("dimos.protocol.skill."):
+                        record.name = record.name.replace("dimos.protocol.skill.", "")
+                    return super().format(record)
+
             self.log_handler.setFormatter(
-                logging.Formatter(
+                ShortNameFormatter(
                     "%(asctime)s - %(name)s - %(levelname)s - %(message)s", datefmt="%H:%M:%S"
                 )
             )
@@ -225,15 +254,11 @@ class AgentSpyApp(App):
 
     def update_state(self, state: Dict[str, SkillState]):
         """Update state from spy callback."""
-        logger.info(f"AgentSpyApp.update_state called with {len(state)} skills")
-
         # Update history with current state
         current_time = time.time()
 
         # Add new skills or update existing ones
         for skill_name, skill_state in state.items():
-            logger.debug(f"Processing skill {skill_name} in state {skill_state.state}")
-
             # Find if skill already in history
             found = False
             for i, (name, old_state, start_time) in enumerate(self.skill_history):
@@ -250,19 +275,13 @@ class AgentSpyApp(App):
                     # Use first message timestamp if available
                     start_time = skill_state._items[0].ts
                 self.skill_history.append((skill_name, skill_state, start_time))
-                logger.info(f"Added new skill to history: {skill_name}")
-
-        logger.info(f"History now has {len(self.skill_history)} skills")
 
         # Schedule UI update
         self.call_from_thread(self.refresh_table)
 
     def refresh_table(self):
         """Refresh the table display."""
-        logger.debug(f"refresh_table called, history has {len(self.skill_history)} items")
-
         if not self.table:
-            logger.warning("Table not initialized yet")
             return
 
         # Clear table
@@ -274,10 +293,6 @@ class AgentSpyApp(App):
         # Get terminal height and calculate how many rows we can show
         height = self.size.height - 6  # Account for header, footer, column headers
         max_rows = max(1, height)
-
-        logger.debug(
-            f"Showing {min(len(sorted_history), max_rows)} of {len(sorted_history)} skills"
-        )
 
         # Show only top N entries
         for skill_name, skill_state, start_time in sorted_history[:max_rows]:
@@ -298,7 +313,7 @@ class AgentSpyApp(App):
                 last_msg = skill_state._items[-1]
                 if last_msg.type == MsgType.error:
                     details = str(last_msg.content)[:40]
-            elif skill_state.state == SkillStateEnum.ret and msg_count > 0:
+            elif skill_state.state == SkillStateEnum.returned and msg_count > 0:
                 # Show return value
                 last_msg = skill_state._items[-1]
                 if last_msg.type == MsgType.ret:
@@ -334,17 +349,7 @@ class AgentSpyApp(App):
 
 def main():
     """Main entry point for agentspy CLI."""
-    # Set up logging to file for debugging
-    import os
     import sys
-
-    log_file = os.path.join(os.path.dirname(__file__), "agentspy_debug.log")
-    logging.basicConfig(
-        level=logging.DEBUG,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        filename=log_file,
-        filemode="w",
-    )
 
     # Check if running in web mode
     if len(sys.argv) > 1 and sys.argv[1] == "web":
@@ -355,9 +360,6 @@ def main():
         server = Server(f"python {os.path.abspath(__file__)}")
         server.serve()
     else:
-        logger.info("Starting AgentSpy app...")
-
-        # Don't disable logging - we'll show it in the UI instead
         app = AgentSpyApp()
         app.run()
 

@@ -37,8 +37,11 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
 
                 def run_function():
                     self.agent_comms.publish(AgentMsg(skill, None, type=MsgType.start))
-                    val = f(self, *args, **kwargs)
-                    self.agent_comms.publish(AgentMsg(skill, val, type=MsgType.ret))
+                    try:
+                        val = f(self, *args, **kwargs)
+                        self.agent_comms.publish(AgentMsg(skill, val, type=MsgType.ret))
+                    except Exception as e:
+                        self.agent_comms.publish(AgentMsg(skill, str(e), type=MsgType.error))
 
                 thread = threading.Thread(target=run_function)
                 thread.start()
