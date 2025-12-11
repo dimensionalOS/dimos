@@ -20,12 +20,12 @@ from typing import TYPE_CHECKING
 from pydantic import Field
 
 if TYPE_CHECKING:
-    from dimos.robot.robot import MockRobot, Robot
+    from dimos.robot.robot import MockRobot, Robot  # type: ignore[attr-defined]
 else:
     Robot = "Robot"
     MockRobot = "MockRobot"
 
-from go2_webrtc_driver.constants import RTC_TOPIC
+from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
@@ -220,7 +220,7 @@ class MyUnitreeSkills(SkillLibrary):
             robot_type: Type of robot ("go2" or "g1"), defaults to "go2"
         """
         super().__init__()
-        self._robot: Robot = None
+        self._robot: Robot = None  # type: ignore[assignment]
         self.robot_type = robot_type.lower()
 
         if self.robot_type not in ["go2", "g1"]:
@@ -228,7 +228,7 @@ class MyUnitreeSkills(SkillLibrary):
 
         # Add dynamic skills to this class based on robot type
         dynamic_skills = self.create_skills_live()
-        self.register_skills(dynamic_skills)
+        self.register_skills(dynamic_skills)  # type: ignore[arg-type]
 
     @classmethod
     def register_skills(cls, skill_classes: AbstractSkill | list[AbstractSkill]) -> None:
@@ -242,11 +242,11 @@ class MyUnitreeSkills(SkillLibrary):
 
         for skill_class in skill_classes:
             # Add to the class as a skill
-            setattr(cls, skill_class.__name__, skill_class)
+            setattr(cls, skill_class.__name__, skill_class)  # type: ignore[attr-defined]
 
     def initialize_skills(self) -> None:
         for skill_class in self.get_class_skills():
-            self.create_instance(skill_class.__name__, robot=self._robot)
+            self.create_instance(skill_class.__name__, robot=self._robot)  # type: ignore[attr-defined]
 
         # Refresh the class skills
         self.refresh_class_skills()
@@ -259,13 +259,13 @@ class MyUnitreeSkills(SkillLibrary):
             """Base skill for dynamic skill creation."""
 
             def __call__(self) -> str:
-                super().__call__()
+                super().__call__()  # type: ignore[no-untyped-call]
 
                 # For Go2: Simple api_id based call
                 if hasattr(self, "_app_id"):
                     string = f"{Colors.GREEN_PRINT_COLOR}Executing Go2 skill: {self.__class__.__name__} with api_id={self._app_id}{Colors.RESET_COLOR}"
                     print(string)
-                    self._robot.connection.publish_request(
+                    self._robot.connection.publish_request(  # type: ignore[attr-defined]
                         RTC_TOPIC["SPORT_MOD"], {"api_id": self._app_id}
                     )
                     return f"{self.__class__.__name__} executed successfully"
@@ -274,9 +274,9 @@ class MyUnitreeSkills(SkillLibrary):
                 elif hasattr(self, "_data_value"):
                     string = f"{Colors.GREEN_PRINT_COLOR}Executing G1 skill: {self.__class__.__name__} with data={self._data_value}{Colors.RESET_COLOR}"
                     print(string)
-                    self._robot.connection.publish_request(
-                        self._topic,
-                        {"api_id": self._api_id, "parameter": {"data": self._data_value}},
+                    self._robot.connection.publish_request(  # type: ignore[attr-defined]
+                        self._topic,  # type: ignore[attr-defined]
+                        {"api_id": self._api_id, "parameter": {"data": self._data_value}},  # type: ignore[attr-defined]
                     )
                     return f"{self.__class__.__name__} executed successfully"
                 else:
@@ -323,7 +323,7 @@ class MyUnitreeSkills(SkillLibrary):
                     )
                     skills_classes.append(skill_class)
 
-        return skills_classes
+        return skills_classes  # type: ignore[return-value]
 
     # region Class-based Skills
 
@@ -336,7 +336,7 @@ class MyUnitreeSkills(SkillLibrary):
         duration: float = Field(default=0.0, description="How long to move (seconds).")
 
         def __call__(self) -> str:
-            self._robot.move(
+            self._robot.move(  # type: ignore[attr-defined]
                 Twist(linear=Vector3(self.x, self.y, 0.0), angular=Vector3(0.0, 0.0, self.yaw)),
                 duration=self.duration,
             )

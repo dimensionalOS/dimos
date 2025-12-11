@@ -16,7 +16,7 @@
 from typing import Any
 
 from reactivex import Observable, create, disposable
-import whisper
+import whisper  # type: ignore[import-untyped]
 
 from dimos.stream.audio.base import (
     AbstractAudioConsumer,
@@ -25,7 +25,7 @@ from dimos.stream.audio.base import (
 from dimos.stream.audio.text.base import AbstractTextEmitter
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.stt.node_whisper")
+logger = setup_logger()
 
 
 class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
@@ -44,7 +44,7 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
         self.modelopts = modelopts
         self.model = whisper.load_model(model)
 
-    def consume_audio(self, audio_observable: Observable) -> "WhisperNode":
+    def consume_audio(self, audio_observable: Observable) -> "WhisperNode":  # type: ignore[type-arg]
         """
         Set the audio source observable to consume.
 
@@ -54,10 +54,10 @@ class WhisperNode(AbstractAudioConsumer, AbstractTextEmitter):
         Returns:
             Self for method chaining
         """
-        self.audio_observable = audio_observable
+        self.audio_observable = audio_observable  # type: ignore[assignment]
         return self
 
-    def emit_text(self) -> Observable:
+    def emit_text(self) -> Observable:  # type: ignore[type-arg]
         """
         Create an observable that emits transcribed text from audio.
 

@@ -89,7 +89,7 @@ class Vector:
         return float(self._data[idx])
 
     def __iter__(self) -> Iterable[float]:
-        return iter(self._data)
+        return iter(self._data)  # type: ignore[no-any-return]
 
     def __repr__(self) -> str:
         components = ",".join(f"{x:.6g}" for x in self._data)
@@ -114,7 +114,7 @@ class Vector:
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
-    def serialize(self) -> dict:
+    def serialize(self) -> dict:  # type: ignore[type-arg]
         """Serialize the vector to a dictionary."""
         return {"type": "vector", "c": self._data.tolist()}
 
@@ -230,12 +230,6 @@ class Vector:
 
         scalar_projection = np.dot(self._data, onto_data) / onto_length_sq
         return self.__class__(scalar_projection * onto_data)
-
-    # this is here to test ros_observable_topic
-    # doesn't happen irl afaik that we want a vector from ros message
-    @classmethod
-    def from_msg(cls: type[T], msg: Any) -> T:
-        return cls(*msg)
 
     @classmethod
     def zeros(cls: type[T], dim: int) -> T:

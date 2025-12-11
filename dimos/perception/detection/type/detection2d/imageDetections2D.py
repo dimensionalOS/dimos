@@ -21,7 +21,7 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
 if TYPE_CHECKING:
-    from dimos_lcm.vision_msgs import Detection2DArray
+    from dimos_lcm.vision_msgs import Detection2DArray  # type: ignore[import-untyped]
     from ultralytics.engine.results import Results
 
     from dimos.msgs.sensor_msgs import Image
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
 
 class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
-    def from_ros_detection2d_array(
+    def from_ros_detection2d_array(  # type: ignore[no-untyped-def]
         cls, image: Image, ros_detections: Detection2DArray, **kwargs
     ) -> ImageDetections2D:
         """Convert from ROS Detection2DArray message to ImageDetections2D object."""
@@ -42,7 +42,7 @@ class ImageDetections2D(ImageDetections[Detection2D]):
         return cls(image=image, detections=detections)
 
     @classmethod
-    def from_ultralytics_result(
+    def from_ultralytics_result(  # type: ignore[no-untyped-def]
         cls, image: Image, results: list[Results], **kwargs
     ) -> ImageDetections2D:
         """Create ImageDetections2D from ultralytics Results.

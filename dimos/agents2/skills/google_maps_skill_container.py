@@ -25,14 +25,14 @@ from dimos.mapping.types import LatLon
 from dimos.protocol.skill.skill import skill
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class GoogleMapsSkillContainer(SkillModule):
     _latest_location: LatLon | None = None
     _client: GoogleMaps
 
-    gps_location: In[LatLon] = None
+    gps_location: In[LatLon]
 
     def __init__(self) -> None:
         super().__init__()
@@ -43,7 +43,7 @@ class GoogleMapsSkillContainer(SkillModule):
     @rpc
     def start(self) -> None:
         super().start()
-        self._disposables.add(Disposable(self.gps_location.subscribe(self._on_gps_location)))
+        self._disposables.add(self.gps_location.subscribe(self._on_gps_location))  # type: ignore[arg-type]
 
     @rpc
     def stop(self) -> None:
