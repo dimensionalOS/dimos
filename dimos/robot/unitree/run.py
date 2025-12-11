@@ -108,7 +108,7 @@ def main() -> None:
         module.deploy(dimos, args.ip)
         wait_exit()
     finally:
-        dimos.close_all()
+        dimos.close_all()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":

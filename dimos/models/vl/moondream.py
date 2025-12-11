@@ -4,7 +4,7 @@ import warnings
 import numpy as np
 from PIL import Image as PILImage
 import torch
-from transformers import AutoModelForCausalLM
+from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
@@ -23,7 +23,15 @@ class MoondreamVlModel(VlModel):
         dtype: torch.dtype = torch.bfloat16,
     ) -> None:
         self._model_name = model_name
-        self._device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Use GPU if available, otherwise fall back to CPU
+        if torch.cuda.is_available():
+            self._device = "cuda"
+        # MacOS Metal performance shaders
+        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
+            self._device = "mps"
+        else:
+            self._device = "cpu"
+        
         self._dtype = dtype
 
     @cached_property
@@ -38,7 +46,7 @@ class MoondreamVlModel(VlModel):
 
         return model
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
         if isinstance(image, np.ndarray):
             warnings.warn(
                 "MoondreamVlModel.query should receive standard dimos Image type, not a numpy array",
@@ -57,11 +65,11 @@ class MoondreamVlModel(VlModel):
 
         # Handle both dict and string responses
         if isinstance(result, dict):
-            return result.get("answer", str(result))
+            return result.get("answer", str(result))  # type: ignore[no-any-return]
 
         return str(result)
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's native detect method.
 
         Args:

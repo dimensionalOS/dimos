@@ -17,7 +17,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from turbojpeg import TurboJPEG
+from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
     import threading
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 @runtime_checkable
@@ -63,8 +63,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
     _thread: threading.Thread | None
     _callbacks: dict[str, list[Callable[[Any], None]]]
 
-    def __init__(self, **kwargs) -> None:
-        LCMService.__init__(self, **kwargs)
+    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         self._callbacks = {}
 
@@ -73,6 +72,7 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
         if self.l is None:
             logger.error("Tried to publish after LCM was closed")
             return
+
         self.l.publish(str(topic), message)
 
     def subscribe(
@@ -87,6 +87,9 @@ class LCMPubSubBase(LCMService, PubSub[Topic, Any]):
             return noop
 
         lcm_subscription = self.l.subscribe(str(topic), lambda _, msg: callback(msg, topic))
+
+        # Set queue capacity to 10000 to handle high-volume bursts
+        lcm_subscription.set_queue_capacity(10000)
 
         def unsubscribe() -> None:
             if self.l is None:
@@ -110,18 +113,18 @@ class LCMEncoderMixin(PubSubEncoderMixin[Topic, Any]):
 
 class JpegEncoderMixin(PubSubEncoderMixin[Topic, Any]):
     def encode(self, msg: LCMMsg, _: Topic) -> bytes:
-        return msg.lcm_jpeg_encode()
+        return msg.lcm_jpeg_encode()  # type: ignore[attr-defined, no-any-return]
 
     def decode(self, msg: bytes, topic: Topic) -> LCMMsg:
         if topic.lcm_type is None:
             raise ValueError(
                 f"Cannot decode message for topic '{topic.topic}': no lcm_type specified"
             )
-        return topic.lcm_type.lcm_jpeg_decode(msg)
+        return topic.lcm_type.lcm_jpeg_decode(msg)  # type: ignore[attr-defined, no-any-return]
 
 
 class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
-    def __init__(self, quality: int = 75, **kwargs) -> None:
+    def __init__(self, quality: int = 75, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
         self.jpeg = TurboJPEG()
         self.quality = quality
@@ -131,7 +134,7 @@ class JpegSharedMemoryEncoderMixin(PubSubEncoderMixin[str, Image]):
             raise ValueError("Can only encode images.")
 
         bgr_image = msg.to_bgr().to_opencv()
-        return self.jpeg.encode(bgr_image, quality=self.quality)
+        return self.jpeg.encode(bgr_image, quality=self.quality)  # type: ignore[no-any-return]
 
     def decode(self, msg: bytes, _topic: str) -> Image:
         bgr_array = self.jpeg.decode(msg)
@@ -145,7 +148,7 @@ class LCM(
 
 
 class PickleLCM(
-    PickleEncoderMixin,
+    PickleEncoderMixin,  # type: ignore[type-arg]
     LCMPubSubBase,
 ): ...
 

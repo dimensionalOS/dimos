@@ -227,8 +227,8 @@ def _find_safe_goal_voronoi(
     - Requires scipy for efficient implementation
     """
 
-    from scipy import ndimage
-    from skimage.morphology import skeletonize
+    from scipy import ndimage  # type: ignore[import-untyped]
+    from skimage.morphology import skeletonize  # type: ignore[import-not-found]
 
     # Convert goal to grid coordinates
     goal_grid = costmap.world_to_grid(goal)
@@ -245,7 +245,7 @@ def _find_safe_goal_voronoi(
 
     # Filter skeleton points by minimum clearance
     clearance_cells = int(np.ceil(min_clearance / costmap.resolution))
-    valid_skeleton = skeleton & (distance_field >= clearance_cells)
+    valid_skeleton = skeleton & (distance_field >= clearance_cells)  # type: ignore[operator]
 
     if not np.any(valid_skeleton):
         # Fall back to BFS if no valid skeleton points

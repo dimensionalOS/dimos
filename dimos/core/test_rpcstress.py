@@ -21,7 +21,7 @@ from dimos.core import In, Module, Out, rpc
 class Counter(Module):
     current_count: int = 0
 
-    count_stream: Out[int] = None
+    count_stream: Out[int]
 
     def __init__(self) -> None:
         super().__init__()
@@ -38,7 +38,7 @@ class Counter(Module):
 class CounterValidator(Module):
     """Calls counter.increment() as fast as possible and validates no numbers are skipped."""
 
-    count_in: In[int] = None
+    count_in: In[int]
 
     def __init__(self, increment_func) -> None:
         super().__init__()

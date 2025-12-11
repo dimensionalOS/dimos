@@ -12,10 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations as FoxgloveImageAnnotations
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations as FoxgloveImageAnnotations,
+)
 
 
-class ImageAnnotations(FoxgloveImageAnnotations):
+class ImageAnnotations(FoxgloveImageAnnotations):  # type: ignore[misc]
     def __add__(self, other: "ImageAnnotations") -> "ImageAnnotations":
         points = self.points + other.points
         texts = self.texts + other.texts
@@ -29,5 +31,5 @@ class ImageAnnotations(FoxgloveImageAnnotations):
 
     def agent_encode(self) -> str:
         if len(self.texts) == 0:
-            return None
-        return list(map(lambda t: t.text, self.texts))
+            return None  # type: ignore[return-value]
+        return list(map(lambda t: t.text, self.texts))  # type: ignore[return-value]

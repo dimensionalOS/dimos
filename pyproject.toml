@@ -28,6 +28,7 @@ dependencies = [
     "openai",
     "anthropic>=0.19.0",
     "cerebras-cloud-sdk",
+    "moondream",
     "numpy>=1.26.4,<2.0.0",
     "colorlog==6.9.0",
     "yapf==0.40.2",
@@ -45,25 +46,30 @@ dependencies = [
     "asyncio==3.4.3",
     "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
     "tensorzero==2025.7.5",
-    
+    "structlog>=25.5.0,<26",
+
     # Web Extensions
     "fastapi>=0.115.6",
     "sse-starlette>=2.2.1",
     "uvicorn>=0.34.0",
-    
+
     # Agents
-    "langchain>=0.3.27",
-    "langchain-chroma>=0.2.5",
-    "langchain-core>=0.3.72",
-    "langchain-openai>=0.3.28",
-    "langchain-text-splitters>=0.3.9",  
-    
+    "langchain>=0.3.27,<1",
+    "langchain-chroma>=0.2.6,<1",
+    "langchain-core>=0.3.79,<1",
+    "langchain-openai>=0.3.33,<1",
+    "langchain-text-splitters>=0.3.11,<1",
+    "langchain-huggingface>=0.3.1,<1",
+    "langchain-ollama>=0.3.10,<1",
+    "bitsandbytes>=0.48.2,<1.0; sys_platform == 'linux'",
+    "ollama>=0.6.0",
+
     # Class Extraction
     "pydantic",
-    
+
     # Developer Specific
     "ipykernel",
-    
+
     # Unitree webrtc streaming
     "aiortc==1.9.0",
     "pycryptodome",
@@ -74,17 +80,17 @@ dependencies = [
 
     # Image
     "PyTurboJPEG==1.8.2",
-    
+
     # Audio
     "openai-whisper",
     "soundfile",
-    
+
     # Hugging Face
     "transformers[torch]==4.49.0",
-    
+
     # Vector Embedding
-    "sentence_transformers",    
-    
+    "sentence_transformers",
+
     # Perception Dependencies
     "ultralytics>=8.3.70",
     "filterpy>=1.4.5",
@@ -103,7 +109,7 @@ dependencies = [
     # Inference
     "onnx",
 
-    # Multiprocess 
+    # Multiprocess
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
@@ -112,6 +118,9 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+
+    # Teleop
+    "pygame>=2.6.1",
 ]
 
 [project.scripts]
@@ -162,7 +171,7 @@ cuda = [
     "mmcv>=2.1.0",
     "xformers>=0.0.20",
 
-    # Detic GPU stack 
+    # Detic GPU stack
     "mss",
     "dataclasses",
     "ftfy",
@@ -180,7 +189,7 @@ cuda = [
 
 dev = [
     "ruff==0.14.3",
-    "mypy==1.18.2",
+    "mypy==1.19.0",
     "pre_commit==4.2.0",
     "pytest==8.3.5",
     "pytest-asyncio==0.26.0",
@@ -216,7 +225,6 @@ sim = [
     # Simulation
     "mujoco>=3.3.4",
     "playground>=0.0.5",
-    "pygame>=2.6.1",
 ]
 
 jetson-jp6-cuda126 = [
@@ -266,13 +274,11 @@ combine-as-imports = true
 force-sort-within-sections = true
 
 [tool.mypy]
-# mypy doesn't understand plum @dispatch decorator
-# so we gave up on this check globally
-disable_error_code = ["no-redef", "import-untyped", "import-not-found"]
-files = [
-    "dimos/msgs/**/*.py",
-    "dimos/protocol/**/*.py"
-]
+python_version = "3.12"
+incremental = true
+strict = true
+warn_unused_ignores = false
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
@@ -295,4 +301,3 @@ env = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
-

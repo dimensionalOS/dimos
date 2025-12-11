@@ -58,7 +58,7 @@ class AgentMessageMonitor:
         self.messages: deque[MessageEntry] = deque(maxlen=max_messages)
         self.transport = PickleLCM()
         self.transport.start()
-        self.callbacks: list[callable] = []
+        self.callbacks: list[callable] = []  # type: ignore[valid-type]
         pass
 
     def start(self) -> None:
@@ -79,11 +79,11 @@ class AgentMessageMonitor:
 
             # Notify callbacks
             for callback in self.callbacks:
-                callback(entry)
+                callback(entry)  # type: ignore[misc]
         else:
             pass
 
-    def subscribe(self, callback: callable) -> None:
+    def subscribe(self, callback: callable) -> None:  # type: ignore[valid-type]
         """Subscribe to new messages."""
         self.callbacks.append(callback)
 
@@ -130,12 +130,12 @@ def format_message_content(msg: AnyMessage) -> str:
             return f"{content}\n[Tool Calls: {', '.join(tool_info)}]"
         elif tool_info:
             return f"[Tool Calls: {', '.join(tool_info)}]"
-        return content
+        return content  # type: ignore[return-value]
     else:
         return str(msg.content) if hasattr(msg, "content") else str(msg)
 
 
-class AgentSpyApp(App):
+class AgentSpyApp(App):  # type: ignore[type-arg]
     """TUI application for monitoring agent messages."""
 
     CSS_PATH = theme.CSS_PATH
@@ -165,7 +165,7 @@ class AgentSpyApp(App):
         Binding("ctrl+c", "quit", show=False),
     ]
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.monitor = AgentMessageMonitor()
         self.message_log: RichLog | None = None
@@ -225,7 +225,7 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "web":
         import os
 
-        from textual_serve.server import Server
+        from textual_serve.server import Server  # type: ignore[import-not-found]
 
         server = Server(f"python {os.path.abspath(__file__)}")
         server.serve()

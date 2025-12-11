@@ -20,7 +20,7 @@ FakeZEDModule - Replays recorded ZED data for testing without hardware.
 import functools
 import logging
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 
 from dimos.core import Module, Out, rpc
@@ -31,7 +31,7 @@ from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
-logger = setup_logger(__name__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class FakeZEDModule(Module):
@@ -40,12 +40,12 @@ class FakeZEDModule(Module):
     """
 
     # Define LCM outputs (same as ZEDModule)
-    color_image: Out[Image] = None
-    depth_image: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
-    pose: Out[PoseStamped] = None
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    camera_info: Out[CameraInfo]
+    pose: Out[PoseStamped]
 
-    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:
+    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:  # type: ignore[no-untyped-def]
         """
         Initialize FakeZEDModule with recording path.
 
@@ -65,11 +65,11 @@ class FakeZEDModule(Module):
         logger.info(f"FakeZEDModule initialized with recording: {self.recording_path}")
 
     @functools.cache
-    def _get_color_stream(self):
+    def _get_color_stream(self):  # type: ignore[no-untyped-def]
         """Get cached color image stream."""
         logger.info(f"Loading color image stream from {self.recording_path}/color")
 
-        def image_autocast(x):
+        def image_autocast(x):  # type: ignore[no-untyped-def]
             """Convert raw numpy array to Image."""
             if isinstance(x, np.ndarray):
                 return Image(data=x, format=ImageFormat.RGB)
@@ -81,11 +81,11 @@ class FakeZEDModule(Module):
         return color_replay.stream()
 
     @functools.cache
-    def _get_depth_stream(self):
+    def _get_depth_stream(self):  # type: ignore[no-untyped-def]
         """Get cached depth image stream."""
         logger.info(f"Loading depth image stream from {self.recording_path}/depth")
 
-        def depth_autocast(x):
+        def depth_autocast(x):  # type: ignore[no-untyped-def]
             """Convert raw numpy array to depth Image."""
             if isinstance(x, np.ndarray):
                 # Depth images are float32
@@ -98,11 +98,11 @@ class FakeZEDModule(Module):
         return depth_replay.stream()
 
     @functools.cache
-    def _get_pose_stream(self):
+    def _get_pose_stream(self):  # type: ignore[no-untyped-def]
         """Get cached pose stream."""
         logger.info(f"Loading pose stream from {self.recording_path}/pose")
 
-        def pose_autocast(x):
+        def pose_autocast(x):  # type: ignore[no-untyped-def]
             """Convert raw pose dict to PoseStamped."""
             if isinstance(x, dict):
                 import time
@@ -120,11 +120,11 @@ class FakeZEDModule(Module):
         return pose_replay.stream()
 
     @functools.cache
-    def _get_camera_info_stream(self):
+    def _get_camera_info_stream(self):  # type: ignore[no-untyped-def]
         """Get cached camera info stream."""
         logger.info(f"Loading camera info stream from {self.recording_path}/camera_info")
 
-        def camera_info_autocast(x):
+        def camera_info_autocast(x):  # type: ignore[no-untyped-def]
             """Convert raw camera info dict to CameraInfo message."""
             if isinstance(x, dict):
                 # Extract calibration parameters
@@ -262,7 +262,7 @@ class FakeZEDModule(Module):
 
         super().stop()
 
-    def _publish_pose(self, msg) -> None:
+    def _publish_pose(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Publish pose and TF transform."""
         if msg:
             self.pose.publish(msg)
