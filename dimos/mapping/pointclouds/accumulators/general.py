@@ -14,15 +14,22 @@
 
 import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+from open3d.io import read_point_cloud  # type: ignore[import-untyped]
+
+from dimos.core.global_config import GlobalConfig  # type: ignore[import-untyped]
 
 
 class GeneralPointCloudAccumulator:
     _point_cloud: PointCloud
     _voxel_size: float
 
-    def __init__(self, voxel_size: float) -> None:
+    def __init__(self, voxel_size: float, global_config: GlobalConfig) -> None:
         self._point_cloud = PointCloud()
         self._voxel_size = voxel_size
+
+        if global_config.mujoco_global_map_from_pointcloud:
+            path = global_config.mujoco_global_map_from_pointcloud
+            self._point_cloud = read_point_cloud(path)
 
     def get_point_cloud(self) -> PointCloud:
         return self._point_cloud

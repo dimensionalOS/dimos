@@ -35,7 +35,7 @@ def test_resample_path(costmap, method) -> None:
     start = Vector3(4.0, 2.0, 0)
     goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
     expected = Image.from_file(get_data(f"resample_path_{method}.png"))
-    path = astar("min_cost", costmap, goal_pose.position, start)
+    path = astar("min_cost", costmap, goal_pose.position, start, use_cpp=False)
 
     match method:
         case "simple":

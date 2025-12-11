@@ -28,6 +28,7 @@ def astar(
     costmap: OccupancyGrid,
     goal: VectorLike,
     start: VectorLike,
+    use_cpp: bool = True,
 ) -> Path | None:
     """
     A* path planning algorithm from start to goal position.
@@ -37,6 +38,7 @@ def astar(
         costmap: Costmap object containing the environment
         goal: Goal position as any vector-like object
         start: Start position as any vector-like object (default: origin [0,0])
+        use_cpp: Use C++ implementation for min_cost algorithm if available (default: True)
 
     Returns:
         Path object containing waypoints, or None if no path found
@@ -46,6 +48,6 @@ def astar(
         case "general":
             return general_astar(costmap, goal, start)
         case "min_cost":
-            return min_cost_astar(costmap, goal, start)
+            return min_cost_astar(costmap, goal, start, use_cpp=use_cpp)
         case _:
             raise NotImplementedError()

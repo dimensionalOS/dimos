@@ -92,14 +92,9 @@ class BaseLocalPlanner(Module):
     def start(self) -> None:
         super().start()
 
-        unsub = self.local_costmap.subscribe(self._on_costmap)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.odom.subscribe(self._on_odom)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.path.subscribe(self._on_path)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(Disposable(self.local_costmap.subscribe(self._on_costmap)))
+        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
+        self._disposables.add(Disposable(self.path.subscribe(self._on_path)))
 
     @rpc
     def stop(self) -> None:
@@ -120,14 +115,11 @@ class BaseLocalPlanner(Module):
                 self._start_planning_thread()
 
     def _start_planning_thread(self) -> None:
-        """Start the planning thread."""
         self.stop_planning.clear()
         self.planning_thread = threading.Thread(target=self._follow_path_loop, daemon=True)
         self.planning_thread.start()
-        logger.debug("Started follow path thread")
 
     def _follow_path_loop(self) -> None:
-        """Main planning loop that runs in a separate thread."""
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
                 self.stop_planning.set()

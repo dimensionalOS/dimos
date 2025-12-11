@@ -51,3 +51,5 @@ yolo11n.pt
 .claude
 
 /logs
+
+*.so

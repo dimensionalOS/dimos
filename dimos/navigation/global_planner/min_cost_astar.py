@@ -17,6 +17,16 @@ import heapq
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path
 
+# Try to import C++ extension for faster pathfinding
+try:
+    from dimos.navigation.global_planner.min_cost_astar_ext import (
+        min_cost_astar_cpp as _astar_cpp,
+    )
+
+    _USE_CPP = True
+except ImportError:
+    _USE_CPP = False
+
 # Define possible movements (8-connected grid with diagonal movements)
 _directions = [
     (0, 1),
@@ -50,11 +60,9 @@ def _reconstruct_path(
     start_tuple: tuple[int, int],
     goal_tuple: tuple[int, int],
 ) -> Path:
-    # Reconstruct the path
     waypoints: list[PoseStamped] = []
     while current in parents:
         world_point = costmap.grid_to_world(current)
-        # Create PoseStamped with identity quaternion (no orientation)
         pose = PoseStamped(
             frame_id="world",
             position=[world_point.x, world_point.y, 0.0],
@@ -63,7 +71,6 @@ def _reconstruct_path(
         waypoints.append(pose)
         current = parents[current]
 
-    # Add the start position
     start_world_point = costmap.grid_to_world(start_tuple)
     start_pose = PoseStamped(
         frame_id="world",
@@ -72,7 +79,6 @@ def _reconstruct_path(
     )
     waypoints.append(start_pose)
 
-    # Reverse the path (start to goal)
     waypoints.reverse()
 
     # Add the goal position if it's not already included
@@ -92,26 +98,55 @@ def _reconstruct_path(
     return Path(frame_id="world", poses=waypoints)
 
 
+def _reconstruct_path_from_coords(
+    path_coords: list[tuple[int, int]],
+    costmap: OccupancyGrid,
+) -> Path:
+    waypoints: list[PoseStamped] = []
+
+    for gx, gy in path_coords:
+        world_point = costmap.grid_to_world((gx, gy))
+        pose = PoseStamped(
+            frame_id="world",
+            position=[world_point.x, world_point.y, 0.0],
+            orientation=Quaternion(0, 0, 0, 1),
+        )
+        waypoints.append(pose)
+
+    return Path(frame_id="world", poses=waypoints)
+
+
 def min_cost_astar(
     costmap: OccupancyGrid,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),
     cost_threshold: int = 100,
     unknown_penalty: float = 0.8,
+    use_cpp: bool = True,
 ) -> Path | None:
-    # Convert world coordinates to grid coordinates directly using vector-like inputs
     start_vector = costmap.world_to_grid(start)
     goal_vector = costmap.world_to_grid(goal)
 
-    # Store positions as tuples for dictionary keys
     start_tuple = (int(start_vector.x), int(start_vector.y))
     goal_tuple = (int(goal_vector.x), int(goal_vector.y))
 
-    # Check if goal is out of bounds
     if not (0 <= goal_tuple[0] < costmap.width and 0 <= goal_tuple[1] < costmap.height):
         return None
 
-    # A* algorithm implementation
+    if use_cpp and _USE_CPP:
+        path_coords = _astar_cpp(
+            costmap.grid,
+            start_tuple[0],
+            start_tuple[1],
+            goal_tuple[0],
+            goal_tuple[1],
+            cost_threshold,
+            unknown_penalty,
+        )
+        if not path_coords:
+            return None
+        return _reconstruct_path_from_coords(path_coords, costmap)
+
     open_set: list[tuple[float, float, tuple[int, int]]] = []  # Priority queue for nodes to explore
     closed_set: set[tuple[int, int]] = set()  # Set of explored nodes
 
@@ -130,58 +165,43 @@ def min_cost_astar(
     open_set_hash: set[tuple[int, int]] = {start_tuple}
 
     while open_set:
-        # Get the node with the lowest priority (cost first, then distance)
-        _current_cost, _current_dist, current = heapq.heappop(open_set)
+        _, _, current = heapq.heappop(open_set)
         current_x, current_y = current
 
-        # Remove from open set hash
         if current in open_set_hash:
             open_set_hash.remove(current)
 
-        # Skip if already processed (can happen with duplicate entries)
         if current in closed_set:
             continue
 
-        # Check if we've reached the goal
         if current == goal_tuple:
             return _reconstruct_path(parents, current, costmap, start_tuple, goal_tuple)
 
-        # Add current node to closed set
         closed_set.add(current)
 
-        # Explore neighbors
         for i, (dx, dy) in enumerate(_directions):
             neighbor_x, neighbor_y = current_x + dx, current_y + dy
             neighbor = (neighbor_x, neighbor_y)
 
-            # Check if the neighbor is valid
             if not (0 <= neighbor_x < costmap.width and 0 <= neighbor_y < costmap.height):
                 continue
 
-            # Check if the neighbor is already explored
             if neighbor in closed_set:
                 continue
 
-            # Get the neighbor's cost value
             neighbor_val = costmap.grid[neighbor_y, neighbor_x]
 
-            # Skip if it's a hard obstacle
             if neighbor_val >= cost_threshold:
                 continue
 
-            # Calculate movement cost with penalties
-            # Unknown cells get half the penalty of obstacles
-            if neighbor_val == CostValues.UNKNOWN:  # Unknown cell (-1)
-                # Unknown cells have a moderate traversal cost (half of obstacle threshold)
+            if neighbor_val == CostValues.UNKNOWN:
+                # Unknown cells have a moderate traversal cost
                 cell_cost = cost_threshold * unknown_penalty
-            elif neighbor_val == CostValues.FREE:  # Free space (0)
-                # Free cells have minimal cost
+            elif neighbor_val == CostValues.FREE:
                 cell_cost = 0.0
             else:
-                # Other cells use their actual cost value (1-99)
                 cell_cost = neighbor_val
 
-            # Calculate tentative scores: accumulate cost and distance separately
             tentative_cost = cost_score[current] + cell_cost
             tentative_dist = dist_score[current] + _movement_costs[i]
 
@@ -202,7 +222,6 @@ def min_cost_astar(
                 priority_dist = tentative_dist + h_dist
 
                 # Add the neighbor to the open set with its priority
-                # Only add if not already in open set to reduce duplicates
                 if neighbor not in open_set_hash:
                     heapq.heappush(open_set, (priority_cost, priority_dist, neighbor))
                     open_set_hash.add(neighbor)

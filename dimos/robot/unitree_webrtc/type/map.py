@@ -12,7 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from pathlib import Path
 import time
+from typing import Any
 
 import open3d as o3d  # type: ignore[import-untyped]
 from reactivex import interval
@@ -36,10 +38,13 @@ class Map(Module):
     local_costmap: Out[OccupancyGrid] = None  # type: ignore[assignment]
 
     _point_cloud_accumulator: PointCloudAccumulator
+    _global_config: GlobalConfig
+    _preloaded_occupancy: OccupancyGrid | None = None
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
         voxel_size: float = 0.05,
+        cost_resolution: float = 0.05,
         global_publish_interval: float | None = None,
         min_height: float = 0.15,
         max_height: float = 0.6,
@@ -47,14 +52,17 @@ class Map(Module):
         **kwargs,
     ) -> None:
         self.voxel_size = voxel_size
+        self.cost_resolution = cost_resolution
         self.global_publish_interval = global_publish_interval
         self.min_height = min_height
         self.max_height = max_height
-        self._point_cloud_accumulator = GeneralPointCloudAccumulator(self.voxel_size)
+        self._global_config = global_config or GlobalConfig()
+        self._point_cloud_accumulator = GeneralPointCloudAccumulator(
+            self.voxel_size, self._global_config
+        )
 
-        if global_config:
-            if global_config.simulation:
-                self.min_height = 0.3
+        if self._global_config.simulation:
+            self.min_height = 0.3
 
         super().__init__(**kwargs)
 
@@ -62,26 +70,11 @@ class Map(Module):
     def start(self) -> None:
         super().start()
 
-        unsub = self.lidar.subscribe(self.add_frame)
-        self._disposables.add(Disposable(unsub))
-
-        def publish(_) -> None:  # type: ignore[no-untyped-def]
-            self.global_map.publish(self.to_lidar_message())
-
-            # temporary, not sure if it belogs in mapper
-            # used only for visualizations, not for any algo
-            occupancygrid = general_occupancy(
-                self.to_lidar_message(),
-                resolution=self.voxel_size,
-                min_height=self.min_height,
-                max_height=self.max_height,
-            )
-
-            self.global_costmap.publish(occupancygrid)
+        self._disposables.add(Disposable(self.lidar.subscribe(self.add_frame)))
 
         if self.global_publish_interval is not None:
-            unsub = interval(self.global_publish_interval).subscribe(publish)  # type: ignore[assignment]
-            self._disposables.add(unsub)  # type: ignore[arg-type]
+            unsub = interval(self.global_publish_interval).subscribe(self._publish)
+            self._disposables.add(unsub)
 
     @rpc
     def stop(self) -> None:
@@ -101,20 +94,51 @@ class Map(Module):
             ts=time.time(),
         )
 
+    # Is this RPC?
     @rpc
-    def add_frame(self, frame: LidarMessage) -> "Map":  # type: ignore[return]
+    def add_frame(self, frame: LidarMessage) -> None:
         self._point_cloud_accumulator.add(frame.pointcloud)
+
+        # TODO: MOVE THIS
+        #################################################################################
+        #################################################################################
+        #################################################################################
+        #################################################################################
+        #################################################################################
+        #################################################################################
+        #################################################################################
+        #################################################################################
         local_costmap = general_occupancy(
             frame,
-            resolution=self.voxel_size,
+            resolution=self.cost_resolution,
             min_height=0.15,
             max_height=0.6,
         ).gradient(max_distance=0.25)
+
         self.local_costmap.publish(local_costmap)
 
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
         return self._point_cloud_accumulator.get_point_cloud()
+
+    def _publish(self, _: Any) -> None:
+        self.global_map.publish(self.to_lidar_message())
+
+        occupancygrid = general_occupancy(
+            self.to_lidar_message(),
+            resolution=self.cost_resolution,
+            min_height=self.min_height,
+            max_height=self.max_height,
+        )
+
+        # When debugging occupancy navigation, load a predefined occupancy grid.
+        if self._global_config.mujoco_global_costmap_from_occupancy:
+            if self._preloaded_occupancy is None:
+                path = Path(self._global_config.mujoco_global_costmap_from_occupancy)
+                self._preloaded_occupancy = OccupancyGrid.from_path(path)
+            occupancygrid = self._preloaded_occupancy
+
+        self.global_costmap.publish(occupancygrid)
 
 
 mapper = Map.blueprint

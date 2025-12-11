@@ -12,24 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
+from dimos.utils.data import get_data
 
-# Video/Camera constants
-VIDEO_WIDTH = 320
-VIDEO_HEIGHT = 240
-DEPTH_CAMERA_FOV = 160
 
-# Depth camera range/filtering constants
-MAX_RANGE = 3
-MIN_RANGE = 0.2
-MAX_HEIGHT = 1.2
+def test_generate_mujoco_scene(occupancy) -> None:
+    with open(get_data("expected_occupancy_scene.xml")) as f:
+        expected = f.read()
 
-# Lidar constants
-LIDAR_RESOLUTION = 0.05
+    actual = generate_mujoco_scene(occupancy)
 
-# Simulation timing constants
-STEPS_PER_FRAME = 1
-VIDEO_FPS = 20
-LIDAR_FPS = 2
-
-LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"
+    assert actual == expected

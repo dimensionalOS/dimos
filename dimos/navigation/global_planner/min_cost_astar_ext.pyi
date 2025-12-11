@@ -12,24 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+import numpy as np
+from numpy.typing import NDArray
 
-# Video/Camera constants
-VIDEO_WIDTH = 320
-VIDEO_HEIGHT = 240
-DEPTH_CAMERA_FOV = 160
-
-# Depth camera range/filtering constants
-MAX_RANGE = 3
-MIN_RANGE = 0.2
-MAX_HEIGHT = 1.2
-
-# Lidar constants
-LIDAR_RESOLUTION = 0.05
-
-# Simulation timing constants
-STEPS_PER_FRAME = 1
-VIDEO_FPS = 20
-LIDAR_FPS = 2
-
-LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"
+def min_cost_astar_cpp(
+    grid: NDArray[np.int8],
+    start_x: int,
+    start_y: int,
+    goal_x: int,
+    goal_y: int,
+    cost_threshold: int,
+    unknown_penalty: float,
+) -> list[tuple[int, int]]: ...

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from enum import IntEnum
 import time
-from typing import BinaryIO
+from typing import TYPE_CHECKING, BinaryIO
 
 from dimos_lcm.nav_msgs import (  # type: ignore[import-untyped]
     MapMetaData,
@@ -24,10 +24,16 @@ from dimos_lcm.nav_msgs import (  # type: ignore[import-untyped]
 )
 from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
 import numpy as np
+from PIL import Image
 from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from numpy.typing import NDArray
 
 
 class CostValues(IntEnum):
@@ -56,11 +62,11 @@ class OccupancyGrid(Timestamped):
     ts: float
     frame_id: str
     info: MapMetaData
-    grid: np.ndarray  # type: ignore[type-arg]
+    grid: NDArray[np.int8]
 
     def __init__(
         self,
-        grid: np.ndarray | None = None,  # type: ignore[type-arg]
+        grid: NDArray[np.int8] | None = None,
         width: int | None = None,
         height: int | None = None,
         resolution: float = 0.05,
@@ -171,6 +177,17 @@ class OccupancyGrid(Timestamped):
     def unknown_percent(self) -> float:
         """Percentage of cells that are unknown."""
         return (self.unknown_cells / self.total_cells * 100) if self.total_cells > 0 else 0.0
+
+    @classmethod
+    def from_path(cls, path: Path) -> OccupancyGrid:
+        match path.suffix.lower():
+            case ".npy":
+                return cls(grid=np.load(path))
+            case ".png":
+                img = Image.open(path).convert("L")
+                return cls(grid=np.array(img).astype(np.int8))
+            case _:
+                raise NotImplementedError(f"Unsupported file format: {path.suffix}")
 
     def world_to_grid(self, point: VectorLike) -> Vector3:
         """Convert world coordinates to grid coordinates.
