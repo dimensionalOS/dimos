@@ -34,11 +34,13 @@ logger = setup_logger()
 class DJIDroneVideoStream:
     """Capture drone video using GStreamer appsink."""
 
-    def __init__(self, port: int = 5600) -> None:
+    def __init__(self, port: int = 5600, width: int = 640, height: int = 360) -> None:
         self.port = port
+        self.width = width
+        self.height = height
         self._video_subject = Subject()
         self._process = None
-        self._running = False
+        self._stop_event = threading.Event()
 
     def start(self) -> bool:
         """Start video capture using gst-launch with appsink."""
@@ -61,7 +63,7 @@ class DJIDroneVideoStream:
                 "!",
                 "videoscale",
                 "!",
-                "video/x-raw,width=640,height=360",
+                f"video/x-raw,width={self.width},height={self.height}",
                 "!",
                 "videoconvert",
                 "!",
@@ -79,7 +81,7 @@ class DJIDroneVideoStream:
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
             )
 
-            self._running = True
+            self._stop_event.clear()
 
             # Start capture thread
             self._capture_thread = threading.Thread(target=self._capture_loop, daemon=True)
@@ -98,23 +100,23 @@ class DJIDroneVideoStream:
 
     def _capture_loop(self) -> None:
         """Read frames with fixed size."""
-        # Fixed parameters
-        width, height = 640, 360
         channels = 3
-        frame_size = width * height * channels
+        frame_size = self.width * self.height * channels
 
-        logger.info(f"Capturing frames: {width}x{height} RGB ({frame_size} bytes per frame)")
+        logger.info(
+            f"Capturing frames: {self.width}x{self.height} RGB ({frame_size} bytes per frame)"
+        )
 
         frame_count = 0
         total_bytes = 0
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 # Read exactly one frame worth of data
                 frame_data = b""
                 bytes_needed = frame_size
 
-                while bytes_needed > 0 and self._running:
+                while bytes_needed > 0 and not self._stop_event.is_set():
                     chunk = self._process.stdout.read(bytes_needed)
                     if not chunk:
                         logger.warning("No data from GStreamer")
@@ -129,7 +131,7 @@ class DJIDroneVideoStream:
 
                     # Convert to numpy array
                     frame = np.frombuffer(frame_data, dtype=np.uint8)
-                    frame = frame.reshape((height, width, channels))
+                    frame = frame.reshape((self.height, self.width, channels))
 
                     # Create Image message (RGB format - matches GStreamer pipeline output)
                     img_msg = Image.from_numpy(frame, format=ImageFormat.RGB)
@@ -146,33 +148,30 @@ class DJIDroneVideoStream:
                         )
 
             except Exception as e:
-                if self._running:
+                if not self._stop_event.is_set():
                     logger.error(f"Error in capture loop: {e}")
                 time.sleep(0.1)
 
     def _error_monitor(self) -> None:
         """Monitor GStreamer stderr."""
-        while self._running and self._process:
-            try:
-                line = self._process.stderr.readline()
-                if line:
-                    msg = line.decode("utf-8").strip()
-                    if "ERROR" in msg or "WARNING" in msg:
-                        logger.warning(f"GStreamer: {msg}")
-                    else:
-                        logger.debug(f"GStreamer: {msg}")
-            except:
-                pass
+        while not self._stop_event.is_set() and self._process:
+            line = self._process.stderr.readline()
+            if line:
+                msg = line.decode("utf-8").strip()
+                if "ERROR" in msg or "WARNING" in msg:
+                    logger.warning(f"GStreamer: {msg}")
+                else:
+                    logger.debug(f"GStreamer: {msg}")
 
     def stop(self) -> None:
         """Stop video stream."""
-        self._running = False
+        self._stop_event.set()
 
         if self._process:
             self._process.terminate()
             try:
                 self._process.wait(timeout=2)
-            except:
+            except subprocess.TimeoutExpired:
                 self._process.kill()
             self._process = None
 
@@ -195,7 +194,7 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
 
     def start(self) -> bool:
         """Start replay of recorded video."""
-        self._running = True
+        self._stop_event.clear()
         logger.info("Video replay started")
         return True
 
@@ -210,5 +209,5 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
 
     def stop(self) -> None:
         """Stop replay."""
-        self._running = False
+        self._stop_event.set()
         logger.info("Video replay stopped")
