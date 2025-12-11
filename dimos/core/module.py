@@ -30,25 +30,25 @@ from dimos.core.core import T, rpc
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.tf import LCMTF, TFSpec
-from dimos.protocol.tool.comms import LCMToolComms, ToolCommsSpec
+from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 
 
 class CommsSpec(Enum):
     rpc: RPCSpec
-    agent: ToolCommsSpec
+    agent: SkillCommsSpec
     tf: TFSpec
 
 
 class LCMComms(CommsSpec):
     rpc: LCMRPC
-    agent: LCMToolComms
+    agent: LCMSkillComms
     tf: LCMTF
 
 
 class ModuleBase:
     comms: CommsSpec = LCMComms
     _rpc: Optional[RPCSpec] = None
-    _agent: Optional[ToolCommsSpec] = None
+    _agent: Optional[SkillCommsSpec] = None
     _tf: Optional[TFSpec] = None
 
     def __init__(self, *args, **kwargs):
