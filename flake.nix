@@ -78,7 +78,6 @@
           { vals.pkg=pkgs.pre-commit;                   flags={}; }
 
           ### Runtime deps
-          { vals.pkg=pkgs.python312Packages.opencv4; flags={}; }
           { vals.pkg=pkgs.portaudio;                 flags={ldLibraryGroup=true; packageConfGroup=true;}; }
           { vals.pkg=pkgs.ffmpeg_6;                  flags={}; }
           { vals.pkg=pkgs.ffmpeg_6.dev;              flags={}; }
@@ -189,12 +188,13 @@
         # 3. Host interactive shell  →  `nix develop`
         # ------------------------------------------------------------
         shellHook = ''
+          setopt +o nomatch # allow globs to be empty without throwing an error
           if [ "$OSTYPE" = "linux-gnu" ]; then
             export CC="cc-no-usr-include" # basically patching for nix
             # Create nvidia-only lib symlinks to avoid glibc conflicts
             NVIDIA_LIBS_DIR="/tmp/nix-nvidia-libs-$$"
             mkdir -p "$NVIDIA_LIBS_DIR"
-            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so*; do
+            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so* /usr/lib/x86_64-linux-gnu/libnvidia*.so*; do
               [ -e "$lib" ] && ln -sf "$lib" "$NVIDIA_LIBS_DIR/" 2>/dev/null
             done
           fi
