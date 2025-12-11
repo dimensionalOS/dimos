@@ -296,8 +296,16 @@
             # CUDA/CPU dependencies
             if ! [ "$(uname)" = "Darwin" ] && confirm_ask "Want me to install the cuda dependencies? [y/n]"; then
               # get around weird "pytorch not found" error that seems to be a detection2 issue (how did that install ever work?)
-              pip install 'git+https://github.com/facebookresearch/detectron2.git@v0.6' --no-build-isolation
+              pip install 'detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6' --no-build-isolation
+
+              rm -f pyproject.original.toml
+              cp pyproject.toml pyproject.original.toml
+              # for just a moment, remove facebookresearch/detectron2 from pyproject.toml
+              grep -v '^\s*#' pyproject.original.toml | grep -v "facebookresearch/detectron2" > pyproject.toml
               pip install -e '.[cuda,dev]'
+              # restore pyproject.toml
+              rm -f pyproject.toml
+              mv pyproject.original.toml pyproject.toml
             else
               pip install -e '.[cpu,dev]'
             fi
@@ -346,10 +354,12 @@
           fi
         '';
         devShells = {
+            # basic shell (blends with your current environment)
             default = pkgs.mkShell {
               buildInputs = devPackages;
               shellHook = shellHook;
             };
+            # strict shell (creates a fake home, only select exteral commands (e.g. sudo) from your system are available)
             isolated = (xome.simpleMakeHomeFor {
               inherit pkgs;
               pure = true;
