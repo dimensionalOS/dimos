@@ -204,7 +204,7 @@ class WebsocketVisModule(Module):
             # Force full costmap update on new connection
             self.costmap_encoder.last_full_grid = None
 
-            await self.sio.emit("full_state", current_state, room=sid) # type: ignore[union-attr]
+            await self.sio.emit("full_state", current_state, room=sid)  # type: ignore[union-attr]
             logger.info(
                 f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points"
             )
@@ -219,7 +219,7 @@ class WebsocketVisModule(Module):
             self.goal_request.publish(goal)
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
-        @self.sio.event # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def gps_goal(sid, goal) -> None:
             logger.info(f"Received GPS goal: {goal}")
 
@@ -236,7 +236,7 @@ class WebsocketVisModule(Module):
                 f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
             )
 
-        @self.sio.event # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def start_explore(sid) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
@@ -246,14 +246,14 @@ class WebsocketVisModule(Module):
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def clear_gps_goals(sid) -> None:
             logger.info("Clearing all GPS goal points")
             self.gps_goal_points.clear()
             await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
             logger.info("GPS goal points cleared and updated clients")
 
-        @self.sio.event # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def move_command(sid, data) -> None:
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:
