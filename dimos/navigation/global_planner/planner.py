@@ -22,14 +22,14 @@ from dimos.navigation.global_planner.algo import astar
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 import math
 
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 
-def add_orientations_to_path(path: Path, goal_orientation: Quaternion = None) -> Path:
+def add_orientations_to_path(path: Path, goal_orientation: Quaternion = None) -> Path:  # type: ignore[assignment]
     """Add orientations to path poses based on direction of movement.
 
     Args:
@@ -142,12 +142,12 @@ def resample_path(path: Path, spacing: float) -> Path:
 
 class AstarPlanner(Module):
     # LCM inputs
-    target: In[PoseStamped] = None
-    global_costmap: In[OccupancyGrid] = None
-    odom: In[PoseStamped] = None
+    target: In[PoseStamped]
+    global_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
 
     # LCM outputs
-    path: Out[Path] = None
+    path: Out[Path]
 
     def __init__(self) -> None:
         super().__init__()

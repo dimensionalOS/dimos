@@ -22,7 +22,7 @@ from collections.abc import Callable
 import threading
 import time
 
-from dimos_lcm.std_msgs import Bool, String
+from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
@@ -36,7 +36,7 @@ from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import apply_transform
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class BehaviorTreeNavigator(Module, NavigationInterface):
@@ -54,16 +54,16 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
     """
 
     # LCM inputs
-    odom: In[PoseStamped] = None
-    goal_request: In[PoseStamped] = None  # Input for receiving goal requests
-    global_costmap: In[OccupancyGrid] = None
+    odom: In[PoseStamped]
+    goal_request: In[PoseStamped]  # Input for receiving goal requests
+    global_costmap: In[OccupancyGrid]
 
     # LCM outputs
-    target: Out[PoseStamped] = None
-    goal_reached: Out[Bool] = None
-    navigation_state: Out[String] = None
+    target: Out[PoseStamped]
+    goal_reached: Out[Bool]
+    navigation_state: Out[String]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         publishing_frequency: float = 1.0,
         reset_local_planner: Callable[[], None] | None = None,
@@ -117,12 +117,12 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
     @rpc
     def set_HolonomicLocalPlanner_reset(self, callable: RpcCall) -> None:
         self.reset_local_planner = callable
-        self.reset_local_planner.set_rpc(self.rpc)
+        self.reset_local_planner.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     @rpc
     def set_HolonomicLocalPlanner_is_goal_reached(self, callable: RpcCall) -> None:
         self.check_goal_reached = callable
-        self.check_goal_reached.set_rpc(self.rpc)
+        self.check_goal_reached.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     @rpc
     def start(self) -> None:
@@ -253,7 +253,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                     )
                     return None
 
-            pose = apply_transform(goal, transform)
+            pose = apply_transform(goal, transform)  # type: ignore[arg-type]
             transformed_goal = PoseStamped(
                 position=pose.position,
                 orientation=pose.orientation,
@@ -290,7 +290,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                     # Find safe goal position
                     safe_goal_pos = find_safe_goal(
                         costmap,
-                        original_goal.position,
+                        original_goal.position,  # type: ignore[union-attr]
                         algorithm="bfs",
                         cost_threshold=60,
                         min_clearance=0.25,
@@ -312,7 +312,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                         self.cancel_goal()
 
                     # Check if goal is reached
-                    if self.check_goal_reached():
+                    if self.check_goal_reached():  # type: ignore[misc]
                         reached_msg = Bool()
                         reached_msg.data = True
                         self.goal_reached.publish(reached_msg)
@@ -345,7 +345,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
         with self.state_lock:
             self.state = NavigationState.IDLE
 
-        self.reset_local_planner()
+        self.reset_local_planner()  # type: ignore[misc]
         self.recovery_server.reset()  # Reset recovery server when stopping
 
         logger.info("Navigator stopped")

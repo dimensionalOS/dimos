@@ -44,7 +44,7 @@ The B1 robot runs Ubuntu with the following requirements:
    ```bash
    # Edit the CMakeLists.txt in the unitree_legged_sdk_B1 directory
    vim CMakeLists.txt
-   
+
    # Add this line with the other add_executable statements:
    add_executable(joystick_server example/joystick_server_udp.cpp)
    target_link_libraries(joystick_server ${EXTRA_LIBS})```
@@ -144,7 +144,7 @@ This prints commands instead of sending UDP packets - useful for development.
 - **Mode safety**: Movement only allowed in WALK mode
 - **Graceful shutdown**: Sends stop commands on exit
 
-### Server Side  
+### Server Side
 - **Packet timeout**: Robot stops if no packets for 100ms
 - **Continuous monitoring**: Checks timeout before every control update
 - **Safe defaults**: Starts in IDLE mode
@@ -173,13 +173,13 @@ External Machine (Client)          B1 Robot (Server)
 This is because the onboard hardware (mini PC, jetson, etc.) needs to connect to both the B1 wifi AP network to send cmd_vel messages over UDP, as well as the network running dimensional
 
 
-Plug in wireless adapter 
+Plug in wireless adapter
 ```bash
 nmcli device status
 nmcli device wifi list ifname *DEVICE_NAME*
 # Connect to b1 network
 nmcli device wifi connect "Unitree_B1-251" password "00000000" ifname *DEVICE_NAME*
-# Verify connection 
+# Verify connection
 nmcli connection show --active
 ```
 

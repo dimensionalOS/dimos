@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 import inspect
+import sys
 import threading
 from typing import (
     Any,
@@ -34,7 +35,7 @@ from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.protocol.rpc import LCMRPC, RPCSpec
-from dimos.protocol.service import Configurable
+from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.utils.generic import classproperty
@@ -86,7 +87,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 
     default_config = ModuleConfig
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self._loop, self._loop_thread = get_loop()
         self._disposables = CompositeDisposable()
@@ -97,7 +98,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
             # and we register our RPC server
             self.rpc = self.config.rpc_transport()
             self.rpc.serve_module_rpc(self)
-            self.rpc.start()
+            self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
 
@@ -114,7 +115,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         self._close_rpc()
         if hasattr(self, "_loop") and self._loop_thread:
             if self._loop_thread.is_alive():
-                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop.call_soon_threadsafe(self._loop.stop)  # type: ignore[union-attr]
                 self._loop_thread.join(timeout=2)
             self._loop = None
             self._loop_thread = None
@@ -127,10 +128,10 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     def _close_rpc(self) -> None:
         # Using hasattr is needed because SkillCoordinator skips ModuleBase.__init__ and self.rpc is never set.
         if hasattr(self, "rpc") and self.rpc:
-            self.rpc.stop()
-            self.rpc = None
+            self.rpc.stop()  # type: ignore[attr-defined]
+            self.rpc = None  # type: ignore[assignment]
 
-    def __getstate__(self):
+    def __getstate__(self):  # type: ignore[no-untyped-def]
         """Exclude unpicklable runtime attributes when serializing."""
         state = self.__dict__.copy()
         # Remove unpicklable attributes
@@ -141,7 +142,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         state.pop("_tf", None)
         return state
 
-    def __setstate__(self, state) -> None:
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
         """Restore object from pickled state."""
         self.__dict__.update(state)
         # Reinitialize runtime attributes
@@ -152,14 +153,14 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         self._tf = None
 
     @property
-    def tf(self):
+    def tf(self):  # type: ignore[no-untyped-def]
         if self._tf is None:
             # self._tf = self.config.tf_transport()
             self._tf = LCMTF()
         return self._tf
 
     @tf.setter
-    def tf(self, value) -> None:
+    def tf(self, value) -> None:  # type: ignore[no-untyped-def]
         import warnings
 
         warnings.warn(
@@ -169,7 +170,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         )
 
     @property
-    def outputs(self) -> dict[str, Out]:
+    def outputs(self) -> dict[str, Out]:  # type: ignore[type-arg]
         return {
             name: s
             for name, s in self.__dict__.items()
@@ -177,16 +178,16 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         }
 
     @property
-    def inputs(self) -> dict[str, In]:
+    def inputs(self) -> dict[str, In]:  # type: ignore[type-arg]
         return {
             name: s
             for name, s in self.__dict__.items()
             if isinstance(s, In) and not name.startswith("_")
         }
 
-    @classmethod
+    @classmethod  # type: ignore[misc]
     @property
-    def rpcs(cls) -> dict[str, Callable]:
+    def rpcs(cls) -> dict[str, Callable]:  # type: ignore[type-arg]
         return {
             name: getattr(cls, name)
             for name in dir(cls)
@@ -199,7 +200,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     @rpc
     def io(self) -> str:
         def _box(name: str) -> str:
-            return [
+            return [  # type: ignore[return-value]
                 "┌┴" + "─" * (len(name) + 1) + "┐",
                 f"│ {name} │",
                 "└┬" + "─" * (len(name) + 1) + "┘",
@@ -207,7 +208,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 
         # can't modify __str__ on a function like we are doing for I/O
         # so we have a separate repr function here
-        def repr_rpc(fn: Callable) -> str:
+        def repr_rpc(fn: Callable) -> str:  # type: ignore[type-arg]
             sig = inspect.signature(fn)
             # Remove 'self' parameter
             params = [p for name, p in sig.parameters.items() if name != "self"]
@@ -244,11 +245,11 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return "\n".join(ret)
 
     @classproperty
-    def blueprint(self):
+    def blueprint(self):  # type: ignore[no-untyped-def]
         # Here to prevent circular imports.
         from dimos.core.blueprints import create_module_blueprint
 
-        return partial(create_module_blueprint, self)
+        return partial(create_module_blueprint, self)  # type: ignore[arg-type]
 
     @rpc
     def get_rpc_method_names(self) -> list[str]:
@@ -256,7 +257,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 
     @rpc
     def set_rpc_method(self, method: str, callable: RpcCall) -> None:
-        callable.set_rpc(self.rpc)
+        callable.set_rpc(self.rpc)  # type: ignore[arg-type]
         self._bound_rpc_calls[method] = callable
 
     @overload
@@ -265,7 +266,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     @overload
     def get_rpc_calls(self, method1: str, method2: str, *methods: str) -> tuple[RpcCall, ...]: ...
 
-    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:
+    def get_rpc_calls(self, *methods: str) -> RpcCall | tuple[RpcCall, ...]:  # type: ignore[misc]
         missing = [m for m in methods if m not in self._bound_rpc_calls]
         if missing:
             raise ValueError(
@@ -279,8 +280,35 @@ class DaskModule(ModuleBase):
     ref: Actor
     worker: int
 
-    def __init__(self, *args, **kwargs) -> None:
-        self.ref = None
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Set class-level None attributes for In/Out type annotations.
+
+        This is needed because Dask's Actor proxy looks up attributes on the class
+        (not instance) when proxying attribute access. Without class-level attributes,
+        the proxy would fail with AttributeError even though the instance has the attrs.
+        """
+        super().__init_subclass__(**kwargs)
+
+        # Get type hints for this class only (not inherited ones).
+        globalns = {}
+        for c in cls.__mro__:
+            if c.__module__ in sys.modules:
+                globalns.update(sys.modules[c.__module__].__dict__)
+
+        try:
+            hints = get_type_hints(cls, globalns=globalns, include_extras=True)
+        except (NameError, AttributeError, TypeError):
+            hints = {}
+
+        for name, ann in hints.items():
+            origin = get_origin(ann)
+            if origin in (In, Out):
+                # Set class-level attribute if not already set.
+                if not hasattr(cls, name) or getattr(cls, name) is None:
+                    setattr(cls, name, None)
+
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        self.ref = None  # type: ignore[assignment]
 
         # Get type hints with proper namespace resolution for subclasses
         # Collect namespaces from all classes in the MRO chain
@@ -302,25 +330,25 @@ class DaskModule(ModuleBase):
             origin = get_origin(ann)
             if origin is Out:
                 inner, *_ = get_args(ann) or (Any,)
-                stream = Out(inner, name, self)
+                stream = Out(inner, name, self)  # type: ignore[var-annotated]
                 setattr(self, name, stream)
             elif origin is In:
                 inner, *_ = get_args(ann) or (Any,)
-                stream = In(inner, name, self)
+                stream = In(inner, name, self)  # type: ignore[assignment]
                 setattr(self, name, stream)
         super().__init__(*args, **kwargs)
 
-    def set_ref(self, ref) -> int:
+    def set_ref(self, ref) -> int:  # type: ignore[no-untyped-def]
         worker = get_worker()
         self.ref = ref
         self.worker = worker.name
-        return worker.name
+        return worker.name  # type: ignore[no-any-return]
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
     # called from remote
-    def set_transport(self, stream_name: str, transport: Transport) -> bool:
+    def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
         stream = getattr(self, stream_name, None)
         if not stream:
             raise ValueError(f"{stream_name} not found in {self.__class__.__name__}")
@@ -332,7 +360,7 @@ class DaskModule(ModuleBase):
         return True
 
     # called from remote
-    def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):
+    def connect_stream(self, input_name: str, remote_stream: RemoteOut[T]):  # type: ignore[no-untyped-def]
         input_stream = getattr(self, input_name, None)
         if not input_stream:
             raise ValueError(f"{input_name} not found in {self.__class__.__name__}")

@@ -31,7 +31,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class BaseLocalPlanner(Module):
@@ -48,14 +48,14 @@ class BaseLocalPlanner(Module):
     """
 
     # LCM inputs
-    local_costmap: In[OccupancyGrid] = None
-    odom: In[PoseStamped] = None
-    path: In[Path] = None
+    local_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
+    path: In[Path]
 
     # LCM outputs
-    cmd_vel: Out[Twist] = None
+    cmd_vel: Out[Twist]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         goal_tolerance: float = 0.5,
         orientation_tolerance: float = 0.2,

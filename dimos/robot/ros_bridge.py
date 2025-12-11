@@ -18,24 +18,29 @@ import threading
 from typing import Any
 
 try:
-    import rclpy
-    from rclpy.executors import SingleThreadedExecutor
-    from rclpy.node import Node
-    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+    import rclpy  # type: ignore[import-untyped]
+    from rclpy.executors import SingleThreadedExecutor  # type: ignore[import-untyped]
+    from rclpy.node import Node  # type: ignore[import-untyped]
+    from rclpy.qos import (  # type: ignore[import-untyped]
+        QoSDurabilityPolicy,
+        QoSHistoryPolicy,
+        QoSProfile,
+        QoSReliabilityPolicy,
+    )
 except ImportError:
-    rclpy = None
-    SingleThreadedExecutor = None
-    Node = None
-    QoSProfile = None
-    QoSReliabilityPolicy = None
-    QoSHistoryPolicy = None
-    QoSDurabilityPolicy = None
+    rclpy = None  # type: ignore[assignment]
+    SingleThreadedExecutor = None  # type: ignore[assignment, misc]
+    Node = None  # type: ignore[assignment, misc]
+    QoSProfile = None  # type: ignore[assignment, misc]
+    QoSReliabilityPolicy = None  # type: ignore[assignment, misc]
+    QoSHistoryPolicy = None  # type: ignore[assignment, misc]
+    QoSDurabilityPolicy = None  # type: ignore[assignment, misc]
 
 from dimos.core.resource import Resource
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.ros_bridge", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 class BridgeDirection(Enum):
@@ -54,7 +59,7 @@ class ROSBridge(Resource):
         Args:
             node_name: Name for the ROS node (default: "dimos_ros_bridge")
         """
-        if not rclpy.ok():
+        if not rclpy.ok():  # type: ignore[attr-defined]
             rclpy.init()
 
         self.node = Node(node_name)
@@ -69,7 +74,7 @@ class ROSBridge(Resource):
 
         self._bridges: dict[str, dict[str, Any]] = {}
 
-        self._qos = QoSProfile(
+        self._qos = QoSProfile(  # type: ignore[no-untyped-call]
             reliability=QoSReliabilityPolicy.RELIABLE,
             history=QoSHistoryPolicy.KEEP_LAST,
             durability=QoSDurabilityPolicy.VOLATILE,
@@ -84,9 +89,9 @@ class ROSBridge(Resource):
     def stop(self) -> None:
         """Shutdown the bridge and clean up resources."""
         self._executor.shutdown()
-        self.node.destroy_node()
+        self.node.destroy_node()  # type: ignore[no-untyped-call]
 
-        if rclpy.ok():
+        if rclpy.ok():  # type: ignore[attr-defined]
             rclpy.shutdown()
 
         logger.info("ROSBridge shutdown complete")
@@ -138,7 +143,7 @@ class ROSBridge(Resource):
 
         if direction == BridgeDirection.ROS_TO_DIMOS:
 
-            def ros_callback(msg) -> None:
+            def ros_callback(msg) -> None:  # type: ignore[no-untyped-def]
                 self._ros_to_dimos(msg, dimos_topic, dimos_type, topic_name)
 
             ros_subscription = self.node.create_subscription(
@@ -149,7 +154,7 @@ class ROSBridge(Resource):
         elif direction == BridgeDirection.DIMOS_TO_ROS:
             ros_publisher = self.node.create_publisher(ros_type, ros_topic_name, self._qos)
 
-            def dimos_callback(msg, _topic) -> None:
+            def dimos_callback(msg, _topic) -> None:  # type: ignore[no-untyped-def]
                 self._dimos_to_ros(msg, ros_publisher, topic_name)
 
             dimos_subscription = self.lcm.subscribe(dimos_topic, dimos_callback)
@@ -190,10 +195,10 @@ class ROSBridge(Resource):
             dimos_type: DIMOS message type
             topic_name: Name of the topic for tracking
         """
-        dimos_msg = dimos_type.from_ros_msg(ros_msg)
+        dimos_msg = dimos_type.from_ros_msg(ros_msg)  # type: ignore[attr-defined]
         self.lcm.publish(dimos_topic, dimos_msg)
 
-    def _dimos_to_ros(self, dimos_msg: Any, ros_publisher, _topic_name: str) -> None:
+    def _dimos_to_ros(self, dimos_msg: Any, ros_publisher, _topic_name: str) -> None:  # type: ignore[no-untyped-def]
         """Convert DIMOS message to ROS and publish.
 
         Args:
