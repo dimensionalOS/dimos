@@ -338,8 +338,8 @@
             # automate the readme
             #
             echo
-            echo
-            echo "if you'd like me to setup the project for you, run: dimos_setup"
+            echo "I don't see a venv directory"
+            echo "If you'd like me to setup the project for you, run: dimos_setup"
           fi
         '';
         devShells = {
