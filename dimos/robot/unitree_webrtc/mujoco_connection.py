@@ -80,13 +80,27 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
+            # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
+            executable = sys.executable if sys.platform != "darwin" else "mjpython"
             self.process = subprocess.Popen(
-                [sys.executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
             )
 
         except Exception as e:
             self.shm_data.cleanup()
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
+
+        def get_stderr() -> str:
+            text = ""
+            if self.process and self.process.stderr:
+                text = (
+                    "\n" + self.process.stderr.read().replace("\n", "\n[mujoco_process.py] ") + "\n"
+                )
+            return text
 
         # Wait for process to be ready
         ready_timeout = 300.0
@@ -95,22 +109,33 @@ class MujocoConnection:
         while time.time() - start_time < ready_timeout:
             if self.process.poll() is not None:
                 exit_code = self.process.returncode
+                stderr_string = get_stderr()
                 self.stop()
-                raise RuntimeError(f"MuJoCo process failed to start (exit code {exit_code})")
+                raise RuntimeError(
+                    f"{stderr_string}MuJoCo process failed to start (exit code {exit_code})"
+                )
             if self.shm_data.is_ready():
                 logger.info("MuJoCo process started successfully")
                 return
             time.sleep(0.1)
 
         # Timeout
+        stderr_string = get_stderr()
         self.stop()
-        raise RuntimeError("MuJoCo process failed to start (timeout)")
+        raise RuntimeError(f"{stderr_string}MuJoCo process failed to start (timeout)")
 
     def stop(self) -> None:
         if self._is_cleaned_up:
             return
 
         self._is_cleaned_up = True
+
+        # clean up open file descriptors
+        if self.process:
+            if self.process.stderr:
+                self.process.stderr.close()
+            if self.process.stdout:
+                self.process.stdout.close()
 
         # Cancel any pending timers
         if self._stop_timer:
