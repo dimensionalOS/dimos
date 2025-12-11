@@ -198,9 +198,9 @@ class Drone(Robot):
         self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
         # self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
         # self.websocket_vis.stop_explore_cmd.transport = core.LCMTransport("/stop_explore_cmd", Bool)
-        self.websocket_vis.movecmd.transport = core.LCMTransport("/cmd_vel", Twist)
+        self.websocket_vis.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
 
-        self.websocket_vis.robot_pose.connect(self.connection.odom)
+        self.websocket_vis.odom.connect(self.connection.odom)
         self.websocket_vis.gps_location.connect(self.connection.gps_location)
         # self.websocket_vis.path.connect(self.global_planner.path)
         # self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)

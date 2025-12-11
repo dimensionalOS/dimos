@@ -144,8 +144,11 @@ class WebsocketVisModule(Module):
         except Exception:
             ...
 
-        unsub = self.global_costmap.subscribe(self._on_global_costmap)
-        self._disposables.add(Disposable(unsub))
+        try:
+            unsub = self.global_costmap.subscribe(self._on_global_costmap)
+            self._disposables.add(Disposable(unsub))
+        except Exception:
+            ...
 
     @rpc
     def stop(self) -> None:
