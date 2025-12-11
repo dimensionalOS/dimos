@@ -62,7 +62,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             if self.native_sdk.connected:
                 # Initialize XArm
                 self.native_sdk.motion_enable(True)
-                self.native_sdk.set_mode(0)  # Position control mode
+                self.native_sdk.set_mode(1)  # Servo mode for high-frequency control
                 self.native_sdk.set_state(0)  # Ready state
 
                 self._connected = True
@@ -154,17 +154,17 @@ class XArmSDKWrapper(BaseManipulatorSDK):
     def set_joint_positions(
         self,
         positions: list[float],
-        velocity: float = 1.0,
-        acceleration: float = 1.0,
-        wait: bool = False,
+        _velocity: float = 1.0,
+        _acceleration: float = 1.0,
+        _wait: bool = False,
     ) -> bool:
-        """Move joints to target positions.
+        """Move joints to target positions using servo mode.
 
         Args:
             positions: Target positions in RADIANS
-            velocity: Max velocity as fraction (0-1)
-            acceleration: Max acceleration as fraction (0-1)
-            wait: If True, block until motion completes
+            _velocity: UNUSED in servo mode (kept for interface compatibility)
+            _acceleration: UNUSED in servo mode (kept for interface compatibility)
+            _wait: UNUSED in servo mode (kept for interface compatibility)
 
         Returns:
             True if command accepted
@@ -172,22 +172,10 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         # Convert radians to degrees
         degrees = [math.degrees(pos) for pos in positions]
 
-        # XArm uses deg/s for speed, scale by max velocity (default 180 deg/s)
-        max_speed = 180.0  # deg/s
-        speed = max_speed * velocity
-
-        # XArm uses deg/s² for acceleration (default 1145 deg/s²)
-        max_acc = 1145.0  # deg/s²
-        acc = max_acc * acceleration
-
-        # Send command
-        code = self.native_sdk.set_servo_angle(
-            angle=degrees,
-            speed=speed,
-            mvacc=acc,
-            wait=wait,
-            radius=-1,  # No blending
-        )
+        # Use set_servo_angle_j for high-frequency servo control (100Hz+)
+        # This sends immediate position commands without trajectory planning
+        # Requires mode 1 (servo mode) and executes only the last instruction
+        code = self.native_sdk.set_servo_angle_j(degrees, speed=100, mvacc=500, wait=False)
 
         return code == 0
 
