@@ -185,16 +185,22 @@
         # 3. Host interactive shell  →  `nix develop`
         # ------------------------------------------------------------
         shellHook = ''
-          export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
+          if [ "$OSTYPE" = "linux-gnu" ]; then
+            export CC="cc-no-usr-include" # basically patching for nix
+            # Create nvidia-only lib symlinks to avoid glibc conflicts
+            NVIDIA_LIBS_DIR="/tmp/nix-nvidia-libs-$$"
+            mkdir -p "$NVIDIA_LIBS_DIR"
+            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so*; do
+              [ -e "$lib" ] && ln -sf "$lib" "$NVIDIA_LIBS_DIR/" 2>/dev/null
+            done
+          fi
+          export LD_LIBRARY_PATH="$NVIDIA_LIBS_DIR:${pkgs.lib.makeLibraryPath ldLibraryPackages}:$LD_LIBRARY_PATH"
           export LIBRARY_PATH="$LD_LIBRARY_PATH" # fixes python find_library for pyaudio
           export DISPLAY=:0
           export GI_TYPELIB_PATH="${giTypelibPackagesString}:$GI_TYPELIB_PATH"
           export PKG_CONFIG_PATH=${lib.escapeShellArg packageConfPackagesString}
           export PYTHONPATH="$PYTHONPATH:"${lib.escapeShellArg manualPythonPackages}
           # CC, CFLAGS, and LDFLAGS are bascially all for `pip install pyaudio`
-          if [ "$OSTYPE" = "linux-gnu" ]; then
-              export CC="cc-no-usr-include" # basically patching for nix
-          fi
           export CFLAGS="$(pkg-config --cflags portaudio-2.0) $CFLAGS"
           export LDFLAGS="-L$(pkg-config --variable=libdir portaudio-2.0) $LDFLAGS"
 
