@@ -73,6 +73,8 @@ nix develop
 # You should be able to follow the instructions below as well for a more manual installation
 ```
 
+<!-- TODO: add check for `ulimit -n` on MacOS (gets triggered with ONNX with CoreML gets used, too many files). Should ask the user if they want to up their limit -->
+
 ---
 ## Python Installation
 Tested on Ubuntu 22.04/24.04
