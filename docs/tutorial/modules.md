@@ -33,8 +33,6 @@ print(CameraModule.io())
  ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
 ```
 
-
-
 We can see that camera module outputs two streams:
 
 color_image with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
@@ -44,49 +42,24 @@ As well as offers two RPC calls, start and stop, and a tool for an agent called 
 
 We can easily start this module and explore it's output
 
-```pythonx session=camera_module_demo
+```python session=camera_module_demo
 
 camera = CameraModule()
+# camera.io() returns the same result as above
 camera.start()
-
 # now this module runs in our main loop in a thread. we can observe it's outputs
 
-unsubscribe = camera.color_image.subscribe(print)
+camera.color_image.subscribe(print)
 time.sleep(1)
-unsubscribe()
+camera.stop()
 ```
 
-<!--Error:-->
+<!--Result:-->
 ```
-Traceback (most recent call last):
-  File "/home/lesh/coding/md-babel-python/md_babel_py/session_server.py", line 56, in main
-    result = eval(compile(code, "<block>", "eval"), namespace)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "<block>", line 2
-    camera = CameraModule()
-           ^
-SyntaxError: invalid syntax
-
-During handling of the above exception, another exception occurred:
-
-Traceback (most recent call last):
-  File "/home/lesh/coding/md-babel-python/md_babel_py/session_server.py", line 61, in main
-    exec(compile(code, "<block>", "exec"), namespace)
-  File "<block>", line 7, in <module>
-AttributeError: 'Out' object has no attribute 'subscribe'
-
+<image>
+<image>
+<image>
 ```
-
-
-
-
-
-
-
-
-
-
-
 
 ## Visualizing Blueprints
 
@@ -101,17 +74,3 @@ to_svg(basic, "go2_basic.svg")
 
 <!--Result:-->
 ![output](go2_basic.svg)
-
-
-
-
-
-```pythonx output=go2_standard.svg
-from dimos.core.introspection import to_svg, to_dot
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, standard, agentic
-
-to_svg(standard, "go2_standard.svg")
-```
-
-<!--Result:-->
-![output](go2_standard.svg)

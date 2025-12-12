@@ -31,7 +31,7 @@ from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
-from dimos.core.introspection.module_io import INTERNAL_RPCS, render_module_io
+from dimos.core.introspection.module import INTERNAL_RPCS, render_module_io
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport

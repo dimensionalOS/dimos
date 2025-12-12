@@ -14,7 +14,7 @@
 
 """Module and blueprint introspection utilities."""
 
-from dimos.core.introspection.module_io import INTERNAL_RPCS, render_module_io
+from dimos.core.introspection.module import INTERNAL_RPCS, render_module_io
 
 __all__ = ["INTERNAL_RPCS", "render_module_io", "to_dot", "to_svg"]
 
