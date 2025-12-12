@@ -13,18 +13,18 @@ Some examples of are:
 
 A common module structure for controling a robot looks something like this:
 
-```python  session=blueprints output=go2_standard.svg
+```python  session=blueprints output=go2_basic.svg
 from dimos.core.introspection.blueprint import dot2
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import standard
-dot2.render_svg(standard, "go2_standard.svg")
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic
+dot2.render_svg(basic, "go2_basic.svg")
 ```
 
 <!--Result:-->
-![output](go2_standard.svg)
+![output](go2_basic.svg)
 
 ## Camera Module
 
-Let's learn how to build the above, starting with a simple camera module.
+Let's learn how to build stuff like the above, starting with a simple camera module.
 
 ```python session=camera_module_demo output=camera_module.svg
 from dimos.hardware.camera.module import CameraModule
@@ -57,13 +57,14 @@ print(CameraModule.io())
 
 We can see that camera module outputs two streams:
 
-`color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
-`camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
+- `color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
+- `camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
 
 As well as offers two RPC calls, `start` and `stop`
-And offers an agentic Skill called `video_stream` (about this later)
 
-We can start this module and explore it's output in real time
+And provides an agentic Skill called `video_stream` (about this later)
+
+We can start this module and explore the output of it's streams in real time (this will use your webcam)
 
 ```python session=camera_module_demo ansi=false
 import time
@@ -82,17 +83,17 @@ camera.stop()
 <!--Result:-->
 ```
 Out color_image[Image] @ CameraModule
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:04)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:04)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:05)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:05)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
 ```
 
 ## Connecting modules
 
 Let's load a standard 2D detector module and hook it up to a camera.
 
-```python ansi=false session=detection_module output=detection_module.svg
+```python ansi=false session=detection_module
 from dimos.perception.detection.module2D import Detection2DModule, Config
 print(Detection2DModule.io())
 ```
@@ -117,7 +118,7 @@ TODO: add easy way to print config
 
 looks like detector just needs an image input, outputs some sort of detection and annotation messages, let's connect it to a camera.
 
-```python ansi=false
+```pythonx ansi=false
 import time
 from dimos.perception.detection.module2D import Detection2DModule, Config
 from dimos.hardware.camera.module import CameraModule
@@ -150,12 +151,12 @@ Blueprint is a pre-defined structure of interconnected modules. You can include 
 
 Basic unitree go2 blueprint looks like what we saw before,
 
-```python  session=blueprints output=go2_standard.svg
+```python  session=blueprints output=go2_agentic.svg
 from dimos.core.introspection.blueprint import dot2, LayoutAlgo
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, standard, agentic
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, agentic
 
-dot2.render_svg(standard, "{output}")
+dot2.render_svg(agentic, "{output}")
 ```
 
 <!--Result:-->
-![output](go2_standard.svg)
+![output](go2_agentic.svg)
