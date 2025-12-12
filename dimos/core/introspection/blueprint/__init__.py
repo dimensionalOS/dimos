@@ -20,8 +20,9 @@ Renderers:
 """
 
 from dimos.core.introspection.blueprint import dot, dot2
+from dimos.core.introspection.blueprint.dot2 import LayoutAlgo
 
-__all__ = ["dot", "dot2", "to_dot", "to_svg"]
+__all__ = ["LayoutAlgo", "dot", "dot2", "to_dot", "to_svg"]
 
 
 def to_dot(blueprint_set: "ModuleBlueprintSet") -> str:

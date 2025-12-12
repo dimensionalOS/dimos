@@ -22,12 +22,21 @@ when one output fans out to multiple consumers:
 """
 
 from collections import defaultdict
+from enum import Enum, auto
 import hashlib
 import re
 
 from dimos.core.blueprints import ModuleBlueprintSet
 from dimos.core.module import Module
 from dimos.utils.cli import theme
+
+
+class LayoutAlgo(Enum):
+    """Layout algorithms for controlling graph structure."""
+
+    STACK_CLUSTERS = auto()  # Stack clusters vertically (invisible edges between clusters)
+    STACK_NODES = auto()  # Stack nodes within clusters vertically
+    FDP = auto()  # Use fdp (force-directed) layout engine instead of dot
 
 
 def _color_for_string(colors: list[str], s: str) -> str:
@@ -104,6 +113,7 @@ DEFAULT_IGNORED_MODULES = {"WebsocketVisModule", "UtilizationModule", "FoxgloveB
 def render(
     blueprint_set: ModuleBlueprintSet,
     *,
+    layout: set[LayoutAlgo] | None = None,
     ignored_connections: set[tuple[str, str]] | None = None,
     ignored_modules: set[str] | None = None,
 ) -> str:
@@ -114,6 +124,7 @@ def render(
 
     Args:
         blueprint_set: The blueprint set to visualize.
+        layout: Set of layout algorithms to apply. Default is none (let graphviz decide).
         ignored_connections: Set of (name, type_name) tuples to ignore.
         ignored_modules: Set of module names to ignore.
 
@@ -121,6 +132,8 @@ def render(
         A string in DOT format showing modules as nodes, type nodes as
         small colored hubs, and edges connecting them.
     """
+    if layout is None:
+        layout = set()
     if ignored_connections is None:
         ignored_connections = DEFAULT_IGNORED_CONNECTIONS
     if ignored_modules is None:
@@ -182,7 +195,7 @@ def render(
         "    bgcolor=transparent;",
         "    rankdir=TB;",
         "    splines=true;",
-        f'    node [shape=box, style=filled, fillcolor="{theme.BACKGROUND}", fontcolor="{theme.FOREGROUND}", color="{theme.BLUE}", fontname=fixed, fontsize=12, width=2, height=0.8, margin="0.1,0.1"];',
+        f'    node [shape=box, style=filled, fillcolor="{theme.BACKGROUND}", fontcolor="{theme.FOREGROUND}", color="{theme.BLUE}", fontname=fixed, fontsize=12, margin="0.1,0.1"];',
         "    edge [fontname=fixed, fontsize=10];",
         "",
     ]
@@ -204,7 +217,23 @@ def render(
         lines.append(f'        fillcolor="{color}10";')
         for mod in mods:
             lines.append(f"        {mod};")
+        # Stack nodes vertically within cluster
+        if LayoutAlgo.STACK_NODES in layout and len(mods) > 1:
+            for i in range(len(mods) - 1):
+                lines.append(f"        {mods[i]} -> {mods[i + 1]} [style=invis];")
         lines.append("    }")
+        lines.append("")
+
+    # Add invisible edges between clusters to force vertical stacking
+    if LayoutAlgo.STACK_CLUSTERS in layout and len(sorted_groups) > 1:
+        lines.append("    // Force vertical cluster layout")
+        for i in range(len(sorted_groups) - 1):
+            group_a = sorted_groups[i]
+            group_b = sorted_groups[i + 1]
+            # Pick first node from each cluster
+            node_a = sorted(by_group[group_a])[0]
+            node_b = sorted(by_group[group_b])[0]
+            lines.append(f"    {node_a} -> {node_b} [style=invis, weight=10];")
         lines.append("")
 
     # Add type nodes (outside all clusters)
@@ -218,7 +247,7 @@ def render(
         label = f"{name}:{type_name}"
         lines.append(
             f'    {node_id} [label="{label}", shape=box, style=filled, '
-            f'fillcolor="{color}40", color="{color}", fontcolor="{theme.FOREGROUND}", '
+            f'fillcolor="{color}35", color="{color}", fontcolor="{theme.FOREGROUND}", '
             f'width=0, height=0, margin="0.1,0.05", fontsize=10];'
         )
 
@@ -249,18 +278,28 @@ def render(
     return "\n".join(lines)
 
 
-def render_svg(blueprint_set: ModuleBlueprintSet, output_path: str) -> None:
+def render_svg(
+    blueprint_set: ModuleBlueprintSet,
+    output_path: str,
+    *,
+    layout: set[LayoutAlgo] | None = None,
+) -> None:
     """Generate an SVG file from a ModuleBlueprintSet using graphviz.
 
     Args:
         blueprint_set: The blueprint set to visualize.
         output_path: Path to write the SVG file.
+        layout: Set of layout algorithms to apply.
     """
     import subprocess
 
-    dot_code = render(blueprint_set)
+    if layout is None:
+        layout = set()
+
+    dot_code = render(blueprint_set, layout=layout)
+    engine = "fdp" if LayoutAlgo.FDP in layout else "dot"
     result = subprocess.run(
-        ["dot", "-Tsvg", "-o", output_path],
+        [engine, "-Tsvg", "-o", output_path],
         input=dot_code,
         text=True,
         capture_output=True,
