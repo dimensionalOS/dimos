@@ -14,9 +14,9 @@ etc
 
 ## Example Module
 
-```pythonx session=camera_module_demo
+```python session=camera_module_demo ansi=false
 from dimos.hardware.camera.module import CameraModule
-CameraModule,io()
+print(CameraModule.io())
 ```
 
 <!--Result:-->
@@ -24,14 +24,16 @@ CameraModule,io()
 ┌┴─────────────┐
 │ CameraModule │
 └┬─────────────┘
- ├─ Out color_image[Image]
- ├─ Out camera_info[CameraInfo]
+ ├─ color_image: Image
+ ├─ camera_info: CameraInfo
  │
- ├─ RPC start -> None
- ├─ RPC stop -> None
- |
- ├─ TOOL video_stream
+ ├─ RPC start() -> str
+ ├─ RPC stop() -> None
+ │
+ ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
 ```
+
+
 
 We can see that camera module outputs two streams:
 
@@ -42,8 +44,7 @@ As well as offers two RPC calls, start and stop, and a tool for an agent called 
 
 We can easily start this module and explore it's output
 
-```python
-from dimos.hardware.camera.module import CameraModule
+```pythonx session=camera_module_demo
 
 camera = CameraModule()
 camera.start()
@@ -55,14 +56,27 @@ time.sleep(1)
 unsubscribe()
 ```
 
-<!--Result:-->
+<!--Error:-->
 ```
-<Image>
-<Image>
-<Image>
-<Image>
-<Image>
+Traceback (most recent call last):
+  File "/home/lesh/coding/md-babel-python/md_babel_py/session_server.py", line 56, in main
+    result = eval(compile(code, "<block>", "eval"), namespace)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<block>", line 2
+    camera = CameraModule()
+           ^
+SyntaxError: invalid syntax
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/lesh/coding/md-babel-python/md_babel_py/session_server.py", line 61, in main
+    exec(compile(code, "<block>", "exec"), namespace)
+  File "<block>", line 7, in <module>
+AttributeError: 'Out' object has no attribute 'subscribe'
+
 ```
+
 
 
 
@@ -79,7 +93,7 @@ unsubscribe()
 Basic unitree go2 blueprint looks like
 
 ```pythonx output=go2_basic.svg
-from dimos.core.blueprint_vis import to_svg, to_dot
+from dimos.core.introspection import to_svg, to_dot
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, standard, agentic
 
 to_svg(basic, "go2_basic.svg")
@@ -93,7 +107,7 @@ to_svg(basic, "go2_basic.svg")
 
 
 ```pythonx output=go2_standard.svg
-from dimos.core.blueprint_vis import to_svg, to_dot
+from dimos.core.introspection import to_svg, to_dot
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, standard, agentic
 
 to_svg(standard, "go2_standard.svg")
