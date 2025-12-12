@@ -118,7 +118,7 @@ TODO: add easy way to print config
 
 looks like detector just needs an image input, outputs some sort of detection and annotation messages, let's connect it to a camera.
 
-```pythonx ansi=false
+```python ansi=false
 import time
 from dimos.perception.detection.module2D import Detection2DModule, Config
 from dimos.hardware.camera.module import CameraModule
@@ -155,7 +155,7 @@ Basic unitree go2 blueprint looks like what we saw before,
 from dimos.core.introspection.blueprint import dot2, LayoutAlgo
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, agentic
 
-dot2.render_svg(agentic, "{output}")
+dot2.render_svg(agentic, "go2_agentic.svg")
 ```
 
 <!--Result:-->
