@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Blueprint visualization using Graphviz DOT format."""
+"""Graphviz DOT renderer for blueprint visualization."""
 
 from collections import defaultdict
 import hashlib
@@ -22,19 +22,95 @@ from dimos.core.module import Module
 from dimos.utils.cli import theme
 
 
-def color_for_string(colors: list[str], s: str) -> str:
+def _color_for_string(colors: list[str], s: str) -> str:
     """Get a consistent color for a string based on its hash."""
     h = int(hashlib.md5(s.encode()).hexdigest(), 16)
     return colors[h % len(colors)]
 
 
-def to_dot(blueprint_set: ModuleBlueprintSet) -> str:
+# Colors for group borders (bright, distinct, good on dark backgrounds)
+GROUP_COLORS = [
+    "#5C9FF0",  # blue
+    "#FFB74D",  # orange
+    "#81C784",  # green
+    "#BA68C8",  # purple
+    "#4ECDC4",  # teal
+    "#FF6B6B",  # coral
+    "#FFE66D",  # yellow
+    "#7986CB",  # indigo
+    "#F06292",  # pink
+    "#4DB6AC",  # teal green
+    "#9575CD",  # deep purple
+    "#AED581",  # lime
+    "#64B5F6",  # light blue
+    "#FF8A65",  # deep orange
+    "#AA96DA",  # lavender
+]
+
+# Colors for edges (bright, distinct, good on dark backgrounds)
+EDGE_COLORS = [
+    "#FF6B6B",  # coral red
+    "#4ECDC4",  # teal
+    "#FFE66D",  # yellow
+    "#95E1D3",  # mint
+    "#F38181",  # salmon
+    "#AA96DA",  # lavender
+    "#81C784",  # green
+    "#64B5F6",  # light blue
+    "#FFB74D",  # orange
+    "#BA68C8",  # purple
+    "#4DD0E1",  # cyan
+    "#AED581",  # lime
+    "#FF8A65",  # deep orange
+    "#7986CB",  # indigo
+    "#F06292",  # pink
+    "#A1887F",  # brown
+    "#90A4AE",  # blue grey
+    "#DCE775",  # lime yellow
+    "#4DB6AC",  # teal green
+    "#9575CD",  # deep purple
+    "#E57373",  # light red
+    "#81D4FA",  # sky blue
+    "#C5E1A5",  # light green
+    "#FFCC80",  # light orange
+    "#B39DDB",  # light purple
+    "#80DEEA",  # light cyan
+    "#FFAB91",  # peach
+    "#CE93D8",  # light violet
+    "#80CBC4",  # light teal
+    "#FFF59D",  # light yellow
+]
+
+# Connections to ignore (too noisy/common)
+DEFAULT_IGNORED_CONNECTIONS = {("odom", "PoseStamped")}
+
+# Modules to ignore entirely
+DEFAULT_IGNORED_MODULES = {"WebsocketVisModule", "UtilizationModule", "FoxgloveBridge"}
+
+
+def render(
+    blueprint_set: ModuleBlueprintSet,
+    *,
+    ignored_connections: set[tuple[str, str]] | None = None,
+    ignored_modules: set[str] | None = None,
+) -> str:
     """Generate a DOT graph from a ModuleBlueprintSet.
 
-    Returns a string in DOT format showing modules as nodes and
-    connections between them as edges labeled with name:type.
-    odules are grouped into subgraphs by their package directory.
+    Args:
+        blueprint_set: The blueprint set to visualize.
+        ignored_connections: Set of (name, type_name) tuples to ignore.
+        ignored_modules: Set of module names to ignore.
+
+    Returns:
+        A string in DOT format showing modules as nodes and
+        connections between them as edges labeled with name:type.
+        Modules are grouped into subgraphs by their package directory.
     """
+    if ignored_connections is None:
+        ignored_connections = DEFAULT_IGNORED_CONNECTIONS
+    if ignored_modules is None:
+        ignored_modules = DEFAULT_IGNORED_MODULES
+
     # Collect all outputs: (name, type) -> module
     outputs: dict[tuple[str, type], list[type[Module]]] = defaultdict(list)
     # Collect all inputs: (name, type) -> module
@@ -55,12 +131,6 @@ def to_dot(blueprint_set: ModuleBlueprintSet) -> str:
 
     # Generate edges: for each (name, type), connect outputs to inputs
     edges: set[tuple[str, str, str]] = set()
-
-    # Connections to ignore (too noisy/common)
-    ignored_connections = {("odom", "PoseStamped")}
-
-    # Modules to ignore entirely
-    ignored_modules = {"WebsocketVisModule", "UtilizationModule", "FoxgloveBridge"}
 
     for key, out_modules in outputs.items():
         name, type_ = key
@@ -94,62 +164,9 @@ def to_dot(blueprint_set: ModuleBlueprintSet) -> str:
         group = get_group(mod_class)
         by_group[group].append(mod_name)
 
-    # Colors for group borders (bright, distinct, good on dark backgrounds)
-    group_colors = [
-        "#5C9FF0",  # blue
-        "#FFB74D",  # orange
-        "#81C784",  # green
-        "#BA68C8",  # purple
-        "#4ECDC4",  # teal
-        "#FF6B6B",  # coral
-        "#FFE66D",  # yellow
-        "#7986CB",  # indigo
-        "#F06292",  # pink
-        "#4DB6AC",  # teal green
-        "#9575CD",  # deep purple
-        "#AED581",  # lime
-        "#64B5F6",  # light blue
-        "#FF8A65",  # deep orange
-        "#AA96DA",  # lavender
-    ]
-
-    # Colors for edges (bright, distinct, good on dark backgrounds)
-    edge_colors = [
-        "#FF6B6B",  # coral red
-        "#4ECDC4",  # teal
-        "#FFE66D",  # yellow
-        "#95E1D3",  # mint
-        "#F38181",  # salmon
-        "#AA96DA",  # lavender
-        "#81C784",  # green
-        "#64B5F6",  # light blue
-        "#FFB74D",  # orange
-        "#BA68C8",  # purple
-        "#4DD0E1",  # cyan
-        "#AED581",  # lime
-        "#FF8A65",  # deep orange
-        "#7986CB",  # indigo
-        "#F06292",  # pink
-        "#A1887F",  # brown
-        "#90A4AE",  # blue grey
-        "#DCE775",  # lime yellow
-        "#4DB6AC",  # teal green
-        "#9575CD",  # deep purple
-        "#E57373",  # light red
-        "#81D4FA",  # sky blue
-        "#C5E1A5",  # light green
-        "#FFCC80",  # light orange
-        "#B39DDB",  # light purple
-        "#80DEEA",  # light cyan
-        "#FFAB91",  # peach
-        "#CE93D8",  # light violet
-        "#80CBC4",  # light teal
-        "#FFF59D",  # light yellow
-    ]
-
     # Build label -> color mapping (consistent based on name:type)
     all_labels = sorted(set(label for _, _, label in edges))
-    label_color_map = {label: color_for_string(edge_colors, label) for label in all_labels}
+    label_color_map = {label: _color_for_string(EDGE_COLORS, label) for label in all_labels}
 
     # Build DOT output
     lines = [
@@ -169,7 +186,7 @@ def to_dot(blueprint_set: ModuleBlueprintSet) -> str:
     sorted_groups = sorted(by_group.keys())
     for group in sorted_groups:
         mods = sorted(by_group[group])
-        color = color_for_string(group_colors, group)
+        color = _color_for_string(GROUP_COLORS, group)
         lines.append(f"    subgraph cluster_{group} {{")
         lines.append(f'        label="{group}";')
         lines.append("         labeljust=r;")  # right-justify label
@@ -199,7 +216,7 @@ def to_dot(blueprint_set: ModuleBlueprintSet) -> str:
     return "\n".join(lines)
 
 
-def to_svg(blueprint_set: ModuleBlueprintSet, output_path: str) -> None:
+def render_svg(blueprint_set: ModuleBlueprintSet, output_path: str) -> None:
     """Generate an SVG file from a ModuleBlueprintSet using graphviz.
 
     Args:
@@ -208,7 +225,7 @@ def to_svg(blueprint_set: ModuleBlueprintSet, output_path: str) -> None:
     """
     import subprocess
 
-    dot_code = to_dot(blueprint_set)
+    dot_code = render(blueprint_set)
     result = subprocess.run(
         ["dot", "-Tsvg", "-o", output_path],
         input=dot_code,

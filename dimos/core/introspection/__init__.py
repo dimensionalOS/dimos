@@ -21,8 +21,12 @@ __all__ = ["INTERNAL_RPCS", "render_module_io", "to_dot", "to_svg"]
 
 def __getattr__(name: str):
     """Lazy import blueprint functions to avoid circular imports."""
-    if name in ("to_dot", "to_svg"):
-        from dimos.core.introspection.blueprint import to_dot, to_svg
+    if name == "to_dot":
+        from dimos.core.introspection.blueprint import to_dot
 
-        return to_dot if name == "to_dot" else to_svg
+        return to_dot
+    if name == "to_svg":
+        from dimos.core.introspection.blueprint import to_svg
+
+        return to_svg
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
