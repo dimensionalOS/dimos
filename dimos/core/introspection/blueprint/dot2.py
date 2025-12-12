@@ -106,8 +106,11 @@ TYPE_COLORS = [
 # Connections to ignore (too noisy/common)
 DEFAULT_IGNORED_CONNECTIONS = {("odom", "PoseStamped")}
 
-# Modules to ignore entirely
-DEFAULT_IGNORED_MODULES = {"WebsocketVisModule", "UtilizationModule", "FoxgloveBridge"}
+DEFAULT_IGNORED_MODULES = {
+    "WebsocketVisModule",
+    "UtilizationModule",
+    # "FoxgloveBridge",
+}
 
 
 def render(
@@ -193,7 +196,9 @@ def render(
     lines = [
         "digraph modules {",
         "    bgcolor=transparent;",
-        "    rankdir=TB;",
+        "    rankdir=LR;",
+        # "    nodesep=1;",  # horizontal spacing between nodes
+        # "    ranksep=1.5;",  # vertical spacing between ranks
         "    splines=true;",
         f'    node [shape=box, style=filled, fillcolor="{theme.BACKGROUND}", fontcolor="{theme.FOREGROUND}", color="{theme.BLUE}", fontname=fixed, fontsize=12, margin="0.1,0.1"];',
         "    edge [fontname=fixed, fontsize=10];",
