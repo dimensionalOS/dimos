@@ -3,22 +3,42 @@
 
 # Dimos Modules
 
-Module is a subsystem on a robot that operates autonomously and communicates to other subsystems.
+Module is a subsystem on a robot that operates autonomously and communicates to other subsystems using standardized messages
+
 Some examples of are:
 
 - Webcam (outputs image)
 - Navigation (inputs a map and a target, outputs a path)
 - Detection (takes an image and a vision model like yolo, outputs a stream of detections)
 
-etc
+A common module structure for controling a robot looks something like this:
 
-## Example Module
+```python  session=blueprints output=go2_standard.svg
+from dimos.core.introspection.blueprint import dot2
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import standard
+dot2.render_svg(standard, "go2_standard.svg")
+```
+
+<!--Result:-->
+![output](go2_standard.svg)
+
+## Camera Module
+
+Let's learn how to build the above, starting with a simple camera module.
+
+```python session=camera_module_demo output=camera_module.svg
+from dimos.hardware.camera.module import CameraModule
+from dimos.core.introspection.module import dot
+dot.render_svg(CameraModule.module_info(), "camera_module.svg")
+```
+
+<!--Result:-->
+![output](camera_module.svg)
+
+We can always also print out Module I/O quickly into console via `.io()` call, we will do this from now on.
 
 ```python session=camera_module_demo ansi=false
-from dimos.hardware.camera.module import CameraModule
-#from dimos.core.introspection.module import dot
 print(CameraModule.io())
-#dot.render_svg(CameraModule.module_info(), "{output}")
 ```
 
 <!--Result:-->
@@ -37,12 +57,13 @@ print(CameraModule.io())
 
 We can see that camera module outputs two streams:
 
-color_image with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
-camera_info with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
+`color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
+`camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
 
-As well as offers two RPC calls, start and stop, and a tool for an agent called video_stream (about this later)
+As well as offers two RPC calls, `start` and `stop`
+And offers an agentic Skill called `video_stream` (about this later)
 
-We can easily start this module and explore it's output
+We can start this module and explore it's output in real time
 
 ```python session=camera_module_demo ansi=false
 import time
@@ -61,15 +82,17 @@ camera.stop()
 <!--Result:-->
 ```
 Out color_image[Image] @ CameraModule
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:06:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:06:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:06:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:06:31)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:04)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:04)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:05)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:17:05)
 ```
 
 ## Connecting modules
 
-```python ansi=false
+Let's load a standard 2D detector module and hook it up to a camera.
+
+```python ansi=false session=detection_module output=detection_module.svg
 from dimos.perception.detection.module2D import Detection2DModule, Config
 print(Detection2DModule.io())
 ```
@@ -92,7 +115,7 @@ print(Detection2DModule.io())
 
 TODO: add easy way to print config
 
-looks like detector just needs an image input!
+looks like detector just needs an image input, outputs some sort of detection and annotation messages, let's connect it to a camera.
 
 ```python ansi=false
 import time
@@ -123,7 +146,9 @@ Detection(Person(1))
 
 ## Blueprints
 
-Blueprint is a structure of interconnected modules. basic unitree go2 blueprint looks like this,
+Blueprint is a pre-defined structure of interconnected modules. You can include blueprints or modules in new blueprints
+
+Basic unitree go2 blueprint looks like what we saw before,
 
 ```python  session=blueprints output=go2_standard.svg
 from dimos.core.introspection.blueprint import dot2, LayoutAlgo
