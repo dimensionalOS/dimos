@@ -276,8 +276,21 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
-ignore_missing_imports = true
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
+
+[[tool.mypy.overrides]]
+module = [
+    "rclpy.*",
+    "std_msgs.*",
+    "geometry_msgs.*",
+    "sensor_msgs.*",
+    "nav_msgs.*",
+    "tf2_msgs.*",
+    "mujoco",
+    "mujoco_playground.*",
+    "etils",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
