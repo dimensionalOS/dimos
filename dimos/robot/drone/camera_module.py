@@ -55,7 +55,7 @@ class DroneCameraModule(Module):
     color_image: Out[Image]
     depth_image: Out[Image]
     depth_colorized: Out[Image]
-    camera_info: Out[Any]
+    camera_info: Out[CameraInfo]
     camera_pose: Out[PoseStamped]
 
     def __init__(
