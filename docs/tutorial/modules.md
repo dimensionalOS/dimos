@@ -65,64 +65,12 @@ camera.stop()
 
 Blueprint is a structure of interconnected modules. basic unitree go2 blueprint looks like this,
 
-```python  session=blueprints
+```python  session=blueprints output=go2_standard.svg
 from dimos.core.introspection.blueprint import dot2, LayoutAlgo
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, standard, agentic
-```
 
-
-```python session=blueprints output=go2_standard.svg
 dot2.render_svg(standard, "{output}")
 ```
 
 <!--Result:-->
 ![output](go2_standard.svg)
-
-```python session=blueprints output=go2_standard_stack_clusters.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.STACK_CLUSTERS})
-```
-
-<!--Result:-->
-![output](go2_standard_stack_clusters.svg)
-
-```python session=blueprints output=go2_standard_stack_nodes.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.STACK_NODES})
-```
-
-<!--Result:-->
-![output](go2_standard_stack_nodes.svg)
-
-```python session=blueprints output=go2_standard_stack_both.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.STACK_CLUSTERS, LayoutAlgo.STACK_NODES})
-```
-
-<!--Result:-->
-![output](go2_standard_stack_both.svg)
-
-```python session=blueprints output=go2_standard_fdp.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.FDP})
-```
-
-<!--Result:-->
-![output](go2_standard_fdp.svg)
-
-```python session=blueprints output=go2_standard_fdp_stack_clusters.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.FDP, LayoutAlgo.STACK_CLUSTERS})
-```
-
-<!--Result:-->
-![output](go2_standard_fdp_stack_clusters.svg)
-
-```python session=blueprints output=go2_standard_fdp_stack_nodes.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.FDP, LayoutAlgo.STACK_NODES})
-```
-
-<!--Result:-->
-![output](go2_standard_fdp_stack_nodes.svg)
-
-```python session=blueprints output=go2_standard_fdp_stack_both.svg
-dot2.render_svg(standard, "{output}", layout={LayoutAlgo.FDP, LayoutAlgo.STACK_CLUSTERS, LayoutAlgo.STACK_NODES})
-```
-
-<!--Result:-->
-![output](go2_standard_fdp_stack_both.svg)
