@@ -20,6 +20,7 @@ import time
 
 import cv2
 import onnxruntime  # type: ignore[import-untyped]
+import torch
 from ultralytics import FastSAM  # type: ignore[attr-defined]
 
 from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
