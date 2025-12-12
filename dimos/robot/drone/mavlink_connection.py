@@ -20,10 +20,10 @@ import logging
 import time
 from typing import Any
 
-from pymavlink import mavutil
+from pymavlink import mavutil  # type: ignore[import-untyped]
 from reactivex import Subject
 
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(level=logging.INFO)
@@ -48,14 +48,14 @@ class MavlinkConnection:
         self.connection_string = connection_string
         self.outdoor = outdoor
         self.max_velocity = max_velocity
-        self.mavlink = None
+        self.mavlink: Any = None  # MAVLink connection object
         self.connected = False
-        self.telemetry = {}
+        self.telemetry: dict[str, Any] = {}
 
-        self._odom_subject = Subject()
-        self._status_subject = Subject()
-        self._telemetry_subject = Subject()
-        self._raw_mavlink_subject = Subject()
+        self._odom_subject: Subject[PoseStamped] = Subject()
+        self._status_subject: Subject[dict[str, Any]] = Subject()
+        self._telemetry_subject: Subject[dict[str, Any]] = Subject()
+        self._raw_mavlink_subject: Subject[dict[str, Any]] = Subject()
 
         # Velocity tracking for smoothing
         self.prev_vx = 0.0
@@ -333,7 +333,7 @@ class MavlinkConnection:
 
         return True
 
-    def move_twist(self, twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
+    def move_twist(self, twist: Twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
         """Move using ROS-style Twist commands.
 
         Args:
@@ -978,17 +978,17 @@ class MavlinkConnection:
         return False
 
     @functools.cache
-    def odom_stream(self):
+    def odom_stream(self) -> Subject[PoseStamped]:
         """Get odometry stream."""
         return self._odom_subject
 
     @functools.cache
-    def status_stream(self):
+    def status_stream(self) -> Subject[dict[str, Any]]:
         """Get status stream."""
         return self._status_subject
 
     @functools.cache
-    def telemetry_stream(self):
+    def telemetry_stream(self) -> Subject[dict[str, Any]]:
         """Get full telemetry stream."""
         return self._telemetry_subject
 
@@ -1011,7 +1011,7 @@ class MavlinkConnection:
         """Check if drone is currently flying to a GPS target."""
         return self.flying_to_target
 
-    def get_video_stream(self, fps: int = 30):
+    def get_video_stream(self, fps: int = 30) -> None:
         """Get video stream (to be implemented with GStreamer)."""
         # Will be implemented in camera module
         return None
@@ -1032,8 +1032,8 @@ class FakeMavlinkConnection(MavlinkConnection):
 
                 get_data("drone")
 
-                self.replay = TimedSensorReplay("drone/mavlink")
-                self.messages = []
+                self.replay: Any = TimedSensorReplay("drone/mavlink")
+                self.messages: list[dict[str, Any]] = []
                 # The stream() method returns an Observable that emits messages with timing
                 self.replay.stream().subscribe(self.messages.append)
 
@@ -1042,7 +1042,9 @@ class FakeMavlinkConnection(MavlinkConnection):
                 self.target_component = 1
                 self.mav = self  # self.mavlink.mav is used in many places
 
-            def recv_match(self, blocking: bool = False, type=None, timeout=None):
+            def recv_match(
+                self, blocking: bool = False, type: Any = None, timeout: Any = None
+            ) -> Any:
                 """Return next replay message as fake message object."""
                 if not self.messages:
                     return None
@@ -1051,17 +1053,17 @@ class FakeMavlinkConnection(MavlinkConnection):
 
                 # Create message object with ALL attributes that might be accessed
                 class FakeMsg:
-                    def __init__(self, d) -> None:
+                    def __init__(self, d: dict[str, Any]) -> None:
                         self._dict = d
                         # Set any direct attributes that get accessed
                         self.base_mode = d.get("base_mode", 0)
                         self.command = d.get("command", 0)
                         self.result = d.get("result", 0)
 
-                    def get_type(self):
+                    def get_type(self) -> Any:
                         return self._dict.get("mavpackettype", "")
 
-                    def to_dict(self):
+                    def to_dict(self) -> dict[str, Any]:
                         return self._dict
 
                 # Filter by type if requested
@@ -1079,13 +1081,13 @@ class FakeMavlinkConnection(MavlinkConnection):
                 pass
 
             # Command methods that get called but don't need to do anything in replay
-            def command_long_send(self, *args, **kwargs) -> None:
+            def command_long_send(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-            def set_position_target_local_ned_send(self, *args, **kwargs) -> None:
+            def set_position_target_local_ned_send(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
-            def set_position_target_global_int_send(self, *args, **kwargs) -> None:
+            def set_position_target_global_int_send(self, *args: Any, **kwargs: Any) -> None:
                 pass
 
         # Set up fake mavlink

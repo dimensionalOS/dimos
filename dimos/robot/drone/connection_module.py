@@ -21,8 +21,8 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import String
-from reactivex.disposable import Disposable
+from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
+from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
@@ -37,7 +37,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def _add_disposable(composite, item):
+def _add_disposable(composite: CompositeDisposable, item: Disposable | Any) -> None:
     if isinstance(item, Disposable):
         composite.add(item)
     elif callable(item):
@@ -48,25 +48,25 @@ class DroneConnectionModule(Module):
     """Module that handles drone sensor data and movement commands."""
 
     # Inputs
-    movecmd: In[Vector3] = None
-    movecmd_twist: In[Twist] = None  # Twist commands from tracking/navigation
-    gps_goal: In[LatLon] = None
-    tracking_status: In[String] = None
+    movecmd: In[Vector3]
+    movecmd_twist: In[Twist]  # Twist commands from tracking/navigation
+    gps_goal: In[LatLon]
+    tracking_status: In[Any]
 
     # Outputs
-    odom: Out[PoseStamped] = None
-    gps_location: Out[LatLon] = None
-    status: Out[String] = None  # JSON status
-    telemetry: Out[String] = None  # Full telemetry JSON
-    video: Out[Image] = None
-    follow_object_cmd: Out[String] = None
+    odom: Out[PoseStamped]
+    gps_location: Out[LatLon]
+    status: Out[Any]  # JSON status
+    telemetry: Out[Any]  # Full telemetry JSON
+    video: Out[Image]
+    follow_object_cmd: Out[Any]
 
     # Parameters
     connection_string: str
 
     # Internal state
     _odom: PoseStamped | None = None
-    _status: dict = {}
+    _status: dict[str, Any] = {}
     _latest_video_frame: Image | None = None
     _latest_telemetry: dict[str, Any] | None = None
     _latest_status: dict[str, Any] | None = None
@@ -77,8 +77,8 @@ class DroneConnectionModule(Module):
         connection_string: str = "udp:0.0.0.0:14550",
         video_port: int = 5600,
         outdoor: bool = False,
-        *args,
-        **kwargs,
+        *args: Any,
+        **kwargs: Any,
     ) -> None:
         """Initialize drone connection module.
 
@@ -90,14 +90,14 @@ class DroneConnectionModule(Module):
         self.connection_string = connection_string
         self.video_port = video_port
         self.outdoor = outdoor
-        self.connection = None
-        self.video_stream = None
+        self.connection: MavlinkConnection | None = None
+        self.video_stream: DJIDroneVideoStream | None = None
         self._latest_video_frame = None
         self._latest_telemetry = None
         self._latest_status = None
         self._latest_status_lock = threading.RLock()
         self._running = False
-        self._telemetry_thread = None
+        self._telemetry_thread: threading.Thread | None = None
         Module.__init__(self, *args, **kwargs)
 
     @rpc
@@ -204,14 +204,14 @@ class DroneConnectionModule(Module):
         )
         self.tf.publish(camera_link)
 
-    def _publish_status(self, status: dict) -> None:
+    def _publish_status(self, status: dict[str, Any]) -> None:
         """Publish drone status as JSON string."""
         self._status = status
 
         status_str = String(json.dumps(status))
         self.status.publish(status_str)
 
-    def _publish_telemetry(self, telemetry: dict) -> None:
+    def _publish_telemetry(self, telemetry: dict[str, Any]) -> None:
         """Publish full telemetry as JSON string."""
         telemetry_str = String(json.dumps(telemetry))
         self.telemetry.publish(telemetry_str)
@@ -227,7 +227,8 @@ class DroneConnectionModule(Module):
         while self._running:
             try:
                 # Update telemetry from drone
-                self.connection.update_telemetry(timeout=0.01)
+                if self.connection is not None:
+                    self.connection.update_telemetry(timeout=0.01)
 
                 # Publish default odometry if we don't have real data yet
                 if frame_count % 10 == 0:  # Every ~3Hz
@@ -258,7 +259,7 @@ class DroneConnectionModule(Module):
         return self._odom
 
     @rpc
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Get current drone status.
 
         Returns:
@@ -338,7 +339,7 @@ class DroneConnectionModule(Module):
             return self.connection.set_mode(mode)
         return False
 
-    def move_twist(self, twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
+    def move_twist(self, twist: Twist, duration: float = 0.0, lock_altitude: bool = True) -> bool:
         """Move using ROS-style Twist commands.
 
         Args:
@@ -437,6 +438,8 @@ class DroneConnectionModule(Module):
             self.connection.move_twist(msg, duration=0, lock_altitude=True)
 
     def _on_gps_goal(self, cmd: LatLon) -> None:
+        if self._latest_telemetry is None or self.connection is None:
+            return
         current_alt = self._latest_telemetry.get("GLOBAL_POSITION_INT", {}).get("relative_alt", 0)
         self.connection.fly_to(cmd.lat, cmd.lon, current_alt)
 

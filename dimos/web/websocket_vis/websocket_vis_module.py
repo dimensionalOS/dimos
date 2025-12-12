@@ -96,7 +96,7 @@ class WebsocketVisModule(Module):
         self.costmap_encoder = OptimizedCostmapEncoder(chunk_size=64)
 
         # Track GPS goal points for visualization
-        self.gps_goal_points = []
+        self.gps_goal_points: list[dict[str, float]] = []
         logger.info(
             f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled"
         )
@@ -220,7 +220,7 @@ class WebsocketVisModule(Module):
             logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def gps_goal(sid, goal) -> None:
+        async def gps_goal(sid: str, goal: dict[str, float]) -> None:
             logger.info(f"Received GPS goal: {goal}")
 
             # Publish the goal to LCM
@@ -231,13 +231,14 @@ class WebsocketVisModule(Module):
             logger.info(f"Added GPS goal to list. Total goals: {len(self.gps_goal_points)}")
 
             # Emit updated goal points back to all connected clients
-            await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
+            if self.sio is not None:
+                await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
             logger.debug(
                 f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
             )
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def start_explore(sid) -> None:
+        async def start_explore(sid: str) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
@@ -247,14 +248,15 @@ class WebsocketVisModule(Module):
             self.stop_explore_cmd.publish(Bool(data=True))
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def clear_gps_goals(sid) -> None:
+        async def clear_gps_goals(sid: str) -> None:
             logger.info("Clearing all GPS goal points")
             self.gps_goal_points.clear()
-            await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
+            if self.sio is not None:
+                await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
             logger.info("GPS goal points cleared and updated clients")
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def move_command(sid, data) -> None:
+        async def move_command(sid: str, data: dict[str, Any]) -> None:
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(

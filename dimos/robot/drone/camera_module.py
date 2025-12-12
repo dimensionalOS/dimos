@@ -19,8 +19,9 @@
 
 import threading
 import time
+from typing import Any
 
-from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -48,14 +49,14 @@ class DroneCameraModule(Module):
     """
 
     # Inputs
-    video: In[Image] = None
+    video: In[Image]
 
     # Outputs
-    color_image: Out[Image] = None
-    depth_image: Out[Image] = None
-    depth_colorized: Out[Image] = None
-    camera_info: Out[CameraInfo] = None
-    camera_pose: Out[PoseStamped] = None
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    depth_colorized: Out[Image]
+    camera_info: Out[Any]
+    camera_pose: Out[PoseStamped]
 
     def __init__(
         self,
@@ -64,7 +65,7 @@ class DroneCameraModule(Module):
         camera_frame_id: str = "camera_link",
         base_frame_id: str = "base_link",
         gt_depth_scale: float = 2.0,
-        **kwargs,
+        **kwargs: Any,
     ) -> None:
         """Initialize drone camera module.
 
@@ -86,12 +87,12 @@ class DroneCameraModule(Module):
         self.gt_depth_scale = gt_depth_scale
 
         # Metric3D for depth
-        self.metric3d = None
+        self.metric3d: Any = None  # Lazy-loaded Metric3D model
 
         # Processing state
         self._running = False
-        self._latest_frame = None
-        self._processing_thread = None
+        self._latest_frame: Image | None = None
+        self._processing_thread: threading.Thread | None = None
         self._stop_processing = threading.Event()
 
         logger.info(f"DroneCameraModule initialized with intrinsics: {camera_intrinsics}")
@@ -206,7 +207,7 @@ class DroneCameraModule(Module):
 
         logger.info("Depth processing loop stopped")
 
-    def _publish_camera_info(self, header: Header, shape) -> None:
+    def _publish_camera_info(self, header: Header, shape: tuple[int, ...]) -> None:
         """Publish camera calibration info."""
         try:
             fx, fy, cx, cy = self.camera_intrinsics

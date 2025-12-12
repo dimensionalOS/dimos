@@ -21,9 +21,10 @@ import functools
 import subprocess
 import threading
 import time
+from typing import Any
 
 import numpy as np
-from reactivex import Subject
+from reactivex import Observable, Subject
 
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
@@ -38,8 +39,8 @@ class DJIDroneVideoStream:
         self.port = port
         self.width = width
         self.height = height
-        self._video_subject = Subject()
-        self._process = None
+        self._video_subject: Subject[Image] = Subject()
+        self._process: subprocess.Popen[bytes] | None = None
         self._stop_event = threading.Event()
 
     def start(self) -> bool:
@@ -117,6 +118,8 @@ class DJIDroneVideoStream:
                 bytes_needed = frame_size
 
                 while bytes_needed > 0 and not self._stop_event.is_set():
+                    if self._process is None or self._process.stdout is None:
+                        break
                     chunk = self._process.stdout.read(bytes_needed)
                     if not chunk:
                         logger.warning("No data from GStreamer")
@@ -154,7 +157,9 @@ class DJIDroneVideoStream:
 
     def _error_monitor(self) -> None:
         """Monitor GStreamer stderr."""
-        while not self._stop_event.is_set() and self._process:
+        while not self._stop_event.is_set() and self._process is not None:
+            if self._process.stderr is None:
+                break
             line = self._process.stderr.readline()
             if line:
                 msg = line.decode("utf-8").strip()
@@ -177,7 +182,7 @@ class DJIDroneVideoStream:
 
         logger.info("Video stream stopped")
 
-    def get_stream(self):
+    def get_stream(self) -> Subject[Image]:
         """Get the video stream observable."""
         return self._video_subject
 
@@ -199,13 +204,14 @@ class FakeDJIVideoStream(DJIDroneVideoStream):
         return True
 
     @functools.cache
-    def get_stream(self):
+    def get_stream(self) -> Observable[Image]:  # type: ignore[override]
         """Get the replay stream directly."""
         from dimos.utils.testing import TimedSensorReplay
 
         logger.info("Creating video replay stream")
-        video_store = TimedSensorReplay("drone/video")
-        return video_store.stream()
+        video_store: Any = TimedSensorReplay("drone/video")
+        stream: Observable[Image] = video_store.stream()
+        return stream
 
     def stop(self) -> None:
         """Stop replay."""

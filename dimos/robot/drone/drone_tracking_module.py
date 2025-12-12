@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 import cv2
-from dimos_lcm.std_msgs import String
+from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
 import numpy as np
 
 from dimos.core import In, Module, Out, rpc
@@ -38,19 +38,33 @@ class DroneTrackingModule(Module):
     """Module for drone object tracking with visual servoing control."""
 
     # Inputs
-    video_input: In[Image] = None
-    follow_object_cmd: In[String] = None
+    video_input: In[Image]
+    follow_object_cmd: In[Any]
 
     # Outputs
-    tracking_overlay: Out[Image] = None  # Visualization with bbox and crosshairs
-    tracking_status: Out[String] = None  # JSON status updates
-    cmd_vel: Out[Twist] = None  # Velocity commands for drone control
+    tracking_overlay: Out[Image]  # Visualization with bbox and crosshairs
+    tracking_status: Out[Any]  # JSON status updates
+    cmd_vel: Out[Twist]  # Velocity commands for drone control
 
     def __init__(
         self,
-        x_pid_params: tuple = (0.001, 0.0, 0.0001, (-1.0, 1.0), None, 30),
-        y_pid_params: tuple = (0.001, 0.0, 0.0001, (-1.0, 1.0), None, 30),
-        z_pid_params: tuple | None = None,
+        x_pid_params: tuple[float, float, float, tuple[float, float], None, int] = (
+            0.001,
+            0.0,
+            0.0001,
+            (-1.0, 1.0),
+            None,
+            30,
+        ),
+        y_pid_params: tuple[float, float, float, tuple[float, float], None, int] = (
+            0.001,
+            0.0,
+            0.0001,
+            (-1.0, 1.0),
+            None,
+            30,
+        ),
+        z_pid_params: tuple[float, float, float, tuple[float, float], None, int] | None = None,
     ) -> None:
         """Initialize the drone tracking module.
 
@@ -67,9 +81,9 @@ class DroneTrackingModule(Module):
 
         # Tracking state
         self._tracking_active = False
-        self._tracking_thread = None
-        self._current_object = None
-        self._latest_frame = None
+        self._tracking_thread: threading.Thread | None = None
+        self._current_object: str | None = None
+        self._latest_frame: Image | None = None
         self._frame_lock = threading.Lock()
 
         # Subscribe to video input when transport is set
@@ -84,13 +98,14 @@ class DroneTrackingModule(Module):
         msg = json.loads(cmd.data)
         self.track_object(msg["object_description"], msg["duration"])
 
-    def _get_latest_frame(self) -> np.ndarray | None:
+    def _get_latest_frame(self) -> np.ndarray[Any, np.dtype[Any]] | None:
         """Get the latest video frame as numpy array."""
         with self._frame_lock:
             if self._latest_frame is None:
                 return None
             # Convert Image to numpy array
-            return self._latest_frame.data
+            data: np.ndarray[Any, np.dtype[Any]] = self._latest_frame.data
+            return data
 
     @rpc
     def start(self) -> bool:
@@ -147,9 +162,9 @@ class DroneTrackingModule(Module):
 
             # Initialize CSRT tracker (use legacy for OpenCV 4)
             try:
-                tracker = cv2.legacy.TrackerCSRT_create()
+                tracker = cv2.legacy.TrackerCSRT_create()  # type: ignore[attr-defined]
             except AttributeError:
-                tracker = cv2.TrackerCSRT_create()
+                tracker = cv2.TrackerCSRT_create()  # type: ignore[attr-defined]
 
             # Convert bbox format from [x1, y1, x2, y2] to [x, y, w, h]
             x1, y1, x2, y2 = bbox
@@ -185,7 +200,7 @@ class DroneTrackingModule(Module):
             self._stop_tracking()
             return f"Tracking failed: {e!s}"
 
-    def _visual_servoing_loop(self, tracker, duration: float) -> None:
+    def _visual_servoing_loop(self, tracker: Any, duration: float) -> None:
         """Main visual servoing control loop.
 
         Args:
@@ -290,8 +305,11 @@ class DroneTrackingModule(Module):
             logger.info(f"Visual servoing loop ended after {frame_count} frames")
 
     def _draw_tracking_overlay(
-        self, frame: np.ndarray, bbox: tuple[int, int, int, int], center: tuple[int, int]
-    ) -> np.ndarray:
+        self,
+        frame: np.ndarray[Any, np.dtype[Any]],
+        bbox: tuple[int, int, int, int],
+        center: tuple[int, int],
+    ) -> np.ndarray[Any, np.dtype[Any]]:
         """Draw tracking visualization overlay.
 
         Args:
