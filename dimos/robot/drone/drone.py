@@ -21,9 +21,10 @@ import functools
 import logging
 import os
 import time
+from typing import Any
 
-from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.std_msgs import String
+from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
 from reactivex import Observable
 
 from dimos import core
@@ -54,7 +55,7 @@ class Drone(Robot):
         self,
         connection_string: str = "udp:0.0.0.0:14550",
         video_port: int = 5600,
-        camera_intrinsics: list | None = None,
+        camera_intrinsics: list[float] | None = None,
         output_dir: str | None = None,
         outdoor: bool = False,
     ) -> None:
@@ -85,11 +86,12 @@ class Drone(Robot):
             RobotCapability.VISION,
         ]
 
-        self.dimos = None
-        self.connection = None
-        self.camera = None
-        self.foxglove_bridge = None
-        self.websocket_vis = None
+        self.dimos: core.DimosCluster | None = None
+        self.connection: DroneConnectionModule | None = None
+        self.camera: DroneCameraModule | None = None
+        self.tracking: DroneTrackingModule | None = None
+        self.foxglove_bridge: FoxgloveBridge | None = None
+        self.websocket_vis: WebsocketVisModule | None = None
 
         self._setup_directories()
 
@@ -120,9 +122,10 @@ class Drone(Robot):
 
     def _deploy_connection(self) -> None:
         """Deploy and configure connection module."""
+        assert self.dimos is not None
         logger.info("Deploying connection module...")
 
-        self.connection = self.dimos.deploy(
+        self.connection = self.dimos.deploy(  # type: ignore[attr-defined]
             DroneConnectionModule,
             # connection_string="replay",
             connection_string=self.connection_string,
@@ -149,9 +152,13 @@ class Drone(Robot):
 
     def _deploy_camera(self) -> None:
         """Deploy and configure camera module."""
+        assert self.dimos is not None
+        assert self.connection is not None
         logger.info("Deploying camera module...")
 
-        self.camera = self.dimos.deploy(DroneCameraModule, camera_intrinsics=self.camera_intrinsics)
+        self.camera = self.dimos.deploy(  # type: ignore[attr-defined]
+            DroneCameraModule, camera_intrinsics=self.camera_intrinsics
+        )
 
         # Configure LCM transports
         self.camera.color_image.transport = core.LCMTransport("/drone/color_image", Image)
@@ -167,9 +174,11 @@ class Drone(Robot):
 
     def _deploy_tracking(self) -> None:
         """Deploy and configure tracking module."""
+        assert self.dimos is not None
+        assert self.connection is not None
         logger.info("Deploying tracking module...")
 
-        self.tracking = self.dimos.deploy(
+        self.tracking = self.dimos.deploy(  # type: ignore[attr-defined]
             DroneTrackingModule,
             x_pid_params=(0.05, 0.0, 0.0003, (-5, 5), None, 10),
             y_pid_params=(0.05, 0.0, 0.0003, (-5, 5), None, 10),
@@ -193,7 +202,9 @@ class Drone(Robot):
 
     def _deploy_visualization(self) -> None:
         """Deploy and configure visualization modules."""
-        self.websocket_vis = self.dimos.deploy(WebsocketVisModule)
+        assert self.dimos is not None
+        assert self.connection is not None
+        self.websocket_vis = self.dimos.deploy(WebsocketVisModule)  # type: ignore[attr-defined]
         # self.websocket_vis.click_goal.transport = core.LCMTransport("/goal_request", PoseStamped)
         self.websocket_vis.gps_goal.transport = core.pLCMTransport("/gps_goal")
         # self.websocket_vis.explore_cmd.transport = core.LCMTransport("/explore_cmd", Bool)
@@ -208,10 +219,18 @@ class Drone(Robot):
         self.foxglove_bridge = FoxgloveBridge()
 
     def _deploy_navigation(self) -> None:
-        self.websocket_vis.gps_goal.connect(self.connection.gps_goal)
+        assert self.websocket_vis is not None
+        assert self.connection is not None
+        # Connect In (subscriber) to Out (publisher)
+        self.connection.gps_goal.connect(self.websocket_vis.gps_goal)
 
     def _start_modules(self) -> None:
         """Start all deployed modules."""
+        assert self.connection is not None
+        assert self.camera is not None
+        assert self.tracking is not None
+        assert self.websocket_vis is not None
+        assert self.foxglove_bridge is not None
         logger.info("Starting modules...")
 
         # Start connection first
@@ -245,19 +264,26 @@ class Drone(Robot):
         Returns:
             Current pose or None
         """
-        return self.connection.get_odom()
+        if self.connection is None:
+            return None
+        result: PoseStamped | None = self.connection.get_odom()
+        return result
 
     @functools.cached_property
     def gps_position_stream(self) -> Observable[LatLon]:
+        assert self.connection is not None
         return self.connection.gps_location.transport.pure_observable()
 
-    def get_status(self) -> dict:
+    def get_status(self) -> dict[str, Any]:
         """Get drone status.
 
         Returns:
             Status dictionary
         """
-        return self.connection.get_status()
+        if self.connection is None:
+            return {}
+        result: dict[str, Any] = self.connection.get_status()
+        return result
 
     def move(self, vector: Vector3, duration: float = 0.0) -> None:
         """Send movement command.
@@ -266,6 +292,8 @@ class Drone(Robot):
             vector: Velocity vector [x, y, z] in m/s
             duration: How long to move (0 = continuous)
         """
+        if self.connection is None:
+            return
         self.connection.move(vector, duration)
 
     def takeoff(self, altitude: float = 3.0) -> bool:
@@ -277,7 +305,10 @@ class Drone(Robot):
         Returns:
             True if takeoff initiated
         """
-        return self.connection.takeoff(altitude)
+        if self.connection is None:
+            return False
+        result: bool = self.connection.takeoff(altitude)
+        return result
 
     def land(self) -> bool:
         """Land the drone.
@@ -285,7 +316,10 @@ class Drone(Robot):
         Returns:
             True if land command sent
         """
-        return self.connection.land()
+        if self.connection is None:
+            return False
+        result: bool = self.connection.land()
+        return result
 
     def arm(self) -> bool:
         """Arm the drone.
@@ -293,7 +327,10 @@ class Drone(Robot):
         Returns:
             True if armed successfully
         """
-        return self.connection.arm()
+        if self.connection is None:
+            return False
+        result: bool = self.connection.arm()
+        return result
 
     def disarm(self) -> bool:
         """Disarm the drone.
@@ -301,7 +338,10 @@ class Drone(Robot):
         Returns:
             True if disarmed successfully
         """
-        return self.connection.disarm()
+        if self.connection is None:
+            return False
+        result: bool = self.connection.disarm()
+        return result
 
     def set_mode(self, mode: str) -> bool:
         """Set flight mode.
@@ -312,9 +352,12 @@ class Drone(Robot):
         Returns:
             True if mode set successfully
         """
-        return self.connection.set_mode(mode)
+        if self.connection is None:
+            return False
+        result: bool = self.connection.set_mode(mode)
+        return result
 
-    def fly_to(self, lat: float, lon: float, alt: float) -> bool:
+    def fly_to(self, lat: float, lon: float, alt: float) -> str:
         """Fly to GPS coordinates.
 
         Args:
@@ -323,9 +366,12 @@ class Drone(Robot):
             alt: Altitude in meters (relative to home)
 
         Returns:
-            True if command sent successfully
+            String message indicating success or failure
         """
-        return self.connection.fly_to(lat, lon, alt)
+        if self.connection is None:
+            return "Failed: No connection"
+        result: str = self.connection.fly_to(lat, lon, alt)
+        return result
 
     def cleanup(self) -> None:
         self.stop()
@@ -344,7 +390,7 @@ class Drone(Robot):
             self.foxglove_bridge.stop()
 
         if self.dimos:
-            self.dimos.shutdown()
+            self.dimos.shutdown()  # type: ignore[no-untyped-call]
 
         logger.info("Drone system stopped")
 
@@ -387,7 +433,7 @@ def main() -> None:
 ╚══════════════════════════════════════════╝
     """)
 
-    pubsub.lcm.autoconf()
+    pubsub.lcm.autoconf()  # type: ignore[attr-defined]
 
     drone = Drone(connection_string=connection, video_port=video_port, outdoor=args.outdoor)
 
@@ -406,13 +452,14 @@ def main() -> None:
     print("  • /drone/tracking_overlay - Object tracking visualization (Image)")
     print("  • /drone/tracking_status - Tracking status (String/JSON)")
 
-    from dimos.agents2 import Agent
+    from dimos.agents2 import Agent  # type: ignore[attr-defined]
     from dimos.agents2.cli.human import HumanInput
-    from dimos.agents2.spec import Model, Provider
+    from dimos.agents2.spec import Model, Provider  # type: ignore[attr-defined]
 
-    human_input = drone.dimos.deploy(HumanInput)
-    google_maps = drone.dimos.deploy(GoogleMapsSkillContainer)
-    osm_skill = drone.dimos.deploy(OsmSkill)
+    assert drone.dimos is not None
+    human_input = drone.dimos.deploy(HumanInput)  # type: ignore[attr-defined]
+    google_maps = drone.dimos.deploy(GoogleMapsSkillContainer)  # type: ignore[attr-defined]
+    osm_skill = drone.dimos.deploy(OsmSkill)  # type: ignore[attr-defined]
 
     google_maps.gps_location.transport = core.pLCMTransport("/gps_location")
     osm_skill.gps_location.transport = core.pLCMTransport("/gps_location")
@@ -427,8 +474,8 @@ def main() -> None:
         454 Natoma (Office): 37.780967465525244, -122.40688342010769
         5th and mission intersection: 37.782598539339695, -122.40649441875473
         6th and mission intersection: 37.781007204789354, -122.40868447123661""",
-        model=Model.GPT_4O,
-        provider=Provider.OPENAI,
+        model=Model.GPT_4O,  # type: ignore[attr-defined]
+        provider=Provider.OPENAI,  # type: ignore[attr-defined]
     )
 
     agent.register_skills(drone.connection)

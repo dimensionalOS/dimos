@@ -14,13 +14,23 @@
 
 """Minimal visual servoing controller for drone with downward-facing camera."""
 
+from typing import TypeAlias
+
 from dimos.utils.simple_controller import PIDController
+
+# Type alias for PID parameters tuple
+PIDParams: TypeAlias = tuple[float, float, float, tuple[float, float], float | None, int]
 
 
 class DroneVisualServoingController:
     """Minimal visual servoing for downward-facing drone camera using velocity-only control."""
 
-    def __init__(self, x_pid_params, y_pid_params, z_pid_params=None) -> None:
+    def __init__(
+        self,
+        x_pid_params: PIDParams,
+        y_pid_params: PIDParams,
+        z_pid_params: PIDParams | None = None,
+    ) -> None:
         """
         Initialize drone visual servoing controller.
 
@@ -29,21 +39,21 @@ class DroneVisualServoingController:
             y_pid_params: (kp, ki, kd, output_limits, integral_limit, deadband) for left/right
             z_pid_params: Optional params for altitude control
         """
-        self.x_pid = PIDController(*x_pid_params)
-        self.y_pid = PIDController(*y_pid_params)
-        self.z_pid = PIDController(*z_pid_params) if z_pid_params else None
+        self.x_pid = PIDController(*x_pid_params)  # type: ignore[no-untyped-call]
+        self.y_pid = PIDController(*y_pid_params)  # type: ignore[no-untyped-call]
+        self.z_pid = PIDController(*z_pid_params) if z_pid_params else None  # type: ignore[no-untyped-call]
 
     def compute_velocity_control(
         self,
-        target_x,
-        target_y,  # Target position in image (pixels or normalized)
+        target_x: float,
+        target_y: float,  # Target position in image (pixels or normalized)
         center_x: float = 0.0,
         center_y: float = 0.0,  # Desired position (usually image center)
-        target_z=None,
-        desired_z=None,  # Optional altitude control
+        target_z: float | None = None,
+        desired_z: float | None = None,  # Optional altitude control
         dt: float = 0.1,
         lock_altitude: bool = True,
-    ):
+    ) -> tuple[float, float, float]:
         """
         Compute velocity commands to center target in camera view.
 
@@ -71,14 +81,14 @@ class DroneVisualServoingController:
         # PID control (swap axes for downward camera)
         # For downward camera: object below center (positive error_y) = object is behind drone
         # Need to negate: positive error_y should give negative vx (move backward)
-        vy = self.y_pid.update(error_x, dt)  # Image X -> Drone Y (strafe)
-        vx = -self.x_pid.update(error_y, dt)  # Image Y -> Drone X (NEGATED for correct direction)
+        vy = self.y_pid.update(error_x, dt)  # type: ignore[no-untyped-call]  # Image X -> Drone Y (strafe)
+        vx = -self.x_pid.update(error_y, dt)  # type: ignore[no-untyped-call]  # Image Y -> Drone X (NEGATED)
 
         # Optional altitude control
         vz = 0.0
         if not lock_altitude and self.z_pid and target_z is not None and desired_z is not None:
             error_z = target_z - desired_z
-            vz = self.z_pid.update(error_z, dt)
+            vz = self.z_pid.update(error_z, dt)  # type: ignore[no-untyped-call]
 
         return vx, vy, vz
 

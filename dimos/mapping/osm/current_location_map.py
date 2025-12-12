@@ -72,6 +72,8 @@ class CurrentLocationMap:
         # Add position marker
         import numpy as np
 
+        assert self._map_image is not None
+        assert self._position is not None
         pil_image = PILImage.fromarray(self._map_image.image.data)
         draw = ImageDraw.Draw(pil_image)
         x, y = self._map_image.latlon_to_pixel(self._position)
@@ -103,7 +105,9 @@ class CurrentLocationMap:
             The filepath where the image was saved
         """
         if not self._map_image:
-            self._get_current_map()
+            self._get_current_map()  # type: ignore[no-untyped-call]
 
-        self._map_image.image.save(filepath)
+        if self._map_image is not None:
+            self._map_image.image.save(filepath)
         logger.info(f"Saved OSM map image to {filepath}")
+        return filepath
