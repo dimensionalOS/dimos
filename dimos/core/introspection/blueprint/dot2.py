@@ -251,7 +251,7 @@ def render(
         node_id = _sanitize_id(f"chan_{name}_{type_name}")
         label = f"{name}:{type_name}"
         lines.append(
-            f'    {node_id} [label="{label}", shape=box, style=filled, '
+            f'    {node_id} [label="{label}", shape=note, style=filled, '
             f'fillcolor="{color}35", color="{color}", fontcolor="{theme.FOREGROUND}", '
             f'width=0, height=0, margin="0.1,0.05", fontsize=10];'
         )

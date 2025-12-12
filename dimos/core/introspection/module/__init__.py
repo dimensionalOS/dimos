@@ -16,13 +16,13 @@
 
 Renderers:
     - ansi: ANSI terminal output (default)
-    - (future: html, json, markdown, etc.)
+    - dot: Graphviz DOT format
 """
 
 from collections.abc import Callable
 from typing import Any
 
-from dimos.core.introspection.module import ansi
+from dimos.core.introspection.module import ansi, dot
 from dimos.core.introspection.module.info import (
     INTERNAL_RPCS,
     ModuleInfo,
@@ -41,6 +41,7 @@ __all__ = [
     "SkillInfo",
     "StreamInfo",
     "ansi",
+    "dot",
     "extract_module_info",
     "render_module_io",
 ]

@@ -31,7 +31,7 @@ from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
-from dimos.core.introspection.module import INTERNAL_RPCS, render_module_io
+from dimos.core.introspection.module import INTERNAL_RPCS, extract_module_info, render_module_io
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
@@ -256,6 +256,58 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
             return obj._io_instance
 
     io = _io_descriptor()
+
+    @classmethod
+    def _module_info_class(cls) -> "ModuleInfo":
+        """Class-level module_info() - returns ModuleInfo from annotations."""
+        from dimos.core.introspection.module import ModuleInfo
+
+        hints = get_type_hints(cls)
+
+        def is_stream(hint: type, stream_type: type) -> bool:
+            origin = get_origin(hint)
+            if origin is stream_type:
+                return True
+            if isinstance(hint, type) and issubclass(hint, stream_type):
+                return True
+            return False
+
+        def format_stream(name: str, hint: type) -> str:
+            args = get_args(hint)
+            type_name = args[0].__name__ if args else "?"
+            return f"{name}: {type_name}"
+
+        inputs = {
+            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, In)
+        }
+        outputs = {
+            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, Out)
+        }
+
+        return extract_module_info(
+            name=cls.__name__,
+            inputs=inputs,
+            outputs=outputs,
+            rpcs=cls.rpcs,
+        )
+
+    class _module_info_descriptor:
+        """Descriptor that makes module_info() work on both class and instance."""
+
+        def __get__(
+            self, obj: "ModuleBase | None", objtype: type["ModuleBase"]
+        ) -> Callable[[], "ModuleInfo"]:
+            if obj is None:
+                return objtype._module_info_class
+            # For instances, extract from actual streams
+            return lambda: extract_module_info(
+                name=obj.__class__.__name__,
+                inputs=obj.inputs,
+                outputs=obj.outputs,
+                rpcs=obj.rpcs,
+            )
+
+    module_info = _module_info_descriptor()
 
     @classproperty
     def blueprint(self):  # type: ignore[no-untyped-def]

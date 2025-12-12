@@ -138,9 +138,11 @@ class Stream(Generic[T]):
 
 class Out(Stream[T]):
     _transport: Transport  # type: ignore[type-arg]
+    _local_subscribers: list[Callable[[T], None]]
 
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*argv, **kwargs)
+        self._local_subscribers = []
 
     @property
     def transport(self) -> Transport[T]:
@@ -168,7 +170,15 @@ class Out(Stream[T]):
             ),
         )
 
+    def subscribe(self, cb) -> Callable[[], None]:
+        self._local_subscribers.append(cb)
+        return lambda: self.local_subscribers.remove(cb)
+
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
+        if self._local_subscribers:
+            for cb in self._local_subscribers:
+                cb(msg)
+
         if not hasattr(self, "_transport") or self._transport is None:
             logger.warning(f"Trying to publish on Out {self} without a transport")
             return
@@ -230,8 +240,7 @@ class In(Stream[T], ObservableMixin[T]):
         ...
 
     def connect(self, value: Out[T]) -> None:
-        # just for type checking
-        ...
+        value.subscribe(self.transport.publish)  # type: ignore[arg-type]
 
     @property
     def state(self) -> State:
