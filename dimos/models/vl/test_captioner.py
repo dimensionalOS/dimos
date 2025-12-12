@@ -1,5 +1,5 @@
 import time
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 import pytest
 
@@ -8,8 +8,14 @@ from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
-if TYPE_CHECKING:
-    from dimos.models.vl.base import Captioner
+
+class CaptionerModel(Protocol):
+    """Intersection of Captioner and Resource for testing."""
+
+    def caption(self, image: Image) -> str: ...
+    def caption_batch(self, *images: Image) -> list[str]: ...
+    def start(self) -> None: ...
+    def stop(self) -> None: ...
 
 
 @pytest.mark.parametrize(
@@ -21,7 +27,7 @@ if TYPE_CHECKING:
     ids=["florence2", "moondream"],
 )
 @pytest.mark.gpu
-def test_captioner(model_class: "type[Captioner]", model_name: str) -> None:
+def test_captioner(model_class: type[CaptionerModel], model_name: str) -> None:
     """Test captioning functionality across different model types."""
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 

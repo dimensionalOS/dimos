@@ -45,7 +45,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
                 - "microsoft/Florence-2-large" (~0.8B, better quality)
             **kwargs: Additional config options (device, dtype, warmup, etc.)
         """
-        super().__init__(self, model_name=model_name, **kwargs)
+        super().__init__(model_name=model_name, **kwargs)
 
     @cached_property
     def _processor(self) -> AutoProcessor:
