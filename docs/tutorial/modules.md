@@ -145,6 +145,13 @@ Detection(Person(1))
 Detection(Person(1))
 ```
 
+## Multiprocessing
+
+As we build module structures, very quickly we want to utilize all cores on the machine and potentially distribute modules across machines or even internet
+For this we use `dimos.core` and dimos transport protocols.
+
+We also want an ability to write moduels in faster languages
+
 ## Blueprints
 
 Blueprint is a pre-defined structure of interconnected modules. You can include blueprints or modules in new blueprints
