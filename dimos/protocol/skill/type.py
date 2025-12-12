@@ -19,6 +19,8 @@ from typing import Any, Callable
 
 from dimos.types.timestamped import Timestamped
 
+# defines protocol messages used for communication between skills and agents
+
 
 class Call(Enum):
     Implicit = 0

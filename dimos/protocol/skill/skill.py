@@ -64,12 +64,13 @@ def skill(reducer=Reducer.latest, stream=Stream.none, ret=Return.call_agent):
             if call_id:
                 del kwargs["call_id"]
 
-                def run_function():
-                    return self.call_skill(call_id, skill, args, kwargs)
-
-                thread = threading.Thread(target=run_function)
-                thread.start()
-                return None
+                return self.call_skill(call_id, skill, args, kwargs)
+                # def run_function():
+                #    return self.call_skill(call_id, skill, args, kwargs)
+                #
+                # thread = threading.Thread(target=run_function)
+                # thread.start()
+                # return None
 
             return f(self, *args, **kwargs)
 
@@ -99,8 +100,22 @@ class SkillContainerConfig:
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 
+def threaded(f: Callable[..., Any]) -> Callable[..., None]:
+    """Decorator to run a function in a separate thread."""
+
+    def wrapper(self, *args, **kwargs):
+        thread = threading.Thread(target=f, args=(self, *args), kwargs=kwargs)
+        thread.start()
+        return None
+
+    return wrapper
+
+
 # Inherited by any class that wants to provide skills
 # (This component works standalone but commonly used by DimOS modules)
+#
+# Hosts the function execution and handles correct publishing of skill messages
+# according to the individual skill decorator configuration
 #
 # - It allows us to specify a communication layer for skills (LCM for now by default)
 # - introspection of available skills via the `skills` RPC method
@@ -109,9 +124,6 @@ class SkillContainerConfig:
 #   SkillCoordinator will call this method to get the skills available upon every request to
 #   the agent
 #
-#
-# Hosts the function execution and handles correct publishing of skill messages
-# according to the skill decorator configuration
 class SkillContainer(Configurable[SkillContainerConfig]):
     default_config = SkillContainerConfig
     _skill_transport: Optional[SkillCommsSpec] = None
@@ -121,6 +133,8 @@ class SkillContainer(Configurable[SkillContainerConfig]):
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
 
+    # same interface as coordinator call_skill
+    @threaded
     def call_skill(
         self, call_id: str, skill_name: str, args: tuple[Any, ...], kwargs: dict[str, Any]
     ) -> None:
