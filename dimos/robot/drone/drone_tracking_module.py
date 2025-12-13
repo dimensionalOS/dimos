@@ -179,21 +179,13 @@ class DroneTrackingModule(Module):
             self._current_object = object_name or "object"
             self._tracking_active = True
 
-            # Start tracking in thread
+            # Start tracking in thread (non-blocking - caller should poll get_status())
             self._tracking_thread = threading.Thread(
                 target=self._visual_servoing_loop, args=(tracker, duration), daemon=True
             )
             self._tracking_thread.start()
 
-            # Wait for tracking to complete
-            self._tracking_thread.join(timeout=duration + 1)
-
-            # Check result
-            if self._tracking_active:
-                self._stop_tracking()
-                return f"Tracking completed after {duration} seconds"
-            else:
-                return "Tracking stopped"
+            return f"Tracking started for {self._current_object}. Poll get_status() for updates."
 
         except Exception as e:
             logger.error(f"Tracking error: {e}")
