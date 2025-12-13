@@ -1097,3 +1097,13 @@ class FakeMavlinkConnection(MavlinkConnection):
         # Initialize position tracking (parent __init__ doesn't do this since connect wasn't called)
         self._position = {"x": 0.0, "y": 0.0, "z": 0.0}
         self._last_update = time.time()
+
+    def takeoff(self, altitude: float = 3.0) -> bool:
+        """Fake takeoff - return immediately without blocking."""
+        logger.info(f"[FAKE] Taking off to {altitude}m...")
+        return True
+
+    def land(self) -> bool:
+        """Fake land - return immediately without blocking."""
+        logger.info("[FAKE] Landing...")
+        return True
