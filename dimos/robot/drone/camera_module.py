@@ -284,8 +284,3 @@ class DroneCameraModule(Module):
             self.metric3d.cleanup()
 
         logger.info("Camera module stopped")
-
-    @rpc
-    def get_camera_intrinsics(self) -> list[float]:
-        """Get camera intrinsics."""
-        return self.camera_intrinsics
