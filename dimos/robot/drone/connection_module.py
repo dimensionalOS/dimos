@@ -276,6 +276,15 @@ class DroneConnectionModule(Module):
             duration: How long to move (0 = continuous)
         """
         if self.connection:
+            # Convert dict/list to Vector3
+            if isinstance(vector, dict):
+                vector = Vector3(vector.get("x", 0), vector.get("y", 0), vector.get("z", 0))
+            elif isinstance(vector, (list, tuple)):
+                vector = Vector3(
+                    vector[0] if len(vector) > 0 else 0,
+                    vector[1] if len(vector) > 1 else 0,
+                    vector[2] if len(vector) > 2 else 0,
+                )
             self.connection.move(vector, duration)
 
     @skill()
