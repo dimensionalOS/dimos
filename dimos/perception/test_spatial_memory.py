@@ -134,7 +134,7 @@ class TestSpatialMemory:
             results = []
 
             frames_processed = 0
-            target_frames = 100  # Process more frames for thorough testing
+            target_frames = 10000  # Process more frames for thorough testing
 
             def on_next(result):
                 nonlocal results, frames_processed
@@ -164,6 +164,9 @@ class TestSpatialMemory:
             start_time = time.time()
             while frames_processed < target_frames and time.time() - start_time < timeout:
                 time.sleep(0.5)
+
+            et = time.time()
+            print(f"Time taken (et - st) seconds")
 
             subscription.dispose()
 

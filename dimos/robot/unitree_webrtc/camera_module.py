@@ -17,6 +17,7 @@
 import time, contextlib
 import threading
 from typing import List, Optional
+from collections import deque
 
 import cv2
 import numpy as np
@@ -108,6 +109,9 @@ class UnitreeCameraModule(Module):
         self.slot = None  # attached reader for MRP
         self._multirateprocessor: Optional[MultiRateProcessor] = None
 
+        self._depth_pipeline_timestamps = deque(maxlen=60)
+        self._fps_depth = 0.0
+
         # Threading
         self._processing_thread: Optional[threading.Thread] = None
         self._stop_processing = threading.Event()
@@ -183,6 +187,8 @@ class UnitreeCameraModule(Module):
             return
 
         try:
+            arrival_time = time.time()
+            logger.info(f"Frame IN at {arrival_time:.6f}")
             if self._source is None:
                 # First frame → initialize SourceActor (owner of channel)
                 shape = tuple(msg.data.shape)  # (H, W, C) expected
@@ -208,7 +214,7 @@ class UnitreeCameraModule(Module):
                     channel=self.slot,
                     target_fps_by_model={"depth": 15},
                     handlers={"depth": self._process_depth},
-                    max_age_s=0.25,
+                    max_age_s=0.1,
                 )
                 self._multirateprocessor.start()
 
@@ -248,19 +254,27 @@ class UnitreeCameraModule(Module):
     def _process_depth(self, img_array: np.ndarray, meta=None):
         """Process depth estimation using Metric3D (CPU/GPU handled inside the model)."""
         try:
-            start = time.time()
+            frame_start = time.time()
+            logger.info(f"Frame PROCESS START {frame_start:.6f}")
+
             depth_array = self.metric3d.infer_depth(img_array) / self.gt_depth_scale
             self._last_depth = depth_array
-            end = time.time()
-            logger.info(
-                f"self._last_depth returned. Time: {end}. Time taken: {end - start:.4f} seconds"
-            )
-            start = time.time()
+
+            logger.info(f"Frame PROCESS END {time.time():.6f}")
+
             self._publish_synchronized_data()
-            end = time.time()
-            logger.info(
-                f"publish_synchronized_data called. Time: {end}. Time taken: {end - start:.4f} seconds"
-            )
+            frame_end = time.time()
+            logger.info(f"Frame COMPLETE latency={(frame_end - frame_start)*1000:.1f} ms")
+
+            # --- FPS counter over sliding window ---
+            now = time.time()
+            self._depth_pipeline_timestamps.append(now)
+            if len(self._depth_pipeline_timestamps) >= 2:
+                elapsed = self._depth_pipeline_timestamps[-1] - self._depth_pipeline_timestamps[0]
+                if elapsed > 0:
+                    self._pipeline_fps = (len(self._depth_pipeline_timestamps) - 1) / elapsed
+                    logger.info(f"End-to-end FPS: {self._pipeline_fps:.2f}")
+
         except Exception as e:
             logger.error(f"Error processing depth: {e}", exc_info=True)
 
@@ -315,6 +329,8 @@ class UnitreeCameraModule(Module):
             # Camera info & pose
             self._publish_camera_info(header)
             self._publish_camera_pose(header)
+            publish_done = time.time()
+            logger.info(f"Frame OUT at {publish_done:.6f}")
 
         except Exception as e:
             logger.error(f"Error publishing synchronized data: {e}", exc_info=True)
