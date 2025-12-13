@@ -559,7 +559,7 @@ class TestDroneFullIntegration(unittest.TestCase):
         # Verify cleanup was called
         mock_connection.stop.assert_called_once()
         mock_camera.stop.assert_called_once()
-        self.mock_dimos.shutdown.assert_called_once()
+        self.mock_dimos.close_all.assert_called_once()
 
 
 class TestDroneControlCommands(unittest.TestCase):
