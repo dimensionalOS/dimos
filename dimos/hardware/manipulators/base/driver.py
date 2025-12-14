@@ -100,6 +100,7 @@ class BaseManipulatorDriver(Module):
 
         # RPC registry
         self.rpc_methods = {}
+        self._exposed_component_apis: set[str] = set()  # Track auto-exposed method names
 
         # Capabilities
         self.capabilities = self._get_capabilities()
@@ -111,8 +112,8 @@ class BaseManipulatorDriver(Module):
         # Initialize components with shared resources
         self._initialize_components()
 
-        # Register RPC methods from components
-        self._register_component_rpc_methods()
+        # Auto-expose component API methods as RPCs on the driver
+        self._auto_expose_component_apis()
 
         # Connect to hardware
         self._connect()
@@ -168,16 +169,75 @@ class BaseManipulatorDriver(Module):
             if hasattr(component, "initialize"):
                 component.initialize()
 
-    def _register_component_rpc_methods(self):
-        """Register RPC methods from all components."""
+    def _auto_expose_component_apis(self):
+        """Auto-expose @component_api methods from components as RPC methods on the driver.
+
+        This scans all components for methods decorated with @component_api and creates
+        corresponding @rpc wrapper methods on the driver instance. This allows external
+        code to call these methods via the standard Module RPC system.
+
+        Example:
+            # Component defines:
+            @component_api
+            def enable_servo(self): ...
+
+            # Driver auto-generates an RPC wrapper, so external code can call:
+            driver.enable_servo()
+
+            # And the method is discoverable via:
+            driver.rpcs  # Lists 'enable_servo' among available RPCs
+        """
         for component in self.components:
-            # Find all methods starting with 'rpc_'
             for method_name in dir(component):
-                if method_name.startswith("rpc_"):
-                    method = getattr(component, method_name)
-                    if callable(method):
-                        self.rpc_methods[method_name] = method
-                        self.logger.debug(f"Registered RPC method: {method_name}")
+                if method_name.startswith("_"):
+                    continue
+
+                method = getattr(component, method_name, None)
+                if not callable(method) or not getattr(method, "__component_api__", False):
+                    continue
+
+                # Skip if driver already has a non-wrapper method with this name
+                existing = getattr(self, method_name, None)
+                if existing is not None and not getattr(
+                    existing, "__component_api_wrapper__", False
+                ):
+                    self.logger.warning(
+                        f"Driver already has method '{method_name}', skipping component API"
+                    )
+                    continue
+
+                # Create RPC wrapper - use factory to properly capture method reference
+                wrapper = self._create_component_api_wrapper(method)
+
+                # Attach to driver instance
+                setattr(self, method_name, wrapper)
+
+                # Store in rpc_methods dict for backward compatibility
+                self.rpc_methods[method_name] = wrapper
+
+                # Track exposed method name for cleanup
+                self._exposed_component_apis.add(method_name)
+
+                self.logger.debug(f"Exposed component API as RPC: {method_name}")
+
+    def _create_component_api_wrapper(self, component_method):
+        """Create an RPC wrapper for a component API method.
+
+        Args:
+            component_method: The component method to wrap
+
+        Returns:
+            RPC-decorated wrapper function
+        """
+        import functools
+
+        @rpc
+        @functools.wraps(component_method)
+        def wrapper(*args, **kwargs):
+            return component_method(*args, **kwargs)
+
+        wrapper.__component_api_wrapper__ = True
+        return wrapper
 
     def _connect(self):
         """Connect to the manipulator hardware."""
@@ -551,7 +611,7 @@ class BaseManipulatorDriver(Module):
         """
         self.components.append(component)
         self._initialize_components()
-        self._register_component_rpc_methods()
+        self._auto_expose_component_apis()
 
     def remove_component(self, component):
         """Remove a component at runtime.
@@ -561,6 +621,14 @@ class BaseManipulatorDriver(Module):
         """
         if component in self.components:
             self.components.remove(component)
-            # Re-register RPC methods
-            self.rpc_methods = {}
-            self._register_component_rpc_methods()
+            # Clean up old exposed methods and re-expose for remaining components
+            self._cleanup_exposed_component_apis()
+            self._auto_expose_component_apis()
+
+    def _cleanup_exposed_component_apis(self):
+        """Remove all auto-exposed component API methods from the driver."""
+        for method_name in self._exposed_component_apis:
+            if hasattr(self, method_name):
+                delattr(self, method_name)
+        self._exposed_component_apis.clear()
+        self.rpc_methods.clear()
