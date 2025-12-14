@@ -284,20 +284,20 @@ class Image(Timestamped):
     def sharpness(self) -> float:
         """
         Compute the Tenengrad focus measure for an image.
+        Returns a normalized value between 0 and 1, where 1 is sharpest.
         """
         grayscale = self.to_grayscale()
         # Sobel gradient computation in x and y directions
-        sx = cv2.Sobel(grayscale, cv2.CV_32F, 1, 0, ksize=5)
-        sy = cv2.Sobel(grayscale, cv2.CV_32F, 0, 1, ksize=5)
+        sx = cv2.Sobel(grayscale.data, cv2.CV_32F, 1, 0, ksize=5)
+        sy = cv2.Sobel(grayscale.data, cv2.CV_32F, 0, 1, ksize=5)
 
         # Compute gradient magnitude
         magnitude = cv2.magnitude(sx, sy)
 
-        # Normalize the gradient magnitude for visualization
-        magnitude_normalized = cv2.normalize(magnitude, None, 0, 255, cv2.NORM_MINMAX)
-
-        # Return the mean of the gradient magnitudes and the normalized image
-        return magnitude.mean()
+        # Return normalized mean (0-1 range)
+        # Max theoretical magnitude ~1442, but typically much lower
+        # Using 255 as practical upper bound for 8-bit images
+        return min(magnitude.mean() / 255.0, 1.0)
 
     def save(self, filepath: str) -> bool:
         """Save image to file."""
