@@ -190,7 +190,8 @@ class GraphLCMSpy(LCMSpy, GraphTopic):
     def graph_log(self) -> None:
         while not self.graph_log_stop_event.is_set():
             self.update_graphs(self.config.graph_log_window)  # type: ignore[attr-defined]  # Update global history
-            for topic in self.topic.values():  # type: ignore[call-arg]
+            # Copy to list to avoid RuntimeError: dictionary changed size during iteration
+            for topic in list(self.topic.values()):  # type: ignore[call-arg]
                 topic.update_graphs(self.config.graph_log_window)  # type: ignore[attr-defined]
             time.sleep(self.config.graph_log_window)  # type: ignore[attr-defined]
 
