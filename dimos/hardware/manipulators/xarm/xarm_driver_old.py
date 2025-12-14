@@ -55,7 +55,7 @@ from .components import (
     SystemControlComponent,
 )
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 @dataclass

@@ -52,7 +52,7 @@ from .components import (
     SystemControlComponent,
 )
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 # Unit conversion constants
 # Piper uses 0.001 degrees, we use radians

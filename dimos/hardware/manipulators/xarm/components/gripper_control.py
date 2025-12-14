@@ -25,7 +25,7 @@ Provides RPC methods for controlling various grippers:
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class GripperControlComponent:
