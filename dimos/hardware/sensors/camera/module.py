@@ -12,13 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
+from dataclasses import dataclass, field
 import queue
 import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Generic, Literal, Optional, Protocol, TypeVar
+from typing import Any, Generic, Literal, Optional, Protocol, TypeVar
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
@@ -26,26 +27,29 @@ from reactivex.observable import Observable
 from dimos.agents2 import Output, Reducer, Stream, skill
 from dimos.core import Module, Out, rpc
 from dimos.core.module import Module, ModuleConfig
-from dimos.hardware.camera.spec import (
+from dimos.hardware.sensors.camera.spec import (
     CameraHardware,
 )
-from dimos.hardware.camera.webcam import Webcam, WebcamConfig
+from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.spec import perception as spec
 
-default_transform = lambda: Transform(
-    translation=Vector3(0.0, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-)
+
+def default_transform():
+    return Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        frame_id="base_link",
+        child_frame_id="camera_link",
+    )
 
 
 @dataclass
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
-    transform: Optional[Transform] = field(default_factory=default_transform)
+    transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
 
 
@@ -54,9 +58,9 @@ class CameraModule(Module, spec.Camera):
     camera_info: Out[CameraInfo]
 
     hardware: CameraHardware = None
-    _module_subscription: Optional[Disposable] = None
-    _camera_info_subscription: Optional[Disposable] = None
-    _skill_stream: Optional[Observable[Image]] = None
+    _module_subscription: Disposable | None = None
+    _camera_info_subscription: Disposable | None = None
+    _skill_stream: Observable[Image] | None = None
 
     default_config = CameraModuleConfig
 
@@ -105,8 +109,7 @@ class CameraModule(Module, spec.Camera):
         _queue = queue.Queue(maxsize=1)
         self.hardware.image_stream().subscribe(_queue.put)
 
-        for image in iter(_queue.get, None):
-            yield image
+        yield from iter(_queue.get, None)
 
     def publish_info(self, camera_info: CameraInfo) -> None:
         self.camera_info.publish(camera_info)
