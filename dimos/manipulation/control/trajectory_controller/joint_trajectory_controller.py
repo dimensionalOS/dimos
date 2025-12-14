@@ -39,7 +39,7 @@ from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState, TrajectoryStatus
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 @dataclass

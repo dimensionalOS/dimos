@@ -25,7 +25,7 @@ Provides RPC methods for system-level control operations including:
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class SystemControlComponent:

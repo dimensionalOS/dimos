@@ -40,7 +40,7 @@ from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.simple_controller import PIDController
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 @dataclass
