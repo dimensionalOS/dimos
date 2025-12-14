@@ -109,6 +109,10 @@ class BaseManipulatorDriver(Module):
         self.control_rate = config.get("control_rate", 100)  # Hz - control loop + joint feedback
         self.monitor_rate = config.get("monitor_rate", 10)  # Hz - robot state monitoring
 
+        # Pre-allocate reusable objects (optimization: avoid per-cycle allocation)
+        # Note: _joint_names is populated after _get_capabilities() sets self.capabilities
+        self._joint_names: list[str] = [f"joint{i + 1}" for i in range(self.capabilities.dof)]
+
         # Initialize components with shared resources
         self._initialize_components()
 
@@ -274,7 +278,7 @@ class BaseManipulatorDriver(Module):
                 joint_state_msg = JointState(
                     ts=time.time(),
                     frame_id="joint-state",
-                    name=[f"joint{i + 1}" for i in range(self.capabilities.dof)],
+                    name=self._joint_names,  # Pre-allocated list (optimization)
                     position=positions or [0.0] * self.capabilities.dof,
                     velocity=velocities or [0.0] * self.capabilities.dof,
                     effort=efforts or [0.0] * self.capabilities.dof,
@@ -392,17 +396,17 @@ class BaseManipulatorDriver(Module):
         """
         self.logger.debug("Control loop thread started")
         period = 1.0 / self.control_rate
-        next_time = time.time() + period
+        next_time = time.perf_counter() + period  # perf_counter for precise timing
 
         while not self.stop_event.is_set():
             try:
-                # 1. Process command from queue (if available)
-                try:
-                    command = self.command_queue.get(timeout=0.001)
-                    self._process_command(command)
-                except Empty:
-                    # No command - that's fine, continue
-                    pass
+                # 1. Process all pending commands (non-blocking)
+                while True:
+                    try:
+                        command = self.command_queue.get_nowait()  # Non-blocking (optimization)
+                        self._process_command(command)
+                    except Empty:
+                        break  # No more commands
 
                 # 2. Read joint state feedback (critical for control)
                 self._update_joint_state()
@@ -412,12 +416,12 @@ class BaseManipulatorDriver(Module):
 
             # Rate control - maintain precise timing
             next_time += period
-            sleep_time = next_time - time.time()
+            sleep_time = next_time - time.perf_counter()
             if sleep_time > 0:
                 time.sleep(sleep_time)
             else:
                 # Fell behind - reset timing
-                next_time = time.time() + period
+                next_time = time.perf_counter() + period
                 if sleep_time < -period:
                     self.logger.warning(f"Control loop fell behind by {-sleep_time:.3f}s")
 
@@ -430,7 +434,7 @@ class BaseManipulatorDriver(Module):
         """
         self.logger.debug("Robot state monitor thread started")
         period = 1.0 / self.monitor_rate
-        next_time = time.time() + period
+        next_time = time.perf_counter() + period  # perf_counter for precise timing
 
         while not self.stop_event.is_set():
             try:
@@ -441,11 +445,11 @@ class BaseManipulatorDriver(Module):
 
             # Rate control
             next_time += period
-            sleep_time = next_time - time.time()
+            sleep_time = next_time - time.perf_counter()
             if sleep_time > 0:
                 time.sleep(sleep_time)
             else:
-                next_time = time.time() + period
+                next_time = time.perf_counter() + period
 
         self.logger.debug("Robot state monitor thread stopped")
 
