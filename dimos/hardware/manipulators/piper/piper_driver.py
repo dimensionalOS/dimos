@@ -94,7 +94,7 @@ class PiperDriver(BaseManipulatorDriver):
             logger.info("Enabling Piper servos on start...")
             servo_component = self.get_component(StandardServoComponent)
             if servo_component:
-                result = servo_component.rpc_enable_servo()
+                result = servo_component.enable_servo()
                 if result["success"]:
                     logger.info("Piper servos enabled successfully")
                 else:
