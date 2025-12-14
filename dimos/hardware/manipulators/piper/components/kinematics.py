@@ -22,7 +22,7 @@ Provides RPC methods for kinematic calculations including:
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class KinematicsComponent:
