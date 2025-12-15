@@ -49,11 +49,17 @@ def astar(
         case "general":
             return general_astar(costmap, goal, start)
         case "min_cost":
-            ret = min_cost_astar(costmap, goal, start, use_cpp=False)
-            import numpy as np
+            ret = min_cost_astar(costmap, goal, start, use_cpp=use_cpp)
+            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+            # import numpy as np
 
-            np.save("center_test.npy", costmap.grid)
-            visualize_occupancy_grid(costmap, "rainbow", ret).save("astar_min_cost_path.png")
+            # np.save("center_test.npy", costmap.grid)
+            # visualize_occupancy_grid(costmap, "rainbow", ret).save("astar_min_cost_path.png")
             return ret
         case _:
             raise NotImplementedError()

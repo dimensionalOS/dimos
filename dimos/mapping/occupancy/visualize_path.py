@@ -23,12 +23,16 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 
 
 def visualize_path(
-    occupancy_grid: OccupancyGrid, path: Path, robot_width: float, robot_length: float
+    occupancy_grid: OccupancyGrid,
+    path: Path,
+    robot_width: float,
+    robot_length: float,
+    thickness: int = 1,
+    scale: int = 8,
 ) -> Image:
     image = visualize_occupancy_grid(occupancy_grid, "rainbow")
     bgr = image.data
 
-    scale = 8
     bgr = cv2.resize(
         bgr,
         (bgr.shape[1] * scale, bgr.shape[0] * scale),
@@ -75,7 +79,7 @@ def visualize_path(
 
         # Draw the rotated rectangle
         pts = rotated_corners.astype(np.int32).reshape((-1, 1, 2))
-        cv2.polylines(bgr, [pts], isClosed=True, color=(0, 0, 0), thickness=1)
+        cv2.polylines(bgr, [pts], isClosed=True, color=(0, 0, 0), thickness=thickness)
 
     return Image(
         data=bgr,

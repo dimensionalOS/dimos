@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
+
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 
@@ -19,6 +21,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
 
@@ -33,6 +36,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     navigation_state: Out[String]
     cmd_vel: Out[Twist]
     path: Out[Path]
+    debug_navigation: Out[Image]
 
     _planner: GlobalPlanner
     _global_config: GlobalConfig
@@ -58,6 +62,11 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self._disposables.add(self._planner.path.subscribe(self.path.publish))
 
         self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
+
+        if "DEBUG_NAVIGATION" in os.environ:
+            self._disposables.add(
+                self._planner.debug_navigation.subscribe(self.debug_navigation.publish)
+            )
 
         self._planner.start()
 

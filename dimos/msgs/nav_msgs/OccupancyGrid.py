@@ -306,6 +306,3 @@ class OccupancyGrid(Timestamped):
         )
         instance.info = lcm_msg.info
         return instance
-
-    def gradient(self, obstacle_threshold: int = 50, max_distance: float = 2.0) -> OccupancyGrid:
-        pass
