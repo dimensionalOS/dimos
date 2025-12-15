@@ -35,6 +35,7 @@ PlannerState: TypeAlias = Literal["idle", "initial_rotation", "path_following", 
 
 class LocalPlanner(Resource):
     cmd_vel: Subject[Twist]
+    stopped_navigating: Subject[None]
 
     _thread: Thread | None = None
     _path: Path | None = None
@@ -54,6 +55,7 @@ class LocalPlanner(Resource):
 
     def __init__(self) -> None:
         self.cmd_vel = Subject()
+        self.stopped_navigating = Subject()
         self._lock = RLock()
         self._stop_planning_event = Event()
         self._state = "idle"
@@ -112,6 +114,7 @@ class LocalPlanner(Resource):
             elif state == "idle":
                 with self._lock:
                     self._goal_reached = True
+                    self.stopped_navigating.on_next(None)
                 break
 
             self.cmd_vel.on_next(cmd_vel)

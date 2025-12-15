@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from reactivex import Subject
+from reactivex.disposable import CompositeDisposable
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
@@ -40,18 +41,24 @@ class GlobalPlanner(Resource):
     _global_config: GlobalConfig
     _last_global_costmap_used: OccupancyGrid | None = None
     _current_navigation_map: OccupancyGrid | None = None
+    _disposables: CompositeDisposable
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
         self._local_planner = LocalPlanner()
         self._global_config = global_config
+        self._disposables = CompositeDisposable()
 
     def start(self) -> None:
         self._local_planner.start()
+        self._disposables.add(
+            self._local_planner.stopped_navigating.subscribe(self._on_stopped_navigating)
+        )
 
     def stop(self) -> None:
         self.cancel_goal()
         self._local_planner.stop()
+        self._disposables.dispose()
 
     def handle_odom(self, msg: PoseStamped) -> None:
         self._current_odom = msg
@@ -124,6 +131,9 @@ class GlobalPlanner(Resource):
 
     def is_goal_reached(self) -> bool:
         return self._local_planner.is_goal_reached()
+
+    def _on_stopped_navigating(self, _: None) -> None:
+        self.path.on_next(Path())
 
     @property
     def cmd_vel(self) -> Subject[Twist]:

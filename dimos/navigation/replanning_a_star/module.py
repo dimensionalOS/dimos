@@ -59,9 +59,12 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
         self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
 
+        self._planner.start()
+
     @rpc
     def stop(self) -> None:
         self.cancel_goal()
+        self._planner.stop()
 
         super().stop()
 
