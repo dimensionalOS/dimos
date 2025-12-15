@@ -304,3 +304,79 @@ def calculate_object_size_from_bbox(bbox, depth, camera_intrinsics):
     height_m = (height_px * depth) / fy
 
     return width_m, height_m
+
+
+def extract_centroids_from_bboxes(bboxes, depth_image, camera_intrinsics, percentile=25):
+    """
+    Extract 3D centroids from bounding boxes using depth data.
+
+    Similar to the bbox pose estimation in object_tracker.py, this function
+    calculates 3D positions in camera optical frame coordinates.
+
+    Args:
+        bboxes: List of bounding boxes in format [[x1, y1, x2, y2], ...]
+        depth_image: Depth image (H, W) in meters
+        camera_intrinsics: List [fx, fy, cx, cy] with camera parameters
+        percentile: Percentile to use for depth calculation (default: 25)
+
+    Returns:
+        List of dictionaries containing:
+            - 'bbox_idx': Index of the bbox
+            - 'centroid': [x, y, z] position in camera optical frame (meters)
+            - 'pixel_center': [cx, cy] center in pixel coordinates
+            - 'depth': Calculated depth value in meters
+    """
+    if camera_intrinsics is None or len(camera_intrinsics) != 4:
+        raise ValueError("Camera intrinsics required: [fx, fy, cx, cy]")
+
+    fx, fy, cx, cy = camera_intrinsics
+    results = []
+
+    for idx, bbox in enumerate(bboxes):
+        x1, y1, x2, y2 = map(int, bbox)
+
+        # Calculate pixel center
+        center_x = (x1 + x2) / 2.0
+        center_y = (y1 + y2) / 2.0
+
+        # Ensure bbox is within frame bounds
+        y1_clipped = max(0, y1)
+        y2_clipped = min(depth_image.shape[0], y2)
+        x1_clipped = max(0, x1)
+        x2_clipped = min(depth_image.shape[1], x2)
+
+        # Extract depth values from bbox region
+        roi_depth = depth_image[y1_clipped:y2_clipped, x1_clipped:x2_clipped]
+
+        # Get valid (finite and positive) depth values
+        valid_depths = roi_depth[np.isfinite(roi_depth) & (roi_depth > 0)]
+
+        if len(valid_depths) > 0:
+            # Use percentile for robust depth estimation (default: 25th percentile for closest points)
+            depth_value = float(np.percentile(valid_depths, percentile))
+
+            # Convert pixel coordinates to 3D in optical frame
+            z_optical = depth_value
+            x_optical = (center_x - cx) * z_optical / fx
+            y_optical = (center_y - cy) * z_optical / fy
+
+            results.append(
+                {
+                    "bbox_idx": idx,
+                    "centroid": [x_optical, y_optical, z_optical],
+                    "pixel_center": [center_x, center_y],
+                    "depth": depth_value,
+                }
+            )
+        else:
+            # No valid depth data for this bbox
+            results.append(
+                {
+                    "bbox_idx": idx,
+                    "centroid": None,
+                    "pixel_center": [center_x, center_y],
+                    "depth": None,
+                }
+            )
+
+    return results

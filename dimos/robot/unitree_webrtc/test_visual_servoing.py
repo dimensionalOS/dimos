@@ -181,16 +181,17 @@ def main():
         logger.info("Deploying Mobile Base PBVS module...")
         pbvs_module = robot.dimos.deploy(
             MobileBasePBVS,
-            position_gain=0.4,
-            rotation_gain=0.5,
+            position_gain=0.3,
+            rotation_gain=0.05,
             max_linear_velocity=0.6,
             max_angular_velocity=0.8,
             target_distance=1.2,
             target_tolerance=0.2,
             min_confidence=0.5,
             camera_frame_id="camera_link_optical",
-            base_frame_id="world",
-            tracking_loss_timeout=2.0,
+            track_frame_id="world",
+            base_frame_id="base_link",
+            tracking_loss_timeout=5.0,
         )
 
         # Configure input transports
@@ -201,6 +202,7 @@ def main():
         # Configure output transports
         pbvs_module.viz_image.transport = core.LCMTransport("/mobile_pbvs/viz", Image)
         pbvs_module.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+        pbvs_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
         pbvs_module.tracking_state.transport = core.LCMTransport("/mobile_pbvs/state", String)
         pbvs_module.detection3d_array.transport = core.LCMTransport(
             "/mobile_pbvs/detection3d", Detection3DArray
@@ -208,20 +210,6 @@ def main():
         pbvs_module.detection2d_array.transport = core.LCMTransport(
             "/mobile_pbvs/detection2d", Detection2DArray
         )
-
-        # Connect inputs to robot outputs
-        pbvs_module.rgb_image.connect(robot.connection.video)
-
-        # Connect to appropriate depth source based on robot configuration
-        if robot.use_metric3d_depth:
-            pbvs_module.depth_image.connect(robot.depth_module.depth_image)
-        else:
-            pbvs_module.depth_image.connect(robot.pointcloud_to_depth.depth_image)
-
-        pbvs_module.camera_info.connect(robot.connection.camera_info)
-
-        # Connect velocity commands to robot
-        robot.connection.movecmd.connect(pbvs_module.cmd_vel)
 
         # Start the PBVS module
         pbvs_module.start()
@@ -259,9 +247,9 @@ def main():
             # When tracking is active and viz is available, use viz; otherwise use RGB
             display_frame = None
             if viz_handler.tracking_active and viz_handler.latest_viz is not None:
-                display_frame = viz_handler.latest_viz.copy()
+                display_frame = cv2.cvtColor(viz_handler.latest_viz.copy(), cv2.COLOR_RGB2BGR)
             elif viz_handler.latest_rgb is not None:
-                display_frame = viz_handler.latest_rgb.copy()
+                display_frame = cv2.cvtColor(viz_handler.latest_rgb.copy(), cv2.COLOR_RGB2BGR)
             else:
                 time.sleep(0.03)
                 continue
