@@ -18,6 +18,7 @@ import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 import pytest
 
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -28,7 +29,7 @@ from dimos.utils.data import get_data
 
 @pytest.fixture
 def costmap() -> PointCloud:
-    return OccupancyGrid(np.load(get_data("occupancy_simple.npy"))).gradient(max_distance=1.5)
+    return gradient(OccupancyGrid(np.load(get_data("occupancy_simple.npy"))), max_distance=1.5)
 
 
 @pytest.mark.parametrize(

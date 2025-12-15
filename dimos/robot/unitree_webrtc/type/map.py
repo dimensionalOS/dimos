@@ -22,6 +22,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
@@ -108,12 +109,15 @@ class Map(Module):
         #################################################################################
         #################################################################################
         #################################################################################
-        local_costmap = general_occupancy(
-            frame,
-            resolution=self.cost_resolution,
-            min_height=0.15,
-            max_height=0.6,
-        ).gradient(max_distance=0.25)
+        local_costmap = gradient(
+            general_occupancy(
+                frame,
+                resolution=self.cost_resolution,
+                min_height=0.15,
+                max_height=0.6,
+            ),
+            max_distance=0.25,
+        )
 
         self.local_costmap.publish(local_costmap)
 

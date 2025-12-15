@@ -16,6 +16,7 @@ from collections import deque
 
 import numpy as np
 
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.msgs.geometry_msgs import Vector3, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 
@@ -386,8 +387,8 @@ def _find_safe_goal_gradient(
     # Create gradient if needed (assuming costmap might already be a gradient)
     if np.all((costmap.grid == 0) | (costmap.grid == 100) | (costmap.grid == -1)):
         # Binary map, create gradient
-        gradient_map = costmap.gradient(
-            obstacle_threshold=cost_threshold, max_distance=min_clearance * 2
+        gradient_map = gradient(
+            costmap, obstacle_threshold=cost_threshold, max_distance=min_clearance * 2
         )
         grid = gradient_map.grid
     else:

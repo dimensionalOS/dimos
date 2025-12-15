@@ -15,6 +15,7 @@
 import numpy as np
 import pytest
 
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.path_resampling import simple_resample_path, smooth_resample_path
 from dimos.mapping.occupancy.visualize_path import visualize_path
 from dimos.msgs.geometry_msgs import Pose
@@ -27,7 +28,7 @@ from dimos.utils.data import get_data
 
 @pytest.fixture
 def costmap() -> OccupancyGrid:
-    return OccupancyGrid(np.load(get_data("occupancy_simple.npy"))).gradient(max_distance=1.5)
+    return gradient(OccupancyGrid(np.load(get_data("occupancy_simple.npy"))), max_distance=1.5)
 
 
 @pytest.mark.parametrize("method", ["simple", "smooth"])

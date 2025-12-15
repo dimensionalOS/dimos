@@ -17,6 +17,7 @@ import cv2
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 import typer
 
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import simple_occupancy
 from dimos.mapping.pointclouds.util import (
@@ -77,7 +78,7 @@ def view_map() -> None:
 
 @app.command()
 def view_map_inflated() -> None:
-    og = _get_occupancy_grid().gradient(max_distance=1.5)
+    og = gradient(_get_occupancy_grid(), max_distance=1.5)
     _show_occupancy_grid(og)
 
 

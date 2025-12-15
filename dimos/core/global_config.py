@@ -37,9 +37,9 @@ class GlobalConfig(BaseSettings):
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
     robot_model: str | None = None
-    robot_width: float = 0.4
+    robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
-    planner_strategy: NavigationStrategy = "mixed"
+    planner_strategy: NavigationStrategy = "simple"
     astar_algorithm: AStarAlgorithm = "min_cost"
     planner_robot_speed: float | None = None
 
