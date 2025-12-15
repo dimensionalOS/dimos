@@ -25,7 +25,6 @@ from dimos_lcm.nav_msgs import (  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
 import numpy as np
 from PIL import Image
-from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped

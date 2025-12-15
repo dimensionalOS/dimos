@@ -85,8 +85,6 @@ test_new_nav = (
         go2_connection(),
         mapper(voxel_size=0.5, global_publish_interval=2.5),
         replanning_a_star_planner(),
-        # astar_planner(),
-        # simple_planner(),
         wavefront_frontier_explorer(),
         websocket_vis(),
         foxglove_bridge(),
