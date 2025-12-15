@@ -185,7 +185,47 @@ def make_reducer(simple_reducer: SimpleReducerF) -> ReducerF:
 
 
 # just a convinience class to hold reducer functions
+def _make_skill_msg(
+    msg: SkillMsg[Literal[MsgType.stream]], content: Any
+) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+    """Helper to create a reduced stream message with new content."""
+    return SkillMsg(
+        call_id=msg.call_id,
+        skill_name=msg.skill_name,
+        content=content,
+        type=MsgType.reduced_stream,
+    )
+
+
+def sum_reducer(
+    accumulator: Optional[SkillMsg[Literal[MsgType.reduced_stream]]],
+    msg: SkillMsg[Literal[MsgType.stream]],
+) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+    """Sum reducer that adds values together."""
+    acc_value = accumulator.content if accumulator else None
+    new_value = acc_value + msg.content if acc_value else msg.content
+    return _make_skill_msg(msg, new_value)
+
+
+def latest_reducer(
+    accumulator: Optional[SkillMsg[Literal[MsgType.reduced_stream]]],
+    msg: SkillMsg[Literal[MsgType.stream]],
+) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+    """Latest reducer that keeps only the most recent value."""
+    return _make_skill_msg(msg, msg.content)
+
+
+def all_reducer(
+    accumulator: Optional[SkillMsg[Literal[MsgType.reduced_stream]]],
+    msg: SkillMsg[Literal[MsgType.stream]],
+) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+    """All reducer that collects all values into a list."""
+    acc_value = accumulator.content if accumulator else None
+    new_value = acc_value + [msg.content] if acc_value else [msg.content]
+    return _make_skill_msg(msg, new_value)
+
+
 class Reducer:
-    sum = make_reducer(lambda x, y: x + y if x else y)
-    latest = make_reducer(lambda x, y: y)
-    all = make_reducer(lambda x, y: x + [y] if x else [y])
+    sum = sum_reducer
+    latest = latest_reducer
+    all = all_reducer
