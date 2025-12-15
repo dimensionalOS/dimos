@@ -14,7 +14,7 @@
 
 from typing import Literal, TypeAlias
 
-from dimos.mapping.occupancy.inflation import simple_inflate, voronoi_inflate
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.operations import overlay_occupied, smooth_occupied
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
@@ -30,11 +30,9 @@ def make_navigation_map(
     if strategy == "simple":
         costmap = simple_inflate(occupancy_grid, half_width)
     elif strategy == "mixed":
-        simple_inflate_ammount = 0.1
         costmap = smooth_occupied(occupancy_grid)
-        costmap = simple_inflate(costmap, simple_inflate_ammount)
+        costmap = simple_inflate(costmap, half_width)
         costmap = overlay_occupied(costmap, occupancy_grid)
-        costmap = voronoi_inflate(costmap, half_width - simple_inflate_ammount)
     else:
         raise ValueError(f"Unknown strategy: {strategy}")
 

@@ -16,24 +16,16 @@
 
 import cv2
 import numpy as np
-import pytest
 
-from dimos.mapping.occupancy.inflation import simple_inflate, voronoi_inflate
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.utils.data import get_data
 
 
-@pytest.mark.parametrize("method", ["simple", "voronoi"])
-def test_inflation(occupancy, method) -> None:
-    expected = cv2.imread(get_data(f"inflation_{method}.png"), cv2.IMREAD_COLOR)
+def test_inflation(occupancy) -> None:
+    expected = cv2.imread(get_data("inflation_simple.png"), cv2.IMREAD_COLOR)
 
-    match method:
-        case "simple":
-            og = simple_inflate(occupancy, 0.2)
-        case "voronoi":
-            og = voronoi_inflate(occupancy, 0.2)
-        case _:
-            raise ValueError(f"Unknown inflation method: {method}")
+    og = simple_inflate(occupancy, 0.2)
 
     result = visualize_occupancy_grid(og, "rainbow")
     np.testing.assert_array_equal(result.data, expected)
