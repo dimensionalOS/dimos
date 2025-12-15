@@ -16,7 +16,8 @@ import asyncio
 import functools
 import threading
 import time
-from typing import Literal, TypeAlias
+from dataclasses import dataclass
+from typing import Literal, Optional, TypeAlias
 
 import numpy as np
 from aiortc import MediaStreamTrack
@@ -38,6 +39,34 @@ from dimos.robot.unitree_webrtc.type.odometry import Odometry
 from dimos.utils.reactive import backpressure, callback_to_observable
 
 VideoMessage: TypeAlias = np.ndarray[tuple[int, int, Literal[3]], np.uint8]
+
+
+@dataclass
+class SerializableVideoFrame:
+    """Pickleable wrapper for av.VideoFrame with all metadata"""
+
+    data: np.ndarray
+    pts: Optional[int] = None
+    time: Optional[float] = None
+    dts: Optional[int] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    format: Optional[str] = None
+
+    @classmethod
+    def from_av_frame(cls, frame):
+        return cls(
+            data=frame.to_ndarray(format="rgb24"),
+            pts=frame.pts,
+            time=frame.time,
+            dts=frame.dts,
+            width=frame.width,
+            height=frame.height,
+            format=frame.format.name if hasattr(frame, "format") and frame.format else None,
+        )
+
+    def to_ndarray(self, format=None):
+        return self.data
 
 
 class UnitreeWebRTCConnection:
@@ -237,7 +266,8 @@ class UnitreeWebRTCConnection:
                 if stop_event.is_set():
                     return
                 frame = await track.recv()
-                subject.on_next(frame)
+                serializable_frame = SerializableVideoFrame.from_av_frame(frame)
+                subject.on_next(serializable_frame)
 
         self.conn.video.add_track_callback(accept_track)
 
@@ -247,7 +277,7 @@ class UnitreeWebRTCConnection:
 
         self.loop.call_soon_threadsafe(switch_video_channel)
 
-        def stop(cb):
+        def stop():
             stop_event.set()  # Signal the loop to stop
             self.conn.video.track_callbacks.remove(accept_track)
 
