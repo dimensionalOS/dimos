@@ -16,7 +16,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from ..base.sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 
@@ -32,17 +32,17 @@ class PiperSDKWrapper(BaseManipulatorSDK):
     to our standard interface (0-indexed).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the Piper SDK wrapper."""
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.native_sdk = None
+        self.native_sdk: Any = None
         self.dof = 6  # Piper is always 6-DOF
         self._connected = False
         self._enabled = False
 
     # ============= Connection Management =============
 
-    def connect(self, config: dict) -> bool:
+    def connect(self, config: dict[str, Any]) -> bool:
         """Connect to Piper via CAN bus.
 
         Args:
@@ -347,7 +347,7 @@ class PiperSDKWrapper(BaseManipulatorSDK):
 
     # ============= System State =============
 
-    def get_robot_state(self) -> dict:
+    def get_robot_state(self) -> dict[str, Any]:
         """Get current robot state.
 
         Returns:
@@ -402,7 +402,7 @@ class PiperSDKWrapper(BaseManipulatorSDK):
         """
         status = self.native_sdk.GetArmStatus()
         if status and hasattr(status, "error_code"):
-            return status.error_code
+            return int(status.error_code)
         return 0
 
     def get_error_message(self) -> str:
@@ -513,7 +513,7 @@ class PiperSDKWrapper(BaseManipulatorSDK):
 
     # ============= Optional Methods =============
 
-    def get_cartesian_position(self) -> dict | None:
+    def get_cartesian_position(self) -> dict[str, float] | None:
         """Get current end-effector pose.
 
         Returns:
@@ -533,7 +533,11 @@ class PiperSDKWrapper(BaseManipulatorSDK):
         return None
 
     def set_cartesian_position(
-        self, pose: dict, velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
+        self,
+        pose: dict[str, float],
+        velocity: float = 1.0,
+        acceleration: float = 1.0,
+        wait: bool = False,
     ) -> bool:
         """Move end-effector to target pose.
 
@@ -600,7 +604,7 @@ class PiperSDKWrapper(BaseManipulatorSDK):
             if state:
                 # Piper gripper position is 0-100 (percentage)
                 # Convert to meters (assume max opening 0.08m)
-                return (state / 100.0) * 0.08
+                return float(state / 100.0) * 0.08
         return None
 
     def set_gripper_position(self, position: float, force: float = 1.0) -> bool:

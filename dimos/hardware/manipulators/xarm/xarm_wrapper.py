@@ -16,7 +16,7 @@
 
 import logging
 import math
-from typing import Optional
+from typing import Any, Optional
 
 from ..base.sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 
@@ -28,16 +28,16 @@ class XArmSDKWrapper(BaseManipulatorSDK):
     to our standard interface (radians and meters).
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the XArm SDK wrapper."""
         self.logger = logging.getLogger(self.__class__.__name__)
-        self.native_sdk = None
+        self.native_sdk: Any = None
         self.dof = 7  # Default, will be updated on connect
         self._connected = False
 
     # ============= Connection Management =============
 
-    def connect(self, config: dict) -> bool:
+    def connect(self, config: dict[str, Any]) -> bool:
         """Connect to XArm controller.
 
         Args:
@@ -144,7 +144,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         if hasattr(self.native_sdk, "get_joint_torques"):
             code, torques = self.native_sdk.get_joint_torques()
             if code == 0:
-                return torques[: self.dof]
+                return list(torques[: self.dof])
 
         # Return zeros if not available
         return [0.0] * self.dof
@@ -177,7 +177,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         # Requires mode 1 (servo mode) and executes only the last instruction
         code = self.native_sdk.set_servo_angle_j(degrees, speed=100, mvacc=500, wait=False)
 
-        return code == 0
+        return bool(code == 0)
 
     def set_joint_velocities(self, velocities: list[float]) -> bool:
         """Set joint velocity targets.
@@ -202,7 +202,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
 
         # Send velocity command
         code = self.native_sdk.vc_set_joint_velocity(deg_velocities)
-        return code == 0
+        return bool(code == 0)
 
     def set_joint_efforts(self, efforts: list[float]) -> bool:
         """Set joint effort/torque targets.
@@ -220,7 +220,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
 
         # Send torque command
         code = self.native_sdk.set_joint_torque(efforts)
-        return code == 0
+        return bool(code == 0)
 
     def stop_motion(self) -> bool:
         """Stop all ongoing motion.
@@ -236,7 +236,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             self.native_sdk.set_state(0)  # Clear stop state
             self.native_sdk.motion_enable(True)
 
-        return code == 0
+        return bool(code == 0)
 
     # ============= Servo Control =============
 
@@ -249,7 +249,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         code1 = self.native_sdk.motion_enable(True)
         code2 = self.native_sdk.set_state(0)  # Ready state
         code3 = self.native_sdk.set_mode(1)  # Servo mode
-        return code1 == 0 and code2 == 0 and code3 == 0
+        return bool(code1 == 0 and code2 == 0 and code3 == 0)
 
     def disable_servos(self) -> bool:
         """Disable motor control.
@@ -258,7 +258,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if servos disabled
         """
         code = self.native_sdk.motion_enable(False)
-        return code == 0
+        return bool(code == 0)
 
     def are_servos_enabled(self) -> bool:
         """Check if servos are enabled.
@@ -267,11 +267,11 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if enabled
         """
         # Check motor state
-        return self.native_sdk.mode == 1 and self.native_sdk.mode != 4
+        return bool(self.native_sdk.mode == 1 and self.native_sdk.mode != 4)
 
     # ============= System State =============
 
-    def get_robot_state(self) -> dict:
+    def get_robot_state(self) -> dict[str, Any]:
         """Get current robot state.
 
         Returns:
@@ -292,7 +292,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         Returns:
             Error code (0 = no error)
         """
-        return self.native_sdk.error_code
+        return int(self.native_sdk.error_code)
 
     def get_error_message(self) -> str:
         """Get human-readable error message.
@@ -340,7 +340,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         if code == 0:
             # Reset to ready state
             self.native_sdk.set_state(0)
-        return code == 0
+        return bool(code == 0)
 
     def emergency_stop(self) -> bool:
         """Execute emergency stop.
@@ -349,7 +349,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if e-stop executed
         """
         code = self.native_sdk.emergency_stop()
-        return code == 0
+        return bool(code == 0)
 
     # ============= Information =============
 
@@ -418,7 +418,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
 
     # ============= Optional Methods =============
 
-    def get_cartesian_position(self) -> dict | None:
+    def get_cartesian_position(self) -> dict[str, float] | None:
         """Get current end-effector pose.
 
         Returns:
@@ -439,7 +439,11 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         }
 
     def set_cartesian_position(
-        self, pose: dict, velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
+        self,
+        pose: dict[str, float],
+        velocity: float = 1.0,
+        acceleration: float = 1.0,
+        wait: bool = False,
     ) -> bool:
         """Move end-effector to target pose.
 
@@ -472,7 +476,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
 
         code = self.native_sdk.set_position(xarm_pose, radius=-1, speed=speed, mvacc=acc, wait=wait)
 
-        return code == 0
+        return bool(code == 0)
 
     def get_force_torque(self) -> list[float] | None:
         """Get F/T sensor reading.
@@ -483,7 +487,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         if hasattr(self.native_sdk, "get_ft_sensor_data"):
             code, ft_data = self.native_sdk.get_ft_sensor_data()
             if code == 0:
-                return ft_data
+                return list(ft_data)
         return None
 
     def zero_force_torque(self) -> bool:
@@ -494,7 +498,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         """
         if hasattr(self.native_sdk, "set_ft_sensor_zero"):
             code = self.native_sdk.set_ft_sensor_zero()
-            return code == 0
+            return bool(code == 0)
         return False
 
     def get_gripper_position(self) -> float | None:
@@ -507,7 +511,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             code, pos = self.native_sdk.get_gripper_position()
             if code == 0:
                 # Convert mm to meters
-                return pos / 1000.0
+                return float(pos / 1000.0)
         return None
 
     def set_gripper_position(self, position: float, force: float = 1.0) -> bool:
@@ -524,7 +528,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             # Convert meters to mm
             pos_mm = position * 1000.0
             code = self.native_sdk.set_gripper_position(pos_mm, wait=False)
-            return code == 0
+            return bool(code == 0)
         return False
 
     def set_control_mode(self, mode: str) -> bool:
@@ -547,7 +551,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             return False
 
         code = self.native_sdk.set_mode(mode_map[mode])
-        return code == 0
+        return bool(code == 0)
 
     def get_control_mode(self) -> str | None:
         """Get current control mode.

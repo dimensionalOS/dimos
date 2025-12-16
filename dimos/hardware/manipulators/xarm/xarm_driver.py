@@ -15,6 +15,7 @@
 """XArm driver using the generalized component-based architecture."""
 
 import logging
+from typing import Any
 
 from dimos.hardware.manipulators.base import (
     BaseManipulatorDriver,
@@ -36,11 +37,11 @@ class XArmDriver(BaseManipulatorDriver):
     This file just assembles the pieces.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the XArm driver.
 
         Args:
-            *args, **kwargs: Arguments for Module initialization.
+            **kwargs: Arguments for Module initialization.
                 Driver configuration can be passed via 'config' keyword arg:
                 - ip: IP address of the XArm controller
                 - dof: Degrees of freedom (5, 6, or 7)
@@ -48,7 +49,7 @@ class XArmDriver(BaseManipulatorDriver):
                 - has_force_torque: Whether F/T sensor is attached
         """
         # Extract driver-specific config from kwargs
-        config = kwargs.pop("config", {})
+        config: dict[str, Any] = kwargs.pop("config", {})
 
         # Extract driver-specific params that might be passed directly
         driver_params = [
@@ -85,16 +86,19 @@ class XArmDriver(BaseManipulatorDriver):
         #     from dimos.hardware.manipulators.base.components import StandardForceTorqueComponent
         #     components.append(StandardForceTorqueComponent(sdk))
 
+        # Remove any kwargs that would conflict with explicit arguments
+        kwargs.pop("sdk", None)
+        kwargs.pop("components", None)
+        kwargs.pop("name", None)
+
         # Initialize base driver with SDK and components
-        super().__init__(
-            sdk=sdk, components=components, config=config, name="XArmDriver", *args, **kwargs
-        )
+        super().__init__(sdk=sdk, components=components, config=config, name="XArmDriver", **kwargs)
 
         logger.info("XArmDriver initialized successfully")
 
 
 # Blueprint configuration for the driver
-def get_blueprint():
+def get_blueprint() -> dict[str, Any]:
     """Get the blueprint configuration for the XArm driver.
 
     Returns:
