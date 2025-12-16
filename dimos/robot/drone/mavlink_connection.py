@@ -282,7 +282,7 @@ class MavlinkConnection:
         # MAVLink body frame velocities
         forward = velocity.y  # Forward/backward
         right = velocity.x  # Left/right
-        down = -velocity.z  # Up/down (negative for up)
+        down = velocity.z  # Up/down (negative for DOWN, positive for UP)
 
         logger.debug(f"Moving: forward={forward}, right={right}, down={down}")
 
