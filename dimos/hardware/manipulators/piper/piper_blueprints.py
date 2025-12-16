@@ -30,17 +30,23 @@ Usage:
     coordinator.loop()
 """
 
+from typing import Any
+
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.manipulators.piper.piper_driver import piper_driver as piper_driver_blueprint
 from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
+    JointCommand,
+    JointState,
+    RobotState,
+)
 from dimos.msgs.trajectory_msgs import JointTrajectory
 
 
 # Create a blueprint wrapper for the component-based driver
-def piper_driver(**config):
+def piper_driver(**config: Any) -> Any:
     """Create a blueprint for PiperDriver.
 
     Args:
