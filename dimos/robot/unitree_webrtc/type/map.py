@@ -134,21 +134,16 @@ class Map(Module):
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":  # type: ignore[return]
         """Voxelise *frame* and splice it into the running map."""
-        # Properly voxelize the new frame using VoxelGrid
-        # if self.first_frame:
-        #     self.pointcloud = self._voxelize_pointcloud(frame.pointcloud)
-        #     self.first_frame = False
-        #     return self
-        
+        #  voxelize the new frame
         new_pct = self._voxelize_pointcloud(frame.pointcloud)
 
-        # Skip for empty pointclouds.
+        # skip if the new pointcloud is empty
         if len(new_pct.points) == 0:
             return self
 
-        # Splice the new voxelized frame into the existing map
+        # splice the new voxelized frame into the existing map
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
-        # Re-voxelize the accumulated map to ensure all points are at voxel centers
+        # re-voxelize the accumulated map to ensure all points are at voxel centers
         # and remove any duplicates that may have been introduced during splicing
         self.pointcloud = self._voxelize_pointcloud(self.pointcloud)
         local_costmap = OccupancyGrid.from_pointcloud(
