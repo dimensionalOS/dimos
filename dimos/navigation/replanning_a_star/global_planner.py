@@ -123,14 +123,16 @@ class GlobalPlanner(Resource):
             logger.warning("No safe goal found near requested target")
             return
 
-        logger.info("Found safe goal", x=safe_goal.x, y=safe_goal.y)
+        logger.info("Found safe goal", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
         robot_pos = self._current_odom.position
         costmap = self._navigation_map.gradient_costmap
         path = astar(self._global_config.astar_algorithm, costmap, safe_goal, robot_pos)
 
         if not path:
-            logger.warning("No path found to the goal.", x=safe_goal.x, y=safe_goal.y)
+            logger.warning(
+                "No path found to the goal.", x=round(safe_goal.x, 3), y=round(safe_goal.y, 3)
+            )
             return
 
         resampled_path = smooth_resample_path(path, goal, 0.1)

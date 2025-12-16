@@ -206,7 +206,9 @@ class WebsocketVisModule(Module):
                 frame_id="world",
             )
             self.goal_request.publish(goal)
-            logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
+            logger.info(
+                "Click goal published", x=round(goal.position.x, 3), y=round(goal.position.y, 3)
+            )
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def gps_goal(sid, goal) -> None:  # type: ignore[no-untyped-def]

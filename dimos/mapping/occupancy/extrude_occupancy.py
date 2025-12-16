@@ -228,7 +228,7 @@ def generate_mujoco_scene(
 
     xml_lines.append("  </worldbody>")
     xml_lines.append('  <statistic center="1 -0.8 1.1" extent=".35"/>')
-    xml_lines.append("</mujoco>")
+    xml_lines.append("</mujoco>\n")
 
     xml_content = "\n".join(xml_lines)
 

@@ -59,7 +59,7 @@ class PathClearance:
             and self._last_used_pose is not None
             and self._costmap.grid.shape == self._last_used_shape
             and self._pose_distance(self._last_used_pose, self._pose_index)
-            > self._max_distance_cache
+            < self._max_distance_cache
         ):
             return self._last_mask
 
@@ -67,7 +67,7 @@ class PathClearance:
             occupancy_grid=self._costmap,
             path=self._path,
             robot_width=self._global_config.robot_width,
-            pose_index=0,
+            pose_index=self._pose_index,
             max_length=self._path_lookup_distance,
         )
 

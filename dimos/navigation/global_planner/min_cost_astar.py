@@ -16,6 +16,7 @@ import heapq
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid, Path
+from dimos.utils.logging_config import setup_logger
 
 # Try to import C++ extension for faster pathfinding
 try:
@@ -26,6 +27,8 @@ try:
     _USE_CPP = True
 except ImportError:
     _USE_CPP = False
+
+logger = setup_logger()
 
 # Define possible movements (8-connected grid with diagonal movements)
 _directions = [
@@ -133,19 +136,22 @@ def min_cost_astar(
     if not (0 <= goal_tuple[0] < costmap.width and 0 <= goal_tuple[1] < costmap.height):
         return None
 
-    if use_cpp and _USE_CPP:
-        path_coords = _astar_cpp(
-            costmap.grid,
-            start_tuple[0],
-            start_tuple[1],
-            goal_tuple[0],
-            goal_tuple[1],
-            cost_threshold,
-            unknown_penalty,
-        )
-        if not path_coords:
-            return None
-        return _reconstruct_path_from_coords(path_coords, costmap)
+    if use_cpp:
+        if _USE_CPP:
+            path_coords = _astar_cpp(
+                costmap.grid,
+                start_tuple[0],
+                start_tuple[1],
+                goal_tuple[0],
+                goal_tuple[1],
+                cost_threshold,
+                unknown_penalty,
+            )
+            if not path_coords:
+                return None
+            return _reconstruct_path_from_coords(path_coords, costmap)
+        else:
+            logger.warning("C++ A* module could not be imported. Using Python.")
 
     open_set: list[tuple[float, float, tuple[int, int]]] = []  # Priority queue for nodes to explore
     closed_set: set[tuple[int, int]] = set()  # Set of explored nodes

@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.msgs.geometry_msgs import VectorLike
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -49,17 +48,6 @@ def astar(
         case "general":
             return general_astar(costmap, goal, start)
         case "min_cost":
-            ret = min_cost_astar(costmap, goal, start, use_cpp=use_cpp)
-            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            # TODO: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
-            # import numpy as np
-
-            # np.save("center_test.npy", costmap.grid)
-            # visualize_occupancy_grid(costmap, "rainbow", ret).save("astar_min_cost_path.png")
-            return ret
+            return min_cost_astar(costmap, goal, start, use_cpp=use_cpp)
         case _:
             raise NotImplementedError()

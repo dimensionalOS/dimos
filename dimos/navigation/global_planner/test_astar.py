@@ -18,7 +18,7 @@ import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 import pytest
 
-from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient
 from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
@@ -32,6 +32,11 @@ def costmap() -> PointCloud:
     return gradient(OccupancyGrid(np.load(get_data("occupancy_simple.npy"))), max_distance=1.5)
 
 
+@pytest.fixture
+def costmap_three_paths() -> PointCloud:
+    return voronoi_gradient(OccupancyGrid(np.load(get_data("three_paths.npy"))), max_distance=1.5)
+
+
 @pytest.mark.parametrize(
     "mode,expected_image",
     [
@@ -40,12 +45,30 @@ def costmap() -> PointCloud:
     ],
 )
 def test_astar(costmap, mode, expected_image) -> None:
-    start = Vector3(4.0, 2.0, 0)
+    start = Vector3(4.0, 2.0)
     goal = Vector3(6.15, 10.0)
     expected = Image.from_file(get_data(expected_image))
 
     path = astar(mode, costmap, goal, start, use_cpp=False)
     actual = visualize_occupancy_grid(costmap, "rainbow", path)
+
+    np.testing.assert_array_equal(actual.data, expected.data)
+
+
+@pytest.mark.parametrize(
+    "mode,expected_image",
+    [
+        ("general", "astar_corner_general.png"),
+        ("min_cost", "astar_corner_min_cost.png"),
+    ],
+)
+def test_astar_corner(costmap_three_paths, mode, expected_image) -> None:
+    start = Vector3(2.8, 3.35)
+    goal = Vector3(6.35, 4.25)
+    expected = Image.from_file(get_data(expected_image))
+
+    path = astar(mode, costmap_three_paths, goal, start, use_cpp=False)
+    actual = visualize_occupancy_grid(costmap_three_paths, "rainbow", path)
 
     np.testing.assert_array_equal(actual.data, expected.data)
 
