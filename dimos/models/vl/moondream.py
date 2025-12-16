@@ -26,16 +26,10 @@ class MoondreamConfig(HuggingFaceModelConfig):
     auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
 
 
-class MoondreamVlModel(VlModel, HuggingFaceModel):
+class MoondreamVlModel(HuggingFaceModel, VlModel):
     _model_class = AutoModelForCausalLM
     default_config = MoondreamConfig  # type: ignore[assignment]
     config: MoondreamConfig  # type: ignore[assignment]
-
-    def stop(self) -> None:
-        """Release model and free GPU memory."""
-        # Call LocalModel.stop() which handles _model cleanup and cuda cache
-        HuggingFaceModel.stop(self)
-        VLModel.stop(self)
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:

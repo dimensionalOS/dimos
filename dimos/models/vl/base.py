@@ -187,10 +187,6 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         except Exception:
             pass
 
-    def stop(self) -> None:
-        """Stop the model (Resource interface). Override in subclasses for cleanup."""
-        pass
-
     # requery once if JSON parsing fails
     @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[misc, untyped-decorator]
     def query_json(self, image: Image, query: str) -> dict:  # type: ignore[type-arg]
@@ -225,7 +221,11 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
 
         for track_id, detection_tuple in enumerate(detection_tuples):
             # Scale coordinates back to original image size if resized
-            if scale != 1.0 and isinstance(detection_tuple, (list, tuple)) and len(detection_tuple) == 5:
+            if (
+                scale != 1.0
+                and isinstance(detection_tuple, (list, tuple))
+                and len(detection_tuple) == 5
+            ):
                 detection_tuple = [
                     detection_tuple[0],  # label
                     detection_tuple[1] / scale,  # x1

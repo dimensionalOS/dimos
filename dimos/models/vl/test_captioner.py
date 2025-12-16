@@ -27,21 +27,21 @@ def test_image() -> Image:
     return Image.from_file(get_data("cafe.jpg")).to_rgb()
 
 
-def model_fixture(model_type: type[M]) -> Generator[M, None, None]:
-    model = model_type()
-    model.start()
-    yield model
-    model.stop()
+def generic_model_fixture(model_type: type[M]) -> Generator[M, None, None]:
+    model_instance = model_type()
+    model_instance.start()
+    yield model_instance
+    model_instance.stop()
 
 
 @pytest.fixture(params=[Florence2Model, MoondreamVlModel])
 def captioner_model(request: pytest.FixtureRequest) -> Generator[CaptionerModel, None, None]:
-    yield from model_fixture(request.param)
+    yield from generic_model_fixture(request.param)
 
 
 @pytest.fixture(params=[Florence2Model])
 def florence2_model(request: pytest.FixtureRequest) -> Generator[Florence2Model, None, None]:
-    yield from model_fixture(request.param)
+    yield from generic_model_fixture(request.param)
 
 
 @pytest.mark.gpu

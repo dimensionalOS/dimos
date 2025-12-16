@@ -131,3 +131,6 @@ class MoondreamHostedVlModel(VlModel):
 
         return pixel_points
 
+    def stop(self) -> None:
+        pass
+
