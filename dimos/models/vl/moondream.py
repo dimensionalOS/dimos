@@ -1,4 +1,6 @@
+from dataclasses import dataclass
 from functools import cached_property
+from typing import Any
 import warnings
 
 import numpy as np
@@ -6,59 +8,56 @@ from PIL import Image as PILImage
 import torch
 from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 
+from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 
+# Moondream works well with 512x512 max
+MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 
-class MoondreamVlModel(VlModel):
-    _model_name: str
-    _device: str
-    _dtype: torch.dtype
 
-    def __init__(
-        self,
-        model_name: str = "vikhyatk/moondream2",
-        device: str | None = None,
-        dtype: torch.dtype = torch.bfloat16,
-    ) -> None:
-        self._model_name = model_name
-        # Use GPU if available, otherwise fall back to CPU
-        if torch.cuda.is_available():
-            self._device = "cuda"
-        # MacOS Metal performance shaders
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            self._device = "mps"
-        else:
-            self._device = "cpu"
-        
-        self._dtype = dtype
+@dataclass
+class MoondreamConfig(HuggingFaceModelConfig):
+    """Configuration for MoondreamVlModel."""
+
+    model_name: str = "vikhyatk/moondream2"
+    dtype: torch.dtype = torch.bfloat16
+    auto_resize: tuple[int, int] | None = MOONDREAM_DEFAULT_AUTO_RESIZE
+
+
+class MoondreamVlModel(HuggingFaceModel, VlModel):
+    _model_class = AutoModelForCausalLM
+    default_config = MoondreamConfig  # type: ignore[assignment]
+    config: MoondreamConfig  # type: ignore[assignment]
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:
+        """Load model with compile() for optimization."""
         model = AutoModelForCausalLM.from_pretrained(
-            self._model_name,
-            trust_remote_code=True,
-            torch_dtype=self._dtype,
-        )
-        model = model.to(self._device)
+            self.config.model_name,
+            trust_remote_code=self.config.trust_remote_code,
+            torch_dtype=self.config.dtype,
+        ).to(self.config.device)
         model.compile()
-
         return model
 
-    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+    def _to_pil(self, image: Image | np.ndarray[Any, Any]) -> PILImage.Image:
+        """Convert dimos Image or numpy array to PIL Image, applying auto_resize."""
         if isinstance(image, np.ndarray):
             warnings.warn(
-                "MoondreamVlModel.query should receive standard dimos Image type, not a numpy array",
+                "MoondreamVlModel should receive standard dimos Image type, not a numpy array",
                 DeprecationWarning,
                 stacklevel=2,
             )
             image = Image.from_numpy(image)
 
-        # Convert dimos Image to PIL Image
-        # dimos Image stores data in RGB/BGR format, convert to RGB for PIL
+        image, _ = self._prepare_image(image)
         rgb_image = image.to_rgb()
-        pil_image = PILImage.fromarray(rgb_image.data)
+        return PILImage.fromarray(rgb_image.data)
+
+    def query(self, image: Image | np.ndarray, query: str, **kwargs) -> str:  # type: ignore[no-untyped-def, type-arg]
+        pil_image = self._to_pil(image)
 
         # Query the model
         result = self._model.query(image=pil_image, question=query, reasoning=False)
@@ -69,7 +68,66 @@ class MoondreamVlModel(VlModel):
 
         return str(result)
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
+    def query_batch(self, images: list[Image], query: str, **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+        """Query multiple images with the same question.
+
+        Note: moondream2's batch_answer is not truly batched - it processes
+        images sequentially. No speedup over sequential calls.
+
+        Args:
+            images: List of input images
+            query: Question to ask about each image
+
+        Returns:
+            List of responses, one per image
+        """
+        warnings.warn(
+            "MoondreamVlModel.query_batch() uses moondream's batch_answer which is not "
+            "truly batched - images are processed sequentially with no speedup.",
+            stacklevel=2,
+        )
+        if not images:
+            return []
+
+        pil_images = [self._to_pil(img) for img in images]
+        prompts = [query] * len(images)
+        result: list[str] = self._model.batch_answer(pil_images, prompts)
+        return result
+
+    def query_multi(self, image: Image, queries: list[str], **kwargs) -> list[str]:  # type: ignore[no-untyped-def]
+        """Query a single image with multiple different questions.
+
+        Optimized implementation that encodes the image once and reuses
+        the encoded representation for all queries.
+
+        Args:
+            image: Input image
+            queries: List of questions to ask about the image
+
+        Returns:
+            List of responses, one per query
+        """
+        if not queries:
+            return []
+
+        # Encode image once
+        pil_image = self._to_pil(image)
+        encoded_image = self._model.encode_image(pil_image)
+
+        # Query with each question, reusing the encoded image
+        results = []
+        for query in queries:
+            result = self._model.query(image=encoded_image, question=query, reasoning=False)
+            if isinstance(result, dict):
+                results.append(result.get("answer", str(result)))
+            else:
+                results.append(str(result))
+
+        return results
+
+    def query_detections(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DBBox]:
         """Detect objects using Moondream's native detect method.
 
         Args:
@@ -80,7 +138,7 @@ class MoondreamVlModel(VlModel):
         Returns:
             ImageDetections2D containing detected bounding boxes
         """
-        pil_image = PILImage.fromarray(image.data)
+        pil_image = self._to_pil(image)
 
         settings = {"max_objects": kwargs.get("max_objects", 5)}
         result = self._model.detect(pil_image, query, settings=settings)

@@ -14,17 +14,17 @@ pytestmark = pytest.mark.skipif(
 )
 
 @pytest.fixture
-def model():
+def model() -> MoondreamHostedVlModel:
     return MoondreamHostedVlModel()
 
 @pytest.fixture
-def test_image():
+def test_image() -> Image:
     image_path = os.path.join(os.getcwd(), "assets/test.png")
     if not os.path.exists(image_path):
         pytest.skip(f"Test image not found at {image_path}")
     return Image.from_file(image_path)
 
-def test_caption(model, test_image) -> None:
+def test_caption(model: MoondreamHostedVlModel, test_image: Image) -> None:
     """Test generating a caption."""
     print("\n--- Testing Caption ---")
     caption = model.caption(test_image)
@@ -32,7 +32,7 @@ def test_caption(model, test_image) -> None:
     assert isinstance(caption, str)
     assert len(caption) > 0
 
-def test_query(model, test_image) -> None:
+def test_query(model: MoondreamHostedVlModel, test_image: Image) -> None:
     """Test querying the image."""
     print("\n--- Testing Query ---")
     question = "Is there an xbox controller in the image?"
@@ -44,7 +44,7 @@ def test_query(model, test_image) -> None:
     # The answer should likely be positive given the user's prompt
     assert "yes" in answer.lower() or "controller" in answer.lower()
 
-def test_query_latency(model, test_image) -> None:
+def test_query_latency(model: MoondreamHostedVlModel, test_image: Image) -> None:
     """Test that a simple query returns in under 1 second."""
     print("\n--- Testing Query Latency ---")
     question = "What is this?"
@@ -62,7 +62,7 @@ def test_query_latency(model, test_image) -> None:
     assert duration < 1.0, f"Query took too long: {duration:.4f}s > 1.0s"
 
 @pytest.mark.parametrize("subject", ["xbox controller", "lip balm"])
-def test_detect(model, test_image, subject: str) -> None:
+def test_detect(model: MoondreamHostedVlModel, test_image: Image, subject: str) -> None:
     """Test detecting objects."""
     print(f"\n--- Testing Detect: {subject} ---")
     detections = model.query_detections(test_image, subject)
@@ -82,7 +82,7 @@ def test_detect(model, test_image, subject: str) -> None:
         assert 0 <= y1 < y2 <= test_image.height
 
 @pytest.mark.parametrize("subject", ["xbox controller", "lip balm"])
-def test_point(model, test_image, subject: str) -> None:
+def test_point(model: MoondreamHostedVlModel, test_image: Image, subject: str) -> None:
     """Test pointing at objects."""
     print(f"\n--- Testing Point: {subject} ---")
     points = model.point(test_image, subject)

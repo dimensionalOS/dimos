@@ -102,13 +102,19 @@ dependencies = [
     "lap>=0.5.12",
     "opencv-contrib-python==4.10.0.84",
 
+    # embedding models
+    "open_clip_torch==3.2.0",
+    "torchreid==0.2.5",
+    "gdown==5.2.0",
+    "tensorboard==2.20.0",
+
     # Mapping
     "open3d",
     "googlemaps>=4.10.0",
 
     # Inference
     "onnx",
-
+    "einops==0.8.1",
     # Multiprocess
     "dask[complete]==2025.5.1",
 
@@ -118,6 +124,7 @@ dependencies = [
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",
+    "plotext==5.3.2",
 
     # Teleop
     "pygame>=2.6.1",
@@ -133,7 +140,6 @@ dimos = "dimos.robot.cli.dimos:main"
 
 [project.optional-dependencies]
 manipulation = [
-
     # Contact Graspnet Dependencies
     "h5py>=3.7.0",
     "pyrender>=0.1.45",
@@ -181,10 +187,6 @@ cuda = [
     "nltk",
     "clip @ git+https://github.com/openai/CLIP.git",
     "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
-
-    # embedding models
-    "open_clip_torch>=3.0.0",
-    "torchreid==0.2.5",
 ]
 
 dev = [
@@ -279,6 +281,20 @@ incremental = true
 strict = true
 warn_unused_ignores = false
 exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
+
+[[tool.mypy.overrides]]
+module = [
+    "rclpy.*",
+    "std_msgs.*",
+    "geometry_msgs.*",
+    "sensor_msgs.*",
+    "nav_msgs.*",
+    "tf2_msgs.*",
+    "mujoco",
+    "mujoco_playground.*",
+    "etils",
+]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]

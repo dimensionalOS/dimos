@@ -54,5 +54,10 @@ class Detection2D(Timestamped):
         """Convert detection to ROS Detection2D message."""
         ...
 
+    @abstractmethod
+    def is_valid(self) -> bool:
+        """Check if the detection is valid."""
+        ...
+
 
 Filter2D = Callable[[Detection2D], bool]
