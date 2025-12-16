@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 Detect CUDA (nvcc → nvidia-smi) and MERGE a CUDA-specific dependency block into
 [project.optional-dependencies].cuda in pyproject.toml — without extra blanks.
@@ -19,12 +33,15 @@ from typing import List, Optional
 
 # ---------- CUDA detection ----------------------------------------------------
 _NVCC_RE = re.compile(r"release\s+(\d+\.\d+)")
-_SMI_RE  = re.compile(r"CUDA Version:\s*(\d+\.\d+)")
+_SMI_RE = re.compile(r"CUDA Version:\s*(\d+\.\d+)")
+
 
 def detect_cuda_version() -> Optional[str]:
     # 1) nvcc
     try:
-        out = subprocess.check_output(["nvcc", "--version"], encoding="utf-8", stderr=subprocess.STDOUT)
+        out = subprocess.check_output(
+            ["nvcc", "--version"], encoding="utf-8", stderr=subprocess.STDOUT
+        )
         m = _NVCC_RE.search(out)
         if m:
             return m.group(1)
@@ -39,6 +56,7 @@ def detect_cuda_version() -> Optional[str]:
     except (FileNotFoundError, subprocess.CalledProcessError):
         pass
     return None
+
 
 # ---------- CUDA version → deps mapping (xformers per version) ----------------
 # If you later need different xformers pins per minor, just change the lines below.
@@ -127,6 +145,7 @@ CUDA_KEYLINE = re.compile(r"(?m)^\s*cuda\s*=\s*\[")
 # Quoted-string finder inside a TOML array (simple, suits our deps)
 QUOTED = re.compile(r'"([^"\\]*(?:\\.[^"\\]*)*)"')
 
+
 def _find_cuda_array_span(section_body: str) -> tuple[int, int] | None:
     """Return (start, end) indices of the cuda=[...] array text within section_body,
     or None if not present. Robustly finds the matching closing bracket, ignoring strings."""
@@ -170,9 +189,11 @@ def _find_cuda_array_span(section_body: str) -> tuple[int, int] | None:
         j += 1
     return None
 
+
 def _parse_existing_items(array_text: str) -> List[str]:
     """Extract quoted items from a TOML array text."""
     return [m.group(1) for m in QUOTED.finditer(array_text)]
+
 
 def _order_preserving_merge(existing: List[str], additions: List[str]) -> List[str]:
     seen = set()
@@ -183,6 +204,7 @@ def _order_preserving_merge(existing: List[str], additions: List[str]) -> List[s
             seen.add(x)
     return merged
 
+
 def _format_cuda_array(values: List[str], indent: str = "") -> str:
     # No blank lines; one item per line, trailing commas
     lines = [f"{indent}cuda = ["]
@@ -190,6 +212,7 @@ def _format_cuda_array(values: List[str], indent: str = "") -> str:
         lines.append(f'{indent}    "{v}",')
     lines.append(f"{indent}]")
     return "\n".join(lines)
+
 
 def inject_cuda(pyproject_path: str = "pyproject.toml") -> int:
     ver = detect_cuda_version()
@@ -243,6 +266,6 @@ def inject_cuda(pyproject_path: str = "pyproject.toml") -> int:
     print(f"cuda_inject: Merged CUDA {mm} ({ver}) deps into [project.optional-dependencies].cuda")
     return 0
 
+
 if __name__ == "__main__":
     sys.exit(inject_cuda(sys.argv[1]) if len(sys.argv) > 1 else inject_cuda())
-
