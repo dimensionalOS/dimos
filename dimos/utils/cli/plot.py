@@ -27,9 +27,8 @@ if TYPE_CHECKING:
 
 def _default_size() -> tuple[int, int]:
     """Return default plot size (terminal width, half terminal height)."""
-    # tw, th = plt.terminal_size()
-    # return tw, th // 2
-    return 80, 20
+    tw, th = plt.terminal_size()
+    return tw, th // 2
 
 
 @dataclass

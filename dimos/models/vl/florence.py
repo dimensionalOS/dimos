@@ -140,7 +140,7 @@ class Florence2Model(HuggingFaceModel, Captioner):
 
         # Parse outputs
         captions = []
-        for text, pil_img in zip(generated_texts, pil_images, strict=False):
+        for text, pil_img in zip(generated_texts, pil_images, strict=True):
             parsed = self._processor.post_process_generation(
                 text, task=task_prompt, image_size=pil_img.size
             )

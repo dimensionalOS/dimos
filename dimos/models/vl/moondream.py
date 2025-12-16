@@ -35,6 +35,7 @@ class MoondreamVlModel(VlModel, HuggingFaceModel):
         """Release model and free GPU memory."""
         # Call LocalModel.stop() which handles _model cleanup and cuda cache
         HuggingFaceModel.stop(self)
+        VLModel.stop(self)
 
     @cached_property
     def _model(self) -> AutoModelForCausalLM:

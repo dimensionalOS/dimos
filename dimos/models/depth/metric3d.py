@@ -32,7 +32,7 @@ class Metric3DConfig(LocalModelConfig):
     gt_depth_scale: float = 256.0
     """Scale factor for ground truth depth."""
 
-    device: str = "cuda"
+    device: str = "cuda" if torch.cuda.is_available() else "cpu"
     """Device to run the model on."""
 
 
