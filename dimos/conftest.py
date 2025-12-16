@@ -96,9 +96,14 @@ def monitor_threads(request):
             t for t in threading.enumerate() if t.ident in new_thread_ids and t.name != "MainThread"
         ]
 
-        # Filter out expected persistent threads from Dask that are shared globally
+        # Filter out expected persistent threads that are shared globally
         # These threads are intentionally left running and cleaned up on process exit
-        expected_persistent_thread_prefixes = ["Dask-Offload"]
+        expected_persistent_thread_prefixes = [
+            "Dask-Offload",
+            # HuggingFace safetensors conversion thread - no user cleanup API
+            # https://github.com/huggingface/transformers/issues/29513
+            "Thread-auto_conversion",
+        ]
         new_threads = [
             t
             for t in new_threads

@@ -55,7 +55,7 @@ class MoondreamHostedVlModel(VlModel):
         result = self._client.caption(pil_image, length=length)
         return result.get("caption", str(result))  # type: ignore[no-any-return]
 
-    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D:  # type: ignore[no-untyped-def]
+    def query_detections(self, image: Image, query: str, **kwargs) -> ImageDetections2D[Detection2DBBox]:  # type: ignore[no-untyped-def]
         """Detect objects using Moondream's hosted detect method.
 
         Args:
@@ -130,4 +130,7 @@ class MoondreamHostedVlModel(VlModel):
             pixel_points.append((x_norm * width, y_norm * height))
 
         return pixel_points
+
+    def stop(self) -> None:
+        pass
 
