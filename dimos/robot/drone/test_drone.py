@@ -899,5 +899,140 @@ class TestDroneStatusAndTelemetry(unittest.TestCase):
             self.assertIn("timestamp", telem_dict)
 
 
+class TestFlyToErrorHandling(unittest.TestCase):
+    """Test fly_to() error handling paths."""
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_concurrency_lock(self, mock_get_data, mock_replay) -> None:
+        """flying_to_target=True rejects concurrent fly_to() calls."""
+        mock_stream = MagicMock()
+        mock_stream.subscribe = lambda callback: None
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+        conn.flying_to_target = True
+
+        result = conn.fly_to(37.0, -122.0, 10.0)
+        self.assertIn("Already flying to target", result)
+
+    @patch("dimos.utils.testing.TimedSensorReplay")
+    @patch("dimos.utils.data.get_data")
+    def test_error_when_not_connected(self, mock_get_data, mock_replay) -> None:
+        """connected=False returns error immediately."""
+        mock_stream = MagicMock()
+        mock_stream.subscribe = lambda callback: None
+        mock_replay.return_value.stream.return_value = mock_stream
+
+        conn = FakeMavlinkConnection("replay")
+        conn.connected = False
+
+        result = conn.fly_to(37.0, -122.0, 10.0)
+        self.assertIn("Not connected", result)
+
+
+class TestVisualServoingEdgeCases(unittest.TestCase):
+    """Test DroneVisualServoingController edge cases."""
+
+    def test_output_clamping(self) -> None:
+        """Large errors are clamped to max_velocity."""
+        from dimos.robot.drone.drone_visual_servoing_controller import (
+            DroneVisualServoingController,
+        )
+
+        # PID params: (kp, ki, kd, output_limits, integral_limit, deadband)
+        max_vel = 2.0
+        controller = DroneVisualServoingController(
+            x_pid_params=(1.0, 0.0, 0.0, (-max_vel, max_vel), None, 0),
+            y_pid_params=(1.0, 0.0, 0.0, (-max_vel, max_vel), None, 0),
+        )
+
+        # Large error should be clamped
+        vx, vy, vz = controller.compute_velocity_control(
+            target_x=1000, target_y=1000, center_x=0, center_y=0, dt=0.1
+        )
+        self.assertLessEqual(abs(vx), max_vel)
+        self.assertLessEqual(abs(vy), max_vel)
+
+    def test_deadband_prevents_integral_windup(self) -> None:
+        """Deadband prevents integral accumulation for small errors."""
+        from dimos.robot.drone.drone_visual_servoing_controller import (
+            DroneVisualServoingController,
+        )
+
+        deadband = 10  # pixels
+        controller = DroneVisualServoingController(
+            x_pid_params=(0.0, 1.0, 0.0, (-2.0, 2.0), None, deadband),  # integral only
+            y_pid_params=(0.0, 1.0, 0.0, (-2.0, 2.0), None, deadband),
+        )
+
+        # With error inside deadband, integral should stay at zero
+        for _ in range(10):
+            controller.compute_velocity_control(
+                target_x=5, target_y=5, center_x=0, center_y=0, dt=0.1
+            )
+
+        # Integral should be zero since error < deadband
+        self.assertEqual(controller.x_pid.integral, 0.0)
+        self.assertEqual(controller.y_pid.integral, 0.0)
+
+    def test_reset_clears_integral(self) -> None:
+        """reset() clears accumulated integral to prevent windup."""
+        from dimos.robot.drone.drone_visual_servoing_controller import (
+            DroneVisualServoingController,
+        )
+
+        controller = DroneVisualServoingController(
+            x_pid_params=(0.0, 1.0, 0.0, (-10.0, 10.0), None, 0),  # Only integral
+            y_pid_params=(0.0, 1.0, 0.0, (-10.0, 10.0), None, 0),
+        )
+
+        # Accumulate integral by calling multiple times with error
+        for _ in range(10):
+            controller.compute_velocity_control(
+                target_x=100, target_y=100, center_x=0, center_y=0, dt=0.1
+            )
+
+        # Integral should be non-zero
+        self.assertNotEqual(controller.x_pid.integral, 0.0)
+
+        # Reset should clear it
+        controller.reset()
+        self.assertEqual(controller.x_pid.integral, 0.0)
+        self.assertEqual(controller.y_pid.integral, 0.0)
+
+
+class TestVisualServoingVelocity(unittest.TestCase):
+    """Test visual servoing velocity calculations."""
+
+    def test_velocity_from_bbox_center_error(self) -> None:
+        """Bbox center offset produces proportional velocity command."""
+        from dimos.robot.drone.drone_visual_servoing_controller import (
+            DroneVisualServoingController,
+        )
+
+        controller = DroneVisualServoingController(
+            x_pid_params=(0.01, 0.0, 0.0, (-2.0, 2.0), None, 0),
+            y_pid_params=(0.01, 0.0, 0.0, (-2.0, 2.0), None, 0),
+        )
+
+        # Image center at (320, 180), bbox center at (400, 180) = 80px right
+        frame_center = (320, 180)
+        bbox_center = (400, 180)
+
+        vx, vy, vz = controller.compute_velocity_control(
+            target_x=bbox_center[0],
+            target_y=bbox_center[1],
+            center_x=frame_center[0],
+            center_y=frame_center[1],
+            dt=0.1,
+        )
+
+        # Object to the right -> drone should strafe right (positive vy)
+        self.assertGreater(vy, 0)
+        # No vertical offset -> vx should be ~0
+        self.assertAlmostEqual(vx, 0, places=1)
+
+
 if __name__ == "__main__":
     unittest.main()
