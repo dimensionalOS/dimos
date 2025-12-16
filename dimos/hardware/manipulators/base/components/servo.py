@@ -16,7 +16,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from ..sdk_interface import BaseManipulatorSDK
 from ..spec import ManipulatorCapabilities
@@ -80,7 +80,7 @@ class StandardServoComponent:
     # ============= Component API Methods =============
 
     @component_api
-    def enable_servo(self, check_errors: bool = True) -> dict:
+    def enable_servo(self, check_errors: bool = True) -> dict[str, Any]:
         """Enable servo/motor control.
 
         Args:
@@ -90,6 +90,9 @@ class StandardServoComponent:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Check if already enabled
             if self.sdk.are_servos_enabled():
                 return {"success": True, "message": "Servos already enabled"}
@@ -122,7 +125,7 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def disable_servo(self, stop_motion: bool = True) -> dict:
+    def disable_servo(self, stop_motion: bool = True) -> dict[str, Any]:
         """Disable servo/motor control.
 
         Args:
@@ -132,6 +135,9 @@ class StandardServoComponent:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Check if already disabled
             if not self.sdk.are_servos_enabled():
                 return {"success": True, "message": "Servos already disabled"}
@@ -159,13 +165,16 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def toggle_servo(self) -> dict:
+    def toggle_servo(self) -> dict[str, Any]:
         """Toggle servo enable/disable state.
 
         Returns:
             Dict with 'success', 'enabled' state, and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             current_state = self.sdk.are_servos_enabled()
 
             if current_state:
@@ -183,13 +192,16 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_servo_state(self) -> dict:
+    def get_servo_state(self) -> dict[str, Any]:
         """Get current servo state.
 
         Returns:
             Dict with servo state information
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             enabled = self.sdk.are_servos_enabled()
             robot_state = self.sdk.get_robot_state()
 
@@ -208,13 +220,16 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def emergency_stop(self) -> dict:
+    def emergency_stop(self) -> dict[str, Any]:
         """Execute emergency stop.
 
         Returns:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Execute e-stop
             success = self.sdk.emergency_stop()
 
@@ -241,13 +256,16 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def reset_emergency_stop(self) -> dict:
+    def reset_emergency_stop(self) -> dict[str, Any]:
         """Reset from emergency stop state.
 
         Returns:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Clear errors first
             self.sdk.clear_errors()
 
@@ -270,7 +288,7 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def set_control_mode(self, mode: str) -> dict:
+    def set_control_mode(self, mode: str) -> dict[str, Any]:
         """Set control mode.
 
         Args:
@@ -280,6 +298,9 @@ class StandardServoComponent:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Validate mode
             valid_modes = ["position", "velocity", "torque", "impedance"]
             if mode not in valid_modes:
@@ -311,13 +332,16 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_control_mode(self) -> dict:
+    def get_control_mode(self) -> dict[str, Any]:
         """Get current control mode.
 
         Returns:
             Dict with current mode and success status
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             mode = self.sdk.get_control_mode()
 
             if mode:
@@ -338,13 +362,16 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def clear_errors(self) -> dict:
+    def clear_errors(self) -> dict[str, Any]:
         """Clear any error states.
 
         Returns:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Clear errors via SDK
             success = self.sdk.clear_errors()
 
@@ -364,7 +391,7 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def reset_fault(self) -> dict:
+    def reset_fault(self) -> dict[str, Any]:
         """Reset from fault state.
 
         This typically involves:
@@ -377,6 +404,9 @@ class StandardServoComponent:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             self.logger.info("Resetting fault state...")
 
             # Step 1: Clear errors
@@ -412,7 +442,7 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def home_robot(self, position: list[float] | None = None) -> dict:
+    def home_robot(self, position: list[float] | None = None) -> dict[str, Any]:
         """Move robot to home position.
 
         Args:
@@ -423,6 +453,9 @@ class StandardServoComponent:
             Dict with 'success' and optional 'error' keys
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Determine home position
             if position is None:
                 # Use configured home or zero position
@@ -458,7 +491,7 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def brake_release(self) -> dict:
+    def brake_release(self) -> dict[str, Any]:
         """Release motor brakes (if applicable).
 
         Returns:
@@ -473,7 +506,7 @@ class StandardServoComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def brake_engage(self) -> dict:
+    def brake_engage(self) -> dict[str, Any]:
         """Engage motor brakes (if applicable).
 
         Returns:
