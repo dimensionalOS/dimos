@@ -9,7 +9,7 @@ Complete integration for DJI drones via RosettaDrone MAVLink bridge with visual 
 # Test with replay mode (no hardware needed)
 python dimos/robot/drone/drone.py --replay
 
-# Real drone - indoor (visual odometry)
+# Real drone - indoor (IMU odometry)
 python dimos/robot/drone/drone.py
 
 # Real drone - outdoor (GPS odometry)
@@ -200,14 +200,7 @@ Parameters: `(Kp, Ki, Kd, (min_output, max_output), integral_limit, deadband_pix
 
 ### Unit Tests
 ```bash
-# Test visual servoing controller
-pytest dimos/robot/drone/test_drone_visual_servoing_controller.py
-
-# Test tracking module
-pytest dimos/robot/drone/test_drone_tracking.py
-
-# Test stream communication
-pytest dimos/robot/drone/test_tracking_stream.py
+pytest -s dimos/robot/drone/
 ```
 
 ### Replay Mode (No Hardware)
