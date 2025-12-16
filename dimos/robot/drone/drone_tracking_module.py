@@ -28,10 +28,17 @@ from dimos.core import In, Module, Out, rpc
 from dimos.models.qwen.video_query import get_bbox_from_qwen_frame
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.robot.drone.drone_visual_servoing_controller import DroneVisualServoingController
+from dimos.robot.drone.drone_visual_servoing_controller import (
+    DroneVisualServoingController,
+    PIDParams,
+)
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
+
+INDOOR_PID_PARAMS: PIDParams = (0.001, 0.0, 0.0001, (-1.0, 1.0), None, 30)
+OUTDOOR_PID_PARAMS: PIDParams = (0.05, 0.0, 0.0003, (-5.0, 5.0), None, 10)
+INDOOR_MAX_VELOCITY = 1.0  # m/s safety cap for indoor mode
 
 
 class DroneTrackingModule(Module):
@@ -48,32 +55,30 @@ class DroneTrackingModule(Module):
 
     def __init__(
         self,
-        x_pid_params: tuple[float, float, float, tuple[float, float], None, int] = (
-            0.001,
-            0.0,
-            0.0001,
-            (-1.0, 1.0),
-            None,
-            30,
-        ),
-        y_pid_params: tuple[float, float, float, tuple[float, float], None, int] = (
-            0.001,
-            0.0,
-            0.0001,
-            (-1.0, 1.0),
-            None,
-            30,
-        ),
-        z_pid_params: tuple[float, float, float, tuple[float, float], None, int] | None = None,
+        outdoor: bool = False,
+        x_pid_params: PIDParams | None = None,
+        y_pid_params: PIDParams | None = None,
+        z_pid_params: PIDParams | None = None,
     ) -> None:
         """Initialize the drone tracking module.
 
         Args:
-            x_pid_params: PID parameters for forward/backward control
-            y_pid_params: PID parameters for left/right strafe control
-            z_pid_params: Optional PID parameters for altitude control
+            outdoor: If True, use aggressive outdoor PID params (5 m/s max).
+                     If False (default), use conservative indoor params (1 m/s max).
+            x_pid_params: PID parameters for forward/backward control.
+                          If None, uses preset based on outdoor flag.
+            y_pid_params: PID parameters for left/right strafe control.
+                          If None, uses preset based on outdoor flag.
+            z_pid_params: Optional PID parameters for altitude control.
         """
         super().__init__()
+
+        default_params = OUTDOOR_PID_PARAMS if outdoor else INDOOR_PID_PARAMS
+        x_pid_params = x_pid_params if x_pid_params is not None else default_params
+        y_pid_params = y_pid_params if y_pid_params is not None else default_params
+
+        self._outdoor = outdoor
+        self._max_velocity = None if outdoor else INDOOR_MAX_VELOCITY
 
         self.servoing_controller = DroneVisualServoingController(
             x_pid_params=x_pid_params, y_pid_params=y_pid_params, z_pid_params=z_pid_params
@@ -252,6 +257,11 @@ class DroneTrackingModule(Module):
                     dt=0.033,  # ~30Hz
                     lock_altitude=True,
                 )
+
+                # Clamp velocity for indoor safety
+                if self._max_velocity is not None:
+                    vx = max(-self._max_velocity, min(self._max_velocity, vx))
+                    vy = max(-self._max_velocity, min(self._max_velocity, vy))
 
                 # Publish velocity command via LCM
                 if self.cmd_vel.transport:
