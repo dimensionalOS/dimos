@@ -41,8 +41,12 @@ async def test_agent_init():
     agent.run_implicit_skill("uptime_seconds")
 
     await agent.query_async(
-        "hi there, I have 4 questions for you: Please tell me what's your name and current date, and how much is 124181112 + 124124, and what do you see on the camera?"
+        "hi there, please tell me what's your name and current date, and how much is 124181112 + 124124?"
     )
+
+    print("Agent loop finished, asking about camera")
+
+    await agent.query_async("tell me what you see on the camera?")
 
     print("Agent loop finished")
 
