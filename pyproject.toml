@@ -236,6 +236,10 @@ jetson-jp6-cuda126 = [
     "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/731/15133b0ebb2b3/xformers-0.0.33+ac00641.d20250830-cp39-abi3-linux_aarch64.whl",
 ]
 
+drone = [
+    "pymavlink"
+]
+
 [tool.ruff]
 line-length = 100
 exclude = [
