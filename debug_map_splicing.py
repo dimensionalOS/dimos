@@ -12,8 +12,10 @@ Usage:
 
 import argparse
 import sys
+import time
 from pathlib import Path
 
+import matplotlib.pyplot as plt  # type: ignore[import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 
@@ -58,6 +60,7 @@ def visualize_multiple_frames(
     voxel_size: float = 0.5,
     splice_method: str = "cylinder",
     shrink: float = 0.5,
+    frame_load_times: list[float] | None = None,
 ) -> None:
     """Visualize map building by splicing multiple frames sequentially."""
     num_frames = len(frames)
@@ -68,22 +71,41 @@ def visualize_multiple_frames(
     print(f"Voxel size: {voxel_size}, Splice method: {splice_method}, Shrink: {shrink}")
     print(f"{'='*60}\n")
     
+    # Track processing times for each frame
+    processing_times: list[float] = []
+    frame_indices: list[int] = []
+    
+    # Start overall timer
+    overall_start_time = time.time()
+    
     # Initialize map with first frame using proper voxelization (same as Map._voxelize_pointcloud)
+    frame_start_time = time.time()
     map_pcd, _ = _voxelize_pointcloud(frames[0].pointcloud, voxel_size, use_height_gradient=False)
+    frame_processing_time = time.time() - frame_start_time
+    processing_times.append(frame_processing_time)
+    frame_indices.append(start_idx)
+    
     processed = 1
-    progress_info = f"processed {processed}/{num_frames} frames" if total_frames else f"frame {start_idx}"
-    print(f"Frame {start_idx}: {len(frames[0].pointcloud.points)} → {len(map_pcd.points)} points (after proper voxelization) - {progress_info}")
+    # progress_info = f"processed {processed}/{num_frames} frames" if total_frames else f"frame {start_idx}"
+    # print(f"Frame {start_idx}: {len(frames[0].pointcloud.points)} → {len(map_pcd.points)} points (after proper voxelization) - {progress_info} [{frame_processing_time*1000:.1f}ms]")
     
     # Sequentially add frames (like Map.add_frame does)
     for i, frame in enumerate(frames[1:], start=1):
         frame_idx = start_idx + i
         processed = i + 1
-        progress_info = f"processed {processed}/{num_frames} frames" if total_frames else f"frame {frame_idx}"
+        # progress_info = f"processed {processed}/{num_frames} frames" if total_frames else f"frame {frame_idx}"
+        
+        # Time the processing of this frame
+        frame_start_time = time.time()
+        
         # Use proper voxelization method (same as Map._voxelize_pointcloud in production)
         new_pcd, _ = _voxelize_pointcloud(frame.pointcloud, voxel_size, use_height_gradient=False)
         
         if len(new_pcd.points) == 0:
-            print(f"Frame {frame_idx}: Skipped (empty after voxelization) - {progress_info}")
+            frame_processing_time = time.time() - frame_start_time
+            processing_times.append(frame_processing_time)
+            frame_indices.append(frame_idx)
+            # print(f"Frame {frame_idx}: Skipped (empty after voxelization) - {progress_info} [{frame_processing_time*1000:.1f}ms]")
             continue
         
         # Splice into map
@@ -92,13 +114,33 @@ def visualize_multiple_frames(
         else:
             map_pcd = splice_sphere(map_pcd, new_pcd, shrink=shrink)
         
-        print(f"Frame {frame_idx}: {len(frame.pointcloud.points)} → {len(new_pcd.points)} points → Map: {len(map_pcd.points)} points - {progress_info}")
+        frame_processing_time = time.time() - frame_start_time
+        processing_times.append(frame_processing_time)
+        frame_indices.append(frame_idx)
+        
+        # print(f"Frame {frame_idx}: {len(frame.pointcloud.points)} → {len(new_pcd.points)} points → Map: {len(map_pcd.points)} points - {progress_info} [{frame_processing_time*1000:.1f}ms]")
+    
+    overall_processing_time = time.time() - overall_start_time
     
     print(f"\n{'='*60}")
     print(f"Final Map Statistics:")
     print(f"  Total frames processed: {len(frames)}")
     print(f"  Final map points: {len(map_pcd.points)}")
     print(f"  Average points per frame in map: {len(map_pcd.points) / len(frames):.1f}")
+    
+    # Timing statistics
+    print(f"\n{'='*60}")
+    print(f"Timing Statistics:")
+    print(f"  Overall processing time: {overall_processing_time:.2f}s")
+    if frame_load_times:
+        total_load_time = sum(frame_load_times)
+        print(f"  Total frame loading time: {total_load_time:.2f}s")
+        print(f"  Total time (load + process): {total_load_time + overall_processing_time:.2f}s")
+        print(f"  Average load time per frame: {total_load_time / len(frame_load_times)*1000:.1f}ms")
+    print(f"  Average processing time per frame: {np.mean(processing_times)*1000:.1f}ms")
+    print(f"  Min processing time: {np.min(processing_times)*1000:.1f}ms")
+    print(f"  Max processing time: {np.max(processing_times)*1000:.1f}ms")
+    print(f"  Median processing time: {np.median(processing_times)*1000:.1f}ms")
     
     # Get height range for info
     points = np.asarray(map_pcd.points)
@@ -107,6 +149,11 @@ def visualize_multiple_frames(
         min_z = float(np.min(z_coords))
         max_z = float(np.max(z_coords))
         print(f"  Height range: {min_z:.2f}m to {max_z:.2f}m")
+    
+    # Create timing graph
+    print(f"\n{'='*60}")
+    print(f"Generating timing graph...")
+    _plot_timing_graph(frame_indices, processing_times, frame_load_times, overall_processing_time)
     
     # Create voxel grid from final map with height-based color gradient
     print(f"\nCreating voxel grid visualization...")
@@ -121,6 +168,7 @@ def visualize_multiple_frames(
     print(f"  - Coordinate frame")
     
     # Create wireframe for voxel grid
+    # voxel_wireframe = None
     voxel_wireframe = _create_voxel_wireframe(final_vox_grid, edge_color=[1.0, 1.0, 1.0])  # White edges
     
     # Create coordinate frame
@@ -265,6 +313,71 @@ def _height_to_color(height: float, min_height: float, max_height: float) -> lis
     b = np.clip(b, 0.0, 1.0)
     
     return [float(r), float(g), float(b)]
+
+
+def _plot_timing_graph(
+    frame_indices: list[int],
+    processing_times: list[float],
+    frame_load_times: list[float] | None,
+    overall_time: float,
+) -> None:
+    """Plot timing graph showing time per frame."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+    
+    # Convert to milliseconds
+    processing_times_ms = [t * 1000 for t in processing_times]
+    
+    # Plot 1: Processing time per frame
+    ax1 = axes[0]
+    ax1.plot(frame_indices, processing_times_ms, 'b-o', markersize=4, linewidth=1.5, label='Processing time')
+    ax1.axhline(y=np.mean(processing_times_ms), color='r', linestyle='--', linewidth=1, label=f'Mean: {np.mean(processing_times_ms):.1f}ms')
+    ax1.set_xlabel('Frame Index', fontsize=11)
+    ax1.set_ylabel('Processing Time (ms)', fontsize=11)
+    ax1.set_title('Frame Processing Time', fontsize=12, fontweight='bold')
+    ax1.grid(True, alpha=0.3)
+    ax1.legend()
+    
+    # Plot 2: Combined load + processing time (if available)
+    ax2 = axes[1]
+    if frame_load_times and len(frame_load_times) == len(frame_indices):
+        load_times_ms = [t * 1000 for t in frame_load_times]
+        combined_times_ms = [load + proc for load, proc in zip(load_times_ms, processing_times_ms)]
+        
+        ax2.plot(frame_indices, load_times_ms, 'g-o', markersize=4, linewidth=1.5, label='Load time', alpha=0.7)
+        ax2.plot(frame_indices, processing_times_ms, 'b-o', markersize=4, linewidth=1.5, label='Processing time', alpha=0.7)
+        ax2.plot(frame_indices, combined_times_ms, 'r-o', markersize=4, linewidth=2, label='Total time (load + process)')
+        ax2.set_ylabel('Time (ms)', fontsize=11)
+        ax2.set_title('Frame Load + Processing Time', fontsize=12, fontweight='bold')
+    else:
+        # If no load times, just show processing times again with different view
+        ax2.bar(frame_indices, processing_times_ms, width=0.8, alpha=0.7, color='steelblue', label='Processing time')
+        ax2.axhline(y=np.mean(processing_times_ms), color='r', linestyle='--', linewidth=2, label=f'Mean: {np.mean(processing_times_ms):.1f}ms')
+        ax2.set_ylabel('Processing Time (ms)', fontsize=11)
+        ax2.set_title('Frame Processing Time (Bar Chart)', fontsize=12, fontweight='bold')
+    
+    ax2.set_xlabel('Frame Index', fontsize=11)
+    ax2.grid(True, alpha=0.3, axis='y')
+    ax2.legend()
+    
+    # Add overall statistics text
+    stats_text = (
+        f"Overall Statistics:\n"
+        f"Total frames: {len(frame_indices)}\n"
+        f"Total processing time: {overall_time:.2f}s\n"
+        f"Avg processing: {np.mean(processing_times_ms):.1f}ms\n"
+        f"Min/Max: {np.min(processing_times_ms):.1f}ms / {np.max(processing_times_ms):.1f}ms"
+    )
+    if frame_load_times:
+        total_load = sum(frame_load_times)
+        stats_text += f"\nTotal load time: {total_load:.2f}s\n"
+        stats_text += f"Total time: {total_load + overall_time:.2f}s"
+    
+    fig.text(0.02, 0.02, stats_text, fontsize=9, verticalalignment='bottom',
+             bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout()
+    plt.show()
+    print("  ✓ Timing graph displayed")
 
 
 def _voxelize_pointcloud(pcd: o3d.geometry.PointCloud, voxel_size: float, use_height_gradient: bool = True) -> tuple[o3d.geometry.PointCloud, o3d.geometry.VoxelGrid]:
@@ -414,17 +527,30 @@ def main() -> None:
     print(f"Loading {num_frames} frames starting from frame {start_idx} (total available: {total_frames})...")
     try:
         frames = []
+        frame_load_times: list[float] = []
+        load_start_time = time.time()
+        
         for i in range(num_frames):
             frame_idx = start_idx + i
             if frame_idx >= total_frames:
                 print(f"Warning: Frame {frame_idx} exceeds total frames ({total_frames}), stopping early")
                 break
+            
+            # Time the loading of this frame
+            frame_load_start = time.time()
             frame = load_lidar_frame(args.dataset, frame_idx)
+            frame_load_time = time.time() - frame_load_start
+            frame_load_times.append(frame_load_time)
+            
             frames.append(frame)
             # Show progress like dimos replay
             current_num = i + 1
-            print(f"Loaded frame {current_num}/{num_frames} (frame index {frame_idx}/{total_frames-1})", end="\r")
+            print(f"Loaded frame {current_num}/{num_frames} (frame index {frame_idx}/{total_frames-1}) [{frame_load_time*1000:.1f}ms]", end="\r")
+        
+        total_load_time = time.time() - load_start_time
         print()  # New line after progress
+        print(f"Total loading time: {total_load_time:.2f}s (avg: {total_load_time/len(frames)*1000:.1f}ms per frame)")
+        
         visualize_multiple_frames(
             frames,
             start_idx,
@@ -432,6 +558,7 @@ def main() -> None:
             voxel_size=args.voxel_size,
             splice_method=args.splice_method,
             shrink=args.shrink,
+            frame_load_times=frame_load_times,
         )
     except Exception as e:
         print(f"Error loading frames: {e}")

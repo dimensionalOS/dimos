@@ -100,16 +100,57 @@ class Map(Module):
             ts=time.time(),
         )
 
+    def _voxelize_pointcloud(self, pcd: o3d.geometry.PointCloud) -> o3d.geometry.PointCloud:
+        """Voxelize a point cloud using Open3D VoxelGrid.
+        Creates a VoxelGrid and extracts voxel centers to ensure proper voxelization.
+        This is more accurate than voxel_down_sample which just downsamples.
+        Args:
+            pcd: Input point cloud to voxelize
+        Returns:
+            Voxelized point cloud with points at voxel centers
+        """
+        if len(pcd.points) == 0:
+            return pcd
+        
+        # Create voxel grid from point cloud using proper Open3D API
+        voxel_grid = o3d.geometry.VoxelGrid.create_from_point_cloud(pcd, voxel_size=self.voxel_size)
+        
+        # Extract voxel centers to get properly voxelized point cloud
+        voxel_centers = []
+        for voxel in voxel_grid.get_voxels():
+            # Get the voxel center position using Open3D's proper API
+            center = voxel_grid.get_voxel_center_coordinate(voxel.grid_index)
+            voxel_centers.append(center)
+        
+        if len(voxel_centers) == 0:
+            return o3d.geometry.PointCloud()
+        
+        # Create new point cloud from voxel centers
+        voxelized_pcd = o3d.geometry.PointCloud()
+        voxelized_pcd.points = o3d.utility.Vector3dVector(np.array(voxel_centers))
+        
+        return voxelized_pcd
+
     @rpc
     def add_frame(self, frame: LidarMessage) -> "Map":  # type: ignore[return]
         """Voxelise *frame* and splice it into the running map."""
-        new_pct = frame.pointcloud.voxel_down_sample(voxel_size=self.voxel_size)
+        # Properly voxelize the new frame using VoxelGrid
+        # if self.first_frame:
+        #     self.pointcloud = self._voxelize_pointcloud(frame.pointcloud)
+        #     self.first_frame = False
+        #     return self
+        
+        new_pct = self._voxelize_pointcloud(frame.pointcloud)
 
         # Skip for empty pointclouds.
         if len(new_pct.points) == 0:
             return self
 
+        # Splice the new voxelized frame into the existing map
         self.pointcloud = splice_cylinder(self.pointcloud, new_pct, shrink=0.5)
+        # Re-voxelize the accumulated map to ensure all points are at voxel centers
+        # and remove any duplicates that may have been introduced during splicing
+        self.pointcloud = self._voxelize_pointcloud(self.pointcloud)
         local_costmap = OccupancyGrid.from_pointcloud(
             frame,
             resolution=self.cost_resolution,
