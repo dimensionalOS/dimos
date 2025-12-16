@@ -9,6 +9,11 @@ from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
 
 
+@pytest.fixture(scope="module")
+def test_image() -> Image:
+    return Image.from_file(get_data("cafe.jpg")).to_rgb()
+
+
 class CaptionerModel(Protocol):
     """Intersection of Captioner and Resource for testing."""
 
@@ -27,9 +32,11 @@ class CaptionerModel(Protocol):
     ids=["florence2", "moondream"],
 )
 @pytest.mark.gpu
-def test_captioner(model_class: type[CaptionerModel], model_name: str) -> None:
+def test_captioner(
+    model_class: type[CaptionerModel], model_name: str, test_image: Image
+) -> None:
     """Test captioning functionality across different model types."""
-    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+    image = test_image
 
     print(f"\nTesting {model_name} captioning")
 
@@ -65,11 +72,13 @@ def test_captioner(model_class: type[CaptionerModel], model_name: str) -> None:
 
     print(f"\n{model_name} captioning test passed!")
 
+    model.stop()
+
 
 @pytest.mark.gpu
-def test_florence2_detail_levels() -> None:
+def test_florence2_detail_levels(test_image: Image) -> None:
     """Test Florence-2 different detail levels."""
-    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+    image = test_image
 
     model = Florence2Model()
     model.start()
