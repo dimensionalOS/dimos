@@ -50,7 +50,7 @@ def load_lidar_frame(dataset_name: str, frame_idx: int) -> LidarMessage:
     - Datasets with already-converted LidarMessage objects (no autocast needed)
     """
     # Try loading without autocast first (for datasets where data is already LidarMessage)
-    replay = TimedSensorReplay(f"{dataset_name}/lidar", autocast=None)
+    replay: TimedSensorReplay = TimedSensorReplay(f"{dataset_name}/lidar", autocast=None)
     result = replay.load_one(f"{frame_idx:03d}")
 
     if isinstance(result, tuple):
@@ -260,8 +260,8 @@ def _create_voxel_wireframe(
     """
     if edge_color is None:
         edge_color = [1.0, 1.0, 1.0]
-    points = []
-    lines = []
+    points: list[list[float]] = []
+    lines: list[list[int]] = []
 
     half_size = voxel_grid.voxel_size / 2.0
 
@@ -288,7 +288,7 @@ def _create_voxel_wireframe(
         points.extend(corners)
 
         # Define the 12 edges of a cube (each edge connects two corners)
-        cube_edges = [
+        cube_edges: list[list[int]] = [
             [0, 1],
             [1, 2],
             [2, 3],
