@@ -18,7 +18,7 @@ from collections import deque
 from dataclasses import dataclass, field
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from ..sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 from ..spec import ManipulatorCapabilities
@@ -111,13 +111,16 @@ class StandardStatusComponent:
     # ============= Component API Methods =============
 
     @component_api
-    def get_robot_state(self) -> dict:
+    def get_robot_state(self) -> dict[str, Any]:
         """Get comprehensive robot state.
 
         Returns:
             Dict with complete state information
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             current_time = time.time()
 
             # Get state from SDK
@@ -163,13 +166,16 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_system_info(self) -> dict:
+    def get_system_info(self) -> dict[str, Any]:
         """Get system information.
 
         Returns:
             Dict with system information
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             # Get manipulator info
             info = self.sdk.get_info()
 
@@ -201,7 +207,7 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_capabilities(self) -> dict:
+    def get_capabilities(self) -> dict[str, Any]:
         """Get manipulator capabilities.
 
         Returns:
@@ -231,13 +237,16 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_error_state(self) -> dict:
+    def get_error_state(self) -> dict[str, Any]:
         """Get detailed error state.
 
         Returns:
             Dict with error information
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             error_code = self.sdk.get_error_code()
             error_msg = self.sdk.get_error_message()
 
@@ -261,7 +270,7 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_health_metrics(self) -> dict:
+    def get_health_metrics(self) -> dict[str, Any]:
         """Get health metrics.
 
         Returns:
@@ -288,7 +297,7 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_statistics(self) -> dict:
+    def get_statistics(self) -> dict[str, Any]:
         """Get operation statistics.
 
         Returns:
@@ -317,13 +326,16 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def check_connection(self) -> dict:
+    def check_connection(self) -> dict[str, Any]:
         """Check connection status.
 
         Returns:
             Dict with connection status
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             connected = self.sdk.is_connected()
 
             result = {"connected": connected, "timestamp": time.time(), "success": True}
@@ -347,7 +359,7 @@ class StandardStatusComponent:
     # ============= Force/Torque Monitoring (Optional) =============
 
     @component_api
-    def get_force_torque(self) -> dict:
+    def get_force_torque(self) -> dict[str, Any]:
         """Get force/torque sensor data.
 
         Returns:
@@ -357,6 +369,9 @@ class StandardStatusComponent:
             # Check if F/T is supported
             if not self.capabilities or not self.capabilities.has_force_torque:
                 return {"success": False, "error": "Force/torque sensor not available"}
+
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
 
             ft_data = self.sdk.get_force_torque()
 
@@ -376,7 +391,7 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def zero_force_torque(self) -> dict:
+    def zero_force_torque(self) -> dict[str, Any]:
         """Zero the force/torque sensor.
 
         Returns:
@@ -386,6 +401,9 @@ class StandardStatusComponent:
             # Check if F/T is supported
             if not self.capabilities or not self.capabilities.has_force_torque:
                 return {"success": False, "error": "Force/torque sensor not available"}
+
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
 
             success = self.sdk.zero_force_torque()
             return {"success": success}
@@ -397,13 +415,16 @@ class StandardStatusComponent:
     # ============= I/O Monitoring (Optional) =============
 
     @component_api
-    def get_digital_inputs(self) -> dict:
+    def get_digital_inputs(self) -> dict[str, Any]:
         """Get digital input states.
 
         Returns:
             Dict with digital input states
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             inputs = self.sdk.get_digital_inputs()
 
             if inputs is not None:
@@ -416,7 +437,7 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def set_digital_outputs(self, outputs: dict) -> dict:
+    def set_digital_outputs(self, outputs: dict) -> dict[str, Any]:
         """Set digital output states.
 
         Args:
@@ -426,6 +447,9 @@ class StandardStatusComponent:
             Dict with success status
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             success = self.sdk.set_digital_outputs(outputs)
             return {"success": success}
 
@@ -434,13 +458,16 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_analog_inputs(self) -> dict:
+    def get_analog_inputs(self) -> dict[str, Any]:
         """Get analog input values.
 
         Returns:
             Dict with analog input values
         """
         try:
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
+
             inputs = self.sdk.get_analog_inputs()
 
             if inputs is not None:
@@ -455,7 +482,7 @@ class StandardStatusComponent:
     # ============= Gripper Status (Optional) =============
 
     @component_api
-    def get_gripper_state(self) -> dict:
+    def get_gripper_state(self) -> dict[str, Any]:
         """Get gripper state.
 
         Returns:
@@ -465,6 +492,9 @@ class StandardStatusComponent:
             # Check if gripper is supported
             if not self.capabilities or not self.capabilities.has_gripper:
                 return {"success": False, "error": "Gripper not available"}
+
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
 
             position = self.sdk.get_gripper_position()
 
@@ -527,6 +557,10 @@ class StandardStatusComponent:
 
         # Check error rate (should be < 10 per minute)
         if self.health_metrics.error_rate > 10:
+            return False
+
+        # Check SDK is configured
+        if self.sdk is None:
             return False
 
         # Check connection
