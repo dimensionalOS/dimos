@@ -180,8 +180,7 @@ class Drone(Robot):
 
         self.tracking = self.dimos.deploy(  # type: ignore[attr-defined]
             DroneTrackingModule,
-            x_pid_params=(0.05, 0.0, 0.0003, (-5, 5), None, 10),
-            y_pid_params=(0.05, 0.0, 0.0003, (-5, 5), None, 10),
+            outdoor=self.outdoor,
         )
 
         self.tracking.tracking_overlay.transport = core.LCMTransport(
