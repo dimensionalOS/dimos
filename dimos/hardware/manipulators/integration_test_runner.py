@@ -14,26 +14,33 @@
 # limitations under the License.
 
 """
-Generic integration tests for manipulator drivers.
+Integration test runner for manipulator drivers.
 
-Tests the common BaseManipulatorDriver interface that all arms implement.
+This is a standalone script (NOT a pytest test file) that tests the common
+BaseManipulatorDriver interface that all arms implement.
 Supports both mock mode (for CI/CD) and hardware mode (for real testing).
+
+NOTE: This file is intentionally NOT named test_*.py to avoid pytest auto-discovery.
+For pytest-based unit tests, see: dimos/hardware/manipulators/base/tests/test_driver_unit.py
 
 Usage:
     # Run with mock (CI/CD safe, default)
-    python -m dimos.hardware.manipulators.base.test_driver_integration
+    python -m dimos.hardware.manipulators.integration_test_runner
 
     # Run specific arm with mock
-    python -m dimos.hardware.manipulators.base.test_driver_integration --arm piper
+    python -m dimos.hardware.manipulators.integration_test_runner --arm piper
 
-    # Run with real hardware
-    python -m dimos.hardware.manipulators.base.test_driver_integration --hardware --ip 192.168.1.210
+    # Run with real hardware (xArm)
+    python -m dimos.hardware.manipulators.integration_test_runner --hardware --ip 192.168.1.210
+
+    # Run with real hardware (Piper)
+    python -m dimos.hardware.manipulators.integration_test_runner --hardware --arm piper --can can0
 
     # Run specific test
-    python -m dimos.hardware.manipulators.base.test_driver_integration --test connection
+    python -m dimos.hardware.manipulators.integration_test_runner --test connection
 
     # Skip motion tests (safer for hardware)
-    python -m dimos.hardware.manipulators.base.test_driver_integration --hardware --skip-motion
+    python -m dimos.hardware.manipulators.integration_test_runner --hardware --skip-motion
 """
 
 import argparse
@@ -570,16 +577,16 @@ def main():
         epilog="""
 Examples:
   # Mock mode (CI/CD safe, default)
-  python -m dimos.hardware.manipulators.base.test_driver_integration
+  python -m dimos.hardware.manipulators.integration_test_runner
 
   # xArm hardware mode
-  python -m dimos.hardware.manipulators.base.test_driver_integration --hardware --ip 192.168.1.210
+  python -m dimos.hardware.manipulators.integration_test_runner --hardware --ip 192.168.1.210
 
   # Piper hardware mode
-  python -m dimos.hardware.manipulators.base.test_driver_integration --hardware --arm piper --can can0
+  python -m dimos.hardware.manipulators.integration_test_runner --hardware --arm piper --can can0
 
   # Skip motion tests
-  python -m dimos.hardware.manipulators.base.test_driver_integration --hardware --skip-motion
+  python -m dimos.hardware.manipulators.integration_test_runner --hardware --skip-motion
 """,
     )
     parser.add_argument(
