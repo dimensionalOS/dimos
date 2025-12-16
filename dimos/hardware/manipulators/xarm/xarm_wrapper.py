@@ -248,7 +248,8 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         """
         code1 = self.native_sdk.motion_enable(True)
         code2 = self.native_sdk.set_state(0)  # Ready state
-        return code1 == 0 and code2 == 0
+        code3 = self.native_sdk.set_mode(1)  # Servo mode
+        return code1 == 0 and code2 == 0 and code3 == 0
 
     def disable_servos(self) -> bool:
         """Disable motor control.
@@ -266,7 +267,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if enabled
         """
         # Check motor state
-        return self.native_sdk.state == 0 and self.native_sdk.mode != 4
+        return self.native_sdk.mode == 1 and self.native_sdk.mode != 4
 
     # ============= System State =============
 
@@ -538,7 +539,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
         mode_map = {
             "position": 0,
             "velocity": 4,  # Joint velocity mode
-            "torque": 1,  # Servo mode (for torque control)
+            "servo": 1,  # Servo mode (for torque control)
             "impedance": 0,  # Not directly supported, use position
         }
 
