@@ -30,17 +30,23 @@ Usage:
     coordinator.loop()
 """
 
+from typing import Any
+
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver as xarm_driver_blueprint
 from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
+    JointCommand,
+    JointState,
+    RobotState,
+)
 from dimos.msgs.trajectory_msgs import JointTrajectory
 
 
 # Create a blueprint wrapper for the component-based driver
-def xarm_driver(**config):
+def xarm_driver(**config: Any) -> Any:
     """Create a blueprint for XArmDriver.
 
     Args:

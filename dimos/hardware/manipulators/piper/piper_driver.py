@@ -16,7 +16,7 @@
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from dimos.hardware.manipulators.base import (
     BaseManipulatorDriver,
@@ -38,18 +38,18 @@ class PiperDriver(BaseManipulatorDriver):
     This file just assembles the pieces.
     """
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, **kwargs: Any) -> None:
         """Initialize the Piper driver.
 
         Args:
-            *args, **kwargs: Arguments for Module initialization.
+            **kwargs: Arguments for Module initialization.
                 Driver configuration can be passed via 'config' keyword arg:
                 - can_port: CAN interface name (e.g., 'can0')
                 - has_gripper: Whether gripper is attached
                 - enable_on_start: Whether to enable servos on start
         """
         # Extract driver-specific config from kwargs
-        config = kwargs.pop("config", {})
+        config: dict[str, Any] = kwargs.pop("config", {})
 
         # Extract driver-specific params that might be passed directly
         driver_params = [
@@ -80,9 +80,14 @@ class PiperDriver(BaseManipulatorDriver):
         #     from dimos.hardware.manipulators.base.components import StandardGripperComponent
         #     components.append(StandardGripperComponent(sdk))
 
+        # Remove any kwargs that would conflict with explicit arguments
+        kwargs.pop("sdk", None)
+        kwargs.pop("components", None)
+        kwargs.pop("name", None)
+
         # Initialize base driver with SDK and components
         super().__init__(
-            sdk=sdk, components=components, config=config, name="PiperDriver", *args, **kwargs
+            sdk=sdk, components=components, config=config, name="PiperDriver", **kwargs
         )
 
         # Initialize position target for velocity integration
@@ -102,7 +107,7 @@ class PiperDriver(BaseManipulatorDriver):
 
         logger.info("PiperDriver initialized successfully")
 
-    def _process_command(self, command):
+    def _process_command(self, command: Any) -> None:
         """Override to implement velocity control via position integration.
 
         Args:
@@ -161,7 +166,7 @@ class PiperDriver(BaseManipulatorDriver):
 
 
 # Blueprint configuration for the driver
-def get_blueprint():
+def get_blueprint() -> dict[str, Any]:
     """Get the blueprint configuration for the Piper driver.
 
     Returns:
