@@ -51,7 +51,7 @@ def ensure_tensor_pcd(pcd_any, device: o3c.Device) -> o3d.t.geometry.PointCloud:
 
 @dataclass
 class Config(ModuleConfig):
-    publish_interval: float = 0.2
+    publish_interval: float = 0
     voxel_size: float = 0.05
     block_count: int = 2_000_000
     device: str = "CUDA:0"
@@ -94,30 +94,37 @@ class SparseVoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
-        unsub = self.lidar.subscribe(self.add_frame)
+        unsub = self.lidar.subscribe(self._on_frame)
         self._disposables.add(Disposable(unsub))
 
-        def publish(_) -> None:
-            self.global_map.publish(
-                PointCloud2(
-                    self.get_global_pointcloud().to_legacy(), frame_id="map", ts=time.time()
-                )
-            )
+        # If publish_interval > 0, publish on timer; otherwise publish on each frame
+        if self.config.publish_interval > 0:
 
-        unsub = interval(self.config.publish_interval).subscribe(publish)
-        self._disposables.add(unsub)
+            def publish(_) -> None:
+                self.global_map.publish(self.get_global_pointcloud2())
+
+            unsub = interval(self.config.publish_interval).subscribe(publish)
+            self._disposables.add(unsub)
+
+    def _on_frame(self, frame: LidarMessage) -> None:
+        self.add_frame(frame)
+        if self.config.publish_interval <= 0:
+            self.global_map.publish(self.get_global_pointcloud2())
 
     @timed()
-    def add_frame(self, frame: LidarMessage):
+    def add_frame(self, frame: LidarMessage) -> None:
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
         pts = pcd.point["positions"].to(self._dev, o3c.float32)
         vox = (pts / self.config.voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
         self._hm.activate(keys_Nx3)
 
+    def get_global_pointcloud2(self) -> PointCloud2:
+        return PointCloud2(self.get_global_pointcloud().to_legacy(), frame_id="map", ts=time.time())
+
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
-        pts = voxel_coords.to(o3c.float32) + 0.5
+        pts = voxel_coords + (self.config.voxel_size * 0.5)
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
