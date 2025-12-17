@@ -48,6 +48,7 @@ class Detection2DPoint(Detection2D):
     x: float
     y: float
     name: str
+    ts: float
     image: Image
     track_id: int = -1
     class_id: int = -1
