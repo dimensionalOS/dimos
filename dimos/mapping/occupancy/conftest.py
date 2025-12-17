@@ -15,6 +15,7 @@
 import numpy as np
 import pytest
 
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.utils.data import get_data
 
@@ -26,4 +27,4 @@ def occupancy() -> OccupancyGrid:
 
 @pytest.fixture
 def occupancy_gradient(occupancy) -> OccupancyGrid:
-    return occupancy.gradient(max_distance=1.5)
+    return gradient(occupancy, max_distance=1.5)
