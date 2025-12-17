@@ -50,7 +50,9 @@ def load_lidar_frame(dataset_name: str, frame_idx: int) -> LidarMessage:
     - Datasets with already-converted LidarMessage objects (no autocast needed)
     """
     # Try loading without autocast first (for datasets where data is already LidarMessage)
-    replay: TimedSensorReplay[LidarMessage] = TimedSensorReplay(f"{dataset_name}/lidar", autocast=None)
+    replay: TimedSensorReplay[LidarMessage] = TimedSensorReplay(
+        f"{dataset_name}/lidar", autocast=None
+    )
     result = replay.load_one(f"{frame_idx:03d}")
 
     if isinstance(result, tuple):
