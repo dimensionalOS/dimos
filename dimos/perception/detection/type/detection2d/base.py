@@ -15,10 +15,6 @@
 from abc import abstractmethod
 from collections.abc import Callable
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
-    PointsAnnotation,
-    TextAnnotation,
-)
 from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D  # type: ignore[import-untyped]
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
@@ -37,16 +33,6 @@ class Detection2D(Timestamped):
     @abstractmethod
     def to_image_annotations(self) -> ImageAnnotations:
         """Convert detection to Foxglove ImageAnnotations for visualization."""
-        ...
-
-    @abstractmethod
-    def to_text_annotation(self) -> list[TextAnnotation]:
-        """Return text annotations for visualization."""
-        ...
-
-    @abstractmethod
-    def to_points_annotation(self) -> list[PointsAnnotation]:
-        """Return points/shape annotations for visualization."""
         ...
 
     @abstractmethod
