@@ -89,8 +89,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
-        overrides = {k: v for k, v in kwargs.items() if v is not None}
-        ctx.obj = overrides
+        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
