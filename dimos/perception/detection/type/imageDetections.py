@@ -88,10 +88,13 @@ class ImageDetections(Generic[T], TableStr):
 
         texts = flatten(det.to_text_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
         points = flatten(det.to_points_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
+        circles = flatten(det.to_circle_annotation() for det in self.detections)  # type: ignore[no-untyped-call]
 
         return ImageAnnotations(
             texts=texts,
             texts_length=len(texts),
             points=points,
             points_length=len(points),
+            circles=circles,
+            circles_length=len(circles),
         )
