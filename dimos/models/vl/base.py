@@ -302,18 +302,15 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         Returns:
             ImageDetections2D containing Detection2DPoint instances
         """
-        full_query = f"""show me point coordinates in pixels for this query: `{query}`
+        full_query = f"""Show me point coordinates in pixels for this query: `{query}`
 
-        format should be:
-        `[
-        [label, x, y]
-        ...
-        ]`
-
-        (etc, multiple matches are possible)
-
-        If there's no match return `[]`. Label is whatever you think is appropriate.
-        Only respond with the coordinates, no other text."""
+The format should be:
+```json
+[
+    ["label 1", x, y],
+    ["label 2", x, y],
+    ...
+]
 
         image_detections: ImageDetections2D[Detection2DPoint] = ImageDetections2D(image)
 
