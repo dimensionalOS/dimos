@@ -22,7 +22,8 @@ from typing import Optional, Tuple, List
 from collections import deque
 from scipy.spatial.transform import Rotation as R
 from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos_lcm.vision_msgs import Detection3D, Detection3DArray
+from dimos.msgs.vision_msgs import Detection3DArray
+from dimos_lcm.vision_msgs import Detection3D
 from dimos.utils.logging_config import setup_logger
 from dimos.manipulation.visual_servoing.utils import (
     update_target_grasp_pose,

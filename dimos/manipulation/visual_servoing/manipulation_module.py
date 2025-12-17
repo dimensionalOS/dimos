@@ -29,8 +29,8 @@ import numpy as np
 from dimos.core import Module, In, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Pose, Quaternion
+from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos_lcm.sensor_msgs import CameraInfo
-from dimos_lcm.vision_msgs import Detection3DArray, Detection2DArray
 
 from dimos.hardware.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor

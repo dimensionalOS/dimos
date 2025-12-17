@@ -25,11 +25,12 @@ from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.bt_navigator.navigator import BehaviorTreeNavigator, NavigatorState
 from dimos.navigation.frontier_exploration import WavefrontFrontierExplorer
 from dimos.navigation.global_planner import AstarPlanner
 from dimos.navigation.local_planner.holonomic_local_planner import HolonomicLocalPlanner
-from dimos.perception.detection2d import Detect2DModule, Detection2DArrayFix
+from dimos.perception.detection2d import Detect2DModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
@@ -133,7 +134,7 @@ class UnitreeGo2:
 
         detection = dimos.deploy(Detect2DModule)
         detection.image.connect(connection.video)
-        detection.detections.transport = LCMTransport("/detections", Detection2DArrayFix)
+        detection.detections.transport = LCMTransport("/detections", Detection2DArray)
         detection.annotations.transport = LCMTransport("/annotations", ImageAnnotations)
         detection.start()
 
