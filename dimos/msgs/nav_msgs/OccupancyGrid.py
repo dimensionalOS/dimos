@@ -306,3 +306,103 @@ class OccupancyGrid(Timestamped):
         )
         instance.info = lcm_msg.info
         return instance
+
+    def filter_above(self, threshold: int) -> OccupancyGrid:
+        """Create a new OccupancyGrid with only values above threshold.
+
+        Args:
+            threshold: Keep cells with values > threshold
+
+        Returns:
+            New OccupancyGrid where:
+            - Cells > threshold: kept as-is
+            - Cells <= threshold: set to -1 (unknown)
+            - Unknown cells (-1): preserved
+        """
+        new_grid = self.grid.copy()
+
+        # Create mask for cells to filter (not unknown and <= threshold)
+        filter_mask = (new_grid != -1) & (new_grid <= threshold)
+
+        # Set filtered cells to unknown
+        new_grid[filter_mask] = -1
+
+        # Create new OccupancyGrid
+        filtered = OccupancyGrid(
+            new_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
+
+        return filtered
+
+    def filter_below(self, threshold: int) -> OccupancyGrid:
+        """Create a new OccupancyGrid with only values below threshold.
+
+        Args:
+            threshold: Keep cells with values < threshold
+
+        Returns:
+            New OccupancyGrid where:
+            - Cells < threshold: kept as-is
+            - Cells >= threshold: set to -1 (unknown)
+            - Unknown cells (-1): preserved
+        """
+        new_grid = self.grid.copy()
+
+        # Create mask for cells to filter (not unknown and >= threshold)
+        filter_mask = (new_grid != -1) & (new_grid >= threshold)
+
+        # Set filtered cells to unknown
+        new_grid[filter_mask] = -1
+
+        # Create new OccupancyGrid
+        filtered = OccupancyGrid(
+            new_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
+
+        return filtered
+
+    def max(self) -> OccupancyGrid:
+        """Create a new OccupancyGrid with all non-unknown cells set to maximum value.
+
+        Returns:
+            New OccupancyGrid where:
+            - All non-unknown cells: set to CostValues.OCCUPIED (100)
+            - Unknown cells: preserved as CostValues.UNKNOWN (-1)
+        """
+        new_grid = self.grid.copy()
+
+        # Set all non-unknown cells to max
+        new_grid[new_grid != CostValues.UNKNOWN] = CostValues.OCCUPIED
+
+        # Create new OccupancyGrid
+        maxed = OccupancyGrid(
+            new_grid,
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
+
+        return maxed
+
+    def copy(self) -> OccupancyGrid:
+        """Create a deep copy of the OccupancyGrid.
+
+        Returns:
+            A new OccupancyGrid instance with copied data.
+        """
+        return OccupancyGrid(
+            grid=self.grid.copy(),
+            resolution=self.resolution,
+            origin=self.origin,
+            frame_id=self.frame_id,
+            ts=self.ts,
+        )
