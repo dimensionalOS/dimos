@@ -40,7 +40,7 @@ SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a Syste
 
 def toolmsg_from_state(state: SkillState) -> ToolMessage:
     if state.skill_config.output != Output.standard:
-        content = "Special output, see separate message"
+        content = "output attached in separate messages"
     else:
         content = state.content()
 
@@ -99,6 +99,10 @@ def snapshot_to_messages(
     # (images for example, requires to be a HumanMessage)
     special_msgs: List[HumanMessage] = []
 
+    # for special skills that want to return a separate message that should
+    # stay in history, like actual human messages, critical events
+    history_msgs: List[HumanMessage] = []
+
     # Initialize state_msg
     state_msg = None
 
@@ -109,12 +113,19 @@ def snapshot_to_messages(
         if skill_state.call_id in tool_call_ids:
             tool_msgs.append(toolmsg_from_state(skill_state))
 
-        special_data = skill_state.skill_config.output != Output.standard
+        if skill_state.skill_config.output == Output.human:
+            content = skill_state.content()
+            if not content:
+                continue
+            history_msgs.append(HumanMessage(content=content))
+            continue
+
+        special_data = skill_state.skill_config.output == Output.image
         if special_data:
             content = skill_state.content()
             if not content:
                 continue
-            special_msgs.append(HumanMessage(content=[content]))
+            special_msgs.append(HumanMessage(content=content))
 
         if skill_state.call_id in tool_call_ids:
             continue
@@ -127,7 +138,8 @@ def snapshot_to_messages(
         )
 
     return {
-        "tool_msgs": tool_msgs if tool_msgs else [],
+        "tool_msgs": tool_msgs,
+        "history_msgs": history_msgs,
         "state_msgs": ([state_msg] if state_msg else []) + special_msgs,
     }
 
@@ -200,9 +212,10 @@ class Agent(AgentSpec):
     def run_implicit_skill(self, skill_name: str, *args, **kwargs) -> None:
         self.coordinator.call_skill(False, skill_name, {"args": args, "kwargs": kwargs})
 
-    async def agent_loop(self, seed_query: str = ""):
+    async def agent_loop(self, first_query: str = ""):
         self.state_messages = []
-        self.append_history(HumanMessage(seed_query))
+        if first_query:
+            self.append_history(HumanMessage(first_query))
 
         try:
             while True:
@@ -246,7 +259,9 @@ class Agent(AgentSpec):
                 snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
 
                 self.state_messages = snapshot_msgs.get("state_msgs", [])
-                self.append_history(*snapshot_msgs.get("tool_msgs", []))
+                self.append_history(
+                    *snapshot_msgs.get("tool_msgs", []), *snapshot_msgs.get("history_msgs", [])
+                )
 
         except Exception as e:
             logger.error(f"Error in agent loop: {e}")
@@ -254,8 +269,11 @@ class Agent(AgentSpec):
 
             traceback.print_exc()
 
+    def loop_thread(self):
+        return asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)
+
     def query(self, query: str):
-        return asyncio.ensure_future(self.agent_loop(query), loop=self._loop)
+        return asyncio.ensure_future(self.agent_loop(query))
 
     def query_async(self, query: str):
         return self.agent_loop(query)

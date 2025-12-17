@@ -18,15 +18,16 @@ Dynamically generates skills from UNITREE_WEBRTC_CONTROLS list.
 """
 
 from __future__ import annotations
-import time
-from typing import Optional, TYPE_CHECKING
 
-from dimos.protocol.skill.skill import SkillContainer, skill
-from dimos.msgs.geometry_msgs import Vector3
-from dimos.utils.logging_config import setup_logger
-from dimos.protocol.skill.type import Output, Reducer, Stream
 import datetime
+import time
+from typing import TYPE_CHECKING, Optional
+
 from dimos.core import Module
+from dimos.msgs.geometry_msgs import Vector3
+from dimos.protocol.skill.skill import SkillContainer, skill
+from dimos.protocol.skill.type import Output, Reducer, Stream
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
@@ -34,8 +35,9 @@ if TYPE_CHECKING:
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
 
 # Import constants from unitree_skills
-from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
 from go2_webrtc_driver.constants import RTC_TOPIC
+
+from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
 
 
 class UnitreeSkillContainer(Module):
@@ -52,6 +54,7 @@ class UnitreeSkillContainer(Module):
 
         # Dynamically generate skills from UNITREE_WEBRTC_CONTROLS
         self._generate_unitree_skills()
+        super().__init__()
 
     def _generate_unitree_skills(self):
         """Dynamically generate skills from the UNITREE_WEBRTC_CONTROLS list."""
@@ -139,11 +142,12 @@ class UnitreeSkillContainer(Module):
         return f"Wait completed with length={seconds}s"
 
     @skill(stream=Stream.passive, reducer=Reducer.latest)
-    def current_time(self, frequency: Optional[float] = 10) -> Generator[str, None, None]:
-        """Provides current time."""
+    def current_time(self):
+        """Provides current time implicitly, don't call this skill directly."""
+        print("Starting current_time skill")
         while True:
-            yield datetime.datetime.now()
-            time.sleep(1 / frequency)
+            yield str(datetime.datetime.now())
+            time.sleep(1)
 
     # ========== Helper Methods ==========
 

@@ -23,22 +23,26 @@ import os
 import sys
 import time
 from pathlib import Path
+
 from dotenv import load_dotenv
 
 # Add parent directories to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent))
 
+from threading import Thread
+
+import reactivex as rx
+import reactivex.operators as ops
+
+from dimos.agents2 import Agent, Reducer, Stream, skill
+from dimos.agents2.spec import Model, Provider
+from dimos.core import Module
 from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
-from dimos.core import Module
-from dimos.agents2 import Agent
-from dimos.agents2.spec import Model, Provider
 from dimos.utils.logging_config import setup_logger
 
 # For web interface (simplified for now)
 from dimos.web.robot_web_interface import RobotWebInterface
-import reactivex as rx
-import reactivex.operators as ops
 
 logger = setup_logger("dimos.agents2.run_unitree")
 
@@ -50,6 +54,52 @@ SYSTEM_PROMPT_PATH = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
     "assets/agent/prompt.txt",
 )
+
+
+class WebModule(Module):
+    web_interface: RobotWebInterface = None
+    human_query: rx.subject.Subject = None
+    agent_response: rx.subject.Subject = None
+
+    thread: Thread = None
+
+    def __init__(self):
+        super().__init__()
+        self.agent_response = rx.subject.Subject()
+        self.human_query = rx.subject.Subject()
+
+    def start(self):
+        text_streams = {
+            "agent_responses": self.agent_response,
+        }
+
+        self.web_interface = RobotWebInterface(
+            port=5555,
+            text_streams=text_streams,
+            audio_subject=rx.subject.Subject(),
+        )
+
+        self.web_interface.query_stream.subscribe(self.human_query.on_next)
+
+        self.thread = Thread(target=self.web_interface.run, daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        if self.web_interface:
+            self.web_interface.stop()
+        if self.thread:
+            self.thread.join(timeout=1.0)
+
+        super().stop()
+
+    @skill(stream=Stream.call_agent, reducer=Reducer.all)
+    def human_messages(self):
+        """provide human messages from web interface."""
+        while True:
+            print("waiting for human message...")
+            message = self.human_query.pipe(ops.first()).run()
+            print("GOT HUMAN MESSAGE:", message)
+            yield message
 
 
 class UnitreeAgentRunner:
@@ -77,11 +127,9 @@ class UnitreeAgentRunner:
         logger.info("Robot initialized successfully")
         return robot
 
-    def setup_agent(self, robot: UnitreeGo2, system_prompt: str) -> Agent:
+    def setup_agent(self, skillcontainers, system_prompt: str) -> Agent:
         """Create and configure the agent with skills."""
         logger.info("Setting up agent with skills...")
-
-        skill_container = UnitreeSkillContainer(robot=robot)
 
         # Create agent
         agent = Agent(
@@ -90,43 +138,29 @@ class UnitreeAgentRunner:
             provider=Provider.OPENAI,  # Would need ANTHROPIC provider
         )
 
-        # Register skills
-        agent.register_skills(skill_container)
+        for container in skillcontainers:
+            print("REGISTERING SKILLS FROM CONTAINER:", container)
+            agent.register_skills(container)
 
         # Start agent
         agent.start()
 
+        agent.run_implicit_skill("human_messages")
         # Log available skills
         tools = agent.get_tools()
         logger.info(f"Agent configured with {len(tools)} skills:")
         for tool in tools:  # Show first 5
             logger.info(f"  - {tool.name}")
 
+        agent.query("hello")
         return agent
 
-    def setup_web_interface(self) -> RobotWebInterface:
-        """Setup web interface for text input."""
+    def setup_web(self) -> WebModule:
         logger.info("Setting up web interface...")
+        web_module = WebModule()
+        web_module.start()
 
-        # Create stream subjects for web interface
-        agent_response_subject = rx.subject.Subject()
-        agent_response_stream = agent_response_subject.pipe(ops.share())
-
-        text_streams = {
-            "agent_responses": agent_response_stream,
-        }
-
-        web_interface = RobotWebInterface(
-            port=5555,
-            text_streams=text_streams,
-            audio_subject=rx.subject.Subject(),
-        )
-
-        # Store subject for later use
-        self.agent_response_subject = agent_response_subject
-
-        logger.info("Web interface created on port 5555")
-        return web_interface
+        return web_module
 
     def handle_queries(self):
         """Handle incoming queries from web interface."""
@@ -216,8 +250,14 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
         try:
             # Setup components
             self.robot = self.setup_robot()
-            self.agent = self.setup_agent(self.robot, system_prompt)
-            self.web_interface = self.setup_web_interface()
+            self.web_interface = self.setup_web()
+            self.agent = self.setup_agent(
+                [
+                    UnitreeSkillContainer(robot=self.robot),
+                    self.web_interface,
+                ],
+                system_prompt,
+            )
 
             # Start handling queries
             self.running = True
@@ -233,9 +273,7 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
             logger.info("  - Ask the robot to speak text")
             logger.info("=" * 60)
 
-            # Run web interface (blocks)
-            self.web_interface.run()
-
+            time.sleep(1000)
         except KeyboardInterrupt:
             logger.info("Keyboard interrupt received")
         except Exception as e:
@@ -243,8 +281,8 @@ You can move, navigate, speak, and perform various actions. Be helpful and frien
             import traceback
 
             traceback.print_exc()
-        finally:
-            self.shutdown()
+        # finally:
+        # self.shutdown()
 
     def shutdown(self):
         """Clean shutdown of all components."""

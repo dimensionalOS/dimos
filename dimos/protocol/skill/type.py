@@ -25,7 +25,7 @@ from dimos.types.timestamped import Timestamped
 
 class Output(Enum):
     standard = 0
-    separate_message = 1  # e.g., for images, videos, files, etc.
+    human = 1
     image = 2  # this is same as separate_message, but maybe clearer for users
 
 
@@ -251,9 +251,19 @@ def accumulate_dict(
     return _make_skill_msg(msg, {**acc_value, **msg.content})
 
 
+def accumulate_string(
+    accumulator: Optional[SkillMsg[Literal[MsgType.reduced_stream]]],
+    msg: SkillMsg[Literal[MsgType.stream]],
+) -> SkillMsg[Literal[MsgType.reduced_stream]]:
+    """All reducer that collects all values into a list."""
+    acc_value = accumulator.content if accumulator else ""
+    return _make_skill_msg(msg, acc_value + "\n" + msg.content)
+
+
 class Reducer:
     sum = sum_reducer
     latest = latest_reducer
     all = all_reducer
     accumulate_list = accumulate_list
     accumulate_dict = accumulate_dict
+    string = accumulate_string
