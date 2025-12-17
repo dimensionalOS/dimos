@@ -27,7 +27,6 @@ from dimos.core.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall

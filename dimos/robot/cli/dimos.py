@@ -90,7 +90,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
         overrides = {k: v for k, v in kwargs.items() if v is not None}
-        ctx.obj = overrides  # Pass overrides dict, not GlobalConfig
+        ctx.obj = overrides
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
@@ -111,7 +111,7 @@ def run(
     """Start a robot blueprint"""
     setup_exception_handler()
 
-    cli_overrides: dict[str, Any] = ctx.obj
+    cli_config_overrides: dict[str, Any] = ctx.obj
     pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     blueprint = get_blueprint_by_name(robot_type.value)
 
@@ -119,15 +119,15 @@ def run(
         loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]  # type: ignore[attr-defined]
         blueprint = autoconnect(blueprint, *loaded_modules)
 
-    dimos = blueprint.build(cli_config_overrides=cli_overrides)
+    dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
     dimos.loop()
 
 
 @main.command()
 def show_config(ctx: typer.Context) -> None:
     """Show current config settings and their values."""
-    cli_overrides: dict[str, Any] = ctx.obj
-    config = GlobalConfig().model_copy(update=cli_overrides)
+    cli_config_overrides: dict[str, Any] = ctx.obj
+    config = GlobalConfig().model_copy(update=cli_config_overrides)
 
     for field_name, value in config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
