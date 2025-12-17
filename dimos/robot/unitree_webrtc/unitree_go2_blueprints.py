@@ -84,6 +84,9 @@ test_new_nav = (
     autoconnect(
         go2_connection(),
         mapper(voxel_size=0.5, global_publish_interval=2.5),
+        # astar_planner(),
+        # holonomic_local_planner(),
+        # behavior_tree_navigator(),
         replanning_a_star_planner(),
         wavefront_frontier_explorer(),
         websocket_vis(),
