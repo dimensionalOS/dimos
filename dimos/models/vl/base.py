@@ -6,7 +6,7 @@ import warnings
 
 from dimos.core.resource import Resource
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.utils.data import get_data
 from dimos.utils.decorators import retry
@@ -97,6 +97,55 @@ def vlm_detection_to_detection2d(
         name=name,
         ts=image.ts,
         image=image,
+    )
+
+
+# Type alias for VLM point format: [label, x, y]
+VlmPoint = tuple[str, float, float]
+
+
+def vlm_point_to_detection2d_point(
+    vlm_point: VlmPoint | list[str | float],
+    track_id: int,
+    image: Image,
+) -> Detection2DPoint | None:
+    """Convert a single VLM point [label, x, y] to Detection2DPoint.
+
+    Args:
+        vlm_point: Single point tuple/list containing [label, x, y]
+        track_id: Track ID to assign to this detection
+        image: Source image for the detection
+
+    Returns:
+        Detection2DPoint instance or None if invalid
+    """
+    # Validate list/tuple structure
+    if not isinstance(vlm_point, (list, tuple)):
+        logger.debug(f"VLM point is not a list/tuple: {type(vlm_point)}")
+        return None
+
+    if len(vlm_point) != 3:
+        logger.debug(f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}")
+        return None
+
+    # Extract label
+    name = str(vlm_point[0])
+
+    # Validate and convert coordinates
+    try:
+        x = float(vlm_point[1])
+        y = float(vlm_point[2])
+    except (ValueError, TypeError) as e:
+        logger.debug(f"Invalid VLM point coordinates: {vlm_point[1:]}. Error: {e}")
+        return None
+
+    return Detection2DPoint(
+        x=x,
+        y=y,
+        name=name,
+        ts=image.ts,
+        image=image,
+        track_id=track_id,
     )
 
 
@@ -199,15 +248,18 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
         format should be:
-        `[
-        [label, x1, y1, x2, y2]
+        ```json
+        [
+           ["label1", x1, y1, x2, y2]
+           ["label2", x1, y1, x2, y2]
         ...
         ]`
 
         (etc, multiple matches are possible)
 
         If there's no match return `[]`. Label is whatever you think is appropriate
-        Only respond with the coordinates, no other text."""
+        Only respond with JSON, no other text.
+        """
 
         image_detections = ImageDetections2D(image)
 
@@ -236,5 +288,55 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
             detection2d = vlm_detection_to_detection2d(detection_tuple, track_id, image)
             if detection2d is not None and detection2d.is_valid():
                 image_detections.detections.append(detection2d)
+
+        return image_detections
+
+    def query_points(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DPoint]:
+        """Query the VLM for point locations matching the query.
+
+        Args:
+            image: Input image to query
+            query: Description of what points to find (e.g., "center of the red ball")
+
+        Returns:
+            ImageDetections2D containing Detection2DPoint instances
+        """
+        full_query = f"""Show me point coordinates in pixels for this query: `{query}`
+
+        The format should be:
+        ```json
+        [
+           ["label 1", x, y],
+           ["label 2", x, y],
+        ...
+        ]
+
+        If there's no match return `[]`. Label is whatever you think is appropriate.
+        Only respond with the JSON, no other text.
+        """
+
+        image_detections: ImageDetections2D[Detection2DPoint] = ImageDetections2D(image)
+
+        # Get scaled image and scale factor for coordinate rescaling
+        scaled_image, scale = self._prepare_image(image)
+
+        try:
+            point_tuples = self.query_json(scaled_image, full_query)
+        except Exception:
+            return image_detections
+
+        for track_id, point_tuple in enumerate(point_tuples):
+            # Scale coordinates back to original image size if resized
+            if scale != 1.0 and isinstance(point_tuple, (list, tuple)) and len(point_tuple) == 3:
+                point_tuple = [
+                    point_tuple[0],  # label
+                    point_tuple[1] / scale,  # x
+                    point_tuple[2] / scale,  # y
+                ]
+            point2d = vlm_point_to_detection2d_point(point_tuple, track_id, image)
+            if point2d is not None and point2d.is_valid():
+                image_detections.detections.append(point2d)
 
         return image_detections
