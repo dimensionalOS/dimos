@@ -22,9 +22,18 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-un
     TextAnnotation,
 )
 from dimos_lcm.foxglove_msgs.Point2 import Point2  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+    BoundingBox2D,
+    Detection2D as ROSDetection2D,
+    ObjectHypothesis,
+    ObjectHypothesisWithPose,
+    Point2D,
+    Pose2D,
+)
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.foxglove_msgs.Color import Color
+from dimos.msgs.std_msgs import Header
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.types.timestamped import to_ros_stamp
 
@@ -141,11 +150,34 @@ class Detection2DPoint(Detection2D):
             circles_length=len(circles),
         )
 
+    def to_ros_detection2d(self) -> ROSDetection2D:
+        """Convert point to ROS Detection2D message (as zero-size bbox at point)."""
+        return ROSDetection2D(
+            header=Header(self.ts, "camera_link"),
+            bbox=BoundingBox2D(
+                center=Pose2D(
+                    position=Point2D(x=self.x, y=self.y),
+                    theta=0.0,
+                ),
+                size_x=0.0,
+                size_y=0.0,
+            ),
+            results=[
+                ObjectHypothesisWithPose(
+                    ObjectHypothesis(
+                        class_id=self.class_id,
+                        score=self.confidence,
+                    )
+                )
+            ],
+            id=str(self.track_id),
+        )
+
     def is_valid(self) -> bool:
         """Check if the point is within image bounds."""
         if self.image.shape:
             h, w = self.image.shape[:2]
-            return 0 <= self.x <= w and 0 <= self.y <= h
+            return bool(0 <= self.x <= w and 0 <= self.y <= h)
         return True
 
     def lcm_encode(self):  # type: ignore[no-untyped-def]
