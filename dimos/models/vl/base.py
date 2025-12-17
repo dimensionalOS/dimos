@@ -125,9 +125,7 @@ def vlm_point_to_detection2d_point(
         return None
 
     if len(vlm_point) != 3:
-        logger.debug(
-            f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}"
-        )
+        logger.debug(f"Invalid VLM point length: {len(vlm_point)}, expected 3. Got: {vlm_point}")
         return None
 
     # Extract label
@@ -250,15 +248,18 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         full_query = f"""show me bounding boxes in pixels for this query: `{query}`
 
         format should be:
-        `[
-        [label, x1, y1, x2, y2]
+        ```json
+        [
+           ["label1", x1, y1, x2, y2]
+           ["label2", x1, y1, x2, y2]
         ...
         ]`
 
         (etc, multiple matches are possible)
 
         If there's no match return `[]`. Label is whatever you think is appropriate
-        Only respond with the coordinates, no other text."""
+        Only respond with JSON, no other text.
+        """
 
         image_detections = ImageDetections2D(image)
 
@@ -304,13 +305,17 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         """
         full_query = f"""Show me point coordinates in pixels for this query: `{query}`
 
-The format should be:
-```json
-[
-    ["label 1", x, y],
-    ["label 2", x, y],
-    ...
-]
+        The format should be:
+        ```json
+        [
+           ["label 1", x, y],
+           ["label 2", x, y],
+        ...
+        ]
+
+        If there's no match return `[]`. Label is whatever you think is appropriate.
+        Only respond with the JSON, no other text.
+        """
 
         image_detections: ImageDetections2D[Detection2DPoint] = ImageDetections2D(image)
 
@@ -324,11 +329,7 @@ The format should be:
 
         for track_id, point_tuple in enumerate(point_tuples):
             # Scale coordinates back to original image size if resized
-            if (
-                scale != 1.0
-                and isinstance(point_tuple, (list, tuple))
-                and len(point_tuple) == 3
-            ):
+            if scale != 1.0 and isinstance(point_tuple, (list, tuple)) and len(point_tuple) == 3:
                 point_tuple = [
                     point_tuple[0],  # label
                     point_tuple[1] / scale,  # x
