@@ -11,7 +11,7 @@ from transformers import AutoModelForCausalLM  # type: ignore[import-untyped]
 from dimos.models.base import HuggingFaceModel, HuggingFaceModelConfig
 from dimos.models.vl.base import VlModel
 from dimos.msgs.sensor_msgs import Image
-from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
+from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
 
 # Moondream works well with 512x512 max
 MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
@@ -171,6 +171,47 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
                 name=query,  # Use the query as the object name
                 ts=image.ts,
                 image=image,
+            )
+
+            if detection.is_valid():
+                image_detections.detections.append(detection)
+
+        return image_detections
+
+    def query_points(
+        self, image: Image, query: str, **kwargs: object
+    ) -> ImageDetections2D[Detection2DPoint]:
+        """Detect point locations using Moondream's native point method.
+
+        Args:
+            image: Input image
+            query: Object query (e.g., "person's head", "center of the ball")
+
+        Returns:
+            ImageDetections2D containing detected points
+        """
+        pil_image = self._to_pil(image)
+
+        result = self._model.point(pil_image, query)
+
+        # Convert to ImageDetections2D
+        image_detections: ImageDetections2D[Detection2DPoint] = ImageDetections2D(image)
+
+        # Get image dimensions for converting normalized coords to pixels
+        height, width = image.height, image.width
+
+        for track_id, point in enumerate(result.get("points", [])):
+            # Convert normalized coordinates (0-1) to pixel coordinates
+            x = point["x"] * width
+            y = point["y"] * height
+
+            detection = Detection2DPoint(
+                x=x,
+                y=y,
+                name=query,
+                ts=image.ts,
+                image=image,
+                track_id=track_id,
             )
 
             if detection.is_valid():

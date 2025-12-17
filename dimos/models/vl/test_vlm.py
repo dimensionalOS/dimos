@@ -30,7 +30,7 @@ if TYPE_CHECKING:
     ],
 )
 @pytest.mark.gpu
-def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
+def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
     image = Image.from_file(get_data("cafe.jpg")).to_rgb()
 
     print(f"Testing {model_name}")
@@ -81,6 +81,71 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
     print(f"\n{model_name} Results:")
     print(f"  Average query time: {avg_time:.3f}s")
     print(f"  Total detections: {len(all_detections)}")
+    print(all_detections)
+
+    annotations_transport.publish(all_detections.to_foxglove_annotations())
+
+    annotations_transport.lcm.stop()
+    image_transport.lcm.stop()
+    model.stop()
+
+
+@pytest.mark.parametrize(
+    "model_class,model_name",
+    [
+        (MoondreamVlModel, "Moondream"),
+        (QwenVlModel, "Qwen"),
+    ],
+)
+@pytest.mark.gpu
+def test_vlm_point_detections(model_class: "type[VlModel]", model_name: str) -> None:
+    """Test VLM point detection capabilities."""
+    image = Image.from_file(get_data("cafe.jpg")).to_rgb()
+
+    print(f"Testing {model_name} point detection")
+
+    # Initialize model
+    print(f"Loading {model_name} model...")
+    model: VlModel = model_class()
+    model.start()
+
+    queries = [
+        "center of each person's head",
+        "tip of the nose",
+        "center of the glasses",
+        "cigarette tip",
+        "center of each light bulb",
+        "center of each shoe",
+    ]
+
+    all_detections = ImageDetections2D(image)
+    query_times = []
+
+    # Publish to LCM with model-specific channel names
+    annotations_transport: LCMTransport[ImageAnnotations] = LCMTransport(
+        "/annotations", ImageAnnotations
+    )
+
+    image_transport: LCMTransport[Image] = LCMTransport("/image", Image)
+
+    image_transport.publish(image)
+
+    # Then run VLM queries
+    for query in queries:
+        print(f"\nQuerying for: {query}")
+        start_time = time.time()
+        detections = model.query_points(image, query)
+        query_time = time.time() - start_time
+        query_times.append(query_time)
+
+        print(f"  Found {len(detections)} points in {query_time:.3f}s")
+        all_detections.detections.extend(detections.detections)
+        annotations_transport.publish(all_detections.to_foxglove_annotations())
+
+    avg_time = sum(query_times) / len(query_times) if query_times else 0
+    print(f"\n{model_name} Results:")
+    print(f"  Average query time: {avg_time:.3f}s")
+    print(f"  Total points: {len(all_detections)}")
     print(all_detections)
 
     annotations_transport.publish(all_detections.to_foxglove_annotations())
