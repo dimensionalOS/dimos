@@ -60,6 +60,7 @@ class GlobalPlanner(Resource):
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
+        self.goal_reached = Subject()
         self._global_config = global_config
         self._navigation_map = NavigationMap(self._global_config)
         self._local_planner = LocalPlanner(self._global_config, self._navigation_map)
@@ -143,9 +144,17 @@ class GlobalPlanner(Resource):
         while not self._stop_planner.is_set():
             with self._lock:
                 current_goal = self._current_goal
+                current_odom = self._current_odom
 
-            if current_goal:
-                if self._position_tracker.is_stuck():
+            if current_goal and current_odom:
+                # Check if close enough to goal - accept as arrived
+                if (
+                    current_goal.position.distance(current_odom.position)
+                    < self._replan_goal_tolerance
+                ):
+                    logger.info("Close enough to goal. Accepting as arrived.")
+                    self.cancel_goal(arrived=True)
+                elif self._position_tracker.is_stuck():
                     logger.info("Robot is stuck. Replanning.")
                     self._replan_path()
 

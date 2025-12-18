@@ -14,7 +14,7 @@
 
 import math
 import os
-from threading import Event, RLock, Thread, current_thread
+from threading import Event, RLock, Thread
 import time
 import traceback
 from typing import Literal, TypeAlias
@@ -107,12 +107,7 @@ class LocalPlanner(Resource):
         self._stop_planning_event.set()
 
         with self._lock:
-            if self._thread is not None:
-                if self._thread is not current_thread():
-                    self._thread.join(2)
-                    if self._thread.is_alive():
-                        logger.error("LocalPlanner thread did not stop in time.")
-                self._thread = None
+            self._thread = None
 
         self._reset_state()
 
