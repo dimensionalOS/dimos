@@ -1,3 +1,17 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Minimal blueprint runner that reads from a webcam and logs frames."""
 
 from reactivex.disposable import Disposable
@@ -5,13 +19,10 @@ from reactivex.disposable import Disposable
 from dimos.core import In, Module, pSHMTransport
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
+from dimos.dashboard.module import Dashboard, RerunConnection
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
-from dimos.msgs.sensor_msgs import Image
-
-
-from dimos.dashboard.module import Dashboard
 from dimos.msgs.sensor_msgs import Image
 
 
@@ -25,11 +36,12 @@ class CameraListener(Module):
     @rpc
     def start(self) -> None:
         super().start()
+        self.rc = RerunConnection()  # one connection per process
 
         def _on_frame(img: Image) -> None:
             self._count += 1
             if self._count % 20 == 0:
-                rr.log(f"/color_image", img.to_rerun())
+                self.rc.log(f"/{self.__class__.__name__}/color_image", img.to_rerun())
                 print(
                     f"[camera-listener] frame={self._count} ts={img.ts:.3f} "
                     f"shape={img.height}x{img.width}"
@@ -50,7 +62,8 @@ blueprint = (
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),
         ),
-        Dashboard().blueprint(
+        CameraListener.blueprint(),
+        Dashboard.blueprint(
             auto_open=True,
             terminal_commands={
                 "agent-spy": "htop",
@@ -73,4 +86,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main() 
+    main()
