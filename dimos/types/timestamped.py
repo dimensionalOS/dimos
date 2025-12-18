@@ -63,6 +63,13 @@ def to_ros_stamp(ts: TimeLike) -> ROSTime:
     return ROSTime(sec=sec, nanosec=nanosec)
 
 
+def to_human_readable(ts: float) -> str:
+    """Convert timestamp to human-readable format with date and time."""
+    import time
+
+    return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+
+
 def to_datetime(ts: TimeLike, tz=None) -> datetime:
     if isinstance(ts, datetime):
         if ts.tzinfo is None:

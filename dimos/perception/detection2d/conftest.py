@@ -19,6 +19,7 @@ import pytest
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from dimos_lcm.sensor_msgs import CameraInfo, PointCloud2
 
+from dimos.core import start
 from dimos.core.transport import LCMTransport
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs.Image import Image
@@ -41,6 +42,12 @@ class Moment(TypedDict):
     transforms: list[Transform]
     tf: TF
     detections: Optional[PointCloud2]
+
+
+@pytest.fixture
+def dimos_cluster():
+    with start(5) as dimos:
+        yield dimos
 
 
 @pytest.fixture
@@ -100,10 +107,12 @@ def publish_lcm(moment: Moment):
     detections = moment.get("detections")
     if detections:
         for i, detection in enumerate(detections):
-            detections_transport: LCMTransport = LCMTransport(f"/detected_{i}", PointCloud2)
+            detections_transport: LCMTransport = LCMTransport(
+                f"/detected/pointcloud/{i}", PointCloud2
+            )
             detections_transport.publish(detection.pointcloud)
 
-            detections_image_transport: LCMTransport = LCMTransport(f"/image_detected_{i}", Image)
+            detections_image_transport: LCMTransport = LCMTransport(f"/detected/image/{i}", Image)
             detections_image_transport.publish(detection.cropped_image())
 
 

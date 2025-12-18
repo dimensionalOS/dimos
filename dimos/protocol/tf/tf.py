@@ -112,8 +112,10 @@ class TBuffer(TimestampedCollection[Transform]):
 
         time_range = self.time_range()
         if time_range:
-            start_time = time.strftime("%H:%M:%S", time.localtime(time_range[0]))
-            end_time = time.strftime("%H:%M:%S", time.localtime(time_range[1]))
+            from dimos.types.timestamped import to_human_readable
+
+            start_time = to_human_readable(time_range[0])
+            end_time = to_human_readable(time_range[1])
             duration = time_range[1] - time_range[0]
 
             frame_str = (

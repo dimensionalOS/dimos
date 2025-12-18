@@ -18,16 +18,20 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from reactivex import operators as ops
+from reactivex.observable import Observable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection2d.type import Detection2D, ImageDetections2D
 from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector
+from dimos.utils.reactive import backpressure
 
 
 class Detection2DModule(Module):
     image: In[Image] = None  # type: ignore
-    detections: Out[Detection2D] = None  # type: ignore
+
+    detections: Out[Detection2DArray] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
     _initDetector = Yolo2DDetector
@@ -38,15 +42,15 @@ class Detection2DModule(Module):
             self._detectorClass = detector
         self.detector = self._initDetector()
 
-    def process_frame(self, image: Image) -> ImageDetections2D:
-        return ImageDetections2D.from_detector(
+    def process_image_frame(self, image: Image) -> ImageDetections2D:
+        detections = ImageDetections2D.from_detector(
             image, self.detector.process_image(image.to_opencv())
         )
+        return detections
 
     @functools.cache
-    def detection_stream(self):
-        detection_stream = self.image.observable().pipe(ops.map(self.process_frame))
-        return detection_stream
+    def detection_stream(self) -> Observable[ImageDetections2D]:
+        return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
 
     @rpc
     def start(self):

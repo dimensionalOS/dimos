@@ -20,7 +20,7 @@ import open3d as o3d
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.timeseries import to_human_readable
+from dimos.types.timestamped import to_human_readable
 
 
 class RawLidarPoints(TypedDict):

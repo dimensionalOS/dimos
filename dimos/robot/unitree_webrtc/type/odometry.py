@@ -20,6 +20,7 @@ from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.timeseries import (
     Timestamped,
 )
+from dimos.types.timestamped import to_human_readable, to_timestamp
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -97,7 +98,7 @@ class Odometry(PoseStamped, Timestamped):
             pose["orientation"].get("w"),
         )
 
-        ts = time.time()
+        ts = to_timestamp(msg["data"]["header"]["stamp"])
         return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
 
     def __repr__(self) -> str:
