@@ -22,6 +22,7 @@ from dimos.core.resource import Resource
 from dimos.mapping.occupancy.path_resampling import smooth_resample_path
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
+from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs import Image
@@ -103,6 +104,8 @@ class GlobalPlanner(Resource):
         self._plan_path()
 
     def cancel_goal(self, *, but_will_try_again: bool = False, arrived: bool = False) -> None:
+        logger.info("Cancelling goal.", but_will_try_again=but_will_try_again, arrived=arrived)
+
         with self._lock:
             self._position_tracker.reset_data()
 
@@ -136,6 +139,7 @@ class GlobalPlanner(Resource):
 
             if current_goal:
                 if self._position_tracker.is_stuck():
+                    logger.info("Robot is stuck. Replanning.")
                     self._replan_path()
 
             self._stop_planner.wait(0.1)
@@ -160,6 +164,8 @@ class GlobalPlanner(Resource):
             current_odom = self._current_odom
             current_goal = self._current_goal
             replan_attempt = self._replan_attempt
+
+        logger.info("Replanning.", attempt=replan_attempt)
 
         assert current_odom is not None
         assert current_goal is not None
@@ -187,7 +193,7 @@ class GlobalPlanner(Resource):
         assert current_goal is not None
 
         if current_odom is None:
-            logger.warning("Cannot handle goal request: missing odometry")
+            logger.warning("Cannot handle goal request: missing odometry.")
             return
 
         safe_goal = find_safe_goal(
@@ -200,18 +206,16 @@ class GlobalPlanner(Resource):
         )
 
         if safe_goal is None:
-            logger.warning("No safe goal found near requested target")
+            logger.warning("No safe goal found near requested target.")
             return
 
         goals_distance = safe_goal.distance(current_goal.position)
         if goals_distance > 0.2:
             logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
 
-        logger.info("Found safe goal", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
+        logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
-        robot_pos = current_odom.position
-        costmap = self._navigation_map.gradient_costmap
-        path = astar(self._global_config.astar_algorithm, costmap, safe_goal, robot_pos)
+        path = self._find_wide_path(safe_goal, current_odom.position)
 
         if not path:
             logger.warning(
@@ -224,3 +228,15 @@ class GlobalPlanner(Resource):
         self.path.on_next(resampled_path)
 
         self._local_planner.start_planning(resampled_path)
+
+    def _find_wide_path(self, goal: Vector3, robot_pos: Vector3) -> Path | None:
+        sizes_to_try: list[float] = [2.2, 1.7, 1.3, 1]
+
+        for size in sizes_to_try:
+            costmap = self._navigation_map.make_gradient_costmap(size)
+            path = astar(self._global_config.astar_algorithm, costmap, goal, robot_pos)
+            if path:
+                logger.info(f"Found path {size}x robot width.")
+                return path
+
+        return None

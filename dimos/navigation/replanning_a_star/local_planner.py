@@ -36,7 +36,9 @@ from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import normalize_angle, quaternion_to_euler
 
-PlannerState: TypeAlias = Literal["idle", "initial_rotation", "path_following", "final_rotation"]
+PlannerState: TypeAlias = Literal[
+    "idle", "initial_rotation", "path_following", "final_rotation", "arrived"
+]
 StopMessage: TypeAlias = Literal["arrived", "obstacle_found", "error"]
 
 logger = setup_logger()
@@ -168,11 +170,14 @@ class LocalPlanner(Resource):
                 cmd_vel = self._compute_path_following()
             elif state == "final_rotation":
                 cmd_vel = self._compute_final_rotation()
-            elif state == "idle":
+            elif state == "arrived":
                 self.stopped_navigating.on_next("arrived")
                 break
+            elif state == "idle":
+                cmd_vel = None
 
-            self.cmd_vel.on_next(cmd_vel)
+            if cmd_vel is not None:
+                self.cmd_vel.on_next(cmd_vel)
 
             elapsed = time.perf_counter() - start_time
             sleep_time = max(0.0, (1.0 / self._control_frequency) - elapsed)
@@ -265,7 +270,7 @@ class LocalPlanner(Resource):
         if abs(yaw_error) < self._orientation_tolerance:
             logger.info("Final rotation complete, goal reached")
             with self._lock:
-                self._state = "idle"
+                self._state = "arrived"
             return Twist()
 
         max_angular_speed = self._speed

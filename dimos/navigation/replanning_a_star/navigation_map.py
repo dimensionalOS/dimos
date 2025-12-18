@@ -22,8 +22,6 @@ from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 class NavigationMap:
     _global_config: GlobalConfig
     _binary: OccupancyGrid | None = None
-    _last_binary: OccupancyGrid | None = None
-    _navigation_map: OccupancyGrid | None = None
     _lock: RLock
 
     def __init__(self, global_config: GlobalConfig) -> None:
@@ -48,25 +46,21 @@ class NavigationMap:
 
     @property
     def gradient_costmap(self) -> OccupancyGrid:
+        return self.make_gradient_costmap()
+
+    def make_gradient_costmap(self, robot_increase: float = 1.0) -> OccupancyGrid:
         """
         Get the latest navigation map created from inflating and applying a
         gradient to the binary costmap.
         """
 
         with self._lock:
-            if self._binary is None:
+            binary = self._binary
+            if binary is None:
                 raise ValueError("No current global costmap available")
 
-            # "is", not "==", to check for reference equality
-            if self._binary is self._last_binary:
-                assert self._navigation_map is not None
-                return self._navigation_map
-
-            self._navigation_map = make_navigation_map(
-                self._binary,
-                self._global_config.robot_width,
-                strategy=self._global_config.planner_strategy,
-            )
-            self._last_binary = self._binary
-
-            return self._navigation_map
+        return make_navigation_map(
+            binary,
+            self._global_config.robot_width * robot_increase,
+            strategy=self._global_config.planner_strategy,
+        )

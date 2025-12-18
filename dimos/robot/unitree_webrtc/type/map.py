@@ -47,8 +47,8 @@ class Map(Module):
         voxel_size: float = 0.05,
         cost_resolution: float = 0.05,
         global_publish_interval: float | None = None,
-        min_height: float = 0.15,
-        max_height: float = 0.6,
+        min_height: float = 0.10,
+        max_height: float = 0.5,
         global_config: GlobalConfig | None = None,
         **kwargs,
     ) -> None:
