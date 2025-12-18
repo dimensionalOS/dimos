@@ -317,6 +317,7 @@ def start_dashboard_server_thread(
     https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH"),
     logger: logging.Logger | None = None,
     rrd_url: str | None = None,
+    keep_alive: bool = False,
     **kwargs,
 ) -> threading.Thread:
     protocol = "https" if https_enabled else "http"
@@ -340,7 +341,7 @@ def start_dashboard_server_thread(
             ),
             ensure_logger(logger, "dashboard"),
         ),
-        daemon=True,
+        daemon=not keep_alive,
         name="proxy-server",
     )
     thread.start()
