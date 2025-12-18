@@ -132,12 +132,12 @@ replay_paths = {
 }
 blueprint = (
     autoconnect(
-        DataReplay(
+        DataReplay.blueprint(
             replay_paths=replay_paths,
             interval_sec=0.05,
             loop=True,
         ),
-        Dashboard(
+        Dashboard.blueprint(
             auto_open=True,
             terminal_commands={
                 "agent-spy": "htop",
