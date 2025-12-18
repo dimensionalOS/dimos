@@ -19,7 +19,7 @@ import time
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
-import open3d.core as o3c
+import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
 
@@ -33,7 +33,10 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.metrics import timed
 
 
-def ensure_tensor_pcd(pcd_any, device: o3c.Device) -> o3d.t.geometry.PointCloud:
+def ensure_tensor_pcd(
+    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
+    device: o3c.Device,
+) -> o3d.t.geometry.PointCloud:
     """Convert legacy / cuda.pybind point clouds into o3d.t.geometry.PointCloud on `device`."""
 
     if isinstance(pcd_any, o3d.t.geometry.PointCloud):
@@ -47,6 +50,15 @@ def ensure_tensor_pcd(pcd_any, device: o3c.Device) -> o3d.t.geometry.PointCloud:
     pcd_t = o3d.t.geometry.PointCloud(device=device)
     pcd_t.point["positions"] = o3c.Tensor(pts, o3c.float32, device)
     return pcd_t
+
+
+def ensure_legacy_pcd(
+    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
+) -> o3d.geometry.PointCloud:
+    if isinstance(pcd_any, o3d.geometry.PointCloud):
+        return pcd_any
+
+    return pcd_any.to_legacy()
 
 
 @dataclass
@@ -66,7 +78,7 @@ class SparseVoxelGridMapper(Module):
     global_costmap: Out[OccupancyGrid]
     local_costmap: Out[OccupancyGrid]
 
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         dev = (
             o3c.Device(self.config.device)
@@ -94,33 +106,40 @@ class SparseVoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
-        unsub = self.lidar.subscribe(self._on_frame)
-        self._disposables.add(Disposable(unsub))
+        lidar_unsub = self.lidar.subscribe(self._on_frame)
+        self._disposables.add(Disposable(lidar_unsub))
 
         # If publish_interval > 0, publish on timer; otherwise publish on each frame
         if self.config.publish_interval > 0:
 
-            def publish(_) -> None:
+            def publish(_: int) -> None:
                 self.global_map.publish(self.get_global_pointcloud2())
 
-            unsub = interval(self.config.publish_interval).subscribe(publish)
-            self._disposables.add(unsub)
+            interval_disposable = interval(self.config.publish_interval).subscribe(publish)
+            self._disposables.add(interval_disposable)
 
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
         if self.config.publish_interval <= 0:
             self.global_map.publish(self.get_global_pointcloud2())
 
-    @timed()
+    # @timed()
     def add_frame(self, frame: LidarMessage) -> None:
+        # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
+
         pts = pcd.point["positions"].to(self._dev, o3c.float32)
         vox = (pts / self.config.voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
         self._hm.activate(keys_Nx3)
 
     def get_global_pointcloud2(self) -> PointCloud2:
-        return PointCloud2(self.get_global_pointcloud().to_legacy(), frame_id="map", ts=time.time())
+        return PointCloud2(
+            # we are potentially moving out of CUDA here
+            ensure_legacy_pcd(self.get_global_pointcloud()),
+            frame_id="map",
+            ts=time.time(),
+        )
 
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
@@ -130,7 +149,7 @@ class SparseVoxelGridMapper(Module):
         return out
 
 
-@timed()
+# @timed()
 def splice_cylinder(
     map_pcd: o3d.geometry.PointCloud,
     patch_pcd: o3d.geometry.PointCloud,

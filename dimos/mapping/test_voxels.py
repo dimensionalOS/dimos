@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Generator
+
 import numpy as np
-import open3d as o3d
+import open3d as o3d  # type: ignore[import-untyped]
 import pytest
 
 from dimos.mapping.voxels import SparseVoxelGridMapper
@@ -23,24 +25,25 @@ from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.fixture
-def mapper():
+def mapper() -> Generator[SparseVoxelGridMapper, None, None]:
     mapper = SparseVoxelGridMapper()
     yield mapper
     mapper.stop()
 
 
-def test_injest_a_few(mapper):
+def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
     lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]
 
     frame = lidar_store.find_closest_seek(1.0)
+    assert frame is not None
     print("add", frame)
     mapper.add_frame(frame)
 
     print(mapper.get_global_pointcloud2())
 
 
-def test_roundtrip_coordinates(mapper):
+def test_roundtrip_coordinates(mapper: SparseVoxelGridMapper) -> None:
     """Test that voxelization preserves point coordinates within voxel resolution."""
     voxel_size = mapper.config.voxel_size
 
@@ -81,12 +84,13 @@ def test_roundtrip_coordinates(mapper):
         )
 
 
-def test_roundtrip_range_preserved(mapper):
+def test_roundtrip_range_preserved(mapper: SparseVoxelGridMapper) -> None:
     """Test that input coordinate ranges are preserved in output."""
     data_dir = get_data("unitree_go2_office_walk2")
     lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]
 
     frame = lidar_store.find_closest_seek(1.0)
+    assert frame is not None
     input_pts = np.asarray(frame.pointcloud.points)
 
     mapper.add_frame(frame)
