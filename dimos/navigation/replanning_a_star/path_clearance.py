@@ -74,16 +74,6 @@ class PathClearance:
         self._last_used_shape = self._costmap.grid.shape
         self._last_used_pose = self._pose_index
 
-        x = bool(np.any(self._costmap.grid[self._last_mask] == CostValues.OCCUPIED))
-        print(
-            "mask",
-            x,
-            self._last_used_pose,
-            self._pose_index,
-            self._costmap.grid.shape,
-            self._last_used_shape,
-        )
-
         return self._last_mask
 
     def is_obstacle_ahead(self) -> bool:

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import math
 import os
 from threading import Event, RLock, Thread, current_thread
 import time
@@ -63,6 +64,7 @@ class LocalPlanner(Resource):
     _goal_tolerance: float = 0.3
     _orientation_tolerance: float = 0.2
     _control_frequency: float = 20.0
+    _rotation_threshold: float = 90
 
     def __init__(self, global_config: GlobalConfig, navigation_map: NavigationMap) -> None:
         self.cmd_vel = Subject()
@@ -231,7 +233,7 @@ class LocalPlanner(Resource):
         yaw_error = normalize_angle(desired_yaw - robot_yaw)
 
         # Rotate-then-drive: if heading error is large, rotate in place first
-        rotation_threshold = 0.5  # ~30 degrees
+        rotation_threshold = self._rotation_threshold * math.pi / 180
         if abs(yaw_error) > rotation_threshold:
             angular_velocity = np.clip(self._k_angular * yaw_error, -self._speed, self._speed)
             return Twist(
