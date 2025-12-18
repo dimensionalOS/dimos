@@ -14,6 +14,7 @@
 
 from threading import RLock
 import time
+from typing import cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -61,7 +62,7 @@ class PositionTracker:
         cutoff = now - self._time_window
 
         if self._size == 0:
-            return np.empty((0, 2))
+            return np.empty((0, 2), dtype=np.float32)
 
         if self._size < self._max_points:
             mask = self._timestamps[: self._size] >= cutoff
@@ -70,7 +71,7 @@ class PositionTracker:
         ts = np.concatenate([self._timestamps[self._index :], self._timestamps[: self._index]])
         pos = np.concatenate([self._positions[self._index :], self._positions[: self._index]])
         mask = ts >= cutoff
-        return pos[mask]
+        return cast(NDArray[np.float32], pos[mask])
 
     def is_stuck(self) -> bool:
         with self._lock:

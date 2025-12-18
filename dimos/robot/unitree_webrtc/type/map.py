@@ -22,7 +22,6 @@ from reactivex.disposable import Disposable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.pointclouds.accumulators.general import GeneralPointCloudAccumulator
 from dimos.mapping.pointclouds.accumulators.protocol import PointCloudAccumulator
 from dimos.mapping.pointclouds.occupancy import general_occupancy
@@ -36,7 +35,6 @@ class Map(Module):
     lidar: In[LidarMessage] = None  # type: ignore[assignment]
     global_map: Out[LidarMessage] = None  # type: ignore[assignment]
     global_costmap: Out[OccupancyGrid] = None  # type: ignore[assignment]
-    local_costmap: Out[OccupancyGrid] = None  # type: ignore[assignment]
 
     _point_cloud_accumulator: PointCloudAccumulator
     _global_config: GlobalConfig
@@ -95,31 +93,10 @@ class Map(Module):
             ts=time.time(),
         )
 
-    # Is this RPC?
+    # TODO: Why is this RPC?
     @rpc
     def add_frame(self, frame: LidarMessage) -> None:
         self._point_cloud_accumulator.add(frame.pointcloud)
-
-        # TODO: MOVE THIS
-        #################################################################################
-        #################################################################################
-        #################################################################################
-        #################################################################################
-        #################################################################################
-        #################################################################################
-        #################################################################################
-        #################################################################################
-        local_costmap = gradient(
-            general_occupancy(
-                frame,
-                resolution=self.cost_resolution,
-                min_height=0.15,
-                max_height=0.6,
-            ),
-            max_distance=0.25,
-        )
-
-        self.local_costmap.publish(local_costmap)
 
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:
@@ -152,7 +129,6 @@ def deploy(dimos: DimosCluster, connection: Go2ConnectionProtocol):  # type: ign
     mapper = dimos.deploy(Map, global_publish_interval=1.0)  # type: ignore[attr-defined]
     mapper.global_map.transport = LCMTransport("/global_map", LidarMessage)
     mapper.global_costmap.transport = LCMTransport("/global_costmap", OccupancyGrid)
-    mapper.local_costmap.transport = LCMTransport("/local_costmap", OccupancyGrid)
     mapper.lidar.connect(connection.pointcloud)  # type: ignore[attr-defined]
     mapper.start()
     return mapper

@@ -31,7 +31,6 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     global_costmap: In[OccupancyGrid]
     goal_request: In[PoseStamped]
     target: In[PoseStamped]
-    local_costmap: In[OccupancyGrid]  # TODO: Use this.
 
     goal_reached: Out[Bool]
     navigation_state: Out[String]  # TODO: set it

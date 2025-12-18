@@ -88,7 +88,6 @@ def test_robot_mapping(map_) -> None:
         def publish(self, msg) -> None:
             pass  # Do nothing
 
-    map_.local_costmap = MockStream()
     map_.global_costmap = MockStream()
     map_.global_map = MockStream()
 
