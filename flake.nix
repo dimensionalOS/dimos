@@ -367,7 +367,7 @@
             isolated = (xome.simpleMakeHomeFor {
               inherit pkgs;
               pure = true;
-              commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" "openssl" "ssh" ]; # e.g. use external nvim instead of nix's
+              commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" "openssl" "ssh" "osascript" "otool" "hidutil" "logger" ]; # e.g. use external nvim instead of nix's
               # commonly needed for MacOS: [ "osascript" "otool" "hidutil" "logger" "codesign" ]
               homeSubpathPassthrough = [ "cache/nix/" ]; # share nix cache between projects
               homeModule = {

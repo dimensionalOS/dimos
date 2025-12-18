@@ -26,7 +26,7 @@ import rerun.blueprint as rrb
 from dimos.core import Module, Out, pLCMTransport, pSHMTransport
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.dashboard.module import Dashboard
+from dimos.dashboard.module import Dashboard, RerunConnection
 from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -78,12 +78,7 @@ class DataReplay(Module):
     def _publish_stream(self, output_name: str, path: str) -> None:
         import rerun as rr
 
-        rerun_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
-        rerun_grpc_port: int = os.environ.get("RERUN_GRPC_PORT", 9876)
-
-        rerun_stream = rr.RecordingStream(rerun_id, recording_id=rerun_id)
-        rerun_stream.connect_grpc(f"rerun+http://localhost:{rerun_grpc_port}/proxy")
-        # rr.init(dimensional_rerun_id, spawn=False, strict=True, recording_id=dimensional_rerun_id)
+        rc = RerunConnection()
         print("""[DataReplay] _publish_stream started!""")
         # Resolve the output by attribute name (e.g., "color_image" or "lidar").
         output: Out = getattr(self, output_name)
@@ -95,7 +90,7 @@ class DataReplay(Module):
                 if output and output.transport:
                     if i % 20 == 0:
                         print(f"[DataReplay] publishing {output_name} message {i}")
-                    rerun_stream.log(f"/{output_name}", msg.to_rerun(), strict=True)
+                    rc.log(f"/{output_name}", msg.to_rerun(), strict=True)
                     output.publish(msg)  # type: ignore[no-untyped-call]
                 # time.sleep(self.interval_sec)
                 any_sent = True
@@ -110,6 +105,7 @@ class DataReplay(Module):
         # needs to be init-ed once per thread/process
         # rr.init(dimensional_rerun_id, spawn=False, strict=True, recording_id=dimensional_rerun_id)
         # rr.log("logs", rr.TextLog("this entry has loglevel TRACE", level=rr.TextLogLevel.TRACE))
+        # self.rc.log("logs", rr.TextLog("this entry has loglevel TRACE", level=rr.TextLogLevel.TRACE))
         try:
             for output_name, path in self.replay_paths.items():
                 thread = threading.Thread(

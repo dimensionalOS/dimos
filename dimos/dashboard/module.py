@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses
 import logging
 import os
 from random import choices, random, sample
@@ -25,6 +26,22 @@ import rerun.blueprint as rrb
 
 from dimos.core import In, Module, rpc
 from dimos.dashboard.server import env_bool, start_dashboard_server_thread
+
+default_rerun_grpc_port = 9876
+
+
+@dataclasses.dataclass
+class RerunInfo:
+    logging_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
+    grpc_port: int = int(os.environ.get("RERUN_GRPC_PORT", default_rerun_grpc_port))
+    server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
+    url: str = os.environ.get(
+        "RERUN_URL",
+        f"rerun+http://localhost:{os.environ.get('RERUN_GRPC_PORT', default_rerun_grpc_port)!s}/proxy",
+    )
+
+
+rerun_info = RerunInfo()
 
 
 # there can only be one dashboard at a time (e.g. global dashboard_config is alright)
@@ -49,15 +66,9 @@ class Dashboard(Module):
     https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH")
     https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH")
     logger: logging.Logger | None = None
-    rerun_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
-    rerun_grpc_port: int = os.environ.get("RERUN_GRPC_PORT", 9876)
-    rerun_server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
-    rrd_url: str | None = None
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__()
-        # TODO: the following rerun aspects can only be set via ENV vars (for now)
-        kwargs = {**kwargs, "rerun_id": self.rerun_id, "rerun_grpc_port": self.rerun_grpc_port}
         self.__dict__.update(kwargs)
 
     @rpc
@@ -69,7 +80,7 @@ class Dashboard(Module):
         # init starts part 1 (needed before rr.log or rr.send_blueprint)
         # we manually start the gprc here (part 2)
         # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
-        rr.init(self.rerun_id, spawn=False, strict=True, recording_id=self.rerun_id)
+        rr.init(rerun_info.logging_id, spawn=False, strict=True, recording_id=rerun_info.logging_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
         default_blueprint = rrb.Blueprint(
             rrb.Tabs(
@@ -84,13 +95,13 @@ class Dashboard(Module):
         rr.send_blueprint(default_blueprint)
         # get the rrd_url if it wasn't provided
         print("[Dashboard] starting rerun grpc if needed")
-        self.rrd_url = self.rrd_url or rr.serve_grpc(
-            grpc_port=self.rerun_grpc_port,
-            default_blueprint=default_blueprint,
-            server_memory_limit=self.rerun_server_memory_limit,
-        )
-        print(f"""[Dashboard] rrd_url = {self.rrd_url}""")
-        thread = start_dashboard_server_thread(**self.__dict__)
+        if not os.environ.get("RERUN_URL", None):
+            rr.serve_grpc(
+                grpc_port=rerun_info.grpc_port,
+                default_blueprint=default_blueprint,
+                server_memory_limit=rerun_info.server_memory_limit,
+            )
+        thread = start_dashboard_server_thread(**self.__dict__, rrd_url=rerun_info.url)
 
         @self._disposables.add
         @Disposable
@@ -98,3 +109,21 @@ class Dashboard(Module):
             # Attempt to let the server thread shut down gracefully when the module stops.
             if thread.is_alive():
                 thread.join(timeout=1.0)
+
+
+import multiprocessing as mp
+
+
+class RerunConnection:
+    def __init__(self) -> None:
+        self.init_id = mp.current_process().pid
+        self.stream = rr.RecordingStream(rerun_info.logging_id, recording_id=rerun_info.logging_id)
+        self.stream.connect_grpc(rerun_info.url)
+
+    def log(self, msg: str, value, **kwargs) -> None:
+        if self.init_id != mp.current_process().pid:
+            raise Exception(
+                """Looks like you are somehow using RerunConnection to log data to rerun. However, the process/thread where you init RerunConnection is different from where you are logging. A RerunConnection object needs to be created once per process/thread."""
+            )
+
+        self.stream.log(msg, value, **kwargs)
