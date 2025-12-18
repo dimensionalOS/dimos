@@ -84,7 +84,7 @@ def record_message(path: str, val):
         f.write(line)
 
 def load_messages(log_filepath: str) -> list:
-    """Read a YAML log created by RerunHook and return a list of depickled messages."""
+    """Read a YAML log created return a list of depickled messages."""
     import yaml  # PyYAML is a common dependency in the project
     from pathlib import Path
 

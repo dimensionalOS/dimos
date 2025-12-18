@@ -54,7 +54,6 @@ from dimos.perception.spatial_perception import SpatialMemory
 from dimos.protocol import pubsub
 from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.protocol.tf import TF
-from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.robot.unitree_webrtc.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.map import Map
@@ -67,14 +66,14 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
+from dimos.dashboard.module import Dashboard
+import rerun as rr
 
 logger = setup_logger()
 
 # Suppress verbose loggers
 logging.getLogger("aiortc.codecs.h264").setLevel(logging.ERROR)
-logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
 logging.getLogger("websockets.server").setLevel(logging.ERROR)
-logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
 logging.getLogger("asyncio").setLevel(logging.ERROR)
 logging.getLogger("root").setLevel(logging.WARNING)
 
@@ -131,7 +130,6 @@ class ReplayRTC(Resource):
 
 class ConnectionModule(Module):
     """Module that handles robot sensor data, movement commands, and camera information."""
-
     cmd_vel: In[Twist] = None  # type: ignore[assignment]
     odom: Out[PoseStamped] = None  # type: ignore[assignment]
     gps_location: Out[LatLon] = None  # type: ignore[assignment]
@@ -147,6 +145,8 @@ class ConnectionModule(Module):
     _last_image: Image = None  # type: ignore[assignment]
     _global_config: GlobalConfig
 
+    rerun_namespace = "/connection-module"
+    
     def __init__(  # type: ignore[no-untyped-def]
         self,
         ip: str | None = None,
@@ -227,6 +227,7 @@ class ConnectionModule(Module):
     def _on_lidar(self, msg: LidarMessage) -> None:
         if self.lidar.transport:
             self.lidar.publish(msg)  # type: ignore[no-untyped-call]
+            rr.log(f"{self.rerun_namespace}/lidar", msg.to_rerun())
 
     def _on_video(self, msg: Image) -> None:
         """Handle incoming video frames and publish synchronized camera data."""
@@ -236,10 +237,12 @@ class ConnectionModule(Module):
             self._last_image = rectified_msg
             if self.color_image.transport:
                 self.color_image.publish(rectified_msg)  # type: ignore[no-untyped-call]
+                rr.log(f"{self.rerun_namespace}/color_image", rectified_msg.to_rerun())
         else:
             self._last_image = msg
             if self.color_image.transport:
                 self.color_image.publish(msg)  # type: ignore[no-untyped-call]
+                rr.log(f"{self.rerun_namespace}/color_image", msg.to_rerun())
 
         # Publish camera info and pose synchronized with video
         timestamp = msg.ts if msg.ts else time.time()
@@ -250,6 +253,8 @@ class ConnectionModule(Module):
         self._odom = msg
         if self.odom.transport:
             self.odom.publish(msg)  # type: ignore[no-untyped-call]
+            # rr.log(f"{self.rerun_namespace}/odom", msg.to_rerun())
+        
         self.tf.publish(Transform.from_pose("base_link", msg))
 
         # Publish camera_link transform
@@ -390,7 +395,6 @@ class UnitreeGo2(Resource):
         self.navigator = None
         self.frontier_explorer = None
         self.websocket_vis = None
-        self.foxglove_bridge = None
         self.spatial_memory_module = None
         self.object_tracker = None
         self.utilization_module = None
@@ -424,7 +428,7 @@ class UnitreeGo2(Resource):
         self._deploy_mapping()
         self._deploy_navigation()
         self._deploy_visualization()
-        self._deploy_foxglove_bridge()
+        self._deploy_dashboard()
         self._deploy_perception()
         self._deploy_camera()
 
@@ -432,12 +436,21 @@ class UnitreeGo2(Resource):
         logger.info("UnitreeGo2 initialized and started")
 
     def stop(self) -> None:
-        if self.foxglove_bridge:
-            self.foxglove_bridge.stop()
         self._disposables.dispose()
         self._dimos.stop()
         self.lcm.stop()
 
+    def _deploy_dashboard(self) -> None:
+        """Deploy and configure the dashboard module."""
+        self.dashboard = self._dimos.deploy(Dashboard, 
+            terminal_commands={
+                "agent-spy": "dimos agentspy",
+                "lcm-spy": "dimos lcmspy",
+                # "skill-spy": "dimos skillspy",
+            },
+            auto_open=True,
+        )
+    
     def _deploy_connection(self) -> None:
         """Deploy and configure the connection module."""
         self.connection = self._dimos.deploy(  # type: ignore[assignment]
@@ -525,15 +538,6 @@ class UnitreeGo2(Resource):
         self.websocket_vis.gps_location.connect(self.connection.gps_location)  # type: ignore[attr-defined]
         self.websocket_vis.path.connect(self.global_planner.path)  # type: ignore[attr-defined]
         self.websocket_vis.global_costmap.connect(self.mapper.global_costmap)  # type: ignore[attr-defined]
-
-    def _deploy_foxglove_bridge(self) -> None:
-        self.foxglove_bridge = FoxgloveBridge(  # type: ignore[assignment]
-            shm_channels=[
-                "/go2/color_image#sensor_msgs.Image",
-                "/go2/tracked_overlay#sensor_msgs.Image",
-            ]
-        )
-        self.foxglove_bridge.start()  # type: ignore[attr-defined]
 
     def _deploy_perception(self) -> None:
         """Deploy and configure perception modules."""
