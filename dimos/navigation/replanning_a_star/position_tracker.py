@@ -71,7 +71,7 @@ class PositionTracker:
         ts = np.concatenate([self._timestamps[self._index :], self._timestamps[: self._index]])
         pos = np.concatenate([self._positions[self._index :], self._positions[: self._index]])
         mask = ts >= cutoff
-        return cast(NDArray[np.float32], pos[mask])
+        return cast("NDArray[np.float32]", pos[mask])
 
     def is_stuck(self) -> bool:
         with self._lock:
