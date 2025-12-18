@@ -25,7 +25,7 @@ import rerun.blueprint as rrb
 from dimos.core import Module, Out, pLCMTransport, pSHMTransport
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.dashboard.module import Dashboard
+from dimos.dashboard.module import Dashboard, dimensional_rerun_id
 from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage

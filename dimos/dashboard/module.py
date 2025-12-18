@@ -26,7 +26,7 @@ import rerun.blueprint as rrb
 from dimos.core import In, Module, rpc
 from dimos.dashboard.server import env_bool, start_dashboard_server_thread
 
-id_test = random()
+dimensional_rerun_id = "dimos_main_rerun"
 
 
 # there can only be one dashboard at a time (e.g. global dashboard_config is alright)
@@ -68,7 +68,7 @@ class Dashboard(Module):
         # init starts part 1 (needed before rr.log or rr.send_blueprint)
         # we manually start the gprc here (part 2)
         # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
-        rr.init("rerun_main", spawn=False)
+        rr.init(dimensional_rerun_id, spawn=False, recording_id=dimensional_rerun_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
         default_blueprint = rrb.Blueprint(
             rrb.Tabs(
