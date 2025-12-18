@@ -71,6 +71,7 @@ def ensure_legacy_pcd(
 
 @dataclass
 class Config(ModuleConfig):
+    frame_id: str = "map"
     publish_interval: float = 0
     voxel_size: float = 0.05
     block_count: int = 2_000_000
@@ -144,11 +145,12 @@ class SparseVoxelGridMapper(Module):
         keys_Nx3 = vox.contiguous()
         self._hm.activate(keys_Nx3)
 
+    # returns PointCloud2 message (ready to send off down the pipeline)
     def get_global_pointcloud2(self) -> PointCloud2:
         return PointCloud2(
             # we are potentially moving out of CUDA here
             ensure_legacy_pcd(self.get_global_pointcloud()),
-            frame_id="map",
+            frame_id=self.frame_id,
             ts=time.time(),
         )
 
