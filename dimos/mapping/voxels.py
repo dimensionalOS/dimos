@@ -42,6 +42,10 @@ def ensure_tensor_pcd(
     if isinstance(pcd_any, o3d.t.geometry.PointCloud):
         return pcd_any.to(device)
 
+    assert isinstance(pcd_any, o3d.geometry.PointCloud), (
+        "Input must be a legacy PointCloud or a tensor PointCloud"
+    )
+
     # Legacy CPU point cloud -> tensor
     if isinstance(pcd_any, o3d.geometry.PointCloud):
         return o3d.t.geometry.PointCloud.from_legacy(pcd_any, o3c.float32, device)
@@ -57,6 +61,10 @@ def ensure_legacy_pcd(
 ) -> o3d.geometry.PointCloud:
     if isinstance(pcd_any, o3d.geometry.PointCloud):
         return pcd_any
+
+    assert isinstance(pcd_any, o3d.t.geometry.PointCloud), (
+        "Input must be a legacy PointCloud or a tensor PointCloud"
+    )
 
     return pcd_any.to_legacy()
 
@@ -127,6 +135,9 @@ class SparseVoxelGridMapper(Module):
     def add_frame(self, frame: LidarMessage) -> None:
         # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
+
+        if pcd.is_empty():
+            return
 
         pts = pcd.point["positions"].to(self._dev, o3c.float32)
         vox = (pts / self.config.voxel_size).floor().to(self._key_dtype)
