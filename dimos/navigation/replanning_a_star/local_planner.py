@@ -110,6 +110,8 @@ class LocalPlanner(Resource):
             if self._thread is not None:
                 if self._thread is not current_thread():
                     self._thread.join(2)
+                    if self._thread.is_alive():
+                        logger.error("LocalPlanner thread did not stop in time.")
                 self._thread = None
 
         self._reset_state()
@@ -220,7 +222,8 @@ class LocalPlanner(Resource):
 
         if path_distancer.distance_to_goal(current_pos) < self._goal_tolerance:
             logger.info("Reached goal position, starting final rotation")
-            self._state = "final_rotation"
+            with self._lock:
+                self._state = "final_rotation"
             return self._compute_final_rotation()
 
         closest_index = path_distancer.find_closest_point_index(current_pos)
@@ -231,7 +234,8 @@ class LocalPlanner(Resource):
         distance = np.linalg.norm(direction)
 
         if distance < 1e-6:
-            return Twist()  # TODO: WOT???????????????????????????????????????????????????????????????????????????????
+            # Robot is coincidentally at the lookahead point; skip this cycle.
+            return Twist()
 
         robot_yaw = current_odom.orientation.euler[2]
         desired_yaw = np.arctan2(direction[1], direction[0])

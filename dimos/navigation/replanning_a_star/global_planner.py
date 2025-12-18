@@ -14,6 +14,7 @@
 
 from threading import Event, RLock, Thread, current_thread
 
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
 
@@ -39,6 +40,7 @@ logger = setup_logger()
 
 class GlobalPlanner(Resource):
     path: Subject[Path]
+    goal_reached: Subject[Bool]
 
     _current_odom: PoseStamped | None = None
     _current_goal: PoseStamped | None = None
@@ -84,6 +86,8 @@ class GlobalPlanner(Resource):
         if self._thread is not None:
             if self._thread is not current_thread():
                 self._thread.join(2)
+                if self._thread.is_alive():
+                    logger.error("GlobalPlanner thread did not stop in time.")
             self._thread = None
 
     def handle_odom(self, msg: PoseStamped) -> None:
@@ -116,6 +120,9 @@ class GlobalPlanner(Resource):
 
         self.path.on_next(Path())
         self._local_planner.stop_planning()
+
+        if not but_will_try_again:
+            self.goal_reached.on_next(Bool(arrived))
 
     def get_state(self) -> NavigationState:
         return self._local_planner.get_state()

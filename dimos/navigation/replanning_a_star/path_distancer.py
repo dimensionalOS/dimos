@@ -27,11 +27,11 @@ class PathDistancer:
 
     def __init__(self, path: Path) -> None:
         self._path = np.array([[p.position.x, p.position.y] for p in path.poses])
-        self._cumulative_dists = _make_cummulative_distance_array(self._path)
+        self._cumulative_dists = _make_cumulative_distance_array(self._path)
 
     def find_lookahead_point(self, start_idx: int) -> NDArray[np.float64]:
         """
-        Given a path, and a precomputed array of cummulative distances, find the
+        Given a path, and a precomputed array of cumulative distances, find the
         point which is `lookahead_dist` ahead of the current point.
         """
 
@@ -71,7 +71,7 @@ class PathDistancer:
         return int(np.argmin(distances))
 
 
-def _make_cummulative_distance_array(array: NDArray[np.float64]) -> NDArray[np.float64]:
+def _make_cumulative_distance_array(array: NDArray[np.float64]) -> NDArray[np.float64]:
     """
     For an array representing 2D points, create an array of all the distances
     between the points.

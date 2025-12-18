@@ -67,6 +67,8 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
         self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
 
+        self._disposables.add(self._planner.goal_reached.subscribe(self.goal_reached.publish))
+
         if "DEBUG_NAVIGATION" in os.environ:
             self._disposables.add(
                 self._planner.debug_navigation.subscribe(self.debug_navigation.publish)
