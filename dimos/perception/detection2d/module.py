@@ -67,13 +67,13 @@ def build_detection2d_array_fix(imageDetections: ImageDetections) -> Detection2D
     return Detection2DArrayFix(
         detections_length=len(detections),
         header=Header(image.ts, "camera_link"),
-        detections=[det.to_detection2d() for det in detections],
+        detections=[det.to_ros_detection2d() for det in detections],
     )
 
 
 class Detection2DModule(Module):
     image: In[Image] = None  # type: ignore
-    detections: Out[Detection2DArrayFix] = None  # type: ignore
+    detections: Out[Detection2D] = None  # type: ignore
     annotations: Out[ImageAnnotations] = None  # type: ignore
 
     # _initDetector = Detic2DDetector
@@ -85,21 +85,29 @@ class Detection2DModule(Module):
             self._detectorClass = detector
         self.detector = self._initDetector()
 
-    def process_frame(self, image: Image) -> ImageDetections:
+    def process_frame(self, image: Image) -> List[Detection2D]:
         detections = Detection2D.from_detector(
             self.detector.process_image(image.to_opencv()), image=image
         )
-        return (image, detections)
+        return detections
 
     @functools.cache
     def detection_stream(self):
-        # from dimos.activate_cuda import _init_cuda
-        detection_stream = self.image.observable().pipe(ops.map(self.process_frame))
+        # Returns stream of individual Detection2D objects
+        detection_stream = self.image.observable().pipe(
+            ops.map(self.process_frame),
+            ops.flat_map(
+                lambda detections: ops.from_iterable(detections)
+            ),  # Flatten list to individual items
+        )
 
-        detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
-        detection_stream.pipe(
-            ops.filter(lambda x: len(x[1]) != 0), ops.map(build_detection2d_array_fix)
-        ).subscribe(self.detections.publish)
+        # Publish each detection individually
+        detection_stream.subscribe(self.detections.publish)
+
+        # Convert each Detection2D to ImageAnnotations
+        detection_stream.pipe(ops.map(lambda detection: detection.to_imageannotations())).subscribe(
+            self.annotations.publish
+        )
 
         return detection_stream
 
@@ -111,7 +119,7 @@ class Detection2DModule(Module):
     def stop(self): ...
 
 
-class DetectionPointcloud(Detection2DModule):
+class Detection3DModule(Detection2DModule):
     camera_info: In[CameraInfo] = None  # type: ignore
     pointcloud: In[PointCloud2] = None  # type: ignore
     filtered_pointcloud: Out[PointCloud2] = None  # type: ignore
@@ -127,7 +135,6 @@ class DetectionPointcloud(Detection2DModule):
 
     @functools.cache
     def detection_stream(self):
-        # from dimos.activate_cuda import _init_cuda
         detection_stream = self.image.observable().pipe(ops.map(self.detect))
 
         detection_stream.pipe(ops.map(build_imageannotations)).subscribe(self.annotations.publish)
@@ -286,6 +293,7 @@ class DetectionPointcloud(Detection2DModule):
         if not detections:
             return []
 
+        print("DETECTIONS", detections)
         image = detections[0].image
         if image is None:
             return []
@@ -308,14 +316,14 @@ class DetectionPointcloud(Detection2DModule):
     @functools.cache
     def pointcloud_stream(self):
         # Returns stream of List[Detection3D]
+        # Buffer Detection2D objects by image timestamp to process them together
         return self.detection_stream().pipe(
-            ops.map(
-                lambda image_detections: image_detections[1]
-            ),  # Extract just the List[Detection2D]
+            ops.buffer_with_time(0.1),  # Buffer detections within 100ms window
+            ops.filter(lambda detections: len(detections) > 0),
             ops.with_latest_from(self.pointcloud.observable(), self.camera_info.observable()),
             ops.map(
                 lambda args: self.process_frame(
-                    *args,  # List[Detection2D], PointCloud2, CameraInfo
+                    *args,  # [List[Detection2D], PointCloud2, CameraInfo]
                     self.tf.get("camera_optical", "world"),
                 )
             ),
@@ -334,7 +342,7 @@ class DetectionPointcloud(Detection2DModule):
         ).subscribe(self.filtered_pointcloud.publish)
 
 
-class DetectionDB(DetectionPointcloud):
+class DetectionDBModule(Detection3DModule):
     @rpc
     def start(self):
         super().start()

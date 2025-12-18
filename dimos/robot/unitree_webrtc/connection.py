@@ -172,7 +172,7 @@ class UnitreeWebRTCConnection(ConnectionInterface):
     def lidar_stream(self) -> Subject[LidarMessage]:
         return backpressure(
             self.raw_lidar_stream().pipe(
-                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame))
+                ops.map(lambda raw_frame: LidarMessage.from_msg(raw_frame, ts=time.time()))
             )
         )
 

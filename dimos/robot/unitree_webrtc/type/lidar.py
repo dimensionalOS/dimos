@@ -64,7 +64,7 @@ class LidarMessage(PointCloud2):
         self.resolution = kwargs.get("resolution", 0.05)
 
     @classmethod
-    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg) -> "LidarMessage":
+    def from_msg(cls: "LidarMessage", raw_message: RawLidarMsg, **kwargs) -> "LidarMessage":
         data = raw_message["data"]
         points = data["data"]["points"]
         pointcloud = o3d.geometry.PointCloud()
@@ -75,14 +75,15 @@ class LidarMessage(PointCloud2):
         # to shift the pointcloud by it's origin
         #
         # pointcloud.translate((origin / 2).to_tuple())
-
-        return cls(
-            origin=origin,
-            resolution=data["resolution"],
-            pointcloud=pointcloud,
-            ts=data["stamp"],
-            raw_msg=raw_message,
-        )
+        cls_data = {
+            "origin": origin,
+            "resolution": data["resolution"],
+            "pointcloud": pointcloud,
+            "ts": data["stamp"],
+            "raw_msg": raw_message,
+            **kwargs,
+        }
+        return cls(**cls_data)
 
     def __repr__(self):
         return f"LidarMessage(ts={to_human_readable(self.ts)}, origin={self.origin}, resolution={self.resolution}, {self.pointcloud})"
