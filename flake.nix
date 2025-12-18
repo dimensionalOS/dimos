@@ -358,60 +358,60 @@
           fi
         '';
         devShells = {
-            # basic shell (blends with your current environment)
-            default = pkgs.mkShell {
-              buildInputs = devPackages;
-              shellHook = shellHook;
-            };
-            # strict shell (creates a fake home, only select exteral commands (e.g. sudo) from your system are available)
-            isolated = (xome.simpleMakeHomeFor {
-              inherit pkgs;
-              pure = true;
-              commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" "openssl" "ssh" ]; # e.g. use external nvim instead of nix's
-              # commonly needed for MacOS: [ "osascript" "otool" "hidutil" "logger" "codesign" ]
-              homeSubpathPassthrough = [ "cache/nix/" ]; # share nix cache between projects
-              homeModule = {
-                # for home-manager examples, see:
-                # https://deepwiki.com/nix-community/home-manager/5-configuration-examples
-                # all home-manager options:
-                # https://nix-community.github.io/home-manager/options.xhtml
-                home.homeDirectory = "/tmp/virtual_homes/dimos";
-                home.stateVersion = "25.11";
-                home.packages = devPackages;
+          # basic shell (blends with your current environment)
+          default = pkgs.mkShell {
+            buildInputs = devPackages;
+            shellHook = shellHook;
+          };
+          # strict shell (creates a fake home, only select exteral commands (e.g. sudo) from your system are available)
+          isolated = (xome.simpleMakeHomeFor {
+            inherit pkgs;
+            pure = true;
+            commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" "openssl" "ssh" ]; # e.g. use external nvim instead of nix's
+            # commonly needed for MacOS: [ "osascript" "otool" "hidutil" "logger" "codesign" ]
+            homeSubpathPassthrough = [ "cache/nix/" ]; # share nix cache between projects
+            homeModule = {
+              # for home-manager examples, see:
+              # https://deepwiki.com/nix-community/home-manager/5-configuration-examples
+              # all home-manager options:
+              # https://nix-community.github.io/home-manager/options.xhtml
+              home.homeDirectory = "/tmp/virtual_homes/dimos";
+              home.stateVersion = "25.11";
+              home.packages = devPackages;
 
-                programs = {
-                  home-manager = {
-                    enable = true;
-                  };
-                  zsh = {
-                    enable = true;
-                    enableCompletion = true;
-                    autosuggestion.enable = true;
-                    syntaxHighlighting.enable = true;
-                    shellAliases.ll = "ls -la";
-                    history.size = 100000;
-                    # this is kinda like .zshrc
-                    initContent = ''
-                      # most people expect comments in their shell to to work
-                      setopt interactivecomments
-                      # fix emoji prompt offset issues (this shouldn't lock people into English b/c LANG can be non-english)
-                      export LC_CTYPE=en_US.UTF-8
-                      ${shellHook}
-                    '';
-                  };
-                  starship = {
-                    enable = true;
-                    enableZshIntegration = true;
-                    settings = {
-                      character = {
-                        success_symbol = "[▣](bold green)";
-                        error_symbol = "[▣](bold red)";
-                      };
+              programs = {
+                home-manager = {
+                  enable = true;
+                };
+                zsh = {
+                  enable = true;
+                  enableCompletion = true;
+                  autosuggestion.enable = true;
+                  syntaxHighlighting.enable = true;
+                  shellAliases.ll = "ls -la";
+                  history.size = 100000;
+                  # this is kinda like .zshrc
+                  initContent = ''
+                    # most people expect comments in their shell to to work
+                    setopt interactivecomments
+                    # fix emoji prompt offset issues (this shouldn't lock people into English b/c LANG can be non-english)
+                    export LC_CTYPE=en_US.UTF-8
+                    ${shellHook}
+                  '';
+                };
+                starship = {
+                  enable = true;
+                  enableZshIntegration = true;
+                  settings = {
+                    character = {
+                      success_symbol = "[▣](bold green)";
+                      error_symbol = "[▣](bold red)";
                     };
                   };
                 };
               };
-            }).default;
+            };
+          }).default;
         };
 
         # ------------------------------------------------------------
