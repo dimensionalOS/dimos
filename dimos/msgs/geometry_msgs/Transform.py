@@ -23,7 +23,7 @@ from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
 )
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         Quaternion as ROSQuaternion,
         Transform as ROSTransform,
         TransformStamped as ROSTransformStamped,
@@ -233,7 +233,11 @@ class Transform(Timestamped):
         """Convert to a Rerun Transform3D suitable for rr.log."""
         import rerun as rr  # type: ignore[import-untyped]
 
-        translation = (float(self.translation.x), float(self.translation.y), float(self.translation.z))
+        translation = (
+            float(self.translation.x),
+            float(self.translation.y),
+            float(self.translation.z),
+        )
         rotation = rr.Quaternion(
             x=float(self.rotation.x),
             y=float(self.rotation.y),

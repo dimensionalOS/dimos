@@ -17,8 +17,6 @@ from __future__ import annotations
 import functools
 import struct
 
-import rerun as rr
-
 # Import LCM types
 from dimos_lcm.sensor_msgs.PointCloud2 import (  # type: ignore[import-untyped]
     PointCloud2 as LCMPointCloud2,
@@ -27,16 +25,17 @@ from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-u
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Vector3
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import (  # type: ignore[attr-defined]
+    from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         PointCloud2 as ROSPointCloud2,
         PointField as ROSPointField,
     )
-    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
+    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined, import-untyped]
 
     ROS_AVAILABLE = True
 except ImportError:

@@ -1,20 +1,35 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Replay recorded YAML logs into a simple dashboard + rerun viewer."""
 
-import threading
-import time
 from pathlib import Path
 import sys
+import threading
+import time
 
-import rerun.blueprint as rrb
 from reactivex.disposable import Disposable
+import rerun.blueprint as rrb
 
-from dimos.core import Module, Out, pSHMTransport, pLCMTransport
+from dimos.core import Module, Out, pLCMTransport, pSHMTransport
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
 from dimos.dashboard.module import Dashboard
+from dimos.msgs.nav_msgs import Odometry
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.msgs.nav_msgs import Odometry
+
 
 class DataReplay(Module):
     color_image: Out[Image] = None  # type: ignore[assignment]
@@ -41,7 +56,7 @@ class DataReplay(Module):
 
         file_path = Path(path)
         if not file_path.exists():
-            print(f'''[DataReplay] file {path} does not exist''', file=sys.stderr)
+            print(f"""[DataReplay] file {path} does not exist""", file=sys.stderr)
             return
 
         with file_path.open("r", encoding="utf-8") as f:
@@ -51,19 +66,19 @@ class DataReplay(Module):
                 try:
                     parsed = yaml.unsafe_load(line) or []
                 except Exception as error:
-                    print(f'''warning: line:{line_number} could not be parsed: {error}''')
+                    print(f"""warning: line:{line_number} could not be parsed: {error}""")
                     continue
-                
+
                 if isinstance(parsed, list):
-                    for item in parsed:
-                        yield item
+                    yield from parsed
                 else:
                     yield parsed
 
     def _publish_stream(self, output_name: str, path: str) -> None:
         import rerun as rr
+
         rr.init("rerun_main", spawn=False, strict=True)
-        print(f'''[DataReplay] _publish_stream started!''')
+        print("""[DataReplay] _publish_stream started!""")
         # Resolve the output by attribute name (e.g., "color_image" or "lidar").
         output: Out = getattr(self, output_name)
         while not self._stop_event.is_set():
@@ -85,6 +100,7 @@ class DataReplay(Module):
     def start(self) -> None:
         super().start()
         import rerun as rr
+
         # needs to be init-ed once per thread/process
         rr.init("rerun_main", spawn=False, strict=True)
         rr.log("logs", rr.TextLog("this entry has loglevel TRACE", level=rr.TextLogLevel.TRACE))
@@ -105,7 +121,7 @@ class DataReplay(Module):
             for thread in self._threads:
                 self._disposables.add(Disposable(thread.join))
         except Exception as error:
-            print(f'''[DataReplay] error = {error}''')
+            print(f"""[DataReplay] error = {error}""")
 
 
 # NOTE: this data was recorded with `from dimos.dashboard.support.utils import record_message`
@@ -116,12 +132,12 @@ replay_paths = {
 }
 blueprint = (
     autoconnect(
-        DataReplay.blueprint(
+        DataReplay(
             replay_paths=replay_paths,
             interval_sec=0.05,
             loop=True,
         ),
-        Dashboard().blueprint(
+        Dashboard(
             auto_open=True,
             terminal_commands={
                 "agent-spy": "htop",

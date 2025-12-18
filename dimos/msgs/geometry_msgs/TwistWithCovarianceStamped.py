@@ -15,9 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import TypeAlias
-
-import rerun as rr
+from typing import TYPE_CHECKING, TypeAlias
 
 from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
     TwistWithCovarianceStamped as LCMTwistWithCovarianceStamped,
@@ -26,7 +24,7 @@ import numpy as np
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         TwistWithCovarianceStamped as ROSTwistWithCovarianceStamped,
     )
 except ImportError:
@@ -36,6 +34,9 @@ from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.TwistWithCovariance import TwistWithCovariance
 from dimos.msgs.geometry_msgs.Vector3 import VectorConvertable
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    import rerun as rr
 
 # Types that can be converted to/from TwistWithCovarianceStamped
 TwistWithCovarianceStampedConvertable: TypeAlias = (

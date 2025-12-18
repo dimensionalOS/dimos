@@ -29,7 +29,7 @@ class OsmSkill(SkillModule):
     _latest_location: LatLon | None
     _current_location_map: CurrentLocationMap
 
-    gps_location: In[LatLon] = None  # type: ignore[assignment]
+    gps_location: In[LatLon]
 
     def __init__(self) -> None:
         super().__init__()
@@ -47,14 +47,14 @@ class OsmSkill(SkillModule):
         self._latest_location = location
 
     @skill()
-    def street_map_query(self, query_sentence: str) -> str:
+    def map_query(self, query_sentence: str) -> str:
         """This skill uses a vision language model to find something on the map
         based on the query sentence. You can query it with something like "Where
         can I find a coffee shop?" and it returns the latitude and longitude.
 
         Example:
 
-            street_map_query("Where can I find a coffee shop?")
+            map_query("Where can I find a coffee shop?")
 
         Args:
             query_sentence (str): The query sentence.

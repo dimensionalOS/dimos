@@ -12,63 +12,55 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+from dataclasses import dataclass
+from functools import cached_property
+from typing import Any
 
-import open_clip  # type: ignore[import-not-found]
+import open_clip  # type: ignore[import-untyped]
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
 
-from dimos.models.embedding.base import Embedding, EmbeddingModel
+from dimos.models.base import LocalModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
+from dimos.utils.data import get_data
 
 
 class MobileCLIPEmbedding(Embedding): ...
 
 
-class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
+@dataclass
+class MobileCLIPModelConfig(EmbeddingModelConfig):
+    model_name: str = "MobileCLIP2-S4"
+
+
+class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding], LocalModel):
     """MobileCLIP embedding model for vision-language re-identification."""
 
-    def __init__(
-        self,
-        model_name: str = "MobileCLIP2-S4",
-        model_path: Path | str | None = None,
-        device: str | None = None,
-        normalize: bool = True,
-    ) -> None:
-        """
-        Initialize MobileCLIP model.
+    default_config = MobileCLIPModelConfig
+    config: MobileCLIPModelConfig
 
-        Args:
-            model_name: Name of the model architecture
-            model_path: Path to pretrained weights
-            device: Device to run on (cuda/cpu), auto-detects if None
-            normalize: Whether to L2 normalize embeddings
-        """
-        if not OPEN_CLIP_AVAILABLE:  # type: ignore[name-defined]
-            raise ImportError(
-                "open_clip is required for MobileCLIPModel. "
-                "Install it with: pip install open-clip-torch"
-            )
-
-        # Use GPU if available, otherwise fall back to CPU
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        # MacOS Metal performance shaders
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            self.device = "mps"
-        else:
-            self.device = "cpu"
-        
-        self.normalize = normalize
-
-        # Load model
-        pretrained = str(model_path) if model_path else None
-        self.model, _, self.preprocess = open_clip.create_model_and_transforms(
-            model_name, pretrained=pretrained
+    @cached_property
+    def _model_and_preprocess(self) -> tuple[Any, Any]:
+        """Load model and transforms (open_clip returns them together)."""
+        model_path = get_data("models_mobileclip") / (self.config.model_name + ".pt")
+        model, _, preprocess = open_clip.create_model_and_transforms(
+            self.config.model_name, pretrained=str(model_path)
         )
-        self.tokenizer = open_clip.get_tokenizer(model_name)
-        self.model = self.model.eval().to(self.device)
+        return model.eval().to(self.config.device), preprocess
+
+    @cached_property
+    def _model(self) -> Any:
+        return self._model_and_preprocess[0]
+
+    @cached_property
+    def _preprocess(self) -> Any:
+        return self._model_and_preprocess[1]
+
+    @cached_property
+    def _tokenizer(self) -> Any:
+        return open_clip.get_tokenizer(self.config.model_name)
 
     def embed(self, *images: Image) -> MobileCLIPEmbedding | list[MobileCLIPEmbedding]:
         """Embed one or more images.
@@ -80,9 +72,11 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
 
         # Preprocess and batch
         with torch.inference_mode():
-            batch = torch.stack([self.preprocess(img) for img in pil_images]).to(self.device)
-            feats = self.model.encode_image(batch)
-            if self.normalize:
+            batch = torch.stack([self._preprocess(img) for img in pil_images]).to(
+                self.config.device
+            )
+            feats = self._model.encode_image(batch)
+            if self.config.normalize:
                 feats = F.normalize(feats, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -99,9 +93,9 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            text_tokens = self.tokenizer(list(texts)).to(self.device)
-            feats = self.model.encode_text(text_tokens)
-            if self.normalize:
+            text_tokens = self._tokenizer(list(texts)).to(self.config.device)
+            feats = self._model.encode_text(text_tokens)
+            if self.config.normalize:
                 feats = F.normalize(feats, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -111,10 +105,18 @@ class MobileCLIPModel(EmbeddingModel[MobileCLIPEmbedding]):
 
         return embeddings[0] if len(texts) == 1 else embeddings
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
-        dummy_image = torch.randn(1, 3, 224, 224).to(self.device)
-        dummy_text = self.tokenizer(["warmup"]).to(self.device)
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
+        super().start()
+        dummy_image = torch.randn(1, 3, 224, 224).to(self.config.device)
+        dummy_text = self._tokenizer(["warmup"]).to(self.config.device)
         with torch.inference_mode():
-            self.model.encode_image(dummy_image)
-            self.model.encode_text(dummy_text)
+            self._model.encode_image(dummy_image)
+            self._model.encode_text(dummy_text)
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        for attr in ("_model_and_preprocess", "_model", "_preprocess", "_tokenizer"):
+            if attr in self.__dict__:
+                del self.__dict__[attr]
+        super().stop()

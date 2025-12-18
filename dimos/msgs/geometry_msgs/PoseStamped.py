@@ -20,7 +20,9 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped  # type: ignore[import-untyped]
 
 try:
-    from geometry_msgs.msg import PoseStamped as ROSPoseStamped  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[import-untyped]
+        PoseStamped as ROSPoseStamped,  # type: ignore[attr-defined]
+    )
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
 
@@ -152,7 +154,7 @@ class PoseStamped(Pose, Timestamped):
         ros_msg.pose = Pose.to_ros_msg(self)
 
         return ros_msg
-    
+
     def to_rerun(self):
         """Convert to a Rerun Transform3D suitable for rr.log."""
         import rerun as rr  # type: ignore[import-untyped]

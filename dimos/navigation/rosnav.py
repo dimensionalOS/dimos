@@ -24,22 +24,25 @@ import logging
 import threading
 import time
 
-from geometry_msgs.msg import (  # type: ignore[attr-defined]
+from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
     PointStamped as ROSPointStamped,
     PoseStamped as ROSPoseStamped,
     TwistStamped as ROSTwistStamped,
 )
-from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
-import rclpy
-from rclpy.node import Node
+from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined, import-untyped]
+import rclpy  # type: ignore[import-untyped]
+from rclpy.node import Node  # type: ignore[import-untyped]
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import (  # type: ignore[attr-defined]
+from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
     Joy as ROSJoy,
     PointCloud2 as ROSPointCloud2,
 )
-from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8  # type: ignore[attr-defined]
-from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
+from std_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    Bool as ROSBool,
+    Int8 as ROSInt8,
+)
+from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
 
 from dimos import spec
 from dimos.agents2 import Reducer, Stream, skill  # type: ignore[attr-defined]
@@ -78,14 +81,14 @@ class ROSNav(
     config: Config
     default_config = Config
 
-    goal_req: In[PoseStamped] = None  # type: ignore
+    goal_req: In[PoseStamped]
 
-    pointcloud: Out[PointCloud2] = None  # type: ignore
-    global_pointcloud: Out[PointCloud2] = None  # type: ignore
+    pointcloud: Out[PointCloud2]
+    global_pointcloud: Out[PointCloud2]
 
-    goal_active: Out[PoseStamped] = None  # type: ignore
-    path_active: Out[Path] = None  # type: ignore
-    cmd_vel: Out[Twist] = None  # type: ignore
+    goal_active: Out[PoseStamped]
+    path_active: Out[Path]
+    cmd_vel: Out[Twist]
 
     # Using RxPY Subjects for reactive data flow instead of storing state
     _local_pointcloud_subject: Subject  # type: ignore[type-arg]

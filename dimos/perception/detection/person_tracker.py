@@ -28,9 +28,9 @@ from dimos.utils.reactive import backpressure
 
 
 class PersonTracker(Module):
-    detections: In[Detection2DArray] = None  # type: ignore
-    image: In[Image] = None  # type: ignore
-    target: Out[PoseStamped] = None  # type: ignore
+    detections: In[Detection2DArray]
+    image: In[Image]
+    target: Out[PoseStamped]
 
     camera_info: CameraInfo
 
@@ -40,7 +40,7 @@ class PersonTracker(Module):
 
     def center_to_3d(
         self,
-        pixel: tuple[int, int],
+        pixel: tuple[float, float],
         camera_info: CameraInfo,
         assumed_depth: float = 1.0,
     ) -> Vector3:

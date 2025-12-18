@@ -22,9 +22,9 @@ import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
-import rerun as rr
 import reactivex as rx
 from reactivex import operators as ops
+import rerun as rr
 from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
@@ -39,6 +39,8 @@ from dimos.types.timestamped import Timestamped, TimestampedBufferCollection, to
 from dimos.utils.reactive import quality_barrier
 
 if TYPE_CHECKING:
+    import os
+
     from reactivex.observable import Observable
 
     from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
@@ -51,7 +53,7 @@ except Exception:
     cp = None
 
 try:
-    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined]
+    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSImage = None  # type: ignore[assignment, misc]
 
@@ -159,11 +161,15 @@ class Image(Timestamped):
 
     @classmethod
     def from_file(  # type: ignore[no-untyped-def]
-        cls, filepath: str, format: ImageFormat = ImageFormat.RGB, to_cuda: bool = False, **kwargs
+        cls,
+        filepath: str | os.PathLike[str],
+        format: ImageFormat = ImageFormat.RGB,
+        to_cuda: bool = False,
+        **kwargs,
     ) -> Image:
         if kwargs.pop("to_gpu", False):
             to_cuda = True
-        arr = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+        arr = cv2.imread(str(filepath), cv2.IMREAD_UNCHANGED)
         if arr is None:
             raise ValueError(f"Could not load image from {filepath}")
         if arr.ndim == 2:
@@ -316,6 +322,24 @@ class Image(Timestamped):
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
         return Image(self._impl.resize(width, height, interpolation))
+
+    def resize_to_fit(
+        self, max_width: int, max_height: int, interpolation: int = cv2.INTER_LINEAR
+    ) -> tuple[Image, float]:
+        """Resize image to fit within max dimensions while preserving aspect ratio.
+
+        Only scales down if image exceeds max dimensions. Returns self if already fits.
+
+        Returns:
+            Tuple of (resized_image, scale_factor). Scale factor is 1.0 if no resize needed.
+        """
+        if self.width <= max_width and self.height <= max_height:
+            return self, 1.0
+
+        scale = min(max_width / self.width, max_height / self.height)
+        new_width = int(self.width * scale)
+        new_height = int(self.height * scale)
+        return self.resize(new_width, new_height, interpolation), scale
 
     def crop(self, x: int, y: int, width: int, height: int) -> Image:
         return Image(self._impl.crop(x, y, width, height))  # type: ignore[attr-defined]

@@ -42,9 +42,11 @@ from dimos.utils.logging_config import setup_logger
 
 # Handle ROS imports for environments where ROS is not available like CI
 try:
-    from geometry_msgs.msg import TwistStamped as ROSTwistStamped  # type: ignore[attr-defined]
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
-    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[import-untyped]
+        TwistStamped as ROSTwistStamped,  # type: ignore[attr-defined]
+    )
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined, import-untyped]
+    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
 
     ROS_AVAILABLE = True
 except ImportError:

@@ -27,7 +27,7 @@ import numpy as np
 from piper_sdk import *  # type: ignore[import-not-found]  # from the official Piper SDK
 import pytest
 from reactivex.disposable import Disposable
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 import dimos.core as core
 from dimos.core import In, Module, rpc
@@ -349,7 +349,7 @@ class PiperArm:
 
 
 class VelocityController(Module):
-    cmd_vel: In[Twist] = None  # type: ignore[assignment]
+    cmd_vel: In[Twist]
 
     def __init__(self, arm, period: float = 0.01, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)

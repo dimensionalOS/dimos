@@ -23,14 +23,14 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Output, Reducer, Stream
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.camera.spec import CameraHardware
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
+from dimos.protocol.skill.skill import skill
+from dimos.protocol.skill.type import Output, Reducer, Stream
 
 
 def default_transform():  # type: ignore[no-untyped-def]
@@ -51,8 +51,8 @@ class CameraModuleConfig(ModuleConfig):
 
 
 class CameraModule(Module, spec.Camera):
-    color_image: Out[Image] = None  # type: ignore[assignment]
-    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
+    color_image: Out[Image]
+    camera_info: Out[CameraInfo]
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None  # type: ignore[assignment, type-arg]
     _skill_stream: Observable[Image] | None = None

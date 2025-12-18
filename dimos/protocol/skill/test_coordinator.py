@@ -47,51 +47,53 @@ class SkillContainerTest(Module):
         time.sleep(0.3)
         return x + y
 
-    @skill(stream=Stream.call_agent, reducer=Reducer.all)
+    @skill(stream=Stream.call_agent, reducer=Reducer.all)  # type: ignore[arg-type]
     def counter(self, count_to: int, delay: float | None = 0.05) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
-            if delay > 0:
+            if delay is not None and delay > 0:
                 time.sleep(delay)
             yield i
 
-    @skill(stream=Stream.passive, reducer=Reducer.sum)
+    @skill(stream=Stream.passive, reducer=Reducer.sum)  # type: ignore[arg-type]
     def counter_passive_sum(
         self, count_to: int, delay: float | None = 0.05
     ) -> Generator[int, None, None]:
         """Counts from 1 to count_to, with an optional delay between counts."""
         for i in range(1, count_to + 1):
-            if delay > 0:
+            if delay is not None and delay > 0:
                 time.sleep(delay)
             yield i
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest)
+    @skill(stream=Stream.passive, reducer=Reducer.latest)  # type: ignore[arg-type]
     def current_time(self, frequency: float | None = 10) -> Generator[str, None, None]:
         """Provides current time."""
         while True:
             yield str(datetime.datetime.now())
-            time.sleep(1 / frequency)
+            if frequency is not None:
+                time.sleep(1 / frequency)
 
-    @skill(stream=Stream.passive, reducer=Reducer.latest)
+    @skill(stream=Stream.passive, reducer=Reducer.latest)  # type: ignore[arg-type]
     def uptime_seconds(self, frequency: float | None = 10) -> Generator[float, None, None]:
         """Provides current uptime."""
         start_time = datetime.datetime.now()
         while True:
             yield (datetime.datetime.now() - start_time).total_seconds()
-            time.sleep(1 / frequency)
+            if frequency is not None:
+                time.sleep(1 / frequency)
 
     @skill()
     def current_date(self, frequency: float | None = 10) -> str:
         """Provides current date."""
-        return datetime.datetime.now()
+        return str(datetime.datetime.now())
 
     @skill(output=Output.image)
-    def take_photo(self) -> str:
+    def take_photo(self) -> Image:  # type: ignore[type-arg]
         """Takes a camera photo"""
         print("Taking photo...")
-        img = Image.from_file(get_data("cafe-smol.jpg"))
+        img = Image.from_file(str(get_data("cafe-smol.jpg")))  # type: ignore[arg-type]
         print("Photo taken.")
-        return img
+        return img  # type: ignore[return-value]
 
 
 @pytest.mark.asyncio
@@ -113,7 +115,7 @@ async def test_coordinator_parallel_calls() -> None:
 
         skill_id = f"test-call-{cnt}"
         tool_msg = skillstates[skill_id].agent_encode()
-        assert tool_msg.content == cnt + 2
+        assert tool_msg.content == cnt + 2  # type: ignore[union-attr]
 
         cnt += 1
         if cnt < 5:

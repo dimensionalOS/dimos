@@ -14,7 +14,7 @@
 
 
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
 

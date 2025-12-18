@@ -54,8 +54,8 @@ class NavigationSkillContainer(SkillModule):
         "WavefrontFrontierExplorer.is_exploration_active",
     ]
 
-    color_image: In[Image] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    color_image: In[Image]
+    odom: In[PoseStamped]
 
     def __init__(self) -> None:
         super().__init__()

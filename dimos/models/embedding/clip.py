@@ -12,51 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
+from functools import cached_property
+
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F
 from transformers import CLIPModel as HFCLIPModel, CLIPProcessor  # type: ignore[import-untyped]
 
-from dimos.models.embedding.base import Embedding, EmbeddingModel
+from dimos.models.base import HuggingFaceModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel, HuggingFaceEmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
-
-_CUDA_INITIALIZED = False
 
 
 class CLIPEmbedding(Embedding): ...
 
 
-class CLIPModel(EmbeddingModel[CLIPEmbedding]):
+@dataclass
+class CLIPModelConfig(HuggingFaceEmbeddingModelConfig):
+    model_name: str = "openai/clip-vit-base-patch32"
+    dtype: torch.dtype = torch.float32
+
+
+class CLIPModel(EmbeddingModel[CLIPEmbedding], HuggingFaceModel):
     """CLIP embedding model for vision-language re-identification."""
 
-    def __init__(
-        self,
-        model_name: str = "openai/clip-vit-base-patch32",
-        device: str | None = None,
-        normalize: bool = False,
-    ) -> None:
-        """
-        Initialize CLIP model.
+    default_config = CLIPModelConfig
+    config: CLIPModelConfig
+    _model_class = HFCLIPModel
 
-        Args:
-            model_name: HuggingFace model name (e.g., "openai/clip-vit-base-patch32")
-            device: Device to run on (cuda/cpu), auto-detects if None
-            normalize: Whether to L2 normalize embeddings
-        """
-        # Use GPU if available, otherwise fall back to CPU
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        # MacOS Metal performance shaders
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            self.device = "mps"
-        else:
-            self.device = "cpu"
-        
-        self.normalize = normalize
+    @cached_property
+    def _model(self) -> HFCLIPModel:
+        self._ensure_cuda_initialized()
+        return HFCLIPModel.from_pretrained(self.config.model_name).eval().to(self.config.device)
 
-        # Load model and processor
-        self.model = HFCLIPModel.from_pretrained(model_name).eval().to(self.device)
-        self.processor = CLIPProcessor.from_pretrained(model_name)
+    @cached_property
+    def _processor(self) -> CLIPProcessor:
+        return CLIPProcessor.from_pretrained(self.config.model_name)
 
     def embed(self, *images: Image) -> CLIPEmbedding | list[CLIPEmbedding]:
         """Embed one or more images.
@@ -68,10 +60,10 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
 
         # Process images
         with torch.inference_mode():
-            inputs = self.processor(images=pil_images, return_tensors="pt").to(self.device)
-            image_features = self.model.get_image_features(**inputs)
+            inputs = self._processor(images=pil_images, return_tensors="pt").to(self.config.device)
+            image_features = self._model.get_image_features(**inputs)
 
-            if self.normalize:
+            if self.config.normalize:
                 image_features = F.normalize(image_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -88,12 +80,12 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
         Returns embeddings as torch.Tensor on device for efficient GPU comparisons.
         """
         with torch.inference_mode():
-            inputs = self.processor(text=list(texts), return_tensors="pt", padding=True).to(
-                self.device
+            inputs = self._processor(text=list(texts), return_tensors="pt", padding=True).to(
+                self.config.device
             )
-            text_features = self.model.get_text_features(**inputs)
+            text_features = self._model.get_text_features(**inputs)
 
-            if self.normalize:
+            if self.config.normalize:
                 text_features = F.normalize(text_features, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -103,28 +95,21 @@ class CLIPModel(EmbeddingModel[CLIPEmbedding]):
 
         return embeddings[0] if len(texts) == 1 else embeddings
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
-        # WORKAROUND: HuggingFace CLIP fails with CUBLAS_STATUS_ALLOC_FAILED when it's
-        # the first model to use CUDA. Initialize CUDA context with a dummy operation.
-        # This only needs to happen once per process.
-        global _CUDA_INITIALIZED
-        if self.device == "cuda" and not _CUDA_INITIALIZED:
-            try:
-                # Initialize CUDA with a small matmul operation to setup cuBLAS properly
-                _ = torch.zeros(1, 1, device="cuda") @ torch.zeros(1, 1, device="cuda")
-                torch.cuda.synchronize()
-                _CUDA_INITIALIZED = True
-            except Exception:
-                # If initialization fails, continue anyway - the warmup might still work
-                pass
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
+        super().start()
 
-        dummy_image = torch.randn(1, 3, 224, 224).to(self.device)
-        dummy_text_inputs = self.processor(text=["warmup"], return_tensors="pt", padding=True).to(
-            self.device
+        dummy_image = torch.randn(1, 3, 224, 224).to(self.config.device)
+        dummy_text_inputs = self._processor(text=["warmup"], return_tensors="pt", padding=True).to(
+            self.config.device
         )
 
         with torch.inference_mode():
-            # Use pixel_values directly for image warmup
-            self.model.get_image_features(pixel_values=dummy_image)
-            self.model.get_text_features(**dummy_text_inputs)
+            self._model.get_image_features(pixel_values=dummy_image)
+            self._model.get_text_features(**dummy_text_inputs)
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        if "_processor" in self.__dict__:
+            del self.__dict__["_processor"]
+        super().stop()

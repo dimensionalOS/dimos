@@ -41,11 +41,11 @@ class DepthModule(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None  # type: ignore[assignment]
-    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
+    color_image: In[Image]
+    camera_info: In[CameraInfo]
 
     # LCM outputs
-    depth_image: Out[Image] = None  # type: ignore[assignment]
+    depth_image: Out[Image]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

@@ -17,14 +17,13 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, TypeAlias
 
-import rerun as rr
-
 from dimos_lcm.nav_msgs import Odometry as LCMOdometry  # type: ignore[import-untyped]
 import numpy as np
 from plum import dispatch
+import rerun as rr
 
 try:
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSOdometry = None  # type: ignore[assignment, misc]
 
@@ -261,15 +260,17 @@ class Odometry(LCMOdometry, Timestamped):  # type: ignore[misc]
 
     def to_rerun(self) -> rr.Transform3D:
         """Convert odometry pose to a Rerun transform."""
-        quat = rr.Quaternion(xyzw=np.array(
-            [
-                self.pose.pose.orientation.x,
-                self.pose.pose.orientation.y,
-                self.pose.pose.orientation.z,
-                self.pose.pose.orientation.w,
-            ],
-            dtype=np.float32,
-        ))
+        quat = rr.Quaternion(
+            xyzw=np.array(
+                [
+                    self.pose.pose.orientation.x,
+                    self.pose.pose.orientation.y,
+                    self.pose.pose.orientation.z,
+                    self.pose.pose.orientation.w,
+                ],
+                dtype=np.float32,
+            )
+        )
         return rr.Transform3D(
             translation=np.array([self.x, self.y, self.z], dtype=np.float32),
             rotation=quat,

@@ -18,10 +18,15 @@ import threading
 from typing import Any
 
 try:
-    import rclpy
-    from rclpy.executors import SingleThreadedExecutor
-    from rclpy.node import Node
-    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
+    import rclpy  # type: ignore[import-untyped]
+    from rclpy.executors import SingleThreadedExecutor  # type: ignore[import-untyped]
+    from rclpy.node import Node  # type: ignore[import-untyped]
+    from rclpy.qos import (  # type: ignore[import-untyped]
+        QoSDurabilityPolicy,
+        QoSHistoryPolicy,
+        QoSProfile,
+        QoSReliabilityPolicy,
+    )
 except ImportError:
     rclpy = None  # type: ignore[assignment]
     SingleThreadedExecutor = None  # type: ignore[assignment, misc]

@@ -27,7 +27,7 @@ from dimos_lcm.nav_msgs import Path as LCMPath  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime  # type: ignore[import-untyped]
 
 try:
-    from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
+    from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSPath = None  # type: ignore[assignment, misc]
 

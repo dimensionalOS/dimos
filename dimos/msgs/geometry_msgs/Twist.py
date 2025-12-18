@@ -19,7 +19,7 @@ from plum import dispatch
 import rerun as rr
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         Twist as ROSTwist,
         Vector3 as ROSVector3,
     )
