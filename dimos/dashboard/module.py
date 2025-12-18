@@ -26,8 +26,6 @@ import rerun.blueprint as rrb
 from dimos.core import In, Module, rpc
 from dimos.dashboard.server import env_bool, start_dashboard_server_thread
 
-dimensional_rerun_id = "dimos_main_rerun"
-
 
 # there can only be one dashboard at a time (e.g. global dashboard_config is alright)
 class Dashboard(Module):
@@ -51,12 +49,15 @@ class Dashboard(Module):
     https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH")
     https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH")
     logger: logging.Logger | None = None
+    rerun_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
     rerun_grpc_port: int = os.environ.get("RERUN_GRPC_PORT", 9876)
     rerun_server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
     rrd_url: str | None = None
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__()
+        # TODO: the following rerun aspects can only be set via ENV vars (for now)
+        kwargs = {**kwargs, "rerun_id": self.rerun_id, "rerun_grpc_port": self.rerun_grpc_port}
         self.__dict__.update(kwargs)
 
     @rpc
@@ -68,7 +69,7 @@ class Dashboard(Module):
         # init starts part 1 (needed before rr.log or rr.send_blueprint)
         # we manually start the gprc here (part 2)
         # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
-        rr.init(dimensional_rerun_id, spawn=False, recording_id=dimensional_rerun_id)
+        rr.init(self.rerun_id, spawn=False, strict=True, recording_id=self.rerun_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
         default_blueprint = rrb.Blueprint(
             rrb.Tabs(
@@ -79,13 +80,16 @@ class Dashboard(Module):
                 ),
             )
         )
+        print("[Dashboard] sending empty blueprint")
         rr.send_blueprint(default_blueprint)
         # get the rrd_url if it wasn't provided
+        print("[Dashboard] starting rerun grpc if needed")
         self.rrd_url = self.rrd_url or rr.serve_grpc(
             grpc_port=self.rerun_grpc_port,
             default_blueprint=default_blueprint,
             server_memory_limit=self.rerun_server_memory_limit,
         )
+        print(f"""[Dashboard] rrd_url = {self.rrd_url}""")
         thread = start_dashboard_server_thread(**self.__dict__)
 
         @self._disposables.add
