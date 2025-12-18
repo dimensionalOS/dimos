@@ -188,7 +188,7 @@
         # 3. Host interactive shell  →  `nix develop`
         # ------------------------------------------------------------
         shellHook = ''
-          setopt +o nomatch # allow globs to be empty without throwing an error
+          shopt -s nullglob 2>/dev/null || setopt +o nomatch 2>/dev/null || true # allow globs to be empty without throwing an error
           if [ "$OSTYPE" = "linux-gnu" ]; then
             export CC="cc-no-usr-include" # basically patching for nix
             # Create nvidia-only lib symlinks to avoid glibc conflicts
