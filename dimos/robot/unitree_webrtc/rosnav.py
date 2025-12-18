@@ -27,10 +27,10 @@ logger = setup_logger(level=logging.INFO)
 
 # TODO: Remove, deprecated
 class NavigationModule(Module):
-    goal_pose: Out[PoseStamped] = None  # type: ignore[assignment]
-    goal_reached: In[Bool] = None  # type: ignore[assignment]
-    cancel_goal: Out[Bool] = None  # type: ignore[assignment]
-    joy: Out[Joy] = None  # type: ignore[assignment]
+    goal_pose: Out[PoseStamped]
+    goal_reached: In[Bool]
+    cancel_goal: Out[Bool]
+    joy: Out[Joy]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize NavigationModule."""

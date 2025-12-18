@@ -51,12 +51,12 @@ class BaseLocalPlanner(Module):
     """
 
     # LCM inputs
-    lidar: In[LidarMessage] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    path: In[Path] = None  # type: ignore[assignment]
+    lidar: In[LidarMessage]
+    odom: In[PoseStamped]
+    path: In[Path]
 
     # LCM outputs
-    cmd_vel: Out[Twist] = None  # type: ignore[assignment]
+    cmd_vel: Out[Twist]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,

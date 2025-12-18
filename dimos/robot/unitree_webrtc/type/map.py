@@ -32,9 +32,9 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
 class Map(Module):
-    lidar: In[LidarMessage] = None  # type: ignore[assignment]
-    global_map: Out[LidarMessage] = None  # type: ignore[assignment]
-    global_costmap: Out[OccupancyGrid] = None  # type: ignore[assignment]
+    lidar: In[LidarMessage]
+    global_map: Out[LidarMessage]
+    global_costmap: Out[OccupancyGrid]
 
     _point_cloud_accumulator: PointCloudAccumulator
     _global_config: GlobalConfig

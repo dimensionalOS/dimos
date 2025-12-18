@@ -37,8 +37,8 @@ class JoystickModule(Module):
     This allows testing the same interface that navigation will use.
     """
 
-    twist_out: Out[TwistStamped] = None  # type: ignore[assignment]  # Timestamped velocity commands
-    mode_out: Out[Int32] = None  # type: ignore[assignment]  # Mode changes
+    twist_out: Out[TwistStamped]  # Timestamped velocity commands
+    mode_out: Out[Int32]  # Mode changes
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         Module.__init__(self, *args, **kwargs)

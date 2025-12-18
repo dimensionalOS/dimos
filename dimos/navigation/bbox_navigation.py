@@ -28,9 +28,9 @@ logger = setup_logger(level=logging.DEBUG)
 class BBoxNavigationModule(Module):
     """Minimal module that converts 2D bbox center to navigation goals."""
 
-    detection2d: In[Detection2DArray] = None  # type: ignore[assignment]
-    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
-    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
+    detection2d: In[Detection2DArray]
+    camera_info: In[CameraInfo]
+    goal_request: Out[PoseStamped]
 
     def __init__(self, goal_distance: float = 1.0) -> None:
         super().__init__()

@@ -80,8 +80,10 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
+            # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
+            executable = sys.executable if sys.platform != "darwin" else "mjpython"
             self.process = subprocess.Popen(
-                [sys.executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
+                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
             )
 
         except Exception as e:
@@ -89,7 +91,7 @@ class MujocoConnection:
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
 
         # Wait for process to be ready
-        ready_timeout = 60.0
+        ready_timeout = 300.0
         start_time = time.time()
         assert self.process is not None
         while time.time() - start_time < ready_timeout:
@@ -111,6 +113,13 @@ class MujocoConnection:
             return
 
         self._is_cleaned_up = True
+
+        # clean up open file descriptors
+        if self.process:
+            if self.process.stderr:
+                self.process.stderr.close()
+            if self.process.stdout:
+                self.process.stdout.close()
 
         # Cancel any pending timers
         if self._stop_timer:

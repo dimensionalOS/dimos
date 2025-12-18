@@ -61,7 +61,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None  # type: ignore[assignment]
+    color_image: In[Image]
 
     def __init__(
         self,

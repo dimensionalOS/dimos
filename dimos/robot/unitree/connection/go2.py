@@ -141,12 +141,12 @@ class ReplayConnection(UnitreeWebRTCConnection):
 
 
 class GO2Connection(Module, spec.Camera, spec.Pointcloud):
-    cmd_vel: In[Twist] = None  # type: ignore
-    pointcloud: Out[PointCloud2] = None  # type: ignore
-    odom: Out[PoseStamped] = None  # type: ignore
-    lidar: Out[LidarMessage] = None  # type: ignore
-    color_image: Out[Image] = None  # type: ignore
-    camera_info: Out[CameraInfo] = None  # type: ignore
+    cmd_vel: In[Twist]
+    pointcloud: Out[PointCloud2]
+    odom: Out[PoseStamped]
+    lidar: Out[LidarMessage]
+    color_image: Out[Image]
+    camera_info: Out[CameraInfo]
 
     connection: Go2ConnectionProtocol
     camera_info_static: CameraInfo = _camera_info_static()

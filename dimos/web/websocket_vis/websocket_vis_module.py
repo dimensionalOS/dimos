@@ -64,18 +64,18 @@ class WebsocketVisModule(Module):
     """
 
     # LCM inputs
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    gps_location: In[LatLon] = None  # type: ignore[assignment]
-    path: In[Path] = None  # type: ignore[assignment]
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped]
+    gps_location: In[LatLon]
+    path: In[Path]
+    global_costmap: In[OccupancyGrid]
 
     # LCM outputs
-    goal_request: Out[PoseStamped] = None  # type: ignore[assignment]
-    gps_goal: Out[LatLon] = None  # type: ignore[assignment]
-    explore_cmd: Out[Bool] = None  # type: ignore[assignment]
-    stop_explore_cmd: Out[Bool] = None  # type: ignore[assignment]
-    cmd_vel: Out[Twist] = None  # type: ignore[assignment]
-    movecmd_stamped: Out[TwistStamped] = None  # type: ignore[assignment]
+    goal_request: Out[PoseStamped]
+    gps_goal: Out[LatLon]
+    explore_cmd: Out[Bool]
+    stop_explore_cmd: Out[Bool]
+    cmd_vel: Out[Twist]
+    movecmd_stamped: Out[TwistStamped]
 
     def __init__(self, port: int = 7779, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize the WebSocket visualization module.
@@ -95,10 +95,13 @@ class WebsocketVisModule(Module):
 
         self.vis_state = {}  # type: ignore[var-annotated]
         self.state_lock = threading.Lock()
-
         self.costmap_encoder = OptimizedCostmapEncoder(chunk_size=64)
 
-        logger.info(f"WebSocket visualization module initialized on port {port}")
+        # Track GPS goal points for visualization
+        self.gps_goal_points: list[dict[str, float]] = []
+        logger.info(
+            f"WebSocket visualization module initialized on port {port}, GPS goal tracking enabled"
+        )
 
     def _start_broadcast_loop(self) -> None:
         def websocket_vis_loop() -> None:
@@ -143,8 +146,11 @@ class WebsocketVisModule(Module):
         except Exception:
             ...
 
-        unsub = self.global_costmap.subscribe(self._on_global_costmap)
-        self._disposables.add(Disposable(unsub))
+        try:
+            unsub = self.global_costmap.subscribe(self._on_global_costmap)
+            self._disposables.add(Disposable(unsub))
+        except Exception:
+            ...
 
     @rpc
     def stop(self) -> None:
@@ -193,10 +199,17 @@ class WebsocketVisModule(Module):
             with self.state_lock:
                 current_state = dict(self.vis_state)
 
+            # Include GPS goal points in the initial state
+            if self.gps_goal_points:
+                current_state["gps_travel_goal_points"] = self.gps_goal_points
+
             # Force full costmap update on new connection
             self.costmap_encoder.last_full_grid = None
 
             await self.sio.emit("full_state", current_state, room=sid)  # type: ignore[union-attr]
+            logger.info(
+                f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points"
+            )
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def click(sid, position) -> None:  # type: ignore[no-untyped-def]
@@ -211,12 +224,25 @@ class WebsocketVisModule(Module):
             )
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def gps_goal(sid, goal) -> None:  # type: ignore[no-untyped-def]
-            logger.info(f"Set GPS goal: {goal}")
+        async def gps_goal(sid: str, goal: dict[str, float]) -> None:
+            logger.info(f"Received GPS goal: {goal}")
+
+            # Publish the goal to LCM
             self.gps_goal.publish(LatLon(lat=goal["lat"], lon=goal["lon"]))
 
+            # Add to goal points list for visualization
+            self.gps_goal_points.append(goal)
+            logger.info(f"Added GPS goal to list. Total goals: {len(self.gps_goal_points)}")
+
+            # Emit updated goal points back to all connected clients
+            if self.sio is not None:
+                await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
+            logger.debug(
+                f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
+            )
+
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def start_explore(sid) -> None:  # type: ignore[no-untyped-def]
+        async def start_explore(sid: str) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
@@ -226,7 +252,15 @@ class WebsocketVisModule(Module):
             self.stop_explore_cmd.publish(Bool(data=True))
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
-        async def move_command(sid, data) -> None:  # type: ignore[no-untyped-def]
+        async def clear_gps_goals(sid: str) -> None:
+            logger.info("Clearing all GPS goal points")
+            self.gps_goal_points.clear()
+            if self.sio is not None:
+                await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
+            logger.info("GPS goal points cleared and updated clients")
+
+        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        async def move_command(sid: str, data: dict[str, Any]) -> None:
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:
                 twist = Twist(

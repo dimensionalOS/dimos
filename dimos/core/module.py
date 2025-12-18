@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 import inspect
+import sys
 import threading
 from typing import (
     Any,
@@ -278,6 +279,33 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 class DaskModule(ModuleBase):
     ref: Actor
     worker: int
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Set class-level None attributes for In/Out type annotations.
+
+        This is needed because Dask's Actor proxy looks up attributes on the class
+        (not instance) when proxying attribute access. Without class-level attributes,
+        the proxy would fail with AttributeError even though the instance has the attrs.
+        """
+        super().__init_subclass__(**kwargs)
+
+        # Get type hints for this class only (not inherited ones).
+        globalns = {}
+        for c in cls.__mro__:
+            if c.__module__ in sys.modules:
+                globalns.update(sys.modules[c.__module__].__dict__)
+
+        try:
+            hints = get_type_hints(cls, globalns=globalns, include_extras=True)
+        except (NameError, AttributeError, TypeError):
+            hints = {}
+
+        for name, ann in hints.items():
+            origin = get_origin(ann)
+            if origin in (In, Out):
+                # Set class-level attribute if not already set.
+                if not hasattr(cls, name) or getattr(cls, name) is None:
+                    setattr(cls, name, None)
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.ref = None  # type: ignore[assignment]

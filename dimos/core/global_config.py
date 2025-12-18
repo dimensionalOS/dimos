@@ -30,6 +30,7 @@ class GlobalConfig(BaseSettings):
     simulation: bool = False
     replay: bool = False
     n_dask_workers: int = 2
+    memory_limit: str = "auto"
     mujoco_camera_position: str | None = None
     mujoco_room: str | None = None
     mujoco_room_from_occupancy: str | None = None

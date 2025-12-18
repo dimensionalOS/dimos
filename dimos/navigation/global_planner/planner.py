@@ -29,12 +29,12 @@ logger = setup_logger()
 
 class AstarPlanner(Module):
     # LCM inputs
-    target: In[PoseStamped] = None  # type: ignore[assignment]
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    target: In[PoseStamped]
+    global_costmap: In[OccupancyGrid]
+    odom: In[PoseStamped]
 
     # LCM outputs
-    path: Out[Path] = None  # type: ignore[assignment]
+    path: Out[Path]
 
     _global_config: GlobalConfig
 
