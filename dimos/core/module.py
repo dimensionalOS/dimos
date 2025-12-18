@@ -91,7 +91,7 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
 
     rpc_calls: list[str] = []
 
-    default_config: type[ModuleConfigT]
+    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -292,7 +292,6 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
 class DaskModule(ModuleBase[ModuleConfigT]):
     ref: Actor
     worker: int
-    default_config: type[ModuleConfigT]
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Set class-level None attributes for In/Out type annotations.

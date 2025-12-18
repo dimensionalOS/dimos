@@ -127,6 +127,10 @@ class SparseVoxelGridMapper(Module):
             interval_disposable = interval(self.config.publish_interval).subscribe(publish)
             self._disposables.add(interval_disposable)
 
+    @rpc
+    def stop(self) -> None:
+        super().stop()
+
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
         if self.config.publish_interval <= 0:
