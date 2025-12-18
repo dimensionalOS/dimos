@@ -28,7 +28,7 @@
           { vals.pkg=pkgs.stdenv.cc.cc.lib;   flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.stdenv.cc;          flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.cctools;            flags={}; onlyIf=pkgs.stdenv.isDarwin; } # for pip install opencv-python
-          { vals.pkg=pkgs.pcre2;              flags={ ldLibraryGroup=true; flags.packageConfGroup=pkgs.stdenv.isDarwin; }; }
+          { vals.pkg=pkgs.pcre2;              flags={ ldLibraryGroup=true; packageConfGroup=pkgs.stdenv.isDarwin; }; }
           { vals.pkg=pkgs.libsysprof-capture; flags.packageConfGroup=true; onlyIf=pkgs.stdenv.isDarwin; }
           { vals.pkg=pkgs.xcbuild;            flags={}; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
