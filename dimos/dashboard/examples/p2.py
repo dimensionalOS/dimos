@@ -68,7 +68,7 @@ import time
 
 import yaml
 
-file_path = Path("./dimos/dashboard/support/color_image.ignore.yaml")
+file_path = Path("./dimos/dashboard/support/color_image.yaml")
 if not file_path.exists():
     print(f"""[DataReplay] file {file_path} does not exist""", file=sys.stderr)
     exit(1)

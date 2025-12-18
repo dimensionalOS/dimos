@@ -37,7 +37,7 @@ class RerunInfo:
     server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
     url: str = os.environ.get(
         "RERUN_URL",
-        f"rerun+http://localhost:{os.environ.get('RERUN_GRPC_PORT', default_rerun_grpc_port)!s}/proxy",
+        f"rerun+http://127.0.0.1:{os.environ.get('RERUN_GRPC_PORT', default_rerun_grpc_port)!s}/proxy",
     )
 
 
@@ -102,7 +102,9 @@ class Dashboard(Module):
                 default_blueprint=default_blueprint,
                 server_memory_limit=rerun_info.server_memory_limit,
             )
-        thread = start_dashboard_server_thread(**self.__dict__, rrd_url=rerun_info.url)
+        thread = start_dashboard_server_thread(
+            **self.__dict__, keep_alive=True, rrd_url=rerun_info.url
+        )
 
         @self._disposables.add
         @Disposable
