@@ -62,11 +62,15 @@ class LocalPlanner(Resource):
     _navigation_map: NavigationMap
 
     _speed: float = 1.0
-    _k_angular: float = 2.0
+    _k_angular: float = 0.5
+    _k_derivative: float = 0.15
+    _max_angular_accel: float = 2.0
     _goal_tolerance: float = 0.3
     _orientation_tolerance: float = 0.2
     _control_frequency: float = 20.0
     _rotation_threshold: float = 90
+    _prev_yaw_error: float
+    _prev_angular_velocity: float
 
     def __init__(self, global_config: GlobalConfig, navigation_map: NavigationMap) -> None:
         self.cmd_vel = Subject()
@@ -78,6 +82,8 @@ class LocalPlanner(Resource):
         self._state = "idle"
         self._global_config = global_config
         self._navigation_map = navigation_map
+        self._prev_yaw_error = 0.0
+        self._prev_angular_velocity = 0.0
 
     def start(self) -> None:
         pass
@@ -180,6 +186,30 @@ class LocalPlanner(Resource):
             sleep_time = max(0.0, (1.0 / self._control_frequency) - elapsed)
             stop_event.wait(sleep_time)
 
+    def _compute_angular_velocity(self, yaw_error: float, max_speed: float) -> float:
+        dt = 1.0 / self._control_frequency
+
+        # PD control: proportional + derivative damping
+        yaw_error_derivative = (yaw_error - self._prev_yaw_error) / dt
+        angular_velocity = self._k_angular * yaw_error - self._k_derivative * yaw_error_derivative
+
+        # Rate limiting: limit angular acceleration to prevent jerky corrections
+        max_delta = self._max_angular_accel * dt
+        angular_velocity = np.clip(
+            angular_velocity,
+            self._prev_angular_velocity - max_delta,
+            self._prev_angular_velocity + max_delta,
+        )
+
+        # Clamp to max speed
+        angular_velocity = np.clip(angular_velocity, -max_speed, max_speed)
+
+        # Update state for next iteration
+        self._prev_yaw_error = yaw_error
+        self._prev_angular_velocity = angular_velocity
+
+        return float(angular_velocity)
+
     def _compute_initial_rotation(self) -> Twist:
         with self._lock:
             path = self._path
@@ -198,7 +228,7 @@ class LocalPlanner(Resource):
                 self._state = "path_following"
             return self._compute_path_following()
 
-        angular_velocity = np.clip(self._k_angular * yaw_error, -self._speed, self._speed)
+        angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
 
         return Twist(
             linear=Vector3(0.0, 0.0, 0.0),
@@ -239,14 +269,14 @@ class LocalPlanner(Resource):
         # Rotate-then-drive: if heading error is large, rotate in place first
         rotation_threshold = self._rotation_threshold * math.pi / 180
         if abs(yaw_error) > rotation_threshold:
-            angular_velocity = np.clip(self._k_angular * yaw_error, -self._speed, self._speed)
+            angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
             return Twist(
                 linear=Vector3(0.0, 0.0, 0.0),
                 angular=Vector3(0.0, 0.0, angular_velocity),
             )
 
         # When aligned, drive forward with proportional angular correction
-        angular_velocity = self._k_angular * yaw_error
+        angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
         linear_velocity = self._speed * (1.0 - abs(yaw_error) / rotation_threshold)
 
         return Twist(
@@ -272,10 +302,7 @@ class LocalPlanner(Resource):
                 self._state = "arrived"
             return Twist()
 
-        max_angular_speed = self._speed
-        angular_velocity = np.clip(
-            self._k_angular * yaw_error, -max_angular_speed, max_angular_speed
-        )
+        angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
 
         return Twist(
             linear=Vector3(0.0, 0.0, 0.0),
@@ -289,6 +316,8 @@ class LocalPlanner(Resource):
             self._path_clearance = None
             self._path_distancer = None
             self._pose_index = 0
+            self._prev_yaw_error = 0.0
+            self._prev_angular_velocity = 0.0
 
     def _make_debug_navigation_image(self, path: Path) -> Image:
         scale = 8
