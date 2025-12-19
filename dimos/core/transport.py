@@ -73,9 +73,9 @@ class pLCMTransport(PubSubTransport[T]):
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
-    def start(self): ...
+    def start(self) -> None: ...
 
-    def stop(self):
+    def stop(self) -> None:
         self.lcm.stop()
 
 
@@ -87,9 +87,9 @@ class LCMTransport(PubSubTransport[T]):
         if not hasattr(self, "lcm"):
             self.lcm = LCM(**kwargs)
 
-    def start(self): ...
+    def start(self) -> None: ...
 
-    def stop(self):
+    def stop(self) -> None:
         self.lcm.stop()
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
@@ -117,9 +117,9 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
 
-    def start(self): ...
+    def start(self) -> None: ...
 
-    def stop(self):
+    def stop(self) -> None:
         self.lcm.stop()
 
 
@@ -146,6 +146,11 @@ class pSHMTransport(PubSubTransport[T]):
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.shm.stop()
+
 
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
@@ -169,6 +174,11 @@ class SHMTransport(PubSubTransport[T]):
             self.shm.start()
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.shm.stop()
 
 
 class JpegShmTransport(PubSubTransport[T]):
@@ -195,9 +205,9 @@ class JpegShmTransport(PubSubTransport[T]):
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
 
-    def start(self): ...
+    def start(self) -> None: ...
 
-    def stop(self): ...
+    def stop(self) -> None: ...
 
 
 class ZenohTransport(PubSubTransport[T]): ...

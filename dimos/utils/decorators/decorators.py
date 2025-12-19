@@ -16,8 +16,19 @@ from collections.abc import Callable
 from functools import wraps
 import threading
 import time
+from typing import Any, Protocol, TypeVar
 
 from .accumulators import Accumulator, LatestAccumulator
+
+T_co = TypeVar("T_co", covariant=True)
+R = TypeVar("R")
+
+
+class CachedMethod(Protocol[T_co]):
+    """Protocol for methods decorated with simple_mcache."""
+
+    def __call__(self) -> T_co: ...
+    def invalidate_cache(self, instance: Any) -> None: ...
 
 
 def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ignore[no-untyped-def, type-arg]
@@ -102,7 +113,7 @@ def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ign
     return decorator
 
 
-def simple_mcache(method: Callable) -> Callable:  # type: ignore[type-arg]
+def simple_mcache(method: Callable[..., R]) -> CachedMethod[R]:
     """
     Decorator to cache the result of a method call on the instance.
 
@@ -142,14 +153,14 @@ def simple_mcache(method: Callable) -> Callable:  # type: ignore[type-arg]
                 setattr(self, attr_name, method(self))
             return getattr(self, attr_name)
 
-    def invalidate_cache(instance):  # type: ignore[no-untyped-def]
+    def invalidate_cache(instance: Any) -> None:
         """Clear the cached value for the given instance."""
         if hasattr(instance, attr_name):
             delattr(instance, attr_name)
 
     getter.invalidate_cache = invalidate_cache  # type: ignore[attr-defined]
 
-    return getter
+    return getter  # type: ignore[return-value]
 
 
 def retry(max_retries: int = 3, on_exception: type[Exception] = Exception, delay: float = 0.0):  # type: ignore[no-untyped-def]

@@ -12,11 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Generic, TypeVar
+from __future__ import annotations
 
-from dimos.core import Transport
+from typing import TYPE_CHECKING, Any, Generic, TypeVar
+
 from dimos.core.resource import Resource
 from dimos.utils.testing.replay import TimedSensorReplay
+
+if TYPE_CHECKING:
+    from dimos.core import Transport
 
 T = TypeVar("T")
 
@@ -25,7 +29,7 @@ class SensorMoment(Generic[T], Resource):
     value: T | None = None
 
     def __init__(self, name: str, transport: Transport[T]) -> None:
-        self.replay = TimedSensorReplay(name)
+        self.replay: TimedSensorReplay[T] = TimedSensorReplay(name)
         self.transport = transport
 
     def seek(self, timestamp: float) -> None:
@@ -64,30 +68,32 @@ class OutputMoment(Generic[T], Resource):
 
 
 class Moment(Resource):
-    def moments(self, *classes) -> list[SensorMoment]:
-        moments = []
+    def moments(
+        self, *classes: type[SensorMoment[Any]] | type[OutputMoment[Any]]
+    ) -> list[SensorMoment[Any] | OutputMoment[Any]]:
+        moments: list[SensorMoment[Any] | OutputMoment[Any]] = []
         for attr_name in dir(self):
             attr_value = getattr(self, attr_name)
             if isinstance(attr_value, classes):
-                moments.append(attr_value)
+                moments.append(attr_value)  # type: ignore[arg-type]
         return moments
 
-    def seekable_moments(self) -> list[SensorMoment]:
-        return self.moments(SensorMoment)
+    def seekable_moments(self) -> list[SensorMoment[Any]]:
+        return [m for m in self.moments(SensorMoment) if isinstance(m, SensorMoment)]
 
-    def publishable_moments(self) -> list[SensorMoment | OutputMoment]:
+    def publishable_moments(self) -> list[SensorMoment[Any] | OutputMoment[Any]]:
         return self.moments(OutputMoment, SensorMoment)
 
     def seek(self, timestamp: float) -> None:
         for moment in self.seekable_moments():
             moment.seek(timestamp)
 
-    def publish(self):
+    def publish(self) -> None:
         for moment in self.publishable_moments():
             moment.publish()
 
-    def start(self): ...
+    def start(self) -> None: ...
 
-    def stop(self):
+    def stop(self) -> None:
         for moment in self.publishable_moments():
             moment.stop()

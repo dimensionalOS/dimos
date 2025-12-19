@@ -95,7 +95,9 @@ class SparseVoxelGridMapper(Module):
 
         # If publish_interval > 0, publish on timer; otherwise publish on each frame
         if self.config.publish_interval > 0:
-            disposable = interval(self.config.publish_interval).subscribe(self.publish_global_map)
+            disposable = interval(self.config.publish_interval).subscribe(
+                lambda _: self.publish_global_map()
+            )
             self._disposables.add(disposable)
 
     @rpc
@@ -112,7 +114,7 @@ class SparseVoxelGridMapper(Module):
         if self.config.costmap.publish:
             self.global_costmap.publish(self.get_global_occupancygrid())
 
-    @timed()
+    # @timed()  # TODO: fix thread leak in timed decorator
     def add_frame(self, frame: LidarMessage) -> None:
         # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)

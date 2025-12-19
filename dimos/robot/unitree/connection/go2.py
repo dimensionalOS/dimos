@@ -60,32 +60,18 @@ def _camera_info_static() -> CameraInfo:
     fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
     width, height = (1280, 720)
 
-    # Camera matrix K (3x3)
-    K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-
-    # No distortion coefficients for now
-    D = [0.0, 0.0, 0.0, 0.0, 0.0]
-
-    # Identity rotation matrix
-    R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-    # Projection matrix P (3x4)
-    P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
-
-    base_msg = {
-        "frame_id": "camera_optical",
-        "height": height,
-        "width": width,
-        "distortion_model": "plumb_bob",
-        "D": D,
-        "K": K,
-        "R": R,
-        "P": P,
-        "binning_x": 0,
-        "binning_y": 0,
-    }
-
-    return CameraInfo(**base_msg)
+    return CameraInfo(
+        frame_id="camera_optical",
+        height=height,
+        width=width,
+        distortion_model="plumb_bob",
+        D=[0.0, 0.0, 0.0, 0.0, 0.0],
+        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+        binning_x=0,
+        binning_y=0,
+    )
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
