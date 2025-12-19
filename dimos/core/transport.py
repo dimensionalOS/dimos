@@ -73,6 +73,11 @@ class pLCMTransport(PubSubTransport[T]):
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
+    def start(self): ...
+
+    def stop(self):
+        self.lcm.stop()
+
 
 class LCMTransport(PubSubTransport[T]):
     _started: bool = False
@@ -81,6 +86,11 @@ class LCMTransport(PubSubTransport[T]):
         super().__init__(LCMTopic(topic, type))
         if not hasattr(self, "lcm"):
             self.lcm = LCM(**kwargs)
+
+    def start(self): ...
+
+    def stop(self):
+        self.lcm.stop()
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))

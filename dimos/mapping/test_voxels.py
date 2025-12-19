@@ -18,10 +18,12 @@ import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import pytest
 
+from dimos.core import Resource, Transport
 from dimos.mapping.voxels import SparseVoxelGridMapper
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing import ReplayMoment, TimedSensorReplay
+from dimos.utils.testing.test_moment import Go2Moment
 
 
 @pytest.fixture
@@ -29,6 +31,9 @@ def mapper() -> Generator[SparseVoxelGridMapper, None, None]:
     mapper = SparseVoxelGridMapper()
     yield mapper
     mapper.stop()
+
+
+T = TypeVar("T")
 
 
 def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
