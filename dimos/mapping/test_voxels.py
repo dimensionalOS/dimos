@@ -64,10 +64,18 @@ def two_perspectives_loop(moment):
 
 def test_merge_frames(mapper, moment):
     moment1 = moment(10, False)
-    mapper.add_frame(moment1.lidar.value)
+
+    lidar_frame1 = moment1.lidar.value
+    lidar_frame1_transport = LCMTransport("prev_lidar", PointCloud2)
+    lidar_frame1_transport.publish(lidar_frame1)
+    lidar_frame1_transport.stop()
 
     moment2 = moment(85, False)
-    mapper.add_frame(moment2.lidar.value)
+
+    lidar_frame2 = moment2.lidar.value
+
+    mapper.add_frame(lidar_frame1)
+    mapper.add_frame(lidar_frame2)
 
     moment2.global_map.set(mapper.get_global_pointcloud2())
     moment2.publish()
