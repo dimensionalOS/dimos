@@ -63,7 +63,7 @@ class LocalPlanner(Resource):
     _global_config: GlobalConfig
     _navigation_map: NavigationMap
 
-    _speed: float = 1.0
+    _speed: float = 0.55
     _k_angular: float = 0.5
     _k_derivative: float = 0.15
     _max_angular_accel: float = 2.0
@@ -353,18 +353,14 @@ class LocalPlanner(Resource):
         scaled_mask = np.repeat(np.repeat(mask, scale, axis=0), scale, axis=1)
         scaled_mask = np.flipud(scaled_mask)
         white = np.array([255, 255, 255], dtype=np.int16)
-        image.data[scaled_mask] = (
-            image.data[scaled_mask].astype(np.int16) * 3 + white * 7
-        ) // 10
+        image.data[scaled_mask] = (image.data[scaled_mask].astype(np.int16) * 3 + white * 7) // 10
 
         with self._lock:
             current_odom = self._current_odom
 
         # Draw robot position.
         if current_odom is not None:
-            grid_pos = self._navigation_map.gradient_costmap.world_to_grid(
-                current_odom.position
-            )
+            grid_pos = self._navigation_map.gradient_costmap.world_to_grid(current_odom.position)
             x = int(grid_pos.x * scale)
             y = image.data.shape[0] - 1 - int(grid_pos.y * scale)
             radius = 8
