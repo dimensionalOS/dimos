@@ -347,7 +347,7 @@ class DaskModule(ModuleBase):
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
-    # called from remote
+    @rpc
     def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
         stream = getattr(self, stream_name, None)
         if not stream:
