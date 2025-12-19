@@ -20,14 +20,14 @@ from typing import Any, Protocol, TypeVar
 
 from .accumulators import Accumulator, LatestAccumulator
 
-T_co = TypeVar("T_co", covariant=True)
-R = TypeVar("R")
+_CacheResult_co = TypeVar("_CacheResult_co", covariant=True)
+_CacheReturn = TypeVar("_CacheReturn")
 
 
-class CachedMethod(Protocol[T_co]):
+class CachedMethod(Protocol[_CacheResult_co]):
     """Protocol for methods decorated with simple_mcache."""
 
-    def __call__(self) -> T_co: ...
+    def __call__(self) -> _CacheResult_co: ...
     def invalidate_cache(self, instance: Any) -> None: ...
 
 
@@ -113,7 +113,7 @@ def limit(max_freq: float, accumulator: Accumulator | None = None):  # type: ign
     return decorator
 
 
-def simple_mcache(method: Callable[..., R]) -> CachedMethod[R]:
+def simple_mcache(method: Callable) -> Callable:  # type: ignore[type-arg]
     """
     Decorator to cache the result of a method call on the instance.
 
@@ -160,7 +160,7 @@ def simple_mcache(method: Callable[..., R]) -> CachedMethod[R]:
 
     getter.invalidate_cache = invalidate_cache  # type: ignore[attr-defined]
 
-    return getter  # type: ignore[return-value]
+    return getter
 
 
 def retry(max_retries: int = 3, on_exception: type[Exception] = Exception, delay: float = 0.0):  # type: ignore[no-untyped-def]
