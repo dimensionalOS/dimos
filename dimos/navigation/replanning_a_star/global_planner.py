@@ -86,10 +86,10 @@ class GlobalPlanner(Resource):
         self._stop_planner.set()
         if self._thread is not None:
             if self._thread is not current_thread():
+                self._thread = None
                 self._thread.join(2)
                 if self._thread.is_alive():
                     logger.error("GlobalPlanner thread did not stop in time.")
-            self._thread = None
 
     def handle_odom(self, msg: PoseStamped) -> None:
         with self._lock:

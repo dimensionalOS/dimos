@@ -19,7 +19,7 @@ from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 
 
 def gradient(
-    ocupancy_grid: OccupancyGrid, obstacle_threshold: int = 50, max_distance: float = 2.0
+    occupancy_grid: OccupancyGrid, obstacle_threshold: int = 50, max_distance: float = 2.0
 ) -> OccupancyGrid:
     """Create a gradient OccupancyGrid for path planning.
 
@@ -41,19 +41,19 @@ def gradient(
     """
 
     # Remember which cells are unknown
-    unknown_mask = ocupancy_grid.grid == CostValues.UNKNOWN
+    unknown_mask = occupancy_grid.grid == CostValues.UNKNOWN
 
     # Create binary obstacle map
     # Consider cells >= threshold as obstacles (1), everything else as free (0)
     # Unknown cells are not considered obstacles for distance calculation
-    obstacle_map = (ocupancy_grid.grid >= obstacle_threshold).astype(np.float32)
+    obstacle_map = (occupancy_grid.grid >= obstacle_threshold).astype(np.float32)
 
     # Compute distance transform (distance to nearest obstacle in cells)
     # Unknown cells are treated as if they don't exist for distance calculation
     distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
     # Convert to meters and clip to max distance
-    distance_meters = np.clip(distance_cells * ocupancy_grid.resolution, 0, max_distance)  # type: ignore[operator]
+    distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)  # type: ignore[operator]
 
     # Invert and scale to 0-100 range
     # Far from obstacles (max_distance) -> 0
@@ -72,10 +72,10 @@ def gradient(
     # Create new OccupancyGrid with gradient
     gradient_grid = OccupancyGrid(
         grid=gradient_data,
-        resolution=ocupancy_grid.resolution,
-        origin=ocupancy_grid.origin,
-        frame_id=ocupancy_grid.frame_id,
-        ts=ocupancy_grid.ts,
+        resolution=occupancy_grid.resolution,
+        origin=occupancy_grid.origin,
+        frame_id=occupancy_grid.frame_id,
+        ts=occupancy_grid.ts,
     )
 
     return gradient_grid

@@ -51,8 +51,8 @@ class LocalPlanner(Resource):
 
     _thread: Thread | None = None
     _path: Path | None = None
-    _path_clearance: PathClearance | None
-    _path_distancer: PathDistancer | None
+    _path_clearance: PathClearance | None = None
+    _path_distancer: PathDistancer | None = None
     _current_odom: PoseStamped | None = None
     _pose_index: int
     _lock: RLock

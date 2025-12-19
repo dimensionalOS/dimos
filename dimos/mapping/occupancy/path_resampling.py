@@ -37,7 +37,7 @@ def _add_orientations_to_path(path: Path, goal_orientation: Quaternion) -> None:
         Path with orientations added to all poses
     """
     if not path.poses or len(path.poses) < 2:
-        return None
+        return
 
     # Calculate orientations for all poses except the last one
     for i in range(len(path.poses) - 1):
