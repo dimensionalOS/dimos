@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from threading import Event, RLock, Thread, current_thread
+import time
 
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex import Subject
@@ -46,9 +47,11 @@ class GlobalPlanner(Resource):
     _current_goal: PoseStamped | None = None
     _goal_reached: bool = False
     _thread: Thread | None = None
+
     _global_config: GlobalConfig
     _navigation_map: NavigationMap
     _local_planner: LocalPlanner
+    _position_tracker: PositionTracker
     _disposables: CompositeDisposable
     _stop_planner: Event
     _lock: RLock
@@ -57,17 +60,20 @@ class GlobalPlanner(Resource):
     _safe_goal_tolerance: float = 4.0
     _replan_goal_tolerance: float = 0.5
     _max_replan_attempts: int = 10
+    _stuck_time_window: float = 8.0
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
         self.goal_reached = Subject()
+
         self._global_config = global_config
         self._navigation_map = NavigationMap(self._global_config)
         self._local_planner = LocalPlanner(self._global_config, self._navigation_map)
-        self._position_tracker = PositionTracker()
+        self._position_tracker = PositionTracker(self._stuck_time_window)
         self._disposables = CompositeDisposable()
-        self._lock = RLock()
         self._stop_planner = Event()
+        self._lock = RLock()
+        self._replan_attempt = 0
 
     def start(self) -> None:
         self._local_planner.start()
@@ -77,19 +83,18 @@ class GlobalPlanner(Resource):
         self._stop_planner.clear()
         self._thread = Thread(target=self._thread_entrypoint, daemon=True)
         self._thread.start()
-        self._replan_attempt = 0
 
     def stop(self) -> None:
         self.cancel_goal()
         self._local_planner.stop()
         self._disposables.dispose()
         self._stop_planner.set()
-        if self._thread is not None:
-            if self._thread is not current_thread():
-                self._thread = None
-                self._thread.join(2)
-                if self._thread.is_alive():
-                    logger.error("GlobalPlanner thread did not stop in time.")
+
+        if self._thread is not None and self._thread is not current_thread():
+            self._thread.join(2)
+            if self._thread.is_alive():
+                logger.error("GlobalPlanner thread did not stop in time.")
+            self._thread = None
 
     def handle_odom(self, msg: PoseStamped) -> None:
         with self._lock:
@@ -141,24 +146,40 @@ class GlobalPlanner(Resource):
         return self._local_planner.debug_navigation
 
     def _thread_entrypoint(self) -> None:
+        """Monitor if the robot is stuck."""
+
+        last_id = -1
+        last_time = time.perf_counter()
+
         while not self._stop_planner.is_set():
+            self._stop_planner.wait(0.1)
+
             with self._lock:
                 current_goal = self._current_goal
                 current_odom = self._current_odom
 
-            if current_goal and current_odom:
-                # Check if close enough to goal - accept as arrived
-                if (
-                    current_goal.position.distance(current_odom.position)
-                    < self._replan_goal_tolerance
-                ):
-                    logger.info("Close enough to goal. Accepting as arrived.")
-                    self.cancel_goal(arrived=True)
-                elif self._position_tracker.is_stuck():
-                    logger.info("Robot is stuck. Replanning.")
-                    self._replan_path()
+            if not current_goal or not current_odom:
+                continue
 
-            self._stop_planner.wait(0.1)
+            if current_goal.position.distance(current_odom.position) < self._replan_goal_tolerance:
+                logger.info("Close enough to goal. Accepting as arrived.")
+                self.cancel_goal(arrived=True)
+                continue
+
+            _, new_id = self._local_planner.get_unique_state()
+
+            if new_id != last_id:
+                last_id = new_id
+                last_time = time.perf_counter()
+                continue
+
+            if (
+                time.perf_counter() - last_time > self._stuck_time_window
+                and self._position_tracker.is_stuck()
+            ):
+                logger.info("Robot is stuck. Replanning.")
+                self._replan_path()
+                last_time = time.perf_counter()
 
     def _on_stopped_navigating(self, stop_message: StopMessage) -> None:
         self.path.on_next(Path())

@@ -54,6 +54,7 @@ class LocalPlanner(Resource):
     _path_clearance: PathClearance | None = None
     _path_distancer: PathDistancer | None = None
     _current_odom: PoseStamped | None = None
+
     _pose_index: int
     _lock: RLock
     _stop_planning_event: Event
@@ -68,8 +69,9 @@ class LocalPlanner(Resource):
     _max_angular_accel: float = 2.0
     _goal_tolerance: float = 0.3
     _orientation_tolerance: float = 0.2
-    _control_frequency: float = 20.0
+    _control_frequency: float = 10.0
     _rotation_threshold: float = 90
+
     _prev_yaw_error: float
     _prev_angular_velocity: float
 
@@ -77,6 +79,7 @@ class LocalPlanner(Resource):
         self.cmd_vel = Subject()
         self.stopped_navigating = Subject()
         self.debug_navigation = Subject()
+
         self._pose_index = 0
         self._lock = RLock()
         self._stop_planning_event = Event()
@@ -84,6 +87,7 @@ class LocalPlanner(Resource):
         self._state_unique_id = 0
         self._global_config = global_config
         self._navigation_map = navigation_map
+
         self._prev_yaw_error = 0.0
         self._prev_angular_velocity = 0.0
 
@@ -124,12 +128,16 @@ class LocalPlanner(Resource):
             state = self._state
 
         match state:
-            case "idle":
+            case "idle" | "arrived":
                 return NavigationState.IDLE
             case "initial_rotation" | "path_following" | "final_rotation":
                 return NavigationState.FOLLOWING_PATH
             case _:
                 raise ValueError(f"Unknown planner state: {state}")
+
+    def get_unique_state(self) -> tuple[PlannerState, int]:
+        with self._lock:
+            return (self._state, self._state_unique_id)
 
     def _thread_entrypoint(self) -> None:
         try:
@@ -165,7 +173,9 @@ class LocalPlanner(Resource):
             path_clearance.update_pose_index(self._pose_index)
 
             if "DEBUG_NAVIGATION" in os.environ:
-                self.debug_navigation.on_next(self._make_debug_navigation_image(path))
+                self.debug_navigation.on_next(
+                    self._make_debug_navigation_image(path, path_clearance)
+                )
 
             if path_clearance.is_obstacle_ahead():
                 self.stopped_navigating.on_next("obstacle_found")
@@ -326,7 +336,7 @@ class LocalPlanner(Resource):
             self._prev_yaw_error = 0.0
             self._prev_angular_velocity = 0.0
 
-    def _make_debug_navigation_image(self, path: Path) -> Image:
+    def _make_debug_navigation_image(self, path: Path, path_clearance: PathClearance) -> Image:
         scale = 8
         image = visualize_path(
             self._navigation_map.gradient_costmap,
@@ -338,18 +348,22 @@ class LocalPlanner(Resource):
         )
         image.data = np.flipud(image.data)
 
-        if self._path_clearance is not None:
-            mask = self._path_clearance.mask
-            scaled_mask = np.repeat(np.repeat(mask, scale, axis=0), scale, axis=1)
-            scaled_mask = np.flipud(scaled_mask)
-            white = np.array([255, 255, 255], dtype=np.int16)
-            image.data[scaled_mask] = (
-                image.data[scaled_mask].astype(np.int16) * 3 + white * 7
-            ) // 10
+        # Add path mask.
+        mask = path_clearance.mask
+        scaled_mask = np.repeat(np.repeat(mask, scale, axis=0), scale, axis=1)
+        scaled_mask = np.flipud(scaled_mask)
+        white = np.array([255, 255, 255], dtype=np.int16)
+        image.data[scaled_mask] = (
+            image.data[scaled_mask].astype(np.int16) * 3 + white * 7
+        ) // 10
 
-        if self._current_odom is not None:
+        with self._lock:
+            current_odom = self._current_odom
+
+        # Draw robot position.
+        if current_odom is not None:
             grid_pos = self._navigation_map.gradient_costmap.world_to_grid(
-                self._current_odom.position
+                current_odom.position
             )
             x = int(grid_pos.x * scale)
             y = image.data.shape[0] - 1 - int(grid_pos.y * scale)
@@ -360,4 +374,5 @@ class LocalPlanner(Resource):
                         py, px = y + dy, x + dx
                         if 0 <= py < image.data.shape[0] and 0 <= px < image.data.shape[1]:
                             image.data[py, px] = [255, 255, 255]
+
         return image

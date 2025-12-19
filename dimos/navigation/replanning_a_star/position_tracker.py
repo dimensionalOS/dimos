@@ -33,11 +33,10 @@ class PositionTracker:
     _positions: NDArray[np.float32]
     _index: int
     _size: int
-    _last_check: float
 
-    def __init__(self) -> None:
+    def __init__(self, time_window: float) -> None:
         self._lock = RLock()
-        self._time_window = 10.0
+        self._time_window = time_window
         self._threshold = 0.5
         self._max_points = int(_max_points_per_second * self._time_window)
         self.reset_data()
@@ -48,7 +47,6 @@ class PositionTracker:
             self._positions = np.zeros((self._max_points, 2), dtype=np.float32)
             self._index = 0
             self._size = 0
-            self._last_check = time.perf_counter()
 
     def add_position(self, pose: PoseStamped) -> None:
         with self._lock:
@@ -58,8 +56,7 @@ class PositionTracker:
             self._size = min(self._size + 1, self._max_points)
 
     def _get_recent_positions(self) -> NDArray[np.float32]:
-        now = time.time()
-        cutoff = now - self._time_window
+        cutoff = time.time() - self._time_window
 
         if self._size == 0:
             return np.empty((0, 2), dtype=np.float32)
@@ -75,13 +72,6 @@ class PositionTracker:
 
     def is_stuck(self) -> bool:
         with self._lock:
-            last_check = self._last_check
-
-        if time.perf_counter() - last_check < self._time_window:
-            return False
-
-        with self._lock:
-            self._last_check = time.perf_counter()
             recent = self._get_recent_positions()
 
         if len(recent) == 0:
