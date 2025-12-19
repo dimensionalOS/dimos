@@ -19,8 +19,12 @@ from typing import TypeAlias
 
 import numpy as np
 from dimos_lcm.geometry_msgs import PoseWithCovarianceStamped as LCMPoseWithCovarianceStamped
-from geometry_msgs.msg import PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped
 from plum import dispatch
+
+try:
+    from geometry_msgs.msg import PoseWithCovarianceStamped as ROSPoseWithCovarianceStamped
+except ImportError:
+    ROSPoseWithCovarianceStamped = None
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 from dimos.msgs.geometry_msgs.PoseWithCovariance import PoseWithCovariance
@@ -118,6 +122,7 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         Returns:
             PoseWithCovarianceStamped instance
         """
+
         # Convert timestamp from ROS header
         ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
 
@@ -137,6 +142,7 @@ class PoseWithCovarianceStamped(PoseWithCovariance, Timestamped):
         Returns:
             ROS PoseWithCovarianceStamped message
         """
+
         ros_msg = ROSPoseWithCovarianceStamped()
 
         # Set header

@@ -26,7 +26,11 @@ from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 from dimos_lcm.nav_msgs import Path as LCMPath
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
-from nav_msgs.msg import Path as ROSPath
+
+try:
+    from nav_msgs.msg import Path as ROSPath
+except ImportError:
+    ROSPath = None
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
@@ -199,6 +203,7 @@ class Path(Timestamped):
         Returns:
             Path instance
         """
+
         # Convert timestamp from ROS header
         ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
 
@@ -215,6 +220,7 @@ class Path(Timestamped):
         Returns:
             ROS Path message
         """
+
         ros_msg = ROSPath()
 
         # Set header

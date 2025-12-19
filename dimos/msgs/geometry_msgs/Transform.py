@@ -19,10 +19,17 @@ from typing import BinaryIO
 
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
 from dimos_lcm.geometry_msgs import TransformStamped as LCMTransformStamped
-from geometry_msgs.msg import TransformStamped as ROSTransformStamped
-from geometry_msgs.msg import Transform as ROSTransform
-from geometry_msgs.msg import Vector3 as ROSVector3
-from geometry_msgs.msg import Quaternion as ROSQuaternion
+
+try:
+    from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+    from geometry_msgs.msg import Transform as ROSTransform
+    from geometry_msgs.msg import Vector3 as ROSVector3
+    from geometry_msgs.msg import Quaternion as ROSQuaternion
+except ImportError:
+    ROSTransformStamped = None
+    ROSTransform = None
+    ROSVector3 = None
+    ROSQuaternion = None
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -151,6 +158,7 @@ class Transform(Timestamped):
         Returns:
             Transform instance
         """
+
         # Convert timestamp
         ts = ros_msg.header.stamp.sec + (ros_msg.header.stamp.nanosec / 1_000_000_000)
 
@@ -183,6 +191,7 @@ class Transform(Timestamped):
         Returns:
             ROS TransformStamped message
         """
+
         ros_msg = ROSTransformStamped()
 
         # Set header

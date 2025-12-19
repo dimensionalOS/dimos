@@ -18,8 +18,12 @@ from typing import TypeAlias
 
 import numpy as np
 from dimos_lcm.geometry_msgs import TwistWithCovariance as LCMTwistWithCovariance
-from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
 from plum import dispatch
+
+try:
+    from geometry_msgs.msg import TwistWithCovariance as ROSTwistWithCovariance
+except ImportError:
+    ROSTwistWithCovariance = None
 
 from dimos.msgs.geometry_msgs.Twist import Twist
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorConvertable
@@ -200,6 +204,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
         Returns:
             TwistWithCovariance instance
         """
+
         twist = Twist.from_ros_msg(ros_msg.twist)
         return cls(twist, list(ros_msg.covariance))
 
@@ -209,6 +214,7 @@ class TwistWithCovariance(LCMTwistWithCovariance):
         Returns:
             ROS TwistWithCovariance message
         """
+
         ros_msg = ROSTwistWithCovariance()
         ros_msg.twist = self.twist.to_ros_msg()
         # ROS expects list, not numpy array

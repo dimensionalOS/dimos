@@ -18,8 +18,12 @@ from typing import TypeAlias
 
 import numpy as np
 from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
-from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance
 from plum import dispatch
+
+try:
+    from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance
+except ImportError:
+    ROSPoseWithCovariance = None
 
 from dimos.msgs.geometry_msgs.Pose import Pose, PoseConvertable
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
@@ -200,6 +204,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         Returns:
             PoseWithCovariance instance
         """
+
         pose = Pose.from_ros_msg(ros_msg.pose)
         return cls(pose, list(ros_msg.covariance))
 
@@ -209,6 +214,7 @@ class PoseWithCovariance(LCMPoseWithCovariance):
         Returns:
             ROS PoseWithCovariance message
         """
+
         ros_msg = ROSPoseWithCovariance()
         ros_msg.pose = self.pose.to_ros_msg()
         # ROS expects list, not numpy array

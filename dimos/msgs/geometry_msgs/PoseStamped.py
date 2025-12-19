@@ -22,7 +22,12 @@ from typing import BinaryIO, TypeAlias
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 from dimos_lcm.std_msgs import Header as LCMHeader
 from dimos_lcm.std_msgs import Time as LCMTime
-from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+
+try:
+    from geometry_msgs.msg import PoseStamped as ROSPoseStamped
+except ImportError:
+    ROSPoseStamped = None
+
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Pose import Pose

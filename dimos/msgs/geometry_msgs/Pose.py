@@ -18,9 +18,16 @@ from typing import TypeAlias
 
 from dimos_lcm.geometry_msgs import Pose as LCMPose
 from dimos_lcm.geometry_msgs import Transform as LCMTransform
-from geometry_msgs.msg import Pose as ROSPose
-from geometry_msgs.msg import Point as ROSPoint
-from geometry_msgs.msg import Quaternion as ROSQuaternion
+
+try:
+    from geometry_msgs.msg import Pose as ROSPose
+    from geometry_msgs.msg import Point as ROSPoint
+    from geometry_msgs.msg import Quaternion as ROSQuaternion
+except ImportError:
+    ROSPose = None
+    ROSPoint = None
+    ROSQuaternion = None
+
 from plum import dispatch
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
