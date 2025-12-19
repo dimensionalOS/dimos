@@ -99,7 +99,10 @@ class RPCClient:
         return self.actor_instance.__getattr__(name)
 
 
-def patchdask(dask_client: Client, local_cluster: LocalCluster) -> Client:
+DimosCluster = Client
+
+
+def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     def deploy(
         actor_class,
         *args,
