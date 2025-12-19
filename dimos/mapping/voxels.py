@@ -40,7 +40,7 @@ class CostmapConfig:
     publish: bool = True
     resolution: float = 0.05
     can_pass_under: float = 0.6
-    max_step: float = 0.15
+    can_climb: float = 0.15
 
 
 @dataclass
@@ -198,7 +198,7 @@ class SparseVoxelGridMapper(Module):
             self.get_global_pointcloud2(),
             resolution=self.config.costmap.resolution,
             can_pass_under=self.config.costmap.can_pass_under,
-            max_step=self.config.costmap.max_step,
+            can_climb=self.config.costmap.can_climb,
         )
 
 

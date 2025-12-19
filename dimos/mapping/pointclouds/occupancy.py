@@ -29,9 +29,9 @@ if TYPE_CHECKING:
 def height_cost_occupancy(
     cloud: PointCloud2,
     resolution: float = 0.05,
-    ignore_below: float = 0.1,
     can_pass_under: float = 0.6,
-    max_step: float = 0.15,
+    can_climb: float = 0.15,
+    ignore_noise: float = 0.05,
     smoothing: float = 1.0,
     frame_id: str | None = None,
 ) -> OccupancyGrid:
@@ -123,9 +123,10 @@ def height_cost_occupancy(
         smoothed_heights = ndimage.gaussian_filter(height_map_filled, sigma=smoothing)
         smoothed_weights = ndimage.gaussian_filter(weights, sigma=smoothing)
 
-        # Avoid division by zero
+        # Avoid division by zero (use np.divide with where to prevent warning)
         valid_smooth = smoothed_weights > 0.01
-        height_map_smoothed = np.where(valid_smooth, smoothed_heights / smoothed_weights, np.nan)
+        height_map_smoothed = np.full_like(smoothed_heights, np.nan)
+        np.divide(smoothed_heights, smoothed_weights, out=height_map_smoothed, where=valid_smooth)
 
         # Keep original values where we had observations, use smoothed elsewhere
         height_map = np.where(observed_mask, height_map, height_map_smoothed)
@@ -146,10 +147,16 @@ def height_cost_occupancy(
         # Gradient magnitude = height change per meter
         gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
 
-        # Map gradient to cost: max_step height change over one cell maps to cost 100
+        # Map gradient to cost: can_climb height change over one cell maps to cost 100
         # gradient_magnitude is in m/m, so multiply by resolution to get height change per cell
         height_change_per_cell = gradient_magnitude * resolution
-        cost_float = (height_change_per_cell / max_step) * 100.0
+
+        # Ignore height changes below noise threshold (lidar floor noise)
+        height_change_per_cell = np.where(
+            height_change_per_cell < ignore_noise, 0.0, height_change_per_cell
+        )
+
+        cost_float = (height_change_per_cell / can_climb) * 100.0
         cost_float = np.clip(cost_float, 0, 100)
 
         # Erode observed mask - only trust gradients where all neighbors are observed

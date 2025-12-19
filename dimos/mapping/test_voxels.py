@@ -21,10 +21,12 @@ import pytest
 
 from dimos.core import LCMTransport, Transport
 from dimos.mapping.voxels import SparseVoxelGridMapper
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
+from dimos.utils.testing.replay import TimedSensorReplay
 from dimos.utils.testing.test_moment import Go2Moment
 
 
@@ -37,6 +39,7 @@ def mapper() -> Generator[SparseVoxelGridMapper, None, None]:
 
 class Go2MapperMoment(Go2Moment):
     global_map: OutputMoment[PointCloud2] = OutputMoment(LCMTransport("/global_map", PointCloud2))
+    costmap: OutputMoment[OccupancyGrid] = OutputMoment(LCMTransport("/costmap", OccupancyGrid))
 
 
 @pytest.fixture
@@ -79,6 +82,7 @@ def test_carving(mapper, moment):
     mapper.add_frame(lidar_frame2)
 
     moment2.global_map.set(mapper.get_global_pointcloud2())
+    moment2.costmap.set(mapper.get_global_occupancygrid())
     moment2.publish()
 
     count_carving = mapper._hm.size()

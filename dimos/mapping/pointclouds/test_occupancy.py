@@ -71,7 +71,7 @@ def height_cost_moment():
                 moment.lidar.value,
                 resolution=0.05,
                 can_pass_under=0.6,
-                max_step=0.15,
+                can_climb=0.15,
             )
             moment.costmap.set(costmap)
         if publish:
