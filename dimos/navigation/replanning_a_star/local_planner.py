@@ -58,6 +58,7 @@ class LocalPlanner(Resource):
     _lock: RLock
     _stop_planning_event: Event
     _state: PlannerState
+    _state_unique_id: int
     _global_config: GlobalConfig
     _navigation_map: NavigationMap
 
@@ -80,6 +81,7 @@ class LocalPlanner(Resource):
         self._lock = RLock()
         self._stop_planning_event = Event()
         self._state = "idle"
+        self._state_unique_id = 0
         self._global_config = global_config
         self._navigation_map = navigation_map
         self._prev_yaw_error = 0.0
@@ -140,13 +142,18 @@ class LocalPlanner(Resource):
             self._reset_state()
             self.cmd_vel.on_next(Twist())
 
+    def _change_state(self, new_state: PlannerState) -> None:
+        self._state = new_state
+        self._state_unique_id += 1
+        logger.info("changed state", state=new_state)
+
     def _loop(self) -> None:
         stop_event = self._stop_planning_event
 
         with self._lock:
             path = self._path
             path_clearance = self._path_clearance
-            self._state = "initial_rotation"
+            self._change_state("initial_rotation")
 
         if path is None or path_clearance is None:
             raise RuntimeError("No path set for local planner.")
@@ -225,7 +232,7 @@ class LocalPlanner(Resource):
 
         if abs(yaw_error) < self._orientation_tolerance:
             with self._lock:
-                self._state = "path_following"
+                self._change_state("path_following")
             return self._compute_path_following()
 
         angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
@@ -248,7 +255,7 @@ class LocalPlanner(Resource):
         if path_distancer.distance_to_goal(current_pos) < self._goal_tolerance:
             logger.info("Reached goal position, starting final rotation")
             with self._lock:
-                self._state = "final_rotation"
+                self._change_state("final_rotation")
             return self._compute_final_rotation()
 
         closest_index = path_distancer.find_closest_point_index(current_pos)
@@ -299,7 +306,7 @@ class LocalPlanner(Resource):
         if abs(yaw_error) < self._orientation_tolerance:
             logger.info("Final rotation complete, goal reached")
             with self._lock:
-                self._state = "arrived"
+                self._change_state("arrived")
             return Twist()
 
         angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
@@ -311,7 +318,7 @@ class LocalPlanner(Resource):
 
     def _reset_state(self) -> None:
         with self._lock:
-            self._state = "idle"
+            self._change_state("idle")
             self._path = None
             self._path_clearance = None
             self._path_distancer = None
