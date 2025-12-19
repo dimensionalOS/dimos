@@ -42,7 +42,7 @@ class SensorMoment(Generic[T], Resource):
         self.transport.stop()
 
 
-class OutputMoment(Generic[T]):
+class OutputMoment(Generic[T], Resource):
     value: T | None = None
     transport: Transport[T]
 
@@ -52,27 +52,42 @@ class OutputMoment(Generic[T]):
     def set(self, value: T) -> None:
         self.value = value
 
+    def publish(self) -> None:
+        if self.value is not None:
+            self.transport.publish(self.value)
+
+    def start(self) -> None:
+        pass
+
+    def stop(self) -> None:
+        self.transport.stop()
+
 
 class Moment(Resource):
-    def moments(self) -> list[SensorMoment]:
-        # enumerate all SensorMoment attributes set by subclasses
+    def moments(self, *classes) -> list[SensorMoment]:
         moments = []
         for attr_name in dir(self):
             attr_value = getattr(self, attr_name)
-            if isinstance(attr_value, (SensorMoment, OutputMoment)):
+            if isinstance(attr_value, classes):
                 moments.append(attr_value)
         return moments
 
+    def seekable_moments(self) -> list[SensorMoment]:
+        return self.moments(SensorMoment)
+
+    def publishable_moments(self) -> list[SensorMoment | OutputMoment]:
+        return self.moments(OutputMoment, SensorMoment)
+
     def seek(self, timestamp: float) -> None:
-        for moment in self.moments():
+        for moment in self.seekable_moments():
             moment.seek(timestamp)
 
     def publish(self):
-        for moment in self.moments():
+        for moment in self.publishable_moments():
             moment.publish()
 
     def start(self): ...
 
     def stop(self):
-        for moment in self.moments():
+        for moment in self.publishable_moments():
             moment.stop()

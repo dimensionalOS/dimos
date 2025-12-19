@@ -11,6 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+import time
+
 from dimos.core import LCMTransport
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
@@ -31,7 +33,12 @@ class Go2Moment(Moment):
     def transforms(self):
         if self.odom.value is None:
             return []
-        return go2.GO2Connection._odom_to_tf(self.odom.value)
+
+        # we just make sure to change timestamps so that we can jump
+        # back and forth through time and foxglove doesn't get confused
+        odom = self.odom.value
+        odom.ts = time.time()
+        return go2.GO2Connection._odom_to_tf(odom)
 
     def publish(self):
         t = TF()
@@ -39,6 +46,7 @@ class Go2Moment(Moment):
         t.stop()
 
         camera_info = go2._camera_info_static()
+        camera_info.ts = time.time()
         camera_info_transport: LCMTransport[CameraInfo] = LCMTransport("/camera_info", CameraInfo)
         camera_info_transport.publish(camera_info)
         camera_info_transport.stop()

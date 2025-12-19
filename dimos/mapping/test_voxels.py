@@ -13,16 +13,18 @@
 # limitations under the License.
 
 from collections.abc import Generator
+import time
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import pytest
 
-from dimos.core import Resource, Transport
+from dimos.core import LCMTransport, Transport
 from dimos.mapping.voxels import SparseVoxelGridMapper
+from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
-from dimos.utils.testing import ReplayMoment, TimedSensorReplay
+from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
 
 
@@ -33,7 +35,42 @@ def mapper() -> Generator[SparseVoxelGridMapper, None, None]:
     mapper.stop()
 
 
-T = TypeVar("T")
+class Go2MapperMoment(Go2Moment):
+    global_map: OutputMoment[PointCloud2] = OutputMoment(LCMTransport("global_map", PointCloud2))
+
+
+@pytest.fixture
+def moment():
+    moment = Go2MapperMoment()
+
+    def get_moment(ts: float, publish: bool = True) -> Go2Moment:
+        moment.seek(ts)
+        if publish:
+            moment.publish()
+        return moment
+
+    yield get_moment
+    moment.stop()
+
+
+@pytest.mark.tool
+def two_perspectives_loop(moment):
+    while True:
+        moment(10)
+        time.sleep(1)
+        moment(85)
+        time.sleep(1)
+
+
+def test_merge_frames(mapper, moment):
+    moment1 = moment(10, False)
+    mapper.add_frame(moment1.lidar.value)
+
+    moment2 = moment(85, False)
+    mapper.add_frame(moment2.lidar.value)
+
+    moment2.global_map.set(mapper.get_global_pointcloud2())
+    moment2.publish()
 
 
 def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
