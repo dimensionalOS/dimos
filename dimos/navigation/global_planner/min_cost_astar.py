@@ -167,15 +167,9 @@ def min_cost_astar(
     h_dist = _heuristic(start_tuple[0], start_tuple[1], goal_tuple[0], goal_tuple[1])
     heapq.heappush(open_set, (0.0, h_dist, start_tuple))
 
-    # Track nodes already in open set to avoid duplicates
-    open_set_hash: set[tuple[int, int]] = {start_tuple}
-
     while open_set:
         _, _, current = heapq.heappop(open_set)
         current_x, current_y = current
-
-        if current in open_set_hash:
-            open_set_hash.remove(current)
 
         if current in closed_set:
             continue
@@ -228,8 +222,6 @@ def min_cost_astar(
                 priority_dist = tentative_dist + h_dist
 
                 # Add the neighbor to the open set with its priority
-                if neighbor not in open_set_hash:
-                    heapq.heappush(open_set, (priority_cost, priority_dist, neighbor))
-                    open_set_hash.add(neighbor)
+                heapq.heappush(open_set, (priority_cost, priority_dist, neighbor))
 
     return None
