@@ -117,6 +117,11 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
 
+    def start(self): ...
+
+    def stop(self):
+        self.lcm.stop()
+
 
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
@@ -189,6 +194,10 @@ class JpegShmTransport(PubSubTransport[T]):
             self.shm.start()
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
+
+    def start(self): ...
+
+    def stop(self): ...
 
 
 class ZenohTransport(PubSubTransport[T]): ...

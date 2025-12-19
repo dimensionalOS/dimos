@@ -76,6 +76,7 @@ class Config(ModuleConfig):
     voxel_size: float = 0.05
     block_count: int = 2_000_000
     device: str = "CUDA:0"
+    carve_columns: bool = True
 
 
 class SparseVoxelGridMapper(Module):
@@ -136,7 +137,7 @@ class SparseVoxelGridMapper(Module):
         if self.config.publish_interval <= 0:
             self.global_map.publish(self.get_global_pointcloud2())
 
-    # @timed()
+    @timed()
     def add_frame(self, frame: LidarMessage) -> None:
         # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
@@ -147,7 +148,52 @@ class SparseVoxelGridMapper(Module):
         pts = pcd.point["positions"].to(self._dev, o3c.float32)
         vox = (pts / self.config.voxel_size).floor().to(self._key_dtype)
         keys_Nx3 = vox.contiguous()
-        self._hm.activate(keys_Nx3)
+
+        if self.config.carve_columns:
+            self._carve_and_insert(keys_Nx3)
+        else:
+            self._hm.activate(keys_Nx3)
+
+    def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
+        """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
+        if new_keys.shape[0] == 0:
+            self._hm.activate(new_keys)
+            return
+
+        # Extract (X, Y) from incoming keys
+        xy_keys = new_keys[:, :2].contiguous()
+
+        # Build temp hashmap for O(1) (X,Y) membership lookup
+        xy_hashmap = o3c.HashMap(
+            init_capacity=xy_keys.shape[0],
+            key_dtype=self._key_dtype,
+            key_element_shape=o3c.SizeVector([2]),
+            value_dtypes=[o3c.uint8],
+            value_element_shapes=[o3c.SizeVector([1])],
+            device=self._dev,
+        )
+        dummy_vals = o3c.Tensor.zeros((xy_keys.shape[0], 1), o3c.uint8, self._dev)
+        xy_hashmap.insert(xy_keys, dummy_vals)
+
+        # Get existing keys from main hashmap
+        active_indices = self._hm.active_buf_indices()
+        if active_indices.shape[0] == 0:
+            self._hm.activate(new_keys)
+            return
+
+        existing_keys = self._hm.key_tensor()[active_indices]
+        existing_xy = existing_keys[:, :2].contiguous()
+
+        # Find which existing keys have (X,Y) in the incoming set
+        _, found_mask = xy_hashmap.find(existing_xy)
+
+        # Erase those columns
+        to_erase = existing_keys[found_mask]
+        if to_erase.shape[0] > 0:
+            self._hm.erase(to_erase)
+
+        # Insert new keys
+        self._hm.activate(new_keys)
 
     # returns PointCloud2 message (ready to send off down the pipeline)
     def get_global_pointcloud2(self) -> PointCloud2:

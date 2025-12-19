@@ -62,7 +62,7 @@ def two_perspectives_loop(moment):
         time.sleep(1)
 
 
-def test_merge_frames(mapper, moment):
+def test_carving(mapper, moment):
     moment1 = moment(10, False)
 
     lidar_frame1 = moment1.lidar.value
@@ -74,11 +74,34 @@ def test_merge_frames(mapper, moment):
 
     lidar_frame2 = moment2.lidar.value
 
+    # Carving mapper (default, carve_columns=True)
     mapper.add_frame(lidar_frame1)
     mapper.add_frame(lidar_frame2)
 
     moment2.global_map.set(mapper.get_global_pointcloud2())
     moment2.publish()
+
+    count_carving = mapper._hm.size()
+    # Additive mapper (carve_columns=False)
+    additive_mapper = SparseVoxelGridMapper(carve_columns=False)
+    additive_mapper.add_frame(lidar_frame1)
+    additive_mapper.add_frame(lidar_frame2)
+    count_additive = additive_mapper._hm.size()
+
+    print("\n=== Carving comparison ===")
+    print(f"Additive (no carving): {count_additive}")
+    print(f"With carving: {count_carving}")
+    print(f"Voxels carved: {count_additive - count_carving}")
+
+    # Carving should result in fewer voxels
+    assert count_carving < count_additive, (
+        f"Carving should remove some voxels. Additive: {count_additive}, Carving: {count_carving}"
+    )
+
+    additive_global_map = LCMTransport("additive_global_map", PointCloud2)
+    additive_global_map.publish(additive_mapper.get_global_pointcloud2())
+    additive_global_map.stop()
+    additive_mapper.stop()
 
 
 def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
