@@ -17,7 +17,6 @@ from threading import Thread
 import time
 from typing import Any, Protocol
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -31,7 +30,7 @@ from dimos.msgs.geometry_msgs import (
     Twist,
     Vector3,
 )
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -74,7 +73,7 @@ def _camera_info_static() -> CameraInfo:
     P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
 
     base_msg = {
-        "D_length": len(D),
+        "frame_id": "camera_optical",
         "height": height,
         "width": width,
         "distortion_model": "plumb_bob",
@@ -86,7 +85,7 @@ def _camera_info_static() -> CameraInfo:
         "binning_y": 0,
     }
 
-    return CameraInfo(**base_msg, header=Header("camera_optical"))
+    return CameraInfo(**base_msg)
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
