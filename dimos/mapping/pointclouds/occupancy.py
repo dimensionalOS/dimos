@@ -60,20 +60,11 @@ def height_cost_occupancy(
             width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
         )
 
-    # Step 1: Remove points above can_pass_under height (robot can pass under)
-    height_mask = points[:, 2] <= can_pass_under
-    filtered_points = points[height_mask]
-
-    if len(filtered_points) == 0:
-        return OccupancyGrid(
-            width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
-        )
-
-    # Find bounds of the point cloud in X-Y plane
-    min_x = np.min(filtered_points[:, 0])
-    max_x = np.max(filtered_points[:, 0])
-    min_y = np.min(filtered_points[:, 1])
-    max_y = np.max(filtered_points[:, 1])
+    # Find bounds of the point cloud in X-Y plane (use all points)
+    min_x = np.min(points[:, 0])
+    max_x = np.max(points[:, 0])
+    min_y = np.min(points[:, 1])
+    max_y = np.max(points[:, 1])
 
     # Add padding
     padding = 1.0
@@ -93,21 +84,28 @@ def height_cost_occupancy(
     origin.position.z = 0.0
     origin.orientation.w = 1.0
 
-    # Step 2: Create height map (max height at each XY cell)
+    # Step 1: Build min and max height maps for each cell
     # Initialize with NaN to track which cells have observations
-    height_map = np.full((height, width), np.nan, dtype=np.float32)
+    min_height_map = np.full((height, width), np.nan, dtype=np.float32)
+    max_height_map = np.full((height, width), np.nan, dtype=np.float32)
 
     # Convert point XY to grid indices
-    grid_x = np.round((filtered_points[:, 0] - min_x) / resolution).astype(np.int32)
-    grid_y = np.round((filtered_points[:, 1] - min_y) / resolution).astype(np.int32)
+    grid_x = np.round((points[:, 0] - min_x) / resolution).astype(np.int32)
+    grid_y = np.round((points[:, 1] - min_y) / resolution).astype(np.int32)
 
     # Clip to grid bounds
     grid_x = np.clip(grid_x, 0, width - 1)
     grid_y = np.clip(grid_y, 0, height - 1)
 
-    # For each cell, take the max height (obstacles are what matter)
-    # Use np.fmax.at which ignores NaN (unlike np.maximum which propagates it)
-    np.fmax.at(height_map, (grid_y, grid_x), filtered_points[:, 2])
+    # Use np.fmax/fmin.at which ignore NaN
+    np.fmax.at(max_height_map, (grid_y, grid_x), points[:, 2])
+    np.fmin.at(min_height_map, (grid_y, grid_x), points[:, 2])
+
+    # Step 2: Determine effective height for each cell
+    # If gap between min and max > can_pass_under, robot can pass under - use min (ground)
+    # Otherwise use max (solid obstacle)
+    height_gap = max_height_map - min_height_map
+    height_map = np.where(height_gap > can_pass_under, min_height_map, max_height_map)
 
     # Track which cells have observations
     observed_mask = ~np.isnan(height_map)
