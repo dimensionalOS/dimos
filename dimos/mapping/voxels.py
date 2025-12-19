@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import functools
 import time
 
@@ -26,57 +26,32 @@ from reactivex.disposable import Disposable
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
+from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.utils.decorators import simple_mcache
 from dimos.utils.metrics import timed
 
 
-def ensure_tensor_pcd(
-    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
-    device: o3c.Device,
-) -> o3d.t.geometry.PointCloud:
-    """Convert legacy / cuda.pybind point clouds into o3d.t.geometry.PointCloud on `device`."""
-
-    if isinstance(pcd_any, o3d.t.geometry.PointCloud):
-        return pcd_any.to(device)
-
-    assert isinstance(pcd_any, o3d.geometry.PointCloud), (
-        "Input must be a legacy PointCloud or a tensor PointCloud"
-    )
-
-    # Legacy CPU point cloud -> tensor
-    if isinstance(pcd_any, o3d.geometry.PointCloud):
-        return o3d.t.geometry.PointCloud.from_legacy(pcd_any, o3c.float32, device)
-
-    pts = np.asarray(pcd_any.points, dtype=np.float32)
-    pcd_t = o3d.t.geometry.PointCloud(device=device)
-    pcd_t.point["positions"] = o3c.Tensor(pts, o3c.float32, device)
-    return pcd_t
-
-
-def ensure_legacy_pcd(
-    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
-) -> o3d.geometry.PointCloud:
-    if isinstance(pcd_any, o3d.geometry.PointCloud):
-        return pcd_any
-
-    assert isinstance(pcd_any, o3d.t.geometry.PointCloud), (
-        "Input must be a legacy PointCloud or a tensor PointCloud"
-    )
-
-    return pcd_any.to_legacy()
+@dataclass
+class CostmapConfig:
+    publish: bool = True
+    resolution: float = 0.05
+    can_pass_under: float = 0.6
+    max_step: float = 0.15
 
 
 @dataclass
 class Config(ModuleConfig):
-    frame_id: str = "map"
+    frame_id: str = "world"
     publish_interval: float = 0
     voxel_size: float = 0.05
     block_count: int = 2_000_000
     device: str = "CUDA:0"
     carve_columns: bool = True
+    costmap: CostmapConfig = field(default_factory=CostmapConfig)
 
 
 class SparseVoxelGridMapper(Module):
@@ -86,7 +61,6 @@ class SparseVoxelGridMapper(Module):
     lidar: In[LidarMessage]
     global_map: Out[LidarMessage]
     global_costmap: Out[OccupancyGrid]
-    local_costmap: Out[OccupancyGrid]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -121,12 +95,8 @@ class SparseVoxelGridMapper(Module):
 
         # If publish_interval > 0, publish on timer; otherwise publish on each frame
         if self.config.publish_interval > 0:
-
-            def publish(_: int) -> None:
-                self.global_map.publish(self.get_global_pointcloud2())
-
-            interval_disposable = interval(self.config.publish_interval).subscribe(publish)
-            self._disposables.add(interval_disposable)
+            disposable = interval(self.config.publish_interval).subscribe(self.publish_global_map)
+            self._disposables.add(disposable)
 
     @rpc
     def stop(self) -> None:
@@ -135,7 +105,12 @@ class SparseVoxelGridMapper(Module):
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
         if self.config.publish_interval <= 0:
-            self.global_map.publish(self.get_global_pointcloud2())
+            self.publish_global_map()
+
+    def publish_global_map(self) -> None:
+        self.global_map.publish(self.get_global_pointcloud2())
+        if self.config.costmap.publish:
+            self.global_costmap.publish(self.get_global_occupancygrid())
 
     @timed()
     def add_frame(self, frame: LidarMessage) -> None:
@@ -153,6 +128,10 @@ class SparseVoxelGridMapper(Module):
             self._carve_and_insert(keys_Nx3)
         else:
             self._hm.activate(keys_Nx3)
+
+        self.get_global_pointcloud.invalidate_cache(self)
+        self.get_global_pointcloud2.invalidate_cache(self)
+        self.get_global_occupancygrid.invalidate_cache(self)
 
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
@@ -196,6 +175,7 @@ class SparseVoxelGridMapper(Module):
         self._hm.activate(new_keys)
 
     # returns PointCloud2 message (ready to send off down the pipeline)
+    @simple_mcache
     def get_global_pointcloud2(self) -> PointCloud2:
         return PointCloud2(
             # we are potentially moving out of CUDA here
@@ -204,12 +184,22 @@ class SparseVoxelGridMapper(Module):
             ts=time.time(),
         )
 
+    @simple_mcache
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
         pts = voxel_coords + (self.config.voxel_size * 0.5)
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
+
+    @simple_mcache
+    def get_global_occupancygrid(self) -> OccupancyGrid:
+        return height_cost_occupancy(
+            self.get_global_pointcloud2(),
+            resolution=self.config.costmap.resolution,
+            can_pass_under=self.config.costmap.can_pass_under,
+            max_step=self.config.costmap.max_step,
+        )
 
 
 # @timed()
@@ -243,6 +233,42 @@ def splice_cylinder(
 
     survivors = map_pcd.select_by_index(victims, invert=True)
     return survivors + patch_pcd
+
+
+def ensure_tensor_pcd(
+    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
+    device: o3c.Device,
+) -> o3d.t.geometry.PointCloud:
+    """Convert legacy / cuda.pybind point clouds into o3d.t.geometry.PointCloud on `device`."""
+
+    if isinstance(pcd_any, o3d.t.geometry.PointCloud):
+        return pcd_any.to(device)
+
+    assert isinstance(pcd_any, o3d.geometry.PointCloud), (
+        "Input must be a legacy PointCloud or a tensor PointCloud"
+    )
+
+    # Legacy CPU point cloud -> tensor
+    if isinstance(pcd_any, o3d.geometry.PointCloud):
+        return o3d.t.geometry.PointCloud.from_legacy(pcd_any, o3c.float32, device)
+
+    pts = np.asarray(pcd_any.points, dtype=np.float32)
+    pcd_t = o3d.t.geometry.PointCloud(device=device)
+    pcd_t.point["positions"] = o3c.Tensor(pts, o3c.float32, device)
+    return pcd_t
+
+
+def ensure_legacy_pcd(
+    pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
+) -> o3d.geometry.PointCloud:
+    if isinstance(pcd_any, o3d.geometry.PointCloud):
+        return pcd_any
+
+    assert isinstance(pcd_any, o3d.t.geometry.PointCloud), (
+        "Input must be a legacy PointCloud or a tensor PointCloud"
+    )
+
+    return pcd_any.to_legacy()
 
 
 mapper = SparseVoxelGridMapper.blueprint

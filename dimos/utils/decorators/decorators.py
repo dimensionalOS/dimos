@@ -142,6 +142,13 @@ def simple_mcache(method: Callable) -> Callable:  # type: ignore[type-arg]
                 setattr(self, attr_name, method(self))
             return getattr(self, attr_name)
 
+    def invalidate_cache(instance):  # type: ignore[no-untyped-def]
+        """Clear the cached value for the given instance."""
+        if hasattr(instance, attr_name):
+            delattr(instance, attr_name)
+
+    getter.invalidate_cache = invalidate_cache  # type: ignore[attr-defined]
+
     return getter
 
 

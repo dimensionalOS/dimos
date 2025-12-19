@@ -36,7 +36,7 @@ def mapper() -> Generator[SparseVoxelGridMapper, None, None]:
 
 
 class Go2MapperMoment(Go2Moment):
-    global_map: OutputMoment[PointCloud2] = OutputMoment(LCMTransport("global_map", PointCloud2))
+    global_map: OutputMoment[PointCloud2] = OutputMoment(LCMTransport("/global_map", PointCloud2))
 
 
 @pytest.fixture
@@ -66,7 +66,7 @@ def test_carving(mapper, moment):
     moment1 = moment(10, False)
 
     lidar_frame1 = moment1.lidar.value
-    lidar_frame1_transport = LCMTransport("prev_lidar", PointCloud2)
+    lidar_frame1_transport = LCMTransport("/prev_lidar", PointCloud2)
     lidar_frame1_transport.publish(lidar_frame1)
     lidar_frame1_transport.stop()
 
