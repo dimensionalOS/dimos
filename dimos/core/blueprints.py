@@ -212,7 +212,7 @@ class ModuleBlueprintSet:
                     "Transport",
                     name=remapped_name,
                     original_name=original_name,
-                    topic=_get_topic(transport),
+                    topic=str(getattr(transport, "topic", None)),
                     type=f"{type.__module__}.{type.__qualname__}",
                     module=module.__name__,
                     transport=transport.__class__.__name__,
@@ -362,9 +362,3 @@ def _eliminate_duplicates(blueprints: list[ModuleBlueprint]) -> list[ModuleBluep
             seen.add(bp.module)
             unique_blueprints.append(bp)
     return list(reversed(unique_blueprints))
-
-
-def _get_topic(transport: Any) -> str:
-    topic = getattr(transport, "topic", None)
-    topic = getattr(transport, "topic", topic)
-    return str(topic)

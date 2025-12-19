@@ -86,7 +86,7 @@ def make_path_mask(
     occupied_count = np.sum(occupied_in_path)
 
     if occupied_count / total_points > 0.05:
-        raise Exception(
+        raise ValueError(
             f"More than 5% of path points are occupied: "
             f"{occupied_count}/{total_points} ({100 * occupied_count / total_points:.1f}%)"
         )

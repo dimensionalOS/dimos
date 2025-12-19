@@ -150,22 +150,15 @@ def voronoi_gradient(
     nearest_obstacle_cluster = obstacle_labels[indices[0], indices[1]]
 
     # Find Voronoi edges: cells where neighbors belong to different obstacle clusters
-    voronoi_edges = np.zeros_like(obstacle_map, dtype=bool)
-
-    # Check 8-connectivity neighbors using roll for efficient comparison
-    for dy in [-1, 0, 1]:
-        for dx in [-1, 0, 1]:
-            if dy == 0 and dx == 0:
-                continue
-            # Shift and compare cluster labels
-            shifted = np.roll(np.roll(nearest_obstacle_cluster, dy, axis=0), dx, axis=1)
-            voronoi_edges |= nearest_obstacle_cluster != shifted
-
-    # Remove edges at boundaries (roll wraps around, creating false edges)
-    voronoi_edges[0, :] = False
-    voronoi_edges[-1, :] = False
-    voronoi_edges[:, 0] = False
-    voronoi_edges[:, -1] = False
+    # Using max/min filters: an edge exists where max != min in the 3x3 neighborhood
+    footprint = np.ones((3, 3), dtype=bool)
+    local_max = ndimage.maximum_filter(
+        nearest_obstacle_cluster, footprint=footprint, mode="nearest"
+    )
+    local_min = ndimage.minimum_filter(
+        nearest_obstacle_cluster, footprint=footprint, mode="nearest"
+    )
+    voronoi_edges = local_max != local_min
 
     # Don't count obstacle cells as Voronoi edges
     voronoi_edges &= obstacle_map == 0
