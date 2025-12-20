@@ -28,7 +28,7 @@ except ImportError:
 class Bool(LCMBool):
     """ROS-compatible Bool message."""
 
-    msg_name: ClassVar[str] = "std_msgs.Bool"
+    msg_name = "std_msgs.Bool"
 
     def __init__(self, data: bool = False):
         """Initialize Bool with data value."""
