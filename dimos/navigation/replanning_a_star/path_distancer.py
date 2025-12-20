@@ -65,6 +65,10 @@ class PathDistancer:
     def distance_to_goal(self, current_pos: NDArray[np.float64]) -> float:
         return float(np.linalg.norm(self._path[-1] - current_pos))
 
+    def get_distance_to_path(self, pos: NDArray[np.float64]) -> float:
+        index = self.find_closest_point_index(pos)
+        return float(np.linalg.norm(self._path[index] - pos))
+
     def find_closest_point_index(self, pos: NDArray[np.float64]) -> int:
         """Find the index of the closest point on the path."""
         distances = np.linalg.norm(self._path - pos, axis=1)

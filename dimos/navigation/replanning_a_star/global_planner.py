@@ -61,6 +61,7 @@ class GlobalPlanner(Resource):
     _replan_goal_tolerance: float = 0.5
     _max_replan_attempts: int = 10
     _stuck_time_window: float = 8.0
+    _max_path_deviation: float = 0.9
 
     def __init__(self, global_config: GlobalConfig) -> None:
         self.path = Subject()
@@ -146,7 +147,7 @@ class GlobalPlanner(Resource):
         return self._local_planner.debug_navigation
 
     def _thread_entrypoint(self) -> None:
-        """Monitor if the robot is stuck."""
+        """Monitor if the robot is stuck or veers off track."""
 
         last_id = -1
         last_time = time.perf_counter()
@@ -164,6 +165,18 @@ class GlobalPlanner(Resource):
             if current_goal.position.distance(current_odom.position) < self._replan_goal_tolerance:
                 logger.info("Close enough to goal. Accepting as arrived.")
                 self.cancel_goal(arrived=True)
+                continue
+
+            # Check if robot has veered too far off the path
+            deviation = self._local_planner.get_distance_to_path()
+            if deviation is not None and deviation > self._max_path_deviation:
+                logger.info(
+                    "Robot veered off track. Replanning.",
+                    deviation=round(deviation, 2),
+                    threshold=self._max_path_deviation,
+                )
+                self._replan_path()
+                last_time = time.perf_counter()
                 continue
 
             _, new_id = self._local_planner.get_unique_state()

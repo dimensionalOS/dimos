@@ -289,6 +289,18 @@ class LocalPlanner(Resource):
             angular=Vector3(0.0, 0.0, angular_velocity),
         )
 
+    def get_distance_to_path(self) -> float | None:
+        with self._lock:
+            path_distancer = self._path_distancer
+            current_odom = self._current_odom
+
+        if path_distancer is None or current_odom is None:
+            return None
+
+        current_pos = np.array([current_odom.position.x, current_odom.position.y])
+
+        return path_distancer.get_distance_to_path(current_pos)
+
     def _compute_path_following(self) -> Twist:
         with self._lock:
             path_distancer = self._path_distancer
