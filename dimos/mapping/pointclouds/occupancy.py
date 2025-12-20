@@ -45,7 +45,7 @@ def height_cost_occupancy(
         cloud: PointCloud2 message containing 3D points
         resolution: Grid resolution in meters/cell (default: 0.05)
         can_pass_under: Max height to consider - points above are ignored (default: 0.6)
-        max_step: Height change in meters that maps to cost 100 (default: 0.15)
+        can_climb: Height change in meters that maps to cost 100 (default: 0.15)
         smoothing: Gaussian smoothing sigma in cells for filling gaps (default: 1.0)
         frame_id: Reference frame for the grid (default: uses cloud's frame_id)
 
@@ -163,7 +163,7 @@ def height_cost_occupancy(
         valid_gradient_mask = ndimage.binary_erosion(observed_mask, structure=structure)
 
         # Convert to int8, marking cells without valid gradients as -1
-        cost = np.where(valid_gradient_mask, cost_float.astype(np.int8), -1).astype(np.int8)
+        cost = np.where(valid_gradient_mask, cost_float.astype(np.int8), -1)
     else:
         cost = np.full((height, width), -1, dtype=np.int8)
 

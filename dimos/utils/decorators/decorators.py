@@ -138,8 +138,6 @@ def simple_mcache(method: Callable) -> Callable:  # type: ignore[type-arg]
     def getter(self):  # type: ignore[no-untyped-def]
         # Get or create the lock for this instance
         if not hasattr(self, lock_name):
-            # This is a one-time operation, race condition here is acceptable
-            # as worst case we create multiple locks but only one gets stored
             setattr(self, lock_name, threading.Lock())
 
         lock = getattr(self, lock_name)
@@ -155,8 +153,13 @@ def simple_mcache(method: Callable) -> Callable:  # type: ignore[type-arg]
 
     def invalidate_cache(instance: Any) -> None:
         """Clear the cached value for the given instance."""
-        if hasattr(instance, attr_name):
-            delattr(instance, attr_name)
+        if not hasattr(instance, lock_name):
+            return
+
+        lock = getattr(instance, lock_name)
+        with lock:
+            if hasattr(instance, attr_name):
+                delattr(instance, attr_name)
 
     getter.invalidate_cache = invalidate_cache  # type: ignore[attr-defined]
 
