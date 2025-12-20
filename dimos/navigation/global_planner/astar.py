@@ -14,7 +14,6 @@
 
 from dimos.msgs.geometry_msgs import VectorLike
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.navigation.global_planner.general_astar import general_astar
 from dimos.navigation.global_planner.min_cost_astar import min_cost_astar
 from dimos.navigation.global_planner.types import AStarAlgorithm
