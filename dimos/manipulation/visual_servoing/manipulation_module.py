@@ -895,9 +895,13 @@ class ManipulationModule(Module):
                     # Set up place target if coordinates were provided but depth wasn't available earlier
                     if self.place_target_coords is not None and self.place_target_position is None:
                         if self.latest_depth is not None:
-                            self._set_place_target(self.place_target_coords[0], self.place_target_coords[1])
+                            self._set_place_target(
+                                self.place_target_coords[0], self.place_target_coords[1]
+                            )
                         else:
-                            logger.warning("Place coordinates provided but depth data not available")
+                            logger.warning(
+                                "Place coordinates provided but depth data not available"
+                            )
 
                     if self.place_target_position is not None:
                         logger.info("Transitioning to PLACE stage")
