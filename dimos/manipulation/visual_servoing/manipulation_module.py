@@ -190,7 +190,7 @@ class ManipulationModule(Module):
         self.gripper_max_opening = gripper_max_opening
 
         self.workspace_min_radius = 0.2
-        self.workspace_max_radius = 0.9
+        self.workspace_max_radius = 1.2
         self.min_grasp_pitch_degrees = 60.0
         self.max_grasp_pitch_degrees = 80.0
 
@@ -642,12 +642,12 @@ class ManipulationModule(Module):
 
         # Determine pitch range based on z height
         object_z_height = position.z
-        if object_z_height < 0.4:  # Below 40cm
+        if object_z_height < 0.0:  # Below 5cm
             min_pitch = 60.0
             max_pitch = 90.0
-        elif object_z_height <= 1.0:  # Between 40cm and 1m
+        elif object_z_height <= 0.3:  # Between 5cm and 1m
             min_pitch = 30.0
-            max_pitch = 70.0
+            max_pitch = 60.0
         else:  # Above 1m - use original values as fallback
             min_pitch = self.min_grasp_pitch_degrees
             max_pitch = self.max_grasp_pitch_degrees
