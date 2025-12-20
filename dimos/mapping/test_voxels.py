@@ -56,6 +56,16 @@ def moment():
     moment.stop()
 
 
+@pytest.fixture
+def moment1(moment):
+    return moment(10, False)
+
+
+@pytest.fixture
+def moment2(moment):
+    return moment(10, False)
+
+
 @pytest.mark.tool
 def two_perspectives_loop(moment):
     while True:
@@ -65,15 +75,11 @@ def two_perspectives_loop(moment):
         time.sleep(1)
 
 
-def test_carving(mapper, moment):
-    moment1 = moment(10, False)
-
+def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
     lidar_frame1 = moment1.lidar.value
     lidar_frame1_transport = LCMTransport("/prev_lidar", PointCloud2)
     lidar_frame1_transport.publish(lidar_frame1)
     lidar_frame1_transport.stop()
-
-    moment2 = moment(85, False)
 
     lidar_frame2 = moment2.lidar.value
 
@@ -85,12 +91,12 @@ def test_carving(mapper, moment):
     moment2.costmap.set(mapper.get_global_occupancygrid())
     moment2.publish()
 
-    count_carving = mapper._hm.size()
+    count_carving = mapper.size()
     # Additive mapper (carve_columns=False)
     additive_mapper = SparseVoxelGridMapper(carve_columns=False)
     additive_mapper.add_frame(lidar_frame1)
     additive_mapper.add_frame(lidar_frame2)
-    count_additive = additive_mapper._hm.size()
+    count_additive = additive_mapper.size()
 
     print("\n=== Carving comparison ===")
     print(f"Additive (no carving): {count_additive}")
@@ -112,53 +118,42 @@ def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
     lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]
 
-    frame = lidar_store.find_closest_seek(1.0)
-    assert frame is not None
-    print("add", frame)
-    mapper.add_frame(frame)
+    for i in [1, 4, 8]:
+        frame = lidar_store.find_closest_seek(i)
+        assert frame is not None
+        print("add", frame)
+        mapper.add_frame(frame)
 
-    print(mapper.get_global_pointcloud2())
+    assert len(mapper.get_global_pointcloud2()) == 30136
 
 
-def test_roundtrip_coordinates(mapper: SparseVoxelGridMapper) -> None:
-    """Test that voxelization preserves point coordinates within voxel resolution."""
-    voxel_size = mapper.config.voxel_size
+@pytest.mark.parametrize(
+    "voxel_size, expected_points",
+    [
+        (0.5, 277),
+        (0.1, 7290),
+        (0.05, 28199),
+    ],
+)
+def test_roundtrip(moment1: Go2MapperMoment, voxel_size, expected_points) -> None:
+    mapper = SparseVoxelGridMapper(voxel_size=voxel_size)
+    mapper.add_frame(moment1.lidar.value)
 
-    # Create synthetic points at known voxel centers
-    # Points at voxel centers should round-trip exactly
-    input_pts = np.array(
-        [
-            [0.0, 0.0, 0.0],
-            [voxel_size, 0.0, 0.0],
-            [0.0, voxel_size, 0.0],
-            [0.0, 0.0, voxel_size],
-            [-voxel_size, -voxel_size, -voxel_size],
-            [1.0, 2.0, 3.0],
-            [-1.5, 0.5, -0.25],
-        ],
-        dtype=np.float32,
-    )
+    global1 = mapper.get_global_pointcloud2()
+    assert len(global1) == expected_points
 
-    pcd = o3d.geometry.PointCloud()
-    pcd.points = o3d.utility.Vector3dVector(input_pts)
-    frame = LidarMessage(pointcloud=pcd, ts=0.0)
+    # loseless roundtrip
+    if voxel_size == 0.05:
+        assert len(global1) == len(moment1.lidar.value)
+        # TODO: we want __eq__ on PointCloud2 - should actually compare
+        # all points in both frames
 
-    mapper.add_frame(frame)
+    mapper.add_frame(global1)
+    # no new information, no global map change
+    assert len(mapper.get_global_pointcloud2()) == len(global1)
 
-    out_pcd = mapper.get_global_pointcloud().to_legacy()
-    out_pts = np.asarray(out_pcd.points)
-
-    # Same number of unique voxels
-    assert len(out_pts) == len(input_pts), f"Expected {len(input_pts)} voxels, got {len(out_pts)}"
-
-    # Each output point should be within half a voxel of an input point
-    # (output is voxel center, input could be anywhere in voxel)
-    for out_pt in out_pts:
-        dists = np.linalg.norm(input_pts - out_pt, axis=1)
-        min_dist = dists.min()
-        assert min_dist < voxel_size, (
-            f"Output point {out_pt} too far from any input (dist={min_dist})"
-        )
+    moment1.publish()
+    mapper.stop()
 
 
 def test_roundtrip_range_preserved(mapper: SparseVoxelGridMapper) -> None:
@@ -177,6 +172,9 @@ def test_roundtrip_range_preserved(mapper: SparseVoxelGridMapper) -> None:
 
     voxel_size = mapper.config.voxel_size
     tolerance = voxel_size  # Allow one voxel of difference at boundaries
+
+    # TODO: we want __eq__ on PointCloud2 - should actually compare
+    # all points in both frames
 
     for axis, name in enumerate(["X", "Y", "Z"]):
         in_min, in_max = input_pts[:, axis].min(), input_pts[:, axis].max()

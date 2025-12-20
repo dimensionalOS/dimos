@@ -83,8 +83,8 @@ class SparseVoxelGridMapper(Module):
         )
 
         self._dev = dev
-        self._hm = self.vbg.hashmap()
-        self._key_dtype = self._hm.key_tensor().dtype
+        self._voxel_hashmap = self.vbg.hashmap()
+        self._key_dtype = self._voxel_hashmap.key_tensor().dtype
 
     @rpc
     def start(self) -> None:
@@ -114,6 +114,12 @@ class SparseVoxelGridMapper(Module):
         if self.config.costmap.publish:
             self.global_costmap.publish(self.get_global_occupancygrid())
 
+    def size(self):
+        return self._voxel_hashmap.size()
+
+    def __len__(self):
+        return self.size()
+
     # @timed()  # TODO: fix thread leak in timed decorator
     def add_frame(self, frame: LidarMessage) -> None:
         # we are potentially moving into CUDA here
@@ -129,7 +135,7 @@ class SparseVoxelGridMapper(Module):
         if self.config.carve_columns:
             self._carve_and_insert(keys_Nx3)
         else:
-            self._hm.activate(keys_Nx3)
+            self._voxel_hashmap.activate(keys_Nx3)
 
         self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
         self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
@@ -138,7 +144,7 @@ class SparseVoxelGridMapper(Module):
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
         if new_keys.shape[0] == 0:
-            self._hm.activate(new_keys)
+            self._voxel_hashmap.activate(new_keys)
             return
 
         # Extract (X, Y) from incoming keys
@@ -157,12 +163,12 @@ class SparseVoxelGridMapper(Module):
         xy_hashmap.insert(xy_keys, dummy_vals)
 
         # Get existing keys from main hashmap
-        active_indices = self._hm.active_buf_indices()
+        active_indices = self._voxel_hashmap.active_buf_indices()
         if active_indices.shape[0] == 0:
-            self._hm.activate(new_keys)
+            self._voxel_hashmap.activate(new_keys)
             return
 
-        existing_keys = self._hm.key_tensor()[active_indices]
+        existing_keys = self._voxel_hashmap.key_tensor()[active_indices]
         existing_xy = existing_keys[:, :2].contiguous()
 
         # Find which existing keys have (X,Y) in the incoming set
@@ -171,10 +177,10 @@ class SparseVoxelGridMapper(Module):
         # Erase those columns
         to_erase = existing_keys[found_mask]
         if to_erase.shape[0] > 0:
-            self._hm.erase(to_erase)
+            self._voxel_hashmap.erase(to_erase)
 
         # Insert new keys
-        self._hm.activate(new_keys)
+        self._voxel_hashmap.activate(new_keys)
 
     # returns PointCloud2 message (ready to send off down the pipeline)
     @simple_mcache
