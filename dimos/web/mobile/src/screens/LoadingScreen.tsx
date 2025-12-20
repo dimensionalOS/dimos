@@ -1,19 +1,13 @@
 import React from 'react';
-import {
-  View,
-  Text,
-  StyleSheet,
-  StatusBar,
-  SafeAreaView,
-} from 'react-native';
+import {SafeAreaView, StatusBar, StyleSheet, View} from 'react-native';
+import FigletText from '../utils/FigletText';
 
 const LoadingScreen: React.FC = () => {
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#1E3A8A" />
-      <View style={styles.content}>
-        <Text style={styles.logo}>DIMENSIONAL</Text>
-        <Text style={styles.version}>v0.0.1</Text>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.logoRow}>
+        <FigletText text="DIMENSIONAL" color="#FFF200" fontSize={4} />
       </View>
     </SafeAreaView>
   );
@@ -22,25 +16,30 @@ const LoadingScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1E3A8A', // Blue background
-  },
-  content: {
-    flex: 1,
+    backgroundColor: '#0016B1',
     justifyContent: 'center',
+  },
+  logoRow: {
+    paddingHorizontal: 24,
     alignItems: 'center',
   },
-  logo: {
+  logoImage: {
+    width: 120,
+    height: 120,
+    marginBottom: 16,
+  },
+  appName: {
+    color: '#FFF200',
     fontSize: 32,
-    fontWeight: 'bold',
-    color: '#FBBF24', // Yellow text
-    letterSpacing: 3,
-    textAlign: 'center',
-    fontFamily: 'monospace', // Gives it a more technical/digital look
+    fontWeight: '800',
+    letterSpacing: 2,
+    fontFamily: 'monospace',
+    marginBottom: 8,
   },
   version: {
+    color: '#FFF200',
     fontSize: 12,
-    color: '#FBBF24',
-    marginTop: 8,
+    marginTop: 4,
     fontFamily: 'monospace',
   },
 });

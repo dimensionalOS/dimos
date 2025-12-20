@@ -1,46 +1,51 @@
 import React from 'react';
 import {
-  View,
-  Text,
-  StyleSheet,
-  StatusBar,
-  SafeAreaView,
-  TouchableOpacity,
   Alert,
+  SafeAreaView,
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
 } from 'react-native';
+import FigletText from '../utils/FigletText';
 
-const HomeScreen: React.FC = () => {
+interface HomeScreenProps {
+  onNavigateToSettings: () => void;
+}
+
+const HomeScreen: React.FC<HomeScreenProps> = ({onNavigateToSettings}) => {
   const handleAddRobotDog = () => {
-    Alert.alert('Add Robot Dog', 'This feature will be implemented soon!');
+    Alert.alert('Add Robot', 'This feature will be implemented soon!');
   };
 
   return (
     <SafeAreaView style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#1E3A8A" />
-      <View style={styles.content}>
-        {/* Header with logo */}
-        <View style={styles.header}>
-          <Text style={styles.logo}>DIMENSIONAL</Text>
+      <StatusBar barStyle="light-content" />
+      <View style={styles.headerRow}>
+        <FigletText text="DIMENSIONAL" color="#FFF200" fontSize={4} />
+        <TouchableOpacity 
+          style={styles.gearButton} 
+          onPress={onNavigateToSettings}
+          activeOpacity={0.7}
+        >
           <View style={styles.settingsIcon}>
-            <Text style={styles.settingsText}>⚙️</Text>
+            <Text style={styles.gearText}>⋯</Text>
           </View>
-        </View>
-        
-        {/* Main content area */}
-        <View style={styles.mainContent}>
-          <TouchableOpacity 
-            style={styles.addButton}
-            onPress={handleAddRobotDog}
-            activeOpacity={0.8}
-          >
-            <Text style={styles.addButtonText}>Add Robot Dog</Text>
+        </TouchableOpacity>
+      </View>
+      <View style={styles.centerArea}>
+        <View style={styles.ctaContainer}>
+          <TouchableOpacity
+            style={styles.cta}
+            activeOpacity={0.9}
+            onPress={handleAddRobotDog}>
+            <FigletText text="ADD ROBOT" color="#0016B1" fontSize={5}/>
           </TouchableOpacity>
         </View>
-        
-        {/* Version info */}
-        <View style={styles.footer}>
-          <Text style={styles.version}>v0.0.1</Text>
-        </View>
+      </View>
+      <View style={styles.footer}>
+        <Text style={styles.version}>v0.0.1</Text>
       </View>
     </SafeAreaView>
   );
@@ -49,69 +54,64 @@ const HomeScreen: React.FC = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#1E3A8A', // Blue background
+    backgroundColor: '#0016B1',
   },
-  content: {
-    flex: 1,
-    paddingHorizontal: 20,
-  },
-  header: {
+  headerRow: {
+    paddingTop: 24,
+    paddingHorizontal: 24,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
-    paddingTop: 20,
-    paddingBottom: 40,
+    justifyContent: 'space-between',
   },
-  logo: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#FBBF24', // Yellow text
-    letterSpacing: 2,
-    fontFamily: 'monospace',
+  gearButton: {
+    backgroundColor: '#FFF200',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   settingsIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: '#FBBF24',
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
   },
-  settingsText: {
-    fontSize: 20,
+  gearText: {
+    fontSize: 24,
+    color: '#0016B1',
+    fontWeight: 'bold',
   },
-  mainContent: {
+  centerArea: {
     flex: 1,
-    justifyContent: 'center',
     alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
   },
-  addButton: {
-    backgroundColor: '#FBBF24', // Yellow button
-    paddingHorizontal: 40,
-    paddingVertical: 16,
-    borderRadius: 25,
+  ctaContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: -40,
+  },
+  cta: {
+    backgroundColor: '#FFF200',
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 16,
     shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
     shadowOpacity: 0.25,
-    shadowRadius: 3.84,
-    elevation: 5,
-  },
-  addButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#1E3A8A', // Blue text on yellow button
-    textAlign: 'center',
+    shadowOffset: {width: 0, height: 2},
+    shadowRadius: 4,
+    elevation: 3,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   footer: {
-    paddingBottom: 20,
     alignItems: 'center',
+    paddingBottom: 32,
+    paddingTop: 16,
   },
   version: {
+    color: '#FFF200',
     fontSize: 12,
-    color: '#FBBF24',
     fontFamily: 'monospace',
   },
 });

@@ -1,24 +1,35 @@
 import React, {useState, useEffect} from 'react';
 import LoadingScreen from '../screens/LoadingScreen';
 import HomeScreen from '../screens/HomeScreen';
+import SettingsScreen from '../screens/SettingsScreen';
+
+type Screen = 'loading' | 'home' | 'settings';
 
 const AppNavigator: React.FC = () => {
-  const [isLoading, setIsLoading] = useState(true);
+  const [currentScreen, setCurrentScreen] = useState<Screen>('loading');
 
   useEffect(() => {
-    // Simulate loading time
-    const timer = setTimeout(() => {
-      setIsLoading(false);
-    }, 2500); // 2.5 seconds loading screen
-
+    const timer = setTimeout(() => setCurrentScreen('home'), 1200);
     return () => clearTimeout(timer);
   }, []);
-
-  if (isLoading) {
+  if (currentScreen === 'loading') {
     return <LoadingScreen />;
   }
 
-  return <HomeScreen />;
+  const navigateToSettings = () => {
+    setCurrentScreen('settings');
+  };
+
+  const navigateToHome = () => {
+    setCurrentScreen('home');
+  };
+
+  if (currentScreen === 'settings') {
+    return <SettingsScreen onBack={navigateToHome} />;
+  }
+
+  return <HomeScreen onNavigateToSettings={navigateToSettings} />;
 };
 
 export default AppNavigator;
+
