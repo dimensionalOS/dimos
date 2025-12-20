@@ -647,7 +647,7 @@ class ManipulationModule(Module):
             max_pitch = 90.0
         elif object_z_height <= 0.3:  # Between 5cm and 1m
             min_pitch = 30.0
-            max_pitch = 60.0
+            max_pitch = 50.0
         else:  # Above 1m - use original values as fallback
             min_pitch = self.min_grasp_pitch_degrees
             max_pitch = self.max_grasp_pitch_degrees
