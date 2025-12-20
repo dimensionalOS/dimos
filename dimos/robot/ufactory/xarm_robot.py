@@ -102,8 +102,8 @@ class XArmRobot(Robot):
             camera_frame_id="zed_camera_link",
             ee_to_camera_6dof=[
                 -0.10,
-                0.04,
-                -0.135,
+                0.025,
+                -0.120,
                 0,
                 -1.57,
                 0,
@@ -123,15 +123,15 @@ class XArmRobot(Robot):
             ManipulationModule,
             arm_module=self.xarm,  # Pass the arm module reference (uses same interface)
             min_confidence=0.5,
-            max_depth=1.0,
+            max_depth=1.2,
             max_object_size=0.15,
             camera_frame_id="zed_camera_link_optical",  # Use ZED optical frame
             base_frame_id="base_link",
             track_frame_id=track_frame,  # Use world frame if mobile base enabled
             reach_timeout=15.0,  # Simple timeout for reaching poses
             enable_mobile_base=self.enable_mobile_base_control,  # Pass mobile base flag
-            pregrasp_distance=0.15,
-            grasp_distance_range=0.02,
+            pregrasp_distance=0.3,
+            grasp_distance_range=0.001,
             grasp_width_offset=0.02,
             gripper_max_opening=0.1,
             retract_distance=0.18,
@@ -203,13 +203,10 @@ class XArmRobot(Robot):
             Dict with success status and details
         """
         if self.manipulation_interface:
-            pick_target = (pick_x, pick_y)
-            place_target = (
-                (place_x, place_y) if place_x is not None and place_y is not None else None
-            )
+            # Forward individual parameters correctly to manipulation module
             return self.manipulation_interface.rpc.call_sync(
                 f"{self.manipulation_interface.remote_name}/pick_and_place",
-                ([pick_target, place_target], {}),
+                ([], {"pick_x": pick_x, "pick_y": pick_y, "place_x": place_x, "place_y": place_y}),
                 rpc_timeout=rpc_timeout,
                 max_retries=1,  # Don't retry for long operations
             )

@@ -120,10 +120,14 @@ class xArm:
         # )
         self.cmd_joint_angles([0, -90, 0, 0, 0, 0], speed=50, is_radian=False)
 
-    def gotoObserve(self):
+    def gotoObserve(self, level=1):
         """Move to observation position similar to PiperArm"""
-
-        self.cmd_joint_angles([0.0, -60, -30, 0, 50, 0], speed=50, is_radian=False)
+        if level == "low" or level == 1:
+            self.cmd_joint_angles([0.0, -60, -30, 0, 50, 0], speed=50, is_radian=False)
+        elif level == "med" or level == 2:
+            self.cmd_joint_angles([0.0, -60, -30, 0, 30, 0], speed=50, is_radian=False)
+        elif level == "high" or level == 3:
+            self.cmd_joint_angles([0.0, -50, -65, 0, 75, 0], speed=50, is_radian=False)
         # if code != 0:
         #     logger.error(f"Failed to go to observe position, code: {code}")
 
@@ -560,10 +564,10 @@ class XArmModule(Module):
             # self._reset_command_correction()
 
     @rpc
-    def goto_observe(self):
+    def goto_observe(self, level=1):
         """Move arm to observe position."""
         if self.arm:
-            self.arm.gotoObserve()
+            self.arm.gotoObserve(level=level)
             # self._reset_command_correction()
         else:
             logger.warning("Cannot go to observe position - arm not initialized yet")

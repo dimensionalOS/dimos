@@ -135,8 +135,8 @@ class ManipulationModule(Module):
         pregrasp_distance: float = 0.25,
         grasp_distance_range: float = 0.03,
         grasp_width_offset: float = 0.03,
-        grasp_close_delay: float = 1.0,
-        gripper_max_opening: float = 0.07,
+        grasp_close_delay: float = 0.5,
+        gripper_max_opening: float = 0.09,
         retract_distance: float = 0.12,
         **kwargs,
     ):
@@ -191,7 +191,7 @@ class ManipulationModule(Module):
 
         self.workspace_min_radius = 0.2
         self.workspace_max_radius = 0.9
-        self.min_grasp_pitch_degrees = 20.0
+        self.min_grasp_pitch_degrees = 60.0
         self.max_grasp_pitch_degrees = 80.0
 
         self.grasp_stage = GraspStage.IDLE
@@ -223,6 +223,7 @@ class ManipulationModule(Module):
             position=Vector3(0.0, 0.0, 0.0), orientation=Quaternion(0.0, 0.0, 0.0, 1.0)
         )
         self.place_target_position = None
+        self.place_target_coords = None
         self.target_object_height = None
         self.retract_distance = retract_distance
         self.place_pose = None
@@ -368,13 +369,13 @@ class ManipulationModule(Module):
             self.arm.release_gripper()
             return "release"
         elif key_code == ord("1"):
-            self.arm.goto_observe(pitch=90.0)
+            self.arm.goto_observe(1)
             return "observe"
         elif key_code == ord("2"):
-            self.arm.goto_observe(pitch=120.0)
+            self.arm.goto_observe(2)
             return "observe"
         elif key_code == ord("3"):
-            self.arm.goto_observe(pitch=150.0)
+            self.arm.goto_observe(3)
             return "observe"
 
         return ""
@@ -422,12 +423,19 @@ class ManipulationModule(Module):
                     self.target_object = None
 
             # Handle place target
-            if place_x is not None and place_y is not None and self.latest_depth is not None:
-                self._set_place_target(place_x, place_y)
+            if place_x is not None and place_y is not None:
+                # Store place coordinates to set up target later when depth is available
+                self.place_target_coords = (place_x, place_y)
+                self.place_target_position = None  # Will be set when depth becomes available
             else:
+                self.place_target_coords = None
                 self.place_target_position = None
 
             success = self._execute_pick_and_place()
+
+            # Reset task state after completion (success or failure)
+            self.task_running = False
+            self.reset_to_idle()
 
             return {
                 "success": success,
@@ -438,10 +446,9 @@ class ManipulationModule(Module):
             logger.error(f"Error in pick and place: {e}")
 
             logger.error(f"Traceback: {traceback.format_exc()}")
-            return {"success": False, "error": str(e)}
-        finally:
             self.task_running = False
             self.reset_to_idle()
+            return {"success": False, "error": str(e)}
 
     def _set_place_target(self, place_x: int, place_y: int):
         """Set the place target position from pixel coordinates."""
@@ -496,7 +503,7 @@ class ManipulationModule(Module):
             self.target_object = None
 
         start_time = time.time()
-        while time.time() - start_time < 60.0:
+        while time.time() - start_time < 120.0:
             if self.task_failed:
                 logger.error("Task marked as failed")
                 return False
@@ -628,17 +635,27 @@ class ManipulationModule(Module):
         return target_tracked
 
     def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
-        """Calculate grasp pitch based on distance from robot base."""
+        """Calculate grasp pitch based on distance from robot base and z height."""
         position = target_pose.position
         distance = np.sqrt(position.x**2 + position.y**2 + position.z**2)
         distance = np.clip(distance, self.workspace_min_radius, self.workspace_max_radius)
 
+        # Determine pitch range based on z height
+        object_z_height = position.z
+        if object_z_height < 0.4:  # Below 40cm
+            min_pitch = 60.0
+            max_pitch = 90.0
+        elif object_z_height <= 1.0:  # Between 40cm and 1m
+            min_pitch = 30.0
+            max_pitch = 70.0
+        else:  # Above 1m - use original values as fallback
+            min_pitch = self.min_grasp_pitch_degrees
+            max_pitch = self.max_grasp_pitch_degrees
+
         normalized = (distance - self.workspace_min_radius) / (
             self.workspace_max_radius - self.workspace_min_radius
         )
-        return self.max_grasp_pitch_degrees - (
-            normalized * (self.max_grasp_pitch_degrees - self.min_grasp_pitch_degrees)
-        )
+        return max_pitch - (normalized * (max_pitch - min_pitch))
 
     def reset_to_idle(self):
         """Reset the manipulation system to IDLE state."""
@@ -658,6 +675,7 @@ class ManipulationModule(Module):
         self.place_pose = None
         self.retract_pose = None
         self.place_target_position = None
+        self.place_target_coords = None
         self.target_object_height = None
         self.reached_poses.clear()  # Clear pose history
         self.pose_adjusted = False
@@ -874,9 +892,20 @@ class ManipulationModule(Module):
                 self.pick_success = self.arm.gripper_object_detected()
                 if self.pick_success:
                     logger.info("Object successfully grasped")
+                    # Set up place target if coordinates were provided but depth wasn't available earlier
+                    if self.place_target_coords is not None and self.place_target_position is None:
+                        if self.latest_depth is not None:
+                            self._set_place_target(self.place_target_coords[0], self.place_target_coords[1])
+                        else:
+                            logger.warning("Place coordinates provided but depth data not available")
+
                     if self.place_target_position is not None:
+                        logger.info("Transitioning to PLACE stage")
                         self.set_grasp_stage(GraspStage.PLACE)
                     else:
+                        logger.info("No place target - pick only operation complete")
+                        logger.info("Returning arm to observe position")
+                        self.arm.goto_observe()
                         self.overall_success = True
                 else:
                     logger.error("No object detected in gripper")
