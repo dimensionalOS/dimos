@@ -20,7 +20,7 @@ import open3d as o3d  # type: ignore[import-untyped]
 import pytest
 
 from dimos.core import LCMTransport, Transport
-from dimos.mapping.voxels import SparseVoxelGridMapper
+from dimos.mapping.voxels import VoxelGridMapper
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -31,8 +31,8 @@ from dimos.utils.testing.test_moment import Go2Moment
 
 
 @pytest.fixture
-def mapper() -> Generator[SparseVoxelGridMapper, None, None]:
-    mapper = SparseVoxelGridMapper()
+def mapper() -> Generator[VoxelGridMapper, None, None]:
+    mapper = VoxelGridMapper()
     yield mapper
     mapper.stop()
 
@@ -93,7 +93,7 @@ def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
 
     count_carving = mapper.size()
     # Additive mapper (carve_columns=False)
-    additive_mapper = SparseVoxelGridMapper(carve_columns=False)
+    additive_mapper = VoxelGridMapper(carve_columns=False)
     additive_mapper.add_frame(lidar_frame1)
     additive_mapper.add_frame(lidar_frame2)
     count_additive = additive_mapper.size()
@@ -114,7 +114,7 @@ def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
     additive_mapper.stop()
 
 
-def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
+def test_injest_a_few(mapper: VoxelGridMapper) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
     lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]
 
@@ -136,7 +136,7 @@ def test_injest_a_few(mapper: SparseVoxelGridMapper) -> None:
     ],
 )
 def test_roundtrip(moment1: Go2MapperMoment, voxel_size, expected_points) -> None:
-    mapper = SparseVoxelGridMapper(voxel_size=voxel_size)
+    mapper = VoxelGridMapper(voxel_size=voxel_size)
     mapper.add_frame(moment1.lidar.value)
 
     global1 = mapper.get_global_pointcloud2()
@@ -156,7 +156,7 @@ def test_roundtrip(moment1: Go2MapperMoment, voxel_size, expected_points) -> Non
     mapper.stop()
 
 
-def test_roundtrip_range_preserved(mapper: SparseVoxelGridMapper) -> None:
+def test_roundtrip_range_preserved(mapper: VoxelGridMapper) -> None:
     """Test that input coordinate ranges are preserved in output."""
     data_dir = get_data("unitree_go2_office_walk2")
     lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]

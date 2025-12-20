@@ -31,6 +31,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.spec.map import Global3DMap, GlobalCostmap
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.metrics import timed
 
@@ -54,7 +55,7 @@ class Config(ModuleConfig):
     costmap: CostmapConfig = field(default_factory=CostmapConfig)
 
 
-class SparseVoxelGridMapper(Module):
+class VoxelGridMapper(Module):
     default_config = Config
     config: Config
 
@@ -70,7 +71,7 @@ class SparseVoxelGridMapper(Module):
             else o3c.Device("CPU:0")
         )
 
-        print(f"SparseVoxelGridMapper using device: {dev}")
+        print(f"VoxelGridMapper using device: {dev}")
 
         self.vbg = o3d.t.geometry.VoxelBlockGrid(
             attr_names=("dummy",),
@@ -279,4 +280,4 @@ def ensure_legacy_pcd(
     return pcd_any.to_legacy()
 
 
-mapper = SparseVoxelGridMapper.blueprint
+mapper = VoxelGridMapper.blueprint
