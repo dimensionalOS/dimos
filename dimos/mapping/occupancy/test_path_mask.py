@@ -37,13 +37,12 @@ def test_make_path_mask(occupancy_gradient, pose_index, max_length, expected_ima
     start = Vector3(4.0, 2.0, 0)
     goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
     expected = Image.from_file(get_data(expected_image))
-    path = astar("min_cost", occupancy_gradient, goal_pose.position, start)
+    path = astar("min_cost", occupancy_gradient, goal_pose.position, start, use_cpp=False)
     path = smooth_resample_path(path, goal_pose, 0.1)
     robot_width = 0.4
     path_mask = make_path_mask(occupancy_gradient, path, robot_width, pose_index, max_length)
     actual = visualize_occupancy_grid(occupancy_gradient, "rainbow")
 
     actual.data[path_mask] = [0, 100, 0]
-    actual.save(f"data/{expected_image}")
 
     np.testing.assert_array_equal(actual.data, expected.data)
