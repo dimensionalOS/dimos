@@ -64,11 +64,13 @@ class LocalPlanner(Resource):
     _navigation_map: NavigationMap
 
     _speed: float = 0.55
+    _min_linear_velocity: float = 0.2
+    _min_angular_velocity: float = 0.2
     _k_angular: float = 0.5
     _k_derivative: float = 0.15
     _max_angular_accel: float = 2.0
     _goal_tolerance: float = 0.3
-    _orientation_tolerance: float = 0.2
+    _orientation_tolerance: float = 0.35
     _control_frequency: float = 10.0
     _rotation_threshold: float = 90
 
@@ -161,10 +163,27 @@ class LocalPlanner(Resource):
         with self._lock:
             path = self._path
             path_clearance = self._path_clearance
-            self._change_state("initial_rotation")
+            current_odom = self._current_odom
 
         if path is None or path_clearance is None:
             raise RuntimeError("No path set for local planner.")
+
+        # Determine initial state: skip initial_rotation if already aligned
+        if current_odom is not None and len(path.poses) > 0:
+            first_yaw = quaternion_to_euler(path.poses[0].orientation).z
+            robot_yaw = current_odom.orientation.euler[2]
+            initial_yaw_error = normalize_angle(first_yaw - robot_yaw)
+            self._prev_yaw_error = initial_yaw_error
+
+            if abs(initial_yaw_error) < self._orientation_tolerance:
+                with self._lock:
+                    self._change_state("path_following")
+            else:
+                with self._lock:
+                    self._change_state("initial_rotation")
+        else:
+            with self._lock:
+                self._change_state("initial_rotation")
 
         while not stop_event.is_set():
             start_time = time.perf_counter()
@@ -178,6 +197,7 @@ class LocalPlanner(Resource):
                 )
 
             if path_clearance.is_obstacle_ahead():
+                logger.info("Obstacle detected ahead, stopping local planner.")
                 self.stopped_navigating.on_next("obstacle_found")
                 break
 
@@ -197,11 +217,23 @@ class LocalPlanner(Resource):
                 cmd_vel = None
 
             if cmd_vel is not None:
+                print(cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z)
                 self.cmd_vel.on_next(cmd_vel)
 
             elapsed = time.perf_counter() - start_time
             sleep_time = max(0.0, (1.0 / self._control_frequency) - elapsed)
             stop_event.wait(sleep_time)
+
+        if stop_event.is_set():
+            logger.info("Local planner loop exited due to stop event.")
+
+    def _apply_min_velocity(self, velocity: float, min_velocity: float) -> float:
+        """Apply minimum velocity threshold, preserving sign. Returns 0 if velocity is 0."""
+        if velocity == 0.0:
+            return 0.0
+        if abs(velocity) < min_velocity:
+            return min_velocity if velocity > 0 else -min_velocity
+        return velocity
 
     def _compute_angular_velocity(self, yaw_error: float, max_speed: float) -> float:
         dt = 1.0 / self._control_frequency
@@ -221,6 +253,9 @@ class LocalPlanner(Resource):
         # Clamp to max speed
         angular_velocity = np.clip(angular_velocity, -max_speed, max_speed)
 
+        # Apply minimum velocity threshold
+        angular_velocity = self._apply_min_velocity(angular_velocity, self._min_angular_velocity)
+
         # Update state for next iteration
         self._prev_yaw_error = yaw_error
         self._prev_angular_velocity = angular_velocity
@@ -239,6 +274,8 @@ class LocalPlanner(Resource):
         first_yaw = quaternion_to_euler(first_pose.orientation).z
         robot_yaw = current_odom.orientation.euler[2]
         yaw_error = normalize_angle(first_yaw - robot_yaw)
+
+        print("yaw_error", yaw_error)
 
         if abs(yaw_error) < self._orientation_tolerance:
             with self._lock:
@@ -295,6 +332,7 @@ class LocalPlanner(Resource):
         # When aligned, drive forward with proportional angular correction
         angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
         linear_velocity = self._speed * (1.0 - abs(yaw_error) / rotation_threshold)
+        linear_velocity = self._apply_min_velocity(linear_velocity, self._min_linear_velocity)
 
         return Twist(
             linear=Vector3(linear_velocity, 0.0, 0.0),
