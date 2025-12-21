@@ -19,6 +19,7 @@ import time
 
 import cv2
 import numpy as np
+import rerun as rr
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     AbstractImage,
@@ -125,6 +126,23 @@ class NumpyImage(AbstractImage):
                 cv2.cvtColor(self.data, code), ImageFormat.GRAY, self.frame_id, self.ts
             )
         raise ValueError(f"Unsupported format: {self.format}")
+
+    def to_rerun(self) -> rr.Image:
+        match self.format:
+            case ImageFormat.RGB:
+                return rr.Image(self.data, color_model="RGB")
+            case ImageFormat.RGBA:
+                return rr.Image(self.data, color_model="RGBA")
+            case ImageFormat.BGR:
+                return rr.Image(self.data, color_model="BGR")
+            case ImageFormat.BGRA:
+                return rr.Image(self.data, color_model="BGRA")
+            case ImageFormat.GRAY | ImageFormat.DEPTH:
+                return rr.Image(self.data, color_model="L")
+            case ImageFormat.GRAY16 | ImageFormat.DEPTH16:
+                return rr.Image(self.data, color_model="L")
+            case _:
+                raise ValueError(f"Unsupported format for Rerun: {self.format}")
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> NumpyImage:
         return NumpyImage(

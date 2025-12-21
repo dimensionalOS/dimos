@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+import rerun as rr
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
@@ -40,6 +41,9 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger(level=logging.INFO)
+
+
+rr.init("rerun_go2", spawn=True)
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -169,9 +173,20 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
+        def onimage(image: Image):
+            self.color_image.publish(image)
+            rr.log(
+                "go2_image",
+                image.to_rerun(),
+            )
+
+        def onodom(odom: PoseStamped):
+            self._publish_tf(odom)
+            rr.log("go2_odom", odom.to_rerun())
+
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
-        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
+        self._disposables.add(self.connection.video_stream().subscribe(onimage))
+        self._disposables.add(self.connection.odom_stream().subscribe(onodom))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self._camera_info_thread = Thread(

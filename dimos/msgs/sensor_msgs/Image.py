@@ -41,6 +41,7 @@ if TYPE_CHECKING:
     import os
 
     from reactivex.observable import Observable
+    import rerun as rr
 
     from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
         AbstractImage,
@@ -315,6 +316,9 @@ class Image(Timestamped):
 
     def to_bgr(self) -> Image:
         return Image(self._impl.to_bgr())
+
+    def to_rerun(self) -> rr.Image:
+        return self._impl.to_rerun()
 
     def to_grayscale(self) -> Image:
         return Image(self._impl.to_grayscale())

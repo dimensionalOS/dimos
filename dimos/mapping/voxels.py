@@ -22,6 +22,7 @@ import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
+import rerun as rr
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -34,6 +35,8 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.spec.map import Global3DMap, GlobalCostmap
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.metrics import timed
+
+rr.init("rerun_go2", spawn=True)
 
 
 @dataclass
@@ -112,6 +115,7 @@ class VoxelGridMapper(Module):
 
     def publish_global_map(self) -> None:
         self.global_map.publish(self.get_global_pointcloud2())
+        self.log_global_rerun()
         if self.config.costmap.publish:
             self.global_costmap.publish(self.get_global_occupancygrid())
 
@@ -193,6 +197,21 @@ class VoxelGridMapper(Module):
             ts=time.time(),
         )
 
+    def log_global_rerun(self) -> None:
+        pcd = self.get_global_pointcloud()
+        if pcd.is_empty():
+            return
+
+        positions = pcd.point["positions"].cpu().numpy()
+        heights = positions[:, 2]
+        normalized = (heights - heights.min()) / (heights.max() - heights.min() + 1e-6)
+        colors = turbo_colormap(normalized)
+
+        rr.log(
+            "global_map",
+            rr.Points3D(positions, colors=colors, radii=self.config.voxel_size * 0.5),
+        )
+
     @simple_mcache
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
@@ -265,6 +284,21 @@ def ensure_tensor_pcd(
     pcd_t = o3d.t.geometry.PointCloud(device=device)
     pcd_t.point["positions"] = o3c.Tensor(pts, o3c.float32, device)
     return pcd_t
+
+
+def turbo_colormap(t: np.ndarray) -> np.ndarray:
+    """Attempt to use matplotlib's turbo colormap, fallback to simple gradient."""
+    try:
+        from matplotlib import colormaps
+
+        cmap = colormaps["turbo"]
+        return (cmap(t)[:, :3] * 255).astype(np.uint8)
+    except ImportError:
+        # Fallback: simple blue->red gradient
+        colors = np.zeros((len(t), 3), dtype=np.uint8)
+        colors[:, 0] = (t * 255).astype(np.uint8)  # R
+        colors[:, 2] = ((1 - t) * 255).astype(np.uint8)  # B
+        return colors
 
 
 def ensure_legacy_pcd(

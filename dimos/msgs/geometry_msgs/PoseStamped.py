@@ -18,6 +18,7 @@ import time
 from typing import BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped  # type: ignore[import-untyped]
+import rerun as rr
 
 try:
     from geometry_msgs.msg import (  # type: ignore[import-untyped]
@@ -154,3 +155,28 @@ class PoseStamped(Pose, Timestamped):
         ros_msg.pose = Pose.to_ros_msg(self)
 
         return ros_msg
+
+    def to_rerun(self, length: float = 0.5) -> rr.Arrows3D:
+        origin = [[self.x, self.y, self.z]]
+        forward = self.orientation.rotate_vector(Vector3(length, 0, 0))
+        vector = [[forward.x, forward.y, forward.z]]
+        return rr.Arrows3D(origins=origin, vectors=vector)
+
+
+def example():
+    """Log a batch of 3D arrows."""
+
+    from math import tau
+
+    import numpy as np
+    import rerun as rr
+
+    rr.init("rerun_example_arrow3d", spawn=True)
+
+    lengths = np.log2(np.arange(0, 100) + 1)
+    angles = np.arange(start=0, stop=tau, step=tau * 0.01)
+    origins = np.zeros((100, 3))
+    vectors = np.column_stack([np.sin(angles) * lengths, np.zeros(100), np.cos(angles) * lengths])
+    colors = [[1.0 - c, c, 0.5, 0.5] for c in angles / tau]
+
+    rr.log("arrows", rr.Arrows3D(origins=origins, vectors=vectors, colors=colors))

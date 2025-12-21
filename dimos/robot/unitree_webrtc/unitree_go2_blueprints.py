@@ -15,6 +15,7 @@
 # limitations under the License.
 
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+import rerun as rr
 
 from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
@@ -24,6 +25,7 @@ from dimos.agents2.skills.navigation import navigation_skill
 from dimos.agents2.skills.speak_skill import speak_skill
 from dimos.agents2.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
+from dimos.core import Module
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
 from dimos.mapping.voxels import mapper
@@ -47,7 +49,15 @@ from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
+# class Rerun(Module):
+#     def start(self):
+#         rr.init("rerun_go2", spawn=True)
+
+#     def stop(self): ...
+
+
 basic = autoconnect(
+    #    Rerun.blueprint(),
     go2_connection(),
     mapper(voxel_size=0.05),
     astar_planner(),
@@ -56,7 +66,10 @@ basic = autoconnect(
     wavefront_frontier_explorer(),
     websocket_vis(),
     foxglove_bridge(),
-).global_config(n_dask_workers=4, robot_model="unitree_go2")
+).global_config(
+    n_dask_workers=7,
+    robot_model="unitree_go2",
+)
 
 standard = autoconnect(
     basic,
