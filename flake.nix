@@ -219,114 +219,9 @@
           fi
           cd "$PROJECT_ROOT"
 
-          # helper
-          confirm_ask() {
-            echo
-            question="$1";answer=""
-            while true; do
-              echo "$question"; read response
-              if [ -z "$response" ]; then
-                echo
-                return 0 # success
-                break
-              fi
-              case "$response" in
-                [Yy]* ) answer='yes'; break;;
-                [Nn]* ) answer='no'; break;;
-                * ) echo "Please answer yes or no.";;
-              esac
-            done
-            if [ "$answer" = "yes" ]
-            then
-                echo
-                return 0 # success
-            fi
-            echo
-            return 1 # failure
-          }
-
           #
           # python & setup
           #
-          # automate the readme
-          dimos_setup() {
-            macos_version="$(sw_vers -productVersion 2>/dev/null || echo "0.0")"
-            macos_major_version="''${macos_version%%.*}"
-            echo "Making sure git lfs is installed..."
-            git lfs install || true
-
-            if confirm_ask "Should I donwload the models and data? (around 17Gb) this will be needed to run the simulation [y/n]"; then
-              echo "Downloading the models and data..."
-              git lfs fetch --all
-              git lfs pull
-              echo "Done!"
-            fi
-
-            # check if no .env
-            if ! [ -f ".env" ]
-            then
-                echo "Setting up .env file..."
-                cp default.env .env
-                echo
-                echo "note: you might want to edit the .env file with your own settings"
-                echo
-            fi
-
-            echo "Setting up virtualenv..."
-            python3 -m venv venv
-            echo "Activating virtualenv..."
-            . venv/bin/activate
-            echo "Installing python dependencies..."
-            pip install -e .
-
-            # if really old MacOS then ignore the lcm dependency (it'll be supplied by nix)
-            if [ "$(uname)" = "Darwin" ] && [ "$macos_major_version" -le 13 ]; then
-              echo "You're on a really old MacOS version. Ignore the errors above (and probably later below) about LCM"
-              echo "Got it? (press enter)";read _
-              rm -f pyproject.original.toml
-              cp pyproject.toml pyproject.original.toml
-              # install dimos-lcm without installing lcm
-              pip install --no-deps 'git+https://github.com/dimensionalOS/dimos-lcm.git'
-              # manually install dependencies of dimos-lcm
-              pip install foxglove-websocket numpy
-              # remove dimos-lcm from pyproject.toml for a moment
-              grep -v '^\s*#' pyproject.original.toml | grep -v "dimos-lcm @ .*"  | grep -v "opencv-python"  > pyproject.toml
-              pip install -e '.[cpu,dev,sim]' 2>&1 | grep -v -E "Could not find a version that satisfies the requirement lcm |ERROR: No matching distribution found for lcm"
-              # restore pyproject.toml
-              rm -f pyproject.toml
-              mv pyproject.original.toml pyproject.toml
-            fi
-
-            # CUDA/CPU dependencies
-            if ! [ "$(uname)" = "Darwin" ] && confirm_ask "Want me to install the cuda dependencies? [y/n]"; then
-              # get around weird "pytorch not found" error that seems to be a detection2 issue (how did that install ever work?)
-              pip install 'detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6' --no-build-isolation
-
-              rm -f pyproject.original.toml
-              cp pyproject.toml pyproject.original.toml
-              # for just a moment, remove facebookresearch/detectron2 from pyproject.toml
-              grep -v '^\s*#' pyproject.original.toml | grep -v "facebookresearch/detectron2" > pyproject.toml
-              pip install -e '.[cuda,dev]'
-              # restore pyproject.toml
-              rm -f pyproject.toml
-              mv pyproject.original.toml pyproject.toml
-            else
-              pip install -e '.[cpu,dev]'
-            fi
-
-            # Mujoco/Simulation dependencies
-            if confirm_ask "Want me to install the optional simulation (mujoco) dependencies? [y/n]"; then
-              pip install -e '.[sim]'
-            fi
-
-            if confirm_ask "Would you like me to run the tests to make sure everything is working? [y/n]"; then
-              echo "Running tests..."
-              python -m pytest -s "$PROJECT_ROOT/dimos/" && echo "tests finished"
-            fi
-
-            echo "here's the main command to run:"
-            echo      dimos --replay run unitree-go2
-          }
           if [ -f "$PROJECT_ROOT/venv/bin/activate" ]; then
             # if there is a venv, load it
             _nix_python_path="$(realpath "$(which python)")"
@@ -352,9 +247,11 @@
             #
             # automate the readme
             #
+            cyan="\e[0;36m"
+            color_reset="\e[0m"
             echo
             echo "I don't see a venv directory"
-            echo "If you'd like me to setup the project for you, run: dimos_setup"
+            echo "If you'd like me to setup the project for you, run: $cyan bin/_dev_init $color_reset"
           fi
         '';
         devShells = {
@@ -367,7 +264,7 @@
           isolated = (xome.simpleMakeHomeFor {
             inherit pkgs;
             pure = true;
-            commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" "openssl" "ssh" ]; # e.g. use external nvim instead of nix's
+            commandPassthrough = [ "sudo" "nvim" "code" "sysctl" "sw_vers" "git" "vim" "emacs" "openssl" "ssh" "osascript" "otool" "hidutil" "logger" "codesign" ]; # e.g. use external nvim instead of nix's
             # commonly needed for MacOS: [ "osascript" "otool" "hidutil" "logger" "codesign" ]
             homeSubpathPassthrough = [ "cache/nix/" ]; # share nix cache between projects
             homeModule = {
