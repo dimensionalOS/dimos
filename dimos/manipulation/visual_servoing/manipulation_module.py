@@ -224,9 +224,9 @@ class ManipulationModule(Module):
         )
         self.place_target_position = None
         self.place_target_coords = None
-        self.pick_height = None
         self.target_object_height = None
         self.pick_height = None  # Store the height where object was picked from
+        self.object_held = False  # Track if we're currently holding an object
         self.retract_distance = retract_distance
         self.place_pose = None
         self.retract_pose = None
@@ -379,8 +379,33 @@ class ManipulationModule(Module):
         elif key_code == ord("3"):
             self.arm.goto_observe(3)
             return "observe"
+        elif key_code == ord("o"):
+            # Place-only operation - place held object at last clicked location
+            if self.object_held and self.place_target_position is not None:
+                logger.info("Executing place-only operation")
+                if self._execute_place_only():
+                    return "place_only_success"
+                else:
+                    return "place_only_failed"
+            elif not self.object_held:
+                logger.warning("No object held - cannot execute place-only")
+                return "no_object_held"
+            else:
+                logger.warning("No place target set - click on table first")
+                return "no_place_target"
 
         return ""
+
+    @rpc
+    def set_place_target_only(self, place_x: int, place_y: int):
+        """Set place target for place-only operation."""
+        if self.latest_depth is not None:
+            logger.info(f"Setting place target for place-only: ({place_x}, {place_y})")
+            self._set_place_target(place_x, place_y)
+            return True
+        else:
+            logger.warning("Cannot set place target: no depth data available")
+            return False
 
     @rpc
     def pick_and_place(
@@ -503,6 +528,72 @@ class ManipulationModule(Module):
         else:
             logger.warning("No valid depth points found at place location")
             self.place_target_position = None
+
+    def _execute_place_only(self) -> bool:
+        """Execute place-only operation using state machine."""
+        # Skip object_held check since user doesn't want to rely on it
+        if self.place_target_position is None:
+            logger.error("Cannot execute place-only: no place target set")
+            return False
+
+        try:
+            logger.info("Starting place-only operation")
+
+            # Get place target pose
+            place_pose = self.get_place_target_pose()
+            if place_pose is None:
+                logger.error("Failed to get place target pose")
+                return False
+
+            if not self.check_within_workspace(place_pose):
+                logger.error("Place target outside workspace")
+                return False
+
+            # Set up state machine for place operation
+            self.task_running = True
+            self.task_failed = False
+            self.object_held = True  # Force object held for place operation
+            self.set_grasp_stage(GraspStage.PLACE)
+
+            # Command the arm to place position
+            logger.info(f"Moving to place position: ({place_pose.position.x:.3f}, {place_pose.position.y:.3f}, {place_pose.position.z:.3f})")
+            self.arm.cmd_ee_pose(place_pose, line_mode=True)
+            self.current_executed_pose = place_pose
+            self.waiting_for_reach = True
+            self.waiting_start_time = time.time()
+
+            # Wait for completion using state machine
+            start_time = time.time()
+            while time.time() - start_time < 30.0:  # 30 second timeout
+                if self.task_failed:
+                    logger.error("Place task marked as failed")
+                    return False
+
+                feedback = self.update()
+                if feedback and feedback.success is not None:
+                    success = feedback.success
+                    if success:
+                        logger.info("Place-only operation completed successfully")
+                        self.object_held = False
+                        # Reset place target after successful placement
+                        self.place_target_position = None
+                        self.place_target_coords = None
+                        self.pick_height = None
+                    else:
+                        logger.error("Place-only operation failed")
+                    return success
+
+                time.sleep(0.1)
+
+            logger.error("Place-only operation timed out")
+            return False
+
+        except Exception as e:
+            logger.error(f"Error in place-only operation: {e}")
+            return False
+        finally:
+            self.task_running = False
+            self.reset_to_idle()
 
     def _execute_pick_and_place(self) -> bool:
         """Execute the pick and place task synchronously."""
@@ -936,6 +1027,7 @@ class ManipulationModule(Module):
                 self.pick_success = self.arm.gripper_object_detected()
                 if self.pick_success:
                     logger.info("Object successfully grasped")
+                    self.object_held = True  # Mark that we're now holding an object
                     # Set up place target if coordinates were provided but depth wasn't available earlier
                     if self.place_target_coords is not None and self.place_target_position is None:
                         if self.latest_depth is not None:
@@ -1165,6 +1257,10 @@ class ManipulationModule(Module):
             z_offset = self.target_object_height / 2.0
             place_pos_world[2] += z_offset + 0.02
             logger.info("Using original height calculation for placement")
+        else:
+            # No height information available - use safe default
+            place_pos_world[2] = 0.06  # 12cm above base as default
+            logger.info("No height information available - using default height: 0.12m")
 
         place_pose_world = Pose(
             position=Vector3(place_pos_world[0], place_pos_world[1], place_pos_world[2]),

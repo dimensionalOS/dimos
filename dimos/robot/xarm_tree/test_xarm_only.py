@@ -172,6 +172,7 @@ def main():
     print("CONTROLS:")
     print("  'm' - Switch mode (cycles through pick_place, servoing)")
     print("  'p' - Execute pick-only (after selecting pick location)")
+    print("  'o' - Execute place-only (after holding object and clicking place location)")
     print("  'r' - Reset everything")
     print("  's' - Stop servoing")
     print("  'g' - Open gripper")
@@ -185,8 +186,13 @@ def main():
     print("  '9' - Pitch up (Y+)")
     print("\nPICK AND PLACE MODE:")
     print("  1. Click to select PICK location")
-    print("  2. Click to select PLACE location (executes task)")
-    print("  OR press 'p' after first click for pick-only")
+    print("  2. Click to select PLACE location (executes pick+place)")
+    print("  OR after first click:")
+    print("    - Press 'p' for pick-only operation")
+    print("    - Press 'o' to use same location for place-only (if holding object)")
+    print("\nPLACE-ONLY WORKFLOW:")
+    print("  Option 1: Click location → Press 'o' (uses click as place target)")
+    print("  Option 2: Pick object → Click new location → Press 'o'")
     print("\nVISUAL SERVOING MODE:")
     print("  Click on object to servo to it")
     print("=" * 60 + "\n")
@@ -296,12 +302,17 @@ def main():
                     pick_location = None
                     place_location = None
                     task_in_progress = False
-                    if robot.manipulation_interface:
-                        robot.manipulation_interface.stop_servoing()
-                    if robot.xarm:
-                        robot.xarm.goto_zero()
-                        robot.xarm.release_gripper()
-                    logger.info("Reset everything")
+                    try:
+                        if robot.manipulation_interface:
+                            robot.manipulation_interface.stop_servoing()
+                        if robot.xarm:
+                            # Use goto_observe instead of goto_zero (safer and faster)
+                            robot.xarm.goto_observe()
+                            robot.xarm.release_gripper()
+                        logger.info("Reset everything")
+                    except Exception as e:
+                        logger.error(f"Error during reset: {e}")
+                        logger.info("Reset variables only (robot commands failed)")
                 elif key == ord("p"):
                     # Execute pick-only if location is set
                     if interface.mode == "pick_place" and pick_location and not task_in_progress:
@@ -314,6 +325,27 @@ def main():
                         logger.warning("Task already in progress")
                     elif interface.mode != "pick_place":
                         logger.warning("Pick-only available in pick_place mode")
+                    else:
+                        logger.warning("Select a pick location first")
+                elif key == ord("o"):
+                    # Set place target using the pick location and execute place-only
+                    if interface.mode == "pick_place" and pick_location and not task_in_progress:
+                        try:
+                            # Use pick location as place target
+                            success = robot.manipulation_interface.set_place_target_only(pick_location[0], pick_location[1])
+                            if success:
+                                logger.info(f"Using pick location {pick_location} as place target")
+                                # Execute place-only via keyboard command
+                                action = robot.handle_keyboard_command('o')
+                                logger.info(f"Place-only result: {action}")
+                            else:
+                                logger.error("Failed to set place target")
+                        except Exception as e:
+                            logger.error(f"Error in place-only operation: {e}")
+                    elif task_in_progress:
+                        logger.warning("Task already in progress")
+                    elif interface.mode != "pick_place":
+                        logger.warning("Place-only available in pick_place mode")
                     else:
                         logger.warning("Select a pick location first")
                 elif key == ord("s"):
