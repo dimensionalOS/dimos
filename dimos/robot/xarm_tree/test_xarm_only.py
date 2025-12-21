@@ -37,7 +37,6 @@ place_location = None
 task_in_progress = False
 
 
-
 def mouse_callback(event, x, y, flags, param):
     """Handle mouse events."""
     global mouse_click
@@ -107,7 +106,9 @@ class TestInterface:
         try:
             logger.info(f"Starting servo to object at ({x}, {y})")
             if self.robot.manipulation_interface:
-                result = self.robot.manipulation_interface.servo_to_object(x, y, target_distance=0.5)
+                result = self.robot.manipulation_interface.servo_to_object(
+                    x, y, target_distance=0.5
+                )
                 if result:
                     logger.info("Reached object successfully")
                 else:
@@ -116,7 +117,6 @@ class TestInterface:
                 logger.error("Manipulation interface not available")
         finally:
             task_in_progress = False
-
 
     def stop(self):
         """Stop the test interface."""

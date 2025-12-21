@@ -433,7 +433,9 @@ class ManipulationModule(Module):
                     self.place_target_coords = None  # Clear since we've processed it
                 else:
                     # Store place coordinates to set up target later when depth is available
-                    logger.info("Storing place coordinates for later processing (no depth data yet)")
+                    logger.info(
+                        "Storing place coordinates for later processing (no depth data yet)"
+                    )
                     self.place_target_coords = (place_x, place_y)
                     self.place_target_position = None  # Will be set when depth becomes available
             else:
@@ -470,7 +472,9 @@ class ManipulationModule(Module):
             radius=10,
         )
 
-        logger.info(f"Found {points_3d_camera.shape[0] if points_3d_camera.size > 0 else 0} depth points at place location")
+        logger.info(
+            f"Found {points_3d_camera.shape[0] if points_3d_camera.size > 0 else 0} depth points at place location"
+        )
 
         if points_3d_camera.size > 0:
             transform = self.tf.get(
@@ -492,7 +496,9 @@ class ManipulationModule(Module):
                 )
                 logger.info(f"Transform from {self.camera_frame_id} to {self.track_frame_id}")
             else:
-                logger.warning(f"No transform available for place location: {self.camera_frame_id} -> {self.track_frame_id}")
+                logger.warning(
+                    f"No transform available for place location: {self.camera_frame_id} -> {self.track_frame_id}"
+                )
                 self.place_target_position = None
         else:
             logger.warning("No valid depth points found at place location")
