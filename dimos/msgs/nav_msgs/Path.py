@@ -31,6 +31,8 @@ try:
 except ImportError:
     ROSPath = None  # type: ignore[assignment, misc]
 
+import numpy as np
+
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.types.timestamped import Timestamped
 
@@ -158,6 +160,13 @@ class Path(Timestamped):
 
         # Use header timestamp for the path
         return cls(ts=header_ts, frame_id=frame_id, poses=poses)
+
+    def to_rerun(self) -> rr.LineStrips3D:
+        """Convert to a Rerun 3D line strip using pose positions."""
+        import rerun as rr
+
+        points = np.array([(pose.x, pose.y, pose.z) for pose in self.poses], dtype=np.float32)
+        return rr.LineStrips3D(strips=[points], radii=0.02 if len(points) else None)
 
     def __str__(self) -> str:
         """String representation of Path."""

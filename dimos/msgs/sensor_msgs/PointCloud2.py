@@ -155,6 +155,12 @@ class PointCloud2(Timestamped):
             and max1[2] >= min2[2]
         )
 
+    def to_rerun(self) -> rr.Points3D:
+        """Convert to a Rerun point cloud."""
+        import rerun as rr
+
+        return rr.Points3D(self.as_numpy())
+
     def lcm_encode(self, frame_id: str | None = None) -> bytes:
         """Convert to LCM PointCloud2 message."""
         msg = LCMPointCloud2()
