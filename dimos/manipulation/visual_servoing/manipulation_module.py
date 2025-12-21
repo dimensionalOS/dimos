@@ -224,7 +224,9 @@ class ManipulationModule(Module):
         )
         self.place_target_position = None
         self.place_target_coords = None
+        self.pick_height = None
         self.target_object_height = None
+        self.pick_height = None  # Store the height where object was picked from
         self.retract_distance = retract_distance
         self.place_pose = None
         self.retract_pose = None
@@ -424,9 +426,16 @@ class ManipulationModule(Module):
 
             # Handle place target
             if place_x is not None and place_y is not None:
-                # Store place coordinates to set up target later when depth is available
-                self.place_target_coords = (place_x, place_y)
-                self.place_target_position = None  # Will be set when depth becomes available
+                # Try to set place target immediately if depth is available
+                if self.latest_depth is not None:
+                    logger.info("Setting place target immediately with current depth data")
+                    self._set_place_target(place_x, place_y)
+                    self.place_target_coords = None  # Clear since we've processed it
+                else:
+                    # Store place coordinates to set up target later when depth is available
+                    logger.info("Storing place coordinates for later processing (no depth data yet)")
+                    self.place_target_coords = (place_x, place_y)
+                    self.place_target_position = None  # Will be set when depth becomes available
             else:
                 self.place_target_coords = None
                 self.place_target_position = None
@@ -452,12 +461,16 @@ class ManipulationModule(Module):
 
     def _set_place_target(self, place_x: int, place_y: int):
         """Set the place target position from pixel coordinates."""
+        logger.info(f"Setting place target from pixel coordinates: ({place_x}, {place_y})")
+
         points_3d_camera = select_points_from_depth(
             self.latest_depth,
             (place_x, place_y),
             self.camera_intrinsics,
             radius=10,
         )
+
+        logger.info(f"Found {points_3d_camera.shape[0] if points_3d_camera.size > 0 else 0} depth points at place location")
 
         if points_3d_camera.size > 0:
             transform = self.tf.get(
@@ -477,8 +490,9 @@ class ManipulationModule(Module):
                 logger.info(
                     f"Place target in world frame: ({place_position[0]:.3f}, {place_position[1]:.3f}, {place_position[2]:.3f})"
                 )
+                logger.info(f"Transform from {self.camera_frame_id} to {self.track_frame_id}")
             else:
-                logger.warning("No transform available for place location")
+                logger.warning(f"No transform available for place location: {self.camera_frame_id} -> {self.track_frame_id}")
                 self.place_target_position = None
         else:
             logger.warning("No valid depth points found at place location")
@@ -620,6 +634,9 @@ class ManipulationModule(Module):
                 logger.debug("Target updated with new 2D detection")
 
             self.last_valid_target = self.pbvs.current_target
+            # Store the pick height for use in placing
+            if self.last_valid_target and self.last_valid_target.bbox:
+                self.pick_height = self.last_valid_target.bbox.center.position.z
 
             # Publish TF for tracked object
             self.tf.publish(
@@ -635,27 +652,47 @@ class ManipulationModule(Module):
         return target_tracked
 
     def calculate_dynamic_grasp_pitch(self, target_pose: Pose) -> float:
-        """Calculate grasp pitch based on distance from robot base and z height."""
+        """Calculate grasp pitch using trigonometry based on object position relative to robot base."""
         position = target_pose.position
-        distance = np.sqrt(position.x**2 + position.y**2 + position.z**2)
-        distance = np.clip(distance, self.workspace_min_radius, self.workspace_max_radius)
 
-        # Determine pitch range based on z height
-        object_z_height = position.z
-        if object_z_height < 0.0:  # Below 5cm
-            min_pitch = 60.0
-            max_pitch = 90.0
-        elif object_z_height <= 0.3:  # Between 5cm and 1m
-            min_pitch = 30.0
-            max_pitch = 50.0
-        else:  # Above 1m - use original values as fallback
-            min_pitch = self.min_grasp_pitch_degrees
-            max_pitch = self.max_grasp_pitch_degrees
+        # Calculate horizontal distance from robot base (X-Y plane)
+        horizontal_distance = np.sqrt(position.x**2 + position.y**2)
 
-        normalized = (distance - self.workspace_min_radius) / (
-            self.workspace_max_radius - self.workspace_min_radius
-        )
-        return max_pitch - (normalized * (max_pitch - min_pitch))
+        # Object height from robot base (Z coordinate)
+        object_height = position.z
+
+        # Use both horizontal distance and height for approach angle calculation
+        # Consider height-based approach first, then modify based on horizontal distance
+
+        if object_height < 0.05:
+            # Very low objects (< 5cm) - need steep approach to reach down
+            base_pitch = 70.0
+        elif object_height < 0.20:
+            # Low to medium height objects (5-20cm) - moderate approach
+            # Linear interpolation: 5cm -> 60°, 20cm -> 45°
+            height_factor = (object_height - 0.05) / 0.15
+            base_pitch = 50.0 - (height_factor * 15.0)  # 60° to 45°
+        else:
+            # Higher objects (> 20cm) - shallower approach
+            base_pitch = 20.0
+
+        # Modify base pitch based on horizontal distance
+        if horizontal_distance < 0.4:
+            # Close horizontally - can use shallower angles
+            distance_adjustment = -10.0  # Make 10° shallower
+        elif horizontal_distance > 0.7:
+            # Far horizontally - need steeper angles to reach
+            distance_adjustment = +15.0  # Make 15° steeper
+        else:
+            # Medium distance - no adjustment
+            distance_adjustment = 0.0
+
+        pitch = base_pitch + distance_adjustment
+
+        # Clamp the result between 20 and 80 degrees as requested
+        pitch = np.clip(pitch, 20.0, 80.0)
+
+        return pitch
 
     def reset_to_idle(self):
         """Reset the manipulation system to IDLE state."""
@@ -676,6 +713,7 @@ class ManipulationModule(Module):
         self.retract_pose = None
         self.place_target_position = None
         self.place_target_coords = None
+        self.pick_height = None
         self.target_object_height = None
         self.reached_poses.clear()  # Clear pose history
         self.pose_adjusted = False
@@ -1110,9 +1148,17 @@ class ManipulationModule(Module):
 
         # Place position is stored in world frame
         place_pos_world = self.place_target_position.copy()
-        if self.target_object_height is not None:
+
+        # Use the pick height if available, otherwise fall back to original logic
+        if self.pick_height is not None:
+            # Place at the same height the object was picked from
+            place_pos_world[2] = self.pick_height
+            logger.info(f"Using pick height for placement: {self.pick_height:.3f}m")
+        elif self.target_object_height is not None:
+            # Fallback to original logic if pick height not available
             z_offset = self.target_object_height / 2.0
-            place_pos_world[2] += z_offset + 0.1
+            place_pos_world[2] += z_offset + 0.02
+            logger.info("Using original height calculation for placement")
 
         place_pose_world = Pose(
             position=Vector3(place_pos_world[0], place_pos_world[1], place_pos_world[2]),
