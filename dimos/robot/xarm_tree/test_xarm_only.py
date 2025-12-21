@@ -332,11 +332,13 @@ def main():
                     if interface.mode == "pick_place" and pick_location and not task_in_progress:
                         try:
                             # Use pick location as place target
-                            success = robot.manipulation_interface.set_place_target_only(pick_location[0], pick_location[1])
+                            success = robot.manipulation_interface.set_place_target_only(
+                                pick_location[0], pick_location[1]
+                            )
                             if success:
                                 logger.info(f"Using pick location {pick_location} as place target")
                                 # Execute place-only via keyboard command
-                                action = robot.handle_keyboard_command('o')
+                                action = robot.handle_keyboard_command("o")
                                 logger.info(f"Place-only result: {action}")
                             else:
                                 logger.error("Failed to set place target")

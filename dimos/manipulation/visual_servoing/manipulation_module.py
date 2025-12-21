@@ -556,7 +556,9 @@ class ManipulationModule(Module):
             self.set_grasp_stage(GraspStage.PLACE)
 
             # Command the arm to place position
-            logger.info(f"Moving to place position: ({place_pose.position.x:.3f}, {place_pose.position.y:.3f}, {place_pose.position.z:.3f})")
+            logger.info(
+                f"Moving to place position: ({place_pose.position.x:.3f}, {place_pose.position.y:.3f}, {place_pose.position.z:.3f})"
+            )
             self.arm.cmd_ee_pose(place_pose, line_mode=True)
             self.current_executed_pose = place_pose
             self.waiting_for_reach = True
