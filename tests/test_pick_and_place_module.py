@@ -358,7 +358,7 @@ def run_robot_with_viz(robot_type: str = "piper", **kwargs):
     # Create robot instance with appropriate parameters
     if robot_type == "xarm":
         robot = robot_class(
-            arm_ip=kwargs.get("arm_ip", "192.168.1.210"),
+            arm_ip=kwargs.get("arm_ip", "10.0.0.210"),
             arm_type=kwargs.get("arm_type", "xarm6"),
             enable_mobile_base_control=kwargs.get("enable_mobile_base_control", False),
         )
@@ -429,7 +429,7 @@ if __name__ == "__main__":
         help="Robot type to use (default: piper, can also be set via ROBOT_TYPE env var)",
     )
     parser.add_argument(
-        "--arm-ip", default="192.168.1.210", help="xArm IP address (only used for xarm robot type)"
+        "--arm-ip", default="10.0.0.210", help="xArm IP address (only used for xarm robot type)"
     )
     parser.add_argument(
         "--arm-type", default="xarm6", help="xArm type (only used for xarm robot type)"
