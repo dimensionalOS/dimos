@@ -40,8 +40,8 @@ class CameraListener(Module):
 
         def _on_frame(img: Image) -> None:
             self._count += 1
+            self.rc.log(f"/{self.__class__.__name__}/color_image", img.to_rerun())
             if self._count % 20 == 0:
-                self.rc.log(f"/{self.__class__.__name__}/color_image", img.to_rerun())
                 print(
                     f"[camera-listener] frame={self._count} ts={img.ts:.3f} "
                     f"shape={img.height}x{img.width}"
@@ -55,12 +55,12 @@ if __name__ == "__main__":
     blueprint = (
         autoconnect(
             CameraModule.blueprint(
-                hardware=lambda: Webcam(
-                    camera_index=0,
-                    frequency=15,
-                    stereo_slice="left",
-                    camera_info=zed.CameraInfo.SingleWebcam,
-                ),
+                # hardware=lambda: Webcam(
+                #     camera_index=0,
+                #     frequency=15,
+                #     stereo_slice="left",
+                #     camera_info=zed.CameraInfo.SingleWebcam,
+                # ),
             ),
             CameraListener.blueprint(),
             Dashboard.blueprint(
