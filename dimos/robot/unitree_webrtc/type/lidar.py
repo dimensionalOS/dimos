@@ -131,8 +131,16 @@ class LidarMessage(PointCloud2):
     #
     #     return self._costmap
 
-    def to_rerun(self):
+    def to_rerun(self, colors=None, color_func=None):
         import rerun as rr  # type: ignore[import-untyped]
 
         points = self.as_numpy()
-        return rr.Points3D(points, radii=self.default_render_size)
+        if type(colors) != type(None):
+            return rr.Points3D(points, radii=self.default_render_size, colors=colors)
+        if color_func is not None:
+            return rr.Points3D(points, radii=self.default_render_size, colors=color_func(points))
+
+        # default to color by height
+        from dimos.dashboard.support.colors import color_by_height
+
+        return rr.Points3D(points, radii=self.default_render_size, colors=color_by_height(points))

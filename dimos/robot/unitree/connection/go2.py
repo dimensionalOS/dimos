@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+import math
 from threading import Thread
 import time
 from typing import Any, Protocol
@@ -21,11 +22,13 @@ from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun as rr
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.dashboard.module import RerunConnection
+from dimos.dashboard.support.colors import color_by_height
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -188,7 +191,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         def _log_and_publish_lidar(msg: LidarMessage) -> None:
             self.lidar.publish(msg)
-            self.rc.log("/lidar", msg.to_rerun())
+            self.rc.log("/lidar", msg.to_rerun(color_func=color_by_height))
 
         def _log_and_publish_image(img: Image) -> None:
             self.color_image.publish(img)
@@ -196,20 +199,35 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         def _log_and_publish_odom(msg: PoseStamped) -> None:
             self._publish_tf(msg)
+            translation = [msg.position.x, msg.position.y, msg.position.z]
+            rotation_xyzw = [
+                msg.orientation.x,
+                msg.orientation.y,
+                msg.orientation.z,
+                msg.orientation.w,
+            ]
             self.rc.log(
                 "/odom",
                 rr.Transform3D(
-                    translation=[msg.position.x, msg.position.y, msg.position.z],
-                    rotation=rr.Quaternion(
-                        xyzw=[  # type: ignore[arg-type]
-                            msg.orientation.x,
-                            msg.orientation.y,
-                            msg.orientation.z,
-                            msg.orientation.w,
-                        ]
-                    ),
+                    translation=translation,
+                    rotation=rr.Quaternion(xyzw=rotation_xyzw),  # type: ignore[arg-type]
                 ),
             )
+            # Render a forward arrow to make the robot pose visible in 3D.
+            self.rc.log(
+                "/odom/pose_arrow",
+                rr.Arrows3D(
+                    origins=[[0, 0, 0]],
+                    vectors=[
+                        (-R.from_quat(rotation_xyzw).apply([1.0, 0.0, 0.0])).tolist(),
+                    ],
+                    radii=0.03,
+                    colors=[[0, 255, 0]],
+                ),
+            )
+            # Wrap into [0, 360) for easier plotting; Rerun can plot scalars directly.
+            # yaw_deg = R.from_quat(rotation_xyzw).as_euler("xyz", degrees=True)[2]
+            # self.rc.log("/odom/yaw_deg", rr.Scalars(math.fmod(yaw_deg + 360.0, 360.0)))
 
         self.connection.start()
 

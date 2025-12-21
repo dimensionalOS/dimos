@@ -117,11 +117,15 @@ class Dashboard(Module):
         # get the rrd_url if it wasn't provided
         print("[Dashboard] starting rerun grpc if needed")
         if not os.environ.get("RERUN_URL", None):
-            rr.serve_grpc(
-                grpc_port=rerun_info.grpc_port,
-                default_blueprint=default_blueprint,
-                server_memory_limit=rerun_info.server_memory_limit,
-            )
+            try:
+                rr.serve_grpc(
+                    grpc_port=rerun_info.grpc_port,
+                    default_blueprint=default_blueprint,
+                    server_memory_limit=rerun_info.server_memory_limit,
+                )
+            except Exception as error:
+                self.logger.error(f"Failed to start Rerun GRPC server: {error}")
+
         thread = start_dashboard_server_thread(
             **self.__dict__, keep_alive=True, rrd_url=rerun_info.url
         )

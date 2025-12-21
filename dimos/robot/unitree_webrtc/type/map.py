@@ -69,10 +69,7 @@ class Map(Module):
 
         def publish(_) -> None:  # type: ignore[no-untyped-def]
             self.global_map.publish(self.to_lidar_message())
-            try:
-                self.rc.log("/global_map", self.to_lidar_message().to_rerun())
-            except Exception:
-                pass
+            self.rc.log("/global_map", self.to_lidar_message().to_rerun(colors=[[0, 0, 255]]))
 
             # temporary, not sure if it belogs in mapper
             # used only for visualizations, not for any algo
