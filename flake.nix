@@ -247,8 +247,8 @@
             #
             # automate the readme
             #
-            cyan="\e[0;36m"
-            color_reset="\e[0m"
+            cyan="$(printf '%b' "\e[0;36m")"
+            color_reset="$(printf '%b' "\e[0m")"
             echo
             echo "I don't see a venv directory"
             echo "If you'd like me to setup the project for you, run: $cyan bin/_dev_init $color_reset"

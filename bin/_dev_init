@@ -12,12 +12,19 @@
 PROJECT_ROOT=$(git rev-parse --show-toplevel)
 cd "$PROJECT_ROOT"
 
+cyan="$(printf '%b' "\e[0;36m")"
+light_green="$(printf '%b' "\e[0;1;32m")"
+color_reset="$(printf '%b' "\e[0m")"
+red="$(printf '%b' "\e[0;31m")"
+newline="$(printf "\n")"
+
 # helper
 confirm_ask() {
     echo
+    echo
     question="$1";answer=""
     while true; do
-        echo "$question"; read response
+        echo $light_green"$question"$color_reset; read response
         if [ -z "$response" ]; then
             echo
             return 0 # success
@@ -39,7 +46,7 @@ confirm_ask() {
 
 macos_version="$(sw_vers -productVersion 2>/dev/null || echo "0.0")"
 macos_major_version="''${macos_version%%.*}"
-echo "Making sure git lfs is installed..."
+echo $light_green"Making sure git lfs is installed..."$color_reset
 git lfs install --skip-smudge
 
 if confirm_ask "Should I donwload the models and data? (around 17Gb) this will be needed to run the simulation [y/n]"; then
@@ -59,7 +66,7 @@ then
     echo
 fi
 
-echo "Setting up virtualenv..."
+echo $light_green"Setting up virtualenv..."$color_reset
 python3 -m venv venv
 echo "Activating virtualenv..."
 . venv/bin/activate
@@ -98,6 +105,7 @@ if ! [ "$(uname)" = "Darwin" ] && confirm_ask "Want me to install the cuda depen
     rm -f pyproject.toml
     mv pyproject.original.toml pyproject.toml
 else
+    echo "installing CPU dependencies"
     pip install -e '.[cpu,dev]'
 fi
 
@@ -108,8 +116,12 @@ fi
 
 if confirm_ask "Would you like me to run the tests to make sure everything is working? [y/n]"; then
     echo "Running tests..."
-    python -m pytest -s "$PROJECT_ROOT/dimos/" && echo "tests finished"
+    echo "$cyan    "'python -m pytest -s "./dimos/"'$color_reset
+    python -m pytest -s "$PROJECT_ROOT/dimos/" && echo "${light_green}${newline}tests finished${color_reset}"
 fi
 
-echo "here's the main example command to run:"
-echo      dimos --replay run unitree-go2
+echo
+echo
+echo $light_green"here's the main example command to run:"$color_reset
+echo "$cyan    dimos --replay run unitree-go2 $color_reset"
+echo
