@@ -169,7 +169,7 @@ class LocalPlanner(Resource):
             raise RuntimeError("No path set for local planner.")
 
         # Determine initial state: skip initial_rotation if already aligned.
-        new_state = "initial_rotation"
+        new_state: PlannerState = "initial_rotation"
         if current_odom is not None and len(path.poses) > 0:
             first_yaw = quaternion_to_euler(path.poses[0].orientation).z
             robot_yaw = current_odom.orientation.euler[2]

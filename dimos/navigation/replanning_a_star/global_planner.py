@@ -54,6 +54,8 @@ class GlobalPlanner(Resource):
     _position_tracker: PositionTracker
     _disposables: CompositeDisposable
     _stop_planner: Event
+    _replan_event: Event
+    _replan_reason: StopMessage | None
     _lock: RLock
     _replan_attempt: int
 
@@ -73,6 +75,8 @@ class GlobalPlanner(Resource):
         self._position_tracker = PositionTracker(self._stuck_time_window)
         self._disposables = CompositeDisposable()
         self._stop_planner = Event()
+        self._replan_event = Event()
+        self._replan_reason = None
         self._lock = RLock()
         self._replan_attempt = 0
 
@@ -90,6 +94,7 @@ class GlobalPlanner(Resource):
         self._local_planner.stop()
         self._disposables.dispose()
         self._stop_planner.set()
+        self._replan_event.set()
 
         if self._thread is not None and self._thread is not current_thread():
             self._thread.join(2)
@@ -147,13 +152,29 @@ class GlobalPlanner(Resource):
         return self._local_planner.debug_navigation
 
     def _thread_entrypoint(self) -> None:
-        """Monitor if the robot is stuck or veers off track."""
+        """Monitor if the robot is stuck, veers off track, or stopped navigating."""
 
         last_id = -1
-        last_time = time.perf_counter()
+        last_stuck_check = time.perf_counter()
 
         while not self._stop_planner.is_set():
-            self._stop_planner.wait(0.1)
+            # Wait for either timeout or replan signal from local planner.
+            replanning_wanted = self._replan_event.wait(timeout=0.1)
+
+            if self._stop_planner.is_set():
+                break
+
+            # Handle stop message from local planner (priority)
+            if replanning_wanted:
+                self._replan_event.clear()
+                with self._lock:
+                    reason = self._replan_reason
+                    self._replan_reason = None
+
+                if reason is not None:
+                    self._handle_stop_message(reason)
+                    last_stuck_check = time.perf_counter()
+                    continue
 
             with self._lock:
                 current_goal = self._current_goal
@@ -176,32 +197,42 @@ class GlobalPlanner(Resource):
                     threshold=self._max_path_deviation,
                 )
                 self._replan_path()
-                last_time = time.perf_counter()
+                last_stuck_check = time.perf_counter()
                 continue
 
             _, new_id = self._local_planner.get_unique_state()
 
             if new_id != last_id:
                 last_id = new_id
-                last_time = time.perf_counter()
+                last_stuck_check = time.perf_counter()
                 continue
 
             if (
-                time.perf_counter() - last_time > self._stuck_time_window
+                time.perf_counter() - last_stuck_check > self._stuck_time_window
                 and self._position_tracker.is_stuck()
             ):
                 logger.info("Robot is stuck. Replanning.")
                 self._replan_path()
-                last_time = time.perf_counter()
+                last_stuck_check = time.perf_counter()
 
     def _on_stopped_navigating(self, stop_message: StopMessage) -> None:
+        with self._lock:
+            self._replan_reason = stop_message
+        # Signal the monitoring thread to do the replanning. This is so we don't have two
+        # threads which could be replanning at the same time.
+        self._replan_event.set()
+
+    def _handle_stop_message(self, stop_message: StopMessage) -> None:
+        # Note, this runs in the monitoring thread.
+
         self.path.on_next(Path())
-        if stop_message == "obstacle_found":
-            logger.info("Replanning path due to obstacle found.")
-            self._replan_path()
-        elif stop_message == "arrived":
+
+        if stop_message == "arrived":
             logger.info("Arrived at goal.")
             self.cancel_goal(arrived=True)
+        elif stop_message == "obstacle_found":
+            logger.info("Replanning path due to obstacle found.")
+            self._replan_path()
         elif stop_message == "error":
             logger.info("Failure in navigation.")
             self._replan_path()
