@@ -16,6 +16,7 @@
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.dashboard.module import RerunConnection
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.navigation.global_planner.algo import astar
@@ -155,10 +156,13 @@ class AstarPlanner(Module):
         # Latest data
         self.latest_costmap: OccupancyGrid | None = None
         self.latest_odom: PoseStamped | None = None
+        self.rc: RerunConnection | None = None
 
     @rpc
     def start(self) -> None:
         super().start()
+
+        self.rc = RerunConnection()
 
         unsub = self.target.subscribe(self._on_target)
         self._disposables.add(Disposable(unsub))
@@ -194,6 +198,11 @@ class AstarPlanner(Module):
             # Add orientations to the path, using the goal's orientation for the final pose
             path = add_orientations_to_path(path, msg.orientation)
             self.path.publish(path)
+            try:
+                if self.rc:
+                    self.rc.log("/global_path", path.to_rerun())
+            except Exception as exc:  # pragma: no cover - best-effort logging
+                logger.debug(f"Failed to log global path: {exc}")
 
     def plan(self, goal: Pose) -> Path | None:
         """Plan a path from current position to goal."""

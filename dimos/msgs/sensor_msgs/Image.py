@@ -402,7 +402,8 @@ class Image(Timestamped):
         rgb = self.to_rgb().to_opencv()
         import rerun as rr
 
-        return rr.Image(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+        # return rr.Image(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
+        return rr.Image(rgb)
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: str | None = None) -> bytes:

@@ -20,10 +20,12 @@ from typing import Any, Protocol
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+import rerun as rr
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.dashboard.module import RerunConnection
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -182,11 +184,38 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     def start(self) -> None:
         super().start()
 
+        self.rc = RerunConnection()
+
+        def _log_and_publish_lidar(msg: LidarMessage) -> None:
+            self.lidar.publish(msg)
+            self.rc.log("/lidar", msg.to_rerun())
+
+        def _log_and_publish_image(img: Image) -> None:
+            self.color_image.publish(img)
+            self.rc.log("/video", img.to_rerun())
+
+        def _log_and_publish_odom(msg: PoseStamped) -> None:
+            self._publish_tf(msg)
+            self.rc.log(
+                "/odom",
+                rr.Transform3D(
+                    translation=[msg.position.x, msg.position.y, msg.position.z],
+                    rotation=rr.Quaternion(
+                        xyzw=[  # type: ignore[arg-type]
+                            msg.orientation.x,
+                            msg.orientation.y,
+                            msg.orientation.z,
+                            msg.orientation.w,
+                        ]
+                    ),
+                ),
+            )
+
         self.connection.start()
 
-        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
-        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
+        self._disposables.add(self.connection.lidar_stream().subscribe(_log_and_publish_lidar))
+        self._disposables.add(self.connection.odom_stream().subscribe(_log_and_publish_odom))
+        self._disposables.add(self.connection.video_stream().subscribe(_log_and_publish_image))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self._camera_info_thread = Thread(

@@ -220,9 +220,10 @@ def start_dashboard_server(config: dict, log: logging.Logger):
             )
 
         log.info("📋 Service Routes:")
+        log.info("   🎛  Main Dashboard:          %s://%s:%s/", protocol, dashboard_host, port)
         if zellij_manager.enabled:
             log.info("   🖥️  Zellij Web Client:     %s://%s:%s/", protocol, dashboard_host, port)
-        log.info(f"   📈 Rerun URL:             {rrd_url.replace('rerun+', '')}")
+        log.info(f"   📈 Rerun GRPC:            {rrd_url.replace('rerun+', '')}")
         log.info(
             "   📱 Session Manager UI:    %s://%s:%s%s/",
             protocol,

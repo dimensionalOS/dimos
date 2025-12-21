@@ -21,6 +21,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.dashboard.module import RerunConnection
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
@@ -61,11 +62,17 @@ class Map(Module):
     def start(self) -> None:
         super().start()
 
+        self.rc = RerunConnection()
+
         unsub = self.lidar.subscribe(self.add_frame)
         self._disposables.add(Disposable(unsub))
 
         def publish(_) -> None:  # type: ignore[no-untyped-def]
             self.global_map.publish(self.to_lidar_message())
+            try:
+                self.rc.log("/global_map", self.to_lidar_message().to_rerun())
+            except Exception:
+                pass
 
             # temporary, not sure if it belogs in mapper
             # used only for visualizations, not for any algo
@@ -77,6 +84,12 @@ class Map(Module):
             )
 
             self.global_costmap.publish(occupancygrid)
+            try:
+                import rerun as rr
+
+                self.rc.log("/global_costmap", rr.DepthImage(occupancygrid.grid.astype("float32")))
+            except Exception:
+                pass
 
         if self.global_publish_interval is not None:
             unsub = interval(self.global_publish_interval).subscribe(publish)  # type: ignore[assignment]
@@ -117,6 +130,12 @@ class Map(Module):
             max_height=0.6,
         ).gradient(max_distance=0.25)
         self.local_costmap.publish(local_costmap)
+        try:
+            import rerun as rr
+
+            self.rc.log("/local_costmap", rr.DepthImage(local_costmap.grid.astype("float32")))
+        except Exception:
+            pass
 
     @property
     def o3d_geometry(self) -> o3d.geometry.PointCloud:

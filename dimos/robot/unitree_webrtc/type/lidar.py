@@ -51,6 +51,7 @@ class LidarMessage(PointCloud2):
     resolution: float  # we lose resolution when encoding PointCloud2
     origin: Vector3
     raw_msg: RawLidarMsg | None
+    default_render_size: float = 0.03
     # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
 
     def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -134,9 +135,4 @@ class LidarMessage(PointCloud2):
         import rerun as rr  # type: ignore[import-untyped]
 
         points = self.as_numpy()
-        # Use resolution as a reasonable visual radius when available.
-        radius = self.resolution if self.resolution is not None else None
-        if radius is not None:
-            return rr.Points3D(points, radii=radius)
-
-        return rr.Points3D(points)
+        return rr.Points3D(points, radii=self.default_render_size)

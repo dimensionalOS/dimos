@@ -27,6 +27,7 @@ from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
+from dimos.dashboard.module import RerunConnection
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.navigation.base import NavigationInterface, NavigationState
@@ -112,6 +113,8 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
         # Recovery server for stuck detection
         self.recovery_server = RecoveryServer(stuck_duration=5.0)
 
+        self.rc: RerunConnection | None = None
+
         logger.info("Navigator initialized with stuck detection")
 
     @rpc
@@ -127,6 +130,8 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
+
+        self.rc = RerunConnection()
 
         # Subscribe to inputs
         unsub = self.odom.subscribe(self._on_odom)
@@ -306,6 +311,32 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                             ts=goal.ts,
                         )
                         self.target.publish(safe_goal)
+                        try:
+                            if self.rc:
+                                import rerun as rr
+
+                                self.rc.log(
+                                    "/global_target",
+                                    rr.Transform3D(
+                                        translation=[
+                                            safe_goal.position.x,
+                                            safe_goal.position.y,
+                                            safe_goal.position.z,
+                                        ],
+                                        rotation=rr.Quaternion(
+                                            xyzw=[  # type: ignore[arg-type]
+                                                safe_goal.orientation.x,
+                                                safe_goal.orientation.y,
+                                                safe_goal.orientation.z,
+                                                safe_goal.orientation.w,
+                                            ]
+                                        ),
+                                    ),
+                                )
+                        except Exception as exc:  # pragma: no cover - best-effort logging
+                            logger.debug(
+                                f"[BehaviorTreeNavigator] rerun failed to log global target: {exc}"
+                            )
                         self.current_goal = safe_goal
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")

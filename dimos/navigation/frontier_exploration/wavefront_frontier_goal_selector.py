@@ -29,6 +29,7 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.dashboard.module import RerunConnection
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 from dimos.utils.logging_config import setup_logger
@@ -148,11 +149,15 @@ class WavefrontFrontierExplorer(Module):
         self.exploration_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
 
+        self.rc: RerunConnection | None = None
+
         logger.info("WavefrontFrontierExplorer module initialized")
 
     @rpc
     def start(self) -> None:
         super().start()
+
+        self.rc = RerunConnection()
 
         unsub = self.global_costmap.subscribe(self._on_costmap)
         self._disposables.add(Disposable(unsub))
@@ -776,6 +781,30 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.ts = self.latest_costmap.ts
 
                 self.goal_request.publish(goal_msg)
+                try:
+                    if self.rc:
+                        import rerun as rr
+
+                        self.rc.log(
+                            "/global_target",
+                            rr.Transform3D(
+                                translation=[
+                                    goal_msg.position.x,
+                                    goal_msg.position.y,
+                                    goal_msg.position.z,
+                                ],
+                                rotation=rr.Quaternion(
+                                    xyzw=[  # type: ignore[arg-type]
+                                        goal_msg.orientation.x,
+                                        goal_msg.orientation.y,
+                                        goal_msg.orientation.z,
+                                        goal_msg.orientation.w,
+                                    ]
+                                ),
+                            ),
+                        )
+                except Exception as exc:  # pragma: no cover - best-effort logging
+                    logger.debug(f"Failed to log exploration goal: {exc}")
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1

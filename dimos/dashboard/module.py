@@ -45,7 +45,7 @@ except Exception:
 class RerunInfo:
     logging_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
     grpc_port: int = int(os.environ.get("RERUN_GRPC_PORT", config["default_rerun_grpc_port"]))
-    server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
+    server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "0%")
     url: str = os.environ.get(
         "RERUN_URL",
         f"rerun+http://127.0.0.1:{os.environ.get('RERUN_GRPC_PORT', config['default_rerun_grpc_port'])!s}/proxy",
@@ -94,14 +94,23 @@ class Dashboard(Module):
         print("""[Dashboard] calling rr.init""")
         rr.init(rerun_info.logging_id, spawn=False, recording_id=rerun_info.logging_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
-        default_blueprint = rrb.Blueprint(
-            rrb.Tabs(
-                rrb.Spatial3DView(
-                    name="Spatial3D",
-                    origin="/",
-                    line_grid=rrb.LineGrid3D(spacing=1.0, stroke_width=1.0),
-                ),
-            )
+        default_blueprint = self.__dict__.get(
+            "rerun_default_blueprint",
+            rrb.Blueprint(
+                rrb.Tabs(
+                    rrb.Horizontal(
+                        rrb.Spatial3DView(
+                            name="WorldView",
+                            origin="/",
+                            line_grid=rrb.LineGrid3D(spacing=1.0, stroke_width=1.0),
+                        ),
+                        rrb.Spatial2DView(
+                            name="ImageView1",
+                            origin="/",
+                        ),
+                    ),
+                )
+            ),
         )
         print("[Dashboard] sending empty blueprint")
         rr.send_blueprint(default_blueprint)
