@@ -44,11 +44,37 @@ class ZellijManager:
         self.terminal_commands = terminal_commands
         self.zellij_layout = zellij_layout
         self.enabled = zellij_layout or (terminal_commands and len(terminal_commands.keys()) > 0)
-        if self.enabled and shutil.which("zellij") is None:
-            self.log.error(
-                "zellij executable not found; cannot open terminals in Dashboard %s", session_name
-            )
-            self.enabled = False
+        # check for tried-to-use but wasnt available
+        if self.enabled:
+            command_exists = shutil.which("zellij") is not None
+            version_is_high_enough = False
+            if command_exists:
+                # version check
+                try:
+                    version_list = (
+                        subprocess.run(
+                            ["zellij", "--version"],
+                            check=True,
+                            capture_output=True,
+                            text=True,
+                        )
+                        .stdout.lower()
+                        .replace("zellij", "")
+                        .strip()
+                        .split(".")
+                    )
+                    if version_list[0] != "0":
+                        version_is_high_enough = True
+                    elif int(version_list[1]) >= 43:
+                        version_is_high_enough = True
+                except:
+                    version_is_high_enough = False
+
+            if not version_is_high_enough:
+                self.log.warning(
+                    "dashboard will not have terminals because zellij is not installed or is too old"
+                )
+                self.enabled = False
 
         if self.zellij_layout and terminal_commands:
             self.log.warning(
@@ -85,15 +111,12 @@ class ZellijManager:
 
     @staticmethod
     def is_server_online() -> bool:
-        try:
-            result = subprocess.run(
-                ["zellij", "web", "--status"],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except FileNotFoundError as exc:
-            raise RuntimeError("zellij not found on PATH") from exc
+        result = subprocess.run(
+            ["zellij", "web", "--status"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
         # Example offline: "Web server is offline, checked: http://127.0.0.1:8082"
         return "online" in result.stdout.lower()
