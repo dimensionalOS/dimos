@@ -162,6 +162,7 @@ class TestHolonomicLocalPlanner:
         # v2 should be between v1 and the raw velocity
         assert vel2.linear.x != first_vx  # Should be different due to filtering
         assert 0 < vel2.linear.x <= planner.v_max  # Should still be positive and within limits
+        planner._close_module()
 
     def test_no_path(self, planner, empty_costmap):
         """Test that planner returns None when no path is available."""
@@ -356,6 +357,7 @@ class TestHolonomicLocalPlanner:
         assert vel.angular.z < 0  # Should turn right (negative angular velocity)
         # X velocity should be relatively small compared to Y
         assert abs(vel.linear.x) < abs(vel.linear.y)  # Lateral movement dominates
+        planner._close_module()
 
     def test_angular_velocity_computation(self, empty_costmap):
         """Test that angular velocity is computed to align with path."""
@@ -401,3 +403,4 @@ class TestHolonomicLocalPlanner:
         assert (
             abs(vel.linear.x - vel.linear.y) < max(vel.linear.x, vel.linear.y) * 0.5
         )  # Within 50% of each other
+        planner._close_module()

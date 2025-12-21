@@ -38,7 +38,8 @@ from dimos.robot.unitree_webrtc.type.map import Map
 
 
 def test_module2d(moment: Moment, publish_lcm):
-    detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
+    module = Detection2DModule()
+    detections2d = module.process_image_frame(moment["image_frame"])
 
     print(detections2d)
 
@@ -65,18 +66,20 @@ def test_module2d(moment: Moment, publish_lcm):
     annotations = detections2d.to_image_annotations()
     publish_lcm({"annotations": annotations, **moment})
 
+    module._close_module()
+
 
 def test_module3d(moment: Moment, publish_lcm):
-    detections2d = Detection2DModule().process_image_frame(moment["image_frame"])
+    module2d = Detection2DModule()
+    detections2d = module2d.process_image_frame(moment["image_frame"])
     pointcloud = moment["lidar_frame"]
     camera_transform = moment["tf"].get("camera_optical", "world")
     if camera_transform is None:
         raise ValueError("No camera_optical transform in tf")
     annotations = detections2d.to_image_annotations()
 
-    detections3d = Detection3DModule(camera_info=moment["camera_info"]).process_frame(
-        detections2d, pointcloud, camera_transform
-    )
+    module3d = Detection3DModule(camera_info=moment["camera_info"])
+    detections3d = module3d.process_frame(detections2d, pointcloud, camera_transform)
 
     publish_lcm(
         {
@@ -133,6 +136,9 @@ def test_module3d(moment: Moment, publish_lcm):
     repr_dict = det.to_repr_dict()
     assert repr_dict["dist"] == "0.88m"
     assert repr_dict["points"] == "81"
+
+    module2d._close_module()
+    module3d._close_module()
 
 
 @pytest.mark.tool

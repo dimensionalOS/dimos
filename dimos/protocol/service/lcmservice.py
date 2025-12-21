@@ -251,11 +251,11 @@ class LCMService(Service[LCMConfig]):
                 print(f"Error checking system configuration: {e}")
 
         self._stop_event.clear()
-        self._thread = threading.Thread(target=self._loop)
+        self._thread = threading.Thread(target=self._lcm_loop)
         self._thread.daemon = True
         self._thread.start()
 
-    def _loop(self) -> None:
+    def _lcm_loop(self) -> None:
         """LCM message handling loop."""
         while not self._stop_event.is_set():
             try:
@@ -271,7 +271,11 @@ class LCMService(Service[LCMConfig]):
         """Stop the LCM loop."""
         self._stop_event.set()
         if self._thread is not None:
-            self._thread.join()
+            # Only join if we're not the LCM thread (avoid "cannot join current thread")
+            if threading.current_thread() != self._thread:
+                self._thread.join(timeout=1.0)
+                if self._thread.is_alive():
+                    logger.warning("LCM thread did not stop cleanly within timeout")
 
         # Clean up LCM instance if we created it
         if not self.config.lcm:

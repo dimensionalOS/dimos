@@ -156,6 +156,7 @@ class SkillContainer:
     def __str__(self) -> str:
         return f"SkillContainer({self.__class__.__name__})"
 
+    @rpc
     def stop(self):
         if self._skill_transport:
             self._skill_transport.stop()
@@ -165,8 +166,21 @@ class SkillContainer:
             self._skill_thread_pool.shutdown(wait=True)
             self._skill_thread_pool = None
 
-        if hasattr(self, "_close_rpc"):
+        # If this container is also a Module, close the module properly
+        if hasattr(self, "_close_module"):
+            self._close_module()
+        elif hasattr(self, "_close_rpc"):
             self._close_rpc()
+
+        if hasattr(self, "_loop") and hasattr(self, "_loop_thread") and self._loop_thread:
+            if self._loop_thread.is_alive():
+                self._loop.call_soon_threadsafe(self._loop.stop)
+                self._loop_thread.join(timeout=2)
+            self._loop = None
+            self._loop_thread = None
+
+        if hasattr(self, "_disposables"):
+            self._disposables.dispose()
 
     # TODO: figure out standard args/kwargs passing format,
     # use same interface as skill coordinator call_skill method
@@ -225,11 +239,13 @@ class SkillContainer:
     @rpc
     def skills(self) -> dict[str, SkillConfig]:
         # Avoid recursion by excluding this property itself
+        # Also exclude known properties that shouldn't be accessed
+        excluded = {"skills", "tf", "rpc", "skill_transport"}
         return {
             name: getattr(self, name)._skill_config
             for name in dir(self)
             if not name.startswith("_")
-            and name != "skills"
+            and name not in excluded
             and hasattr(getattr(self, name), "_skill_config")
         }
 
