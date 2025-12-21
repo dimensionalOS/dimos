@@ -43,7 +43,7 @@ class XArmRobot(Robot):
 
     def __init__(
         self,
-        arm_ip: str = "192.168.1.210",
+        arm_ip: str = "10.0.0.210",
         arm_type: str = "xarm6",
         robot_capabilities: Optional[List[RobotCapability]] = None,
         enable_mobile_base_control: bool = False,
@@ -68,7 +68,7 @@ class XArmRobot(Robot):
         """Start the robot modules."""
         # Start Dimos
         self.dimos = core.start(4)  # Need 4 workers for ZED, xArm, Detection, and Manipulation
-        self.foxglove_bridge = FoxgloveBridge()
+        # self.foxglove_bridge = FoxgloveBridge()
 
         # Enable LCM auto-configuration
         pubsub.lcm.autoconf()
@@ -122,7 +122,7 @@ class XArmRobot(Robot):
         self.manipulation_interface = self.dimos.deploy(
             ManipulationModule,
             arm_module=self.xarm,  # Pass the arm module reference (uses same interface)
-            min_confidence=0.5,
+            min_confidence=0.3,
             max_depth=1.2,
             max_object_size=0.15,
             camera_frame_id="zed_camera_link_optical",  # Use ZED optical frame
@@ -172,7 +172,7 @@ class XArmRobot(Robot):
 
         # Start modules
         logger.info("Starting modules...")
-        self.foxglove_bridge.start()
+        # self.foxglove_bridge.start()
         self.stereo_camera.start()
         self.xarm.start()
         self.manipulation_interface.start()
@@ -262,8 +262,8 @@ class XArmRobot(Robot):
 def main():
     """Main entry point."""
     robot = XArmRobot(
-        arm_ip="10.0.0.197",
-        arm_type="xarm7",
+        arm_ip="10.0.0.210",
+        arm_type="xarm6",
         enable_mobile_base_control=False,
     )
     robot.start()
