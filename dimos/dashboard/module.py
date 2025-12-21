@@ -136,7 +136,10 @@ class Dashboard(Module):
         @self._disposables.add
         @Disposable
         def _cleanup_dashboard_thread():
-            os.unlink(config["dashboard_started_lock"])
+            try:
+                os.unlink(config["dashboard_started_lock"])
+            except FileNotFoundError:
+                pass
             # Attempt to let the server thread shut down gracefully when the module stops.
             if thread.is_alive():
                 thread.join(timeout=1.0)
@@ -144,7 +147,7 @@ class Dashboard(Module):
 
 class RerunConnection:
     def __init__(self) -> None:
-        self.init_id = mp.current_process().pid
+        self._init_id = None
         self.stream = None
 
     def log(self, msg: str, value, **kwargs) -> None:
@@ -155,8 +158,9 @@ class RerunConnection:
                 rerun_info.logging_id, recording_id=rerun_info.logging_id
             )
             self.stream.connect_grpc(rerun_info.url)
+            self._init_id = mp.current_process().pid
 
-        if self.init_id != mp.current_process().pid:
+        if self._init_id != mp.current_process().pid:
             raise Exception(
                 """Looks like you are somehow using RerunConnection to log data to rerun. However, the process/thread where you init RerunConnection is different from where you are logging. A RerunConnection object needs to be created once per process/thread."""
             )

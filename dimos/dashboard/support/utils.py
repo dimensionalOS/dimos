@@ -73,7 +73,7 @@ def make_constants(json_data):
         try:
             with open(f"/tmp/{each.pid}.json") as infile:
                 return json.load(infile)
-        except:
+        except Exception:
             pass
     # if none of the parents have a json file, make one
     with open(f"/tmp/{os.getpid()}.json", "w") as outfile:
