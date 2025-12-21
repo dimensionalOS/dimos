@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from abc import ABC
+from typing import Protocol
 
 from dimos.core import Out
 from dimos.msgs.sensor_msgs import PointCloud2
 
 
-class PointcloudPerception(ABC):
-    pointcloud: Out[PointCloud2] = None  # type: ignore
+class PointcloudPerception(Protocol):
+    pointcloud: Out[PointCloud2]

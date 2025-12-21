@@ -13,20 +13,27 @@
 # limitations under the License.
 
 from dimos.core import In, Module, Out
-from dimos.mapping.spec import Global3DMapSpec
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.navigation.spec import NavSpec
-from dimos.perception.pointcloud.spec import PointcloudPerception
 
 
-class RosNav(Module, PointcloudPerception, Global3DMapSpec, NavSpec):
+class ROSNav(Module):
     goal_req: In[PoseStamped] = None  # type: ignore
     goal_active: Out[PoseStamped] = None  # type: ignore
     path_active: Out[Path] = None  # type: ignore
-
     ctrl: Out[Twist] = None  # type: ignore
 
+    # PointcloudPerception attributes
     pointcloud: Out[PointCloud2] = None  # type: ignore
+
+    # Global3DMapSpec attributes
     global_pointcloud: Out[PointCloud2] = None  # type: ignore
+
+    def navigate_to_target(self, target: PoseStamped) -> None:
+        # TODO: Implement navigation logic
+        pass
+
+    def stop_navigating(self) -> None:
+        # TODO: Implement stop logic
+        pass
