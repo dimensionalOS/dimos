@@ -12,11 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import wraps
 import logging
 import os
-import time
-from typing import Optional
 
 from aiohttp import web
 from yarl import URL
@@ -27,12 +24,6 @@ def env_bool(name: str, default: bool = False) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
-
-
-def normalize_path_prefix(prefix: str) -> str:
-    if not prefix.startswith("/"):
-        prefix = "/" + prefix
-    return prefix.rstrip("/") or "/"
 
 
 def path_matches(prefix: str, path: str) -> bool:
@@ -70,57 +61,6 @@ def ensure_logger(logger: logging.Logger | None, log_name: str = "proxy") -> log
         return logging.getLogger("proxy")
     else:
         return logger
-
-
-def rate_limit(min_interval: float):
-    """
-    Prevent the function from being called more often than once every `min_interval` seconds.
-    """
-
-    def decorator(func):
-        last_called = 0.0
-
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            nonlocal last_called
-            now = time.time()
-            if now - last_called < min_interval:
-                return  # skip call
-            last_called = now
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-def record_message(path: str, val):
-    import base64
-    from pathlib import Path
-    import pickle
-
-    payload = base64.b64encode(pickle.dumps(val)).decode("ascii")
-    line = f'- !!python/object/apply:pickle.loads [!!binary "{payload}"]\n'
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a", encoding="utf-8") as f:
-        f.write(line)
-
-
-def load_messages(log_filepath: str) -> list:
-    """Read a YAML log created return a list of depickled messages."""
-    from pathlib import Path
-
-    import yaml  # PyYAML is a common dependency in the project
-
-    path = Path(log_filepath)
-    if not path.exists():
-        return []
-
-    with open(path, encoding="utf-8") as f:
-        data = yaml.safe_load(f) or []
-
-    # Items are already restored by pickle.loads via the YAML tag
-    return list(data)
 
 
 def make_constants(json_data):
