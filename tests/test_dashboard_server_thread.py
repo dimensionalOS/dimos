@@ -14,6 +14,7 @@
 
 import asyncio
 import importlib
+import json
 import logging
 import sys
 import threading
@@ -179,3 +180,226 @@ def test_serves_html_and_tracks_zellij_availability(monkeypatch, zellij_enabled,
     assert responses["html_args"]["zellij_token"] == "token-xyz"
     assert responses["html_args"]["session_name"].startswith("sess-name")
     assert responses["port"] == 9876
+
+
+def test_health_endpoint_reports_services(monkeypatch, dashboard_server):
+    responses: dict = {}
+
+    class FakeZellijManager:
+        def __init__(self, *, log, session_name, port, terminal_commands, token):
+            self.enabled = True
+
+        async def start_zellij_server(self, token_holder):
+            responses["zellij_started"] = True
+            return None
+
+    def fake_run_app(
+        app, host=None, port=None, ssl_context=None, access_log=None, handle_signals=None
+    ):
+        responses["host"] = host
+        responses["port"] = port
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        route = next(iter(app.router.routes()))
+        try:
+            app._set_loop(loop)  # type: ignore[attr-defined]
+            app.freeze()
+            loop.run_until_complete(app.startup())
+            req = make_mocked_request("GET", "/health", app=app)
+            resp = loop.run_until_complete(route.handler(req))
+            responses["status"] = resp.status
+            responses["payload"] = json.loads(resp.text)
+        finally:
+            loop.run_until_complete(app.shutdown())
+            loop.run_until_complete(app.cleanup())
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    monkeypatch.setattr(dashboard_server, "ZellijManager", FakeZellijManager)
+    monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
+
+    thread = dashboard_server.start_dashboard_server_thread(
+        port=5050,
+        dashboard_host="dash.test",
+        zellij_url="http://zellij:9999",
+        rrd_url="rrd+tcp://rrd:123",
+    )
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+    payload = responses["payload"]
+    assert payload["status"] == "ok"
+    assert payload["services"]["frontend"] == "http://dash.test:5050/zviewer"
+    assert payload["services"]["api"] == "http://dash.test:5050/zviewer/api"
+    assert payload["services"]["rerun"] == "rrd+tcp://rrd:123"
+    assert payload["services"]["zellij"] == "http://zellij:9999"
+    assert responses["status"] == 200
+    assert responses["host"] == "dash.test"
+    assert responses["port"] == 5050
+    assert responses["zellij_started"] is True
+
+
+def test_api_routes_have_cors_and_sessions(monkeypatch, dashboard_server):
+    responses: dict = {}
+
+    class FakeZellijManager:
+        def __init__(self, *, log, session_name, port, terminal_commands, token):
+            self.enabled = True
+
+        async def start_zellij_server(self, token_holder):
+            responses["zellij_started"] = True
+            return None
+
+        async def run_zellij_list_sessions(self):
+            return {"success": True, "sessions": ["alpha"], "count": 1}
+
+    def fake_run_app(
+        app, host=None, port=None, ssl_context=None, access_log=None, handle_signals=None
+    ):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        route = next(iter(app.router.routes()))
+        try:
+            app._set_loop(loop)  # type: ignore[attr-defined]
+            app.freeze()
+            loop.run_until_complete(app.startup())
+
+            req_health = make_mocked_request("GET", "/zviewer/api/health", app=app)
+            resp_health = loop.run_until_complete(route.handler(req_health))
+            responses["health_status"] = resp_health.status
+            responses["health_payload"] = json.loads(resp_health.text)
+            responses["health_cors"] = resp_health.headers.get("Access-Control-Allow-Origin")
+
+            req_sessions = make_mocked_request("GET", "/zviewer/api/sessions", app=app)
+            resp_sessions = loop.run_until_complete(route.handler(req_sessions))
+            responses["sessions_status"] = resp_sessions.status
+            responses["sessions_payload"] = json.loads(resp_sessions.text)
+            responses["sessions_cors"] = resp_sessions.headers.get("Access-Control-Allow-Headers")
+
+            req_options = make_mocked_request("OPTIONS", "/zviewer/api/health", app=app)
+            resp_options = loop.run_until_complete(route.handler(req_options))
+            responses["options_status"] = resp_options.status
+            responses["options_cors"] = resp_options.headers.get("Access-Control-Allow-Origin")
+            responses["options_methods"] = resp_options.headers.get("Access-Control-Allow-Methods")
+        finally:
+            loop.run_until_complete(app.shutdown())
+            loop.run_until_complete(app.cleanup())
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    monkeypatch.setattr(dashboard_server, "ZellijManager", FakeZellijManager)
+    monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
+
+    thread = dashboard_server.start_dashboard_server_thread(
+        dashboard_host="127.0.0.1",
+        zellij_session_name="cors-sess",
+        zellij_token="tok-cors",
+        rrd_url="rrd://noop",
+    )
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+    assert responses["health_status"] == 200
+    assert responses["health_payload"]["status"] == "ok"
+    assert responses["health_cors"] == "*"
+    assert responses["sessions_status"] == 200
+    assert responses["sessions_payload"]["count"] == 1
+    assert responses["sessions_payload"]["sessions"] == ["alpha"]
+    assert responses["sessions_cors"] == "*"
+    assert responses["options_status"] == 204
+    assert responses["options_cors"] == "*"
+    assert "GET" in responses["options_methods"]
+    assert responses["zellij_started"] is True
+
+
+def test_auto_open_launches_browser(monkeypatch, dashboard_server):
+    browser_calls: list = []
+
+    class FakeZellijManager:
+        def __init__(self, *, log, session_name, port, terminal_commands, token):
+            self.enabled = False
+
+    def fake_run_app(
+        app, host=None, port=None, ssl_context=None, access_log=None, handle_signals=None
+    ):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            app._set_loop(loop)  # type: ignore[attr-defined]
+            app.freeze()
+            loop.run_until_complete(app.startup())
+            loop.run_until_complete(asyncio.sleep(0.35))
+        finally:
+            loop.run_until_complete(app.shutdown())
+            loop.run_until_complete(app.cleanup())
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    monkeypatch.setattr(dashboard_server, "ZellijManager", FakeZellijManager)
+    monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
+    monkeypatch.setattr(dashboard_server.webbrowser, "open", lambda url: browser_calls.append(url))
+
+    thread = dashboard_server.start_dashboard_server_thread(
+        auto_open=True,
+        port=4444,
+        dashboard_host="dash.local",
+        terminal_commands={},
+        rrd_url="rrd://noop",
+    )
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+    assert browser_calls == ["http://dash.local:4444/zviewer"]
+
+
+def test_https_context_is_built_and_passed(monkeypatch, dashboard_server):
+    responses: dict = {}
+
+    class FakeSSLContext:
+        def __init__(self, protocol):
+            self.protocol = protocol
+            self.loaded = None
+
+        def load_cert_chain(self, certfile, keyfile):
+            self.loaded = (certfile, keyfile)
+
+    class FakeZellijManager:
+        def __init__(self, *, log, session_name, port, terminal_commands, token):
+            self.enabled = False
+
+    def fake_run_app(
+        app, host=None, port=None, ssl_context=None, access_log=None, handle_signals=None
+    ):
+        responses["host"] = host
+        responses["port"] = port
+        responses["ssl_context"] = ssl_context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            app._set_loop(loop)  # type: ignore[attr-defined]
+            app.freeze()
+            loop.run_until_complete(app.startup())
+        finally:
+            loop.run_until_complete(app.shutdown())
+            loop.run_until_complete(app.cleanup())
+            loop.close()
+            asyncio.set_event_loop(None)
+
+    monkeypatch.setattr(dashboard_server.ssl, "SSLContext", FakeSSLContext)
+    monkeypatch.setattr(dashboard_server, "ZellijManager", FakeZellijManager)
+    monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
+
+    thread = dashboard_server.start_dashboard_server_thread(
+        https_enabled=True,
+        https_key_path="/certs/key.pem",
+        https_cert_path="/certs/cert.pem",
+        port=4433,
+        rrd_url="rrd://noop",
+    )
+    thread.join(timeout=5)
+    assert not thread.is_alive()
+
+    ctx = responses["ssl_context"]
+    assert isinstance(ctx, FakeSSLContext)
+    assert ctx.loaded == ("/certs/cert.pem", "/certs/key.pem")
+    assert responses["host"] == "localhost"
+    assert responses["port"] == 4433
