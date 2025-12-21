@@ -285,7 +285,7 @@ class GlobalPlanner(Resource):
         for size in sizes_to_try:
             costmap = self._navigation_map.make_gradient_costmap(size)
             path = astar(self._global_config.astar_algorithm, costmap, goal, robot_pos)
-            if path:
+            if path and path.poses:
                 logger.info(f"Found path {size}x robot width.")
                 return path
 

@@ -168,28 +168,25 @@ class LocalPlanner(Resource):
         if path is None or path_clearance is None:
             raise RuntimeError("No path set for local planner.")
 
-        # Determine initial state: skip initial_rotation if already aligned
+        # Determine initial state: skip initial_rotation if already aligned.
+        new_state = "initial_rotation"
         if current_odom is not None and len(path.poses) > 0:
             first_yaw = quaternion_to_euler(path.poses[0].orientation).z
             robot_yaw = current_odom.orientation.euler[2]
             initial_yaw_error = normalize_angle(first_yaw - robot_yaw)
             self._prev_yaw_error = initial_yaw_error
-
             if abs(initial_yaw_error) < self._orientation_tolerance:
-                with self._lock:
-                    self._change_state("path_following")
-            else:
-                with self._lock:
-                    self._change_state("initial_rotation")
-        else:
-            with self._lock:
-                self._change_state("initial_rotation")
+                new_state = "path_following"
+
+        with self._lock:
+            self._change_state(new_state)
 
         while not stop_event.is_set():
             start_time = time.perf_counter()
 
-            path_clearance.update_costmap(self._navigation_map.binary_costmap)
-            path_clearance.update_pose_index(self._pose_index)
+            with self._lock:
+                path_clearance.update_costmap(self._navigation_map.binary_costmap)
+                path_clearance.update_pose_index(self._pose_index)
 
             if "DEBUG_NAVIGATION" in os.environ:
                 self.debug_navigation.on_next(
@@ -318,7 +315,10 @@ class LocalPlanner(Resource):
             return self._compute_final_rotation()
 
         closest_index = path_distancer.find_closest_point_index(current_pos)
-        self._pose_index = closest_index
+
+        with self._lock:
+            self._pose_index = closest_index
+
         lookahead_point = path_distancer.find_lookahead_point(closest_index)
 
         direction = lookahead_point - current_pos

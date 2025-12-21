@@ -52,34 +52,41 @@ class PathClearance:
 
     @property
     def mask(self) -> NDArray[np.bool_]:
-        assert self._costmap is not None
+        with self._lock:
+            costmap = self._costmap
+            pose_index = self._pose_index
+
+        assert costmap is not None
 
         if (
             self._last_mask is not None
             and self._last_used_pose is not None
-            and self._costmap.grid.shape == self._last_used_shape
-            and self._pose_distance(self._last_used_pose, self._pose_index)
-            < self._max_distance_cache
+            and costmap.grid.shape == self._last_used_shape
+            and self._pose_distance(self._last_used_pose, pose_index) < self._max_distance_cache
         ):
             return self._last_mask
 
         self._last_mask = make_path_mask(
-            occupancy_grid=self._costmap,
+            occupancy_grid=costmap,
             path=self._path,
             robot_width=self._global_config.robot_width,
-            pose_index=self._pose_index,
+            pose_index=pose_index,
             max_length=self._path_lookup_distance,
         )
 
-        self._last_used_shape = self._costmap.grid.shape
-        self._last_used_pose = self._pose_index
+        self._last_used_shape = costmap.grid.shape
+        self._last_used_pose = pose_index
 
         return self._last_mask
 
     def is_obstacle_ahead(self) -> bool:
-        if self._costmap is None:
+        with self._lock:
+            costmap = self._costmap
+
+        if costmap is None:
             return True
-        return bool(np.any(self._costmap.grid[self.mask] == CostValues.OCCUPIED))
+
+        return bool(np.any(costmap.grid[self.mask] == CostValues.OCCUPIED))
 
     def _pose_distance(self, index1: int, index2: int) -> float:
         p1 = self._path.poses[index1].position

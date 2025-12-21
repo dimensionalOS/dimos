@@ -50,7 +50,7 @@ class PositionTracker:
 
     def add_position(self, pose: PoseStamped) -> None:
         with self._lock:
-            self._timestamps[self._index] = pose.ts
+            self._timestamps[self._index] = time.time()
             self._positions[self._index] = (pose.position.x, pose.position.y)
             self._index = (self._index + 1) % self._max_points
             self._size = min(self._size + 1, self._max_points)
