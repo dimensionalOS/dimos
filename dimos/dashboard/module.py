@@ -16,28 +16,36 @@
 import dataclasses
 import logging
 import os
-from random import choices, random, sample
-import sys
-from typing import Optional
+from pathlib import Path
+import tempfile
+import multiprocessing as mp
 
 from reactivex.disposable import Disposable
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 
-from dimos.core import In, Module, rpc
+from dimos.core import Module, rpc
 from dimos.dashboard.server import env_bool, start_dashboard_server_thread
+from dimos.dashboard.support.utils import make_constants
 
-default_rerun_grpc_port = 9876
+config = make_constants(dict(
+    default_rerun_grpc_port=9876,
+    dashboard_started_lock=tempfile.NamedTemporaryFile(delete=False).name,
+))
 
+try:
+    os.unlink(config['dashboard_started_lock'])
+except Exception as error:
+    pass
 
 @dataclasses.dataclass
 class RerunInfo:
     logging_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
-    grpc_port: int = int(os.environ.get("RERUN_GRPC_PORT", default_rerun_grpc_port))
+    grpc_port: int = int(os.environ.get("RERUN_GRPC_PORT", config['default_rerun_grpc_port']))
     server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "25%")
     url: str = os.environ.get(
         "RERUN_URL",
-        f"rerun+http://127.0.0.1:{os.environ.get('RERUN_GRPC_PORT', default_rerun_grpc_port)!s}/proxy",
+        f"rerun+http://127.0.0.1:{os.environ.get('RERUN_GRPC_PORT', config['default_rerun_grpc_port'])!s}/proxy",
     )
 
 
@@ -105,25 +113,30 @@ class Dashboard(Module):
         thread = start_dashboard_server_thread(
             **self.__dict__, keep_alive=True, rrd_url=rerun_info.url
         )
-
+        # set the lock
+        with open(config['dashboard_started_lock'], 'w+') as the_file:
+            the_file.write("1")
+        
         @self._disposables.add
         @Disposable
         def _cleanup_dashboard_thread():
+            os.unlink(config['dashboard_started_lock'])
             # Attempt to let the server thread shut down gracefully when the module stops.
             if thread.is_alive():
                 thread.join(timeout=1.0)
 
-
-import multiprocessing as mp
-
-
 class RerunConnection:
     def __init__(self) -> None:
         self.init_id = mp.current_process().pid
-        self.stream = rr.RecordingStream(rerun_info.logging_id, recording_id=rerun_info.logging_id)
-        self.stream.connect_grpc(rerun_info.url)
-
+        self.stream = None
+    
     def log(self, msg: str, value, **kwargs) -> None:
+        if not self.stream:
+            if not Path(config['dashboard_started_lock']).exists():
+                return
+            self.stream = rr.RecordingStream(rerun_info.logging_id, recording_id=rerun_info.logging_id)
+            self.stream.connect_grpc(rerun_info.url)
+        
         if self.init_id != mp.current_process().pid:
             raise Exception(
                 """Looks like you are somehow using RerunConnection to log data to rerun. However, the process/thread where you init RerunConnection is different from where you are logging. A RerunConnection object needs to be created once per process/thread."""
