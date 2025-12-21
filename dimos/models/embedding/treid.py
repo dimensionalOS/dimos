@@ -12,62 +12,43 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+from dataclasses import dataclass
+from functools import cached_property
 
 import torch
 import torch.nn.functional as F
-from torchreid import utils as torchreid_utils  # type: ignore[import-not-found]
+from torchreid import utils as torchreid_utils  # type: ignore[import-untyped]
 
-from dimos.models.embedding.base import Embedding, EmbeddingModel
+from dimos.models.base import LocalModel
+from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig
 from dimos.msgs.sensor_msgs import Image
-
-_CUDA_INITIALIZED = False
+from dimos.utils.data import get_data
 
 
 class TorchReIDEmbedding(Embedding): ...
 
 
-class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
+# osnet models downloaded from https://kaiyangzhou.github.io/deep-person-reid/MODEL_ZOO.html
+# into dimos/data/models_torchreid/
+# feel free to add more
+@dataclass
+class TorchReIDModelConfig(EmbeddingModelConfig):
+    model_name: str = "osnet_x1_0"
+
+
+class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding], LocalModel):
     """TorchReID embedding model for person re-identification."""
 
-    def __init__(
-        self,
-        model_name: str = "se_resnext101_32x4d",
-        model_path: Path | str | None = None,
-        device: str | None = None,
-        normalize: bool = False,
-    ) -> None:
-        """
-        Initialize TorchReID model.
+    default_config = TorchReIDModelConfig
+    config: TorchReIDModelConfig
 
-        Args:
-            model_name: Name of the model architecture (e.g., "osnet_x1_0", "osnet_x0_75")
-            model_path: Path to pretrained weights (.pth.tar file)
-            device: Device to run on (cuda/cpu), auto-detects if None
-            normalize: Whether to L2 normalize embeddings
-        """
-        if not TORCHREID_AVAILABLE:  # type: ignore[name-defined]
-            raise ImportError(
-                "torchreid is required for TorchReIDModel. Install it with: pip install torchreid"
-            )
-
-        # Use GPU if available, otherwise fall back to CPU
-        if torch.cuda.is_available():
-            self.device = "cuda"
-        # MacOS Metal performance shaders
-        elif torch.backends.mps.is_available() and torch.backends.mps.is_built():
-            self.device = "mps"
-        else:
-            self.device = "cpu"
-        
-        self.normalize = normalize
-
-        # Load model using torchreid's FeatureExtractor
-        model_path_str = str(model_path) if model_path else ""
-        self.extractor = torchreid_utils.FeatureExtractor(
-            model_name=model_name,
-            model_path=model_path_str,
-            device=self.device,
+    @cached_property
+    def _model(self) -> torchreid_utils.FeatureExtractor:
+        self._ensure_cuda_initialized()
+        return torchreid_utils.FeatureExtractor(
+            model_name=self.config.model_name,
+            model_path=str(get_data("models_torchreid") / (self.config.model_name + ".pth")),
+            device=self.config.device,
         )
 
     def embed(self, *images: Image) -> TorchReIDEmbedding | list[TorchReIDEmbedding]:
@@ -80,15 +61,15 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
 
         # Extract features
         with torch.inference_mode():
-            features = self.extractor(np_images)
+            features = self._model(np_images)
 
             # torchreid may return either numpy array or torch tensor depending on configuration
             if isinstance(features, torch.Tensor):
-                features_tensor = features.to(self.device)
+                features_tensor = features.to(self.config.device)
             else:
-                features_tensor = torch.from_numpy(features).to(self.device)
+                features_tensor = torch.from_numpy(features).to(self.config.device)
 
-            if self.normalize:
+            if self.config.normalize:
                 features_tensor = F.normalize(features_tensor, dim=-1)
 
         # Create embeddings (keep as torch.Tensor on device)
@@ -110,24 +91,17 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
             "Use CLIP or MobileCLIP for text-image similarity."
         )
 
-    def warmup(self) -> None:
-        """Warmup the model with a dummy forward pass."""
-        # WORKAROUND: TorchReID can fail with CUBLAS errors when it's the first model to use CUDA.
-        # Initialize CUDA context with a dummy operation. This only needs to happen once per process.
-        global _CUDA_INITIALIZED
-        if self.device == "cuda" and not _CUDA_INITIALIZED:
-            try:
-                # Initialize CUDA with a small matmul operation to setup cuBLAS properly
-                _ = torch.zeros(1, 1, device="cuda") @ torch.zeros(1, 1, device="cuda")
-                torch.cuda.synchronize()
-                _CUDA_INITIALIZED = True
-            except Exception:
-                # If initialization fails, continue anyway - the warmup might still work
-                pass
+    def start(self) -> None:
+        """Start the model with a dummy forward pass."""
+        super().start()
 
         # Create a dummy 256x128 image (typical person ReID input size) as numpy array
         import numpy as np
 
         dummy_image = np.random.randint(0, 256, (256, 128, 3), dtype=np.uint8)
         with torch.inference_mode():
-            _ = self.extractor([dummy_image])
+            _ = self._model([dummy_image])
+
+    def stop(self) -> None:
+        """Release model and free GPU memory."""
+        super().stop()

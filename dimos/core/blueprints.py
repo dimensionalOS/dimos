@@ -268,10 +268,16 @@ class ModuleBlueprintSet:
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
-    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+    def build(
+        self,
+        global_config: GlobalConfig | None = None,
+        cli_config_overrides: Mapping[str, Any] | None = None,
+    ) -> ModuleCoordinator:
         if global_config is None:
             global_config = GlobalConfig()
-        global_config = global_config.model_copy(update=self.global_config_overrides)
+        global_config = global_config.model_copy(update=dict(self.global_config_overrides))
+        if cli_config_overrides:
+            global_config = global_config.model_copy(update=dict(cli_config_overrides))
 
         self._check_requirements()
         self._verify_no_name_conflicts()
