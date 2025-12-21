@@ -68,6 +68,7 @@ basic = (
     .transports(
         # These are kept the same so that we don't have to change foxglove configs.
         # Although we probably should.
+        # NOTE: at least on MacOS, removing these (even with no foxglove/rerun) causes ram to spike to the point that the go2 --replay crashes with 16Gb of ram
         {
             ("color_image", Image): pSHMTransport(
                 "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
