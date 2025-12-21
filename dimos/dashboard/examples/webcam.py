@@ -19,9 +19,9 @@ from reactivex.disposable import Disposable
 from dimos.core import In, Module, pSHMTransport
 from dimos.core.blueprints import autoconnect
 from dimos.core.core import rpc
-from dimos.hardware.camera.module import CameraModule
 from dimos.dashboard.module import Dashboard, RerunConnection
 from dimos.hardware.camera import zed
+from dimos.hardware.camera.module import CameraModule
 from dimos.hardware.camera.webcam import Webcam
 from dimos.msgs.sensor_msgs import Image
 
@@ -36,7 +36,7 @@ class CameraListener(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        self.rc = RerunConnection() # one connection per process
+        self.rc = RerunConnection()  # one connection per process
 
         def _on_frame(img: Image) -> None:
             self._count += 1
@@ -50,6 +50,7 @@ class CameraListener(Module):
         print("camera subscribing")
         unsub = self.color_image.subscribe(_on_frame)
         self._disposables.add(Disposable(unsub))
+
 
 if __name__ == "__main__":
     blueprint = (

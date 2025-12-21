@@ -129,7 +129,7 @@ class LidarMessage(PointCloud2):
     #         self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
     #
     #     return self._costmap
-    
+
     def to_rerun(self):
         """
         Convert this lidar message to a `rerun.Points3D` archetype.

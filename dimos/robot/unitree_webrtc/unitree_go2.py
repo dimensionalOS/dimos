@@ -25,6 +25,7 @@ from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex import Observable
 from reactivex.disposable import CompositeDisposable
+import rerun as rr
 
 from dimos import core
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
@@ -32,6 +33,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
+from dimos.dashboard.module import Dashboard
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Twist, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -66,8 +68,6 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.monitoring import UtilizationModule
 from dimos.utils.testing import TimedSensorReplay
 from dimos.web.websocket_vis.websocket_vis_module import WebsocketVisModule
-from dimos.dashboard.module import Dashboard
-import rerun as rr
 
 logger = setup_logger()
 
@@ -130,6 +130,7 @@ class ReplayRTC(Resource):
 
 class ConnectionModule(Module):
     """Module that handles robot sensor data, movement commands, and camera information."""
+
     cmd_vel: In[Twist] = None  # type: ignore[assignment]
     odom: Out[PoseStamped] = None  # type: ignore[assignment]
     gps_location: Out[LatLon] = None  # type: ignore[assignment]
@@ -146,7 +147,7 @@ class ConnectionModule(Module):
     _global_config: GlobalConfig
 
     rerun_namespace = "/connection-module"
-    
+
     def __init__(  # type: ignore[no-untyped-def]
         self,
         ip: str | None = None,
@@ -254,7 +255,7 @@ class ConnectionModule(Module):
         if self.odom.transport:
             self.odom.publish(msg)  # type: ignore[no-untyped-call]
             # rr.log(f"{self.rerun_namespace}/odom", msg.to_rerun())
-        
+
         self.tf.publish(Transform.from_pose("base_link", msg))
 
         # Publish camera_link transform
@@ -442,7 +443,8 @@ class UnitreeGo2(Resource):
 
     def _deploy_dashboard(self) -> None:
         """Deploy and configure the dashboard module."""
-        self.dashboard = self._dimos.deploy(Dashboard, 
+        self.dashboard = self._dimos.deploy(
+            Dashboard,
             terminal_commands={
                 "agent-spy": "dimos agentspy",
                 "lcm-spy": "dimos lcmspy",
@@ -450,7 +452,7 @@ class UnitreeGo2(Resource):
             },
             auto_open=True,
         )
-    
+
     def _deploy_connection(self) -> None:
         """Deploy and configure the connection module."""
         self.connection = self._dimos.deploy(  # type: ignore[assignment]

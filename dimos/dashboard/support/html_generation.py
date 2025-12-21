@@ -1,21 +1,46 @@
-from typing import Optional
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from functools import lru_cache
 import json
 import os
-
 import re
+from typing import Optional
 
 DEFAULT_SESSION_NAME = "dimos-dashboard"
 
 path_to_baseline_css = os.path.join(os.path.dirname(__file__), "css_baseline.css")
-with open(path_to_baseline_css,'r') as f:
+with open(path_to_baseline_css) as f:
     css_baseline_contents = f.read()
 
+
 # prevent any kind of html injection (even accidental)
-escape_js_for_html = lambda text: text.replace("</script>", "<\\/script>")
-escape_js_value = lambda text: escape_js_for_html(json.dumps(text))
-escape_css_for_html = lambda text: text.replace("</style>", "\\003C/style>")
+def escape_js_for_html(text):
+    return text.replace("</script>", "<\\/script>")
+
+
+def escape_js_value(text):
+    return escape_js_for_html(json.dumps(text))
+
+
+def escape_css_for_html(text):
+    return text.replace("</style>", "\\003C/style>")
+
+
 session_name_regex = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
 def ensure_session_name_valid(value: str) -> str:
     """
     Note: this function is enforcing two restrictions:
@@ -25,26 +50,43 @@ def ensure_session_name_valid(value: str) -> str:
     if not isinstance(value, str):
         raise TypeError(f"Expected str, got {type(value).__name__}")
     if not session_name_regex.match(value):
-        raise ValueError("session name may only contain letters, numbers, underscores, or dashes. Got "+value)
+        raise ValueError(
+            "session name may only contain letters, numbers, underscores, or dashes. Got " + value
+        )
     if len(value) < 2:
-        raise ValueError("session name must be at least 2 characters long. Got: "+value)
-    
+        raise ValueError("session name must be at least 2 characters long. Got: " + value)
+
     return value
 
+
 @lru_cache(maxsize=2)
-def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optional[str] = None, session_name: str = DEFAULT_SESSION_NAME) -> str:
+def html_code_gen(
+    rrd_url: str,
+    zellij_enabled: bool = True,
+    zellij_token: str | None = None,
+    session_name: str = DEFAULT_SESSION_NAME,
+) -> str:
     # TODO: download "https://esm.sh/@rerun-io/web-viewer@0.27.2" so that rerun works offline
-    
+
     zellij_html = ""
-    zellij_js = "document.body.style.setProperty('--terminal-panel-width', '0vw');" # makes rerun fullscreen
+    zellij_js = "document.body.style.setProperty('--terminal-panel-width', '0vw');"  # makes rerun fullscreen
     if zellij_enabled:
-        zellij_html = """
+        zellij_html = (
+            """
             <div id="terminal-side">
-                <iframe data-is-zellij="true" id="iframe-"""+ensure_session_name_valid(session_name)+"""" src="/"""+ensure_session_name_valid(session_name)+"""" frameborder="0" onload="this.style.opacity = '1'"> </iframe>
+                <iframe data-is-zellij="true" id="iframe-"""
+            + ensure_session_name_valid(session_name)
+            + """" src="/"""
+            + ensure_session_name_valid(session_name)
+            + """" frameborder="0" onload="this.style.opacity = '1'"> </iframe>
             </div>
         """
-        zellij_js = """
-            const zellijToken = """+escape_js_value(zellij_token)+""";
+        )
+        zellij_js = (
+            """
+            const zellijToken = """
+            + escape_js_value(zellij_token)
+            + """;
             const iframes = document.querySelectorAll('iframe[data-is-zellij="true"]')
             await new Promise((r) => setTimeout(r, 200))
             for (let each of iframes) {
@@ -83,15 +125,19 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
                 }
             }
         """
-    
-    return """
+        )
+
+    return (
+        """
 <!DOCTYPE html>
 <html lang="en">
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
         <title>DimOS Viewer</title>
-        <style>"""+escape_css_for_html(css_baseline_contents)+"""</style>
+        <style>"""
+        + escape_css_for_html(css_baseline_contents)
+        + """</style>
         <style>
             body {
                 --terminal-panel-width: 30vw;
@@ -115,7 +161,7 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
                 width: 100%;
                 height: 100%;
                 border: none;
-                margin: 0;  
+                margin: 0;
                 zoom: 0.8;
             }
             body canvas {
@@ -148,19 +194,25 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
     </style>
     </head>
     <body>
-        """+zellij_html+"""
+        """
+        + zellij_html
+        + """
     </body>
     <script type="module">
-        // 
+        //
         // zellij
-        // 
-        """+zellij_js+"""
-        
-        // 
+        //
+        """
+        + zellij_js
+        + """
+
+        //
         // rerun
-        // 
+        //
         import { WebViewer } from "https://esm.sh/@rerun-io/web-viewer@0.27.2";
-        const rrdUrl = """+escape_js_value(rrd_url)+""";
+        const rrdUrl = """
+        + escape_js_value(rrd_url)
+        + """;
         const parentElement = document.body;
         const viewer = new WebViewer();
         console.log("Starting Rerun viewer")
@@ -168,3 +220,4 @@ def html_code_gen(rrd_url: str, zellij_enabled: bool = True, zellij_token: Optio
     </script>
 </html>
 """
+    )
