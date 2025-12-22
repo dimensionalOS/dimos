@@ -22,67 +22,86 @@ A simple joint-space trajectory executor. Does NOT:
 - Call IK
 
 Just samples a trajectory at time t and sends joint positions to the driver.
+
+State Machine:
+    IDLE ──execute()──► EXECUTING ──done──► COMPLETED
+      ▲                     │                    │
+      │                  cancel()             reset()
+      │                     ▼                    │
+      └─────reset()───── ABORTED ◄──────────────┘
+                            │
+                         error
+                            ▼
+                          FAULT ──reset()──► IDLE
 """
 
-# Input topics
-joint_state: In[JointState] = None  # Feedback from arm driver
-robot_state: In[RobotState] = None  # Robot status from arm driver
-trajectory: In[JointTrajectory] = None  # Desired Cartesian pose
-
-# Output topics
-joint_position_command: Out[JointCommand] = None  # To arm driver
+from dimos.core import In, Out
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryStatus
 
 
-def execute_trajectory():
-    """
-    Set and start executing a new trajectory immediately.
-    Returns True if accepted, False if controller busy or traj invalid.
+class JointTrajectoryControllerSpec:
+    """Specification for joint trajectory controller.
+
+    Executes joint trajectories at a fixed rate by sampling and forwarding
+    joint positions to the arm driver.
     """
 
+    # Input topics
+    joint_state: In[JointState]  # Feedback from arm driver
+    robot_state: In[RobotState]  # Robot status from arm driver
+    trajectory: In[JointTrajectory]  # Trajectory to execute (topic-based trigger)
 
-def cancel():
-    """
-    Cancel the currently executing trajectory.
-    Returns True if cancelled, False if no active trajectory.
-    """
+    # Output topics
+    joint_position_command: Out[JointCommand]  # To arm driver
 
+    # RPC Methods
+    def start(self) -> None:
+        """Start the trajectory controller and begin listening for trajectories."""
+        ...
 
-def get_status():
-    """
-    Get the current status of the trajectory execution.
-    Returns a TrajectoryStatus message with details.
-     "state": "IDLE" | "EXECUTING" | "COMPLETED" | "ABORTED" | "FAULT",
-      "progress": float in [0,1],
-      "active_traj_id": Optional[str],
-      "error": Optional[str],
-    """
+    def stop(self) -> None:
+        """Stop the trajectory controller and execution loop."""
+        ...
 
-
-class JointTrajectory(Protocol):
-    """Protocol for a joint trajectory object."""
-
-    duration: float  # Total duration in seconds
-
-    def sample(self, t: float) -> tuple[list[float], list[float]]:
+    def execute_trajectory(self, trajectory: JointTrajectory) -> bool:
         """
-        Sample the trajectory at time t.
+        Set and start executing a new trajectory immediately.
+        If currently executing, preempts and starts new trajectory.
 
         Args:
-            t: Time in seconds (0 <= t <= duration)
+            trajectory: JointTrajectory to execute
 
         Returns:
-            Tuple of (q_ref, qd_ref):
-                - q_ref: Joint positions (radians)
-                - qd_ref: Joint velocities (rad/s)
+            True if accepted, False if in FAULT state or trajectory invalid
         """
         ...
 
+    def cancel(self) -> bool:
+        """
+        Cancel the currently executing trajectory.
+        Robot stops at current position.
 
-class TrajectoryStatus(Protocol):
-    """Status of trajectory execution."""
+        Returns:
+            True if cancelled, False if no active trajectory
+        """
+        ...
 
-    state: TrajectoryState  # Current state
-    progress: float  # Progress 0.0 to 1.0
-    time_elapsed: float  # Seconds since trajectory start
-    time_remaining: float  # Estimated seconds remaining
-    error: str | None  # Error message if FAULT state
+    def reset(self) -> bool:
+        """
+        Reset from FAULT, COMPLETED, or ABORTED state back to IDLE.
+        Required before executing new trajectories after a fault.
+
+        Returns:
+            True if reset successful, False if currently EXECUTING
+        """
+        ...
+
+    def get_status(self) -> TrajectoryStatus:
+        """
+        Get the current status of the trajectory execution.
+
+        Returns:
+            TrajectoryStatus with state, progress, time_elapsed, time_remaining, error
+        """
+        ...
