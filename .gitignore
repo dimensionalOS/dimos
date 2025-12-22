@@ -1,3 +1,7 @@
+# generic ignore pattern
+**/*.ignore
+**/*.ignore.*
+
 .vscode/
 
 # Ignore Python cache files
