@@ -103,6 +103,11 @@ class TrajectorySetter:
         print("  ⚠ Warning: No joint state received (timeout)")
         return False
 
+    def stop(self) -> None:
+        """Stop the LCM transports and clean up resources."""
+        self.trajectory_pub.lcm.stop()
+        self.joint_state_sub.lcm.stop()
+
     def _on_joint_state(self, msg: JointState) -> None:
         """Callback for joint state updates."""
         self.latest_joint_state = msg
