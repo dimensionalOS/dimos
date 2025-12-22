@@ -296,9 +296,6 @@ class JointTrajectoryGenerator:
         # If we scale time by k, we need to scale velocity by 1/k
         # But we also need to ensure we travel the same distance
 
-        # Simpler approach: compute the average velocity needed
-        distance / duration
-
         # For trapezoidal profile, v_avg = v_peak * (1 - t_accel/duration)
         # For simplicity, use a heuristic: scale velocity so trajectory fits
 
