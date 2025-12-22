@@ -186,7 +186,7 @@ def validate_trajectory(
             # Estimate acceleration from position change
             for j in range(len(prev["positions"])):
                 pos_change = curr["positions"][j] - prev["positions"][j]
-                pos_change / dt
+                estimated_vel = pos_change / dt
 
                 # If velocities provided, use them for better estimate
                 if "velocities" in prev and "velocities" in curr:
