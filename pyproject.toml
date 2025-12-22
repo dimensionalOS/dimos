@@ -29,7 +29,7 @@ dependencies = [
     "anthropic>=0.19.0",
     "cerebras-cloud-sdk",
     "moondream",
-    "numpy>=1.26.4,<2.0.0",
+    "numpy>=1.26.4",
     "colorlog==6.9.0",
     "yapf==0.40.2",
     "typeguard",
@@ -42,9 +42,9 @@ dependencies = [
     "Flask>=2.2",
     "python-multipart==0.0.20",
     "reactivex",
-    "rxpy-backpressure @ git+https://github.com/dimensionalOS/rxpy-backpressure.git",
+    "rxpy-backpressure",
     "asyncio==3.4.3",
-    "go2-webrtc-connect @ git+https://github.com/dimensionalOS/go2_webrtc_connect.git",
+    "go2-webrtc-connect",
     "tensorzero==2025.7.5",
     "structlog>=25.5.0,<26",
 
@@ -97,7 +97,7 @@ dependencies = [
     "scipy>=1.15.1",
     "scikit-learn",
     "Pillow",
-    "clip @ git+https://github.com/openai/CLIP.git",
+    "clip",
     "timm>=1.0.15",
     "lap>=0.5.12",
     "opencv-contrib-python==4.10.0.84",
@@ -119,7 +119,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@3aeb724863144a8ba6cf72c9f42761d1007deda4",
+    "dimos-lcm",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",
@@ -151,7 +151,7 @@ manipulation = [
     "pandas>=1.5.2",
     "tqdm>=4.65.0",
     "pyyaml>=6.0",
-    "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
+    "contact-graspnet-pytorch",
 
     # piper arm
     "piper-sdk",
@@ -185,8 +185,8 @@ cuda = [
     "fasttext",
     "lvis",
     "nltk",
-    "clip @ git+https://github.com/openai/CLIP.git",
-    "detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6",
+    "clip",
+    "detectron2",
 ]
 
 dev = [
@@ -229,14 +229,15 @@ sim = [
     "playground>=0.0.5",
 ]
 
-jetson-jp6-cuda126 = [
-    # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels
-    # Note: Alternative torch wheel from docs: https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
-    "torch @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/564/4d4458f1ba159/torch-2.8.0-cp310-cp310-linux_aarch64.whl",
-    "torchvision @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/1c0/3de08a69e9554/torchvision-0.23.0-cp310-cp310-linux_aarch64.whl",
-    "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/4eb/e6a8902dc7708/onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl",
-    "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/731/15133b0ebb2b3/xformers-0.0.33+ac00641.d20250830-cp39-abi3-linux_aarch64.whl",
-]
+# NOTE: jetson-jp6-cuda126 extra is disabled due to 404 errors from wheel URLs
+# The pypi.jetson-ai-lab.io URLs are currently unavailable. Update with working URLs when available.
+# jetson-jp6-cuda126 = [
+#     # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels (aarch64 Linux only)
+#     "torch @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../torch-2.8.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
+#     "torchvision @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../torchvision-0.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
+#     "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
+#     "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../xformers-0.0.33-cp39-abi3-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
+# ]
 
 drone = [
     "pymavlink"
@@ -317,3 +318,53 @@ env = [
 addopts = "-v -p no:warnings -ra --color=yes -m 'not vis and not benchmark and not exclude and not tool and not needsdata and not lcm and not ros and not heavy and not gpu and not module and not tofix'"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+
+[dependency-groups]
+dev = [
+    "ruff==0.14.3",
+    "mypy==1.19.0",
+    "pre_commit==4.2.0",
+    "pytest==8.3.5",
+    "pytest-asyncio==0.26.0",
+    "pytest-mock==3.15.0",
+    "pytest-env==1.1.5",
+    "pytest-timeout==2.4.0",
+    "textual==3.7.1",
+    "requests-mock==1.12.1",
+    "terminaltexteffects==0.12.2",
+    # Types
+    "lxml-stubs>=0.5.1,<1",
+    "pandas-stubs>=2.3.2.250926,<3",
+    "types-PySocks>=1.7.1.20251001,<2",
+    "types-PyYAML>=6.0.12.20250915,<7",
+    "types-colorama>=0.4.15.20250801,<1",
+    "types-defusedxml>=0.7.0.20250822,<1",
+    "types-gevent>=25.4.0.20250915,<26",
+    "types-greenlet>=3.2.0.20250915,<4",
+    "types-jmespath>=1.0.2.20250809,<2",
+    "types-jsonschema>=4.25.1.20251009,<5",
+    "types-networkx>=3.5.0.20251001,<4",
+    "types-protobuf>=6.32.1.20250918,<7",
+    "types-psutil>=7.0.0.20251001,<8",
+    "types-pytz>=2025.2.0.20250809,<2026",
+    "types-simplejson>=3.20.0.20250822,<4",
+    "types-tabulate>=0.9.0.20241207,<1",
+    "types-tensorflow>=2.18.0.20251008,<3",
+    "types-tqdm>=4.67.0.20250809,<5",
+]
+
+[tool.uv]
+# Build dependencies for packages that don't declare them properly
+extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = ["numpy"] }
+
+# Default dependency groups to install
+default-groups = ["dev"]
+
+
+[tool.uv.sources]
+rxpy-backpressure = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git" }
+go2-webrtc-connect = { git = "https://github.com/dimensionalOS/go2_webrtc_connect.git" }
+clip = { git = "https://github.com/openai/CLIP.git" }
+dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
+contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
+detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }
