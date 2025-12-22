@@ -267,7 +267,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if enabled
         """
         # Check motor state
-        return bool(self.native_sdk.mode == 1 and self.native_sdk.mode != 4)
+        return bool(self.native_sdk.mode == 1)
 
     # ============= System State =============
 
