@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 import time
 
 import numpy as np
@@ -42,8 +42,11 @@ class Go2MapperMoment(Go2Moment):
     costmap: OutputMoment[OccupancyGrid] = OutputMoment(LCMTransport("/costmap", OccupancyGrid))
 
 
+MomentFactory = Callable[[float, bool], Go2MapperMoment]
+
+
 @pytest.fixture
-def moment():
+def moment() -> Generator[MomentFactory, None, None]:
     instances: list[Go2MapperMoment] = []
 
     def get_moment(ts: float, publish: bool = True) -> Go2MapperMoment:
@@ -60,31 +63,35 @@ def moment():
 
 
 @pytest.fixture
-def moment1(moment):
+def moment1(moment: MomentFactory) -> Go2MapperMoment:
     return moment(10, False)
 
 
 @pytest.fixture
-def moment2(moment):
+def moment2(moment: MomentFactory) -> Go2MapperMoment:
     return moment(85, False)
 
 
 @pytest.mark.tool
-def two_perspectives_loop(moment):
+def two_perspectives_loop(moment: MomentFactory) -> None:
     while True:
-        moment(10)
+        moment(10, True)
         time.sleep(1)
-        moment(85)
+        moment(85, True)
         time.sleep(1)
 
 
-def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
+def test_carving(
+    mapper: VoxelGridMapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment
+) -> None:
     lidar_frame1 = moment1.lidar.value
-    lidar_frame1_transport = LCMTransport("/prev_lidar", PointCloud2)
+    assert lidar_frame1 is not None
+    lidar_frame1_transport: LCMTransport[PointCloud2] = LCMTransport("/prev_lidar", PointCloud2)
     lidar_frame1_transport.publish(lidar_frame1)
     lidar_frame1_transport.stop()
 
     lidar_frame2 = moment2.lidar.value
+    assert lidar_frame2 is not None
 
     # Debug: check XY overlap
     pts1 = np.asarray(lidar_frame1.pointcloud.points)
@@ -124,7 +131,9 @@ def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
         f"Carving should remove some voxels. Additive: {count_additive}, Carving: {count_carving}"
     )
 
-    additive_global_map = LCMTransport("additive_global_map", PointCloud2)
+    additive_global_map: LCMTransport[PointCloud2] = LCMTransport(
+        "additive_global_map", PointCloud2
+    )
     additive_global_map.publish(additive_mapper.get_global_pointcloud2())
     additive_global_map.stop()
     additive_mapper.stop()
@@ -151,16 +160,19 @@ def test_injest_a_few(mapper: VoxelGridMapper) -> None:
         (0.05, 28199),
     ],
 )
-def test_roundtrip(moment1: Go2MapperMoment, voxel_size, expected_points) -> None:
+def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points: int) -> None:
+    lidar_frame = moment1.lidar.value
+    assert lidar_frame is not None
+
     mapper = VoxelGridMapper(voxel_size=voxel_size)
-    mapper.add_frame(moment1.lidar.value)
+    mapper.add_frame(lidar_frame)
 
     global1 = mapper.get_global_pointcloud2()
     assert len(global1) == expected_points
 
     # loseless roundtrip
     if voxel_size == 0.05:
-        assert len(global1) == len(moment1.lidar.value)
+        assert len(global1) == len(lidar_frame)
         # TODO: we want __eq__ on PointCloud2 - should actually compare
         # all points in both frames
 

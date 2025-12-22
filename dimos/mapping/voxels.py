@@ -115,14 +115,14 @@ class VoxelGridMapper(Module):
         if self.config.costmap.publish:
             self.global_costmap.publish(self.get_global_occupancygrid())
 
-    def size(self):
-        return self._voxel_hashmap.size()
+    def size(self) -> int:
+        return self._voxel_hashmap.size()  # type: ignore[no-any-return]
 
-    def __len__(self):
+    def __len__(self) -> int:
         return self.size()
 
     # @timed()  # TODO: fix thread leak in timed decorator
-    def add_frame(self, frame: LidarMessage) -> None:
+    def add_frame(self, frame: PointCloud2) -> None:
         # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
 

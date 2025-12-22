@@ -14,7 +14,7 @@
 import time
 
 from dimos.core import LCMTransport
-from dimos.msgs.geometry_msgs import PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, Transform
 from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.protocol.tf import TF
 from dimos.robot.unitree.connection import go2
@@ -25,13 +25,17 @@ data_dir = get_data("unitree_go2_office_walk2")
 
 
 class Go2Moment(Moment):
+    lidar: SensorMoment[PointCloud2]
+    video: SensorMoment[Image]
+    odom: SensorMoment[PoseStamped]
+
     def __init__(self) -> None:
         self.lidar = SensorMoment(f"{data_dir}/lidar", LCMTransport("/lidar", PointCloud2))
         self.video = SensorMoment(f"{data_dir}/video", LCMTransport("/color_image", Image))
         self.odom = SensorMoment(f"{data_dir}/odom", LCMTransport("/odom", PoseStamped))
 
     @property
-    def transforms(self):
+    def transforms(self) -> list[Transform]:
         if self.odom.value is None:
             return []
 
@@ -41,7 +45,7 @@ class Go2Moment(Moment):
         odom.ts = time.time()
         return go2.GO2Connection._odom_to_tf(odom)
 
-    def publish(self):
+    def publish(self) -> None:
         t = TF()
         t.publish(*self.transforms)
         t.stop()
@@ -52,7 +56,7 @@ class Go2Moment(Moment):
         camera_info_transport.publish(camera_info)
         camera_info_transport.stop()
 
-        return super().publish()
+        super().publish()
 
 
 def test_moment_seek_and_publish() -> None:
