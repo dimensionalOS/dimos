@@ -306,14 +306,13 @@ class JointTrajectoryController(Module):
         period = 1.0 / self.config.control_frequency
         logger.info(f"Execution loop started at {self.config.control_frequency}Hz")
 
+        next_time = time.perf_counter()
         while not self._stop_event.is_set():
             try:
+                cmd = None
                 with self._lock:
                     # Only process if executing
-                    if self._state != TrajectoryState.EXECUTING:
-                        # Release lock and sleep
-                        pass
-                    else:
+                    if self._state == TrajectoryState.EXECUTING:
                         # Compute elapsed time
                         t = time.time() - self._start_time
 
@@ -327,13 +326,10 @@ class JointTrajectoryController(Module):
                             # Sample trajectory
                             q_ref, qd_ref = self._trajectory.sample(t)
 
-                            # Create and publish command (outside lock would be better but simpler here)
+                            # Create command (publish outside lock for thread safety)
                             cmd = JointCommand(positions=q_ref, timestamp=time.time())
 
-                            # Publish - must release lock first for thread safety
-                            trajectory_active = True
-
-                if trajectory_active if "trajectory_active" in dir() else False:
+                if cmd is not None:
                     try:
                         self.joint_position_command.publish(cmd)
                     except Exception as e:
@@ -342,19 +338,16 @@ class JointTrajectoryController(Module):
                             self._state = TrajectoryState.FAULT
                             self._error_message = f"Publish failed: {e}"
 
-                # Reset flag
-                trajectory_active = False
-
-                # Maintain loop frequency
-                time.sleep(period)
-
             except Exception as e:
                 logger.error(f"Error in execution loop: {e}")
                 with self._lock:
                     if self._state == TrajectoryState.EXECUTING:
                         self._state = TrajectoryState.FAULT
                         self._error_message = str(e)
-                time.sleep(period)
+
+            # Maintain loop frequency (accounts for loop execution time)
+            next_time += period
+            time.sleep(max(0.0, next_time - time.perf_counter()))
 
         logger.info("Execution loop stopped")
 
