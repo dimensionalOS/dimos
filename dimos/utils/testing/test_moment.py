@@ -25,9 +25,10 @@ data_dir = get_data("unitree_go2_office_walk2")
 
 
 class Go2Moment(Moment):
-    lidar = SensorMoment(f"{data_dir}/lidar", LCMTransport("/lidar", PointCloud2))
-    video = SensorMoment(f"{data_dir}/video", LCMTransport("/color_image", Image))
-    odom = SensorMoment(f"{data_dir}/odom", LCMTransport("/odom", PoseStamped))
+    def __init__(self) -> None:
+        self.lidar = SensorMoment(f"{data_dir}/lidar", LCMTransport("/lidar", PointCloud2))
+        self.video = SensorMoment(f"{data_dir}/video", LCMTransport("/color_image", Image))
+        self.odom = SensorMoment(f"{data_dir}/odom", LCMTransport("/odom", PoseStamped))
 
     @property
     def transforms(self):

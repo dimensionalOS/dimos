@@ -44,16 +44,19 @@ class Go2MapperMoment(Go2Moment):
 
 @pytest.fixture
 def moment():
-    moment = Go2MapperMoment()
+    instances: list[Go2MapperMoment] = []
 
-    def get_moment(ts: float, publish: bool = True) -> Go2Moment:
-        moment.seek(ts)
+    def get_moment(ts: float, publish: bool = True) -> Go2MapperMoment:
+        m = Go2MapperMoment()
+        m.seek(ts)
         if publish:
-            moment.publish()
-        return moment
+            m.publish()
+        instances.append(m)
+        return m
 
     yield get_moment
-    moment.stop()
+    for m in instances:
+        m.stop()
 
 
 @pytest.fixture
@@ -63,7 +66,7 @@ def moment1(moment):
 
 @pytest.fixture
 def moment2(moment):
-    return moment(10, False)
+    return moment(85, False)
 
 
 @pytest.mark.tool
@@ -82,6 +85,19 @@ def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
     lidar_frame1_transport.stop()
 
     lidar_frame2 = moment2.lidar.value
+
+    # Debug: check XY overlap
+    pts1 = np.asarray(lidar_frame1.pointcloud.points)
+    pts2 = np.asarray(lidar_frame2.pointcloud.points)
+
+    voxel_size = mapper.config.voxel_size
+    xy1 = set(map(tuple, (pts1[:, :2] / voxel_size).astype(int)))
+    xy2 = set(map(tuple, (pts2[:, :2] / voxel_size).astype(int)))
+
+    overlap = xy1 & xy2
+    print(f"\nFrame1 XY columns: {len(xy1)}")
+    print(f"Frame2 XY columns: {len(xy2)}")
+    print(f"Overlapping XY columns: {len(overlap)}")
 
     # Carving mapper (default, carve_columns=True)
     mapper.add_frame(lidar_frame1)
