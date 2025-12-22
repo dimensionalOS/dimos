@@ -63,7 +63,10 @@ class NavigationModule(Module, Node):
     soft_stop: In[Int8] = None
 
     pointcloud: Out[PointCloud2] = None
+    global_pointcloud: Out[PointCloud2] = None
+
     goal_active: Out[PoseStamped] = None
+    path_active: Out[Path] = None
     goal_reached: Out[Bool] = None
     odom: Out[Odometry] = None
     cmd_vel: Out[TwistStamped] = None
@@ -108,6 +111,10 @@ class NavigationModule(Module, Node):
         self.registered_scan_sub = self.create_subscription(
             ROSPointCloud2, "/registered_scan", self._on_ros_registered_scan, 10
         )
+        self.global_pointcloud_sub = self.create_subscription(
+            ROSPointCloud2, "/terrain_map_ext", self._on_ros_global_pointcloud, 10
+        )
+        self.path_sub = self.create_subscription(ROSPath, "/path", self._on_ros_path, 10)
 
         logger.info("NavigationModule initialized with ROS2 node")
 
@@ -165,6 +172,14 @@ class NavigationModule(Module, Node):
     def _on_ros_registered_scan(self, msg: ROSPointCloud2):
         dimos_pointcloud = PointCloud2.from_ros_msg(msg)
         self.pointcloud.publish(dimos_pointcloud)
+
+    def _on_ros_global_pointcloud(self, msg: ROSPointCloud2):
+        dimos_pointcloud = PointCloud2.from_ros_msg(msg)
+        self.global_pointcloud.publish(dimos_pointcloud)
+
+    def _on_ros_path(self, msg: ROSPath):
+        dimos_path = Path.from_ros_msg(msg)
+        self.path_active.publish(dimos_path)
 
     def _on_ros_tf(self, msg: ROSTFMessage):
         ros_tf = TFMessage.from_ros_msg(msg)
@@ -446,9 +461,13 @@ class NavBot(Resource):
         self.navigation_module.pointcloud.transport = core.LCMTransport(
             "/pointcloud_map", PointCloud2
         )
+        self.navigation_module.global_pointcloud.transport = core.LCMTransport(
+            "/global_pointcloud", PointCloud2
+        )
         self.navigation_module.goal_active.transport = core.LCMTransport(
             "/goal_active", PoseStamped
         )
+        self.navigation_module.path_active.transport = core.LCMTransport("/path_active", Path)
         self.navigation_module.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
         self.navigation_module.odom.transport = core.LCMTransport("/odom", Odometry)
         self.navigation_module.cmd_vel.transport = core.LCMTransport("/cmd_vel", TwistStamped)
