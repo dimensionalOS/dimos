@@ -214,7 +214,6 @@ class LocalPlanner(Resource):
                 cmd_vel = None
 
             if cmd_vel is not None:
-                print(cmd_vel.linear.x, cmd_vel.linear.y, cmd_vel.angular.z)
                 self.cmd_vel.on_next(cmd_vel)
 
             elapsed = time.perf_counter() - start_time
@@ -271,8 +270,6 @@ class LocalPlanner(Resource):
         first_yaw = quaternion_to_euler(first_pose.orientation).z
         robot_yaw = current_odom.orientation.euler[2]
         yaw_error = normalize_angle(first_yaw - robot_yaw)
-
-        print("yaw_error", yaw_error)
 
         if abs(yaw_error) < self._orientation_tolerance:
             with self._lock:
