@@ -25,7 +25,7 @@ from reactivex.subject import ReplaySubject, Subject
 from dimos.stream.audio.base import AbstractAudioTransform, AudioEvent
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.audio.key_recorder")
+logger = setup_logger()
 
 
 class KeyRecorder(AbstractAudioTransform):

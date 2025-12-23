@@ -15,7 +15,7 @@
 from enum import Enum
 import inspect
 import sys
-from typing import Optional, get_args, get_origin
+from typing import Any, Optional, get_args, get_origin
 
 import typer
 
@@ -23,6 +23,8 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
+from dimos.robot.cli.topic import topic_echo, topic_send
+from dimos.utils.logging_config import setup_exception_handler
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
 
@@ -88,8 +90,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
 
     def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
         ctx = kwargs.pop("ctx")
-        overrides = {k: v for k, v in kwargs.items() if v is not None}
-        ctx.obj = GlobalConfig().model_copy(update=overrides)
+        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
 
     callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
 
@@ -108,7 +109,9 @@ def run(
     ),
 ) -> None:
     """Start a robot blueprint"""
-    config: GlobalConfig = ctx.obj
+    setup_exception_handler()
+
+    cli_config_overrides: dict[str, Any] = ctx.obj
     pubsub.lcm.autoconf()  # type: ignore[attr-defined]
     blueprint = get_blueprint_by_name(robot_type.value)
 
@@ -116,14 +119,15 @@ def run(
         loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]  # type: ignore[attr-defined]
         blueprint = autoconnect(blueprint, *loaded_modules)
 
-    dimos = blueprint.build(global_config=config)
+    dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
     dimos.loop()
 
 
 @main.command()
 def show_config(ctx: typer.Context) -> None:
     """Show current config settings and their values."""
-    config: GlobalConfig = ctx.obj
+    cli_config_overrides: dict[str, Any] = ctx.obj
+    config = GlobalConfig().model_copy(update=cli_config_overrides)
 
     for field_name, value in config.model_dump().items():
         typer.echo(f"{field_name}: {value}")
@@ -171,6 +175,26 @@ def humancli(ctx: typer.Context) -> None:
 
     sys.argv = ["humancli", *ctx.args]
     humancli_main()
+
+
+topic_app = typer.Typer(help="Topic commands for pub/sub")
+main.add_typer(topic_app, name="topic")
+
+
+@topic_app.command()
+def echo(
+    topic: str = typer.Argument(..., help="Topic name to listen on (e.g., /goal_request)"),
+    type_name: str = typer.Argument(..., help="Message type (e.g., PoseStamped)"),
+) -> None:
+    topic_echo(topic, type_name)
+
+
+@topic_app.command()
+def send(
+    topic: str = typer.Argument(..., help="Topic name to send to (e.g., /goal_request)"),
+    message_expr: str = typer.Argument(..., help="Python expression for the message"),
+) -> None:
+    topic_send(topic, message_expr)
 
 
 if __name__ == "__main__":

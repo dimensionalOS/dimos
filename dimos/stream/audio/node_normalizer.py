@@ -28,7 +28,7 @@ from dimos.stream.audio.volume import (
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.stream.audio.node_normalizer")
+logger = setup_logger()
 
 
 class AudioNormalizer(AbstractAudioTransform):

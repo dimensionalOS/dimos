@@ -32,7 +32,7 @@ from dimos.robot.unitree.connection import g1
 from dimos.robot.unitree.connection.g1 import G1Connection
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class G1ZedDeployResult(TypedDict):
@@ -63,7 +63,9 @@ def deploy_g1_monozed(dimos: DimosCluster) -> CameraModule:
         ),
     )
 
-    camera.image.transport = pSHMTransport("/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE)
+    camera.color_image.transport = pSHMTransport(
+        "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+    )
     camera.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
     camera.start()
     return camera

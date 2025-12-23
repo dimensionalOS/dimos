@@ -22,15 +22,15 @@ from dimos.msgs.sensor_msgs import Joy
 from dimos.msgs.std_msgs.Bool import Bool
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 # TODO: Remove, deprecated
 class NavigationModule(Module):
-    goal_pose: Out[PoseStamped] = None  # type: ignore[assignment]
-    goal_reached: In[Bool] = None  # type: ignore[assignment]
-    cancel_goal: Out[Bool] = None  # type: ignore[assignment]
-    joy: Out[Joy] = None  # type: ignore[assignment]
+    goal_pose: Out[PoseStamped]
+    goal_reached: In[Bool]
+    cancel_goal: Out[Bool]
+    joy: Out[Joy]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         """Initialize NavigationModule."""
@@ -81,7 +81,7 @@ class NavigationModule(Module):
         )
 
         if self.joy:
-            self.joy.publish(joy_msg)  # type: ignore[no-untyped-call]
+            self.joy.publish(joy_msg)
             logger.info("Setting autonomy mode via Joy message")
 
     @rpc
@@ -103,9 +103,9 @@ class NavigationModule(Module):
 
         self.goal_reach = None
         self._set_autonomy_mode()
-        self.goal_pose.publish(pose)  # type: ignore[no-untyped-call]
+        self.goal_pose.publish(pose)
         time.sleep(0.2)
-        self.goal_pose.publish(pose)  # type: ignore[no-untyped-call]
+        self.goal_pose.publish(pose)
 
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -130,7 +130,7 @@ class NavigationModule(Module):
 
         if self.cancel_goal:
             cancel_msg = Bool(data=True)
-            self.cancel_goal.publish(cancel_msg)  # type: ignore[no-untyped-call]
+            self.cancel_goal.publish(cancel_msg)
             return True
 
         return False

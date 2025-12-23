@@ -54,6 +54,22 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 - **DimOS Interface / Development Tools**
   - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
 
+## MacOS Installation
+
+```sh
+# Install Nix
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+
+# clone the repository
+git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
+
+# setup the environment (follow the prompts after nix develop)
+cd dimos
+nix develop
+
+# You should be able to follow the instructions below as well for a more manual installation
+```
+
 ---
 ## Python Installation
 Tested on Ubuntu 22.04/24.04
@@ -83,10 +99,10 @@ pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pyt
 #### Install dependencies
 ```bash
 # CPU only (reccomended to attempt first)
-pip install -e .[cpu,dev]
+pip install -e '.[cpu,dev]'
 
 # CUDA install
-pip install -e .[cuda,dev]
+pip install -e '.[cuda,dev]'
 
 # Copy and configure environment variables
 cp default.env .env
@@ -99,27 +115,27 @@ pytest -s dimos/
 
 #### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
-CONNECTION_TYPE=replay python dimos/robot/unitree_webrtc/unitree_go2.py
+dimos --replay run unitree-go2
 ```
 
 #### Test Dimensional with a simulated UnitreeGo2 in MuJoCo (no robot required)
 ```bash
-pip install -e .[sim]
+pip install -e '.[sim]'
 export DISPLAY=:1 # Or DISPLAY=:0 if getting GLFW/OpenGL X11 errors
-CONNECTION_TYPE=mujoco python dimos/robot/unitree_webrtc/unitree_go2.py
+dimos --simulation run unitree-go2
 ```
 
 #### Test Dimensional with a real UnitreeGo2 over WebRTC
 ```bash
 export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/unitree_go2.py
+dimos run unitree-go2
 ```
 
 #### Test Dimensional with a real UnitreeGo2 running Agents
 *OpenAI / Alibaba keys required*
 ```bash
 export ROBOT_IP=192.168.X.XXX # Add the robot IP address
-python dimos/robot/unitree_webrtc/run_agents2.py
+dimos run unitree-go2-agentic
 ```
 ---
 

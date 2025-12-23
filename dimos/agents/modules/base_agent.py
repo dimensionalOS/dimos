@@ -29,7 +29,7 @@ try:
 except ImportError:
     from dimos.agents.modules.base import BaseAgent
 
-logger = setup_logger("dimos.agents.modules.base_agent")
+logger = setup_logger()
 
 
 class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
@@ -40,8 +40,8 @@ class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
     """
 
     # Module I/O - AgentMessage based communication
-    message_in: In[AgentMessage] = None  # type: ignore[assignment]  # Primary input for AgentMessage
-    response_out: Out[AgentResponse] = None  # type: ignore[assignment]  # Output AgentResponse objects
+    message_in: In[AgentMessage]  # Primary input for AgentMessage
+    response_out: Out[AgentResponse]  # Output AgentResponse objects
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -125,7 +125,7 @@ class BaseAgentModule(BaseAgent, Module):  # type: ignore[misc]
         # Connect response output
         if self.response_out:
             disposable = self.response_subject.subscribe(
-                lambda response: self.response_out.publish(response)  # type: ignore[no-untyped-call]
+                lambda response: self.response_out.publish(response)
             )
             self._module_disposables.append(disposable)
 

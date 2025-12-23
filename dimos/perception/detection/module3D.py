@@ -37,23 +37,23 @@ from dimos.utils.reactive import backpressure
 
 
 class Detection3DModule(Detection2DModule):
-    image: In[Image] = None  # type: ignore
-    pointcloud: In[PointCloud2] = None  # type: ignore
+    image: In[Image]
+    pointcloud: In[PointCloud2]
 
-    detections: Out[Detection2DArray] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
-    scene_update: Out[SceneUpdate] = None  # type: ignore
+    detections: Out[Detection2DArray]
+    annotations: Out[ImageAnnotations]
+    scene_update: Out[SceneUpdate]
 
     # just for visualization,
     # emits latest pointclouds of detected objects in a frame
-    detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
+    detected_pointcloud_0: Out[PointCloud2]
+    detected_pointcloud_1: Out[PointCloud2]
+    detected_pointcloud_2: Out[PointCloud2]
 
     # just for visualization, emits latest top 3 detections in a frame
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
+    detected_image_0: Out[Image]
+    detected_image_1: Out[Image]
+    detected_image_2: Out[Image]
 
     detection_3d_stream: Observable[ImageDetections3DPC] | None = None
 
@@ -192,7 +192,7 @@ class Detection3DModule(Detection2DModule):
             pointcloud_topic = getattr(self, "detected_pointcloud_" + str(index))
             pointcloud_topic.publish(detection.pointcloud)
 
-        self.scene_update.publish(detections.to_foxglove_scene_update())  # type: ignore[no-untyped-call]
+        self.scene_update.publish(detections.to_foxglove_scene_update())
 
 
 def deploy(  # type: ignore[no-untyped-def]
@@ -206,7 +206,7 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector = dimos.deploy(Detection3DModule, camera_info=camera.hardware_camera_info, **kwargs)  # type: ignore[attr-defined]
 
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)

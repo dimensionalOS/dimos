@@ -15,16 +15,32 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import time
 from typing import TYPE_CHECKING, Generic, TypeVar
 
 import numpy as np
 import torch
 
+from dimos.models.base import HuggingFaceModelConfig, LocalModelConfig
 from dimos.types.timestamped import Timestamped
 
 if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import Image
+
+
+@dataclass
+class EmbeddingModelConfig(LocalModelConfig):
+    """Base config for embedding models."""
+
+    normalize: bool = True
+
+
+@dataclass
+class HuggingFaceEmbeddingModelConfig(HuggingFaceModelConfig):
+    """Base config for HuggingFace-based embedding models."""
+
+    normalize: bool = True
 
 
 class Embedding(Timestamped):
@@ -81,7 +97,6 @@ class EmbeddingModel(ABC, Generic[E]):
     """Abstract base class for embedding models supporting vision and language."""
 
     device: str
-    normalize: bool = True
 
     @abstractmethod
     def embed(self, *images: Image) -> E | list[E]:
