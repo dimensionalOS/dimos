@@ -14,6 +14,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import platform
+
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos.agents2.agent import llm_agent
@@ -47,15 +49,36 @@ from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
+# mac has some issue with high bandwidth UDP
+# so we use pSHMTransport for color_image
+# (could we adress this on system config layer?)
+mac = autoconnect(
+    foxglove_bridge(
+        shm_channels=[
+            "/color_image#sensor_msgs.Image",
+        ]
+    ),
+).transports(
+    {
+        ("color_image", Image): pSHMTransport(
+            "color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        ),
+    }
+)
+
+
+linux = autoconnect(foxglove_bridge())
+
+
 basic = autoconnect(
+    linux if platform.system() == "Linux" else mac,
+    websocket_vis(),
     go2_connection(),
     mapper(voxel_size=0.05),
     astar_planner(),
     holonomic_local_planner(),
     behavior_tree_navigator(),
     wavefront_frontier_explorer(),
-    websocket_vis(),
-    foxglove_bridge(),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")
 
 standard = autoconnect(
@@ -67,19 +90,19 @@ standard = autoconnect(
 
 standard_with_jpeglcm = standard.transports(
     {
-        ("color_image", Image): JpegLcmTransport("/go2/color_image", Image),
+        ("color_image", Image): JpegLcmTransport("/color_image", Image),
     }
 )
 
 standard_with_jpegshm = autoconnect(
     standard.transports(
         {
-            ("color_image", Image): JpegShmTransport("/go2/color_image", quality=75),
+            ("color_image", Image): JpegShmTransport("/color_image", quality=75),
         }
     ),
     foxglove_bridge(
         jpeg_shm_channels=[
-            "/go2/color_image#sensor_msgs.Image",
+            "/color_image#sensor_msgs.Image",
         ]
     ),
 )

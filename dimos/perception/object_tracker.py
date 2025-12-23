@@ -17,7 +17,6 @@ import threading
 import time
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 # Import LCM messages
 from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
@@ -31,7 +30,11 @@ from reactivex.disposable import Disposable
 from dimos.core import In, Module, ModuleConfig, Out, rpc
 from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs import (
+    CameraInfo,  # type: ignore[import-untyped]
+    Image,
+    ImageFormat,
+)
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.protocol.tf import TF
