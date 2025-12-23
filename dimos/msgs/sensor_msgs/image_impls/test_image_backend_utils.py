@@ -17,7 +17,6 @@ import pytest
 
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 
-# Print whether we're running in CPU or GPU mode
 try:
     import cupy as cp
 
