@@ -293,7 +293,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         # Dask's IO loop and Profile threads are daemon threads
         # that will be cleaned up when the process exits
         # This is needed, solves race condition in CI thread check
-        time.sleep(0.5)
+        time.sleep(0.1)
 
     dask_client.deploy = deploy
     dask_client.check_worker_memory = check_worker_memory
