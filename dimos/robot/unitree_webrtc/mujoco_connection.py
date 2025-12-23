@@ -63,7 +63,7 @@ class MujocoConnection:
 
         # Trigger the download of the mujoco_menajerie package. This is so it
         # doesn't trigger in the mujoco process where it can time out.
-        import mujoco_playground
+        import mujoco_playground  # noqa: F401
 
         self.global_config = global_config
         self.process: subprocess.Popen[bytes] | None = None
