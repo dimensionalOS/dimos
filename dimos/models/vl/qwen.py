@@ -40,7 +40,6 @@ class QwenVlModel(VlModel):
 
         img_base64 = image.to_base64()
 
-        img_base64 = image.to_base64()
         response = self._client.chat.completions.create(
             model=self._model_name,
             messages=[
