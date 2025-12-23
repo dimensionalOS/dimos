@@ -22,8 +22,6 @@ Provides RPC methods for querying robot state including:
 - Firmware version
 """
 
-from typing import Optional
-
 from dimos.core import rpc
 from dimos.msgs.sensor_msgs import JointState, RobotState
 from dimos.utils.logging_config import setup_logger

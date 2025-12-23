@@ -17,7 +17,6 @@
 from dataclasses import dataclass, field
 from threading import Lock
 import time
-from typing import Optional
 
 
 @dataclass

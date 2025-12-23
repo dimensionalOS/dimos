@@ -31,7 +31,6 @@ Pattern matches: interactive_control.py + sample_trajectory_generator.py
 """
 
 import signal
-import sys
 import time
 
 from dimos import core

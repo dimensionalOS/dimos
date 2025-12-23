@@ -16,7 +16,7 @@
 
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from ..sdk_interface import BaseManipulatorSDK
 from ..spec import ManipulatorCapabilities

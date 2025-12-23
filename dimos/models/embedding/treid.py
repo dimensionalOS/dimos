@@ -59,7 +59,7 @@ class TorchReIDModel(EmbeddingModel[TorchReIDEmbedding]):
             self.device = "mps"
         else:
             self.device = "cpu"
-        
+
         self.normalize = normalize
 
         # Load model using torchreid's FeatureExtractor

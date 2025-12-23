@@ -14,8 +14,6 @@
 
 """Validation utilities for manipulator drivers."""
 
-from typing import Optional
-
 
 def validate_joint_limits(
     positions: list[float],

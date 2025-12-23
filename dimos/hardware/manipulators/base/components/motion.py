@@ -17,7 +17,7 @@
 import logging
 from queue import Queue
 import time
-from typing import Any, Optional
+from typing import Any
 
 from ..driver import Command
 from ..sdk_interface import BaseManipulatorSDK
@@ -186,7 +186,7 @@ class StandardMotionComponent:
 
                 # Check velocity limits
                 if self.capabilities.max_joint_velocity:
-                    valid, error = validate_velocity_limits(
+                    valid, _error = validate_velocity_limits(
                         velocities, self.capabilities.max_joint_velocity, self.velocity_scale
                     )
                     if not valid:

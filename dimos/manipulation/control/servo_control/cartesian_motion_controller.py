@@ -30,7 +30,6 @@ from dataclasses import dataclass
 import math
 import threading
 import time
-from typing import Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig

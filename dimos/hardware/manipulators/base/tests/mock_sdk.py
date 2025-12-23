@@ -26,7 +26,6 @@ Features:
 
 from dataclasses import dataclass, field
 import math
-from typing import Any
 
 from ..sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 

@@ -31,7 +31,7 @@ class MoondreamVlModel(VlModel):
             self._device = "mps"
         else:
             self._device = "cpu"
-        
+
         self._dtype = dtype
 
     @cached_property

@@ -15,12 +15,12 @@
 """Standard status monitoring component for manipulator drivers."""
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
-from ..sdk_interface import BaseManipulatorSDK, ManipulatorInfo
+from ..sdk_interface import BaseManipulatorSDK
 from ..spec import ManipulatorCapabilities
 from ..utils import SharedState
 from . import component_api

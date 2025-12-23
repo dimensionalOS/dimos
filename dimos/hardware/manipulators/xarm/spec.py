@@ -16,8 +16,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from dimos.core import In, Out
-from dimos.msgs.geometry_msgs import PoseStamped, Twist, WrenchStamped
-from dimos.msgs.nav_msgs import Path
+from dimos.msgs.geometry_msgs import WrenchStamped
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 
 
