@@ -165,7 +165,7 @@ def test_string_representation():
     print("✓ Joy string representation test passed")
 
 
-@pytest.mark.skipif(not ROS_AVAILABLE, reason="ROS not available")
+@pytest.mark.ros
 def test_ros_conversion():
     """Test conversion to/from ROS Joy messages."""
     print("Testing Joy ROS conversion...")
