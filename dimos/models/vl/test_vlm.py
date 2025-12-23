@@ -11,7 +11,7 @@ from dimos.models.vl.moondream import MoondreamVlModel
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type import ImageDetections2D
-from dimos.utils.cli.plot import Plot, bar
+from dimos.utils.cli.plot import bar
 from dimos.utils.data import get_data
 
 if TYPE_CHECKING:

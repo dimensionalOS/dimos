@@ -16,6 +16,7 @@ from collections import deque
 
 import numpy as np
 
+from dimos.mapping.occupancy.gradient import gradient
 from dimos.msgs.geometry_msgs import Vector3, VectorLike
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
 
@@ -47,6 +48,15 @@ def find_safe_goal(
 
     if algorithm == "bfs":
         return _find_safe_goal_bfs(
+            costmap,
+            goal,
+            cost_threshold,
+            min_clearance,
+            max_search_distance,
+            connectivity_check_radius,
+        )
+    elif algorithm == "bfs_contiguous":
+        return _find_safe_goal_bfs_contiguous(
             costmap,
             goal,
             cost_threshold,
@@ -140,6 +150,73 @@ def _find_safe_goal_bfs(
                 if (nx, ny) not in visited:
                     visited.add((nx, ny))
                     queue.append((nx, ny, dist + 1))
+
+    return None
+
+
+def _find_safe_goal_bfs_contiguous(
+    costmap: OccupancyGrid,
+    goal: VectorLike,
+    cost_threshold: int,
+    min_clearance: float,
+    max_search_distance: float,
+    connectivity_check_radius: int,
+) -> Vector3 | None:
+    """
+    BFS-based search for nearest safe goal position, only following passable cells.
+    Unlike regular BFS, this only expands through cells with occupancy < 100,
+    ensuring the path doesn't cross through impassable obstacles.
+
+    Pros:
+    - Guarantees finding the closest safe position reachable without crossing obstacles
+    - Ensures connectivity to the goal through passable space
+    - Good for finding safe positions in the same "room" or connected area
+
+    Cons:
+    - May not find nearby safe spots if they're on the other side of a wall
+    - Slightly slower than regular BFS due to additional checks
+    """
+
+    # Convert goal to grid coordinates
+    goal_grid = costmap.world_to_grid(goal)
+    gx, gy = int(goal_grid.x), int(goal_grid.y)
+
+    # Convert distances to grid cells
+    clearance_cells = int(np.ceil(min_clearance / costmap.resolution))
+    max_search_cells = int(np.ceil(max_search_distance / costmap.resolution))
+
+    # BFS queue and visited set
+    queue = deque([(gx, gy, 0)])
+    visited = set([(gx, gy)])
+
+    # 8-connected neighbors
+    neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1)]
+
+    while queue:
+        x, y, dist = queue.popleft()
+
+        # Check if we've exceeded max search distance
+        if dist > max_search_cells:
+            break
+
+        # Check if position is valid
+        if _is_position_safe(
+            costmap, x, y, cost_threshold, clearance_cells, connectivity_check_radius
+        ):
+            # Convert back to world coordinates
+            return costmap.grid_to_world((x, y))
+
+        # Add neighbors to queue
+        for dx, dy in neighbors:
+            nx, ny = x + dx, y + dy
+
+            # Check bounds
+            if 0 <= nx < costmap.width and 0 <= ny < costmap.height:
+                if (nx, ny) not in visited:
+                    # Only expand through passable cells (occupancy < 100)
+                    if costmap.grid[ny, nx] < 100:
+                        visited.add((nx, ny))
+                        queue.append((nx, ny, dist + 1))
 
     return None
 
@@ -310,8 +387,8 @@ def _find_safe_goal_gradient(
     # Create gradient if needed (assuming costmap might already be a gradient)
     if np.all((costmap.grid == 0) | (costmap.grid == 100) | (costmap.grid == -1)):
         # Binary map, create gradient
-        gradient_map = costmap.gradient(
-            obstacle_threshold=cost_threshold, max_distance=min_clearance * 2
+        gradient_map = gradient(
+            costmap, obstacle_threshold=cost_threshold, max_distance=min_clearance * 2
         )
         grid = gradient_map.grid
     else:
