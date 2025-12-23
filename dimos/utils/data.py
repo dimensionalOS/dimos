@@ -23,7 +23,7 @@ import tempfile
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 def _get_user_data_dir() -> Path:
