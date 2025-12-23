@@ -58,7 +58,12 @@ class MujocoConnection:
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
 
+        # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
+
+        # Trigger the download of the mujoco_menajerie package. This is so it
+        # doesn't trigger in the mujoco process where it can time out.
+        import mujoco_playground
 
         self.global_config = global_config
         self.process: subprocess.Popen[bytes] | None = None
