@@ -30,7 +30,7 @@ from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.vector import Vector
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.skills.visual_navigation", level=logging.DEBUG)
+logger = setup_logger(level=logging.DEBUG)
 
 
 class FollowHuman(AbstractRobotSkill):

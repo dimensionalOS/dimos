@@ -29,7 +29,7 @@ from dimos.protocol.skill.skill import skill
 from dimos.types.robot_location import RobotLocation
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class NavigationSkillContainer(SkillModule):
@@ -54,8 +54,8 @@ class NavigationSkillContainer(SkillModule):
         "WavefrontFrontierExplorer.is_exploration_active",
     ]
 
-    color_image: In[Image] = None  # type: ignore[assignment]
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
+    color_image: In[Image]
+    odom: In[PoseStamped]
 
     def __init__(self) -> None:
         super().__init__()

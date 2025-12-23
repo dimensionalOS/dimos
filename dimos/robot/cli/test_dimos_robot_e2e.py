@@ -143,6 +143,7 @@ def human_input():
 
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
+@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
 def test_dimos_robot_demo_e2e(lcm_spy, dimos_robot_call, human_input) -> None:
     lcm_spy.wait_for_topic("/rpc/DemoCalculatorSkill/set_LlmAgent_register_skills/res")
     lcm_spy.wait_for_topic("/rpc/HumanInput/start/res")

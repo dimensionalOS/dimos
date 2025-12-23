@@ -20,7 +20,7 @@ from typing import TypeAlias
 from dimos_lcm.sensor_msgs import Joy as LCMJoy  # type: ignore[import-untyped]
 
 try:
-    from sensor_msgs.msg import Joy as ROSJoy  # type: ignore[attr-defined]
+    from sensor_msgs.msg import Joy as ROSJoy  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSJoy = None  # type: ignore[assignment, misc]
 

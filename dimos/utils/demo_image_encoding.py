@@ -40,7 +40,7 @@ from dimos.utils.fast_image_generator import random_image
 
 
 class EmitterModule(Module):
-    image: Out[Image] = None  # type: ignore[assignment]
+    image: Out[Image]
 
     _thread: threading.Thread | None = None
     _stop_event: threading.Event | None = None
@@ -65,12 +65,12 @@ class EmitterModule(Module):
             total = time.time() - start
             print("took", total)
             open_file.write(str(time.time()) + "\n")
-            self.image.publish(Image(data=data))  # type: ignore[no-untyped-call]
+            self.image.publish(Image(data=data))
         open_file.close()
 
 
 class ReceiverModule(Module):
-    image: In[Image] = None  # type: ignore[assignment]
+    image: In[Image]
 
     _open_file = None
 

@@ -29,13 +29,13 @@ from dimos.utils.logging_config import setup_logger
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi  # type: ignore[import-not-found]
+import gi  # type: ignore[import-untyped,import-not-found]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-not-found]
+from gi.repository import GLib, Gst  # type: ignore[import-untyped,import-not-found]
 
-logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 Gst.init(None)
 
@@ -43,7 +43,7 @@ Gst.init(None)
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
 
-    video: Out[Image] = None  # type: ignore[assignment]
+    video: Out[Image]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -286,7 +286,7 @@ class GstreamerCameraModule(Module):
 
             # Publish the image
             if self.video and self.running:
-                self.video.publish(image_msg)  # type: ignore[no-untyped-call]
+                self.video.publish(image_msg)
 
             # Log statistics periodically
             self.frame_count += 1

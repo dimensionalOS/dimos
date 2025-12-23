@@ -58,9 +58,9 @@ class EmbeddingIDSystem(IDSystem):
         # Call model factory (class or function) to get model instance
         self.model = model()
 
-        # Call warmup if available
-        if hasattr(self.model, "warmup"):
-            self.model.warmup()
+        # Call start if available (Resource interface)
+        if hasattr(self.model, "start"):
+            self.model.start()
 
         self.padding = padding
         self.similarity_threshold = similarity_threshold

@@ -21,7 +21,7 @@ from dimos.types.manipulation import TranslationConstraint, Vector  # type: igno
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
-logger = setup_logger("dimos.skills.translation_constraint_skill")
+logger = setup_logger()
 
 
 class TranslationConstraintSkill(AbstractManipulationSkill):

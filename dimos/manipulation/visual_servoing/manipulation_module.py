@@ -51,7 +51,7 @@ from dimos.utils.transform_utils import (
     pose_to_matrix,
 )
 
-logger = setup_logger("dimos.manipulation.visual_servoing.manipulation_module")
+logger = setup_logger()
 
 
 class GraspStage(Enum):
@@ -107,12 +107,12 @@ class ManipulationModule(Module):
     """
 
     # LCM inputs
-    rgb_image: In[Image] = None  # type: ignore[assignment]
-    depth_image: In[Image] = None  # type: ignore[assignment]
-    camera_info: In[CameraInfo] = None  # type: ignore[assignment]
+    rgb_image: In[Image]
+    depth_image: In[Image]
+    camera_info: In[CameraInfo]
 
     # LCM outputs
-    viz_image: Out[Image] = None  # type: ignore[assignment]
+    viz_image: Out[Image]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -904,7 +904,7 @@ class ManipulationModule(Module):
         try:
             viz_rgb = cv2.cvtColor(viz_image, cv2.COLOR_BGR2RGB)
             msg = Image.from_numpy(viz_rgb)
-            self.viz_image.publish(msg)  # type: ignore[no-untyped-call]
+            self.viz_image.publish(msg)
         except Exception as e:
             logger.error(f"Error publishing visualization: {e}")
 
