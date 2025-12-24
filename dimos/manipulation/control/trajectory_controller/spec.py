@@ -24,30 +24,41 @@ A simple joint-space trajectory executor. Does NOT:
 Just samples a trajectory at time t and sends joint positions to the driver.
 """
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from dimos.core import In, Out
+    from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+    from dimos.msgs.trajectory_msgs import JointTrajectory as JointTrajectoryMsg, TrajectoryState
+
 # Input topics
-joint_state: In[JointState] = None  # Feedback from arm driver
-robot_state: In[RobotState] = None  # Robot status from arm driver
-trajectory: In[JointTrajectory] = None  # Desired Cartesian pose
+joint_state: In[JointState] | None = None  # Feedback from arm driver
+robot_state: In[RobotState] | None = None  # Robot status from arm driver
+trajectory: In[JointTrajectoryMsg] | None = None  # Desired trajectory
 
 # Output topics
-joint_position_command: Out[JointCommand] = None  # To arm driver
+joint_position_command: Out[JointCommand] | None = None  # To arm driver
 
 
-def execute_trajectory():
+def execute_trajectory() -> bool:
     """
     Set and start executing a new trajectory immediately.
     Returns True if accepted, False if controller busy or traj invalid.
     """
+    ...
 
 
-def cancel():
+def cancel() -> bool:
     """
     Cancel the currently executing trajectory.
     Returns True if cancelled, False if no active trajectory.
     """
+    ...
 
 
-def get_status():
+def get_status() -> TrajectoryStatusProtocol:
     """
     Get the current status of the trajectory execution.
     Returns a TrajectoryStatus message with details.
@@ -56,9 +67,10 @@ def get_status():
       "active_traj_id": Optional[str],
       "error": Optional[str],
     """
+    ...
 
 
-class JointTrajectory(Protocol):
+class JointTrajectoryProtocol(Protocol):
     """Protocol for a joint trajectory object."""
 
     duration: float  # Total duration in seconds
@@ -78,7 +90,7 @@ class JointTrajectory(Protocol):
         ...
 
 
-class TrajectoryStatus(Protocol):
+class TrajectoryStatusProtocol(Protocol):
     """Status of trajectory execution."""
 
     state: TrajectoryState  # Current state
