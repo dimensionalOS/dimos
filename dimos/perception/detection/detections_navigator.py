@@ -15,6 +15,7 @@
 import logging
 from typing import Tuple
 
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -31,11 +32,12 @@ from dimos.msgs.nav_msgs.Path import Path
 from dimos.protocol.skill import skill
 from dimos.protocol.tf import TF
 
-logger = setup_logger("dimos.perception.detection.person_tracker", level=logging.INFO)
+logger = setup_logger("dimos.perception.detection.detections_navigator", level=logging.INFO)
 
 
-class PersonTracker(Module):
-    detections: In[Detection2DArray] = None  # type: ignore
+class DetectionsNavigator(Module):
+    detections: In[Detection2DArray] = None  # type: ignore  # Person detections
+    object_detections: In[Detection2DArray] = None  # type: ignore  # SUPER BAD needed since we cant have two modules subscribe to ONE input stream together
     image: In[Image] = None  # type: ignore
     target: Out[Path] = None  # type: ignore
 
@@ -86,12 +88,26 @@ class PersonTracker(Module):
         return Vector3(z_optical, -x_optical, -y_optical)
 
     def detections_stream(self) -> Observable[ImageDetections2D]:
+        # Merge person detections and object detections
+        person_detections = self.detections.pure_observable().pipe(
+            ops.filter(lambda d: d and d.detections_length > 0)  # type: ignore[attr-defined]
+        )
+
+        object_detections = (
+            self.object_detections.pure_observable().pipe(
+                ops.filter(lambda d: d and d.detections_length > 0)  # type: ignore[attr-defined]
+            )
+            if self.object_detections
+            else rx.empty()
+        )
+
+        # Merge both detection streams
+        merged_detections = rx.merge(person_detections, object_detections)
+
         return backpressure(
             align_timestamped(
                 self.image.pure_observable(),
-                self.detections.pure_observable().pipe(
-                    ops.filter(lambda d: d.detections_length > 0)  # type: ignore[attr-defined]
-                ),
+                merged_detections,
                 match_tolerance=0.15,
                 buffer_size=0.3,
             ).pipe(ops.map(lambda pair: ImageDetections2D.from_ros_detection2d_array(*pair)))
@@ -130,7 +146,7 @@ class PersonTracker(Module):
             self._continuous = continuous
             self._sub = self.detections_stream().subscribe(self.track)
             self._is_tracking = True
-            logger.info(f"PersonTracker: Tracking started (continuous={continuous})")
+            logger.info(f"DetectionsNavigator: Tracking started (continuous={continuous})")
         return "Person tracking started"
 
     @skill()
@@ -144,7 +160,7 @@ class PersonTracker(Module):
             empty_path = Path(poses=[])
             self.target.publish(empty_path)
 
-            logger.info("PersonTracker: Tracking stopped")
+            logger.info("DetectionsNavigator: Tracking stopped")
         return "Person tracking stopped"
 
     @rpc
@@ -157,17 +173,17 @@ class PersonTracker(Module):
 
     def track(self, detections2D: ImageDetections2D):
         logger.info(
-            f"PersonTracker.track() called with {len(detections2D)} detections at ts={detections2D.ts:.3f}"
+            f"DetectionsNavigator.track() called with {len(detections2D)} detections at ts={detections2D.ts:.3f}"
         )
         print(detections2D)
 
         if len(detections2D) == 0:
-            logger.warning("PersonTracker: No detections, skipping")
+            logger.warning("DetectionsNavigator: No detections, skipping")
             return
 
         target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())
         logger.info(
-            f"PersonTracker: Selected target person - center={target.center_bbox}, "
+            f"DetectionsNavigator: Selected target person - center={target.center_bbox}, "
             f"bbox_volume={target.bbox_2d_volume():.1f}px"
         )
 
@@ -178,7 +194,7 @@ class PersonTracker(Module):
 
         vector = self.center_to_3d(target.center_bbox, self.camera_info, 1.0)
         logger.info(
-            f"PersonTracker: 3D position in camera_link: x={vector.x:.3f}, y={vector.y:.3f}, z={vector.z:.3f}"
+            f"DetectionsNavigator: 3D position in camera_link: x={vector.x:.3f}, y={vector.y:.3f}, z={vector.z:.3f}"
         )
 
         pose_in_camera = PoseStamped(
@@ -187,17 +203,19 @@ class PersonTracker(Module):
             frame_id="camera_link",
         )
 
-        logger.info(f"PersonTracker: Looking up TF world->camera_link at ts={detections2D.ts:.3f}")
+        logger.info(
+            f"DetectionsNavigator: Looking up TF world->camera_link at ts={detections2D.ts:.3f}"
+        )
         tf_world_to_camera = self.tf.get("world", "camera_link", detections2D.ts, 1.0)
         if not tf_world_to_camera:
             logger.error(
-                f"PersonTracker: TF lookup FAILED! world->camera_link at ts={detections2D.ts:.3f} "
+                f"DetectionsNavigator: TF lookup FAILED! world->camera_link at ts={detections2D.ts:.3f} "
                 f"(tolerance=1.0s) - NO GOAL PUBLISHED"
             )
             return
 
         logger.info(
-            f"PersonTracker: TF lookup succeeded - "
+            f"DetectionsNavigator: TF lookup succeeded - "
             f"translation=({tf_world_to_camera.translation.x:.2f}, "
             f"{tf_world_to_camera.translation.y:.2f}, "
             f"{tf_world_to_camera.translation.z:.2f})"
@@ -208,7 +226,7 @@ class PersonTracker(Module):
         pose_in_world = tf_world_to_target.to_pose(ts=detections2D.ts)
 
         logger.info(
-            f"PersonTracker: PUBLISHING GOAL - world position=("
+            f"DetectionsNavigator: PUBLISHING GOAL - world position=("
             f"{pose_in_world.position.x:.2f}, "
             f"{pose_in_world.position.y:.2f}, "
             f"{pose_in_world.position.z:.2f})"

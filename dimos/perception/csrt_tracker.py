@@ -36,11 +36,11 @@ from dimos_lcm.vision_msgs import (
     Pose2D,
 )
 
-logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
+logger = setup_logger("dimos.perception.csrt_tracker", level=logging.INFO)
 
 
-class ObjectTracker2D(Module):
-    """Pure 2D object tracking module using OpenCV's CSRT tracker."""
+class CSRTTracker(Module):
+    """2D object tracking module using CSRT."""
 
     color_image: In[Image] = None
 
@@ -105,7 +105,7 @@ class ObjectTracker2D(Module):
 
         unsub = self.color_image.subscribe(on_frame)
         self._disposables.add(Disposable(unsub))
-        logger.info(f"ObjectTracker2D started ({self.camera_info.width}x{self.camera_info.height})")
+        logger.info(f"CSRTTracker started ({self.camera_info.width}x{self.camera_info.height})")
 
     @rpc
     def stop(self) -> None:

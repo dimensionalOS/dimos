@@ -27,7 +27,7 @@ from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
 from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.person_tracker import PersonTracker
+from dimos.perception.detection.detections_navigator import DetectionsNavigator
 from dimos.perception.detection.reid import ReidModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.foxglove_bridge import FoxgloveBridge
@@ -78,10 +78,12 @@ def detection_unitree():
 
     # nav = deploy_navigation(dimos, connection)
 
-    person_tracker = dimos.deploy(PersonTracker, cameraInfo=ConnectionModule._camera_info())
-    person_tracker.image.connect(connection.video)
-    person_tracker.detections.connect(detector.detections)
-    person_tracker.target.transport = LCMTransport("/goal_request", PoseStamped)
+    detections_navigator = dimos.deploy(
+        DetectionsNavigator, cameraInfo=ConnectionModule._camera_info()
+    )
+    detections_navigator.image.connect(connection.video)
+    detections_navigator.detections.connect(detector.detections)
+    detections_navigator.target.transport = LCMTransport("/goal_request", PoseStamped)
 
     reid = dimos.deploy(ReidModule)
 
@@ -90,7 +92,7 @@ def detection_unitree():
     reid.annotations.transport = LCMTransport("/reid/annotations", ImageAnnotations)
 
     detector.start()
-    # person_tracker.start()
+    # detections_navigator.start()
     connection.start()
     reid.start()
 

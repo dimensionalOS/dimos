@@ -28,7 +28,7 @@ from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillConta
 from dimos.agents2.skills.navigation import NavigationSkillContainer
 from dimos.robot.utils.robot_debugger import RobotDebugger
 from dimos.utils.logging_config import setup_logger
-from dimos.perception.detection.person_tracker import PersonTracker
+from dimos.perception.detection.detections_navigator import DetectionsNavigator
 
 logger = setup_logger("dimos.robot.unitree_webrtc.run_agents2")
 
@@ -99,6 +99,8 @@ class UnitreeAgents2Runner(Resource):
         for container in skill_containers:
             logger.info(f"Registering skills from container: {container}")
             self._agent.register_skills(container)
+
+        self._agent.register_skills(self._robot.connection)
 
         self._agent.run_implicit_skill("human")
 

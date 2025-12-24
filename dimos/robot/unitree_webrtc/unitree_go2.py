@@ -65,9 +65,9 @@ from dimos.skills.skills import AbstractRobotSkill, SkillLibrary
 from dimos.utils.data import get_data
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
-from dimos.perception.object_tracker_2d import ObjectTracker2D
+from dimos.perception.csrt_tracker import CSRTTracker
 from dimos.perception.detection.module2D import Detection2DModule
-from dimos.perception.detection.person_tracker import PersonTracker
+from dimos.perception.detection.detections_navigator import DetectionsNavigator
 from dimos_lcm.std_msgs import Bool
 from dimos.robot.robot import UnitreeRobot
 from dimos.types.robot_capabilities import RobotCapability
@@ -422,10 +422,9 @@ class UnitreeGo2(UnitreeRobot, Resource):
         self.websocket_vis = None
         self.foxglove_bridge = None
         self.spatial_memory_module = None
-        self.object_tracker = None
+        self.csrt_tracker = None
         self.detection_module = None
-        self.person_tracker = None
-        self.object_following_tracker = None
+        self.detections_navigator = None
         self.utilization_module = None
 
         self._setup_directories()
@@ -588,9 +587,9 @@ class UnitreeGo2(UnitreeRobot, Resource):
 
         logger.info("Spatial memory module deployed and connected")
 
-        # Deploy 2D object tracker (outputs Detection2DArray for PersonTracker)
-        self.object_tracker = self._dimos.deploy(
-            ObjectTracker2D,
+        # Deploy 2D object tracker (outputs Detection2DArray for DetectionsNavigator)
+        self.csrt_tracker = self._dimos.deploy(
+            CSRTTracker,
             camera_info=ConnectionModule._camera_info(),
             frame_id="camera_link",
         )
@@ -600,25 +599,19 @@ class UnitreeGo2(UnitreeRobot, Resource):
             Detection2DModule, camera_info=ConnectionModule._camera_info(), max_freq=2
         )
 
-        # Deploy PersonTracker for person following
-        self.person_tracker = self._dimos.deploy(
-            PersonTracker,
-            cameraInfo=ConnectionModule._camera_info(),
-        )
-
-        # Deploy a second PersonTracker for object following (reuses same logic)
-        self.object_following_tracker = self._dimos.deploy(
-            PersonTracker,
+        # Deploy DetectionsNavigator for both person and object following
+        self.detections_navigator = self._dimos.deploy(
+            DetectionsNavigator,
             cameraInfo=ConnectionModule._camera_info(),
         )
 
         # self.utilization_module = self.dimos.deploy(UtilizationModule)
 
         # Set up transports for object tracker
-        self.object_tracker.detection2darray.transport = core.LCMTransport(
+        self.csrt_tracker.detection2darray.transport = core.LCMTransport(
             "/go2/detection2d", Detection2DArray
         )
-        self.object_tracker.tracked_overlay.transport = core.pSHMTransport(
+        self.csrt_tracker.tracked_overlay.transport = core.pSHMTransport(
             "/go2/tracked_overlay", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
         )
 
@@ -640,20 +633,15 @@ class UnitreeGo2(UnitreeRobot, Resource):
         )
 
         # Set up transports for person tracker
-        self.person_tracker.target.transport = core.LCMTransport("/person_path", Path)
+        self.detections_navigator.target.transport = core.LCMTransport("/person_path", Path)
 
-        # Set up transports for object following tracker
-        self.object_following_tracker.target.transport = core.LCMTransport("/object_path", Path)
-
-        logger.info(
-            "Object tracker, detection module, person tracker, object following tracker deployed"
-        )
+        logger.info("Object tracker, detection module, person tracker deployed")
 
     def _deploy_camera(self):
         """Deploy and configure the camera module."""
         # Connect object tracker inputs
-        if self.object_tracker:
-            self.object_tracker.color_image.connect(self.connection.color_image)
+        if self.csrt_tracker:
+            self.csrt_tracker.color_image.connect(self.connection.color_image)
             logger.info("Object tracker connected to camera")
 
         # Connect detection module inputs
@@ -662,18 +650,17 @@ class UnitreeGo2(UnitreeRobot, Resource):
             logger.info("Detection module connected to camera")
 
         # Connect person tracker inputs
-        if self.person_tracker:
-            self.person_tracker.image.connect(self.connection.color_image)
-            self.person_tracker.detections.connect(self.detection_module.detections)
-            self.person_tracker.target.connect(self.local_planner.path)
-            logger.info("Person tracker connected to detection module and local planner")
-
-        # Connect object following tracker inputs
-        if self.object_following_tracker:
-            self.object_following_tracker.image.connect(self.connection.color_image)
-            self.object_following_tracker.detections.connect(self.object_tracker.detection2darray)
-            self.object_following_tracker.target.connect(self.local_planner.path)
-            logger.info("Object following tracker connected to object tracker and local planner")
+        if self.detections_navigator:
+            self.detections_navigator.image.connect(self.connection.color_image)
+            # Connect both detection sources to different inputs
+            self.detections_navigator.detections.connect(
+                self.detection_module.detections
+            )  # Person detections
+            self.detections_navigator.object_detections.connect(
+                self.csrt_tracker.detection2darray
+            )  # SUper ghetto, because we cant connect two inputs
+            self.detections_navigator.target.connect(self.local_planner.path)
+            logger.info("Person tracker connected to both detection sources and local planner")
 
     def _start_modules(self):
         """Start all deployed modules in the correct order."""

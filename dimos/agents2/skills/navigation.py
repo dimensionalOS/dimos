@@ -161,11 +161,11 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         logger.info(f"Found {query} at {bbox}")
 
-        # Start tracking - ObjectTracker2D publishes Detection2DArray
-        self._robot.object_tracker.track(bbox)
+        # Start object tracking - CSRTTracker publishes Detection2DArray to object_detections input
+        self._robot.csrt_tracker.track(bbox)
 
-        # Start object following tracker to handle navigation
-        self._robot.object_following_tracker.start_tracking(continuous=False)
+        # Start detections navigator - it will receive detections from csrt_tracker via object_detections input
+        self._robot.detections_navigator.start_tracking(continuous=False)
 
         start_time = time.time()
         timeout = 30.0
@@ -173,12 +173,12 @@ class NavigationSkillContainer(SkillContainer, Resource):
         try:
             while time.time() - start_time < timeout:
                 # Check if object tracking is still active
-                if not self._robot.object_tracker.is_tracking():
+                if not self._robot.csrt_tracker.is_tracking():
                     logger.info(f"Lost tracking of '{query}'")
                     return None
 
-                # Check if object following tracker stopped (reached the object)
-                if not self._robot.object_following_tracker.is_tracking():
+                # Check if detections navigator stopped (reached the object)
+                if not self._robot.detections_navigator.is_tracking():
                     logger.info(f"Reached '{query}'")
                     return f"Successfully reached '{query}'"
 
@@ -191,8 +191,8 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         finally:
             # Stop tracking
-            self._robot.object_tracker.stop_track()
-            self._robot.object_following_tracker.stop_tracking()
+            self._robot.detections_navigator.stop_tracking()
+            self._robot.csrt_tracker.stop_track()
 
     def _get_bbox_for_current_frame(self, query: str) -> Optional[BBox]:
         if self._latest_image is None:
@@ -221,7 +221,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
         return f"Successfuly arrived at '{query}'"
 
     @skill()
-    def follow_person(self, person_description: str = "person", continuous: bool = True) -> str:
+    def follow_person(self, continuous: bool = True) -> str:
         """Follow and navigate to a person detected in the camera view.
 
         The robot will continuously track the person and navigate until reaching them.
@@ -229,7 +229,6 @@ class NavigationSkillContainer(SkillContainer, Resource):
         of the camera frame.
 
         Args:
-            person_description: Description of person to follow (default: "person")
             continuous: If True, follow continuously without checking arrival.
                        If False, stop when person is reached (default: True)
 
@@ -240,36 +239,34 @@ class NavigationSkillContainer(SkillContainer, Resource):
             raise ValueError(f"{self} has not been started.")
 
         # Check for required modules
-        if not hasattr(self._robot, "person_tracker"):
-            return "Person tracker not available on this robot"
+        if not hasattr(self._robot, "detections_navigator"):
+            return "Detections navigator not available on this robot"
 
         if not hasattr(self._robot, "detection_module"):
             return "Detection module not available on this robot"
 
-        logger.info(
-            f"Starting person following for: {person_description} (continuous={continuous})"
-        )
+        logger.info(f"Starting person following for: (continuous={continuous})")
 
-        self._robot.person_tracker.start_tracking(continuous=continuous)
+        self._robot.detections_navigator.start_tracking(continuous=continuous)
 
         try:
             start_time = time.time()
             timeout = 60.0  # 60 second timeout
 
             while time.time() - start_time < timeout:
-                # Check if tracking stopped (arrival detected by PersonTracker)
-                if not self._robot.person_tracker.is_tracking():
-                    logger.info("PersonTracker stopped - person reached")
-                    return f"Successfully reached {person_description}"
+                # Check if tracking stopped (arrival detected by DetectionsNavigator)
+                if not self._robot.detections_navigator.is_tracking():
+                    logger.info("DetectionsNavigator stopped - person reached")
+                    return f"Successfully reached person"
 
                 time.sleep(0.25)
 
-            logger.warning(f"Following {person_description} timed out after {timeout}s")
-            return f"Timeout while following {person_description}"
+            logger.warning(f"Following person timed out after {timeout}s")
+            return f"Timeout while following person"
 
         finally:
             # Always stop tracking
-            self._robot.person_tracker.stop_tracking()
+            self._robot.detections_navigator.stop_tracking()
 
     @skill()
     def stop_human_tracking(self) -> str:
@@ -286,7 +283,7 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         logger.info("Stopping person tracking")
 
-        self._robot.person_tracker.stop_tracking()
+        self._robot.detections_navigator.stop_tracking()
 
         self._robot.cancel_navigation()
 
