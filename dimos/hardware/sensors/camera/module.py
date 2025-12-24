@@ -53,7 +53,7 @@ class CameraModuleConfig(ModuleConfig):
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
 
 
-class CameraModule(Module, spec.Camera):
+class CameraModule(Module[CameraModuleConfig], spec.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
@@ -62,10 +62,15 @@ class CameraModule(Module, spec.Camera):
     _camera_info_subscription: Disposable | None = None
     _skill_stream: Observable[Image] | None = None
 
+    config: CameraModuleConfig
     default_config = CameraModuleConfig
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+    @property
+    def hardware_camera_info(self) -> CameraInfo:
+        return self.hardware.camera_info  # type: ignore[union-attr]
 
     @rpc
     def start(self):

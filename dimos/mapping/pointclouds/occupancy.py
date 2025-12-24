@@ -26,6 +26,156 @@ if TYPE_CHECKING:
     from dimos.msgs.sensor_msgs import PointCloud2
 
 
+def height_cost_occupancy(
+    cloud: PointCloud2,
+    resolution: float = 0.05,
+    can_pass_under: float = 0.6,
+    can_climb: float = 0.15,
+    ignore_noise: float = 0.05,
+    smoothing: float = 1.0,
+    frame_id: str | None = None,
+) -> OccupancyGrid:
+    """Create a costmap based on terrain slope (rate of change of height).
+
+    Costs are assigned based on the gradient magnitude of the terrain height.
+    Steeper slopes get higher costs, with max_step height change mapping to cost 100.
+    Cells without observations are marked unknown (-1).
+
+    Args:
+        cloud: PointCloud2 message containing 3D points
+        resolution: Grid resolution in meters/cell (default: 0.05)
+        can_pass_under: Max height to consider - points above are ignored (default: 0.6)
+        can_climb: Height change in meters that maps to cost 100 (default: 0.15)
+        smoothing: Gaussian smoothing sigma in cells for filling gaps (default: 1.0)
+        frame_id: Reference frame for the grid (default: uses cloud's frame_id)
+
+    Returns:
+        OccupancyGrid with costs 0-100 based on terrain slope, -1 for unknown
+    """
+    points = cloud.as_numpy()
+    ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
+
+    if len(points) == 0:
+        return OccupancyGrid(
+            width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
+        )
+
+    # Find bounds of the point cloud in X-Y plane (use all points)
+    min_x = np.min(points[:, 0])
+    max_x = np.max(points[:, 0])
+    min_y = np.min(points[:, 1])
+    max_y = np.max(points[:, 1])
+
+    # Add padding
+    padding = 1.0
+    min_x -= padding
+    max_x += padding
+    min_y -= padding
+    max_y += padding
+
+    # Calculate grid dimensions
+    width = int(np.ceil((max_x - min_x) / resolution))
+    height = int(np.ceil((max_y - min_y) / resolution))
+
+    # Create origin pose
+    origin = Pose()
+    origin.position.x = min_x
+    origin.position.y = min_y
+    origin.position.z = 0.0
+    origin.orientation.w = 1.0
+
+    # Step 1: Build min and max height maps for each cell
+    # Initialize with NaN to track which cells have observations
+    min_height_map = np.full((height, width), np.nan, dtype=np.float32)
+    max_height_map = np.full((height, width), np.nan, dtype=np.float32)
+
+    # Convert point XY to grid indices
+    grid_x = np.round((points[:, 0] - min_x) / resolution).astype(np.int32)
+    grid_y = np.round((points[:, 1] - min_y) / resolution).astype(np.int32)
+
+    # Clip to grid bounds
+    grid_x = np.clip(grid_x, 0, width - 1)
+    grid_y = np.clip(grid_y, 0, height - 1)
+
+    # Use np.fmax/fmin.at which ignore NaN
+    np.fmax.at(max_height_map, (grid_y, grid_x), points[:, 2])
+    np.fmin.at(min_height_map, (grid_y, grid_x), points[:, 2])
+
+    # Step 2: Determine effective height for each cell
+    # If gap between min and max > can_pass_under, robot can pass under - use min (ground)
+    # Otherwise use max (solid obstacle)
+    height_gap = max_height_map - min_height_map
+    height_map = np.where(height_gap > can_pass_under, min_height_map, max_height_map)
+
+    # Track which cells have observations
+    observed_mask = ~np.isnan(height_map)
+
+    # Step 3: Apply smoothing to fill gaps while preserving unknown space
+    if smoothing > 0 and np.any(observed_mask):
+        # Use a weighted smoothing approach that only interpolates from known cells
+        # Create a weight map (1 for observed, 0 for unknown)
+        weights = observed_mask.astype(np.float32)
+        height_map_filled = np.where(observed_mask, height_map, 0.0)
+
+        # Smooth both height values and weights
+        smoothed_heights = ndimage.gaussian_filter(height_map_filled, sigma=smoothing)
+        smoothed_weights = ndimage.gaussian_filter(weights, sigma=smoothing)
+
+        # Avoid division by zero (use np.divide with where to prevent warning)
+        valid_smooth = smoothed_weights > 0.01
+        height_map_smoothed = np.full_like(smoothed_heights, np.nan)
+        np.divide(smoothed_heights, smoothed_weights, out=height_map_smoothed, where=valid_smooth)
+
+        # Keep original values where we had observations, use smoothed elsewhere
+        height_map = np.where(observed_mask, height_map, height_map_smoothed)
+
+        # Update observed mask to include smoothed cells
+        observed_mask = ~np.isnan(height_map)
+
+    # Step 4: Calculate rate of change (gradient magnitude)
+    # Use Sobel filters for gradient calculation
+    if np.any(observed_mask):
+        # Replace NaN with 0 for gradient calculation
+        height_for_grad = np.where(observed_mask, height_map, 0.0)
+
+        # Calculate gradients (Sobel gives gradient in pixels, scale by resolution)
+        grad_x = ndimage.sobel(height_for_grad, axis=1) / (8.0 * resolution)
+        grad_y = ndimage.sobel(height_for_grad, axis=0) / (8.0 * resolution)
+
+        # Gradient magnitude = height change per meter
+        gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+
+        # Map gradient to cost: can_climb height change over one cell maps to cost 100
+        # gradient_magnitude is in m/m, so multiply by resolution to get height change per cell
+        height_change_per_cell = gradient_magnitude * resolution
+
+        # Ignore height changes below noise threshold (lidar floor noise)
+        height_change_per_cell = np.where(
+            height_change_per_cell < ignore_noise, 0.0, height_change_per_cell
+        )
+
+        cost_float = (height_change_per_cell / can_climb) * 100.0
+        cost_float = np.clip(cost_float, 0, 100)
+
+        # Erode observed mask - only trust gradients where all neighbors are observed
+        # This prevents false high costs at boundaries with unknown regions
+        structure = ndimage.generate_binary_structure(2, 1)  # 4-connectivity
+        valid_gradient_mask = ndimage.binary_erosion(observed_mask, structure=structure)
+
+        # Convert to int8, marking cells without valid gradients as -1
+        cost = np.where(valid_gradient_mask, cost_float.astype(np.int8), -1)
+    else:
+        cost = np.full((height, width), -1, dtype=np.int8)
+
+    return OccupancyGrid(
+        grid=cost,
+        resolution=resolution,
+        origin=origin,
+        frame_id=frame_id or cloud.frame_id,
+        ts=ts,
+    )
+
+
 def general_occupancy(
     cloud: PointCloud2,
     resolution: float = 0.05,
