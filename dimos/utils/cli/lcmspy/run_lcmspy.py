@@ -51,7 +51,7 @@ def topic_text(topic_name: str) -> Text:
         return Text(parts[0], style=theme.BRIGHT_WHITE) + Text("#" + parts[1], style=theme.BLUE)
 
     if topic_name[:4] == "/rpc":
-        return Text(topic_name[:4], style=theme.RED) + Text(
+        return Text(topic_name[:4], style=theme.BLUE) + Text(
             topic_name[4:], style=theme.BRIGHT_WHITE
         )
 
