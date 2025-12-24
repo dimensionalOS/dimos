@@ -1405,7 +1405,6 @@ dependencies = [
     { name = "pyturbojpeg" },
     { name = "reactivex" },
     { name = "requests" },
-    { name = "rxpy-backpressure" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
@@ -1606,7 +1605,6 @@ requires-dist = [
     { name = "requests-mock", marker = "extra == 'dev'", specifier = "==1.12.1" },
     { name = "rtree", marker = "extra == 'manipulation'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.3" },
-    { name = "rxpy-backpressure", git = "https://github.com/dimensionalOS/rxpy-backpressure.git" },
     { name = "scikit-learn" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentence-transformers" },
@@ -7441,11 +7439,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/03/15/51960ae340823c9859fb60c63301d977308735403e2134e17d1d2858c7fb/ruff-0.14.3-py3-none-win_amd64.whl", hash = "sha256:d7b7006ac0756306db212fd37116cce2bd307e1e109375e1c6c106002df0ae5f", size = 13594005, upload-time = "2025-10-31T00:26:22.533Z" },
     { url = "https://files.pythonhosted.org/packages/b7/73/4de6579bac8e979fca0a77e54dec1f1e011a0d268165eb8a9bc0982a6564/ruff-0.14.3-py3-none-win_arm64.whl", hash = "sha256:26eb477ede6d399d898791d01961e16b86f02bc2486d0d1a7a9bb2379d055dc1", size = 12590017, upload-time = "2025-10-31T00:26:24.52Z" },
 ]
-
-[[package]]
-name = "rxpy-backpressure"
-version = "1.0.0"
-source = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git#e3a696950c0483ad3f405616a3a60b8b7c60e1a8" }
 
 [[package]]
 name = "safetensors"
