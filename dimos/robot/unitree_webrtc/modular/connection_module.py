@@ -37,6 +37,7 @@ from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
+from dimos.utils.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
@@ -86,20 +87,20 @@ class FakeRTC(UnitreeWebRTCConnection):
     def liedown(self) -> None:
         print("liedown suppressed")
 
-    @functools.cache
+    @simple_mcache
     def lidar_stream(self):  # type: ignore[no-untyped-def]
         print("lidar stream start")
         lidar_store = TimedSensorReplay(f"{self.dir_name}/lidar")  # type: ignore[var-annotated]
         return lidar_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
-    @functools.cache
+    @simple_mcache
     def odom_stream(self):  # type: ignore[no-untyped-def]
         print("odom stream start")
         odom_store = TimedSensorReplay(f"{self.dir_name}/odom")  # type: ignore[var-annotated]
         return odom_store.stream(**self.replay_config)  # type: ignore[arg-type]
 
     # we don't have raw video stream in the data set
-    @functools.cache
+    @simple_mcache
     def video_stream(self):  # type: ignore[no-untyped-def]
         print("video stream start")
         video_store = TimedSensorReplay(f"{self.dir_name}/video")  # type: ignore[var-annotated]
