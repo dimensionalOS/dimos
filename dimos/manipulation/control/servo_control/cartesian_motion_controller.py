@@ -383,6 +383,17 @@ class CartesianMotionController(Module):
         logger.info(f"Cartesian control loop started at {self.config.control_frequency}Hz")
 
         while not self._stop_event.is_set():
+            # Sleep at start of loop to maintain frequency even when using continue
+            sleep_time = next_time - time.time()
+            if sleep_time > 0:
+                if self._stop_event.wait(timeout=sleep_time):
+                    break
+            else:
+                # Loop overrun - reset timing
+                next_time = time.time()
+
+            next_time += period
+
             try:
                 current_time = time.time()
                 dt = period  # Use fixed timestep for consistent control
@@ -398,7 +409,6 @@ class CartesianMotionController(Module):
 
                 # Check if we have valid state
                 if joint_state is None or len(joint_state.position) == 0:
-                    time.sleep(period)
                     continue
 
                 # Compute current TCP pose via FK
@@ -406,7 +416,6 @@ class CartesianMotionController(Module):
 
                 if code != 0 or current_pose_list is None:
                     logger.warning(f"FK failed with code: {code}")
-                    time.sleep(period)
                     continue
 
                 # Convert FK result to Pose (xArm returns [x, y, z, roll, pitch, yaw] in mm)
@@ -436,7 +445,6 @@ class CartesianMotionController(Module):
                     self.current_pose.publish(current_pose_stamped)
                 else:
                     logger.warning(f"Unexpected FK result format: {current_pose_list}")
-                    time.sleep(period)
                     continue
 
                 # Check for target timeout
@@ -452,13 +460,11 @@ class CartesianMotionController(Module):
                     logger.debug(
                         f"Not tracking: is_tracking={is_tracking}, target_pose={target_pose is not None}"
                     )
-                    time.sleep(period)
                     continue
 
                 # Check if we have current pose
                 if self._current_tcp_pose is None:
                     logger.warning("No current TCP pose available, skipping control")
-                    time.sleep(period)
                     continue
 
                 # Compute Cartesian error
@@ -544,7 +550,6 @@ class CartesianMotionController(Module):
 
                 if code != 0 or target_joints is None:
                     logger.warning(f"IK failed with code: {code}, target_joints={target_joints}")
-                    time.sleep(period)
                     continue
 
                 logger.debug(f"IK successful: {len(target_joints)} joints")
@@ -579,23 +584,11 @@ class CartesianMotionController(Module):
                 except Exception as e:
                     logger.error(f"✗ Failed to publish joint command: {e}")
 
-                # Maintain loop frequency
-                next_time += period
-                sleep_time = next_time - time.time()
-
-                if sleep_time > 0:
-                    if self._stop_event.wait(timeout=sleep_time):
-                        break
-                else:
-                    logger.debug(f"Control loop overrun: {-sleep_time * 1000:.2f}ms")
-                    next_time = time.time()
-
             except Exception as e:
                 logger.error(f"Error in control loop: {e}")
                 import traceback
 
                 traceback.print_exc()
-                time.sleep(period)
 
         logger.info("Cartesian control loop stopped")
 
