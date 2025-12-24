@@ -361,9 +361,7 @@ class NavBot:
         self.navigation_module.goal_req.transport = core.LCMTransport("/goal", PoseStamped)
         self.navigation_module.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
 
-        self.navigation_module.pointcloud.transport = core.LCMTransport(
-            "/pointcloud_map", PointCloud2
-        )
+        self.navigation_module.pointcloud.transport = core.LCMTransport("/map", PointCloud2)
         self.navigation_module.global_pointcloud.transport = core.LCMTransport(
             "/global_pointcloud", PointCloud2
         )

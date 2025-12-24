@@ -259,23 +259,26 @@ class UnitreeG1(Robot, Resource):
         if self.enable_joystick:
             self._deploy_joystick()
 
-        self.nav = self._dimos.deploy(ROSNavigationModule)
+        # self.nav = self._dimos.deploy(ROSNavigationModule)
 
-        # Input ports (module receives commands)
-        self.nav.goal_req.transport = core.LCMTransport("/goal", PoseStamped)
-        self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
+        # # Input ports (module receives commands)
+        # self.nav.goal_req.transport = core.LCMTransport("/goal", PoseStamped)
+        # self.nav.cancel_goal.transport = core.LCMTransport("/cancel_goal", Bool)
 
-        # Output ports (module publishes data)
-        self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
-        self.nav.pointcloud.transport = core.LCMTransport("/pointcloud_map", PointCloud2)
-        self.nav.global_pointcloud.transport = core.LCMTransport("/global_pointcloud", PointCloud2)
-        self.nav.goal_active.transport = core.LCMTransport("/goal_active", PoseStamped)
-        self.nav.path_active.transport = core.LCMTransport("/path_active", Path)
-        self.nav.odom.transport = core.LCMTransport("/odom", Odometry)
-        self.nav.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
-        self.nav.odom_pose.transport = core.LCMTransport("/odom_pose", PoseStamped)
+        # # Output ports (module publishes data)
+        # self.nav.goal_reached.transport = core.LCMTransport("/goal_reached", Bool)
+        # self.nav.pointcloud.transport = core.LCMTransport("/pointcloud_map", PointCloud2)
+        # self.nav.global_pointcloud.transport = core.LCMTransport("/global_pointcloud", PointCloud2)
+        # self.nav.goal_active.transport = core.LCMTransport("/goal_active", PoseStamped)
+        # self.nav.path_active.transport = core.LCMTransport("/path_active", Path)
+        # self.nav.odom.transport = core.LCMTransport("/odom", Odometry)
+        # self.nav.cmd_vel.transport = core.LCMTransport("/cmd_vel", Twist)
+        # self.nav.odom_pose.transport = core.LCMTransport("/odom_pose", PoseStamped)
 
-        self.nav.start()
+        # self.nav.start()
+        from dimos.navigation.rosnav.nav_bot import NavBot
+
+        nav = NavBot(self._dimos)
 
         self._deploy_camera()
         self._deploy_detection(self.nav.navigate_to)
