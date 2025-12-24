@@ -41,7 +41,7 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
+    detector: Optional[Callable[[Any], Detector]] = Yolo2DDetector
     camera_info: CameraInfo = CameraInfo()
 
 

@@ -37,6 +37,7 @@ from dimos.agents2 import Agent
 from dimos.agents2.cli.human import HumanInput
 from dimos.agents2.skills.ros_navigation import RosNavigation
 from dimos.agents2.spec import Model, Provider
+from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import In, Module, Out, rpc
 from dimos.core.dimos import Dimos
 from dimos.core.resource import Resource
@@ -228,7 +229,7 @@ class UnitreeG1(Robot, Resource):
 
     def _deploy_detection(self, goto):
         detection = self._dimos.deploy(
-            Detection3DModule, camera_info=zed.CameraInfo.SingleWebcam, goto=goto
+            ObjectDBModule, camera_info=zed.CameraInfo.SingleWebcam, goto=goto
         )
 
         detection.image.connect(self.camera.image)
@@ -236,8 +237,8 @@ class UnitreeG1(Robot, Resource):
 
         detection.annotations.transport = core.LCMTransport("/annotations", ImageAnnotations)
         detection.detections.transport = core.LCMTransport("/detections", Detection2DArray)
-
         detection.scene_update.transport = core.LCMTransport("/scene_update", SceneUpdate)
+
         # detection.target.transport = core.LCMTransport("/target", PoseStamped)
 
         detection.detected_pointcloud_0.transport = core.LCMTransport(
@@ -306,13 +307,12 @@ class UnitreeG1(Robot, Resource):
         agent.register_skills(self.detection)
 
         time.sleep(1)  # Wait for modules to initialize
-        print(agent.coordinator)
-        # print(agent.coordinator.skills())
 
         # Register ROS navigation
         self._ros_nav = RosNavigation(self)
         self._ros_nav.start()
-        # agent.register_skills(self._ros_nav)
+
+        agent.register_skills(self._ros_nav)
 
         agent.run_implicit_skill("human")
         agent.start()
@@ -350,7 +350,7 @@ class UnitreeG1(Robot, Resource):
             CameraModule,
             transform=Transform(
                 translation=Vector3(0.05, 0.0, 0.0),
-                rotation=Quaternion.from_euler(Vector3(0.0, 0.0, 0.0)),
+                rotation=Quaternion.from_euler(Vector3(0.0, 0.1, 0.0)),
                 frame_id="sensor",
                 child_frame_id="camera_link",
             ),
@@ -362,7 +362,10 @@ class UnitreeG1(Robot, Resource):
             ),
         )
 
-        self.camera.image.transport = core.LCMTransport("/image", Image)
+        # self.camera.image.transport = core.LCMTransport("/image", Image)
+        self.camera.image.transport = core.pSHMTransport(
+            "/image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
+        )
         self.camera.camera_info.transport = core.LCMTransport("/camera_info", CameraInfo)
         logger.info("Webcam module configured")
 
@@ -384,16 +387,16 @@ class UnitreeG1(Robot, Resource):
         self.foxglove_bridge.start()
 
     def _deploy_perception(self):
-        # self.spatial_memory_module = self._dimos.deploy(
-        #    SpatialMemory,
-        #    collection_name=self.spatial_memory_collection,
-        #    db_path=self.db_path,
-        #    visual_memory_path=self.visual_memory_path,
-        #    output_dir=self.spatial_memory_dir,
-        # )
+        self.spatial_memory_module = self._dimos.deploy(
+            SpatialMemory,
+            collection_name=self.spatial_memory_collection,
+            db_path=self.db_path,
+            visual_memory_path=self.visual_memory_path,
+            output_dir=self.spatial_memory_dir,
+        )
 
-        # self.spatial_memory_module.video.transport = core.LCMTransport("/image", Image)
-        # self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
+        self.spatial_memory_module.color_image.transport = core.LCMTransport("/image", Image)
+        self.spatial_memory_module.odom.transport = core.LCMTransport("/odom", PoseStamped)
 
         logger.info("Spatial memory module deployed and connected")
 

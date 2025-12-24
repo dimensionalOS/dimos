@@ -150,6 +150,10 @@ class Detection3DModule(Detection2DModule):
 
         self.detection_stream_3d.subscribe(self._publish_detections)
 
+    #        self.detection_stream_3d.subscribe(
+    #            lambda detections: self.scene_update.publish(detections.to_foxglove_scene_update())
+    #        )
+
     @rpc
     def stop(self) -> None:
         super().stop()
