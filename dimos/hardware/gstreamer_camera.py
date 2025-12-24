@@ -14,6 +14,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import logging
 import sys
 import threading
@@ -21,7 +22,7 @@ import time
 
 import numpy as np
 
-from dimos.core import Module, Out, rpc
+from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
@@ -40,8 +41,16 @@ logger = setup_logger(level=logging.INFO)
 Gst.init(None)
 
 
+@dataclass
+class Config(ModuleConfig):
+    frame_id: str = "camera"
+
+
 class GstreamerCameraModule(Module):
     """Module that captures frames from a remote camera using GStreamer TCP with absolute timestamps."""
+
+    default_config = Config
+    config: Config
 
     video: Out[Image]
 
@@ -49,7 +58,6 @@ class GstreamerCameraModule(Module):
         self,
         host: str = "localhost",
         port: int = 5000,
-        frame_id: str = "camera",
         timestamp_offset: float = 0.0,
         reconnect_interval: float = 5.0,
         *args,
@@ -66,7 +74,6 @@ class GstreamerCameraModule(Module):
         """
         self.host = host
         self.port = port
-        self.frame_id = frame_id
         self.timestamp_offset = timestamp_offset
         self.reconnect_interval = reconnect_interval
 
@@ -79,8 +86,7 @@ class GstreamerCameraModule(Module):
         self.frame_count = 0
         self.last_log_time = time.time()
         self.reconnect_timer_id = None
-
-        Module.__init__(self, *args, **kwargs)
+        super().__init__(**kwargs)
 
     @rpc
     def start(self) -> None:
