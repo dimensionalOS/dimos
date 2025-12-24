@@ -17,6 +17,7 @@ from dimos.core.blueprints import ModuleBlueprintSet
 # The blueprints are defined as import strings so as not to trigger unnecessary imports.
 all_blueprints = {
     "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard",
+    "unitree-go2-newmapper": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:newmapper",
     "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:basic",
     "unitree-go2-shm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_shm",
     "unitree-go2-jpegshm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpegshm",

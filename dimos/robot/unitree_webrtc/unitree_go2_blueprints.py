@@ -28,7 +28,7 @@ from dimos.agents2.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
-from dimos.mapping.voxels import mapper
+from dimos.mapping.voxels import voxel_mapper
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.bt_navigator.navigator import (
@@ -45,13 +45,15 @@ from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.go2 import go2_connection
+from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
 
-# mac has some issue with high bandwidth UDP
+# Mac has some issue with high bandwidth UDP
+#
 # so we use pSHMTransport for color_image
-# (could we adress this on system config layer?)
+# (Could we adress this on the system config layer? Is this fixable on mac?)
 mac = autoconnect(
     foxglove_bridge(
         shm_channels=[
@@ -69,17 +71,28 @@ mac = autoconnect(
 
 linux = autoconnect(foxglove_bridge())
 
-
 basic = autoconnect(
     linux if platform.system() == "Linux" else mac,
     websocket_vis(),
     go2_connection(),
-    mapper(voxel_size=0.05),
+    mapper(voxel_size=0.5, global_publish_interval=2.5),
     astar_planner(),
     holonomic_local_planner(),
     behavior_tree_navigator(),
     wavefront_frontier_explorer(),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")
+
+
+newmapper = autoconnect(
+    linux if platform.system() == "Linux" else mac,
+    go2_connection(),
+    # these values are defaults but leaving here for clarity
+    #
+    # no publish interval - publishes immediately on each lidar frame
+    # voxel size same as input
+    voxel_mapper(voxel_size=0.05, publish_interval=0),
+).global_config(n_dask_workers=4, robot_model="unitree_go2")
+
 
 standard = autoconnect(
     basic,
