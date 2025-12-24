@@ -68,10 +68,14 @@ wheels = [
 [[package]]
 name = "aioice"
 version = "0.9.0"
-source = { git = "https://github.com/legion1581/aioice.git?rev=go2#ff5755a1e37127411b5fc797c105804db8437445" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dnspython" },
     { name = "ifaddr" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/b6/e2b0e48ccb5b04fe29265e93f14a0915f416e359c897ae87d570566c430b/aioice-0.9.0.tar.gz", hash = "sha256:fc2401b1c4b6e19372eaaeaa28fd1bd9cbf6b0e412e48625297c53b495eebd1e", size = 40324, upload-time = "2023-04-01T14:17:34.853Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b6/35/d21e48d3ba25d32aba5d142d54c4491376c659dd74d052a30dd25198007b/aioice-0.9.0-py3-none-any.whl", hash = "sha256:b609597a3a5a611e0004ff04772e16aceb881d51c25c0afc4ceac05d5e50024e", size = 24177, upload-time = "2023-04-01T14:17:33.538Z" },
 ]
 
 [[package]]
@@ -1534,7 +1538,7 @@ requires-dist = [
     { name = "flask", specifier = ">=2.2" },
     { name = "ftfy", marker = "extra == 'cuda'" },
     { name = "gdown", specifier = "==5.2.0" },
-    { name = "go2-webrtc-connect", git = "https://github.com/dimensionalOS/go2_webrtc_connect.git" },
+    { name = "go2-webrtc-connect" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "h5py", marker = "extra == 'manipulation'", specifier = ">=3.7.0" },
     { name = "ipykernel" },
@@ -2261,20 +2265,21 @@ wheels = [
 
 [[package]]
 name = "go2-webrtc-connect"
-version = "0.0.1"
-source = { git = "https://github.com/dimensionalOS/go2_webrtc_connect.git#ba8b343fca482e55dc126e9254b81437b6f800d0" }
+version = "0.2.1"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "aioice" },
     { name = "aiortc" },
     { name = "flask-socketio" },
     { name = "lz4" },
-    { name = "opencv-python" },
-    { name = "pyaudio" },
+    { name = "numpy" },
+    { name = "packaging" },
     { name = "pycryptodome" },
-    { name = "pydub" },
     { name = "requests" },
-    { name = "sounddevice" },
     { name = "wasmtime" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/8d/482ed17c425360ce755554132220b60d2ff185d2eb84b276d9de45bcea62/go2_webrtc_connect-0.2.1.tar.gz", hash = "sha256:9fddf74f6e75963af0d0ecf86dfa10fce8d2a11a3f7a46f0f28e686e35b0e058", size = 31733, upload-time = "2025-08-22T13:21:51.473Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f7/16/4f59c951a9d1616e684950067ed874f8ed65d6f0dd3d2dda9ac58a928551/go2_webrtc_connect-0.2.1-py3-none-any.whl", hash = "sha256:520f13cee82cd6a74c7de4ec4c3513deab658eff1c92cf03fdf6d28cd8dd03c6", size = 38447, upload-time = "2025-08-22T13:21:49.24Z" },
 ]
 
 [[package]]
@@ -6450,15 +6455,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/50/35/b17cb89ff865484c6a20ef46bf9d95a5f07328292578de0b295f4a6beec2/pydot-4.0.1.tar.gz", hash = "sha256:c2148f681c4a33e08bf0e26a9e5f8e4099a82e0e2a068098f32ce86577364ad5", size = 162594, upload-time = "2025-06-17T20:09:56.454Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7e/32/a7125fb28c4261a627f999d5fb4afff25b523800faed2c30979949d6facd/pydot-4.0.1-py3-none-any.whl", hash = "sha256:869c0efadd2708c0be1f916eb669f3d664ca684bc57ffb7ecc08e70d5e93fee6", size = 37087, upload-time = "2025-06-17T20:09:55.25Z" },
-]
-
-[[package]]
-name = "pydub"
-version = "0.25.1"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326, upload-time = "2021-03-10T02:09:54.659Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327, upload-time = "2021-03-10T02:09:53.503Z" },
 ]
 
 [[package]]
