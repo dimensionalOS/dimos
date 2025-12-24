@@ -80,6 +80,9 @@ class NavigationSkillContainer(SkillContainer, Resource):
             raise ValueError(f"{self} has not been started.")
 
         pose_data = self._robot.get_odom()
+        if pose_data is None:
+            return "Failed to get robot's current position - odometry not available yet"
+
         position = pose_data.position
         rotation = quaternion_to_euler(pose_data.orientation)
 
@@ -129,7 +132,15 @@ class NavigationSkillContainer(SkillContainer, Resource):
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
-    def _navigate_by_tagged_location(self, query: str) -> Optional[str]:
+    @skill()
+    def navigate_by_tagged_location(self, query: str) -> Optional[str]:
+        """Navigate to a recently saved/tagged location by looking up the map coordinates.
+        ONLY RUN IF YOU HAVE IN YOUR MEMORY THAT YOU RECENTLY TAGGED THE LOCATION.
+        For example, you will see "Tag this location as the home point, or patrol point A, etc.
+        Args:
+            query: Tagged location to retrieve coordinates from the spatial memory
+        """
+
         robot_location = self._robot.spatial_memory.query_tagged_location(query)
 
         if not robot_location:

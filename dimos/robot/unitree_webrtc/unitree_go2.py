@@ -282,6 +282,7 @@ class ConnectionModule(Module):
         ]
 
     def _publish_tf(self, msg):
+        self._odom = msg  # Save the latest odometry
         self.odom.publish(msg)
         self.tf.publish(*self._odom_to_tf(msg))
 
@@ -757,13 +758,13 @@ class UnitreeGo2(UnitreeRobot, Resource):
     def gps_position_stream(self) -> Observable[LatLon]:
         return self.connection.gps_location.transport.pure_observable()
 
-    def get_odom(self) -> PoseStamped:
+    def get_odom(self) -> Optional[PoseStamped]:
         """Get the robot's odometry.
 
         Returns:
-            The robot's odometry
+            The robot's odometry, or None if not available yet
         """
-        return self.connection.get_odom()
+        return self.connection.get_odom() if self.connection else None
 
 
 def main():
