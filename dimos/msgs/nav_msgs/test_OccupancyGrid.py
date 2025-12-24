@@ -20,6 +20,9 @@ import pickle
 import numpy as np
 import pytest
 
+from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.occupancy.inflation import simple_inflate
+from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
@@ -177,11 +180,9 @@ def test_from_pointcloud() -> None:
     pointcloud = PointCloud2.lcm_decode(lcm_msg)
 
     # Convert pointcloud to occupancy grid
-    occupancygrid = OccupancyGrid.from_pointcloud(
-        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0
-    )
+    occupancygrid = general_occupancy(pointcloud, resolution=0.05, min_height=0.1, max_height=2.0)
     # Apply inflation separately if needed
-    occupancygrid = occupancygrid.inflate(0.1)
+    occupancygrid = simple_inflate(occupancygrid, 0.1)
 
     # Check that grid was created with reasonable properties
     assert occupancygrid.width > 0
@@ -200,7 +201,7 @@ def test_gradient() -> None:
     grid = OccupancyGrid(grid=data, resolution=0.1)  # 0.1m per cell
 
     # Convert to gradient
-    gradient_grid = grid.gradient(obstacle_threshold=50, max_distance=1.0)
+    gradient_grid = gradient(grid, obstacle_threshold=50, max_distance=1.0)
 
     # Check that we get an OccupancyGrid back
     assert isinstance(gradient_grid, OccupancyGrid)
@@ -229,7 +230,7 @@ def test_gradient() -> None:
     data_with_unknown[8:10, 8:10] = -1  # Add unknown area (far from obstacle)
 
     grid_with_unknown = OccupancyGrid(data_with_unknown, resolution=0.1)
-    gradient_with_unknown = grid_with_unknown.gradient(max_distance=1.0)  # 1m max distance
+    gradient_with_unknown = gradient(grid_with_unknown, max_distance=1.0)  # 1m max distance
 
     # Unknown cells should remain unknown (new behavior - unknowns are preserved)
     assert gradient_with_unknown.grid[0, 0] == -1  # Should remain unknown
@@ -375,14 +376,12 @@ def test_lcm_broadcast() -> None:
     pointcloud = PointCloud2.lcm_decode(lcm_msg)
 
     # Create occupancy grid from pointcloud
-    occupancygrid = OccupancyGrid.from_pointcloud(
-        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0
-    )
+    occupancygrid = general_occupancy(pointcloud, resolution=0.05, min_height=0.1, max_height=2.0)
     # Apply inflation separately if needed
-    occupancygrid = occupancygrid.inflate(0.1)
+    occupancygrid = simple_inflate(occupancygrid, 0.1)
 
     # Create gradient field with larger max_distance for better visualization
-    gradient_grid = occupancygrid.gradient(obstacle_threshold=70, max_distance=2.0)
+    gradient_grid = gradient(occupancygrid, obstacle_threshold=70, max_distance=2.0)
 
     # Debug: Print actual values to see the difference
     print("\n=== DEBUG: Comparing grids ===")

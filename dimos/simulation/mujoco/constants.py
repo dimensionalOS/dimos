@@ -28,7 +28,7 @@ MAX_HEIGHT = 1.2
 LIDAR_RESOLUTION = 0.05
 
 # Simulation timing constants
-STEPS_PER_FRAME = 7
+STEPS_PER_FRAME = 1
 VIDEO_FPS = 20
 LIDAR_FPS = 2
 
