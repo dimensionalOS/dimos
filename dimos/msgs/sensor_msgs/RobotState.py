@@ -24,13 +24,47 @@ import struct
 class RobotState(object):
     msg_name = "sensor_msgs.RobotState"
 
-    __slots__ = ["state", "mode", "error_code", "warn_code", "cmdnum", "mt_brake", "mt_able"]
+    __slots__ = [
+        "state",
+        "mode",
+        "error_code",
+        "warn_code",
+        "cmdnum",
+        "mt_brake",
+        "mt_able",
+        "tcp_pose",
+        "tcp_offset",
+        "joints",
+    ]
 
-    __typenames__ = ["int32_t", "int32_t", "int32_t", "int32_t", "int32_t", "int32_t", "int32_t"]
+    __typenames__ = [
+        "int32_t",
+        "int32_t",
+        "int32_t",
+        "int32_t",
+        "int32_t",
+        "int32_t",
+        "int32_t",
+        "float",
+        "float",
+        "float",
+    ]
 
-    __dimensions__ = [None, None, None, None, None, None, None]
+    __dimensions__ = [None, None, None, None, None, None, None, None, None, None]
 
-    def __init__(self, state=0, mode=0, error_code=0, warn_code=0, cmdnum=0, mt_brake=0, mt_able=0):
+    def __init__(
+        self,
+        state=0,
+        mode=0,
+        error_code=0,
+        warn_code=0,
+        cmdnum=0,
+        mt_brake=0,
+        mt_able=0,
+        tcp_pose=None,
+        tcp_offset=None,
+        joints=None,
+    ):
         # LCM Type: int32_t
         self.state = state
         # LCM Type: int32_t
@@ -45,6 +79,12 @@ class RobotState(object):
         self.mt_brake = mt_brake
         # LCM Type: int32_t
         self.mt_able = mt_able
+        # LCM Type: float[] - TCP pose [x, y, z, roll, pitch, yaw]
+        self.tcp_pose = tcp_pose if tcp_pose is not None else []
+        # LCM Type: float[] - TCP offset [x, y, z, roll, pitch, yaw]
+        self.tcp_offset = tcp_offset if tcp_offset is not None else []
+        # LCM Type: float[] - Joint positions (variable length based on robot DOF)
+        self.joints = joints if joints is not None else []
 
     def lcm_encode(self):
         """Encode for LCM transport (dimos uses lcm_encode method name)."""
@@ -69,6 +109,18 @@ class RobotState(object):
                 self.mt_able,
             )
         )
+        # Encode tcp_pose array
+        buf.write(struct.pack(">i", len(self.tcp_pose)))
+        for val in self.tcp_pose:
+            buf.write(struct.pack(">f", val))
+        # Encode tcp_offset array
+        buf.write(struct.pack(">i", len(self.tcp_offset)))
+        for val in self.tcp_offset:
+            buf.write(struct.pack(">f", val))
+        # Encode joints array
+        buf.write(struct.pack(">i", len(self.joints)))
+        for val in self.joints:
+            buf.write(struct.pack(">f", val))
 
     @classmethod
     def lcm_decode(cls, data: bytes):
@@ -97,13 +149,29 @@ class RobotState(object):
             self.mt_brake,
             self.mt_able,
         ) = struct.unpack(">iiiiiii", buf.read(28))
+        # Decode tcp_pose array
+        tcp_pose_len = struct.unpack(">i", buf.read(4))[0]
+        self.tcp_pose = []
+        for _ in range(tcp_pose_len):
+            self.tcp_pose.append(struct.unpack(">f", buf.read(4))[0])
+        # Decode tcp_offset array
+        tcp_offset_len = struct.unpack(">i", buf.read(4))[0]
+        self.tcp_offset = []
+        for _ in range(tcp_offset_len):
+            self.tcp_offset.append(struct.unpack(">f", buf.read(4))[0])
+        # Decode joints array
+        joints_len = struct.unpack(">i", buf.read(4))[0]
+        self.joints = []
+        for _ in range(joints_len):
+            self.joints.append(struct.unpack(">f", buf.read(4))[0])
         return self
 
     @classmethod
     def _get_hash_recursive(cls, parents):
         if cls in parents:
             return 0
-        tmphash = (0x40A67674D7F79A43) & 0xFFFFFFFFFFFFFFFF
+        # Updated hash to reflect new fields: tcp_pose, tcp_offset, joints
+        tmphash = (0x8C3B9A1FE7D24E6A) & 0xFFFFFFFFFFFFFFFF
         tmphash = (((tmphash << 1) & 0xFFFFFFFFFFFFFFFF) + (tmphash >> 63)) & 0xFFFFFFFFFFFFFFFF
         return tmphash
 

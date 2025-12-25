@@ -169,7 +169,8 @@ def test_joint_state_reading():
         if len(robot_states_received) <= 3:
             logger.info(
                 f"Received robot state #{len(robot_states_received)} via LCM: "
-                f"state={msg.state}, mode={msg.mode}, error={msg.error_code}"
+                f"state={msg.state}, mode={msg.mode}, error={msg.error_code}, "
+                f"joints={msg.joints}, tcp_pose={msg.tcp_pose}, tcp_offset={msg.tcp_offset}"
             )
 
     # Subscribe to the LCM transports

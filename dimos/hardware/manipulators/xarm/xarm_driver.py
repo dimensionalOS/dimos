@@ -127,6 +127,9 @@ class XArmDriver(
         self.curr_mode: int = 0  # Current control mode
         self.curr_cmdnum: int = 0  # Command queue length
         self.curr_warn: int = 0  # Warning code
+        self.curr_tcp_pose: List[float] = []  # TCP pose [x, y, z, roll, pitch, yaw]
+        self.curr_tcp_offset: List[float] = []  # TCP offset [x, y, z, roll, pitch, yaw]
+        self.curr_joints: List[float] = []  # Joint positions
 
         # Shared state (protected by locks)
         self._joint_cmd_lock = threading.Lock()
@@ -173,6 +176,9 @@ class XArmDriver(
         self.curr_mode = 0
         self.curr_cmdnum = 0
         self.curr_warn = 0
+        self.curr_tcp_pose = []
+        self.curr_tcp_offset = []
+        self.curr_joints = []
         self.arm = None
 
         # Joint names based on configuration
@@ -433,8 +439,8 @@ class XArmDriver(
     def _start_robot_state_thread(self):
         """
         Start the robot state publishing thread.
-        This thread publishes robot state at a fixed rate (default 10Hz),
-        using data from _report_data_callback when available, or current state variables.
+        This thread publishes robot state at robot_state_rate Hz,
+        using data from state variables updated by _report_data_callback.
         """
         logger.info(f"Starting robot state thread at {self.config.robot_state_rate}Hz")
 
@@ -754,8 +760,7 @@ class XArmDriver(
         Robot state publishing loop.
 
         Publishes robot state at robot_state_rate Hz (default 10Hz).
-        Uses latest data from _report_data_callback (when available) or
-        current state variables (curr_state, curr_mode, curr_err, etc.).
+        Uses state variables updated by _report_data_callback.
         """
         period = 1.0 / self.config.robot_state_rate
         next_time = time.time()
@@ -774,6 +779,9 @@ class XArmDriver(
                     cmdnum=self.curr_cmdnum,
                     mt_brake=0,  # Not always available, updated by callback
                     mt_able=0,  # Not always available, updated by callback
+                    tcp_pose=self.curr_tcp_pose,
+                    tcp_offset=self.curr_tcp_offset,
+                    joints=self.curr_joints,
                 )
 
                 # Update shared state
@@ -825,6 +833,8 @@ class XArmDriver(
         - warn_code: Warning code
         - cmdnum: Command queue length
         - cartesian: TCP pose [x, y, z, roll, pitch, yaw]
+        - tcp_offset: TCP offset [x, y, z, roll, pitch, yaw]
+        - joints: Joint positions (variable length based on DOF)
         - mtbrake: Motor brake state
         - mtable: Motor enable state
         """
@@ -844,29 +854,19 @@ class XArmDriver(
             self.curr_cmdnum = data.get("cmdnum", 0)
             self.curr_warn = data.get("warn_code", 0)
 
-            # Create and publish RobotState
-            robot_state = RobotState(
-                state=self.curr_state,
-                mode=self.curr_mode,
-                error_code=self.curr_err,
-                warn_code=self.curr_warn,
-                cmdnum=self.curr_cmdnum,
-                mt_brake=data.get("mtbrake", 0),
-                mt_able=data.get("mtable", 0),
-            )
+            # Update pose and joint tracking variables
+            # Extract arrays from callback data (ensure they're lists)
+            cartesian = data.get("cartesian", [])
+            self.curr_tcp_pose = list(cartesian) if cartesian else []
 
-            # Update shared state
-            with self._joint_state_lock:
-                self._robot_state_ = robot_state
+            tcp_offset = data.get("tcp_offset", [])
+            self.curr_tcp_offset = list(tcp_offset) if tcp_offset else []
 
-            # Publish robot state (only if transport is configured)
-            if self.robot_state._transport or (
-                hasattr(self.robot_state, "connection") and self.robot_state.connection
-            ):
-                try:
-                    self.robot_state.publish(robot_state)
-                except Exception:
-                    pass  # Transport error, skip publishing
+            joints = data.get("joints", [])
+            self.curr_joints = list(joints) if joints else []
+
+            # Note: Robot state publishing is handled by _robot_state_loop thread
+            # This callback only updates the state variables
 
             # Publish force/torque sensor data if available
             self._publish_ft_sensor_data()
