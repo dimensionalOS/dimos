@@ -18,6 +18,8 @@ Gripper Control Component for PiperDriver.
 Provides RPC methods for gripper control operations.
 """
 
+from typing import Any
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -32,6 +34,10 @@ class GripperControlComponent:
     - self.piper: C_PiperInterface_V2 instance
     - self.config: PiperDriverConfig instance
     """
+
+    # Type hints for attributes provided by parent class
+    piper: Any
+    config: Any
 
     @rpc
     def set_gripper(
@@ -78,7 +84,8 @@ class GripperControlComponent:
         Returns:
             Tuple of (success, message)
         """
-        return self.set_gripper(gripper_angle=1000, gripper_effort=effort)
+        result: tuple[bool, str] = self.set_gripper(gripper_angle=1000, gripper_effort=effort)  # type: ignore[no-any-return]
+        return result
 
     @rpc
     def close_gripper(self, effort: int = 100) -> tuple[bool, str]:
@@ -91,7 +98,8 @@ class GripperControlComponent:
         Returns:
             Tuple of (success, message)
         """
-        return self.set_gripper(gripper_angle=0, gripper_effort=effort)
+        result: tuple[bool, str] = self.set_gripper(gripper_angle=0, gripper_effort=effort)  # type: ignore[no-any-return]
+        return result
 
     @rpc
     def set_gripper_zero(self) -> tuple[bool, str]:

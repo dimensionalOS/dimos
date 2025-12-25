@@ -20,8 +20,13 @@ Provides RPC methods for kinematic calculations including:
 - Inverse kinematics
 """
 
+from typing import TYPE_CHECKING, Any
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from xarm.wrapper import XArmAPI
 
 logger = setup_logger()
 
@@ -34,6 +39,10 @@ class KinematicsComponent:
     - self.arm: XArmAPI instance
     - self.config: XArmDriverConfig instance
     """
+
+    # Type hints for attributes expected from parent class
+    arm: "XArmAPI"
+    config: Any  # Config dict accessed as object (dict with attribute access)
 
     @rpc
     def get_inverse_kinematics(self, pose: list[float]) -> tuple[int, list[float] | None]:

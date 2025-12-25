@@ -25,6 +25,7 @@ Provides RPC methods for motion control operations including:
 
 import math
 import time
+from typing import Any
 
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
@@ -42,6 +43,16 @@ class MotionControlComponent:
     - RAD_TO_PIPER: conversion constant (radians → 0.001 degrees)
     - PIPER_TO_RAD: conversion constant (0.001 degrees → radians)
     """
+
+    # Type hints for attributes expected from parent class
+    piper: Any
+    config: Any
+    RAD_TO_PIPER: float
+    PIPER_TO_RAD: float
+    _joint_cmd_lock: Any
+    _joint_cmd_: Any
+    _vel_cmd_: Any
+    _last_cmd_time: float
 
     @rpc
     def set_joint_angles(self, angles: list[float], gripper_state: int = 0x00) -> tuple[bool, str]:

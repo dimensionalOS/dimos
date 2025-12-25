@@ -15,9 +15,9 @@
 """Standard components for manipulator drivers."""
 
 from collections.abc import Callable
-from typing import TypeVar
+from typing import Any, TypeVar
 
-F = TypeVar("F", bound=Callable)
+F = TypeVar("F", bound=Callable[..., Any])
 
 
 def component_api(fn: F) -> F:

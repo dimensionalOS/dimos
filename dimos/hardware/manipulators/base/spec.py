@@ -153,7 +153,7 @@ class ManipulatorDriverSpec(Protocol):
     ft_sensor: Out[WrenchStamped] | None  # Force/torque sensor data
 
     # ============= Component Access =============
-    def get_component(self, component_type: type):
+    def get_component(self, component_type: type) -> Any:
         """Get a component by type.
 
         Args:
@@ -166,9 +166,9 @@ class ManipulatorDriverSpec(Protocol):
             motion = driver.get_component(StandardMotionComponent)
             motion.rpc_move_joint([0, 0, 0, 0, 0, 0])
         """
-        ...
+        pass
 
-    def get_rpc_method(self, method_name: str):
+    def get_rpc_method(self, method_name: str) -> Any:
         """Get an RPC method by name.
 
         Args:

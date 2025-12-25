@@ -283,7 +283,7 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*|.*/example_.*\\.py$|.*integration_test.*\\.py$|.*/mock_.*\\.py$|^dimos/msgs/.*"
 
 [[tool.mypy.overrides]]
 module = [

@@ -62,11 +62,15 @@ class TrajectorySetter:
         self.arm_type = arm_type.lower()
 
         # Publisher for trajectories
-        self.trajectory_pub = core.LCMTransport("/trajectory", JointTrajectory)
+        self.trajectory_pub: core.LCMTransport[JointTrajectory] = core.LCMTransport(
+            "/trajectory", JointTrajectory
+        )
 
         # Subscribe to arm-specific joint state topic
         joint_state_topic = f"/{self.arm_type}/joint_states"
-        self.joint_state_sub = core.LCMTransport(joint_state_topic, JointState)
+        self.joint_state_sub: core.LCMTransport[JointState] = core.LCMTransport(
+            joint_state_topic, JointState
+        )
         self.latest_joint_state: JointState | None = None
 
         # Will be set dynamically from joint_state
@@ -124,6 +128,8 @@ class TrajectorySetter:
         Returns:
             JointTrajectory with proper timing and velocities
         """
+        if self.generator is None:
+            raise RuntimeError("Generator not initialized - joint state not received yet")
         return self.generator.generate(waypoints)
 
     def publish_trajectory(self, trajectory: JointTrajectory) -> None:
@@ -163,7 +169,7 @@ def parse_joint_input(line: str, num_joints: int) -> list[float] | None:
     return positions
 
 
-def preview_waypoints(waypoints: list[list[float]], num_joints: int):
+def preview_waypoints(waypoints: list[list[float]], num_joints: int) -> None:
     """Show waypoints list."""
     if not waypoints:
         print("No waypoints")
@@ -183,7 +189,7 @@ def preview_waypoints(waypoints: list[list[float]], num_joints: int):
     print("-" * line_width)
 
 
-def preview_trajectory(trajectory: JointTrajectory, num_joints: int):
+def preview_trajectory(trajectory: JointTrajectory, num_joints: int) -> None:
     """Show generated trajectory preview."""
     # Dynamically generate header based on joint count
     joint_headers = " ".join([f"{'J' + str(i + 1):>7}" for i in range(num_joints)])
@@ -219,8 +225,12 @@ def preview_trajectory(trajectory: JointTrajectory, num_joints: int):
     print("=" * line_width)
 
 
-def interactive_mode(setter: TrajectorySetter):
+def interactive_mode(setter: TrajectorySetter) -> None:
     """Interactive mode for creating trajectories."""
+    if setter.num_joints is None:
+        print("Error: No joint state received. Cannot start interactive mode.")
+        return
+    
     # Generate dynamic joint list for help text
     joint_args = " ".join([f"<j{i + 1}>" for i in range(setter.num_joints)])
 
@@ -347,6 +357,9 @@ def interactive_mode(setter: TrajectorySetter):
 
             # VEL - set max velocity
             elif cmd == "vel" and len(parts) >= 2:
+                if setter.generator is None:
+                    print("Generator not initialized")
+                    continue
                 try:
                     vel = float(parts[1])
                     if vel <= 0:
@@ -362,6 +375,9 @@ def interactive_mode(setter: TrajectorySetter):
 
             # ACCEL - set max acceleration
             elif cmd == "accel" and len(parts) >= 2:
+                if setter.generator is None:
+                    print("Generator not initialized")
+                    continue
                 try:
                     accel = float(parts[1])
                     if accel <= 0:
@@ -375,6 +391,9 @@ def interactive_mode(setter: TrajectorySetter):
 
             # LIMITS - show current limits
             elif cmd == "limits":
+                if setter.generator is None:
+                    print("Generator not initialized")
+                    continue
                 v = setter.generator.max_velocity[0]
                 a = setter.generator.max_acceleration[0]
                 print(f"Max velocity: {v:.2f} rad/s ({math.degrees(v):.1f} deg/s)")
@@ -391,7 +410,7 @@ def interactive_mode(setter: TrajectorySetter):
         print("\n\nExiting...")
 
 
-def main():
+def main() -> int:
     """Main entry point."""
     import argparse
 

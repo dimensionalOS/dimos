@@ -157,7 +157,7 @@ def euler_to_quaternion(roll: float, pitch: float, yaw: float) -> tuple[float, f
     return qx, qy, qz, qw
 
 
-def pose_dict_to_list(pose: dict) -> list[float]:
+def pose_dict_to_list(pose: dict[str, float]) -> list[float]:
     """Convert pose dictionary to list format.
 
     Args:
@@ -176,7 +176,7 @@ def pose_dict_to_list(pose: dict) -> list[float]:
     ]
 
 
-def pose_list_to_dict(pose: list[float]) -> dict:
+def pose_list_to_dict(pose: list[float]) -> dict[str, float]:
     """Convert pose list to dictionary format.
 
     Args:
@@ -198,7 +198,7 @@ def pose_list_to_dict(pose: list[float]) -> dict:
     }
 
 
-def twist_dict_to_list(twist: dict) -> list[float]:
+def twist_dict_to_list(twist: dict[str, float]) -> list[float]:
     """Convert twist dictionary to list format.
 
     Args:
@@ -217,7 +217,7 @@ def twist_dict_to_list(twist: dict) -> list[float]:
     ]
 
 
-def twist_list_to_dict(twist: list[float]) -> dict:
+def twist_list_to_dict(twist: list[float]) -> dict[str, float]:
     """Convert twist list to dictionary format.
 
     Args:

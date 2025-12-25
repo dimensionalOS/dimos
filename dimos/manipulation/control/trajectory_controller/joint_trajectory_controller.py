@@ -32,6 +32,7 @@ Behavior:
 from dataclasses import dataclass
 import threading
 import time
+from typing import Any
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -70,16 +71,17 @@ class JointTrajectoryController(Module):
     """
 
     default_config = JointTrajectoryControllerConfig
+    config: JointTrajectoryControllerConfig  # Type hint for proper attribute access
 
     # Input topics
-    joint_state: In[JointState] = None  # Feedback from arm driver
-    robot_state: In[RobotState] = None  # Robot status from arm driver
-    trajectory: In[JointTrajectory] = None  # Trajectory to execute (topic-based)
+    joint_state: In[JointState] = None  # type: ignore[assignment]  # Feedback from arm driver
+    robot_state: In[RobotState] = None  # type: ignore[assignment]  # Robot status from arm driver
+    trajectory: In[JointTrajectory] = None  # type: ignore[assignment]  # Trajectory to execute (topic-based)
 
     # Output topics
-    joint_position_command: Out[JointCommand] = None  # To arm driver
+    joint_position_command: Out[JointCommand] = None  # type: ignore[assignment]  # To arm driver
 
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
 
         # State machine
@@ -318,7 +320,10 @@ class JointTrajectoryController(Module):
                         t = time.time() - self._start_time
 
                         # Check if trajectory complete
-                        if t >= self._trajectory.duration:
+                        if self._trajectory is None:
+                            self._state = TrajectoryState.FAULT
+                            logger.error("Trajectory is None during execution")
+                        elif t >= self._trajectory.duration:
                             self._state = TrajectoryState.COMPLETED
                             logger.info(
                                 f"Trajectory completed: duration={self._trajectory.duration:.3f}s"

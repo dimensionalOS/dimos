@@ -14,7 +14,7 @@
 
 """Validation utilities for manipulator drivers."""
 
-from typing import Optional
+from typing import Any, Optional, cast
 
 
 def validate_joint_limits(
@@ -116,7 +116,7 @@ def validate_acceleration_limits(
 
 
 def validate_trajectory(
-    trajectory: list[dict],
+    trajectory: list[dict[str, float | list[float]]],
     lower_limits: list[float],
     upper_limits: list[float],
     max_velocities: list[float] | None = None,
@@ -146,9 +146,9 @@ def validate_trajectory(
         return False, "Trajectory must start at time 0"
 
     # Check waypoints are time-ordered
-    prev_time = -1
+    prev_time: float = -1.0
     for i, waypoint in enumerate(trajectory):
-        curr_time = waypoint.get("time", 0)
+        curr_time = cast(float, waypoint.get("time", 0))
         if curr_time <= prev_time:
             return False, f"Waypoint {i} time {curr_time} not after previous {prev_time}"
         prev_time = curr_time
@@ -159,7 +159,7 @@ def validate_trajectory(
         if "positions" not in waypoint:
             return False, f"Waypoint {i} missing positions"
 
-        positions = waypoint["positions"]
+        positions = cast(list[float], waypoint["positions"])
 
         # Validate position limits
         valid, error = validate_joint_limits(positions, lower_limits, upper_limits)
@@ -168,7 +168,7 @@ def validate_trajectory(
 
         # Validate velocity limits if provided
         if "velocities" in waypoint and max_velocities:
-            velocities = waypoint["velocities"]
+            velocities = cast(list[float], waypoint["velocities"])
             valid, error = validate_velocity_limits(velocities, max_velocities)
             if not valid:
                 return False, f"Waypoint {i}: {error}"
@@ -179,18 +179,22 @@ def validate_trajectory(
             prev = trajectory[i - 1]
             curr = trajectory[i]
 
-            dt = curr["time"] - prev["time"]
+            dt = cast(float, curr["time"]) - cast(float, prev["time"])
             if dt <= 0:
                 continue
 
             # Estimate acceleration from position change
-            for j in range(len(prev["positions"])):
-                pos_change = curr["positions"][j] - prev["positions"][j]
+            prev_pos = cast(list[float], prev["positions"])
+            curr_pos = cast(list[float], curr["positions"])
+            for j in range(len(prev_pos)):
+                pos_change = curr_pos[j] - prev_pos[j]
                 pos_change / dt
 
                 # If velocities provided, use them for better estimate
                 if "velocities" in prev and "velocities" in curr:
-                    vel_change = curr["velocities"][j] - prev["velocities"][j]
+                    prev_vel = cast(list[float], prev["velocities"])
+                    curr_vel = cast(list[float], curr["velocities"])
+                    vel_change = curr_vel[j] - prev_vel[j]
                     acc = vel_change / dt
                     if abs(acc) > max_accelerations[j]:
                         return (

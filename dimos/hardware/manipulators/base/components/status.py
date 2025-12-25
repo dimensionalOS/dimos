@@ -76,33 +76,33 @@ class StandardStatusComponent:
         self.health_metrics = HealthMetrics()
 
         # Rate calculation
-        self.update_timestamps = deque(maxlen=100)
-        self.command_timestamps = deque(maxlen=100)
-        self.error_timestamps = deque(maxlen=100)
+        self.update_timestamps: deque[float] = deque(maxlen=100)
+        self.command_timestamps: deque[float] = deque(maxlen=100)
+        self.error_timestamps: deque[float] = deque(maxlen=100)
 
         # Error history
-        self.error_history = deque(maxlen=50)
+        self.error_history: deque[dict[str, Any]] = deque(maxlen=50)
 
     # ============= Initialization Methods (called by BaseDriver) =============
 
-    def set_sdk(self, sdk: BaseManipulatorSDK):
+    def set_sdk(self, sdk: BaseManipulatorSDK) -> None:
         """Set the SDK wrapper instance."""
         self.sdk = sdk
 
-    def set_shared_state(self, shared_state: SharedState):
+    def set_shared_state(self, shared_state: SharedState) -> None:
         """Set the shared state instance."""
         self.shared_state = shared_state
 
-    def set_capabilities(self, capabilities: ManipulatorCapabilities):
+    def set_capabilities(self, capabilities: ManipulatorCapabilities) -> None:
         """Set the capabilities instance."""
         self.capabilities = capabilities
 
-    def initialize(self):
+    def initialize(self) -> None:
         """Initialize the component after all resources are set."""
         self.start_time = time.time()
         self.logger.debug("Status component initialized")
 
-    def publish_state(self):
+    def publish_state(self) -> None:
         """Called periodically to update metrics (by publisher thread)."""
         current_time = time.time()
         self.update_timestamps.append(current_time)
@@ -338,7 +338,7 @@ class StandardStatusComponent:
 
             connected = self.sdk.is_connected()
 
-            result = {"connected": connected, "timestamp": time.time(), "success": True}
+            result: dict[str, Any] = {"connected": connected, "timestamp": time.time(), "success": True}
 
             # Try to get more info if connected
             if connected:
@@ -437,7 +437,7 @@ class StandardStatusComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def set_digital_outputs(self, outputs: dict) -> dict[str, Any]:
+    def set_digital_outputs(self, outputs: dict[str, bool]) -> dict[str, Any]:
         """Set digital output states.
 
         Args:
@@ -499,14 +499,14 @@ class StandardStatusComponent:
             position = self.sdk.get_gripper_position()
 
             if position is not None:
-                result = {
+                result: dict[str, Any] = {
                     "position": position,  # meters
                     "timestamp": time.time(),
                     "success": True,
                 }
 
                 # Add from shared state if available
-                if self.shared_state:
+                if self.shared_state and self.shared_state.gripper_force is not None:
                     result["force"] = self.shared_state.gripper_force
 
                 return result
@@ -519,7 +519,7 @@ class StandardStatusComponent:
 
     # ============= Helper Methods =============
 
-    def _update_health_metrics(self):
+    def _update_health_metrics(self) -> None:
         """Update health metrics based on recent data."""
         current_time = time.time()
 
@@ -573,7 +573,7 @@ class StandardStatusComponent:
 
         return True
 
-    def record_error(self, error_code: int, error_msg: str):
+    def record_error(self, error_code: int, error_msg: str) -> None:
         """Record an error occurrence.
 
         Args:
@@ -586,6 +586,6 @@ class StandardStatusComponent:
             {"code": error_code, "message": error_msg, "timestamp": current_time}
         )
 
-    def record_command(self):
+    def record_command(self) -> None:
         """Record a command occurrence."""
         self.command_timestamps.append(time.time())

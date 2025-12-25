@@ -47,7 +47,7 @@ def execute_trajectory() -> bool:
     Set and start executing a new trajectory immediately.
     Returns True if accepted, False if controller busy or traj invalid.
     """
-    ...
+    raise NotImplementedError("Protocol method")
 
 
 def cancel() -> bool:
@@ -55,7 +55,7 @@ def cancel() -> bool:
     Cancel the currently executing trajectory.
     Returns True if cancelled, False if no active trajectory.
     """
-    ...
+    raise NotImplementedError("Protocol method")
 
 
 def get_status() -> TrajectoryStatusProtocol:
@@ -67,6 +67,7 @@ def get_status() -> TrajectoryStatusProtocol:
       "active_traj_id": Optional[str],
       "error": Optional[str],
     """
+    raise NotImplementedError("Protocol method")
     ...
 
 

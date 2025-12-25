@@ -22,8 +22,13 @@ Provides RPC methods for controlling various grippers:
 - Robotiq gripper
 """
 
+from typing import TYPE_CHECKING, Any
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from xarm.wrapper import XArmAPI
 
 logger = setup_logger()
 
@@ -36,6 +41,10 @@ class GripperControlComponent:
     - self.arm: XArmAPI instance
     - self.config: XArmDriverConfig instance
     """
+
+    # Type hints for attributes expected from parent class
+    arm: "XArmAPI"
+    config: Any  # Config dict accessed as object (dict with attribute access)
 
     # =========================================================================
     # Standard xArm Gripper
@@ -305,7 +314,7 @@ class GripperControlComponent:
             return (-1, str(e))
 
     @rpc
-    def robotiq_get_status(self) -> tuple[int, dict | None]:
+    def robotiq_get_status(self) -> tuple[int, dict[str, Any] | None]:
         """Get Robotiq gripper status."""
         try:
             ret = self.arm.robotiq_get_status()

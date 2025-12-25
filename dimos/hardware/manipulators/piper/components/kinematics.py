@@ -19,6 +19,8 @@ Provides RPC methods for kinematic calculations including:
 - Forward kinematics
 """
 
+from typing import Any
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -35,8 +37,12 @@ class KinematicsComponent:
     - PIPER_TO_RAD: conversion constant (0.001 degrees → radians)
     """
 
+    # Type hints for attributes provided by parent class
+    piper: Any
+    config: Any
+
     @rpc
-    def get_forward_kinematics(self, mode: str = "feedback") -> tuple[bool, dict | None]:
+    def get_forward_kinematics(self, mode: str = "feedback") -> tuple[bool, dict[str, float] | None]:
         """
         Compute forward kinematics.
 
