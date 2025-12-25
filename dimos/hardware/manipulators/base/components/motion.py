@@ -43,9 +43,9 @@ class StandardMotionComponent:
         self,
         sdk: BaseManipulatorSDK | None = None,
         shared_state: SharedState | None = None,
-        command_queue: Queue | None = None,
+        command_queue: "Queue[Any]" | None = None,
         capabilities: ManipulatorCapabilities | None = None,
-    ):
+    ) -> None:
         """Initialize the motion component.
 
         Args:
@@ -66,23 +66,23 @@ class StandardMotionComponent:
 
     # ============= Initialization Methods (called by BaseDriver) =============
 
-    def set_sdk(self, sdk: BaseManipulatorSDK):
+    def set_sdk(self, sdk: BaseManipulatorSDK) -> None:
         """Set the SDK wrapper instance."""
         self.sdk = sdk
 
-    def set_shared_state(self, shared_state: SharedState):
+    def set_shared_state(self, shared_state: SharedState) -> None:
         """Set the shared state instance."""
         self.shared_state = shared_state
 
-    def set_command_queue(self, command_queue: Queue):
+    def set_command_queue(self, command_queue: "Queue[Any]") -> None:
         """Set the command queue instance."""
         self.command_queue = command_queue
 
-    def set_capabilities(self, capabilities: ManipulatorCapabilities):
+    def set_capabilities(self, capabilities: ManipulatorCapabilities) -> None:
         """Set the capabilities instance."""
         self.capabilities = capabilities
 
-    def initialize(self):
+    def initialize(self) -> None:
         """Initialize the component after all resources are set."""
         self.logger.debug("Motion component initialized")
 
@@ -419,7 +419,7 @@ class StandardMotionComponent:
 
     @component_api
     def move_cartesian(
-        self, pose: dict, velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
+        self, pose: dict[str, float], velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
     ) -> dict[str, Any]:
         """Move end-effector to target pose.
 
@@ -482,6 +482,7 @@ class StandardMotionComponent:
             if not self.capabilities or not self.capabilities.has_cartesian_control:
                 return {"success": False, "error": "Cartesian control not supported"}
 
+            pose: dict[str, float] | None = None
             if self.shared_state and self.shared_state.cartesian_position:
                 # Get from shared state
                 pose = self.shared_state.cartesian_position
@@ -503,7 +504,7 @@ class StandardMotionComponent:
     # ============= Trajectory Execution (Optional) =============
 
     @component_api
-    def execute_trajectory(self, trajectory: list[dict], wait: bool = True) -> dict[str, Any]:
+    def execute_trajectory(self, trajectory: list[dict[str, Any]], wait: bool = True) -> dict[str, Any]:
         """Execute a joint trajectory.
 
         Args:

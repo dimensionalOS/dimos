@@ -24,7 +24,8 @@ Provides RPC methods for querying robot state including:
 - Firmware version
 """
 
-from typing import Optional
+import threading
+from typing import Any, Optional
 
 from dimos.core import rpc
 from dimos.msgs.sensor_msgs import JointState, RobotState
@@ -45,6 +46,14 @@ class StateQueryComponent:
     - self._robot_state_: Optional[RobotState]
     - PIPER_TO_RAD: conversion constant (0.001 degrees → radians)
     """
+
+    # Type hints for attributes expected from parent class
+    piper: Any  # C_PiperInterface_V2 instance
+    config: Any  # Config dict accessed as object
+    _joint_state_lock: threading.Lock
+    _joint_states_: JointState | None
+    _robot_state_: RobotState | None
+    PIPER_TO_RAD: float
 
     @rpc
     def get_joint_state(self) -> JointState | None:
@@ -69,7 +78,7 @@ class StateQueryComponent:
             return self._robot_state_
 
     @rpc
-    def get_arm_status(self) -> tuple[bool, dict | None]:
+    def get_arm_status(self) -> tuple[bool, dict[str, Any] | None]:
         """
         Get arm status.
 
@@ -127,7 +136,7 @@ class StateQueryComponent:
             return (False, None)
 
     @rpc
-    def get_end_pose(self) -> tuple[bool, dict | None]:
+    def get_end_pose(self) -> tuple[bool, dict[str, float] | None]:
         """
         Get end-effector pose.
 
@@ -158,7 +167,7 @@ class StateQueryComponent:
             return (False, None)
 
     @rpc
-    def get_gripper_state(self) -> tuple[bool, dict | None]:
+    def get_gripper_state(self) -> tuple[bool, dict[str, Any] | None]:
         """
         Get gripper state.
 
@@ -302,7 +311,7 @@ class StateQueryComponent:
             return (False, None)
 
     @rpc
-    def get_motor_max_acc_limit(self) -> tuple[bool, dict | None]:
+    def get_motor_max_acc_limit(self) -> tuple[bool, dict[str, Any] | None]:
         """
         Get maximum acceleration limit for all motors.
 

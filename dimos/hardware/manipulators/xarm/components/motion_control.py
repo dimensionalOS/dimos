@@ -23,9 +23,14 @@ Provides RPC methods for motion control operations including:
 """
 
 import math
+import threading
+from typing import TYPE_CHECKING, Any
 
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from xarm.wrapper import XArmAPI
 
 logger = setup_logger()
 
@@ -40,6 +45,12 @@ class MotionControlComponent:
     - self._joint_cmd_lock: threading.Lock
     - self._joint_cmd_: Optional[list[float]]
     """
+
+    # Type hints for attributes expected from parent class
+    arm: "XArmAPI"
+    config: Any  # Config dict accessed as object (dict with attribute access)
+    _joint_cmd_lock: threading.Lock
+    _joint_cmd_: list[float] | None
 
     @rpc
     def set_joint_angles(self, angles: list[float]) -> tuple[int, str]:

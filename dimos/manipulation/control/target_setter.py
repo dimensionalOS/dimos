@@ -37,20 +37,24 @@ class TargetSetter:
     - Supporting relative mode movements
     """
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the target setter."""
         # Create LCM transport for publishing targets
-        self.target_pub = core.LCMTransport("/target_pose", PoseStamped)
+        self.target_pub: core.LCMTransport[PoseStamped] = core.LCMTransport(
+            "/target_pose", PoseStamped
+        )
 
         # Subscribe to current pose from controller
-        self.current_pose_sub = core.LCMTransport("/xarm/current_pose", PoseStamped)
-        self.latest_current_pose = None
+        self.current_pose_sub: core.LCMTransport[PoseStamped] = core.LCMTransport(
+            "/xarm/current_pose", PoseStamped
+        )
+        self.latest_current_pose: PoseStamped | None = None
 
         print("TargetSetter initialized")
         print("  Publishing to: /target_pose")
         print("  Subscribing to: /xarm/current_pose")
 
-    def start(self):
+    def start(self) -> bool:
         """Start subscribing to current pose."""
         self.current_pose_sub.subscribe(self._on_current_pose)
         print("  Waiting for current pose...")
@@ -67,7 +71,9 @@ class TargetSetter:
         """Callback for current pose updates."""
         self.latest_current_pose = msg
 
-    def publish_pose(self, x, y, z, roll=0.0, pitch=0.0, yaw=0.0):
+    def publish_pose(
+        self, x: float, y: float, z: float, roll: float = 0.0, pitch: float = 0.0, yaw: float = 0.0
+    ) -> None:
         """
         Publish target pose (absolute world frame coordinates).
 
@@ -80,7 +86,8 @@ class TargetSetter:
 
         if is_identity and self.latest_current_pose is not None:
             # Use current orientation
-            orientation = self.latest_current_pose.orientation
+            q = self.latest_current_pose.orientation
+            orientation = [q.x, q.y, q.z, q.w]
             print("\n✓ Published target (preserving current orientation):")
         else:
             # Convert Euler to Quaternion
@@ -105,7 +112,7 @@ class TargetSetter:
         )
 
 
-def interactive_mode(setter):
+def interactive_mode(setter: TargetSetter) -> None:
     """
     Interactive mode: repeatedly prompt for target poses.
 
@@ -169,7 +176,7 @@ def interactive_mode(setter):
         print("\n\nExiting interactive mode...")
 
 
-def print_banner():
+def print_banner() -> None:
     """Print welcome banner."""
     print("\n" + "=" * 80)
     print("xArm Target Pose Publisher")
@@ -179,7 +186,7 @@ def print_banner():
     print("=" * 80)
 
 
-def main():
+def main() -> int:
     """Main entry point."""
     print_banner()
 

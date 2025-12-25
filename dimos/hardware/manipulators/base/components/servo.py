@@ -61,19 +61,19 @@ class StandardServoComponent:
 
     # ============= Initialization Methods (called by BaseDriver) =============
 
-    def set_sdk(self, sdk: BaseManipulatorSDK):
+    def set_sdk(self, sdk: BaseManipulatorSDK) -> None:
         """Set the SDK wrapper instance."""
         self.sdk = sdk
 
-    def set_shared_state(self, shared_state: SharedState):
+    def set_shared_state(self, shared_state: SharedState) -> None:
         """Set the shared state instance."""
         self.shared_state = shared_state
 
-    def set_capabilities(self, capabilities: ManipulatorCapabilities):
+    def set_capabilities(self, capabilities: ManipulatorCapabilities) -> None:
         """Set the capabilities instance."""
         self.capabilities = capabilities
 
-    def initialize(self):
+    def initialize(self) -> None:
         """Initialize the component after all resources are set."""
         self.logger.debug("Servo component initialized")
 
@@ -250,7 +250,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in emergency_stop: {e}")
             # Try to stop motion as fallback
             try:
-                self.sdk.stop_motion()
+                if self.sdk is not None:
+                    self.sdk.stop_motion()
             except:
                 pass
             return {"success": False, "error": str(e)}

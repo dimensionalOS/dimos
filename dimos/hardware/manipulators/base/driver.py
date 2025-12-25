@@ -52,24 +52,24 @@ class BaseManipulatorDriver(Module):
     - Pub/Sub with LCM transport for real-time control
     """
 
-    # Input topics (commands from controllers)
-    joint_position_command: In[JointCommand] = None  # Target joint positions (radians)
-    joint_velocity_command: In[JointCommand] = None  # Target joint velocities (rad/s)
+    # Input topics (commands from controllers - initialized by Module)
+    joint_position_command: In[JointCommand] = None  # type: ignore[assignment]
+    joint_velocity_command: In[JointCommand] = None  # type: ignore[assignment]
 
-    # Output topics (state publishing)
-    joint_state: Out[JointState] = None  # Joint state (position, velocity, effort)
-    robot_state: Out[RobotState] = None  # Robot state (mode, errors, etc.)
-    ft_sensor: Out[WrenchStamped] = None  # Force/torque sensor data (optional)
+    # Output topics (state publishing - initialized by Module)
+    joint_state: Out[JointState] = None  # type: ignore[assignment]
+    robot_state: Out[RobotState] = None  # type: ignore[assignment]
+    ft_sensor: Out[WrenchStamped] = None  # type: ignore[assignment]
 
     def __init__(
         self,
         sdk: BaseManipulatorSDK,
-        components: list,
-        config: dict,
+        components: list[Any],
+        config: dict[str, Any],
         name: str | None = None,
-        *args,
-        **kwargs,
-    ):
+        *args: Any,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the base manipulator driver.
 
         Args:
@@ -84,7 +84,7 @@ class BaseManipulatorDriver(Module):
 
         self.sdk = sdk
         self.components = components
-        self.config = config
+        self.config: Any = config  # Config dict accessed as object
         self.name = name or self.__class__.__name__
 
         # Logging
@@ -95,11 +95,11 @@ class BaseManipulatorDriver(Module):
 
         # Threading
         self.stop_event = Event()
-        self.threads = []
-        self.command_queue = Queue(maxsize=10)
+        self.threads: list[Thread] = []
+        self.command_queue: Queue[Any] = Queue(maxsize=10)
 
         # RPC registry
-        self.rpc_methods = {}
+        self.rpc_methods: dict[str, Any] = {}
         self._exposed_component_apis: set[str] = set()  # Track auto-exposed method names
 
         # Capabilities
@@ -150,7 +150,7 @@ class BaseManipulatorDriver(Module):
             reach=self.config.get("reach", 0.0),
         )
 
-    def _initialize_components(self):
+    def _initialize_components(self) -> None:
         """Initialize components with shared resources."""
         for component in self.components:
             # Provide access to shared state
@@ -173,7 +173,7 @@ class BaseManipulatorDriver(Module):
             if hasattr(component, "initialize"):
                 component.initialize()
 
-    def _auto_expose_component_apis(self):
+    def _auto_expose_component_apis(self) -> None:
         """Auto-expose @component_api methods from components as RPC methods on the driver.
 
         This scans all components for methods decorated with @component_api and creates
@@ -224,7 +224,7 @@ class BaseManipulatorDriver(Module):
 
                 self.logger.debug(f"Exposed component API as RPC: {method_name}")
 
-    def _create_component_api_wrapper(self, component_method):
+    def _create_component_api_wrapper(self, component_method: Any) -> Any:
         """Create an RPC wrapper for a component API method.
 
         Args:
@@ -237,13 +237,13 @@ class BaseManipulatorDriver(Module):
 
         @rpc
         @functools.wraps(component_method)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             return component_method(*args, **kwargs)
 
-        wrapper.__component_api_wrapper__ = True
+        wrapper.__component_api_wrapper__ = True  # type: ignore[attr-defined]
         return wrapper
 
-    def _connect(self):
+    def _connect(self) -> None:
         """Connect to the manipulator hardware."""
         self.logger.info(f"Connecting to {self.name}...")
 
@@ -258,7 +258,7 @@ class BaseManipulatorDriver(Module):
         self._update_joint_state()
         self._update_robot_state()
 
-    def _update_joint_state(self):
+    def _update_joint_state(self) -> None:
         """Update joint state from hardware (high frequency - 100Hz).
 
         Reads joint positions, velocities, efforts and publishes to LCM immediately.
@@ -288,7 +288,7 @@ class BaseManipulatorDriver(Module):
         except Exception as e:
             self.logger.error(f"Error updating joint state: {e}")
 
-    def _update_robot_state(self):
+    def _update_robot_state(self) -> None:
         """Update robot state from hardware (low frequency - 10Hz).
 
         Reads robot mode, errors, warnings, optional states and publishes to LCM immediately.
@@ -354,7 +354,7 @@ class BaseManipulatorDriver(Module):
     # ============= Threading =============
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         """Start all driver threads and subscribe to input topics."""
         super().start()
         self.logger.info(f"Starting {self.name} driver threads...")
@@ -389,7 +389,7 @@ class BaseManipulatorDriver(Module):
 
         self.logger.info(f"{self.name} driver started successfully")
 
-    def _control_loop_thread(self):
+    def _control_loop_thread(self) -> None:
         """Control loop: send commands AND read joint feedback (100Hz).
 
         This tight loop ensures synchronized command/feedback for real-time control.
@@ -427,7 +427,7 @@ class BaseManipulatorDriver(Module):
 
         self.logger.debug("Control loop thread stopped")
 
-    def _robot_state_monitor_thread(self):
+    def _robot_state_monitor_thread(self) -> None:
         """Monitor robot state: mode, errors, warnings (10-20Hz).
 
         Lower frequency monitoring for high-level planning and error handling.
@@ -453,7 +453,7 @@ class BaseManipulatorDriver(Module):
 
         self.logger.debug("Robot state monitor thread stopped")
 
-    def _process_command(self, command: Command):
+    def _process_command(self, command: Command) -> None:
         """Process a command from the queue.
 
         Args:
@@ -534,7 +534,7 @@ class BaseManipulatorDriver(Module):
     # ============= Lifecycle Management =============
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop all threads and disconnect from hardware."""
         self.logger.info(f"Stopping {self.name} driver...")
 
@@ -565,14 +565,14 @@ class BaseManipulatorDriver(Module):
         # Call Module's stop
         super().stop()
 
-    def __del__(self):
+    def __del__(self) -> None:
         """Cleanup on deletion."""
         if self.shared_state.is_connected:
             self.stop()
 
     # ============= RPC Method Access =============
 
-    def get_rpc_method(self, method_name: str):
+    def get_rpc_method(self, method_name: str) -> Any:
         """Get an RPC method by name.
 
         Args:
@@ -593,7 +593,7 @@ class BaseManipulatorDriver(Module):
 
     # ============= Component Access =============
 
-    def get_component(self, component_type: type):
+    def get_component(self, component_type: type[Any]) -> Any:
         """Get a component by type.
 
         Args:
@@ -607,7 +607,7 @@ class BaseManipulatorDriver(Module):
                 return component
         return None
 
-    def add_component(self, component):
+    def add_component(self, component: Any) -> None:
         """Add a component at runtime.
 
         Args:
@@ -617,7 +617,7 @@ class BaseManipulatorDriver(Module):
         self._initialize_components()
         self._auto_expose_component_apis()
 
-    def remove_component(self, component):
+    def remove_component(self, component: Any) -> None:
         """Remove a component at runtime.
 
         Args:
@@ -629,7 +629,7 @@ class BaseManipulatorDriver(Module):
             self._cleanup_exposed_component_apis()
             self._auto_expose_component_apis()
 
-    def _cleanup_exposed_component_apis(self):
+    def _cleanup_exposed_component_apis(self) -> None:
         """Remove all auto-exposed component API methods from the driver."""
         for method_name in self._exposed_component_apis:
             if hasattr(self, method_name):

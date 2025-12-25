@@ -22,6 +22,8 @@ Provides RPC methods for configuring robot parameters including:
 - Motor configuration
 """
 
+from typing import Any
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -36,6 +38,10 @@ class ConfigurationComponent:
     - self.piper: C_PiperInterface_V2 instance
     - self.config: PiperDriverConfig instance
     """
+
+    # Type hints for attributes provided by parent class
+    piper: Any
+    config: Any
 
     @rpc
     def set_joint_config(

@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import math
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -94,6 +94,7 @@ class CartesianMotionController(Module):
     """
 
     default_config = CartesianMotionControllerConfig
+    config: CartesianMotionControllerConfig  # Type hint for proper attribute access
 
     # RPC methods to request from other modules (resolved at blueprint build time)
     rpc_calls = [
@@ -101,17 +102,19 @@ class CartesianMotionController(Module):
         "XArmDriver.get_inverse_kinematics",
     ]
 
-    # Input topics
-    joint_state: In[JointState] = None  # Feedback from arm driver
-    robot_state: In[RobotState] = None  # Robot status from arm driver
-    target_pose: In[PoseStamped] = None  # Desired Cartesian pose
+    # Input topics (initialized by Module base class)
+    joint_state: In[JointState] = None  # type: ignore[assignment]
+    robot_state: In[RobotState] = None  # type: ignore[assignment]
+    target_pose: In[PoseStamped] = None  # type: ignore[assignment]
 
-    # Output topics
-    joint_position_command: Out[JointCommand] = None  # Commands to arm driver
-    cartesian_velocity: Out[Twist] = None  # Debug: Cartesian velocity commands
-    current_pose: Out[PoseStamped] = None  # Current TCP pose (for target setters)
+    # Output topics (initialized by Module base class)
+    joint_position_command: Out[JointCommand] = None  # type: ignore[assignment]
+    cartesian_velocity: Out[Twist] = None  # type: ignore[assignment]
+    current_pose: Out[PoseStamped] = None  # type: ignore[assignment]
 
-    def __init__(self, arm_driver: ArmDriverSpec | None = None, *args, **kwargs) -> None:
+    def __init__(
+        self, arm_driver: ArmDriverSpec | None = None, *args: Any, **kwargs: Any
+    ) -> None:
         """
         Initialize the Cartesian motion controller.
 
@@ -193,19 +196,23 @@ class CartesianMotionController(Module):
     def _call_fk(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
         """Call FK - uses blueprint RPC wiring or legacy arm_driver reference."""
         try:
-            return self.get_rpc_calls("XArmDriver.get_forward_kinematics")(joint_positions)
+            result: tuple[int, list[float] | None] = self.get_rpc_calls("XArmDriver.get_forward_kinematics")(joint_positions)  # type: ignore[no-any-return]
+            return result
         except (ValueError, KeyError):
             if self._arm_driver_legacy:
-                return self._arm_driver_legacy.get_forward_kinematics(joint_positions)
+                result_fk: tuple[int, list[float] | None] = self._arm_driver_legacy.get_forward_kinematics(joint_positions)  # type: ignore[attr-defined, no-any-return]
+                return result_fk
             raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
 
     def _call_ik(self, pose: list[float]) -> tuple[int, list[float] | None]:
         """Call IK - uses blueprint RPC wiring or legacy arm_driver reference."""
         try:
-            return self.get_rpc_calls("XArmDriver.get_inverse_kinematics")(pose)
+            result: tuple[int, list[float] | None] = self.get_rpc_calls("XArmDriver.get_inverse_kinematics")(pose)  # type: ignore[no-any-return]
+            return result
         except (ValueError, KeyError):
             if self._arm_driver_legacy:
-                return self._arm_driver_legacy.get_inverse_kinematics(pose)
+                result_ik: tuple[int, list[float] | None] = self._arm_driver_legacy.get_inverse_kinematics(pose)  # type: ignore[attr-defined, no-any-return]
+                return result_ik
             raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
 
     @rpc
@@ -474,7 +481,7 @@ class CartesianMotionController(Module):
 
                 # Log error periodically (every 1 second)
                 if not hasattr(self, "_last_error_log_time"):
-                    self._last_error_log_time = 0
+                    self._last_error_log_time = 0.0
                 if current_time - self._last_error_log_time > 1.0:
                     logger.info(
                         f"Curr=[{self._current_tcp_pose.x:.3f},{self._current_tcp_pose.y:.3f},{self._current_tcp_pose.z:.3f}]m Tgt=[{target_pose.x:.3f},{target_pose.y:.3f},{target_pose.z:.3f}]m Err={pos_error_mag * 1000:.1f}mm"

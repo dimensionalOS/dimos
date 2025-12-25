@@ -17,7 +17,7 @@
 from dataclasses import dataclass, field
 from threading import Lock
 import time
-from typing import Optional
+from typing import Any, Optional
 
 
 @dataclass
@@ -43,12 +43,12 @@ class SharedState:
     target_efforts: list[float] | None = None  # Nm
 
     # Cartesian state (if available)
-    cartesian_position: dict | None = None  # x,y,z,roll,pitch,yaw
-    cartesian_velocity: dict | None = None  # vx,vy,vz,wx,wy,wz
+    cartesian_position: dict[str, float] | None = None  # x,y,z,roll,pitch,yaw
+    cartesian_velocity: dict[str, float] | None = None  # vx,vy,vz,wx,wy,wz
 
     # Cartesian targets
-    target_cartesian_position: dict | None = None
-    target_cartesian_velocity: dict | None = None
+    target_cartesian_position: dict[str, float] | None = None
+    target_cartesian_velocity: dict[str, float] | None = None
 
     # Force/torque sensor (if available)
     force_torque: list[float] | None = None  # [fx,fy,fz,tx,ty,tz]
@@ -84,7 +84,7 @@ class SharedState:
         positions: list[float] | None = None,
         velocities: list[float] | None = None,
         efforts: list[float] | None = None,
-    ):
+    ) -> None:
         """Thread-safe update of joint state.
 
         Args:
@@ -108,7 +108,7 @@ class SharedState:
         mode: int | None = None,
         error_code: int | None = None,
         error_message: str | None = None,
-    ):
+    ) -> None:
         """Thread-safe update of robot state.
 
         Args:
@@ -130,7 +130,9 @@ class SharedState:
             if error_message is not None:
                 self.error_message = error_message
 
-    def update_cartesian_state(self, position: dict | None = None, velocity: dict | None = None):
+    def update_cartesian_state(
+        self, position: dict[str, float] | None = None, velocity: dict[str, float] | None = None
+    ) -> None:
         """Thread-safe update of Cartesian state.
 
         Args:
@@ -148,7 +150,7 @@ class SharedState:
         positions: list[float] | None = None,
         velocities: list[float] | None = None,
         efforts: list[float] | None = None,
-    ):
+    ) -> None:
         """Thread-safe update of joint targets.
 
         Args:
@@ -181,7 +183,7 @@ class SharedState:
                 self.joint_efforts.copy() if self.joint_efforts else None,
             )
 
-    def get_robot_state(self) -> dict:
+    def get_robot_state(self) -> dict[str, Any]:
         """Thread-safe read of robot state.
 
         Returns:
@@ -199,7 +201,7 @@ class SharedState:
                 "last_update": self.last_state_update,
             }
 
-    def get_statistics(self) -> dict:
+    def get_statistics(self) -> dict[str, Any]:
         """Get statistics about state updates.
 
         Returns:
@@ -215,13 +217,13 @@ class SharedState:
                 "last_error_time": self.last_error_time,
             }
 
-    def clear_errors(self):
+    def clear_errors(self) -> None:
         """Clear error state."""
         with self.lock:
             self.error_code = 0
             self.error_message = ""
 
-    def reset(self):
+    def reset(self) -> None:
         """Reset all state to initial values."""
         with self.lock:
             self.joint_positions = None

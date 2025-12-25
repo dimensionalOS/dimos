@@ -18,12 +18,13 @@ from typing import Protocol
 from dimos.core import In, Out
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, WrenchStamped
 from dimos.msgs.nav_msgs import Path
-from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.sensor_msgs import JointCommand, JointState
+from dimos.msgs.sensor_msgs import RobotState as RobotStateMsg
 
 
 @dataclass
 class RobotState:
-    """Custom message containing full robot state."""
+    """Custom message containing full robot state (deprecated - use RobotStateMsg)."""
 
     state: int = 0  # Robot state (0: ready, 3: paused, 4: stopped, etc.)
     mode: int = 0  # Control mode (0: position, 1: servo, 4: joint velocity, 5: cartesian velocity)

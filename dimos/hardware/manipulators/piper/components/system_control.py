@@ -22,6 +22,8 @@ Provides RPC methods for system-level control operations including:
 - Master/slave configuration
 """
 
+from typing import Any
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
 
@@ -36,6 +38,10 @@ class SystemControlComponent:
     - self.piper: C_PiperInterface_V2 instance
     - self.config: PiperDriverConfig instance
     """
+
+    # Type hints for attributes expected from parent class
+    piper: Any  # C_PiperInterface_V2 instance
+    config: Any  # Config dict accessed as object
 
     @rpc
     def enable_servo_mode(self) -> tuple[bool, str]:

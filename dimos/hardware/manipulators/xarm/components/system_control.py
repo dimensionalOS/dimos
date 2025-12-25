@@ -22,8 +22,19 @@ Provides RPC methods for system-level control operations including:
 - Emergency stop
 """
 
+from typing import TYPE_CHECKING, Any, Protocol
+
 from dimos.core import rpc
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from xarm.wrapper import XArmAPI
+
+    class XArmConfig(Protocol):
+        """Protocol for XArm configuration."""
+
+        is_radian: bool
+        velocity_control: bool
 
 logger = setup_logger()
 
@@ -36,6 +47,10 @@ class SystemControlComponent:
     - self.arm: XArmAPI instance
     - self.config: XArmDriverConfig instance
     """
+
+    # Type hints for attributes expected from parent class
+    arm: "XArmAPI"
+    config: Any  # Should be XArmConfig but accessed as dict
 
     @rpc
     def enable_servo_mode(self) -> tuple[int, str]:
