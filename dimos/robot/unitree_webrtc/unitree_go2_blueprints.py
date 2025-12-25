@@ -34,9 +34,12 @@ from dimos.navigation.bt_navigator.navigator import (
 from dimos.navigation.frontier_exploration import (
     wavefront_frontier_explorer,
 )
-from dimos.navigation.global_planner import astar_planner
+from dimos.navigation.global_planner.planner import astar_planner
 from dimos.navigation.local_planner.holonomic_local_planner import (
     holonomic_local_planner,
+)
+from dimos.navigation.replanning_a_star.module import (
+    replanning_a_star_planner,
 )
 from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
@@ -82,6 +85,28 @@ standard = autoconnect(
     object_tracking(frame_id="camera_link"),
     utilization(),
 ).global_config(n_dask_workers=8)
+
+test_new_nav = (
+    autoconnect(
+        go2_connection(),
+        mapper(voxel_size=0.5, global_publish_interval=2.5),
+        # astar_planner(),
+        # holonomic_local_planner(),
+        # behavior_tree_navigator(),
+        replanning_a_star_planner(),
+        wavefront_frontier_explorer(),
+        websocket_vis(),
+        foxglove_bridge(),
+    )
+    .global_config(n_dask_workers=4, robot_model="unitree_go2")
+    .transports(
+        {
+            ("color_image", Image): LCMTransport("/go2/color_image", Image),
+            ("camera_pose", PoseStamped): LCMTransport("/go2/camera_pose", PoseStamped),
+            ("camera_info", CameraInfo): LCMTransport("/go2/camera_info", CameraInfo),
+        }
+    )
+)
 
 standard_with_jpeglcm = standard.transports(
     {

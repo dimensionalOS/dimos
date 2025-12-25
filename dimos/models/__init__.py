@@ -1,3 +1,3 @@
 from dimos.models.base import HuggingFaceModel, LocalModel
 
-__all__ = ["LocalModel", "HuggingFaceModel"]
+__all__ = ["HuggingFaceModel", "LocalModel"]
