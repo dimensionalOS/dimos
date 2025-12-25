@@ -19,7 +19,6 @@ This module provides frontier detection and exploration goal selection
 for autonomous navigation using the dimos Costmap and Vector types.
 """
 
-from functools import partial
 import threading
 from collections import deque
 from dataclasses import dataclass
@@ -29,7 +28,6 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from dimos.core import Module, In, Out, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, CostValues
 from dimos.utils.logging_config import setup_logger
@@ -819,6 +817,6 @@ class WavefrontFrontierExplorer(Module):
                     threading.Event().wait(2.0)
 
 
-wavefront_frontier_explorer = partial(create_module_blueprint, WavefrontFrontierExplorer)
+wavefront_frontier_explorer = WavefrontFrontierExplorer.blueprint
 
 __all__ = ["WavefrontFrontierExplorer", "wavefront_frontier_explorer"]

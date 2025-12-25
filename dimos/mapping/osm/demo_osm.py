@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 from dotenv import load_dotenv
 from reactivex import interval
 
@@ -21,7 +20,7 @@ from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.osm import osm_skill
 from dimos.agents2.system_prompt import get_system_prompt
-from dimos.core.blueprints import autoconnect, create_module_blueprint
+from dimos.core.blueprints import autoconnect
 from dimos.core.module import Module
 from dimos.core.stream import Out
 from dimos.mapping.types import LatLon
@@ -43,7 +42,7 @@ class DemoRobot(Module):
         self.gps_location.publish(LatLon(lat=37.78092426217621, lon=-122.40682866540769))
 
 
-demo_robot = partial(create_module_blueprint, DemoRobot)
+demo_robot = DemoRobot.blueprint
 
 
 demo_osm = autoconnect(

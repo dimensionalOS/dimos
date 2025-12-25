@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from functools import partial
 import inspect
 import threading
 from dataclasses import dataclass
@@ -36,6 +37,7 @@ from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
+from dimos.utils.generic import classproperty
 
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
@@ -237,6 +239,13 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         ]
 
         return "\n".join(ret)
+
+    @classproperty
+    def blueprint(cls):
+        # Here to prevent circular imports.
+        from dimos.core.blueprints import create_module_blueprint
+
+        return partial(create_module_blueprint, cls)
 
 
 class DaskModule(ModuleBase):

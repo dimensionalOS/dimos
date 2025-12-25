@@ -14,7 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import time
 import threading
 from typing import Optional
@@ -22,7 +21,6 @@ from typing import Optional
 import numpy as np
 
 from dimos.core import Module, In, Out, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos_lcm.sensor_msgs import CameraInfo
@@ -240,7 +238,7 @@ class DepthModule(Module):
             logger.error(f"Error publishing depth data: {e}", exc_info=True)
 
 
-depth_module = partial(create_module_blueprint, DepthModule)
+depth_module = DepthModule.blueprint
 
 
 __all__ = ["DepthModule", "depth_module"]

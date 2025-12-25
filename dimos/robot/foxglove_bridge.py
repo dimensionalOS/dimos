@@ -13,7 +13,6 @@
 # limitations under the License.
 
 import asyncio
-from functools import partial
 import threading
 import logging
 
@@ -21,7 +20,6 @@ import logging
 from dimos_lcm.foxglove_bridge import FoxgloveBridge as LCMFoxgloveBridge
 
 from dimos.core import Module, rpc
-from dimos.core.blueprints import create_module_blueprint
 
 
 class FoxgloveBridge(Module):
@@ -69,7 +67,7 @@ class FoxgloveBridge(Module):
         super().stop()
 
 
-foxglove_bridge = partial(create_module_blueprint, FoxgloveBridge)
+foxglove_bridge = FoxgloveBridge.blueprint
 
 
 __all__ = ["FoxgloveBridge", "foxglove_bridge"]

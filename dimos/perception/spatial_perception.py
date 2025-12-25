@@ -16,7 +16,6 @@
 Spatial Memory module for creating a semantic map of the environment.
 """
 
-from functools import partial
 import uuid
 import time
 import os
@@ -31,7 +30,6 @@ from reactivex.disposable import Disposable
 
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import In, Module, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.geometry_msgs import Vector3, Pose, PoseStamped
 from dimos.utils.logging_config import setup_logger
@@ -665,6 +663,6 @@ class SpatialMemory(Module):
         return None
 
 
-spatial_memory = partial(create_module_blueprint, SpatialMemory)
+spatial_memory = SpatialMemory.blueprint
 
 __all__ = ["SpatialMemory", "spatial_memory"]

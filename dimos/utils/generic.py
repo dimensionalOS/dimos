@@ -71,3 +71,8 @@ def short_id(from_string: str | None = None) -> str:
         chars.append(alphabet[rem])
 
     return "".join(reversed(chars))[:min_chars]
+
+
+class classproperty(property):
+    def __get__(self, obj, cls):
+        return self.fget(cls)

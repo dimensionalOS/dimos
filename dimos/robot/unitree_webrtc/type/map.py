@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
 import time
 from typing import Optional
 
@@ -22,7 +21,6 @@ from reactivex import interval
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
-from dimos.core.blueprints import create_module_blueprint
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
@@ -170,7 +168,7 @@ def splice_cylinder(
     return survivors + patch_pcd
 
 
-mapper = partial(create_module_blueprint, Map)
+mapper = Map.blueprint
 
 
 __all__ = ["Map", "mapper"]
