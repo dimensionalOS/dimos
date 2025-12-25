@@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
 import reactivex
 from reactivex import operators as ops
 
-from dimos.agents.memory.visual_memory import VisualMemory
+from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.msgs.geometry_msgs import Quaternion, Vector3
 
 # from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2  # Uncomment when properly configured
