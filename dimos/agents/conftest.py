@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from dimos.agents2.agent import Agent
-from dimos.agents2.testing import MockModel
+from dimos.agents.agent import Agent
+from dimos.agents.testing import MockModel
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
 

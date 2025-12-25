@@ -16,7 +16,7 @@ import queue
 
 from reactivex.disposable import Disposable
 
-from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import pLCMTransport, rpc
 from dimos.core.module import Module
 from dimos.core.rpc_client import RpcCall

@@ -42,7 +42,7 @@ def test_take_a_look_around(create_navigation_agent, navigation_skill_container,
     navigation_skill_container._bound_rpc_calls[
         "WavefrontFrontierExplorer.is_exploration_active"
     ] = is_exploration_active_mock
-    mocker.patch("dimos.agents2.skills.navigation.time.sleep")
+    mocker.patch("dimos.agents.skills.navigation.time.sleep")
     agent = create_navigation_agent(fixture="test_take_a_look_around.json")
 
     agent.query("take a look around for 10 seconds")
@@ -54,15 +54,15 @@ def test_go_to_semantic_location(
     create_navigation_agent, navigation_skill_container, mocker
 ) -> None:
     mocker.patch(
-        "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
+        "dimos.agents.skills.navigation.NavigationSkillContainer._navigate_by_tagged_location",
         return_value=None,
     )
     mocker.patch(
-        "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_to_object",
+        "dimos.agents.skills.navigation.NavigationSkillContainer._navigate_to_object",
         return_value=None,
     )
     navigate_to_mock = mocker.patch(
-        "dimos.agents2.skills.navigation.NavigationSkillContainer._navigate_to",
+        "dimos.agents.skills.navigation.NavigationSkillContainer._navigate_to",
         return_value=True,
     )
     query_by_text_mock = mocker.Mock(

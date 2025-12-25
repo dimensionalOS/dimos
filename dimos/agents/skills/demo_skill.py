@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,14 +13,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
+from dotenv import load_dotenv
 
-_SYSTEM_PROMPT = None
+from dimos.agents.agent import llm_agent
+from dimos.agents.cli.human import human_input
+from dimos.agents.skills.demo_calculator_skill import demo_calculator_skill
+from dimos.agents.system_prompt import get_system_prompt
+from dimos.core.blueprints import autoconnect
+
+load_dotenv()
 
 
-def get_system_prompt() -> str:
-    global _SYSTEM_PROMPT
-    if _SYSTEM_PROMPT is None:
-        with open(AGENT_SYSTEM_PROMPT_PATH) as f:
-            _SYSTEM_PROMPT = f.read()
-    return _SYSTEM_PROMPT
+demo_skill = autoconnect(
+    demo_calculator_skill(),
+    human_input(),
+    llm_agent(system_prompt=get_system_prompt()),
+)

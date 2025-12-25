@@ -29,9 +29,9 @@ from langchain_core.messages import (
 )
 from langchain_huggingface import ChatHuggingFace, HuggingFacePipeline
 
-from dimos.agents2.ollama_agent import ensure_ollama_model
-from dimos.agents2.spec import AgentSpec, Model, Provider
-from dimos.agents2.system_prompt import get_system_prompt
+from dimos.agents.ollama_agent import ensure_ollama_model
+from dimos.agents.spec import AgentSpec, Model, Provider
+from dimos.agents.system_prompt import get_system_prompt
 from dimos.core import DimosCluster, rpc
 from dimos.protocol.skill.coordinator import (
     SkillCoordinator,
@@ -413,7 +413,7 @@ def deploy(
     provider: Provider = Provider.OPENAI,  # type: ignore[attr-defined]
     skill_containers: list[SkillContainer] | None = None,
 ) -> Agent:
-    from dimos.agents2.cli.human import HumanInput
+    from dimos.agents.cli.human import HumanInput
 
     if skill_containers is None:
         skill_containers = []

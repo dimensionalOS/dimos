@@ -14,7 +14,7 @@
 # limitations under the License.
 
 """
-Run script for Unitree Go2 robot with agents2 framework.
+Run script for Unitree Go2 robot with agents framework.
 This is the migrated version using the new LangChain-based agent system.
 """
 
@@ -24,9 +24,9 @@ import time
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.agents2 import Agent, Output, Reducer, Stream, skill  # type: ignore[attr-defined]
-from dimos.agents2.cli.human import HumanInput
-from dimos.agents2.spec import Model, Provider
+from dimos.agents import Agent, Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents.cli.human import HumanInput
+from dimos.agents.spec import Model, Provider
 from dimos.core import LCMTransport, Module, rpc, start
 from dimos.hardware.camera import zed
 from dimos.hardware.camera.module import CameraModule

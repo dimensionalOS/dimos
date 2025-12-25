@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 # Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -13,21 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dotenv import load_dotenv
+from dimos.agents.constants import AGENT_SYSTEM_PROMPT_PATH
 
-from dimos.agents2.agent import llm_agent
-from dimos.agents2.cli.human import human_input
-from dimos.agents2.skills.demo_robot import demo_robot
-from dimos.agents2.skills.google_maps_skill_container import google_maps_skill
-from dimos.agents2.system_prompt import get_system_prompt
-from dimos.core.blueprints import autoconnect
-
-load_dotenv()
+_SYSTEM_PROMPT = None
 
 
-demo_google_maps_skill = autoconnect(
-    demo_robot(),
-    google_maps_skill(),
-    human_input(),
-    llm_agent(system_prompt=get_system_prompt()),
-)
+def get_system_prompt() -> str:
+    global _SYSTEM_PROMPT
+    if _SYSTEM_PROMPT is None:
+        with open(AGENT_SYSTEM_PROMPT_PATH) as f:
+            _SYSTEM_PROMPT = f.read()
+    return _SYSTEM_PROMPT

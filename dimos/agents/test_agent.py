@@ -15,7 +15,7 @@
 import pytest
 import pytest_asyncio
 
-from dimos.agents2.agent import Agent
+from dimos.agents.agent import Agent
 from dimos.core import start
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
 
