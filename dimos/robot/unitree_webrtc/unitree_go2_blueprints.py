@@ -104,27 +104,14 @@ standard = autoconnect(
     utilization(),
 ).global_config(n_dask_workers=8)
 
-test_new_nav = (
-    autoconnect(
-        go2_connection(),
-        mapper(voxel_size=0.5, global_publish_interval=2.5),
-        # astar_planner(),
-        # holonomic_local_planner(),
-        # behavior_tree_navigator(),
-        replanning_a_star_planner(),
-        wavefront_frontier_explorer(),
-        websocket_vis(),
-        foxglove_bridge(),
-    )
-    .global_config(n_dask_workers=4, robot_model="unitree_go2")
-    .transports(
-        {
-            ("color_image", Image): LCMTransport("/go2/color_image", Image),
-            ("camera_pose", PoseStamped): LCMTransport("/go2/camera_pose", PoseStamped),
-            ("camera_info", CameraInfo): LCMTransport("/go2/camera_info", CameraInfo),
-        }
-    )
-)
+test_new_nav = autoconnect(
+    go2_connection(),
+    voxel_mapper(voxel_size=0.05, publish_interval=0),
+    replanning_a_star_planner(),
+    wavefront_frontier_explorer(),
+    websocket_vis(),
+    foxglove_bridge(),
+).global_config(n_dask_workers=4, robot_model="unitree_go2")
 
 standard_with_jpeglcm = standard.transports(
     {
