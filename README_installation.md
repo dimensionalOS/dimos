@@ -1,11 +1,11 @@
 # DimOS
 
-## Instalation
+## Installation
 
 Clone the repo:
 
 ```bash
-git clone --single-branch git@github.com:dimensionalOS/dimos.git
+git clone -b main --single-branch git@github.com:dimensionalOS/dimos.git
 cd dimos
 ```
 
@@ -40,7 +40,7 @@ uv sync --extra dev --extra cpu --extra sim --extra drone
 
 ### Install Foxglove Studio (robot visualization and control)
 
-(This will be obsolete once we finish our migration to opensource [Rerun](https://rerun.io/).)
+> **Note:** This will be obsolete once we finish our migration to open source [Rerun](https://rerun.io/).
 
 Download and install [Foxglove Studio](https://foxglove.dev/download):
 
@@ -57,9 +57,12 @@ Open Foxglove Studio:
 foxglove-studio
 ```
 
-Click on "Open connection". In the popup window leave the WebSocket URL as `ws://localhost:8765` and click on "Open".
+To connect and load our dashboard:
 
-You need to load our dashboard. In the top right, click on the "Default" dropdown, and then "Import from file...". Go to the `dimos` repo and select `assets/foxglove_dashboards/unitree.json`.
+1. Click on "Open connection"
+2. In the popup window, leave the WebSocket URL as `ws://localhost:8765` and click "Open"
+3. In the top right, click on the "Default" dropdown, then "Import from file..."
+4. Navigate to the `dimos` repo and select `assets/foxglove_dashboards/unitree.json`
 
 ### Test the install
 
@@ -73,7 +76,7 @@ They should all pass in about 3 minutes.
 
 ### Test a robot replay
 
-Run the system by playing back recorded data from a robot:
+Run the system by playing back recorded data from a robot (the replay data is automatically downloaded via Git LFS):
 
 ```bash
 uv run dimos --replay run unitree-go2-basic
@@ -110,3 +113,24 @@ git lfs pull --include="assets/dimensional.command-center-extension-0.0.1.foxe"
 To install it, drag that file over the Foxglove Studio window. The extension will be installed automatically. Then, click on the "Add panel" icon on the top right and add "command-center".
 
 You can now click on the map to give it a travel goal, or click on "Start Keyboard Control" to teleoperate it.
+
+### Using `dimos` in your code
+
+If you want to use dimos in your own project (not the cloned repo), you can install it as a dependency:
+
+```bash
+uv add dimos
+```
+
+Note, a few dependencies do not have PyPI packages and need to be installed from their Git repositories. These are only required for specific features:
+
+- **CLIP** and **detectron2**: Required for the Detic open-vocabulary object detector
+- **contact_graspnet_pytorch**: Required for robotic grasp prediction
+
+You can install them with:
+
+```bash
+uv add git+https://github.com/openai/CLIP.git
+uv add git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git
+uv add git+https://github.com/facebookresearch/detectron2.git
+```
