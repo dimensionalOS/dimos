@@ -317,6 +317,156 @@ class XArmDriver(
         logger.info("xArm driver stopped")
 
     # =========================================================================
+    # Static Methods: Error Interpretation
+    # =========================================================================
+
+    @staticmethod
+    def controller_error_interpreter(err_code: int) -> str:
+        """
+        Translate xArm error code to human-readable message.
+
+        Mirrors C++ XArmDriver::controller_error_interpreter() from ROS driver.
+
+        Args:
+            err_code: xArm error code
+
+        Returns:
+            Human-readable error description
+        """
+        error_map = {
+            0: "Everything OK",
+            1: "Hardware Emergency STOP effective",
+            2: "Emergency IO of Control Box is triggered",
+            3: "Emergency Stop of Three-state Switch triggered",
+            11: "Servo Motor Error of Joint 1",
+            12: "Servo Motor Error of Joint 2",
+            13: "Servo Motor Error of Joint 3",
+            14: "Servo Motor Error of Joint 4",
+            15: "Servo Motor Error of Joint 5",
+            16: "Servo Motor Error of Joint 6",
+            17: "Servo Motor Error of Joint 7",
+            19: "End Module Communication Error",
+            21: "Kinematic Error",
+            22: "Self-collision Error",
+            23: "Joint Angle Exceed Limit",
+            24: "Speed Exceeds Limit",
+            25: "Planning Error",
+            26: "System Real Time Error",
+            27: "Command Reply Error",
+            29: "Other Errors, please contact technical support",
+            30: "Feedback Speed Exceeds limit",
+            31: "Collision Caused Abnormal Joint Current",
+            32: "Circle Calculation Error",
+            33: "Controller GPIO Error",
+            34: "Trajectory Recording Timeout",
+            35: "Exceed Safety Boundary",
+            36: "Number of Delayed Command Exceed Limit",
+            37: "Abnormal Motion in Manual Mode",
+            38: "Abnormal Joint Angle",
+            39: "Abnormal Communication Between Master and Slave IC of Power Board",
+            50: "Tool Force/Torque Sensor Error",
+            51: "Tool Force Torque Sensor Mode Setting Error",
+            52: "Tool Force Torque Sensor Zero Setting Error",
+            53: "Tool Force Torque Sensor Overload",
+            110: "Robot Arm Base Board Communication Error",
+            111: "Control Box External RS485 Device Communication Error",
+        }
+
+        return error_map.get(err_code, f"Abnormal Error Code ({err_code}), please contact support!")
+
+    # =========================================================================
+    # Private Methods: Safety Checks
+    # =========================================================================
+
+    def _xarm_is_ready_read(self) -> bool:
+        """
+        Check if robot is ready for reading (no errors).
+
+        Mirrors C++ UFRobotSystemHardware::_xarm_is_ready_read() from ROS driver.
+        Logs error changes with human-readable interpretation.
+
+        Returns:
+            True if curr_err == 0, False otherwise
+        """
+        # Track last error for change detection
+        if not hasattr(self, "_last_err"):
+            self._last_err = 0
+
+        curr_err = self.curr_err
+
+        # Log error changes
+        if curr_err != 0:
+            if self._last_err != curr_err:
+                logger.error(
+                    f"[{self.config.ip_address}] xArm Error detected! "
+                    f"Code C{curr_err} -> [ {self.controller_error_interpreter(curr_err)} ]"
+                )
+
+        self._last_err = curr_err
+        return curr_err == 0
+
+    def _xarm_is_ready_write(self) -> bool:
+        """
+        Check if robot is ready for writing (correct state and mode).
+
+        Mirrors C++ UFRobotSystemHardware::_xarm_is_ready_write() from ROS driver.
+        Validates:
+        - No errors (curr_err == 0)
+        - State is ready (curr_state <= 2: 0=ready, 1=running, 2=paused)
+        - Mode matches expected (1=SERVO for position, 4=VELO_JOINT for velocity)
+
+        Returns:
+            True if robot is ready for commands, False otherwise
+        """
+        # Initialize tracking variables if needed
+        if not hasattr(self, "_last_not_ready"):
+            self._last_not_ready = False
+        if not hasattr(self, "_last_state"):
+            self._last_state = self.curr_state
+        if not hasattr(self, "_last_mode"):
+            self._last_mode = self.curr_mode
+
+        # Check for errors first
+        if not self._xarm_is_ready_read():
+            self._last_not_ready = True
+            return False
+
+        curr_state = self.curr_state
+        curr_mode = self.curr_mode
+
+        # Check state (must be 0=ready, 1=running, or 2=paused, NOT >2 which are error states)
+        if curr_state > 2:
+            if self._last_state != curr_state:
+                self._last_state = curr_state
+                logger.warning(
+                    f"[{self.config.ip_address}] Robot State detected! State: {curr_state}"
+                )
+            self._last_not_ready = True
+            return False
+        self._last_state = curr_state
+
+        # Check mode matches expected control mode
+        expected_mode = 4 if self.config.velocity_control else 1  # VELO_JOINT=4, SERVO=1
+        if curr_mode != expected_mode:
+            if self._last_mode != curr_mode:
+                self._last_mode = curr_mode
+                logger.warning(
+                    f"[{self.config.ip_address}] Robot Mode detected! "
+                    f"Mode: {curr_mode} (expected {expected_mode} for "
+                    f"{'velocity' if self.config.velocity_control else 'position'} control)"
+                )
+            self._last_not_ready = True
+            return False
+        self._last_mode = curr_mode
+
+        # Log when robot becomes ready after being not ready
+        if self._last_not_ready:
+            logger.info(f"[{self.config.ip_address}] Robot is Ready")
+
+        self._last_not_ready = False
+        return True
+
+    # =========================================================================
     # Private Methods: Initialization
     # =========================================================================
 
@@ -509,18 +659,6 @@ class XArmDriver(
             self._joint_cmd_ = list(cmd_msg.positions)
             self._last_cmd_time = time.time()  # Update timestamp for timeout detection
 
-        # DEBUG: Log first few commands received
-        # if not hasattr(self, '_cmd_recv_count'):
-        #     self._cmd_recv_count = 0
-        # self._cmd_recv_count += 1
-        #
-        # if self._cmd_recv_count <= 3 or self._cmd_recv_count % 100 == 0:
-        #     logger.info(
-        #         f"✓ Received position command #{self._cmd_recv_count}: "
-        #         f"joint6={math.degrees(cmd_msg.positions[5]):.2f}°, "
-        #         f"timestamp={cmd_msg.timestamp:.3f}"
-        #     )
-
     def _on_joint_velocity_command(self, cmd_msg: JointCommand):
         """
         Callback when joint velocity command is received.
@@ -545,7 +683,6 @@ class XArmDriver(
         This thread ONLY reads joint states and publishes them.
         Runs at joint_state_rate Hz (independent of report_type).
         """
-        # Determine rate (C++ line 237-239)
         # If joint_state_rate < 0, use default based on report_type
         # Otherwise use the configured rate
         if self.config.joint_state_rate < 0:
@@ -703,17 +840,35 @@ class XArmDriver(
 
                 # Send command if available
                 if joint_cmd is not None and len(joint_cmd) == self.config.num_joints:
+                    code = None  # Initialize code variable
+
                     if self.config.velocity_control:
                         # Velocity control mode (mode 4)
                         # NOTE: velocities are in degrees/second, not radians!
+                        # Always send velocity commands (velocity changes frequently)
                         code = self.arm.vc_set_joint_velocity(
                             joint_cmd, False, self.config.velocity_duration
                         )
                     else:
                         # Position control mode (mode 1)
-                        code = self.arm.set_servo_angle_j(
-                            angles=joint_cmd, is_radian=self.config.is_radian
-                        )
+                        # Only send if command changed (reduce network traffic)
+                        command_changed = True
+                        if hasattr(self, "_prev_joint_cmd") and self._prev_joint_cmd is not None:
+                            # Check if command changed by more than threshold (0.0001 rad ~ 0.006 degrees)
+                            if len(self._prev_joint_cmd) == len(joint_cmd):
+                                command_changed = any(
+                                    abs(joint_cmd[i] - self._prev_joint_cmd[i]) > 0.0001
+                                    for i in range(len(joint_cmd))
+                                )
+
+                        if command_changed:
+                            code = self.arm.set_servo_angle_j(
+                                angles=joint_cmd, is_radian=self.config.is_radian
+                            )
+                            # Store command if successfully sent
+                            if code == 0:
+                                self._prev_joint_cmd = joint_cmd.copy()
+                        # else: command unchanged, skip sending
 
                     # command_count += 1  # Disabled - used for logging
 
@@ -728,7 +883,7 @@ class XArmDriver(
                     #     command_count = 0
                     #     last_log_time = current_time
 
-                    if code != 0:
+                    if code is not None and code != 0:
                         if code == 9:
                             logger.warning(
                                 f"Command failed: not ready to move "
