@@ -53,8 +53,8 @@ Configuration values can be set from multiple places in order of precedence (lat
 - Default value defined on GlobalConfig. (`simulation = False`)
 - Value defined in `.env` (`SIMULATION=true`)
 - Value in the environment variable (`SIMULATION=true`)
-- Value coming from the CLI (`--simulation` or `--no-simulation`)
 - Value defined on the blueprint (`blueprint.global_config(simulation=True)`)
+- Value coming from the CLI (`--simulation` or `--no-simulation`)
 
 For environment variables/`.env` values, you have to prefix the name with `DIMOS_`.
 

@@ -15,6 +15,7 @@
 # limitations under the License.
 
 
+from pathlib import Path
 import xml.etree.ElementTree as ET
 
 from etils import epath  # type: ignore[import-untyped]
@@ -22,6 +23,9 @@ import mujoco  # type: ignore[import-untyped]
 from mujoco_playground._src import mjx_env  # type: ignore[import-untyped]
 import numpy as np
 
+from dimos.core.global_config import GlobalConfig
+from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.simulation.mujoco.input_controller import InputController
 from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
 
@@ -41,11 +45,11 @@ def get_assets() -> dict[str, bytes]:
 
 
 def load_model(
-    input_device: InputController, robot: str, scene: str
+    input_device: InputController, robot: str, scene_xml: str
 ) -> tuple[mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
 
-    xml_string = get_model_xml(robot, scene)
+    xml_string = get_model_xml(robot, scene_xml)
     model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
     data = mujoco.MjData(model)
 
@@ -83,11 +87,19 @@ def load_model(
     return model, data
 
 
-def get_model_xml(robot: str, scene: str) -> str:
-    xml_file = (DATA_DIR / f"scene_{scene}.xml").as_posix()
-
-    tree = ET.parse(xml_file)
-    root = tree.getroot()
-    root.set("model", f"{robot}_{scene}")
+def get_model_xml(robot: str, scene_xml: str) -> str:
+    root = ET.fromstring(scene_xml)
+    root.set("model", f"{robot}_scene")
     root.insert(0, ET.Element("include", file=f"{robot}.xml"))
     return ET.tostring(root, encoding="unicode")
+
+
+def load_scene_xml(config: GlobalConfig) -> str:
+    if config.mujoco_room_from_occupancy:
+        path = Path(config.mujoco_room_from_occupancy)
+        return generate_mujoco_scene(OccupancyGrid.from_path(path))
+
+    mujoco_room = config.mujoco_room or "office1"
+    xml_file = (DATA_DIR / f"scene_{mujoco_room}.xml").as_posix()
+    with open(xml_file) as f:
+        return f.read()

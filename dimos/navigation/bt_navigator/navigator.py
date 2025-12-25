@@ -27,6 +27,8 @@ from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
+from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.navigation.base import NavigationInterface, NavigationState
@@ -285,7 +287,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                         self.cancel_goal()
                         continue
 
-                    costmap = self.latest_costmap.inflate(0.1).gradient(max_distance=1.0)
+                    costmap = gradient(simple_inflate(self.latest_costmap, 0.1), max_distance=1.0)
 
                     # Find safe goal position
                     safe_goal_pos = find_safe_goal(

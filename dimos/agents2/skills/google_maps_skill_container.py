@@ -15,8 +15,6 @@
 import json
 from typing import Any
 
-from reactivex.disposable import Disposable
-
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
