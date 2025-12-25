@@ -302,6 +302,10 @@ module = [
 ]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
+follow_imports = "skip"
+
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 markers = [
