@@ -17,9 +17,9 @@
 import threading
 from typing import Any
 
-from dimos.agents.agent_message import AgentMessage
-from dimos.agents.agent_types import AgentResponse
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.agents_deprecated.agent_message import AgentMessage
+from dimos.agents_deprecated.agent_types import AgentResponse
+from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
 from dimos.core import In, Module, Out, rpc
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
@@ -27,7 +27,7 @@ from dimos.utils.logging_config import setup_logger
 try:
     from .base import BaseAgent
 except ImportError:
-    from dimos.agents.modules.base import BaseAgent
+    from dimos.agents_deprecated.modules.base import BaseAgent
 
 logger = setup_logger()
 

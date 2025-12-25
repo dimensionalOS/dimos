@@ -15,8 +15,8 @@
 
 from textwrap import dedent
 
-from dimos.agents.tokenizer.base import AbstractTokenizer
-from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
+from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
+from dimos.agents_deprecated.tokenizer.openai_tokenizer import OpenAITokenizer
 
 # TODO: Make class more generic when implementing other tokenizers. Presently its OpenAI specific.
 # TODO: Build out testing and logging

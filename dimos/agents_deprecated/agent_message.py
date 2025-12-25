@@ -17,7 +17,7 @@
 from dataclasses import dataclass, field
 import time
 
-from dimos.agents.agent_types import AgentImage
+from dimos.agents_deprecated.agent_types import AgentImage
 from dimos.msgs.sensor_msgs.Image import Image
 
 

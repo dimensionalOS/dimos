@@ -19,7 +19,7 @@ from langchain_chroma import Chroma
 from langchain_openai import OpenAIEmbeddings
 import torch
 
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
 
 
 class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):

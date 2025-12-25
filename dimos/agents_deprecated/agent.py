@@ -41,9 +41,9 @@ from reactivex.disposable import CompositeDisposable, Disposable
 from reactivex.subject import Subject
 
 # Local imports
-from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
-from dimos.agents.prompt_builder.impl import PromptBuilder
-from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
+from dimos.agents_deprecated.memory.chroma_impl import OpenAISemanticMemory
+from dimos.agents_deprecated.prompt_builder.impl import PromptBuilder
+from dimos.agents_deprecated.tokenizer.openai_tokenizer import OpenAITokenizer
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.stream.stream_merger import create_stream_merger
@@ -54,8 +54,8 @@ from dimos.utils.threadpool import get_scheduler
 if TYPE_CHECKING:
     from reactivex.scheduler import ThreadPoolScheduler
 
-    from dimos.agents.memory.base import AbstractAgentSemanticMemory
-    from dimos.agents.tokenizer.base import AbstractTokenizer
+    from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
 
 # Initialize environment variables
 load_dotenv()

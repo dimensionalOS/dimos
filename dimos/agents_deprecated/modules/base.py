@@ -21,17 +21,17 @@ from typing import Any
 
 from reactivex.subject import Subject
 
-from dimos.agents.agent_message import AgentMessage
-from dimos.agents.agent_types import AgentResponse, ConversationHistory, ToolCall
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
-from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
+from dimos.agents_deprecated.agent_message import AgentMessage
+from dimos.agents_deprecated.agent_types import AgentResponse, ConversationHistory, ToolCall
+from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
+from dimos.agents_deprecated.memory.chroma_impl import OpenAISemanticMemory
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 try:
     from .gateway import UnifiedGatewayClient
 except ImportError:
-    from dimos.agents.modules.gateway import UnifiedGatewayClient
+    from dimos.agents_deprecated.modules.gateway import UnifiedGatewayClient
 
 logger = setup_logger()
 

@@ -29,7 +29,7 @@ import anthropic
 from dotenv import load_dotenv
 
 # Local imports
-from dimos.agents.agent import LLMAgent
+from dimos.agents_deprecated.agent import LLMAgent
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.stream.frame_processor import FrameProcessor
 from dimos.utils.logging_config import setup_logger
@@ -39,8 +39,8 @@ if TYPE_CHECKING:
     from reactivex import Observable
     from reactivex.scheduler import ThreadPoolScheduler
 
-    from dimos.agents.memory.base import AbstractAgentSemanticMemory
-    from dimos.agents.prompt_builder.impl import PromptBuilder
+    from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
+    from dimos.agents_deprecated.prompt_builder.impl import PromptBuilder
 
 # Initialize environment variables
 load_dotenv()

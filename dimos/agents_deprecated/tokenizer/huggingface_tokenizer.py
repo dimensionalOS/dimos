@@ -12,20 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import tiktoken
+from transformers import AutoTokenizer  # type: ignore[import-untyped]
 
-from dimos.agents.tokenizer.base import AbstractTokenizer
+from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
 from dimos.utils.logging_config import setup_logger
 
 
-class OpenAITokenizer(AbstractTokenizer):
-    def __init__(self, model_name: str = "gpt-4o", **kwargs) -> None:  # type: ignore[no-untyped-def]
+class HuggingFaceTokenizer(AbstractTokenizer):
+    def __init__(self, model_name: str = "Qwen/Qwen2.5-0.5B", **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
 
-        # Initilize the tokenizer for the openai set of models
+        # Initilize the tokenizer for the huggingface models
         self.model_name = model_name
         try:
-            self.tokenizer = tiktoken.encoding_for_model(self.model_name)
+            self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         except Exception as e:
             raise ValueError(
                 f"Failed to initialize tokenizer for model {self.model_name}. Error: {e!s}"

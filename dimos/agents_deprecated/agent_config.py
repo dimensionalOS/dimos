@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from dimos.agents.agent import Agent
+from dimos.agents_deprecated.agent import Agent
 
 
 class AgentConfig:
