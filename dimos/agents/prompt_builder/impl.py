@@ -15,6 +15,7 @@
 
 from textwrap import dedent
 from typing import Optional
+
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 
@@ -24,9 +25,9 @@ from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 
 class PromptBuilder:
     DEFAULT_SYSTEM_PROMPT = dedent("""
-    You are an AI assistant capable of understanding and analyzing both visual and textual information. 
-    Your task is to provide accurate and insightful responses based on the data provided to you. 
-    Use the following information to assist the user with their query. Do not rely on any internal 
+    You are an AI assistant capable of understanding and analyzing both visual and textual information.
+    Your task is to provide accurate and insightful responses based on the data provided to you.
+    Use the following information to assist the user with their query. Do not rely on any internal
     knowledge or make assumptions beyond the provided data.
 
     Visual Context: You may have been given an image to analyze. Use the visual details to enhance your response.
@@ -39,7 +40,7 @@ class PromptBuilder:
     """)
 
     def __init__(
-        self, model_name="gpt-4o", max_tokens=128000, tokenizer: Optional[AbstractTokenizer] = None
+        self, model_name="gpt-4o", max_tokens=128000, tokenizer: AbstractTokenizer | None = None
     ):
         """
         Initialize the prompt builder.

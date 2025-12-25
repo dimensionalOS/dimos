@@ -25,30 +25,31 @@
 # browser like Safari.
 
 # Fast Api & Uvicorn
-import cv2
-from dimos.web.edge_io import EdgeIO
-from fastapi import FastAPI, Request, Form, HTTPException, UploadFile, File
-from fastapi.responses import HTMLResponse, StreamingResponse, JSONResponse
-from sse_starlette.sse import EventSourceResponse
-from fastapi.templating import Jinja2Templates
-import uvicorn
-from threading import Lock
-from pathlib import Path
-from queue import Queue, Empty
 import asyncio
-
-from reactivex.disposable import SingleAssignmentDisposable
-from reactivex import operators as ops
-import reactivex as rx
-from fastapi.middleware.cors import CORSMiddleware
 
 # For audio processing
 import io
+from pathlib import Path
+from queue import Empty, Queue
+from threading import Lock
 import time
-import numpy as np
+
+import cv2
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.templating import Jinja2Templates
 import ffmpeg
+import numpy as np
+import reactivex as rx
+from reactivex import operators as ops
+from reactivex.disposable import SingleAssignmentDisposable
 import soundfile as sf
+from sse_starlette.sse import EventSourceResponse
+import uvicorn
+
 from dimos.stream.audio.base import AudioEvent
+from dimos.web.edge_io import EdgeIO
 
 # TODO: Resolve threading, start/stop stream functionality.
 
@@ -275,7 +276,7 @@ class FastAPIServer(EdgeIO):
                 # Ensure we always return valid JSON even on error
                 return JSONResponse(
                     status_code=500,
-                    content={"success": False, "message": f"Server error: {str(e)}"},
+                    content={"success": False, "message": f"Server error: {e!s}"},
                 )
 
         @self.app.post("/upload_audio")
@@ -335,10 +336,10 @@ class FastAPIServer(EdgeIO):
 
                 return JSONResponse(response)
             except Exception as e:
-                print(f"Error processing command: {str(e)}")
+                print(f"Error processing command: {e!s}")
                 return JSONResponse(
                     status_code=500,
-                    content={"success": False, "message": f"Error processing command: {str(e)}"},
+                    content={"success": False, "message": f"Error processing command: {e!s}"},
                 )
 
         @self.app.get("/text_stream/{key}")

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.stream.audio.utils import keepalive
-from dimos.stream.audio.pipelines import tts, stt
-from dimos.utils.threadpool import get_scheduler
 from dimos.agents.agent import OpenAIAgent
+from dimos.stream.audio.pipelines import stt, tts
+from dimos.stream.audio.utils import keepalive
+from dimos.utils.threadpool import get_scheduler
 
 
 def main():

@@ -11,23 +11,25 @@
 Deformable DETR model and criterion classes.
 """
 
-import torch
-import torch.nn.functional as F
-from torch import nn
+import copy
 import math
 
+import torch
+from torch import nn
+import torch.nn.functional as F
 from util import box_ops
 from util.misc import (
     NestedTensor,
-    nested_tensor_from_tensor_list,
     accuracy,
     get_world_size,
     interpolate,
-    is_dist_avail_and_initialized,
     inverse_sigmoid,
+    is_dist_avail_and_initialized,
+    nested_tensor_from_tensor_list,
 )
 
 from .backbone import build_backbone
+from .deformable_transformer import build_deforamble_transformer
 from .matcher import build_matcher
 from .segmentation import (
     DETRsegm,
@@ -36,8 +38,6 @@ from .segmentation import (
     dice_loss,
     sigmoid_focal_loss,
 )
-from .deformable_transformer import build_deforamble_transformer
-import copy
 
 
 def _get_clones(module, N):
@@ -226,7 +226,7 @@ class DeformableDETR(nn.Module):
         # as a dict having both a Tensor and a list.
         return [
             {"pred_logits": a, "pred_boxes": b}
-            for a, b in zip(outputs_class[:-1], outputs_coord[:-1])
+            for a, b in zip(outputs_class[:-1], outputs_coord[:-1], strict=False)
         ]
 
 
@@ -261,7 +261,7 @@ class SetCriterion(nn.Module):
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices, strict=False)])
         target_classes = torch.full(
             src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device
         )
@@ -311,7 +311,7 @@ class SetCriterion(nn.Module):
         assert "pred_boxes" in outputs
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs["pred_boxes"][idx]
-        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices)], dim=0)
+        target_boxes = torch.cat([t["boxes"][i] for t, (_, i) in zip(targets, indices, strict=False)], dim=0)
 
         loss_bbox = F.l1_loss(src_boxes, target_boxes, reduction="none")
 
@@ -476,7 +476,7 @@ class PostProcess(nn.Module):
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1)
         boxes = boxes * scale_fct[:, None, :]
 
-        results = [{"scores": s, "labels": l, "boxes": b} for s, l, b in zip(scores, labels, boxes)]
+        results = [{"scores": s, "labels": l, "boxes": b} for s, l, b in zip(scores, labels, boxes, strict=False)]
 
         return results
 
@@ -489,7 +489,7 @@ class MLP(nn.Module):
         self.num_layers = num_layers
         h = [hidden_dim] * (num_layers - 1)
         self.layers = nn.ModuleList(
-            nn.Linear(n, k) for n, k in zip([input_dim] + h, h + [output_dim])
+            nn.Linear(n, k) for n, k in zip([input_dim, *h], [*h, output_dim], strict=False)
         )
 
     def forward(self, x):

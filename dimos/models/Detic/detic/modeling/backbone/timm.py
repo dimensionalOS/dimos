@@ -1,24 +1,19 @@
 #!/usr/bin/env python
-# -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates.
 import copy
 
+from detectron2.layers.batch_norm import FrozenBatchNorm2d
+from detectron2.modeling.backbone import FPN, Backbone
+from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
+import fvcore.nn.weight_init as weight_init
+from timm import create_model
+from timm.models.convnext import ConvNeXt, checkpoint_filter_fn, default_cfgs
+from timm.models.helpers import build_model_with_cfg
+from timm.models.registry import register_model
+from timm.models.resnet import Bottleneck, ResNet, default_cfgs as default_cfgs_resnet
 import torch
 from torch import nn
 import torch.nn.functional as F
-import fvcore.nn.weight_init as weight_init
-
-from detectron2.modeling.backbone import FPN
-from detectron2.modeling.backbone.build import BACKBONE_REGISTRY
-from detectron2.layers.batch_norm import FrozenBatchNorm2d
-from detectron2.modeling.backbone import Backbone
-
-from timm import create_model
-from timm.models.helpers import build_model_with_cfg
-from timm.models.registry import register_model
-from timm.models.resnet import ResNet, Bottleneck
-from timm.models.resnet import default_cfgs as default_cfgs_resnet
-from timm.models.convnext import ConvNeXt, default_cfgs, checkpoint_filter_fn
 
 
 @register_model
@@ -143,12 +138,12 @@ class TIMM(Backbone):
             dict(num_chs=f["num_chs"], reduction=f["reduction"])
             for i, f in enumerate(self.base.feature_info)
         ]
-        self._out_features = ["layer{}".format(x) for x in out_levels]
+        self._out_features = [f"layer{x}" for x in out_levels]
         self._out_feature_channels = {
-            "layer{}".format(l): feature_info[l - 1]["num_chs"] for l in out_levels
+            f"layer{l}": feature_info[l - 1]["num_chs"] for l in out_levels
         }
         self._out_feature_strides = {
-            "layer{}".format(l): feature_info[l - 1]["reduction"] for l in out_levels
+            f"layer{l}": feature_info[l - 1]["reduction"] for l in out_levels
         }
         self._size_divisibility = max(self._out_feature_strides.values())
         if "resnet" in base_name:
@@ -167,7 +162,7 @@ class TIMM(Backbone):
 
     def forward(self, x):
         features = self.base(x)
-        ret = {k: v for k, v in zip(self._out_features, features)}
+        ret = {k: v for k, v in zip(self._out_features, features, strict=False)}
         return ret
 
     @property

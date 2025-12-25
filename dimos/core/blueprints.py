@@ -12,16 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass, field
 from collections import defaultdict
-from functools import cached_property
+from dataclasses import dataclass, field
+from functools import cached_property, reduce
 import inspect
+import operator
 from types import MappingProxyType
-from typing import Any, Literal, Mapping, get_origin, get_args
+from typing import Any, Literal, Mapping, get_args, get_origin
 
-from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
+from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.utils.generic import short_id
@@ -122,7 +123,7 @@ class ModuleBlueprintSet:
 
         # Fulfil method requests (so modules can call each other).
         for blueprint in self.blueprints:
-            for method_name, method in blueprint.module.rpcs.items():
+            for method_name in blueprint.module.rpcs.keys():
                 if not method_name.startswith("set_"):
                     continue
                 linked_name = method_name.removeprefix("set_")
@@ -164,9 +165,11 @@ def create_module_blueprint(module: type[Module], *args: Any, **kwargs: Any) -> 
 
 def autoconnect(*blueprints: ModuleBlueprintSet) -> ModuleBlueprintSet:
     all_blueprints = tuple(_eliminate_duplicates([bp for bs in blueprints for bp in bs.blueprints]))
-    all_transports = dict(sum([list(x.transports.items()) for x in blueprints], []))
+    all_transports = dict(
+        reduce(operator.iadd, [list(x.transports.items()) for x in blueprints], [])
+    )
     all_config_overrides = dict(
-        sum([list(x.global_config_overrides.items()) for x in blueprints], [])
+        reduce(operator.iadd, [list(x.global_config_overrides.items()) for x in blueprints], [])
     )
 
     return ModuleBlueprintSet(

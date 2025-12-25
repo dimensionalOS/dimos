@@ -6,15 +6,10 @@
 # Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
 # ------------------------------------------------------------------------------------------------
 
-from __future__ import absolute_import
-from __future__ import print_function
-from __future__ import division
-
-import torch
-from torch.autograd import gradcheck
 
 from functions.ms_deform_attn_func import MSDeformAttnFunction, ms_deform_attn_core_pytorch
-
+import torch
+from torch.autograd import gradcheck
 
 N, M, D = 1, 2, 2
 Lq, L, P = 2, 2, 2

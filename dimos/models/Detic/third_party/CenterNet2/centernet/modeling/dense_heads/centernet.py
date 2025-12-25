@@ -1,19 +1,17 @@
+from detectron2.config import configurable
+from detectron2.layers import cat
+from detectron2.modeling.proposal_generator.build import PROPOSAL_GENERATOR_REGISTRY
+from detectron2.structures import Boxes, Instances
+from detectron2.utils.comm import get_world_size
 import torch
 from torch import nn
 
-from detectron2.modeling.proposal_generator.build import PROPOSAL_GENERATOR_REGISTRY
-from detectron2.layers import cat
-from detectron2.structures import Instances, Boxes
-from detectron2.utils.comm import get_world_size
-from detectron2.config import configurable
-
-from ..layers.heatmap_focal_loss import heatmap_focal_loss_jit
-from ..layers.heatmap_focal_loss import binary_heatmap_focal_loss_jit
+from ..debug import debug_test, debug_train
+from ..layers.heatmap_focal_loss import binary_heatmap_focal_loss_jit, heatmap_focal_loss_jit
 from ..layers.iou_loss import IOULoss
 from ..layers.ml_nms import ml_nms
-from ..debug import debug_train, debug_test
-from .utils import reduce_sum, _transpose
 from .centernet_head import CenterNetHead
+from .utils import _transpose, reduce_sum
 
 __all__ = ["CenterNet"]
 
@@ -49,7 +47,7 @@ class CenterNet(nn.Module):
         sigmoid_clamp=1e-4,
         ignore_high_fp=-1.0,
         center_nms=False,
-        sizes_of_interest=[[0, 80], [64, 160], [128, 320], [256, 640], [512, 10000000]],
+        sizes_of_interest=None,
         more_pos=False,
         more_pos_thresh=0.2,
         more_pos_topk=9,
@@ -63,11 +61,17 @@ class CenterNet(nn.Module):
         not_clamp_box=False,
         debug=False,
         vis_thresh=0.5,
-        pixel_mean=[103.530, 116.280, 123.675],
-        pixel_std=[1.0, 1.0, 1.0],
+        pixel_mean=None,
+        pixel_std=None,
         device="cuda",
         centernet_head=None,
     ):
+        if pixel_std is None:
+            pixel_std = [1.0, 1.0, 1.0]
+        if pixel_mean is None:
+            pixel_mean = [103.53, 116.28, 123.675]
+        if sizes_of_interest is None:
+            sizes_of_interest = [[0, 80], [64, 160], [128, 320], [256, 640], [512, 10000000]]
         super().__init__()
         self.num_classes = num_classes
         self.in_features = in_features
@@ -673,7 +677,7 @@ class CenterNet(nn.Module):
                     is_proposal=is_proposal,
                 )
             )
-        boxlists = list(zip(*sampled_boxes))
+        boxlists = list(zip(*sampled_boxes, strict=False))
         boxlists = [Instances.cat(boxlist) for boxlist in boxlists]
         boxlists = self.nms_and_topK(boxlists, nms=not self.not_nms)
         return boxlists
@@ -795,7 +799,7 @@ class CenterNet(nn.Module):
         c33_reg_loss.view(N * L, K)[level_masks.view(N * L), 4] = 0  # real center
         c33_reg_loss = c33_reg_loss.view(N, L * K)
         if N == 0:
-            loss_thresh = c33_reg_loss.new_ones((N)).float()
+            loss_thresh = c33_reg_loss.new_ones(N).float()
         else:
             loss_thresh = torch.kthvalue(c33_reg_loss, self.more_pos_topk, dim=1)[0]  # N
         loss_thresh[loss_thresh > self.more_pos_thresh] = self.more_pos_thresh  # N
@@ -899,7 +903,7 @@ class CenterNet(nn.Module):
             c33_regs = torch.cat(c33_regs, dim=0)
             c33_masks = torch.cat(c33_masks, dim=0)
         else:
-            labels = shapes_per_level.new_zeros((0)).long()
+            labels = shapes_per_level.new_zeros(0).long()
             level_masks = shapes_per_level.new_zeros((0, L)).bool()
             c33_inds = shapes_per_level.new_zeros((0, L, K)).long()
             c33_regs = shapes_per_level.new_zeros((0, L, K, 4)).float()

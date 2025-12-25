@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 from collections import deque
+
+import numpy as np
 
 
 def compute_iou(bbox1, bbox2):
@@ -313,7 +314,7 @@ class target2dTracker:
 
         # For each detection, try to match with an existing target.
         for mask, bbox, det_tid, prob, name, texture in zip(
-            masks, bboxes, track_ids, probs, names, texture_values
+            masks, bboxes, track_ids, probs, names, texture_values, strict=False
         ):
             matched_target = None
 

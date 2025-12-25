@@ -19,25 +19,26 @@ WebSocket Visualization Module for Dimos navigation and mapping.
 """
 
 import asyncio
+import base64
 import threading
 import time
 from typing import Any, Dict, Optional
-import base64
-import numpy as np
 
+from dimos_lcm.std_msgs import Bool
+import numpy as np
+from reactivex.disposable import Disposable
 import socketio
-import uvicorn
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse
 from starlette.routing import Route
+import uvicorn
 
-from dimos.core import Module, In, Out, rpc
-from dimos_lcm.std_msgs import Bool
+from dimos.core import In, Module, Out, rpc
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.utils.logging_config import setup_logger
-from reactivex.disposable import Disposable
+
 from .optimized_costmap import OptimizedCostmapEncoder
 
 logger = setup_logger("dimos.web.websocket_vis")
@@ -85,12 +86,12 @@ class WebsocketVisModule(Module):
         super().__init__(**kwargs)
 
         self.port = port
-        self._uvicorn_server_thread: Optional[threading.Thread] = None
-        self.sio: Optional[socketio.AsyncServer] = None
+        self._uvicorn_server_thread: threading.Thread | None = None
+        self.sio: socketio.AsyncServer | None = None
         self.app = None
         self._broadcast_loop = None
         self._broadcast_thread = None
-        self._uvicorn_server: Optional[uvicorn.Server] = None
+        self._uvicorn_server: uvicorn.Server | None = None
 
         self.vis_state = {}
         self.state_lock = threading.Lock()
@@ -268,7 +269,7 @@ class WebsocketVisModule(Module):
         self.vis_state["costmap"] = costmap_data
         self._emit("costmap", costmap_data)
 
-    def _process_costmap(self, costmap: OccupancyGrid) -> Dict[str, Any]:
+    def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
         costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
         grid_data = self.costmap_encoder.encode_costmap(costmap.grid)

@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+
 from ultralytics import YOLO, FastSAM
 
 

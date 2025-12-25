@@ -15,8 +15,8 @@
 import pytest
 
 try:
-    from tf2_msgs.msg import TFMessage as ROSTFMessage
     from geometry_msgs.msg import TransformStamped as ROSTransformStamped
+    from tf2_msgs.msg import TFMessage as ROSTFMessage
 except ImportError:
     ROSTransformStamped = None
     ROSTFMessage = None
@@ -256,7 +256,7 @@ def test_tfmessage_ros_roundtrip():
 
     assert len(restored) == len(original)
 
-    for orig_tf, rest_tf in zip(original, restored):
+    for orig_tf, rest_tf in zip(original, restored, strict=False):
         assert rest_tf.frame_id == orig_tf.frame_id
         assert rest_tf.child_frame_id == orig_tf.child_frame_id
         assert rest_tf.ts == orig_tf.ts

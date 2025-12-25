@@ -27,7 +27,7 @@ from typing import Optional
 from dimos import core
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import TwistStamped, PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
@@ -71,8 +71,8 @@ class UnitreeB1(Robot, Resource):
         self,
         ip: str = "192.168.123.14",
         port: int = 9090,
-        output_dir: str = None,
-        skill_library: Optional[SkillLibrary] = None,
+        output_dir: str | None = None,
+        skill_library: SkillLibrary | None = None,
         enable_joystick: bool = False,
         enable_ros_bridge: bool = True,
         test_mode: bool = False,

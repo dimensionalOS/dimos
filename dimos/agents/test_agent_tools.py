@@ -14,20 +14,21 @@
 
 """Production test for BaseAgent tool handling functionality."""
 
-import pytest
 import asyncio
 import os
+
 from dotenv import load_dotenv
 from pydantic import Field
+import pytest
 
-from dimos.agents.modules.base import BaseAgent
-from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos import core
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
-from dimos.skills.skills import AbstractSkill, SkillLibrary
-from dimos import core
-from dimos.core import Module, Out, In, rpc
+from dimos.agents.modules.base import BaseAgent
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
+from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_agent_tools")
@@ -45,7 +46,7 @@ class CalculateSkill(AbstractSkill):
             result = eval(self.expression)
             return f"The result is {result}"
         except Exception as e:
-            return f"Error calculating: {str(e)}"
+            return f"Error calculating: {e!s}"
 
 
 class WeatherSkill(AbstractSkill):
@@ -188,9 +189,9 @@ async def test_agent_module_with_tools():
 
         # Verify weather details
         assert isinstance(response, AgentResponse), "Expected AgentResponse object"
-        assert "new york" in response.content.lower(), f"Expected 'New York' in response"
-        assert "72" in response.content, f"Expected temperature '72' in response"
-        assert "sunny" in response.content.lower(), f"Expected 'sunny' in response"
+        assert "new york" in response.content.lower(), "Expected 'New York' in response"
+        assert "72" in response.content, "Expected temperature '72' in response"
+        assert "sunny" in response.content.lower(), "Expected 'sunny' in response"
 
         # Test 3: Navigation (potentially long-running)
         logger.info("\n=== Test 3: Navigation Tool ===")
@@ -295,9 +296,9 @@ def test_base_agent_direct_tools():
     logger.info(f"Tool calls: {response2.tool_calls}")
 
     assert response2.content is not None
-    assert "london" in response2.content.lower(), f"Expected 'London' in response"
-    assert "72" in response2.content, f"Expected temperature '72' in response"
-    assert "sunny" in response2.content.lower(), f"Expected 'sunny' in response"
+    assert "london" in response2.content.lower(), "Expected 'London' in response"
+    assert "72" in response2.content, "Expected temperature '72' in response"
+    assert "sunny" in response2.content.lower(), "Expected 'sunny' in response"
 
     # Verify tool was called
     if response2.tool_calls is not None:
@@ -330,8 +331,8 @@ class MockToolAgent(BaseAgent):
 
     async def _process_query_async(self, agent_msg, base64_image=None, base64_images=None):
         """Mock tool execution."""
-        from dimos.agents.agent_types import AgentResponse, ToolCall
         from dimos.agents.agent_message import AgentMessage
+        from dimos.agents.agent_types import AgentResponse, ToolCall
 
         # Get text from AgentMessage
         if isinstance(agent_msg, AgentMessage):
@@ -384,7 +385,7 @@ def test_mock_agent_tools():
     logger.info(f"Mock tool calls: {response.tool_calls}")
 
     assert response.content is not None
-    assert "42" in response.content, f"Expected '42' in response"
+    assert "42" in response.content, "Expected '42' in response"
     assert response.tool_calls is not None, "Expected tool calls"
     assert len(response.tool_calls) == 1, "Expected exactly one tool call"
     assert response.tool_calls[0].name == "CalculateSkill", "Expected CalculateSkill"

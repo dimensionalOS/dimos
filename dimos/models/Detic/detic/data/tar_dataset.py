@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 # Copyright (c) Facebook, Inc. and its affiliates.
-import os
 import gzip
-import numpy as np
 import io
+import os
+
+import numpy as np
 from PIL import Image
 from torch.utils.data import Dataset
 
@@ -92,7 +93,7 @@ class DiskTarDataset(Dataset):
         return st
 
 
-class _TarDataset(object):
+class _TarDataset:
     def __init__(self, filename, npy_index_dir, preload=False):
         # translated from
         # fbcode/experimental/deeplearning/matthijs/comp_descs/tardataset.lua

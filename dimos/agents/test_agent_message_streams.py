@@ -17,23 +17,23 @@
 
 import asyncio
 import os
+import pickle
 import time
+
 from dotenv import load_dotenv
 import pytest
-import pickle
-
 from reactivex import operators as ops
 
 from dimos import core
-from dimos.core import Module, In, Out, rpc
-from dimos.agents.modules.base_agent import BaseAgentModule
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
 from dimos.utils.data import get_data
-from dimos.utils.testing import TimedSensorReplay
 from dimos.utils.logging_config import setup_logger
+from dimos.utils.testing import TimedSensorReplay
 
 logger = setup_logger("test_agent_message_streams")
 
@@ -88,7 +88,7 @@ class VideoMessageSender(Module):
         # Test that message can be pickled (for module communication)
         try:
             pickled = pickle.dumps(msg)
-            unpickled = pickle.loads(pickled)
+            pickle.loads(pickled)
             logger.info(f"Message pickling test passed - size: {len(pickled)} bytes")
         except Exception as e:
             logger.error(f"Message pickling failed: {e}")
@@ -130,7 +130,7 @@ class MultiImageMessageSender(Module):
             msg = AgentMessage()
             msg.add_text("Compare these images and describe what changed between them.")
 
-            for i, frame in enumerate(self.frames[:2]):
+            for _i, frame in enumerate(self.frames[:2]):
                 msg.add_image(frame)
 
             logger.info(f"Sending multi-image message with {len(msg.images)} images")
@@ -354,7 +354,7 @@ def test_agent_message_text_only():
     msg.add_text("of France?")
 
     response = agent.query(msg)
-    assert "Paris" in response.content, f"Expected 'Paris' in response"
+    assert "Paris" in response.content, "Expected 'Paris' in response"
 
     # Test pickling of AgentMessage
     pickled = pickle.dumps(msg)

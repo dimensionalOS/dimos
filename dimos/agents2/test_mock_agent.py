@@ -16,9 +16,9 @@
 
 import time
 
-import pytest
 from dimos_lcm.sensor_msgs import CameraInfo
 from langchain_core.messages import AIMessage, HumanMessage
+import pytest
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.testing import MockModel

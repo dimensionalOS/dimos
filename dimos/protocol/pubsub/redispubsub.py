@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import defaultdict
+from dataclasses import dataclass, field
 import json
 import threading
 import time
-from collections import defaultdict
-from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List
 
 import redis
@@ -30,7 +30,7 @@ class RedisConfig:
     host: str = "localhost"
     port: int = 6379
     db: int = 0
-    kwargs: Dict[str, Any] = field(default_factory=dict)
+    kwargs: dict[str, Any] = field(default_factory=dict)
 
 
 class Redis(PubSub[str, Any], Service[RedisConfig]):
@@ -46,7 +46,7 @@ class Redis(PubSub[str, Any], Service[RedisConfig]):
         self._pubsub = None
 
         # Subscription management
-        self._callbacks: Dict[str, List[Callable[[Any, str], None]]] = defaultdict(list)
+        self._callbacks: dict[str, list[Callable[[Any, str], None]]] = defaultdict(list)
         self._listener_thread = None
         self._running = False
 

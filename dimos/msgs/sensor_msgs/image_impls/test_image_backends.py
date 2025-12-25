@@ -87,7 +87,7 @@ def alloc_timer(request):
     """Helper fixture for adaptive testing with optional GPU support."""
 
     def _alloc(
-        arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool = None, label: str | None = None
+        arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool | None = None, label: str | None = None
     ):
         tag = label or request.node.name
 
@@ -500,7 +500,7 @@ def test_csrt_tracker(alloc_timer):
 
     # Compare to ground-truth expected bbox
     expected = (x0 + dx, y0 + dy, w0, h0)
-    err_cpu = sum(abs(a - b) for a, b in zip(bbox_cpu, expected))
+    err_cpu = sum(abs(a - b) for a, b in zip(bbox_cpu, expected, strict=False))
     assert err_cpu <= 8
 
     # Optionally test GPU parity when CUDA is available
@@ -509,7 +509,7 @@ def test_csrt_tracker(alloc_timer):
         ok_gpu, bbox_gpu = gpu2.csrt_update(trk_gpu)
         assert ok_gpu
 
-        err_gpu = sum(abs(a - b) for a, b in zip(bbox_gpu, expected))
+        err_gpu = sum(abs(a - b) for a, b in zip(bbox_gpu, expected, strict=False))
         assert err_gpu <= 10  # allow some slack for scale/window effects
 
 
@@ -681,7 +681,6 @@ def test_nvimgcodec_gpu_path(monkeypatch):
         pytest.skip("nvimgcodec library not available")
 
     # Save original nvimgcodec module reference
-    original_nvimgcodec = AbstractImageMod.nvimgcodec
 
     # Create a CUDA image and encode using the actual nvimgcodec if available
     arr = _prepare_image(ImageFormat.BGR, (32, 32, 3))

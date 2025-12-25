@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from threading import Event, Thread
+import time
 
 import pytest
 
-from dimos.core import In, Module, Out, start, rpc
+from dimos.core import In, Module, Out, rpc, start
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry

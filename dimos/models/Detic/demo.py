@@ -2,24 +2,23 @@
 import argparse
 import glob
 import multiprocessing as mp
-import numpy as np
 import os
+import sys
 import tempfile
 import time
 import warnings
-import cv2
-import tqdm
-import sys
-import mss
 
+import cv2
 from detectron2.config import get_cfg
 from detectron2.data.detection_utils import read_image
 from detectron2.utils.logger import setup_logger
+import mss
+import numpy as np
+import tqdm
 
 sys.path.insert(0, "third_party/CenterNet2/")
 from centernet.config import add_centernet_config
 from detic.config import add_detic_config
-
 from detic.predictor import VisualizationDemo
 
 
@@ -196,7 +195,7 @@ if __name__ == "__main__":
             ("x264", ".mkv") if test_opencv_video_format("x264", ".mkv") else ("mp4v", ".mp4")
         )
         if codec == ".mp4v":
-            warnings.warn("x264 codec not available, switching to mp4v")
+            warnings.warn("x264 codec not available, switching to mp4v", stacklevel=2)
         if args.output:
             if os.path.isdir(args.output):
                 output_fname = os.path.join(args.output, basename)

@@ -23,14 +23,15 @@ import datetime
 import time
 from typing import TYPE_CHECKING, Optional
 
+from go2_webrtc_driver.constants import RTC_TOPIC
+
 from dimos.core import Module
 from dimos.core.core import rpc
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
-from dimos.utils.logging_config import setup_logger
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
-from go2_webrtc_driver.constants import RTC_TOPIC
+from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2
@@ -41,7 +42,7 @@ logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
 class UnitreeSkillContainer(Module):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    def __init__(self, robot: Optional[UnitreeGo2] = None):
+    def __init__(self, robot: UnitreeGo2 | None = None):
         """Initialize the skill container with robot reference.
 
         Args:
@@ -178,9 +179,7 @@ class UnitreeSkillContainer(Module):
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            result = self._robot.connection.publish_request(
-                RTC_TOPIC["SPORT_MOD"], {"api_id": api_id}
-            )
+            self._robot.connection.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": api_id})
             message = f"{name} command executed successfully (id={api_id})"
             logger.info(message)
             return message

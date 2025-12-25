@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from dimos.core.module import Module
-from dimos.core.rpc_client import RPCClient, RpcCall
+from dimos.core.rpc_client import RpcCall, RPCClient
 from dimos.protocol.skill.skill import rpc
 
 

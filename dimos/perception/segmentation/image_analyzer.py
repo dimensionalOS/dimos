@@ -13,9 +13,10 @@
 # limitations under the License.
 
 import base64
-from openai import OpenAI
-import cv2
 import os
+
+import cv2
+from openai import OpenAI
 
 NORMAL_PROMPT = "What are in these images? Give a short word answer with at most two words, \
                 if not sure, give a description of its shape or color like 'small tube', 'blue item'. \" \
@@ -87,7 +88,7 @@ class ImageAnalyzer:
             messages=[
                 {
                     "role": "user",
-                    "content": [{"type": "text", "text": prompt}] + image_data,
+                    "content": [{"type": "text", "text": prompt}, *image_data],
                 }
             ],
             max_tokens=300,
@@ -95,7 +96,7 @@ class ImageAnalyzer:
         )
 
         # Accessing the content of the response using dot notation
-        return [choice.message.content for choice in response.choices][0]
+        return next(choice.message.content for choice in response.choices)
 
 
 def main():
@@ -130,7 +131,7 @@ def main():
     object_list = [item.strip()[2:] for item in results.split("\n")]
 
     # Overlay text on images and display them
-    for i, (img, obj) in enumerate(zip(images, object_list)):
+    for i, (img, obj) in enumerate(zip(images, object_list, strict=False)):
         if obj:  # Only process non-empty lines
             # Add text to image
             font = cv2.FONT_HERSHEY_SIMPLEX

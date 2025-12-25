@@ -13,17 +13,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+from reactivex import Observable, create, disposable
+import sounddevice as sd
+
 from dimos.stream.audio.base import (
     AbstractAudioEmitter,
     AudioEvent,
 )
-
-import numpy as np
-from typing import Optional, List, Dict, Any
-from reactivex import Observable, create, disposable
-import time
-import sounddevice as sd
-
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.audio.node_microphone")
@@ -34,7 +34,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
     def __init__(
         self,
-        device_index: Optional[int] = None,
+        device_index: int | None = None,
         sample_rate: int = 16000,
         channels: int = 1,
         block_size: int = 1024,
@@ -118,7 +118,7 @@ class SounddeviceAudioSource(AbstractAudioEmitter):
 
         return create(on_subscribe)
 
-    def get_available_devices(self) -> List[Dict[str, Any]]:
+    def get_available_devices(self) -> list[dict[str, Any]]:
         """Get a list of available audio input devices."""
         return sd.query_devices()
 

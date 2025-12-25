@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import boto3
 import os
+
+import boto3
 
 try:
     import open3d as o3d
@@ -77,7 +78,7 @@ class S3Utils:
     def upload_text_file(bucket_name, local_path, s3_key):
         s3 = boto3.client("s3")
         try:
-            with open(local_path, "r") as file:
+            with open(local_path) as file:
                 content = file.read()
 
             # Ensure the s3_key includes the file name

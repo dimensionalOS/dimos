@@ -53,7 +53,6 @@ class TestSam2DSegmenter:
 
             # Note: conf and iou are parameters for process_image, not constructor
             # We'll monkey patch the process_image method to use lower thresholds
-            original_process_image = segmenter.process_image
 
             def patched_process_image(image):
                 results = segmenter.model.track(

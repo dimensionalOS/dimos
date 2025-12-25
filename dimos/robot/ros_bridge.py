@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from enum import Enum
 import logging
 import threading
-from typing import Dict, Any, Type, Optional
-from enum import Enum
+from typing import Any, Dict, Optional, Type
 
 try:
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from rclpy.qos import QoSProfile, QoSReliabilityPolicy, QoSHistoryPolicy, QoSDurabilityPolicy
+    from rclpy.qos import QoSDurabilityPolicy, QoSHistoryPolicy, QoSProfile, QoSReliabilityPolicy
 except ImportError:
     rclpy = None
     SingleThreadedExecutor = None
@@ -67,7 +67,7 @@ class ROSBridge(Resource):
         self._spin_thread = threading.Thread(target=self._ros_spin, daemon=True)
         self._spin_thread.start()  # TODO: don't forget to shut it down
 
-        self._bridges: Dict[str, Dict[str, Any]] = {}
+        self._bridges: dict[str, dict[str, Any]] = {}
 
         self._qos = QoSProfile(
             reliability=QoSReliabilityPolicy.RELIABLE,
@@ -101,10 +101,10 @@ class ROSBridge(Resource):
     def add_topic(
         self,
         topic_name: str,
-        dimos_type: Type,
-        ros_type: Type,
+        dimos_type: type,
+        ros_type: type,
         direction: BridgeDirection,
-        remap_topic: Optional[str] = None,
+        remap_topic: str | None = None,
     ) -> None:
         """Add unidirectional bridging for a topic.
 
@@ -180,7 +180,7 @@ class ROSBridge(Resource):
         logger.info(f"  DIMOS type: {dimos_type.__name__}, ROS type: {ros_type.__name__}")
 
     def _ros_to_dimos(
-        self, ros_msg: Any, dimos_topic: Topic, dimos_type: Type, _topic_name: str
+        self, ros_msg: Any, dimos_topic: Topic, dimos_type: type, _topic_name: str
     ) -> None:
         """Convert ROS message to DIMOS and publish.
 

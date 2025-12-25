@@ -14,6 +14,7 @@
 # limitations under the License.
 
 from reactivex import Observable
+
 from dimos.stream.audio.text.base import AbstractTextConsumer
 from dimos.utils.logging_config import setup_logger
 
@@ -72,6 +73,7 @@ class TextPrinterNode(AbstractTextConsumer):
 
 if __name__ == "__main__":
     import time
+
     from reactivex import Subject
 
     # Create a simple text subject that we can push values to

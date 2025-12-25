@@ -45,7 +45,7 @@ class AgentMemoryConnectionError(AgentMemoryError):
         self.traceback = traceback.format_exc() if cause else None
 
     def __str__(self):
-        return f"{self.message}\nCaused by: {repr(self.cause)}" if self.cause else self.message
+        return f"{self.message}\nCaused by: {self.cause!r}" if self.cause else self.message
 
 
 class UnknownConnectionTypeError(AgentMemoryConnectionError):

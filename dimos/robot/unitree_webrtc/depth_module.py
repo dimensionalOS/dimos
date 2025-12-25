@@ -14,16 +14,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 import threading
+import time
 from typing import Optional
 
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
-from dimos.core import Module, In, Out, rpc
+from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos_lcm.sensor_msgs import CameraInfo
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__name__)
@@ -76,7 +76,7 @@ class DepthModule(Module):
         self._cannot_process_depth = False
 
         # Threading
-        self._processing_thread: Optional[threading.Thread] = None
+        self._processing_thread: threading.Thread | None = None
         self._stop_processing = threading.Event()
 
         if global_config:

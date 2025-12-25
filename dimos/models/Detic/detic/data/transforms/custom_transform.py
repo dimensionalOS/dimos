@@ -1,18 +1,17 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # Part of the code is from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/data/transforms.py
 # Modified by Xingyi Zhou
 # The original code is under Apache-2.0 License
-import numpy as np
-import torch
-import torch.nn.functional as F
 from fvcore.transforms.transform import (
     Transform,
 )
+import numpy as np
 from PIL import Image
+import torch
+import torch.nn.functional as F
 
 try:
-    import cv2  # noqa
+    import cv2
 except ImportError:
     # OpenCV is an optional dependency at the moment
     pass

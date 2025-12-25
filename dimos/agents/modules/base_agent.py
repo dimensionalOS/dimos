@@ -17,10 +17,10 @@
 import threading
 from typing import Any, Dict, List, Optional, Union
 
-from dimos.core import Module, In, Out, rpc
-from dimos.agents.memory.base import AbstractAgentSemanticMemory
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
+from dimos.agents.memory.base import AbstractAgentSemanticMemory
+from dimos.core import In, Module, Out, rpc
 from dimos.skills.skills import AbstractSkill, SkillLibrary
 from dimos.utils.logging_config import setup_logger
 
@@ -46,9 +46,9 @@ class BaseAgentModule(BaseAgent, Module):
     def __init__(
         self,
         model: str = "openai::gpt-4o-mini",
-        system_prompt: Optional[str] = None,
-        skills: Optional[Union[SkillLibrary, List[AbstractSkill], AbstractSkill]] = None,
-        memory: Optional[AbstractAgentSemanticMemory] = None,
+        system_prompt: str | None = None,
+        skills: Union[SkillLibrary, list[AbstractSkill], AbstractSkill] | None = None,
+        memory: AbstractAgentSemanticMemory | None = None,
         temperature: float = 0.0,
         max_tokens: int = 4096,
         max_input_tokens: int = 128000,
@@ -167,7 +167,7 @@ class BaseAgentModule(BaseAgent, Module):
         logger.info("System prompt updated")
 
     @rpc
-    def get_conversation_history(self) -> List[Dict[str, Any]]:
+    def get_conversation_history(self) -> list[dict[str, Any]]:
         """Get current conversation history."""
         with self._history_lock:
             return self.history.copy()
@@ -192,7 +192,7 @@ class BaseAgentModule(BaseAgent, Module):
         # Process through unified handler
         self._handle_agent_message(agent_msg)
 
-    def _update_latest_data(self, data: Dict[str, Any]):
+    def _update_latest_data(self, data: dict[str, Any]):
         """Update latest data context."""
         with self._data_lock:
             self._latest_data = data
@@ -202,7 +202,7 @@ class BaseAgentModule(BaseAgent, Module):
         with self._image_lock:
             self._latest_image = img
 
-    def _format_data_context(self, data: Dict[str, Any]) -> str:
+    def _format_data_context(self, data: dict[str, Any]) -> str:
         """Format data dictionary as context string."""
         # Simple formatting - can be customized
         parts = []

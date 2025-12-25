@@ -14,16 +14,15 @@
 
 from __future__ import annotations
 
-import functools
 from dataclasses import dataclass
+import functools
 from typing import Any, Callable, Dict, Optional, TypeVar
 
-import numpy as np
 from dimos_lcm.sensor_msgs import CameraInfo
 from lcm_msgs.builtin_interfaces import Duration
 from lcm_msgs.foxglove_msgs import CubePrimitive, SceneEntity, SceneUpdate, TextPrimitive
-from lcm_msgs.geometry_msgs import Point, Pose, Quaternion
-from lcm_msgs.geometry_msgs import Vector3 as LCMVector3
+from lcm_msgs.geometry_msgs import Point, Pose, Quaternion, Vector3 as LCMVector3
+import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
 from dimos.msgs.geometry_msgs import PoseStamped, Transform, Vector3
@@ -60,7 +59,7 @@ class Detection3DBBox(Detection2DBBox):
             orientation=self.orientation,
         )
 
-    def to_repr_dict(self) -> Dict[str, Any]:
+    def to_repr_dict(self) -> dict[str, Any]:
         # Calculate distance from camera
         camera_pos = self.transform.translation
         distance = (self.center - camera_pos).magnitude()

@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 import cv2
+import numpy as np
+
 from dimos.types.vector import Vector
 
 
@@ -61,7 +62,7 @@ def filter_detections(
 
     # Filter detections
     for bbox, track_id, class_id, conf, name in zip(
-        bboxes, track_ids, class_ids, confidences, names
+        bboxes, track_ids, class_ids, confidences, names, strict=False
     ):
         # Check if detection passes all specified filters
         keep = True
@@ -172,7 +173,7 @@ def plot_results(image, bboxes, track_ids, class_ids, confidences, names, alpha=
     """
     vis_img = image.copy()
 
-    for bbox, track_id, conf, name in zip(bboxes, track_ids, confidences, names):
+    for bbox, track_id, conf, name in zip(bboxes, track_ids, confidences, names, strict=False):
         # Generate consistent color based on track_id or class name
         if track_id != -1:
             np.random.seed(track_id)
@@ -263,7 +264,7 @@ def calculate_distance_angle_from_bbox(bbox, depth, camera_intrinsics):
     # Calculate center of bounding box in pixels
     x1, y1, x2, y2 = bbox
     center_x = (x1 + x2) / 2
-    center_y = (y1 + y2) / 2
+    (y1 + y2) / 2
 
     # Calculate normalized image coordinates
     x_norm = (center_x - cx) / fx

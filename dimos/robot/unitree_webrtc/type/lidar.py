@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from copy import copy
+import time
 from typing import List, Optional, TypedDict
 
 import numpy as np
@@ -32,11 +32,11 @@ class RawLidarData(TypedDict):
     """Data portion of the LIDAR message"""
 
     frame_id: str
-    origin: List[float]
+    origin: list[float]
     resolution: float
     src_size: int
     stamp: float
-    width: List[int]
+    width: list[int]
     data: RawLidarPoints
 
 
@@ -51,7 +51,7 @@ class RawLidarMsg(TypedDict):
 class LidarMessage(PointCloud2):
     resolution: float  # we lose resolution when encoding PointCloud2
     origin: Vector3
-    raw_msg: Optional[RawLidarMsg]
+    raw_msg: RawLidarMsg | None
     # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
 
     def __init__(self, **kwargs):

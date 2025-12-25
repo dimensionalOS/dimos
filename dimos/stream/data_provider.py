@@ -13,14 +13,13 @@
 # limitations under the License.
 
 from abc import ABC
-from reactivex import Subject, Observable
-from reactivex.subject import Subject
-from reactivex.scheduler import ThreadPoolScheduler
-import multiprocessing
 import logging
+import multiprocessing
 
 import reactivex as rx
-from reactivex import operators as ops
+from reactivex import Observable, Subject, operators as ops
+from reactivex.scheduler import ThreadPoolScheduler
+from reactivex.subject import Subject
 
 logging.basicConfig(level=logging.INFO)
 
@@ -62,7 +61,7 @@ class ROSDataProvider(AbstractDataProvider):
         super().push_data(data)
         print("Data pushed to subject")
 
-    def capture_data_as_observable(self, fps: int = None) -> Observable:
+    def capture_data_as_observable(self, fps: int | None = None) -> Observable:
         """Get the data stream as an observable.
 
         Args:
@@ -127,7 +126,7 @@ class QueryDataProvider(AbstractDataProvider):
 
     def start_query_stream(
         self,
-        query_template: str = None,
+        query_template: str | None = None,
         frequency: float = 3.0,
         start_count: int = 0,
         end_count: int = 5000,

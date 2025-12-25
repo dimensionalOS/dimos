@@ -13,12 +13,12 @@
 # limitations under the License.
 
 import asyncio
-import json
-import threading
-import time
 from copy import copy
 from dataclasses import dataclass
 from enum import Enum
+import json
+import threading
+import time
 from typing import Any, List, Literal, Optional, Union
 
 from langchain_core.messages import ToolMessage
@@ -28,14 +28,12 @@ from rich.table import Table
 from rich.text import Text
 
 from dimos.core import rpc
-from dimos.core.module import get_loop
+from dimos.core.module import Module, get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer
 from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
 from dimos.protocol.skill.utils import interpret_tool_call_args
 from dimos.utils.logging_config import setup_logger
-from dimos.core.module import Module
-
 
 logger = setup_logger(__file__)
 
@@ -76,9 +74,9 @@ class SkillState:
     end_msg: SkillMsg[Literal[MsgType.ret]] = None
     error_msg: SkillMsg[Literal[MsgType.error]] = None
     ret_msg: SkillMsg[Literal[MsgType.ret]] = None
-    reduced_stream_msg: List[SkillMsg[Literal[MsgType.reduced_stream]]] = None
+    reduced_stream_msg: list[SkillMsg[Literal[MsgType.reduced_stream]]] = None
 
-    def __init__(self, call_id: str, name: str, skill_config: Optional[SkillConfig] = None) -> None:
+    def __init__(self, call_id: str, name: str, skill_config: SkillConfig | None = None) -> None:
         super().__init__()
 
         self.skill_config = skill_config or SkillConfig(
@@ -272,10 +270,10 @@ class SkillCoordinator(Module):
     _dynamic_containers: list[SkillContainer]
     _skill_state: SkillStateDict  # key is call_id, not skill_name
     _skills: dict[str, SkillConfig]
-    _updates_available: Optional[asyncio.Event]
-    _loop: Optional[asyncio.AbstractEventLoop]
-    _loop_thread: Optional[threading.Thread]
-    _agent_loop: Optional[asyncio.AbstractEventLoop]
+    _updates_available: asyncio.Event | None
+    _loop: asyncio.AbstractEventLoop | None
+    _loop_thread: threading.Thread | None
+    _agent_loop: asyncio.AbstractEventLoop | None
 
     def __init__(self) -> None:
         # TODO: Why isn't this super().__init__() ?
@@ -413,7 +411,7 @@ class SkillCoordinator(Module):
         if should_notify:
             updates_available = self._ensure_updates_available()
             if updates_available is None:
-                print(f"[DEBUG] Event not created yet, deferring notification")
+                print("[DEBUG] Event not created yet, deferring notification")
                 return
 
             try:
@@ -462,7 +460,7 @@ class SkillCoordinator(Module):
             return False
         return True
 
-    async def wait_for_updates(self, timeout: Optional[float] = None) -> True:
+    async def wait_for_updates(self, timeout: float | None = None) -> True:
         """Wait for skill updates to become available.
 
         This method should be called by the agent when it's ready to receive updates.
@@ -503,17 +501,17 @@ class SkillCoordinator(Module):
                 # print(f"[DEBUG] Waiting for event with timeout {timeout}")
                 await asyncio.wait_for(updates_available.wait(), timeout=timeout)
             else:
-                print(f"[DEBUG] Waiting for event without timeout")
+                print("[DEBUG] Waiting for event without timeout")
                 await updates_available.wait()
-            print(f"[DEBUG] Event was set! Returning True")
+            print("[DEBUG] Event was set! Returning True")
             return True
         except asyncio.TimeoutError:
-            print(f"[DEBUG] Timeout occurred while waiting for event")
+            print("[DEBUG] Timeout occurred while waiting for event")
             return False
         except RuntimeError as e:
             if "bound to a different event loop" in str(e):
                 print(
-                    f"[DEBUG] Event loop binding error detected, recreating event and returning False to retry"
+                    "[DEBUG] Event loop binding error detected, recreating event and returning False to retry"
                 )
                 # Recreate the event in the current loop
                 current_loop = asyncio.get_running_loop()
@@ -625,7 +623,7 @@ class SkillCoordinator(Module):
             logger.info(f"Registering dynamic skill container, {container}")
             self._dynamic_containers.append(container)
 
-    def get_skill_config(self, skill_name: str) -> Optional[SkillConfig]:
+    def get_skill_config(self, skill_name: str) -> SkillConfig | None:
         skill_config = self._skills.get(skill_name)
         if not skill_config:
             skill_config = self.skills().get(skill_name)

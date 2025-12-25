@@ -44,7 +44,7 @@ class RtspVideoProvider(AbstractVideoProvider):
     """
 
     def __init__(
-        self, dev_name: str, rtsp_url: str, pool_scheduler: Optional[ThreadPoolScheduler] = None
+        self, dev_name: str, rtsp_url: str, pool_scheduler: ThreadPoolScheduler | None = None
     ) -> None:
         """Initializes the RTSP video provider.
 
@@ -56,7 +56,7 @@ class RtspVideoProvider(AbstractVideoProvider):
         super().__init__(dev_name, pool_scheduler)
         self.rtsp_url = rtsp_url
         # Holds the currently active ffmpeg process Popen object
-        self._ffmpeg_process: Optional[subprocess.Popen] = None
+        self._ffmpeg_process: subprocess.Popen | None = None
         # Lock to protect access to the ffmpeg process object
         self._lock = threading.Lock()
 
@@ -170,7 +170,7 @@ class RtspVideoProvider(AbstractVideoProvider):
 
         def emit_frames(observer, scheduler):
             """Function executed by rx.create to emit frames."""
-            process: Optional[subprocess.Popen] = None
+            process: subprocess.Popen | None = None
             # Event to signal the processing loop should stop (e.g., on dispose)
             should_stop = threading.Event()
 

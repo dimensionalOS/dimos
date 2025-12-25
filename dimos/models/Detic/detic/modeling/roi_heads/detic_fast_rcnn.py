@@ -1,19 +1,22 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import math
-import torch
-from fvcore.nn import giou_loss, smooth_l1_loss
-from torch import nn
-from torch.nn import functional as F
-import fvcore.nn.weight_init as weight_init
-import detectron2.utils.comm as comm
+
 from detectron2.config import configurable
 from detectron2.layers import ShapeSpec, cat, nonzero_tuple
+from detectron2.modeling.roi_heads.fast_rcnn import (
+    FastRCNNOutputLayers,
+    _log_classification_stats,
+    fast_rcnn_inference,
+)
+import detectron2.utils.comm as comm
 from detectron2.utils.events import get_event_storage
-from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
-from detectron2.modeling.roi_heads.fast_rcnn import fast_rcnn_inference
-from detectron2.modeling.roi_heads.fast_rcnn import _log_classification_stats
+from fvcore.nn import giou_loss, smooth_l1_loss
+import fvcore.nn.weight_init as weight_init
+import torch
+from torch import nn
+from torch.nn import functional as F
 
-from ..utils import load_class_freq, get_fed_loss_inds
+from ..utils import get_fed_loss_inds, load_class_freq
 from .zero_shot_classifier import ZeroShotClassifier
 
 __all__ = ["DeticFastRCNNOutputLayers"]
@@ -287,7 +290,7 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         scores = self.predict_probs(predictions, proposals)
         if self.mult_proposal_score:
             proposal_scores = [p.get("objectness_logits") for p in proposals]
-            scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)]
+            scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores, strict=False)]
         image_shapes = [x.image_size for x in proposals]
         return fast_rcnn_inference(
             boxes,
@@ -341,7 +344,7 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         loss = scores[0].new_zeros([1])[0]
         caption_loss = scores[0].new_zeros([1])[0]
         for idx, (score, labels, prop_score, p) in enumerate(
-            zip(scores, image_labels, prop_scores, proposals)
+            zip(scores, image_labels, prop_scores, proposals, strict=False)
         ):
             if score.shape[0] == 0:
                 loss += score.new_zeros([1])[0]
@@ -464,13 +467,7 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
             # caption_target: 1 x MB
             rank = comm.get_rank()
             global_idx = B * rank + idx
-            assert (classifier_info[2][global_idx, -1] - rank) ** 2 < 1e-8, "{} {} {} {} {}".format(
-                rank,
-                global_idx,
-                classifier_info[2][global_idx, -1],
-                classifier_info[2].shape,
-                classifier_info[2][:, -1],
-            )
+            assert (classifier_info[2][global_idx, -1] - rank) ** 2 < 1e-8, f"{rank} {global_idx} {classifier_info[2][global_idx, -1]} {classifier_info[2].shape} {classifier_info[2][:, -1]}"
             caption_target[:, global_idx] = 1.0
         else:
             assert caption_score.shape[1] == B
@@ -480,7 +477,7 @@ class DeticFastRCNNOutputLayers(FastRCNNOutputLayers):
         )
         if self.sync_caption_batch:
             fg_mask = (caption_target > 0.5).float()
-            assert (fg_mask.sum().item() - 1.0) ** 2 < 1e-8, "{} {}".format(fg_mask.shape, fg_mask)
+            assert (fg_mask.sum().item() - 1.0) ** 2 < 1e-8, f"{fg_mask.shape} {fg_mask}"
             pos_loss = (caption_loss_img * fg_mask).sum()
             neg_loss = (caption_loss_img * (1.0 - fg_mask)).sum()
             caption_loss_img = pos_loss + self.neg_cap_weight * neg_loss

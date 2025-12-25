@@ -14,10 +14,8 @@
 
 from typing import Any, Callable
 
-
 from dimos.protocol.rpc.lcmrpc import LCMRPC
 from dimos.utils.logging_config import setup_logger
-
 
 logger = setup_logger(__file__)
 

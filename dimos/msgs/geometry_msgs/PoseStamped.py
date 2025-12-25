@@ -14,14 +14,13 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 import struct
 import time
-from io import BytesIO
 from typing import BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
-from dimos_lcm.std_msgs import Header as LCMHeader
-from dimos_lcm.std_msgs import Time as LCMTime
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 try:
     from geometry_msgs.msg import PoseStamped as ROSPoseStamped
@@ -79,7 +78,7 @@ class PoseStamped(Pose, Timestamped):
                 lcm_msg.pose.orientation.y,
                 lcm_msg.pose.orientation.z,
                 lcm_msg.pose.orientation.w,
-            ],  # noqa: E501,
+            ],
         )
 
     def __str__(self) -> str:
@@ -117,7 +116,7 @@ class PoseStamped(Pose, Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSPoseStamped) -> "PoseStamped":
+    def from_ros_msg(cls, ros_msg: ROSPoseStamped) -> PoseStamped:
         """Create a PoseStamped from a ROS geometry_msgs/PoseStamped message.
 
         Args:

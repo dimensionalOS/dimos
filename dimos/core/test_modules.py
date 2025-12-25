@@ -29,8 +29,8 @@ class ModuleVisitor(ast.NodeVisitor):
 
     def __init__(self, filepath: str):
         self.filepath = filepath
-        self.classes: List[
-            Tuple[str, List[str], Set[str]]
+        self.classes: list[
+            tuple[str, list[str], set[str]]
         ] = []  # (class_name, base_classes, methods)
 
     def visit_ClassDef(self, node: ast.ClassDef):
@@ -61,7 +61,7 @@ class ModuleVisitor(ast.NodeVisitor):
         self.generic_visit(node)
 
 
-def get_import_aliases(tree: ast.AST) -> Dict[str, str]:
+def get_import_aliases(tree: ast.AST) -> dict[str, str]:
     """Extract import aliases from the AST."""
     aliases = {}
 
@@ -81,10 +81,10 @@ def get_import_aliases(tree: ast.AST) -> Dict[str, str]:
 
 
 def is_module_subclass(
-    base_classes: List[str],
-    aliases: Dict[str, str],
-    class_hierarchy: Dict[str, List[str]] = None,
-    current_module_path: str = None,
+    base_classes: list[str],
+    aliases: dict[str, str],
+    class_hierarchy: dict[str, list[str]] | None = None,
+    current_module_path: str | None = None,
 ) -> bool:
     """Check if any base class is or resolves to dimos.core.Module or its variants (recursively)."""
     target_classes = {
@@ -99,7 +99,7 @@ def is_module_subclass(
         "dimos.core.module.DaskModule",
     }
 
-    def find_qualified_name(base: str, context_module: str = None) -> str:
+    def find_qualified_name(base: str, context_module: str | None = None) -> str:
         """Find the qualified name for a base class, using import context if available."""
         if not class_hierarchy:
             return base
@@ -126,7 +126,9 @@ def is_module_subclass(
         # Otherwise return the base as-is
         return base
 
-    def check_base(base: str, visited: Set[str] = None, context_module: str = None) -> bool:
+    def check_base(
+        base: str, visited: set[str] | None = None, context_module: str | None = None
+    ) -> bool:
         if visited is None:
             visited = set()
 
@@ -168,8 +170,10 @@ def is_module_subclass(
 
 
 def scan_file(
-    filepath: Path, class_hierarchy: Dict[str, List[str]] = None, root_path: Path = None
-) -> List[Tuple[str, str, bool, bool, Set[str]]]:
+    filepath: Path,
+    class_hierarchy: dict[str, list[str]] | None = None,
+    root_path: Path | None = None,
+) -> list[tuple[str, str, bool, bool, set[str]]]:
     """
     Scan a Python file for Module subclasses.
 
@@ -179,7 +183,7 @@ def scan_file(
     forbidden_method_names = {"acquire", "release", "open", "close", "shutdown", "clean", "cleanup"}
 
     try:
-        with open(filepath, "r", encoding="utf-8") as f:
+        with open(filepath, encoding="utf-8") as f:
             content = f.read()
 
         tree = ast.parse(content, filename=str(filepath))
@@ -215,7 +219,7 @@ def scan_file(
         return []
 
 
-def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
+def build_class_hierarchy(root_path: Path) -> dict[str, list[str]]:
     """Build a complete class hierarchy by scanning all Python files."""
     hierarchy = {}
 
@@ -225,7 +229,7 @@ def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
             continue
 
         try:
-            with open(filepath, "r", encoding="utf-8") as f:
+            with open(filepath, encoding="utf-8") as f:
                 content = f.read()
 
             tree = ast.parse(content, filename=str(filepath))
@@ -257,7 +261,7 @@ def build_class_hierarchy(root_path: Path) -> Dict[str, List[str]]:
     return hierarchy
 
 
-def scan_directory(root_path: Path) -> List[Tuple[str, str, bool, bool, Set[str]]]:
+def scan_directory(root_path: Path) -> list[tuple[str, str, bool, bool, set[str]]]:
     """Scan all Python files in the directory tree."""
     # First, build the complete class hierarchy
     class_hierarchy = build_class_hierarchy(root_path)

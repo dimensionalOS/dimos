@@ -12,9 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Tuple, TypeVar, Union, Sequence
+import builtins
+from typing import List, Sequence, Tuple, TypeVar, Union
 
 import numpy as np
+
 from dimos.types.ros_polyfill import Vector3
 
 T = TypeVar("T", bound="Vector")
@@ -49,7 +51,7 @@ class Vector:
         return self.x
 
     @property
-    def tuple(self) -> Tuple[float, ...]:
+    def tuple(self) -> tuple[float, ...]:
         """Tuple representation of the vector."""
         return tuple(self._data)
 
@@ -103,7 +105,7 @@ class Vector:
 
         return f"{getArrow()} Vector {self.__repr__()}"
 
-    def serialize(self) -> Tuple:
+    def serialize(self) -> builtins.tuple:
         """Serialize the vector to a tuple."""
         return {"type": "vector", "c": self._data.tolist()}
 
@@ -261,11 +263,11 @@ class Vector:
             v[2] = 1.0
         return cls(v)
 
-    def to_list(self) -> List[float]:
+    def to_list(self) -> list[float]:
         """Convert the vector to a list."""
         return self._data.tolist()
 
-    def to_tuple(self) -> Tuple[float, ...]:
+    def to_tuple(self) -> builtins.tuple[float, ...]:
         """Convert the vector to a tuple."""
         return tuple(self._data)
 
@@ -327,7 +329,7 @@ def to_vector(value: VectorLike) -> Vector:
         return Vector(value)
 
 
-def to_tuple(value: VectorLike) -> Tuple[float, ...]:
+def to_tuple(value: VectorLike) -> tuple[float, ...]:
     """Convert a vector-compatible value to a tuple.
 
     Args:
@@ -348,7 +350,7 @@ def to_tuple(value: VectorLike) -> Tuple[float, ...]:
         return tuple(value)
 
 
-def to_list(value: VectorLike) -> List[float]:
+def to_list(value: VectorLike) -> list[float]:
     """Convert a vector-compatible value to a list.
 
     Args:

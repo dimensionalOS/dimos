@@ -15,17 +15,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from dataclasses import dataclass
 import functools
 import logging
 import os
 import queue
 import time
-import warnings
-from dataclasses import dataclass
 from typing import List, Optional
+import warnings
 
-import reactivex as rx
 from dimos_lcm.sensor_msgs import CameraInfo
+import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
@@ -118,7 +118,7 @@ class FakeRTC(UnitreeWebRTCConnection):
 
 @dataclass
 class ConnectionModuleConfig(ModuleConfig):
-    ip: Optional[str] = None
+    ip: str | None = None
     connection_type: str = "fake"  # or "fake" or "mujoco"
     loop: bool = False  # For fake connection
     speed: float = 1.0  # For fake connection
@@ -153,8 +153,7 @@ class ConnectionModule(Module):
         _queue = queue.Queue(maxsize=1)
         self.connection.video_stream().subscribe(_queue.put)
 
-        for image in iter(_queue.get, None):
-            yield image
+        yield from iter(_queue.get, None)
 
     @rpc
     def record(self, recording_name: str):
@@ -219,7 +218,7 @@ class ConnectionModule(Module):
         super().stop()
 
     @classmethod
-    def _odom_to_tf(self, odom: PoseStamped) -> List[Transform]:
+    def _odom_to_tf(cls, odom: PoseStamped) -> list[Transform]:
         camera_link = Transform(
             translation=Vector3(0.3, 0.0, 0.0),
             rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
@@ -267,7 +266,7 @@ class ConnectionModule(Module):
         return self.connection.publish_request(topic, data)
 
     @classmethod
-    def _camera_info(self) -> Out[CameraInfo]:
+    def _camera_info(cls) -> Out[CameraInfo]:
         fx, fy, cx, cy = list(
             map(
                 lambda x: int(x / image_resize_factor),

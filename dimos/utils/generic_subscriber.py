@@ -14,11 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
 import logging
-from typing import Optional, Any
+import threading
+from typing import TYPE_CHECKING, Any, Optional
+
 from reactivex import Observable
-from reactivex.disposable import Disposable
+
+if TYPE_CHECKING:
+    from reactivex.disposable import Disposable
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +35,11 @@ class GenericSubscriber:
         Args:
             stream: The RxPy Observable stream to subscribe to.
         """
-        self.latest_message: Optional[Any] = None
+        self.latest_message: Any | None = None
         self._lock = threading.Lock()
-        self._subscription: Optional[Disposable] = None
+        self._subscription: Disposable | None = None
         self._stream_completed = threading.Event()
-        self._stream_error: Optional[Exception] = None
+        self._stream_error: Exception | None = None
 
         if stream is not None:
             try:
@@ -68,7 +71,7 @@ class GenericSubscriber:
         logger.info("Stream completed.")
         self._stream_completed.set()
 
-    def get_data(self) -> Optional[Any]:
+    def get_data(self) -> Any | None:
         """Get the latest message received from the stream.
 
         Returns:

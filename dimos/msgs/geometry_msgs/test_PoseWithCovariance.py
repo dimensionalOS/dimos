@@ -12,15 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
 import numpy as np
 import pytest
-from dimos_lcm.geometry_msgs import PoseWithCovariance as LCMPoseWithCovariance
 
 try:
-    from geometry_msgs.msg import PoseWithCovariance as ROSPoseWithCovariance
-    from geometry_msgs.msg import Pose as ROSPose
-    from geometry_msgs.msg import Point as ROSPoint
-    from geometry_msgs.msg import Quaternion as ROSQuaternion
+    from geometry_msgs.msg import (
+        Point as ROSPoint,
+        Pose as ROSPose,
+        PoseWithCovariance as ROSPoseWithCovariance,
+        Quaternion as ROSQuaternion,
+    )
 except ImportError:
     ROSPoseWithCovariance = None
     ROSPose = None
@@ -268,7 +270,7 @@ def test_pose_with_covariance_equality():
 
     # Different type
     assert pose_cov1 != "not a pose"
-    assert pose_cov1 != None
+    assert pose_cov1 is not None
 
 
 def test_pose_with_covariance_lcm_encode_decode():

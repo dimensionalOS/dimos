@@ -20,12 +20,13 @@ including WebRTC requests and action client commands.
 Commands are processed sequentially and only when the robot is in IDLE state.
 """
 
+from enum import Enum, auto
+from queue import Empty, PriorityQueue
 import threading
 import time
+from typing import Any, Callable, Dict, NamedTuple, Optional
 import uuid
-from enum import Enum, auto
-from queue import PriorityQueue, Empty
-from typing import Callable, Optional, NamedTuple, Dict, Any
+
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger for the ros command queue module
@@ -56,7 +57,7 @@ class ROSCommand(NamedTuple):
     id: str  # Unique ID for tracking
     cmd_type: CommandType  # Type of command
     execute_func: Callable  # Function to execute the command
-    params: Dict[str, Any]  # Parameters for the command (for debugging/logging)
+    params: dict[str, Any]  # Parameters for the command (for debugging/logging)
     priority: int  # Priority level (lower is higher priority)
     timeout: float  # How long to wait for this command to complete
 
@@ -72,8 +73,8 @@ class ROSCommandQueue:
     def __init__(
         self,
         webrtc_func: Callable,
-        is_ready_func: Callable[[], bool] = None,
-        is_busy_func: Optional[Callable[[], bool]] = None,
+        is_ready_func: Callable[[], bool] | None = None,
+        is_busy_func: Callable[[], bool] | None = None,
         debug: bool = True,
     ):
         """
@@ -151,10 +152,10 @@ class ROSCommandQueue:
     def queue_webrtc_request(
         self,
         api_id: int,
-        topic: str = None,
+        topic: str | None = None,
         parameter: str = "",
-        request_id: str = None,
-        data: Dict[str, Any] = None,
+        request_id: str | None = None,
+        data: dict[str, Any] | None = None,
         priority: int = 0,
         timeout: float = 30.0,
     ) -> str:
@@ -435,7 +436,7 @@ class ROSCommandQueue:
             return
 
         is_ready = self._is_ready_func()
-        is_busy = self._is_busy_func() if self._is_busy_func else False
+        self._is_busy_func() if self._is_busy_func else False
         queue_size = self.queue_size
 
         # Get information about the current command
@@ -466,6 +467,6 @@ class ROSCommandQueue:
         return self._queue.qsize()
 
     @property
-    def current_command(self) -> Optional[ROSCommand]:
+    def current_command(self) -> ROSCommand | None:
         """Get the current command being processed"""
         return self._current_command

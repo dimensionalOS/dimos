@@ -12,17 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import inspect
 from enum import Enum
+import inspect
 from typing import Optional, get_args, get_origin
 
 import typer
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
-from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 from dimos.protocol import pubsub
-
+from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})
 
@@ -42,7 +41,8 @@ def create_dynamic_callback():
         field_type = field_info.annotation
 
         # Handle Optional types
-        if get_origin(field_type) is type(Optional[str]):  # Check for Optional/Union with None
+        # Check for Optional/Union with None
+        if get_origin(field_type) is type(Optional[str]):  # noqa: UP045
             inner_types = get_args(field_type)
             if len(inner_types) == 2 and type(None) in inner_types:
                 # It's Optional[T], get the actual type T
@@ -66,7 +66,7 @@ def create_dynamic_callback():
                     f"--{cli_option_name}/--no-{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=Optional[bool],
+                annotation=Optional[bool],  # noqa: UP045
             )
         else:
             # For non-boolean fields, use regular option
@@ -78,7 +78,7 @@ def create_dynamic_callback():
                     f"--{cli_option_name}",
                     help=f"Override {field_name} in GlobalConfig",
                 ),
-                annotation=Optional[actual_type],
+                annotation=Optional[actual_type],  # noqa: UP045
             )
         params.append(param)
 

@@ -12,13 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.skills.skills import AbstractSkill
+import queue
+import threading
+import time
+from typing import Any, List, Optional
+
 from pydantic import Field
 from reactivex import Subject
-from typing import Optional, Any, List
-import time
-import threading
-import queue
+
+from dimos.skills.skills import AbstractSkill
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.skills.speak")
@@ -77,12 +79,12 @@ class Speak(AbstractSkill):
 
     text: str = Field(..., description="Text to speak")
 
-    def __init__(self, tts_node: Optional[Any] = None, **data):
+    def __init__(self, tts_node: Any | None = None, **data):
         super().__init__(**data)
         self._tts_node = tts_node
         self._audio_complete = threading.Event()
         self._subscription = None
-        self._subscriptions: List = []  # Track all subscriptions
+        self._subscriptions: list = []  # Track all subscriptions
 
     def __call__(self):
         if not self._tts_node:
@@ -147,7 +149,7 @@ class Speak(AbstractSkill):
                     result_queue.put(f"Spoke: {self.text} successfully")
             except Exception as e:
                 logger.error(f"Error in speak task: {e}")
-                result_queue.put(f"Error speaking text: {str(e)}")
+                result_queue.put(f"Error speaking text: {e!s}")
 
         # Add our speech task to the global queue for sequential processing
         display_text = self.text[:50] + "..." if len(self.text) > 50 else self.text

@@ -1,26 +1,30 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Part of the code is from https://github.com/xingyizhou/UniDet/blob/master/projects/UniDet/unidet/data/multi_dataset_dataloader.py (Apache-2.0 License)
-import operator
-import torch
-import torch.utils.data
-from detectron2.utils.comm import get_world_size
-
-from detectron2.config import configurable
-from torch.utils.data.sampler import Sampler
-from detectron2.data.common import DatasetFromList, MapDataset
-from detectron2.data.dataset_mapper import DatasetMapper
-from detectron2.data.build import get_detection_dataset_dicts, build_batch_data_loader
-from detectron2.data.samplers import TrainingSampler, RepeatFactorTrainingSampler
-from detectron2.data.build import worker_init_reset_seed, print_instances_class_histogram
-from detectron2.data.build import filter_images_with_only_crowd_annotations
-from detectron2.data.build import filter_images_with_few_keypoints
-from detectron2.data.build import check_metadata_consistency
-from detectron2.data.catalog import MetadataCatalog, DatasetCatalog
-from detectron2.utils import comm
+from collections import defaultdict
 import itertools
 import math
-from collections import defaultdict
+import operator
 from typing import Optional
+
+from detectron2.config import configurable
+from detectron2.data.build import (
+    build_batch_data_loader,
+    check_metadata_consistency,
+    filter_images_with_few_keypoints,
+    filter_images_with_only_crowd_annotations,
+    get_detection_dataset_dicts,
+    print_instances_class_histogram,
+    worker_init_reset_seed,
+)
+from detectron2.data.catalog import DatasetCatalog, MetadataCatalog
+from detectron2.data.common import DatasetFromList, MapDataset
+from detectron2.data.dataset_mapper import DatasetMapper
+from detectron2.data.samplers import RepeatFactorTrainingSampler, TrainingSampler
+from detectron2.utils import comm
+from detectron2.utils.comm import get_world_size
+import torch
+import torch.utils.data
+from torch.utils.data.sampler import Sampler
 
 
 def _custom_train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=None):
@@ -65,7 +69,7 @@ def _custom_train_loader_from_config(cfg, mapper=None, *, dataset=None, sampler=
         )
         sampler = RepeatFactorTrainingSampler(repeat_factors)
     else:
-        raise ValueError("Unknown training sampler: {}".format(sampler_name))
+        raise ValueError(f"Unknown training sampler: {sampler_name}")
 
     return {
         "dataset": dataset_dicts,
@@ -93,12 +97,14 @@ def build_custom_train_loader(
     num_datasets=1,
     multi_dataset_grouping=False,
     use_diff_bs_size=False,
-    dataset_bs=[],
+    dataset_bs=None,
 ):
     """
     Modified from detectron2.data.build.build_custom_train_loader, but supports
     different samplers
     """
+    if dataset_bs is None:
+        dataset_bs = []
     if isinstance(dataset, list):
         dataset = DatasetFromList(dataset, copy=False)
     if mapper is not None:
@@ -132,9 +138,7 @@ def build_multi_dataset_batch_data_loader(
     """ """
     world_size = get_world_size()
     assert total_batch_size > 0 and total_batch_size % world_size == 0, (
-        "Total batch size ({}) must be divisible by the number of gpus ({}).".format(
-            total_batch_size, world_size
-        )
+        f"Total batch size ({total_batch_size}) must be divisible by the number of gpus ({world_size})."
     )
 
     batch_size = total_batch_size // world_size
@@ -157,11 +161,11 @@ def get_detection_dataset_dicts_with_source(
 ):
     assert len(dataset_names)
     dataset_dicts = [DatasetCatalog.get(dataset_name) for dataset_name in dataset_names]
-    for dataset_name, dicts in zip(dataset_names, dataset_dicts):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
+    for dataset_name, dicts in zip(dataset_names, dataset_dicts, strict=False):
+        assert len(dicts), f"Dataset '{dataset_name}' is empty!"
 
-    for source_id, (dataset_name, dicts) in enumerate(zip(dataset_names, dataset_dicts)):
-        assert len(dicts), "Dataset '{}' is empty!".format(dataset_name)
+    for source_id, (dataset_name, dicts) in enumerate(zip(dataset_names, dataset_dicts, strict=False)):
+        assert len(dicts), f"Dataset '{dataset_name}' is empty!"
         for d in dicts:
             d["dataset_source"] = source_id
 
@@ -194,7 +198,7 @@ class MultiDatasetSampler(Sampler):
         use_rfs,
         dataset_ann,
         repeat_threshold=0.001,
-        seed: Optional[int] = None,
+        seed: int | None = None,
     ):
         """ """
         sizes = [0 for _ in range(len(dataset_ratio))]
@@ -203,9 +207,7 @@ class MultiDatasetSampler(Sampler):
         print("dataset sizes", sizes)
         self.sizes = sizes
         assert len(dataset_ratio) == len(sizes), (
-            "length of dataset ratio {} should be equal to number if dataset {}".format(
-                len(dataset_ratio), len(sizes)
-            )
+            f"length of dataset ratio {len(dataset_ratio)} should be equal to number if dataset {len(sizes)}"
         )
         if seed is None:
             seed = comm.shared_random_seed()
@@ -219,7 +221,7 @@ class MultiDatasetSampler(Sampler):
 
         dataset_weight = [
             torch.ones(s) * max(sizes) / s * r / sum(dataset_ratio)
-            for i, (r, s) in enumerate(zip(dataset_ratio, sizes))
+            for i, (r, s) in enumerate(zip(dataset_ratio, sizes, strict=False))
         ]
         dataset_weight = torch.cat(dataset_weight)
 
@@ -253,7 +255,7 @@ class MultiDatasetSampler(Sampler):
             ids = torch.multinomial(
                 self.weights, self.sample_epoch_size, generator=g, replacement=True
             )
-            nums = [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
+            [(self.dataset_ids[ids] == i).sum().int().item() for i in range(len(self.sizes))]
             yield from ids
 
 

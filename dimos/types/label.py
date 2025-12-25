@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Any
+from typing import Any, Dict
 
 
 class LabelType:
-    def __init__(self, labels: Dict[str, Any], metadata: Any = None):
+    def __init__(self, labels: dict[str, Any], metadata: Any = None):
         """
         Initializes a standardized label type.
 

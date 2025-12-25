@@ -16,16 +16,17 @@
 
 import asyncio
 import os
-import pytest
 import threading
 import time
+
 from dotenv import load_dotenv
+import pytest
 
 from dimos import core
-from dimos.core import Module, Out, In, rpc
-from dimos.agents.modules.base_agent import BaseAgentModule
 from dimos.agents.agent_message import AgentMessage
 from dimos.agents.agent_types import AgentResponse
+from dimos.agents.modules.base_agent import BaseAgentModule
+from dimos.core import In, Module, Out, rpc
 from dimos.protocol import pubsub
 
 

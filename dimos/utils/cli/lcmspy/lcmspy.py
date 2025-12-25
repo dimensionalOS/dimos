@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import threading
-import time
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum
+import threading
+import time
 
 import lcm
 
@@ -60,7 +60,7 @@ class Topic:
         self.total_traffic_bytes += datalen
         self._cleanup_old_messages()
 
-    def _cleanup_old_messages(self, max_age: float = None):
+    def _cleanup_old_messages(self, max_age: float | None = None):
         """Remove messages older than max_age seconds"""
         current_time = time.time()
         while self.message_history and current_time - self.message_history[0][0] > (

@@ -1,22 +1,23 @@
-import sys
-import cv2
-import tempfile
 from pathlib import Path
-import cog
+import sys
+import tempfile
 import time
+
+import cog
+import cv2
+from detectron2.config import get_cfg
+from detectron2.data import MetadataCatalog
 
 # import some common detectron2 utilities
 from detectron2.engine import DefaultPredictor
-from detectron2.config import get_cfg
 from detectron2.utils.visualizer import Visualizer
-from detectron2.data import MetadataCatalog
 
 # Detic libraries
 sys.path.insert(0, "third_party/CenterNet2/")
 from centernet.config import add_centernet_config
 from detic.config import add_detic_config
-from detic.modeling.utils import reset_cls_test
 from detic.modeling.text.text_encoder import build_text_encoder
+from detic.modeling.utils import reset_cls_test
 
 
 class Predictor(cog.Predictor):

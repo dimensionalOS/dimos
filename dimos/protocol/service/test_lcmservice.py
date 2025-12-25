@@ -392,8 +392,17 @@ def test_autoconf_with_command_failures():
                 )(),  # ifconfig lo multicast
                 subprocess.CalledProcessError(
                     1,
-                    get_sudo_prefix().split()
-                    + ["route", "add", "-net", "224.0.0.0", "netmask", "240.0.0.0", "dev", "lo"],
+                    [
+                        *get_sudo_prefix().split(),
+                        "route",
+                        "add",
+                        "-net",
+                        "224.0.0.0",
+                        "netmask",
+                        "240.0.0.0",
+                        "dev",
+                        "lo",
+                    ],
                     "Permission denied",
                     "Operation not permitted",
                 ),

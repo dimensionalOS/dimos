@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from transformers import AutoTokenizer
+
 from dimos.agents.tokenizer.base import AbstractTokenizer
 from dimos.utils.logging_config import setup_logger
 
@@ -27,7 +28,7 @@ class HuggingFaceTokenizer(AbstractTokenizer):
             self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
         except Exception as e:
             raise ValueError(
-                f"Failed to initialize tokenizer for model {self.model_name}. Error: {str(e)}"
+                f"Failed to initialize tokenizer for model {self.model_name}. Error: {e!s}"
             )
 
     def tokenize_text(self, text):
@@ -43,7 +44,7 @@ class HuggingFaceTokenizer(AbstractTokenizer):
         try:
             return self.tokenizer.decode(tokenized_text, errors="ignore")
         except Exception as e:
-            raise ValueError(f"Failed to detokenize text. Error: {str(e)}")
+            raise ValueError(f"Failed to detokenize text. Error: {e!s}")
 
     def token_count(self, text):
         """

@@ -1,12 +1,11 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # Part of the code is from https://github.com/rwightman/efficientdet-pytorch/blob/master/effdet/data/transforms.py
 # Modified by Xingyi Zhou
 # The original code is under Apache-2.0 License
+from detectron2.data.transforms.augmentation import Augmentation
 import numpy as np
 from PIL import Image
 
-from detectron2.data.transforms.augmentation import Augmentation
 from .custom_transform import EfficientDetResizeCropTransform
 
 __all__ = [

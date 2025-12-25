@@ -38,9 +38,8 @@ from typing import (
 
 import dimos.core.colors as colors
 from dimos.core.stream import In, RemoteIn, Transport
-from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM
-from dimos.protocol.pubsub.lcmpubsub import Topic as LCMTopic
-from dimos.protocol.pubsub.shmpubsub import SharedMemory, PickleSharedMemory
+from dimos.protocol.pubsub.lcmpubsub import LCM, PickleLCM, Topic as LCMTopic
+from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
 
 T = TypeVar("T")
 
@@ -156,7 +155,7 @@ class SHMTransport(PubSubTransport[T]):
 
 
 class DaskTransport(Transport[T]):
-    subscribers: List[Callable[[T], None]]
+    subscribers: list[Callable[[T], None]]
     _started: bool = False
 
     def __init__(self):

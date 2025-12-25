@@ -1,21 +1,19 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
-import torch
-import torch.nn.functional as F
-from torch import nn
-
 from detectron2.modeling import META_ARCH_REGISTRY, build_backbone
 from detectron2.structures import Boxes, Instances
-from ..utils import load_class_freq, get_fed_loss_inds
-
 from models.backbone import Joiner
 from models.deformable_detr import DeformableDETR, SetCriterion
+from models.deformable_transformer import DeformableTransformer
 from models.matcher import HungarianMatcher
 from models.position_encoding import PositionEmbeddingSine
-from models.deformable_transformer import DeformableTransformer
 from models.segmentation import sigmoid_focal_loss
+import torch
+from torch import nn
+import torch.nn.functional as F
 from util.box_ops import box_cxcywh_to_xyxy, box_xyxy_to_cxcywh
 from util.misc import NestedTensor, accuracy
 
+from ..utils import get_fed_loss_inds, load_class_freq
 
 __all__ = ["DeformableDetr"]
 
@@ -37,7 +35,7 @@ class CustomSetCriterion(SetCriterion):
         src_logits = outputs["pred_logits"]
 
         idx = self._get_src_permutation_idx(indices)
-        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices)])
+        target_classes_o = torch.cat([t["labels"][J] for t, (_, J) in zip(targets, indices, strict=False)])
         target_classes = torch.full(
             src_logits.shape[:2], self.num_classes, dtype=torch.int64, device=src_logits.device
         )
@@ -272,7 +270,7 @@ class DeformableDetr(nn.Module):
         boxes = boxes * scale_fct[:, None, :]
 
         results = []
-        for s, l, b, size in zip(scores, labels, boxes, target_sizes):
+        for s, l, b, size in zip(scores, labels, boxes, target_sizes, strict=False):
             r = Instances((size[0], size[1]))
             r.pred_boxes = Boxes(b)
             r.scores = s

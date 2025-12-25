@@ -27,20 +27,21 @@
 # limitations under the License.
 
 import os
-import time
 import tempfile
+import time
+from typing import Any, Dict, List, Optional, Tuple
+
 import pytest
-from typing import Dict, List, Optional, Any, Tuple
 
 from dimos.manipulation.manipulation_history import ManipulationHistory, ManipulationHistoryEntry
 from dimos.types.manipulation import (
-    ManipulationTask,
     AbstractConstraint,
-    TranslationConstraint,
-    RotationConstraint,
     ForceConstraint,
-    ManipulationTaskConstraint,
     ManipulationMetadata,
+    ManipulationTask,
+    ManipulationTaskConstraint,
+    RotationConstraint,
+    TranslationConstraint,
 )
 from dimos.types.vector import Vector
 
@@ -205,7 +206,7 @@ def test_manipulation_history_save_load(temp_output_dir, sample_task):
     """Test saving and loading history from disk."""
     # Create history and add entry
     history = ManipulationHistory(output_dir=temp_output_dir)
-    entry = history.create_task_entry(
+    history.create_task_entry(
         task=sample_task, result={"status": "success"}, agent_response="Task completed"
     )
 

@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import asyncio
+from dataclasses import dataclass
 from functools import partial
 import inspect
 import threading
-from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
@@ -24,9 +24,9 @@ from typing import (
     get_origin,
     get_type_hints,
 )
-from reactivex.disposable import CompositeDisposable
 
 from dask.distributed import Actor, get_worker
+from reactivex.disposable import CompositeDisposable
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
@@ -40,7 +40,7 @@ from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.utils.generic import classproperty
 
 
-def get_loop() -> tuple[asyncio.AbstractEventLoop, Optional[threading.Thread]]:
+def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
     # we are actually instantiating a new loop here
     # to not interfere with an existing dask loop
 
@@ -75,10 +75,10 @@ class ModuleConfig:
 
 
 class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
-    _rpc: Optional[RPCSpec] = None
-    _tf: Optional[TFSpec] = None
-    _loop: Optional[asyncio.AbstractEventLoop] = None
-    _loop_thread: Optional[threading.Thread]
+    _rpc: RPCSpec | None = None
+    _tf: TFSpec | None = None
+    _loop: asyncio.AbstractEventLoop | None = None
+    _loop_thread: threading.Thread | None
     _disposables: CompositeDisposable
 
     default_config = ModuleConfig
@@ -197,9 +197,9 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
     def io(self) -> str:
         def _box(name: str) -> str:
             return [
-                f"┌┴" + "─" * (len(name) + 1) + "┐",
+                "┌┴" + "─" * (len(name) + 1) + "┐",
                 f"│ {name} │",
-                f"└┬" + "─" * (len(name) + 1) + "┘",
+                "└┬" + "─" * (len(name) + 1) + "┘",
             ]
 
         # can't modify __str__ on a function like we are doing for I/O
@@ -241,11 +241,11 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return "\n".join(ret)
 
     @classproperty
-    def blueprint(cls):
+    def blueprint(self):
         # Here to prevent circular imports.
         from dimos.core.blueprints import create_module_blueprint
 
-        return partial(create_module_blueprint, cls)
+        return partial(create_module_blueprint, self)
 
 
 class DaskModule(ModuleBase):

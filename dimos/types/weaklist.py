@@ -14,8 +14,8 @@
 
 """Weak reference list implementation that automatically removes dead references."""
 
-import weakref
 from typing import Any, Iterator, Optional
+import weakref
 
 
 class WeakList:

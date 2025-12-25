@@ -49,7 +49,7 @@ class PersonDistanceEstimator:
         self.fx = K[0, 0]
         self.cx = K[0, 2]
 
-    def estimate_distance_angle(self, bbox: tuple, robot_pitch: float = None):
+    def estimate_distance_angle(self, bbox: tuple, robot_pitch: float | None = None):
         """
         Estimate distance and angle to person using ground plane constraint.
 

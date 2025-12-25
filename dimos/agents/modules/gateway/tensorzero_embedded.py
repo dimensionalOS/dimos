@@ -14,11 +14,11 @@
 
 """TensorZero embedded gateway client with correct config format."""
 
-import os
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
+import os
 from pathlib import Path
+from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +81,7 @@ model_name = "claude-3-opus-20240229"
 # Cerebras Models - disabled for CI (no API key)
 # [models.llama_3_3_70b]
 # routing = ["cerebras"]
-# 
+#
 # [models.llama_3_3_70b.providers.cerebras]
 # type = "openai"
 # model_name = "llama-3.3-70b"
@@ -180,13 +180,13 @@ weight = 0.4
     def inference(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[Dict[str, Any], Iterator[Dict[str, Any]]]:
+    ) -> Union[dict[str, Any], Iterator[dict[str, Any]]]:
         """Synchronous inference call through TensorZero."""
 
         # Map model to TensorZero function
@@ -233,13 +233,13 @@ weight = 0.4
     async def ainference(
         self,
         model: str,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
         temperature: float = 0.0,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
         stream: bool = False,
         **kwargs,
-    ) -> Union[Dict[str, Any], AsyncIterator[Dict[str, Any]]]:
+    ) -> Union[dict[str, Any], AsyncIterator[dict[str, Any]]]:
         """Async inference with streaming support."""
         import asyncio
 

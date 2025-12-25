@@ -47,7 +47,7 @@ def test_json_encoded_pubsub():
 
     # Verify all messages were received and properly decoded
     assert len(received_messages) == len(test_messages)
-    for original, received in zip(test_messages, received_messages):
+    for original, received in zip(test_messages, received_messages, strict=False):
         assert original == received
 
 

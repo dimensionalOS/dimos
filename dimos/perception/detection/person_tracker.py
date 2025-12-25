@@ -39,7 +39,7 @@ class PersonTracker(Module):
 
     def center_to_3d(
         self,
-        pixel: Tuple[int, int],
+        pixel: tuple[int, int],
         camera_info: CameraInfo,
         assumed_depth: float = 1.0,
     ) -> Vector3:
