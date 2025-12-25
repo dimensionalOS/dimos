@@ -35,6 +35,8 @@ class GoogleMapsSkillContainer(SkillModule):
     def __init__(self) -> None:
         super().__init__()
         self._client = GoogleMaps()
+        self._started = True
+        self._max_valid_distance = 20000  # meters
 
     @rpc
     def start(self) -> None:
@@ -80,9 +82,10 @@ class GoogleMapsSkillContainer(SkillModule):
         return result.model_dump_json()
 
     @skill()
-    def get_gps_position_for_queries(self, *queries: str) -> str:
-        """Get the GPS position (latitude/longitude)
-
+    def get_gps_position_for_queries(self, queries: list[str]) -> str:
+        """Get the GPS position (latitude/longitude) from Google Maps for know landmarks or searchable locations.
+           This includes anything that wouldn't be viewable on a physical OSM map including intersections (5th and Natoma)
+           landmarks (Dolores park), or locations (Tempest bar)
         Example:
 
             get_gps_position_for_queries(['Fort Mason', 'Lafayette Park'])

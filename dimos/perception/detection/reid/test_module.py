@@ -29,7 +29,7 @@ def test_reid_ingress(imageDetections2d) -> None:
 
     # Create TorchReID-based IDSystem for testing
     reid_model = TorchReIDModel(model_name="osnet_x1_0")
-    reid_model.warmup()
+    reid_model.start()
     idsystem = EmbeddingIDSystem(
         model=lambda: reid_model,
         padding=20,
