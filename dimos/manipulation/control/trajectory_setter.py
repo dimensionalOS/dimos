@@ -230,7 +230,7 @@ def interactive_mode(setter: TrajectorySetter) -> None:
     if setter.num_joints is None:
         print("Error: No joint state received. Cannot start interactive mode.")
         return
-    
+
     # Generate dynamic joint list for help text
     joint_args = " ".join([f"<j{i + 1}>" for i in range(setter.num_joints)])
 

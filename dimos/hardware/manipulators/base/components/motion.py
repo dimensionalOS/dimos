@@ -43,7 +43,7 @@ class StandardMotionComponent:
         self,
         sdk: BaseManipulatorSDK | None = None,
         shared_state: SharedState | None = None,
-        command_queue: "Queue[Any]" | None = None,
+        command_queue: Queue[Any] | None = None,
         capabilities: ManipulatorCapabilities | None = None,
     ) -> None:
         """Initialize the motion component.
@@ -419,7 +419,11 @@ class StandardMotionComponent:
 
     @component_api
     def move_cartesian(
-        self, pose: dict[str, float], velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
+        self,
+        pose: dict[str, float],
+        velocity: float = 1.0,
+        acceleration: float = 1.0,
+        wait: bool = False,
     ) -> dict[str, Any]:
         """Move end-effector to target pose.
 
@@ -504,7 +508,9 @@ class StandardMotionComponent:
     # ============= Trajectory Execution (Optional) =============
 
     @component_api
-    def execute_trajectory(self, trajectory: list[dict[str, Any]], wait: bool = True) -> dict[str, Any]:
+    def execute_trajectory(
+        self, trajectory: list[dict[str, Any]], wait: bool = True
+    ) -> dict[str, Any]:
         """Execute a joint trajectory.
 
         Args:
