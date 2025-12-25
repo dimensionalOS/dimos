@@ -42,7 +42,9 @@ class KinematicsComponent:
     config: Any
 
     @rpc
-    def get_forward_kinematics(self, mode: str = "feedback") -> tuple[bool, dict[str, float] | None]:
+    def get_forward_kinematics(
+        self, mode: str = "feedback"
+    ) -> tuple[bool, dict[str, float] | None]:
         """
         Compute forward kinematics.
 

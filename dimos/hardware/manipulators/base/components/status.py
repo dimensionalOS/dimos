@@ -338,7 +338,11 @@ class StandardStatusComponent:
 
             connected = self.sdk.is_connected()
 
-            result: dict[str, Any] = {"connected": connected, "timestamp": time.time(), "success": True}
+            result: dict[str, Any] = {
+                "connected": connected,
+                "timestamp": time.time(),
+                "success": True,
+            }
 
             # Try to get more info if connected
             if connected:

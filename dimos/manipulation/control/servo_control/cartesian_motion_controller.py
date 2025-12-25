@@ -112,9 +112,7 @@ class CartesianMotionController(Module):
     cartesian_velocity: Out[Twist] = None  # type: ignore[assignment]
     current_pose: Out[PoseStamped] = None  # type: ignore[assignment]
 
-    def __init__(
-        self, arm_driver: ArmDriverSpec | None = None, *args: Any, **kwargs: Any
-    ) -> None:
+    def __init__(self, arm_driver: ArmDriverSpec | None = None, *args: Any, **kwargs: Any) -> None:
         """
         Initialize the Cartesian motion controller.
 
@@ -196,22 +194,30 @@ class CartesianMotionController(Module):
     def _call_fk(self, joint_positions: list[float]) -> tuple[int, list[float] | None]:
         """Call FK - uses blueprint RPC wiring or legacy arm_driver reference."""
         try:
-            result: tuple[int, list[float] | None] = self.get_rpc_calls("XArmDriver.get_forward_kinematics")(joint_positions)  # type: ignore[no-any-return]
+            result: tuple[int, list[float] | None] = self.get_rpc_calls(
+                "XArmDriver.get_forward_kinematics"
+            )(joint_positions)  # type: ignore[no-any-return]
             return result
         except (ValueError, KeyError):
             if self._arm_driver_legacy:
-                result_fk: tuple[int, list[float] | None] = self._arm_driver_legacy.get_forward_kinematics(joint_positions)  # type: ignore[attr-defined, no-any-return]
+                result_fk: tuple[int, list[float] | None] = (
+                    self._arm_driver_legacy.get_forward_kinematics(joint_positions)
+                )  # type: ignore[attr-defined, no-any-return]
                 return result_fk
             raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
 
     def _call_ik(self, pose: list[float]) -> tuple[int, list[float] | None]:
         """Call IK - uses blueprint RPC wiring or legacy arm_driver reference."""
         try:
-            result: tuple[int, list[float] | None] = self.get_rpc_calls("XArmDriver.get_inverse_kinematics")(pose)  # type: ignore[no-any-return]
+            result: tuple[int, list[float] | None] = self.get_rpc_calls(
+                "XArmDriver.get_inverse_kinematics"
+            )(pose)  # type: ignore[no-any-return]
             return result
         except (ValueError, KeyError):
             if self._arm_driver_legacy:
-                result_ik: tuple[int, list[float] | None] = self._arm_driver_legacy.get_inverse_kinematics(pose)  # type: ignore[attr-defined, no-any-return]
+                result_ik: tuple[int, list[float] | None] = (
+                    self._arm_driver_legacy.get_inverse_kinematics(pose)
+                )  # type: ignore[attr-defined, no-any-return]
                 return result_ik
             raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
 
