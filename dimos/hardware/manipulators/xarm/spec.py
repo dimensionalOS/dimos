@@ -13,10 +13,27 @@
 # limitations under the License.
 
 from typing import Protocol
+from dataclasses import dataclass
 
 from dimos.core import In, Out
 from dimos.msgs.geometry_msgs import WrenchStamped
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.geometry_msgs import PoseStamped, Twist, WrenchStamped
+from dimos.msgs.nav_msgs import Path
+from dimos.msgs.sensor_msgs import JointState
+
+
+@dataclass
+class RobotState:
+    """Custom message containing full robot state."""
+
+    state: int = 0  # Robot state (0: ready, 3: paused, 4: stopped, etc.)
+    mode: int = 0  # Control mode (0: position, 1: servo, 4: joint velocity, 5: cartesian velocity)
+    error_code: int = 0  # Error code
+    warn_code: int = 0  # Warning code
+    cmdnum: int = 0  # Command queue length
+    mt_brake: int = 0  # Motor brake state
+    mt_able: int = 0  # Motor enable state
 
 
 class ArmDriverSpec(Protocol):
