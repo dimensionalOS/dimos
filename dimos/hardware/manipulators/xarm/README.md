@@ -1,296 +1,405 @@
-# xArm Real-time Driver
+# xArm Driver for dimos
 
-A real-time controller for the xArm manipulator family (xArm5, xArm6, xArm7) compatible with the xArm Python SDK.
+Complete driver implementation for UFACTORY xArm robotic manipulators integrated with the dimos framework.
 
-## Architecture Overview
+## Features
 
-The driver implements a **dual-threaded, callback-driven architecture** for real-time control:
+- **Full dimos Integration**: Uses `dimos.deploy()` with proper LCM transports
+- **Dual-Threaded Architecture**: Separate 100Hz loops for joint state reading and control
+- **Position & Velocity Control**: Support for both servo position control (mode 1) and velocity control (mode 4)
+- **Trajectory Generation**: Sample trajectory generator with position and velocity trajectory support
+- **Interactive Control**: User-friendly CLI for manual robot control
+- **ROS-Compatible Messages**: JointState, RobotState, JointCommand
+- **Comprehensive RPC API**: Full access to xArm SDK functionality
+- **Hardware Monitoring**: Joint states, robot state, force/torque sensors
+- **Firmware Version Detection**: Automatic API selection based on firmware
+
+## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                      XArmDriver Module                           │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                   │
-│  MAIN THREAD (Event Loop)                                        │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Input Topics (Non-blocking Callbacks):                    │ │
-│  │  ┌──────────────┐         ┌──────────────────┐            │ │
-│  │  │  joint_cmd   │────────▶│  _on_joint_cmd() │            │ │
-│  │  │List[float]   │         │  (stores latest) │            │ │
-│  │  └──────────────┘         └─────────┬────────┘            │ │
-│  │                                      │                      │ │
-│  │  ┌──────────────┐         ┌──────────▼───────┐            │ │
-│  │  │ velocity_cmd │────────▶│ _on_velocity_cmd()│            │ │
-│  │  │List[float]   │         │  (stores latest) │            │ │
-│  │  └──────────────┘         └─────────┬────────┘            │ │
-│  │                                      │                      │ │
-│  │  RPC Methods (Callable):             ▼                      │ │
-│  │  • set_joint_angles()     ┌────────────────┐              │ │
-│  │  • enable_servo_mode()    │ Shared State   │              │ │
-│  │  • clean_error()          │ (Thread-safe)  │              │ │
-│  │  • get_position()         │                │              │ │
-│  │  • move_gohome()          │ • joint_cmd_   │◀─────────┐   │ │
-│  │  • emergency_stop()       │ • vel_cmd_     │          │   │ │
-│  │  • etc...                 │ • joint_states_│──────────┼─┐ │ │
-│  │                           │ • robot_state_ │◀─────┐   │ │ │ │
-│  │  SDK Callback (Event-Driven):  └─────────────┘      │   │ │ │ │
-│  │  ┌──────────────────────────────────┐               │   │ │ │ │
-│  │  │ _report_data_callback()          │───────────────┘   │ │ │ │
-│  │  │ (100Hz if report_type='dev')     │                   │ │ │ │
-│  │  │ • Update curr_state, curr_err    │───────────────────┼─┼─┤ │
-│  │  │ • Publish robot_state topic      │                   │ │ │ │
-│  │  │ • Publish FT sensor data         │                   │ │ │ │
-│  │  └──────────────────────────────────┘                   │ │ │ │
-│  │                                                        │ │ │ │
-│  └────────────────────────────────────────────────────────┘ │ │ │
-│                                       ▲                      │ │ │
-│                                       │                      │ │ │
-│  CONTROL THREAD (100Hz Real-time Loop)                      │ │ │
-│  ┌────────────────────────────────────┼────────────────┐  │ │ │ │
-│  │                                     │                │  │ │ │ │
-│  │  ┌──────────────────────────────────┴──────────┐    │  │ │ │ │
-│  │  │ 1. Read joint_cmd_ from shared state        │    │  │ │ │ │
-│  │  └──────────────────┬──────────────────────────┘    │  │ │ │ │
-│  │                     ▼                                │  │ │ │ │
-│  │  ┌──────────────────────────────────────────────┐   │  │ │ │ │
-│  │  │ 2. Send command via set_servo_angle_j()      │   │  │ │ │ │
-│  │  └──────────────────┬───────────────────────────┘   │  │ │ │ │
-│  │                     ▼                                │  │ │ │ │
-│  │  ┌──────────────────────────────────────────────┐   │  │ │ │ │
-│  │  │ 3. Read joint state via get_servo_angle()    │   │  │ │ │ │
-│  │  └──────────────────┬───────────────────────────┘   │  │ │ │ │
-│  │                     ▼                                │  │ │ │ │
-│  │  ┌──────────────────────────────────────────────┐   │  │ │ │ │
-│  │  │ 4. Write to joint_states_ & publish          │───┼──┘ │ │ │
-│  │  └──────────────────┬───────────────────────────┘   │    │ │ │
-│  │                     ▼                                │    │ │ │
-│  │  ┌──────────────────────────────────────────────┐   │    │ │ │
-│  │  │ 5. Sleep to maintain 100Hz                   │   │    │ │ │
-│  │  └──────────────────┬───────────────────────────┘   │    │ │ │
-│  │                     │                                │      │ │
-│  │                     └────────────────────────────────┘      │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                               │                                   │
-│                               ▼                                   │
-│                    ┌────────────────────┐                         │
-│                    │   xArm SDK API     │                         │
-│                    │   (XArmAPI)        │                         │
-│                    └─────────┬──────────┘                         │
-│                              │                                    │
-│  Output Topics:              │                                    │
-│  ┌──────────────────────────▼┐         ┌──────────────┐          │
-│  │  joint_state              │────────▶│ JointState   │          │
-│  │  Out[JointState]          │         │ subscribers  │          │
-│  └───────────────────────────┘         └──────────────┘          │
-│                                                                   │
-│  ┌───────────────────────────┐         ┌──────────────┐          │
-│  │  robot_state              │────────▶│ RobotState   │          │
-│  │  Out[RobotState]          │         │ subscribers  │          │
-│  └───────────────────────────┘         └──────────────┘          │
-│                                                                   │
-└───────────────────────────────────────────────────────────────────┘
+XArmDriver (dimos Module)
+├── Joint State Thread (100Hz)
+│   ├── Reads: position, velocity, effort
+│   └── Publishes: /xarm/joint_states (LCM)
+├── Robot State Thread (10Hz)
+│   ├── Reads: state, mode, error_code, warn_code
+│   └── Publishes: /xarm/robot_state (LCM)
+├── Control Thread (100Hz)
+│   ├── Subscribes: /xarm/joint_position_command, /xarm/joint_velocity_command
+│   ├── Mode-aware: Switches between position (mode 1) and velocity (mode 4)
+│   ├── Timeout protection: Stops robot if no commands for 1 second
+│   └── Sends to hardware: set_servo_angle_j() or vc_set_joint_velocity()
+├── Report Callback (event-driven)
+│   ├── Updates state variables when SDK pushes data
+│   └── Publishes: /xarm/ft_ext, /xarm/ft_raw (LCM)
+└── RPC Methods
+    ├── State queries: get_joint_state(), get_position()
+    ├── Motion control: set_joint_angles(), set_servo_angle()
+    ├── Mode switching: enable_velocity_control_mode(), disable_velocity_control_mode()
+    └── System control: motion_enable(), clean_error()
+
+SampleTrajectoryGenerator (dimos Module)
+├── Control Loop (100Hz)
+│   ├── Generates: Position or velocity commands
+│   ├── Publishes to: /xarm/joint_position_command OR /xarm/joint_velocity_command
+│   └── Auto-switches topic based on trajectory type
+├── Position Trajectories
+│   └── Linear interpolation between start and end positions
+├── Velocity Trajectories
+│   └── Constant velocity for specified duration
+└── RPC Methods
+    ├── move_joint(joint_index, delta_degrees, duration)
+    └── move_joint_velocity(joint_index, velocity_deg_s, duration)
 ```
 
-**Key Design Principles:**
-- **2 Threads Total**: Main thread (callbacks + RPC + SDK callback) + Control thread (RT loop)
-- **Event-Driven State Updates**: SDK callback provides robot state at ~100Hz (dev mode)
-- **Separation of Concerns**:
-  - Control thread: Critical real-time joint control (100Hz)
-  - SDK callback: Robot state, errors, FT sensor (~100Hz if dev mode)
-- **Lock-Protected Shared State**: All shared variables use `threading.Lock()`
-- **Non-blocking Callbacks**: All callbacks just store/publish data, never block
+## Quick Start
 
-## Key Components
+### 1. Set xArm IP Address
 
-### 1. **Shared State Management**
-- `joint_cmd_`: Latest joint position command (protected by `_joint_cmd_lock`)
-- `vel_cmd_`: Latest velocity command (protected by `_joint_cmd_lock`)
-- `joint_states_`: Latest joint state reading (protected by `_joint_state_lock`)
-- `robot_state_`: Latest robot state reading (protected by `_joint_state_lock`)
+```bash
+export XARM_IP=192.168.1.235  # Your xArm's IP
+```
 
-All shared state uses `threading.Lock()` for thread-safe access.
+### 2. Interactive Control (Recommended)
 
-### 2. **Control Thread (100Hz)**
+The easiest way to control the robot with both position and velocity modes:
+
+```bash
+venv/bin/python dimos/hardware/manipulators/xarm/interactive_control.py
+```
+
+This provides:
+- **Mode selection**: Choose position or velocity control for each motion
+- **Joint selection**: Move individual joints
+- **Position mode**: Move by angle (degrees) over a duration
+- **Velocity mode**: Move at constant velocity (deg/s) for a duration
+- **Safety**: Automatic mode switching and state management
+
+Example session:
+```
+Select control mode:
+  1. Position control (move by angle)
+  2. Velocity control (move with velocity)
+Mode (1 or 2): 2
+
+Which joint to move? (1-6): 6
+Velocity (deg/s): 10
+Duration (seconds): 2.0
+
+⚙ Preparing for velocity control...
+  Velocity control mode enabled (code: 0)
+✓ Started velocity control on joint 6: 10.0°/s for 2.0s
+```
+
+### 3. Run Driver (Continuous Mode)
+
+Start the driver and keep it running (publishes on LCM topics):
+
+```bash
+venv/bin/python dimos/hardware/manipulators/xarm/test_xarm_driver.py
+```
+
+The driver will publish:
+- Joint states at ~100 Hz on `/xarm/joint_states`
+- Robot state at ~10 Hz on `/xarm/robot_state`
+- Force/torque data on `/xarm/ft_ext` and `/xarm/ft_raw`
+
+Press `Ctrl+C` to stop the driver.
+
+### 4. Velocity Control Test
+
+Test velocity control with a simple script:
+
+```bash
+venv/bin/python dimos/hardware/manipulators/xarm/test_velocity_control.py
+```
+
+This sends a constant velocity command to joint 6 for 1 second, then stops.
+
+### 5. Deploy in Your Application
+
+#### Position Control Example
+
 ```python
-def _control_loop(self):
-    # Critical real-time loop at 100Hz (configurable)
-    # ONLY handles time-critical operations:
-    # 1. Read latest joint_cmd_ from shared state
-    # 2. Send command via arm.set_servo_angle_j(angles)
-    # 3. Read joint state via arm.get_servo_angle()
-    # 4. Write to joint_states_ shared state
-    # 5. Publish joint_state to topic
-    # 6. Sleep to maintain frequency
+from dimos import core
+from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
+from dimos.hardware.manipulators.xarm.sample_trajectory_generator import SampleTrajectoryGenerator
+from dimos.msgs.sensor_msgs import JointState, RobotState, JointCommand
+
+# Start dimos cluster
+cluster = core.start(1)
+
+# Deploy xArm driver
+xarm = cluster.deploy(
+    XArmDriver,
+    ip_address="192.168.1.235",
+    control_frequency=100.0,
+    num_joints=6,
+    enable_on_start=False,
+)
+
+# Set up driver transports
+xarm.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
+xarm.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
+xarm.joint_position_command.transport = core.LCMTransport("/xarm/joint_position_command", JointCommand)
+
+# Deploy trajectory generator
+traj_gen = cluster.deploy(
+    SampleTrajectoryGenerator,
+    num_joints=6,
+    control_mode="position",
+    publish_rate=100.0,
+)
+
+# Set up trajectory generator transports
+traj_gen.joint_state_input.transport = core.LCMTransport("/xarm/joint_states", JointState)
+traj_gen.joint_position_command.transport = core.LCMTransport("/xarm/joint_position_command", JointCommand)
+
+# Start modules
+xarm.start()
+traj_gen.start()
+
+# Enable servo mode
+xarm.enable_servo_mode()
+traj_gen.enable_publishing()
+
+# Move joint 6 by 10 degrees over 2 seconds
+result = traj_gen.move_joint(joint_index=5, delta_degrees=10.0, duration=2.0)
+print(result)
+
+# Cleanup
+traj_gen.stop()
+xarm.stop()
+cluster.stop()
 ```
 
-**Key Requirements:**
-- Servo mode (mode 1) must be enabled
-- Uses `set_servo_angle_j()` which executes only the last instruction
-- Maintains precise timing with next_time tracking
-- **Only joint commands and joint states** - no robot state reading here
+#### Velocity Control Example
 
-### 3. **SDK Report Callback (Main Thread, Event-Driven)**
 ```python
-def _report_data_callback(self, data: dict):
-    # Called by SDK at configured frequency (report_type)
-    # Receives robot state data from SDK:
-    # 1. Update curr_state, curr_err, curr_mode, curr_cmdnum, curr_warn
-    # 2. Create and publish RobotState message
-    # 3. Publish force/torque sensor data (if available)
+from dimos import core
+from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
+from dimos.hardware.manipulators.xarm.sample_trajectory_generator import SampleTrajectoryGenerator
+from dimos.msgs.sensor_msgs import JointState, RobotState, JointCommand
+
+# Start dimos cluster
+cluster = core.start(1)
+
+# Deploy xArm driver
+xarm = cluster.deploy(
+    XArmDriver,
+    ip_address="192.168.1.235",
+    control_frequency=100.0,
+    num_joints=6,
+)
+
+# Set up driver transports (note: both position AND velocity)
+xarm.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
+xarm.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
+xarm.joint_position_command.transport = core.LCMTransport("/xarm/joint_position_command", JointCommand)
+xarm.joint_velocity_command.transport = core.LCMTransport("/xarm/joint_velocity_command", JointCommand)
+
+# Deploy trajectory generator
+traj_gen = cluster.deploy(
+    SampleTrajectoryGenerator,
+    num_joints=6,
+    control_mode="position",  # Will auto-switch to velocity when needed
+    publish_rate=100.0,
+)
+
+# Set up trajectory generator transports (both topics)
+traj_gen.joint_state_input.transport = core.LCMTransport("/xarm/joint_states", JointState)
+traj_gen.joint_position_command.transport = core.LCMTransport("/xarm/joint_position_command", JointCommand)
+traj_gen.joint_velocity_command.transport = core.LCMTransport("/xarm/joint_velocity_command", JointCommand)
+
+# Start modules
+xarm.start()
+traj_gen.start()
+
+# Enable velocity control mode (sets robot to mode 4, state 0)
+code, msg = xarm.enable_velocity_control_mode()
+print(f"Velocity mode: {msg}")
+
+# Move joint 6 at 20 deg/s for 2 seconds
+result = traj_gen.move_joint_velocity(joint_index=5, velocity_deg_s=20.0, duration=2.0)
+print(result)
+
+# Wait for completion, then return to position mode
+time.sleep(2.5)
+code, msg = xarm.disable_velocity_control_mode()
+print(f"Position mode: {msg}")
+
+# Cleanup
+traj_gen.stop()
+xarm.stop()
+cluster.stop()
 ```
-
-**Key Points:**
-- **Event-driven** - SDK calls this automatically
-- **Frequency depends on report_type**:
-  - `'dev'`: ~100Hz (high frequency, recommended)
-  - `'rich'`: ~5Hz (includes torque data)
-  - `'normal'`: ~5Hz (basic state only)
-- Runs in **SDK's background thread** (not control loop)
-- Provides all state in one callback (state, mode, errors, warnings, cmdnum, mtbrake, mtable)
-
-### 4. **Topic Subscriptions (Non-blocking)**
-```python
-def _on_joint_cmd(self, joint_cmd: List[float]):
-    # Non-blocking callback
-    # Just store the latest command in shared state
-    with self._joint_cmd_lock:
-        self._joint_cmd_ = list(joint_cmd)
-```
-
-**Design Pattern:**
-- Callbacks are non-blocking
-- Store latest data in shared state
-- Control loop processes at fixed frequency
-
-### 5. **RPC Methods**
-All xArm SDK API functions are exposed as RPC methods:
-- Return `Tuple[int, str]` for commands (code, message)
-- Return `Tuple[int, Optional[T]]` for queries (code, result)
-- Thread-safe access to shared state
-
-## Files Created
-
-1. **[JointState.py](../../../msgs/sensor_msgs/JointState.py)** - ROS sensor_msgs/JointState message type
-2. **[spec.py](spec.py)** - Protocol specification with RobotState dataclass
-3. **[xarm_driver.py](xarm_driver.py)** - Main driver implementation
 
 ## Configuration
 
-```python
-@dataclass
-class XArmDriverConfig(ModuleConfig):
-    ip_address: str = "192.168.1.185"      # xArm IP address
-    is_radian: bool = True                  # Use radians (True) or degrees (False)
-    control_frequency: float = 100.0        # Control loop frequency in Hz (joint cmds & states)
-    report_type: str = "dev"                # SDK report type: 'dev'=100Hz, 'rich'=5Hz+torque, 'normal'=5Hz
-    enable_on_start: bool = True            # Enable servo mode on start
-    num_joints: int = 7                     # Number of joints (5, 6, or 7)
-    check_joint_limit: bool = True          # Check joint limits
-    check_cmdnum_limit: bool = True         # Check command queue limit
-    max_cmdnum: int = 512                   # Maximum command queue size
+### XArmDriverConfig Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ip_address` | str | "192.168.1.235" | xArm controller IP address |
+| `num_joints` | int | 6 | Number of joints (5, 6, or 7) |
+| `control_frequency` | float | 100.0 | Control loop rate (Hz) |
+| `joint_state_rate` | float | 100.0 | Joint state publishing rate (Hz) |
+| `robot_state_rate` | float | 10.0 | Robot state publishing rate (Hz) |
+| `report_type` | str | "dev" | SDK report type ("normal", "rich", "dev") |
+| `enable_on_start` | bool | False | Enable servo mode on startup |
+| `is_radian` | bool | True | Use radians for positions (True) or degrees (False) |
+| `velocity_control` | bool | False | Enable velocity control mode on startup |
+| `velocity_duration` | float | 0.1 | Duration parameter for vc_set_joint_velocity (seconds) |
+
+## Message Types
+
+### Input Topics (Commands)
+
+- `joint_position_command: In[JointCommand]` - Target joint positions (radians)
+- `joint_velocity_command: In[JointCommand]` - Target joint velocities (deg/s)
+
+**Note**: Velocity commands are in **degrees/second**, not radians/second. This is due to the xArm SDK `vc_set_joint_velocity()` API expecting degrees/second.
+
+### Output Topics (State)
+
+- `joint_state: Out[JointState]` - Joint positions, velocities, efforts
+- `robot_state: Out[RobotState]` - Robot state, mode, errors, warnings
+- `ft_ext: Out[WrenchStamped]` - External force/torque (compensated)
+- `ft_raw: Out[WrenchStamped]` - Raw force/torque sensor data
+
+## RPC Methods
+
+### XArmDriver RPC Methods
+
+#### State Queries
+- `get_joint_state() -> JointState` - Get current joint state
+- `get_robot_state() -> RobotState` - Get robot status
+- `get_position() -> Tuple[int, List[float]]` - Get TCP position/orientation
+- `get_version() -> Tuple[int, str]` - Get firmware version
+
+#### Motion Control
+- `set_joint_angles(angles, speed, mvacc, mvtime) -> Tuple[int, str]`
+- `set_servo_angle(joint_id, angle, speed, mvacc, mvtime) -> Tuple[int, str]`
+
+#### Mode Switching
+- `enable_servo_mode() -> Tuple[int, str]` - Enable servo mode (mode 1)
+- `disable_servo_mode() -> Tuple[int, str]` - Disable servo mode
+- `enable_velocity_control_mode() -> Tuple[int, str]` - Enable velocity control (mode 4, state 0)
+- `disable_velocity_control_mode() -> Tuple[int, str]` - Return to position control (mode 1, state 0)
+
+#### System Control
+- `motion_enable(enable) -> Tuple[int, str]` - Enable/disable motors
+- `set_mode(mode) -> Tuple[int, str]` - Set control mode
+- `set_state(state) -> Tuple[int, str]` - Set robot state
+- `clean_error() -> Tuple[int, str]` - Clear error codes
+- `clean_warn() -> Tuple[int, str]` - Clear warning codes
+
+### SampleTrajectoryGenerator RPC Methods
+
+- `move_joint(joint_index, delta_degrees, duration) -> str` - Move joint by relative angle
+- `move_joint_velocity(joint_index, velocity_deg_s, duration) -> str` - Move joint at constant velocity
+- `enable_publishing() -> None` - Start publishing commands
+- `disable_publishing() -> None` - Stop publishing commands
+- `get_current_state() -> dict` - Get trajectory generator state
+
+## Test Suite
+
+The test suite validates full dimos deployment:
+
+1. **Basic Connection** - Deploy, connect, get firmware version
+2. **Joint State Reading** - Read joint states via RPC (30 samples)
+3. **Command Sending** - Send motion commands via RPC
+4. **RPC Methods** - Test all RPC method calls
+
+### Expected Results
+
+```
+✓ TEST 1: Basic Connection - PASSED
+✓ TEST 2: Joint State Reading - PASSED
+⚠ TEST 3: Command Sending - May fail if robot not in correct state
+✓ TEST 4: RPC Methods - PASSED
+
+Total: 3/4 tests passed (Test 3 requires specific robot state)
 ```
 
-## Usage Example
+## Troubleshooting
 
-```python
-from dimos.hardware.manipulators.xarm import XArmDriver, XArmDriverConfig
-from dimos.core import LCMTransport
-from dimos.msgs.sensor_msgs import JointState
+### GLIBC Version Error
 
-# Configure driver
-config = XArmDriverConfig(
-    ip_address="192.168.1.185",
-    num_joints=7,
-    control_frequency=100.0,
-    enable_on_start=True
-)
-
-# Create driver instance
-driver = XArmDriver(config=config)
-
-# Set up transports
-driver.joint_cmd.transport = LCMTransport("/xarm/joint_cmd", list)
-driver.joint_state.transport = LCMTransport("/xarm/joint_state", JointState)
-
-# Start the driver
-driver.start()
-
-# Send commands via topic
-driver.joint_cmd.publish([0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
-
-# Or use RPC methods
-code, msg = driver.set_joint_angles([0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7])
-print(f"Code: {code}, Message: {msg}")
-
-# Get state via RPC
-joint_state = driver.get_joint_state()
-print(f"Current position: {joint_state.position}")
-
-# Stop the driver
-driver.stop()
+```
+OSError: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.36' not found
 ```
 
-## Servo Mode Control
+This is caused by Open3D's system dependencies conflicting with your system's GLIBC version.
 
-The driver requires servo mode (mode 1) for real-time control:
+**Solution**: Run tests directly using the venv Python binary (do NOT activate the venv first):
+```bash
+# From repo root
+venv/bin/python dimos/hardware/manipulators/xarm/test_xarm_driver.py
 
-```python
-# Enable servo mode (done automatically on start if enable_on_start=True)
-driver.enable_servo_mode()
-
-# Send commands - executed immediately at 100Hz
-driver.joint_cmd.publish(target_angles)
-
-# Disable servo mode when done
-driver.disable_servo_mode()
+# Or use the wrapper script (which does this automatically)
+./dimos/hardware/manipulators/xarm/test_xarm_deploy.sh
 ```
 
-## Thread Safety
+**Important**: Do NOT run `source venv/bin/activate` before running the tests. Use the Python binary directly.
 
-All shared state access is protected:
-- `_joint_cmd_lock` protects command state
-- `_joint_state_lock` protects sensor state
-- Callbacks are non-blocking (store and return)
-- Control loop reads at fixed frequency
+### Connection Timeout
 
-## Error Handling
+**Check**:
+1. xArm is powered on
+2. Network connection: `ping 192.168.1.235`
+3. Firewall allows TCP connections
+4. IP address is correct in `XARM_IP` environment variable
 
-```python
-# Clear errors via RPC
-driver.clean_error()
-driver.clean_warn()
+### Transport Not Specified Errors
 
-# Emergency stop
-driver.emergency_stop()
+These are expected when running without LCM transports configured. The driver will:
+- Store state internally
+- Provide RPC access to state
+- Log at DEBUG level (not ERROR)
 
-# Check robot state
-robot_state = driver.get_robot_state()
-if robot_state.error_code != 0:
-    print(f"Error: {robot_state.error_code}")
-```
+## Control Modes
 
-## API Code Reference
+The xArm supports different control modes:
 
-See [xarm_api_code.md](../../../../xArm-Python-SDK/doc/api/xarm_api_code.md) for error code definitions.
+- **Mode 0**: Position mode (basic)
+- **Mode 1**: Servo mode (position control with continuous commands)
+- **Mode 4**: Velocity control mode
 
-Common codes:
-- `0`: Success
-- `1`: Emergency stop activated
-- `2`: Servo error
-- `3`: Servo not enabled
-- And more...
+### Position Control Workflow
 
-## Future Enhancements
+1. Set robot to **mode 1** (servo mode) with `enable_servo_mode()`
+2. Set robot **state to 0** (ready)
+3. Send position commands via `/xarm/joint_position_command`
+4. Commands are in **radians**
 
-1. **Velocity Control**: Currently placeholders - needs implementation using `vc_set_joint_velocity()`
-2. **Joint Velocity Computation**: Currently returns zeros - could compute from position differences
-3. **Effort Reading**: Currently zeros - xArm SDK may not provide direct torque reading
-4. **Trajectory Following**: Could add spline interpolation for smooth trajectories
-5. **Collision Detection**: Integrate xArm collision sensitivity settings
+### Velocity Control Workflow
 
-## Notes
+1. Set robot to **mode 4** with `enable_velocity_control_mode()` (also sets state to 0)
+2. Send velocity commands via `/xarm/joint_velocity_command`
+3. Commands are in **degrees/second** (not radians!)
+4. After trajectory, call `disable_velocity_control_mode()` to return to position control
 
-- Compatible with xArm5, xArm6, and xArm7 (set `num_joints` in config)
-- Requires xArm Python SDK installed (`pip install xarm-python-sdk`)
-- Network connection to xArm required
-- Default IP: 192.168.1.185 (configured in xArm settings)
+**Important**: The driver automatically switches between reading position and velocity commands based on the `velocity_control` config flag, which is set by the `enable_velocity_control_mode()` / `disable_velocity_control_mode()` RPC methods.
+
+## Files
+
+- `xarm_driver.py` - Main driver implementation with position and velocity control
+- `sample_trajectory_generator.py` - Trajectory generator with position and velocity support
+- `interactive_control.py` - Interactive CLI for manual robot control
+- `test_velocity_control.py` - Velocity control test script
+- `spec.py` - RobotState dataclass definition
+- `test_xarm_driver.py` - Full dimos deployment test suite
+- `test_xarm_driver_simple.py` - Lightweight SDK-only tests
+- `test_xarm_minimal.py` - Minimal connection test
+- `README.md` - This file
+
+## Dependencies
+
+- `xarm-python-sdk >= 1.17.0` - xArm Python SDK
+- `dimos` - dimos framework
+- Python 3.10+
+
+## License
+
+Copyright 2025 Dimensional Inc. - Apache License 2.0
