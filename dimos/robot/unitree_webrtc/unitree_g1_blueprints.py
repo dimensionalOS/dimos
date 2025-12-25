@@ -25,9 +25,9 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-un
 )
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
-from dimos.agents2.agent import llm_agent
-from dimos.agents2.cli.human import human_input
-from dimos.agents2.skills.navigation import navigation_skill
+from dimos.agents.agent import llm_agent
+from dimos.agents.cli.human import human_input
+from dimos.agents.skills.navigation import navigation_skill
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport

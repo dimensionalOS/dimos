@@ -21,7 +21,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.agents2 import skill  # type: ignore[attr-defined]
+from dimos.agents import skill  # type: ignore[attr-defined]
 from dimos.core import DimosCluster, In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
