@@ -16,14 +16,11 @@ from collections.abc import Callable, Generator
 import time
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
 import pytest
 
-from dimos.core import LCMTransport, Transport
+from dimos.core import LCMTransport
 from dimos.mapping.voxels import VoxelGridMapper
-from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.replay import TimedSensorReplay
