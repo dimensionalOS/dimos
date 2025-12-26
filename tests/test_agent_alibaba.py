@@ -16,8 +16,8 @@ import os
 
 from openai import OpenAI
 
-from dimos.agents.agent import OpenAIAgent
-from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
+from dimos.agents_deprecated.agent import OpenAIAgent
+from dimos.agents_deprecated.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.stream.video_provider import VideoProvider
 from dimos.utils.threadpool import get_scheduler

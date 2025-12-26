@@ -25,7 +25,7 @@ else:
     Robot = "Robot"
     MockRobot = "MockRobot"
 
-from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
+from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Twist, Vector3
 from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary

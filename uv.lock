@@ -1372,7 +1372,6 @@ dependencies = [
     { name = "filterpy" },
     { name = "flask" },
     { name = "gdown" },
-    { name = "go2-webrtc-connect" },
     { name = "googlemaps" },
     { name = "ipykernel" },
     { name = "langchain" },
@@ -1427,6 +1426,7 @@ dependencies = [
     { name = "typeguard" },
     { name = "typer" },
     { name = "ultralytics" },
+    { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
     { name = "wasmtime" },
     { name = "yapf" },
@@ -1538,7 +1538,6 @@ requires-dist = [
     { name = "flask", specifier = ">=2.2" },
     { name = "ftfy", marker = "extra == 'cuda'" },
     { name = "gdown", specifier = "==5.2.0" },
-    { name = "go2-webrtc-connect" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "h5py", marker = "extra == 'manipulation'", specifier = ">=3.7.0" },
     { name = "ipykernel" },
@@ -1645,6 +1644,7 @@ requires-dist = [
     { name = "types-tensorflow", marker = "extra == 'dev'", specifier = ">=2.18.0.20251008,<3" },
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.67.0.20250809,<5" },
     { name = "ultralytics", specifier = ">=8.3.70" },
+    { name = "unitree-webrtc-connect", specifier = ">=2.0.3" },
     { name = "uvicorn", specifier = ">=0.34.0" },
     { name = "wasmtime" },
     { name = "xformers", marker = "extra == 'cuda'", specifier = ">=0.0.20" },
@@ -2261,25 +2261,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/02/6e639e90f181dc9127046e00d0528f9f7ad12d428972e3a5378b9aefdb0b/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.p39.p310.p311.p312.p313-none-manylinux_2_28_x86_64.whl", hash = "sha256:7916034efa867927892635733a3b6af8cd95ceb10566fd7f1e0d2763c2ee8b12", size = 243525, upload-time = "2025-09-12T08:54:34.006Z" },
     { url = "https://files.pythonhosted.org/packages/84/06/cb588ca65561defe0fc48d1df4c2ac12569b81231ae4f2b52ab37007d0bd/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.p39.p310.p311.p312.p313-none-win32.whl", hash = "sha256:6c9549da71b93e367b4d71438798daae1da2592039fd14204a80a1a2348ae127", size = 552685, upload-time = "2025-09-12T08:54:35.723Z" },
     { url = "https://files.pythonhosted.org/packages/86/27/00c9c96af18ac0a5eac2ff61cbe306551a2d770d7173f396d0792ee1a59e/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.p39.p310.p311.p312.p313-none-win_amd64.whl", hash = "sha256:6292d5d6634d668cd23d337e6089491d3945a9aa4ac6e1667b0003520d7caa51", size = 559466, upload-time = "2025-09-12T08:54:37.661Z" },
-]
-
-[[package]]
-name = "go2-webrtc-connect"
-version = "0.2.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiortc" },
-    { name = "flask-socketio" },
-    { name = "lz4" },
-    { name = "numpy" },
-    { name = "packaging" },
-    { name = "pycryptodome" },
-    { name = "requests" },
-    { name = "wasmtime" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/9e/8d/482ed17c425360ce755554132220b60d2ff185d2eb84b276d9de45bcea62/go2_webrtc_connect-0.2.1.tar.gz", hash = "sha256:9fddf74f6e75963af0d0ecf86dfa10fce8d2a11a3f7a46f0f28e686e35b0e058", size = 31733, upload-time = "2025-08-22T13:21:51.473Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/f7/16/4f59c951a9d1616e684950067ed874f8ed65d6f0dd3d2dda9ac58a928551/go2_webrtc_connect-0.2.1-py3-none-any.whl", hash = "sha256:520f13cee82cd6a74c7de4ec4c3513deab658eff1c92cf03fdf6d28cd8dd03c6", size = 38447, upload-time = "2025-08-22T13:21:49.24Z" },
 ]
 
 [[package]]
@@ -6458,6 +6439,15 @@ wheels = [
 ]
 
 [[package]]
+name = "pydub"
+version = "0.25.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/fe/9a/e6bca0eed82db26562c73b5076539a4a08d3cffd19c3cc5913a3e61145fd/pydub-0.25.1.tar.gz", hash = "sha256:980a33ce9949cab2a569606b65674d748ecbca4f0796887fd6f46173a7b0d30f", size = 38326, upload-time = "2021-03-10T02:09:54.659Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a6/53/d78dc063216e62fc55f6b2eebb447f6a4b0a59f55c8406376f76bf959b08/pydub-0.25.1-py2.py3-none-any.whl", hash = "sha256:65617e33033874b59d87db603aa1ed450633288aefead953b30bded59cb599a6", size = 32327, upload-time = "2021-03-10T02:09:53.503Z" },
+]
+
+[[package]]
 name = "pyee"
 version = "13.0.0"
 source = { registry = "https://pypi.org/simple" }
@@ -8894,6 +8884,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1f/63/21a32e1facfeee245dbdfb7b4669faf7a36ff7c00b50987932bdab126f4b/ultralytics_thop-2.0.18.tar.gz", hash = "sha256:21103bcd39cc9928477dc3d9374561749b66a1781b35f46256c8d8c4ac01d9cf", size = 34557, upload-time = "2025-10-29T16:58:13.526Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/c7/fb42228bb05473d248c110218ffb8b1ad2f76728ed8699856e5af21112ad/ultralytics_thop-2.0.18-py3-none-any.whl", hash = "sha256:2bb44851ad224b116c3995b02dd5e474a5ccf00acf237fe0edb9e1506ede04ec", size = 28941, upload-time = "2025-10-29T16:58:12.093Z" },
+]
+
+[[package]]
+name = "unitree-webrtc-connect"
+version = "2.0.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiortc" },
+    { name = "flask-socketio" },
+    { name = "lz4" },
+    { name = "numpy" },
+    { name = "opencv-python" },
+    { name = "packaging" },
+    { name = "pyaudio" },
+    { name = "pycryptodome" },
+    { name = "pydub" },
+    { name = "requests" },
+    { name = "sounddevice" },
+    { name = "wasmtime" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8f/49/0bf005d4d0e6c3fe10768fb5df980e81e14fcaa5e40dcf6c6468f0a4785b/unitree_webrtc_connect-2.0.3.tar.gz", hash = "sha256:b1e11333487bc6bbae19ecd58d896d03bef7ccf70c3b44c529b72c5516e76805", size = 34143, upload-time = "2025-12-02T02:00:03.361Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/90/a4/7bf3a2eed033f249f86e5b1546753d488be7db1a4865535d425b5866d056/unitree_webrtc_connect-2.0.3-py3-none-any.whl", hash = "sha256:e1a43cd7daecce97fc7e4a1c6b6858759dacd8147f5402486ee6808da43a9256", size = 39738, upload-time = "2025-12-02T02:00:02.183Z" },
 ]
 
 [[package]]
