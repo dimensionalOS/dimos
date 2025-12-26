@@ -22,6 +22,8 @@ all_blueprints = {
     "unitree-go2-shm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_shm",
     "unitree-go2-agentic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:agentic",
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
+    "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
+    "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
 }
 
 
