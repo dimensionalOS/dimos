@@ -277,11 +277,7 @@ class LocalPlanner(Resource):
             return self._compute_path_following()
 
         angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
-
-        return Twist(
-            linear=Vector3(0.0, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
+        return self._angular_twist(angular_velocity)
 
     def get_distance_to_path(self) -> float | None:
         with self._lock:
@@ -367,11 +363,7 @@ class LocalPlanner(Resource):
             return Twist()
 
         angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
-
-        return Twist(
-            linear=Vector3(0.0, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
+        return self._angular_twist(angular_velocity)
 
     def _reset_state(self) -> None:
         with self._lock:
@@ -419,3 +411,13 @@ class LocalPlanner(Resource):
                             image.data[py, px] = [255, 255, 255]
 
         return image
+
+    def _angular_twist(self, angular_velocity: float) -> Twist:
+        # In simulation, add a small forward velocity to help the locomotion
+        # policy execute rotation (some policies don't handle pure in-place rotation).
+        linear_x = self._min_linear_velocity if self._global_config.simulation else 0.0
+
+        return Twist(
+            linear=Vector3(linear_x, 0.0, 0.0),
+            angular=Vector3(0.0, 0.0, angular_velocity),
+        )
