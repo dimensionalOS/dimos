@@ -106,7 +106,7 @@ class VoxelGridMapper(Module):
 
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
-        if self.config.publish_interval <= 0:
+        if self.config.publish_interval == 0:
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
