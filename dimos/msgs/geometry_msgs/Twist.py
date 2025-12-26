@@ -14,20 +14,17 @@
 
 from __future__ import annotations
 
-import struct
-from io import BytesIO
-from typing import BinaryIO
-
 from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import Twist as ROSTwist
-    from geometry_msgs.msg import Vector3 as ROSVector3
+    from geometry_msgs.msg import Twist as ROSTwist, Vector3 as ROSVector3
 except ImportError:
     ROSTwist = None
     ROSVector3 = None
 
+# Import Quaternion at runtime for beartype compatibility
+# (beartype needs to resolve forward references at runtime)
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3, VectorLike
 
@@ -57,7 +54,7 @@ class Twist(LCMTwist):
         self.angular = angular.to_euler()
 
     @dispatch
-    def __init__(self, twist: "Twist") -> None:
+    def __init__(self, twist: Twist) -> None:
         """Initialize from another Twist (copy constructor)."""
         self.linear = Vector3(twist.linear)
         self.angular = Vector3(twist.angular)
@@ -69,7 +66,7 @@ class Twist(LCMTwist):
         self.angular = Vector3(lcm_twist.angular)
 
     @dispatch
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         """Handle keyword arguments for LCM compatibility."""
         linear = kwargs.get("linear", Vector3())
         angular = kwargs.get("angular", Vector3())
@@ -109,7 +106,7 @@ class Twist(LCMTwist):
         return not self.is_zero()
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSTwist) -> "Twist":
+    def from_ros_msg(cls, ros_msg: ROSTwist) -> Twist:
         """Create a Twist from a ROS geometry_msgs/Twist message.
 
         Args:
@@ -134,3 +131,6 @@ class Twist(LCMTwist):
         ros_msg.linear = ROSVector3(x=self.linear.x, y=self.linear.y, z=self.linear.z)
         ros_msg.angular = ROSVector3(x=self.angular.x, y=self.angular.y, z=self.angular.z)
         return ros_msg
+
+
+__all__ = ["Quaternion", "Twist"]

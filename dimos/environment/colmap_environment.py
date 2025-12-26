@@ -14,9 +14,11 @@
 
 # UNDER DEVELOPMENT 🚧🚧🚧
 
+from pathlib import Path
+
 import cv2
 import pycolmap
-from pathlib import Path
+
 from dimos.environment.environment import Environment
 
 
@@ -58,7 +60,7 @@ class COLMAPEnvironment(Environment):
         # Initialize from the extracted frames
         return self.initialize_from_images(frame_output_dir)
 
-    def _extract_frames_from_video(self, video_path, frame_output_dir):
+    def _extract_frames_from_video(self, video_path, frame_output_dir) -> None:
         """Extract frames from a video and save them to a directory."""
         cap = cv2.VideoCapture(str(video_path))
         frame_count = 0
@@ -73,17 +75,17 @@ class COLMAPEnvironment(Environment):
 
         cap.release()
 
-    def label_objects(self):
+    def label_objects(self) -> None:
         pass
 
-    def get_visualization(self, format_type):
+    def get_visualization(self, format_type) -> None:
         pass
 
-    def get_segmentations(self):
+    def get_segmentations(self) -> None:
         pass
 
-    def get_point_cloud(self, object_id=None):
+    def get_point_cloud(self, object_id=None) -> None:
         pass
 
-    def get_depth_map(self):
+    def get_depth_map(self) -> None:
         pass

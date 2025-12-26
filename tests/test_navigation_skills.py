@@ -25,16 +25,12 @@ Usage:
   python simple_navigation_test.py --skip-build --query "kitchen"
 """
 
-import os
-import sys
-import time
-import logging
 import argparse
-import threading
-from reactivex import Subject, operators as RxOps
 import os
+import threading
+import time
 
-import tests.test_header
+from reactivex import operators as RxOps
 
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl

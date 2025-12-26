@@ -1,21 +1,24 @@
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 # Part of the code is from https://github.com/tztztztztz/eql.detectron2/blob/master/projects/EQL/eql/fast_rcnn.py
 import math
+
+from detectron2.layers import ShapeSpec, cat
+from detectron2.modeling.roi_heads.fast_rcnn import (
+    FastRCNNOutputLayers,
+    _log_classification_stats,
+    fast_rcnn_inference,
+)
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from detectron2.layers import ShapeSpec, cat
-from detectron2.modeling.roi_heads.fast_rcnn import FastRCNNOutputLayers
-from detectron2.modeling.roi_heads.fast_rcnn import fast_rcnn_inference
-from detectron2.modeling.roi_heads.fast_rcnn import _log_classification_stats
-from .fed_loss import load_class_freq, get_fed_loss_inds
+from .fed_loss import get_fed_loss_inds, load_class_freq
 
 __all__ = ["CustomFastRCNNOutputLayers"]
 
 
 class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
-    def __init__(self, cfg, input_shape: ShapeSpec, **kwargs):
+    def __init__(self, cfg, input_shape: ShapeSpec, **kwargs) -> None:
         super().__init__(cfg, input_shape, **kwargs)
         self.use_sigmoid_ce = cfg.MODEL.ROI_BOX_HEAD.USE_SIGMOID_CE
         if self.use_sigmoid_ce:
@@ -43,7 +46,6 @@ class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
         gt_classes = (
             cat([p.gt_classes for p in proposals], dim=0) if len(proposals) else torch.empty(0)
         )
-        num_classes = self.num_classes
         _log_classification_stats(scores, gt_classes)
 
         if len(proposals):
@@ -125,7 +127,7 @@ class CustomFastRCNNOutputLayers(FastRCNNOutputLayers):
         scores = self.predict_probs(predictions, proposals)
         if self.cfg.MODEL.ROI_BOX_HEAD.MULT_PROPOSAL_SCORE:
             proposal_scores = [p.get("objectness_logits") for p in proposals]
-            scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores)]
+            scores = [(s * ps[:, None]) ** 0.5 for s, ps in zip(scores, proposal_scores, strict=False)]
         image_shapes = [x.image_size for x in proposals]
         return fast_rcnn_inference(
             boxes,

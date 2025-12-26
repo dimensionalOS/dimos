@@ -8,15 +8,14 @@
 Benchmark inference speed of Deformable DETR.
 """
 
+import argparse
 import os
 import time
-import argparse
 
-import torch
-
+from datasets import build_dataset
 from main import get_args_parser as get_main_args_parser
 from models import build_model
-from datasets import build_dataset
+import torch
 from util.misc import nested_tensor_from_tensor_list
 
 
@@ -32,7 +31,7 @@ def get_benckmark_arg_parser():
 
 
 @torch.no_grad()
-def measure_average_inference_time(model, inputs, num_iters=100, warm_iters=5):
+def measure_average_inference_time(model, inputs, num_iters: int=100, warm_iters: int=5):
     ts = []
     for iter_ in range(num_iters):
         torch.cuda.synchronize()

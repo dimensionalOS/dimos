@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
+from collections.abc import Sequence
+
 import cv2
+import numpy as np
 import torch
 
 
 class SimpleTracker:
-    def __init__(self, history_size=100, min_count=10, count_window=20):
+    def __init__(
+        self, history_size: int = 100, min_count: int = 10, count_window: int = 20
+    ) -> None:
         """
         Simple temporal tracker that counts appearances in a fixed window.
         :param history_size: Number of past frames to remember
@@ -43,12 +47,12 @@ class SimpleTracker:
 
         # Compute occurrences efficiently using numpy
         unique_ids, counts = np.unique(all_tracks, return_counts=True)
-        id_counts = dict(zip(unique_ids, counts))
+        id_counts = dict(zip(unique_ids, counts, strict=False))
 
         # Update total counts but ensure it only contains IDs within the history size
         total_tracked_ids = np.concatenate(self.history) if self.history else np.array([])
         unique_total_ids, total_counts = np.unique(total_tracked_ids, return_counts=True)
-        self.total_counts = dict(zip(unique_total_ids, total_counts))
+        self.total_counts = dict(zip(unique_total_ids, total_counts, strict=False))
 
         # Return IDs that appear often enough
         return [track_id for track_id, count in id_counts.items() if count >= self.min_count]
@@ -58,7 +62,7 @@ class SimpleTracker:
         return self.total_counts
 
 
-def extract_masks_bboxes_probs_names(result, max_size=0.7):
+def extract_masks_bboxes_probs_names(result, max_size: float = 0.7):
     """
     Extracts masks, bounding boxes, probabilities, and class names from one Ultralytics result object.
 
@@ -81,7 +85,7 @@ def extract_masks_bboxes_probs_names(result, max_size=0.7):
 
     total_area = result.masks.orig_shape[0] * result.masks.orig_shape[1]
 
-    for box, mask_data in zip(result.boxes, result.masks.data):
+    for box, mask_data in zip(result.boxes, result.masks.data, strict=False):
         mask_numpy = mask_data
 
         # Extract bounding box
@@ -110,7 +114,7 @@ def extract_masks_bboxes_probs_names(result, max_size=0.7):
     return masks, bboxes, track_ids, probs, names, areas
 
 
-def compute_texture_map(frame, blur_size=3):
+def compute_texture_map(frame, blur_size: int = 3):
     """
     Compute texture map using gradient statistics.
     Returns high values for textured regions and low values for smooth regions.
@@ -149,7 +153,15 @@ def compute_texture_map(frame, blur_size=3):
 
 
 def filter_segmentation_results(
-    frame, masks, bboxes, track_ids, probs, names, areas, texture_threshold=0.07, size_filter=800
+    frame,
+    masks,
+    bboxes,
+    track_ids,
+    probs: Sequence[float],
+    names: Sequence[str],
+    areas,
+    texture_threshold: float = 0.07,
+    size_filter: int = 800,
 ):
     """
     Filters segmentation results using both overlap and saliency detection.
@@ -228,7 +240,15 @@ def filter_segmentation_results(
     )
 
 
-def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
+def plot_results(
+    image,
+    masks,
+    bboxes,
+    track_ids,
+    probs: Sequence[float],
+    names: Sequence[str],
+    alpha: float = 0.5,
+):
     """
     Draws bounding boxes, masks, and labels on the given image with enhanced visualization.
     Includes object names in the overlay and improved text visibility.
@@ -236,7 +256,9 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
     h, w = image.shape[:2]
     overlay = image.copy()
 
-    for mask, bbox, track_id, prob, name in zip(masks, bboxes, track_ids, probs, names):
+    for mask, bbox, track_id, prob, name in zip(
+        masks, bboxes, track_ids, probs, names, strict=False
+    ):
         # Convert mask tensor to numpy if needed
         if isinstance(mask, torch.Tensor):
             mask = mask.cpu().numpy()
@@ -291,7 +313,7 @@ def plot_results(image, masks, bboxes, track_ids, probs, names, alpha=0.5):
     return result
 
 
-def crop_images_from_bboxes(image, bboxes, buffer=0):
+def crop_images_from_bboxes(image, bboxes, buffer: int = 0):
     """
     Crops regions from an image based on bounding boxes with an optional buffer.
 

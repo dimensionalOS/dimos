@@ -20,7 +20,6 @@ import functools
 import logging
 import threading
 import time
-from typing import List
 
 from reactivex import Observable
 
@@ -28,7 +27,6 @@ from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.utils.data import get_data
-
 
 LIDAR_FREQUENCY = 10
 ODOM_FREQUENCY = 50
@@ -38,15 +36,15 @@ logger = logging.getLogger(__name__)
 
 
 class MujocoConnection:
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         try:
             from dimos.simulation.mujoco.mujoco import MujocoThread
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
         get_data("mujoco_sim")
         self.mujoco_thread = MujocoThread()
-        self._stream_threads: List[threading.Thread] = []
-        self._stop_events: List[threading.Event] = []
+        self._stream_threads: list[threading.Thread] = []
+        self._stop_events: list[threading.Event] = []
         self._is_cleaned_up = False
 
         # Register cleanup on exit
@@ -89,10 +87,10 @@ class MujocoConnection:
         if hasattr(self, "video_stream"):
             self.video_stream.cache_clear()
 
-    def standup(self):
+    def standup(self) -> None:
         print("standup supressed")
 
-    def liedown(self):
+    def liedown(self) -> None:
         print("liedown supressed")
 
     @functools.cache
@@ -105,7 +103,7 @@ class MujocoConnection:
             stop_event = threading.Event()
             self._stop_events.append(stop_event)
 
-            def run():
+            def run() -> None:
                 try:
                     while not stop_event.is_set() and not self._is_cleaned_up:
                         lidar_to_publish = self.mujoco_thread.get_lidar_message()
@@ -123,7 +121,7 @@ class MujocoConnection:
             self._stream_threads.append(thread)
             thread.start()
 
-            def dispose():
+            def dispose() -> None:
                 stop_event.set()
 
             return dispose
@@ -140,7 +138,7 @@ class MujocoConnection:
             stop_event = threading.Event()
             self._stop_events.append(stop_event)
 
-            def run():
+            def run() -> None:
                 try:
                     while not stop_event.is_set() and not self._is_cleaned_up:
                         odom_to_publish = self.mujoco_thread.get_odom_message()
@@ -157,7 +155,7 @@ class MujocoConnection:
             self._stream_threads.append(thread)
             thread.start()
 
-            def dispose():
+            def dispose() -> None:
                 stop_event.set()
 
             return dispose
@@ -174,7 +172,7 @@ class MujocoConnection:
             stop_event = threading.Event()
             self._stop_events.append(stop_event)
 
-            def run():
+            def run() -> None:
                 lat = 37.78092426217621
                 lon = -122.40682866540769
                 try:
@@ -189,7 +187,7 @@ class MujocoConnection:
             self._stream_threads.append(thread)
             thread.start()
 
-            def dispose():
+            def dispose() -> None:
                 stop_event.set()
 
             return dispose
@@ -206,7 +204,7 @@ class MujocoConnection:
             stop_event = threading.Event()
             self._stop_events.append(stop_event)
 
-            def run():
+            def run() -> None:
                 try:
                     while not stop_event.is_set() and not self._is_cleaned_up:
                         with self.mujoco_thread.pixels_lock:
@@ -223,16 +221,16 @@ class MujocoConnection:
             self._stream_threads.append(thread)
             thread.start()
 
-            def dispose():
+            def dispose() -> None:
                 stop_event.set()
 
             return dispose
 
         return Observable(on_subscribe)
 
-    def move(self, twist: Twist, duration: float = 0.0):
+    def move(self, twist: Twist, duration: float = 0.0) -> None:
         if not self._is_cleaned_up:
             self.mujoco_thread.move(twist, duration)
 
-    def publish_request(self, topic: str, data: dict):
+    def publish_request(self, topic: str, data: dict) -> None:
         pass

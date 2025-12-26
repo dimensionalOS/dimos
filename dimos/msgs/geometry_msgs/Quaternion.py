@@ -14,13 +14,13 @@
 
 from __future__ import annotations
 
-import struct
 from collections.abc import Sequence
 from io import BytesIO
+import struct
 from typing import BinaryIO, TypeAlias
 
-import numpy as np
 from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
+import numpy as np
 from plum import dispatch
 from scipy.spatial.transform import Rotation as R
 
@@ -74,7 +74,7 @@ class Quaternion(LCMQuaternion):
         self.w = sequence[3]
 
     @dispatch
-    def __init__(self, quaternion: "Quaternion") -> None:
+    def __init__(self, quaternion: Quaternion) -> None:
         """Initialize from another Quaternion (copy constructor)."""
         self.x, self.y, self.z, self.w = quaternion.x, quaternion.y, quaternion.z, quaternion.w
 
@@ -113,7 +113,7 @@ class Quaternion(LCMQuaternion):
         return self.to_euler()
 
     @classmethod
-    def from_euler(cls, vector: Vector3) -> "Quaternion":
+    def from_euler(cls, vector: Vector3) -> Quaternion:
         """Convert Euler angles (roll, pitch, yaw) in radians to quaternion.
 
         Args:
@@ -175,7 +175,7 @@ class Quaternion(LCMQuaternion):
             return False
         return self.x == other.x and self.y == other.y and self.z == other.z and self.w == other.w
 
-    def __mul__(self, other: "Quaternion") -> "Quaternion":
+    def __mul__(self, other: Quaternion) -> Quaternion:
         """Multiply two quaternions (Hamilton product).
 
         The result represents the composition of rotations:

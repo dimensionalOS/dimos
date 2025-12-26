@@ -13,8 +13,6 @@
 # limitations under the License.
 
 
-from typing import Optional
-
 from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
 from lcm_msgs.foxglove_msgs import SceneUpdate
 from reactivex import operators as ops
@@ -25,8 +23,7 @@ from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import Transform
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.perception.detection.module2D import Config as Module2DConfig
-from dimos.perception.detection.module2D import Detection2DModule
+from dimos.perception.detection.module2D import Config as Module2DConfig, Detection2DModule
 from dimos.perception.detection.type import (
     ImageDetections2D,
     ImageDetections3DPC,
@@ -58,7 +55,7 @@ class Detection3DModule(Detection2DModule):
     detected_image_1: Out[Image] = None  # type: ignore
     detected_image_2: Out[Image] = None  # type: ignore
 
-    detection_3d_stream: Optional[Observable[ImageDetections3DPC]] = None
+    detection_3d_stream: Observable[ImageDetections3DPC] | None = None
 
     def process_frame(
         self,
@@ -106,7 +103,7 @@ class Detection3DModule(Detection2DModule):
         return self.process_frame(detections, pc, transform)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         super().start()
 
         def detection2d_to_3d(args):
@@ -127,7 +124,7 @@ class Detection3DModule(Detection2DModule):
     def stop(self) -> None:
         super().stop()
 
-    def _publish_detections(self, detections: ImageDetections3DPC):
+    def _publish_detections(self, detections: ImageDetections3DPC) -> None:
         if not detections:
             return
 

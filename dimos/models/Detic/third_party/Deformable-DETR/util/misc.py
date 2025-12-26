@@ -13,26 +13,27 @@ Misc functions, including distributed helpers.
 Mostly copy-paste from torchvision references.
 """
 
-import os
-import subprocess
-import time
 from collections import defaultdict, deque
 import datetime
+import os
 import pickle
-from typing import Optional, List
+import subprocess
+import time
+from typing import List, Optional
 
 import torch
-import torch.distributed as dist
 from torch import Tensor
+import torch.distributed as dist
 
 # needed due to empty tensor bug in pytorch and torchvision 0.5
 import torchvision
 
 if float(torchvision.__version__[:3]) < 0.5:
     import math
+
     from torchvision.ops.misc import _NewEmptyTensorOp
 
-    def _check_size_scale_factor(dim, size, scale_factor):
+    def _check_size_scale_factor(dim: int, size: int, scale_factor):
         # type: (int, Optional[List[int]], Optional[float]) -> None
         if size is None and scale_factor is None:
             raise ValueError("either size or scale_factor should be defined")
@@ -40,33 +41,31 @@ if float(torchvision.__version__[:3]) < 0.5:
             raise ValueError("only one of size or scale_factor should be defined")
         if not (scale_factor is not None and len(scale_factor) != dim):
             raise ValueError(
-                "scale_factor shape must match input shape. Input is {}D, scale_factor size is {}".format(
-                    dim, len(scale_factor)
-                )
+                f"scale_factor shape must match input shape. Input is {dim}D, scale_factor size is {len(scale_factor)}"
             )
 
-    def _output_size(dim, input, size, scale_factor):
+    def _output_size(dim: int, input, size: int, scale_factor):
         # type: (int, Tensor, Optional[List[int]], Optional[float]) -> List[int]
         assert dim == 2
         _check_size_scale_factor(dim, size, scale_factor)
         if size is not None:
             return size
         # if dim is not 2 or scale_factor is iterable use _ntuple instead of concat
-        assert scale_factor is not None and isinstance(scale_factor, (int, float))
+        assert scale_factor is not None and isinstance(scale_factor, int | float)
         scale_factors = [scale_factor, scale_factor]
         # math.floor might return float in py2.7
-        return [int(math.floor(input.size(i + 2) * scale_factors[i])) for i in range(dim)]
+        return [math.floor(input.size(i + 2) * scale_factors[i]) for i in range(dim)]
 elif float(torchvision.__version__[:3]) < 0.7:
     from torchvision.ops import _new_empty_tensor
     from torchvision.ops.misc import _output_size
 
 
-class SmoothedValue(object):
+class SmoothedValue:
     """Track a series of values and provide access to smoothed values over a
     window or the global series average.
     """
 
-    def __init__(self, window_size=20, fmt=None):
+    def __init__(self, window_size: int=20, fmt=None) -> None:
         if fmt is None:
             fmt = "{median:.4f} ({global_avg:.4f})"
         self.deque = deque(maxlen=window_size)
@@ -74,12 +73,12 @@ class SmoothedValue(object):
         self.count = 0
         self.fmt = fmt
 
-    def update(self, value, n=1):
+    def update(self, value, n: int=1) -> None:
         self.deque.append(value)
         self.count += n
         self.total += value * n
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         """
         Warning: does not synchronize the deque!
         """
@@ -114,7 +113,7 @@ class SmoothedValue(object):
     def value(self):
         return self.deque[-1]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.fmt.format(
             median=self.median,
             avg=self.avg,
@@ -160,14 +159,14 @@ def all_gather(data):
     dist.all_gather(tensor_list, tensor)
 
     data_list = []
-    for size, tensor in zip(size_list, tensor_list):
+    for size, tensor in zip(size_list, tensor_list, strict=False):
         buffer = tensor.cpu().numpy().tobytes()[:size]
         data_list.append(pickle.loads(buffer))
 
     return data_list
 
 
-def reduce_dict(input_dict, average=True):
+def reduce_dict(input_dict, average: bool=True):
     """
     Args:
         input_dict (dict): all the values will be reduced
@@ -190,20 +189,20 @@ def reduce_dict(input_dict, average=True):
         dist.all_reduce(values)
         if average:
             values /= world_size
-        reduced_dict = {k: v for k, v in zip(names, values)}
+        reduced_dict = {k: v for k, v in zip(names, values, strict=False)}
     return reduced_dict
 
 
-class MetricLogger(object):
-    def __init__(self, delimiter="\t"):
+class MetricLogger:
+    def __init__(self, delimiter: str="\t") -> None:
         self.meters = defaultdict(SmoothedValue)
         self.delimiter = delimiter
 
-    def update(self, **kwargs):
+    def update(self, **kwargs) -> None:
         for k, v in kwargs.items():
             if isinstance(v, torch.Tensor):
                 v = v.item()
-            assert isinstance(v, (float, int))
+            assert isinstance(v, float | int)
             self.meters[k].update(v)
 
     def __getattr__(self, attr):
@@ -211,19 +210,19 @@ class MetricLogger(object):
             return self.meters[attr]
         if attr in self.__dict__:
             return self.__dict__[attr]
-        raise AttributeError("'{}' object has no attribute '{}'".format(type(self).__name__, attr))
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{attr}'")
 
-    def __str__(self):
+    def __str__(self) -> str:
         loss_str = []
         for name, meter in self.meters.items():
-            loss_str.append("{}: {}".format(name, str(meter)))
+            loss_str.append(f"{name}: {meter!s}")
         return self.delimiter.join(loss_str)
 
-    def synchronize_between_processes(self):
+    def synchronize_between_processes(self) -> None:
         for meter in self.meters.values():
             meter.synchronize_between_processes()
 
-    def add_meter(self, name, meter):
+    def add_meter(self, name: str, meter) -> None:
         self.meters[name] = meter
 
     def log_every(self, iterable, print_freq, header=None):
@@ -294,9 +293,7 @@ class MetricLogger(object):
         total_time = time.time() - start_time
         total_time_str = str(datetime.timedelta(seconds=int(total_time)))
         print(
-            "{} Total time: {} ({:.4f} s / it)".format(
-                header, total_time_str, total_time / len(iterable)
-            )
+            f"{header} Total time: {total_time_str} ({total_time / len(iterable):.4f} s / it)"
         )
 
 
@@ -322,7 +319,7 @@ def get_sha():
 
 
 def collate_fn(batch):
-    batch = list(zip(*batch))
+    batch = list(zip(*batch, strict=False))
     batch[0] = nested_tensor_from_tensor_list(batch[0])
     return tuple(batch)
 
@@ -336,19 +333,19 @@ def _max_by_axis(the_list):
     return maxes
 
 
-def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
+def nested_tensor_from_tensor_list(tensor_list: list[Tensor]):
     # TODO make this more general
     if tensor_list[0].ndim == 3:
         # TODO make it support different-sized images
         max_size = _max_by_axis([list(img.shape) for img in tensor_list])
         # min_size = tuple(min(s) for s in zip(*[img.shape for img in tensor_list]))
-        batch_shape = [len(tensor_list)] + max_size
+        batch_shape = [len(tensor_list), *max_size]
         b, c, h, w = batch_shape
         dtype = tensor_list[0].dtype
         device = tensor_list[0].device
         tensor = torch.zeros(batch_shape, dtype=dtype, device=device)
         mask = torch.ones((b, h, w), dtype=torch.bool, device=device)
-        for img, pad_img, m in zip(tensor_list, tensor, mask):
+        for img, pad_img, m in zip(tensor_list, tensor, mask, strict=False):
             pad_img[: img.shape[0], : img.shape[1], : img.shape[2]].copy_(img)
             m[: img.shape[1], : img.shape[2]] = False
     else:
@@ -356,13 +353,13 @@ def nested_tensor_from_tensor_list(tensor_list: List[Tensor]):
     return NestedTensor(tensor, mask)
 
 
-class NestedTensor(object):
-    def __init__(self, tensors, mask: Optional[Tensor]):
+class NestedTensor:
+    def __init__(self, tensors, mask: Tensor | None) -> None:
         self.tensors = tensors
         self.mask = mask
 
-    def to(self, device, non_blocking=False):
-        # type: (Device) -> NestedTensor # noqa
+    def to(self, device, non_blocking: bool=False):
+        # type: (Device) -> NestedTensor
         cast_tensor = self.tensors.to(device, non_blocking=non_blocking)
         mask = self.mask
         if mask is not None:
@@ -372,7 +369,7 @@ class NestedTensor(object):
             cast_mask = None
         return NestedTensor(cast_tensor, cast_mask)
 
-    def record_stream(self, *args, **kwargs):
+    def record_stream(self, *args, **kwargs) -> None:
         self.tensors.record_stream(*args, **kwargs)
         if self.mask is not None:
             self.mask.record_stream(*args, **kwargs)
@@ -380,11 +377,11 @@ class NestedTensor(object):
     def decompose(self):
         return self.tensors, self.mask
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return str(self.tensors)
 
 
-def setup_for_distributed(is_master):
+def setup_for_distributed(is_master: bool) -> None:
     """
     This function disables printing when not in master process
     """
@@ -392,7 +389,7 @@ def setup_for_distributed(is_master):
 
     builtin_print = __builtin__.print
 
-    def print(*args, **kwargs):
+    def print(*args, **kwargs) -> None:
         force = kwargs.pop("force", False)
         if is_master or force:
             builtin_print(*args, **kwargs)
@@ -400,7 +397,7 @@ def setup_for_distributed(is_master):
     __builtin__.print = print
 
 
-def is_dist_avail_and_initialized():
+def is_dist_avail_and_initialized() -> bool:
     if not dist.is_available():
         return False
     if not dist.is_initialized():
@@ -436,12 +433,12 @@ def is_main_process():
     return get_rank() == 0
 
 
-def save_on_master(*args, **kwargs):
+def save_on_master(*args, **kwargs) -> None:
     if is_main_process():
         torch.save(*args, **kwargs)
 
 
-def init_distributed_mode(args):
+def init_distributed_mode(args) -> None:
     if "RANK" in os.environ and "WORLD_SIZE" in os.environ:
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ["WORLD_SIZE"])
@@ -453,7 +450,7 @@ def init_distributed_mode(args):
         ntasks = int(os.environ["SLURM_NTASKS"])
         node_list = os.environ["SLURM_NODELIST"]
         num_gpus = torch.cuda.device_count()
-        addr = subprocess.getoutput("scontrol show hostname {} | head -n1".format(node_list))
+        addr = subprocess.getoutput(f"scontrol show hostname {node_list} | head -n1")
         os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", "29500")
         os.environ["MASTER_ADDR"] = addr
         os.environ["WORLD_SIZE"] = str(ntasks)
@@ -473,7 +470,7 @@ def init_distributed_mode(args):
 
     torch.cuda.set_device(args.gpu)
     args.dist_backend = "nccl"
-    print("| distributed init (rank {}): {}".format(args.rank, args.dist_url), flush=True)
+    print(f"| distributed init (rank {args.rank}): {args.dist_url}", flush=True)
     torch.distributed.init_process_group(
         backend=args.dist_backend,
         init_method=args.dist_url,
@@ -503,7 +500,7 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corners=None):
+def interpolate(input, size: Optional[int]=None, scale_factor=None, mode: str="nearest", align_corners=None):
     # type: (Tensor, Optional[List[int]], Optional[float], str, Optional[bool]) -> Tensor
     """
     Equivalent to nn.functional.interpolate, but with support for empty batch sizes.
@@ -523,7 +520,7 @@ def interpolate(input, size=None, scale_factor=None, mode="nearest", align_corne
         return torchvision.ops.misc.interpolate(input, size, scale_factor, mode, align_corners)
 
 
-def get_total_grad_norm(parameters, norm_type=2):
+def get_total_grad_norm(parameters, norm_type: int=2):
     parameters = list(filter(lambda p: p.grad is not None, parameters))
     norm_type = float(norm_type)
     device = parameters[0].grad.device
@@ -534,7 +531,7 @@ def get_total_grad_norm(parameters, norm_type=2):
     return total_norm
 
 
-def inverse_sigmoid(x, eps=1e-5):
+def inverse_sigmoid(x, eps: float=1e-5):
     x = x.clamp(min=0, max=1)
     x1 = x.clamp(min=eps)
     x2 = (1 - x).clamp(min=eps)

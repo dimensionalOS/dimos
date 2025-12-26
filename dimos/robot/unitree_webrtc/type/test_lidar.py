@@ -14,17 +14,12 @@
 # limitations under the License.
 
 import itertools
-import time
 
-import pytest
-
-from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.testing import SensorReplay
 
 
-def test_init():
+def test_init() -> None:
     lidar = SensorReplay("office_lidar")
 
     for raw_frame in itertools.islice(lidar.iterate(), 5):

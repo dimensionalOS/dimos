@@ -1,8 +1,9 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 import argparse
 import json
-import path
 import os
+
+import path
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -13,7 +14,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     print("Loading", args.ann)
-    data = json.load(open(args.ann, "r"))
+    data = json.load(open(args.ann))
     images = []
     count = 0
     for x in data["images"]:

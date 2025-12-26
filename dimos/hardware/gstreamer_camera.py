@@ -33,7 +33,7 @@ import gi
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstApp", "1.0")
-from gi.repository import Gst, GLib
+from gi.repository import GLib, Gst
 
 logger = setup_logger("dimos.hardware.gstreamer_camera", level=logging.INFO)
 
@@ -54,7 +54,7 @@ class GstreamerCameraModule(Module):
         reconnect_interval: float = 5.0,
         *args,
         **kwargs,
-    ):
+    ) -> None:
         """Initialize the GStreamer TCP camera module.
 
         Args:
@@ -83,7 +83,7 @@ class GstreamerCameraModule(Module):
         Module.__init__(self, *args, **kwargs)
 
     @rpc
-    def start(self):
+    def start(self) -> None:
         if self.running:
             logger.warning("GStreamer camera module is already running")
             return
@@ -128,12 +128,12 @@ class GstreamerCameraModule(Module):
             logger.error(f"Failed to connect to {self.host}:{self.port}: {e}")
             self._schedule_reconnect()
 
-    def _cleanup_reconnect_timer(self):
+    def _cleanup_reconnect_timer(self) -> None:
         if self.reconnect_timer_id:
             GLib.source_remove(self.reconnect_timer_id)
             self.reconnect_timer_id = None
 
-    def _schedule_reconnect(self):
+    def _schedule_reconnect(self) -> None:
         if not self.should_reconnect:
             return
 
@@ -143,14 +143,14 @@ class GstreamerCameraModule(Module):
             int(self.reconnect_interval), self._reconnect_timeout
         )
 
-    def _reconnect_timeout(self):
+    def _reconnect_timeout(self) -> bool:
         self.reconnect_timer_id = None
         if self.should_reconnect:
             logger.info("Attempting to reconnect...")
             self._connect()
         return False  # Don't repeat the timeout
 
-    def _handle_disconnect(self):
+    def _handle_disconnect(self) -> None:
         if not self.should_reconnect:
             return
 
@@ -205,13 +205,13 @@ class GstreamerCameraModule(Module):
         bus.add_signal_watch()
         bus.connect("message", self._on_bus_message)
 
-    def _run_main_loop(self):
+    def _run_main_loop(self) -> None:
         try:
             self.main_loop.run()
         except Exception as e:
             logger.error(f"Main loop error: {e}")
 
-    def _on_bus_message(self, bus, message):
+    def _on_bus_message(self, bus, message) -> None:
         t = message.type
 
         if t == Gst.MessageType.EOS:
@@ -226,7 +226,7 @@ class GstreamerCameraModule(Module):
             logger.warning(f"GStreamer warning: {warn}, {debug}")
         elif t == Gst.MessageType.STATE_CHANGED:
             if message.src == self.pipeline:
-                old_state, new_state, pending_state = message.parse_state_changed()
+                _old_state, new_state, _pending_state = message.parse_state_changed()
                 if new_state == Gst.State.PLAYING:
                     logger.info("Pipeline is now playing - connected to TCP server")
 

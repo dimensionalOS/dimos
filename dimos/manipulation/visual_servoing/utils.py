@@ -12,31 +12,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
-from typing import Dict, Any, Optional, List, Tuple, Union
 from dataclasses import dataclass
+from typing import Any
 
-from dimos.msgs.geometry_msgs import Pose, Vector3, Quaternion
-from dimos_lcm.vision_msgs import Detection3D, Detection2D
 import cv2
-from dimos.perception.detection2d.utils import plot_results
+from dimos_lcm.vision_msgs import Detection2D, Detection3D
+import numpy as np
+
+from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.perception.common.utils import project_2d_points_to_3d
+from dimos.perception.detection2d.utils import plot_results
 from dimos.utils.transform_utils import (
-    optical_to_robot_frame,
-    robot_to_optical_frame,
-    pose_to_matrix,
-    matrix_to_pose,
-    euler_to_quaternion,
     compose_transforms,
-    yaw_towards_point,
+    euler_to_quaternion,
     get_distance,
+    matrix_to_pose,
     offset_distance,
+    optical_to_robot_frame,
+    pose_to_matrix,
+    robot_to_optical_frame,
+    yaw_towards_point,
 )
 
 
 def match_detection_by_id(
-    detection_3d: Detection3D, detections_3d: List[Detection3D], detections_2d: List[Detection2D]
-) -> Optional[Detection2D]:
+    detection_3d: Detection3D, detections_3d: list[Detection3D], detections_2d: list[Detection2D]
+) -> Detection2D | None:
     """
     Find the corresponding Detection2D for a given Detection3D.
 
@@ -181,8 +182,8 @@ def transform_points_3d(
 
 def select_points_from_depth(
     depth_image: np.ndarray,
-    target_point: Tuple[int, int],
-    camera_intrinsics: Union[List[float], np.ndarray],
+    target_point: tuple[int, int],
+    camera_intrinsics: list[float] | np.ndarray,
     radius: int = 5,
 ) -> np.ndarray:
     """
@@ -230,7 +231,7 @@ def select_points_from_depth(
 
 def update_target_grasp_pose(
     target_pose: Pose, ee_pose: Pose, grasp_distance: float = 0.0, grasp_pitch_degrees: float = 45.0
-) -> Optional[Pose]:
+) -> Pose | None:
     """
     Update target grasp pose based on current target pose and EE pose.
 
@@ -287,7 +288,7 @@ def is_target_reached(target_pose: Pose, current_pose: Pose, tolerance: float = 
 class ObjectMatchResult:
     """Result of object matching with confidence metrics."""
 
-    matched_object: Optional[Detection3D]
+    matched_object: Detection3D | None
     confidence: float
     distance: float
     size_similarity: float
@@ -299,7 +300,7 @@ def calculate_object_similarity(
     candidate_obj: Detection3D,
     distance_weight: float = 0.6,
     size_weight: float = 0.4,
-) -> Tuple[float, float, float]:
+) -> tuple[float, float, float]:
     """
     Calculate comprehensive similarity between two objects.
 
@@ -335,7 +336,7 @@ def calculate_object_similarity(
 
         # Calculate similarity for each dimension pair
         dim_similarities = []
-        for target_dim, candidate_dim in zip(target_dims, candidate_dims):
+        for target_dim, candidate_dim in zip(target_dims, candidate_dims, strict=False):
             if target_dim == 0.0 and candidate_dim == 0.0:
                 dim_similarities.append(1.0)  # Both dimensions are zero
             elif target_dim == 0.0 or candidate_dim == 0.0:
@@ -358,7 +359,7 @@ def calculate_object_similarity(
 
 def find_best_object_match(
     target_obj: Detection3D,
-    candidates: List[Detection3D],
+    candidates: list[Detection3D],
     max_distance: float = 0.1,
     min_size_similarity: float = 0.4,
     distance_weight: float = 0.7,
@@ -412,7 +413,7 @@ def find_best_object_match(
     )
 
 
-def parse_zed_pose(zed_pose_data: Dict[str, Any]) -> Optional[Pose]:
+def parse_zed_pose(zed_pose_data: dict[str, Any]) -> Pose | None:
     """
     Parse ZED pose data dictionary into a Pose object.
 
@@ -439,7 +440,7 @@ def parse_zed_pose(zed_pose_data: Dict[str, Any]) -> Optional[Pose]:
 
 
 def estimate_object_depth(
-    depth_image: np.ndarray, segmentation_mask: Optional[np.ndarray], bbox: List[float]
+    depth_image: np.ndarray, segmentation_mask: np.ndarray | None, bbox: list[float]
 ) -> float:
     """
     Estimate object depth dimension using segmentation mask and depth data.
@@ -633,8 +634,8 @@ def create_pbvs_visualization(
     image: np.ndarray,
     current_target=None,
     position_error=None,
-    target_reached=False,
-    grasp_stage="idle",
+    target_reached: bool = False,
+    grasp_stage: str = "idle",
 ) -> np.ndarray:
     """
     Create simple PBVS visualization overlay.
@@ -720,9 +721,9 @@ def create_pbvs_visualization(
 
 def visualize_detections_3d(
     rgb_image: np.ndarray,
-    detections: List[Detection3D],
+    detections: list[Detection3D],
     show_coordinates: bool = True,
-    bboxes_2d: Optional[List[List[float]]] = None,
+    bboxes_2d: list[list[float]] | None = None,
 ) -> np.ndarray:
     """
     Visualize detections with 3D position overlay next to bounding boxes.
@@ -768,7 +769,7 @@ def visualize_detections_3d(
                 pos_xyz = np.array([position.x, position.y, position.z])
 
                 # Get bounding box coordinates
-                x1, y1, x2, y2 = map(int, bbox)
+                _x1, y1, x2, _y2 = map(int, bbox)
 
                 # Add position text next to bounding box (top-right corner)
                 pos_text = f"({pos_xyz[0]:.2f}, {pos_xyz[1]:.2f}, {pos_xyz[2]:.2f})"

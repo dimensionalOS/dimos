@@ -1,18 +1,19 @@
 import math
+
+from detectron2.config import configurable
+from detectron2.layers import get_norm
 import torch
 from torch import nn
 from torch.nn import functional as F
 
-from detectron2.layers import get_norm
-from detectron2.config import configurable
 from ..layers.deform_conv import DFConv2d
 
 __all__ = ["CenterNetHead"]
 
 
 class Scale(nn.Module):
-    def __init__(self, init_value=1.0):
-        super(Scale, self).__init__()
+    def __init__(self, init_value: float=1.0) -> None:
+        super().__init__()
         self.scale = nn.Parameter(torch.FloatTensor([init_value]))
 
     def forward(self, input):
@@ -25,18 +26,18 @@ class CenterNetHead(nn.Module):
         self,
         # input_shape: List[ShapeSpec],
         in_channels,
-        num_levels,
+        num_levels: int,
         *,
-        num_classes=80,
-        with_agn_hm=False,
-        only_proposal=False,
-        norm="GN",
-        num_cls_convs=4,
-        num_box_convs=4,
-        num_share_convs=0,
-        use_deformable=False,
-        prior_prob=0.01,
-    ):
+        num_classes: int=80,
+        with_agn_hm: bool=False,
+        only_proposal: bool=False,
+        norm: str="GN",
+        num_cls_convs: int=4,
+        num_box_convs: int=4,
+        num_share_convs: int=0,
+        use_deformable: bool=False,
+        prior_prob: float=0.01,
+    ) -> None:
         super().__init__()
         self.num_classes = num_classes
         self.with_agn_hm = with_agn_hm
@@ -82,7 +83,7 @@ class CenterNetHead(nn.Module):
                 elif norm != "":
                     tower.append(get_norm(norm, channel))
                 tower.append(nn.ReLU())
-            self.add_module("{}_tower".format(head), nn.Sequential(*tower))
+            self.add_module(f"{head}_tower", nn.Sequential(*tower))
 
         self.bbox_pred = nn.Conv2d(
             in_channels, 4, kernel_size=self.out_kernel, stride=1, padding=self.out_kernel // 2
@@ -129,7 +130,7 @@ class CenterNetHead(nn.Module):
     def from_config(cls, cfg, input_shape):
         ret = {
             # 'input_shape': input_shape,
-            "in_channels": [s.channels for s in input_shape][0],
+            "in_channels": next(s.channels for s in input_shape),
             "num_levels": len(input_shape),
             "num_classes": cfg.MODEL.CENTERNET.NUM_CLASSES,
             "with_agn_hm": cfg.MODEL.CENTERNET.WITH_AGN_HM,

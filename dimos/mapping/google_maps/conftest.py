@@ -14,10 +14,10 @@
 
 import json
 from pathlib import Path
+
 import pytest
 
 from dimos.mapping.google_maps.google_maps import GoogleMaps
-
 
 _FIXTURE_DIR = Path(__file__).parent / "fixtures"
 

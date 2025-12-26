@@ -16,7 +16,6 @@
 
 import json
 from multiprocessing import shared_memory
-from typing import Dict
 
 
 class ActorRegistry:
@@ -26,7 +25,7 @@ class ActorRegistry:
     SHM_SIZE = 65536  # 64KB should be enough for most deployments
 
     @staticmethod
-    def update(actor_name: str, worker_id: str):
+    def update(actor_name: str, worker_id: str) -> None:
         """Update registry with new actor deployment."""
         try:
             shm = shared_memory.SharedMemory(name=ActorRegistry.SHM_NAME)
@@ -46,7 +45,7 @@ class ActorRegistry:
         shm.close()
 
     @staticmethod
-    def get_all() -> Dict[str, str]:
+    def get_all() -> dict[str, str]:
         """Get all actor->worker mappings."""
         try:
             shm = shared_memory.SharedMemory(name=ActorRegistry.SHM_NAME)
@@ -57,7 +56,7 @@ class ActorRegistry:
             return {}
 
     @staticmethod
-    def clear():
+    def clear() -> None:
         """Clear the registry and free shared memory."""
         try:
             shm = shared_memory.SharedMemory(name=ActorRegistry.SHM_NAME)
@@ -68,7 +67,7 @@ class ActorRegistry:
             pass
 
     @staticmethod
-    def _read_from_shm(shm) -> Dict[str, str]:
+    def _read_from_shm(shm) -> dict[str, str]:
         """Read JSON data from shared memory."""
         raw = bytes(shm.buf[:]).rstrip(b"\x00")
         if not raw:
@@ -76,7 +75,7 @@ class ActorRegistry:
         return json.loads(raw.decode("utf-8"))
 
     @staticmethod
-    def _write_to_shm(shm, data: Dict[str, str]):
+    def _write_to_shm(shm, data: dict[str, str]):
         """Write JSON data to shared memory."""
         json_bytes = json.dumps(data).encode("utf-8")
         if len(json_bytes) > ActorRegistry.SHM_SIZE:

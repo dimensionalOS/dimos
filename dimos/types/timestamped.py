@@ -12,8 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
-from typing import Generic, Iterable, List, Optional, Tuple, TypeVar, Union
+from typing import Generic, TypeVar, Union
 
 from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
@@ -45,7 +46,7 @@ def to_timestamp(ts: TimeLike) -> float:
     """Convert TimeLike to a timestamp in seconds."""
     if isinstance(ts, datetime):
         return ts.timestamp()
-    if isinstance(ts, (int, float)):
+    if isinstance(ts, int | float):
         return float(ts)
     if isinstance(ts, dict) and "sec" in ts and "nanosec" in ts:
         return ts["sec"] + ts["nanosec"] / 1e9
@@ -100,7 +101,7 @@ def to_datetime(ts: TimeLike, tz=None) -> datetime:
 class Timestamped:
     ts: float
 
-    def __init__(self, ts: float):
+    def __init__(self, ts: float) -> None:
         self.ts = ts
 
     def dt(self) -> datetime:
@@ -119,14 +120,14 @@ T = TypeVar("T", bound=Timestamped)
 class TimestampedCollection(Generic[T]):
     """A collection of timestamped objects with efficient time-based operations."""
 
-    def __init__(self, items: Optional[Iterable[T]] = None):
+    def __init__(self, items: Iterable[T] | None = None) -> None:
         self._items = SortedKeyList(items or [], key=lambda x: x.ts)
 
     def add(self, item: T) -> None:
         """Add a timestamped item to the collection."""
         self._items.add(item)
 
-    def find_closest(self, timestamp: float, tolerance: Optional[float] = None) -> Optional[T]:
+    def find_closest(self, timestamp: float, tolerance: float | None = None) -> T | None:
         """Find the timestamped object closest to the given timestamp."""
         if not self._items:
             return None
@@ -162,12 +163,12 @@ class TimestampedCollection(Generic[T]):
 
         return self._items[closest_idx]
 
-    def find_before(self, timestamp: float) -> Optional[T]:
+    def find_before(self, timestamp: float) -> T | None:
         """Find the last item before the given timestamp."""
         idx = self._items.bisect_key_left(timestamp)
         return self._items[idx - 1] if idx > 0 else None
 
-    def find_after(self, timestamp: float) -> Optional[T]:
+    def find_after(self, timestamp: float) -> T | None:
         """Find the first item after the given timestamp."""
         idx = self._items.bisect_key_right(timestamp)
         return self._items[idx] if idx < len(self._items) else None
@@ -184,7 +185,7 @@ class TimestampedCollection(Generic[T]):
             return 0.0
         return self._items[-1].ts - self._items[0].ts
 
-    def time_range(self) -> Optional[Tuple[float, float]]:
+    def time_range(self) -> tuple[float, float] | None:
         """Get the time range (start, end) of the collection."""
         if not self._items:
             return None
@@ -197,19 +198,19 @@ class TimestampedCollection(Generic[T]):
         return TimestampedCollection(self._items[start_idx:end_idx])
 
     @property
-    def start_ts(self) -> Optional[float]:
+    def start_ts(self) -> float | None:
         """Get the start timestamp of the collection."""
         return self._items[0].ts if self._items else None
 
     @property
-    def end_ts(self) -> Optional[float]:
+    def end_ts(self) -> float | None:
         """Get the end timestamp of the collection."""
         return self._items[-1].ts if self._items else None
 
     def __len__(self) -> int:
         return len(self._items)
 
-    def __iter__(self):
+    def __iter__(self) -> Iterator:
         return iter(self._items)
 
     def __getitem__(self, idx: int) -> T:
@@ -223,7 +224,7 @@ SECONDARY = TypeVar("SECONDARY", bound=Timestamped)
 class TimestampedBufferCollection(TimestampedCollection[T]):
     """A timestamped collection that maintains a sliding time window, dropping old messages."""
 
-    def __init__(self, window_duration: float, items: Optional[Iterable[T]] = None):
+    def __init__(self, window_duration: float, items: Iterable[T] | None = None) -> None:
         """
         Initialize with a time window duration in seconds.
 
@@ -270,12 +271,12 @@ class MatchContainer(Timestamped, Generic[PRIMARY, SECONDARY]):
     tracking which secondaries are still missing to avoid redundant searches.
     """
 
-    def __init__(self, primary: PRIMARY, matches: List[Optional[SECONDARY]]):
+    def __init__(self, primary: PRIMARY, matches: list[SECONDARY | None]) -> None:
         super().__init__(primary.ts)
         self.primary = primary
         self.matches = matches  # Direct list with None for missing matches
 
-    def message_received(self, secondary_idx: int, secondary_item: SECONDARY):
+    def message_received(self, secondary_idx: int, secondary_item: SECONDARY) -> None:
         """Process a secondary message and check if it matches this primary."""
         if self.matches[secondary_idx] is None:
             self.matches[secondary_idx] = secondary_item
@@ -284,7 +285,7 @@ class MatchContainer(Timestamped, Generic[PRIMARY, SECONDARY]):
         """Check if all secondary matches have been found."""
         return all(match is not None for match in self.matches)
 
-    def get_tuple(self) -> Tuple[PRIMARY, ...]:
+    def get_tuple(self) -> tuple[PRIMARY, ...]:
         """Get the result tuple for emission."""
         return (self.primary, *self.matches)
 
@@ -294,7 +295,7 @@ def align_timestamped(
     *secondary_observables: Observable[SECONDARY],
     buffer_size: float = 1.0,  # seconds
     match_tolerance: float = 0.1,  # seconds
-) -> Observable[Tuple[PRIMARY, ...]]:
+) -> Observable[tuple[PRIMARY, ...]]:
     """Align a primary observable with one or more secondary observables.
 
     Args:
@@ -312,7 +313,7 @@ def align_timestamped(
 
     def subscribe(observer, scheduler=None):
         # Create a timed buffer collection for each secondary observable
-        secondary_collections: List[TimestampedBufferCollection[SECONDARY]] = [
+        secondary_collections: list[TimestampedBufferCollection[SECONDARY]] = [
             TimestampedBufferCollection(buffer_size) for _ in secondary_observables
         ]
 
@@ -331,13 +332,13 @@ def align_timestamped(
             """Check if secondary stream has progressed past the primary + tolerance."""
             return secondary_ts > primary_ts + match_tolerance
 
-        def remove_stakeholder(stakeholder: MatchContainer):
+        def remove_stakeholder(stakeholder: MatchContainer) -> None:
             """Remove a stakeholder from all tracking structures."""
             primary_buffer.remove(stakeholder)
             for weak_list in secondary_stakeholders.values():
                 weak_list.discard(stakeholder)
 
-        def on_secondary(i: int, secondary_item: SECONDARY):
+        def on_secondary(i: int, secondary_item: SECONDARY) -> None:
             # Add the secondary item to its collection
             secondary_collections[i].add(secondary_item)
 
@@ -368,7 +369,7 @@ def align_timestamped(
                 )
             )
 
-        def on_primary(primary_item: PRIMARY):
+        def on_primary(primary_item: PRIMARY) -> None:
             # Try to find matches in existing secondary collections
             matches = [None] * len(secondary_observables)
 

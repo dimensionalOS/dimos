@@ -14,14 +14,13 @@
 
 from __future__ import annotations
 
-import time
 from abc import abstractmethod
-from types import FunctionType
+from collections.abc import Callable
+import time
 from typing import (
+    TYPE_CHECKING,
     Any,
-    Callable,
     Generic,
-    Optional,
     TypedDict,
     TypeVar,
 )
@@ -30,6 +29,8 @@ from dimos.protocol.pubsub.spec import PubSub
 from dimos.protocol.rpc.spec import Args, RPCSpec
 from dimos.utils.logging_config import setup_logger
 
+if TYPE_CHECKING:
+    from types import FunctionType
 
 logger = setup_logger(__file__)
 
@@ -68,7 +69,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
     @abstractmethod
     def _encodeRPCRes(self, res: RPCRes) -> MsgT: ...
 
-    def call(self, name: str, arguments: Args, cb: Optional[Callable]):
+    def call(self, name: str, arguments: Args, cb: Callable | None):
         if cb is None:
             return self.call_nowait(name, arguments)
 
@@ -81,7 +82,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
         req: RPCReq = {"name": name, "args": arguments, "id": msg_id}
 
-        def receive_response(msg: MsgT, _: TopicT):
+        def receive_response(msg: MsgT, _: TopicT) -> None:
             res = self._decodeRPCRes(msg)
             if res.get("id") != msg_id:
                 return
@@ -100,7 +101,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         req: RPCReq = {"name": name, "args": arguments, "id": None}
         self.publish(topic_req, self._encodeRPCReq(req))
 
-    def serve_rpc(self, f: FunctionType, name: Optional[str] = None):
+    def serve_rpc(self, f: FunctionType, name: str | None = None):
         if not name:
             name = f.__name__
 
@@ -118,7 +119,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
             # Execute RPC handler in a separate thread to avoid deadlock when
             # the handler makes nested RPC calls.
-            def execute_and_respond():
+            def execute_and_respond() -> None:
                 try:
                     response = f(*args[0], **args[1])
                     req_id = req.get("id")

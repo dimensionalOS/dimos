@@ -22,16 +22,14 @@ Uses standard Twist interface for velocity commands.
 
 import logging
 import os
-from typing import Optional
 
 from dimos import core
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import TwistStamped, PoseStamped
+from dimos.msgs.geometry_msgs import PoseStamped, TwistStamped
 from dimos.msgs.nav_msgs.Odometry import Odometry
 from dimos.msgs.std_msgs import Int32
 from dimos.msgs.tf2_msgs.TFMessage import TFMessage
-from dimos.protocol.pubsub.lcmpubsub import LCM
 from dimos.robot.robot import Robot
 from dimos.robot.ros_bridge import BridgeDirection, ROSBridge
 from dimos.robot.unitree_webrtc.unitree_b1.connection import (
@@ -71,12 +69,12 @@ class UnitreeB1(Robot, Resource):
         self,
         ip: str = "192.168.123.14",
         port: int = 9090,
-        output_dir: str = None,
-        skill_library: Optional[SkillLibrary] = None,
+        output_dir: str | None = None,
+        skill_library: SkillLibrary | None = None,
         enable_joystick: bool = False,
         enable_ros_bridge: bool = True,
         test_mode: bool = False,
-    ):
+    ) -> None:
         """Initialize the B1 robot.
 
         Args:
@@ -104,7 +102,7 @@ class UnitreeB1(Robot, Resource):
         os.makedirs(self.output_dir, exist_ok=True)
         logger.info(f"Robot outputs will be saved to: {self.output_dir}")
 
-    def start(self):
+    def start(self) -> None:
         """Start the B1 robot - initialize DimOS, deploy modules, and start them."""
 
         logger.info("Initializing DimOS...")
@@ -151,7 +149,7 @@ class UnitreeB1(Robot, Resource):
         if self.ros_bridge:
             self.ros_bridge.stop()
 
-    def _deploy_ros_bridge(self):
+    def _deploy_ros_bridge(self) -> None:
         """Deploy and configure ROS bridge (matching G1 implementation)."""
         self.ros_bridge = ROSBridge("b1_ros_bridge")
 
@@ -175,7 +173,7 @@ class UnitreeB1(Robot, Resource):
         logger.info("ROS bridge deployed: /cmd_vel, /state_estimation, /tf (ROS → DIMOS)")
 
     # Robot control methods (standard interface)
-    def move(self, twist_stamped: TwistStamped, duration: float = 0.0):
+    def move(self, twist_stamped: TwistStamped, duration: float = 0.0) -> None:
         """Send movement command to robot using timestamped Twist.
 
         Args:
@@ -185,26 +183,26 @@ class UnitreeB1(Robot, Resource):
         if self.connection:
             self.connection.move(twist_stamped, duration)
 
-    def stand(self):
+    def stand(self) -> None:
         """Put robot in stand mode."""
         if self.connection:
             self.connection.stand()
             logger.info("B1 switched to STAND mode")
 
-    def walk(self):
+    def walk(self) -> None:
         """Put robot in walk mode."""
         if self.connection:
             self.connection.walk()
             logger.info("B1 switched to WALK mode")
 
-    def idle(self):
+    def idle(self) -> None:
         """Put robot in idle mode."""
         if self.connection:
             self.connection.idle()
             logger.info("B1 switched to IDLE mode")
 
 
-def main():
+def main() -> None:
     """Main entry point for testing B1 robot."""
     import argparse
 

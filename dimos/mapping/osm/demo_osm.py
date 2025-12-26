@@ -31,14 +31,14 @@ load_dotenv()
 class DemoRobot(Module):
     gps_location: Out[LatLon] = None
 
-    def start(self):
+    def start(self) -> None:
         super().start()
         self._disposables.add(interval(1.0).subscribe(lambda _: self._publish_gps_location()))
 
-    def stop(self):
+    def stop(self) -> None:
         super().stop()
 
-    def _publish_gps_location(self):
+    def _publish_gps_location(self) -> None:
         self.gps_location.publish(LatLon(lat=37.78092426217621, lon=-122.40682866540769))
 
 

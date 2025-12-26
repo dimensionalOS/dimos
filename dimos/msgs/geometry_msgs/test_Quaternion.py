@@ -12,14 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 import numpy as np
 import pytest
-from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 
 
-def test_quaternion_default_init():
+def test_quaternion_default_init() -> None:
     """Test that default initialization creates an identity quaternion (w=1, x=y=z=0)."""
     q = Quaternion()
     assert q.x == 0.0
@@ -29,7 +29,7 @@ def test_quaternion_default_init():
     assert q.to_tuple() == (0.0, 0.0, 0.0, 1.0)
 
 
-def test_quaternion_component_init():
+def test_quaternion_component_init() -> None:
     """Test initialization with four float components (x, y, z, w)."""
     q = Quaternion(0.5, 0.5, 0.5, 0.5)
     assert q.x == 0.5
@@ -60,7 +60,7 @@ def test_quaternion_component_init():
     assert isinstance(q4.x, float)
 
 
-def test_quaternion_sequence_init():
+def test_quaternion_sequence_init() -> None:
     """Test initialization from sequence (list, tuple) of 4 numbers."""
     # From list
     q1 = Quaternion([0.1, 0.2, 0.3, 0.4])
@@ -91,7 +91,7 @@ def test_quaternion_sequence_init():
         Quaternion([1, 2, 3, 4, 5])  # Too many components
 
 
-def test_quaternion_numpy_init():
+def test_quaternion_numpy_init() -> None:
     """Test initialization from numpy array."""
     # From numpy array
     arr = np.array([0.1, 0.2, 0.3, 0.4])
@@ -117,7 +117,7 @@ def test_quaternion_numpy_init():
         Quaternion(np.array([1, 2, 3, 4, 5]))  # Too many elements
 
 
-def test_quaternion_copy_init():
+def test_quaternion_copy_init() -> None:
     """Test initialization from another Quaternion (copy constructor)."""
     original = Quaternion(0.1, 0.2, 0.3, 0.4)
     copy = Quaternion(original)
@@ -132,7 +132,7 @@ def test_quaternion_copy_init():
     assert copy == original
 
 
-def test_quaternion_lcm_init():
+def test_quaternion_lcm_init() -> None:
     """Test initialization from LCM Quaternion."""
     lcm_quat = LCMQuaternion()
     lcm_quat.x = 0.1
@@ -147,7 +147,7 @@ def test_quaternion_lcm_init():
     assert q.w == 0.4
 
 
-def test_quaternion_properties():
+def test_quaternion_properties() -> None:
     """Test quaternion component properties."""
     q = Quaternion(1.0, 2.0, 3.0, 4.0)
 
@@ -161,7 +161,7 @@ def test_quaternion_properties():
     assert q.to_tuple() == (1.0, 2.0, 3.0, 4.0)
 
 
-def test_quaternion_indexing():
+def test_quaternion_indexing() -> None:
     """Test quaternion indexing support."""
     q = Quaternion(1.0, 2.0, 3.0, 4.0)
 
@@ -172,7 +172,7 @@ def test_quaternion_indexing():
     assert q[3] == 4.0
 
 
-def test_quaternion_euler():
+def test_quaternion_euler() -> None:
     """Test quaternion to Euler angles conversion."""
 
     # Test identity quaternion (should give zero angles)
@@ -197,7 +197,7 @@ def test_quaternion_euler():
     assert np.isclose(angles_x90.z, 0.0, atol=1e-10)  # yaw should be 0
 
 
-def test_lcm_encode_decode():
+def test_lcm_encode_decode() -> None:
     """Test encoding and decoding of Quaternion to/from binary LCM format."""
     q_source = Quaternion(1.0, 2.0, 3.0, 4.0)
 
@@ -210,7 +210,7 @@ def test_lcm_encode_decode():
     assert q_dest == q_source
 
 
-def test_quaternion_multiplication():
+def test_quaternion_multiplication() -> None:
     """Test quaternion multiplication (Hamilton product)."""
     # Test identity multiplication
     q1 = Quaternion(0.5, 0.5, 0.5, 0.5)
@@ -245,7 +245,7 @@ def test_quaternion_multiplication():
     assert np.isclose(result.w, np.cos(expected_angle / 2), atol=1e-10)
 
 
-def test_quaternion_conjugate():
+def test_quaternion_conjugate() -> None:
     """Test quaternion conjugate."""
     q = Quaternion(0.1, 0.2, 0.3, 0.4)
     conj = q.conjugate()
@@ -266,7 +266,7 @@ def test_quaternion_conjugate():
     assert np.isclose(result.w, expected_w, atol=1e-10)
 
 
-def test_quaternion_inverse():
+def test_quaternion_inverse() -> None:
     """Test quaternion inverse."""
     # Test with unit quaternion
     q_unit = Quaternion(0, 0, 0, 1).normalize()  # Already normalized but being explicit
@@ -297,7 +297,7 @@ def test_quaternion_inverse():
     assert np.isclose(result.w, 1, atol=1e-10)
 
 
-def test_quaternion_normalize():
+def test_quaternion_normalize() -> None:
     """Test quaternion normalization."""
     # Test non-unit quaternion
     q = Quaternion(1, 2, 3, 4)
@@ -315,7 +315,7 @@ def test_quaternion_normalize():
     assert np.isclose(q_norm.w, q.w / scale, atol=1e-10)
 
 
-def test_quaternion_rotate_vector():
+def test_quaternion_rotate_vector() -> None:
     """Test rotating vectors with quaternions."""
     from dimos.msgs.geometry_msgs.Vector3 import Vector3
 
@@ -360,7 +360,7 @@ def test_quaternion_rotate_vector():
     assert np.isclose(v_rotated.z, v.z, atol=1e-10)
 
 
-def test_quaternion_inverse_zero():
+def test_quaternion_inverse_zero() -> None:
     """Test that inverting zero quaternion raises error."""
     q_zero = Quaternion(0, 0, 0, 0)
 
@@ -368,7 +368,7 @@ def test_quaternion_inverse_zero():
         q_zero.inverse()
 
 
-def test_quaternion_normalize_zero():
+def test_quaternion_normalize_zero() -> None:
     """Test that normalizing zero quaternion raises error."""
     q_zero = Quaternion(0, 0, 0, 0)
 
@@ -376,7 +376,7 @@ def test_quaternion_normalize_zero():
         q_zero.normalize()
 
 
-def test_quaternion_multiplication_type_error():
+def test_quaternion_multiplication_type_error() -> None:
     """Test that multiplying quaternion with non-quaternion raises error."""
     q = Quaternion(1, 0, 0, 0)
 

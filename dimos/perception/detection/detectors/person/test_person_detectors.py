@@ -27,7 +27,7 @@ def person(people):
     return people[0]
 
 
-def test_person_detection(people):
+def test_person_detection(people) -> None:
     """Test that we can detect people with pose keypoints."""
     assert len(people) > 0
 
@@ -40,7 +40,7 @@ def test_person_detection(people):
     assert person.keypoint_scores.shape == (17,)
 
 
-def test_person_properties(people):
+def test_person_properties(people) -> None:
     """Test Detection2DPerson object properties and methods."""
     person = people[0]
 
@@ -62,7 +62,7 @@ def test_person_properties(people):
     assert all(0 <= conf <= 1 for _, _, conf in visible)
 
 
-def test_person_normalized_coords(people):
+def test_person_normalized_coords(people) -> None:
     """Test normalized coordinates if available."""
     person = people[0]
 
@@ -78,7 +78,7 @@ def test_person_normalized_coords(people):
         assert (person.bbox_normalized <= 1).all()
 
 
-def test_multiple_people(people):
+def test_multiple_people(people) -> None:
     """Test that multiple people can be detected."""
     print(f"\nDetected {len(people)} people in test image")
 
@@ -93,14 +93,14 @@ def test_multiple_people(people):
             print(f"    {name}: ({xy[0]:.1f}, {xy[1]:.1f}) conf={conf:.3f}")
 
 
-def test_image_detections2d_structure(people):
+def test_image_detections2d_structure(people) -> None:
     """Test that process_image returns ImageDetections2D."""
     assert isinstance(people, ImageDetections2D)
     assert len(people.detections) > 0
     assert all(isinstance(d, Detection2DPerson) for d in people.detections)
 
 
-def test_invalid_keypoint(test_image):
+def test_invalid_keypoint(test_image) -> None:
     """Test error handling for invalid keypoint names."""
     # Create a dummy Detection2DPerson
     import numpy as np
@@ -123,7 +123,7 @@ def test_invalid_keypoint(test_image):
         person.get_keypoint("invalid_keypoint")
 
 
-def test_person_annotations(person):
+def test_person_annotations(person) -> None:
     # Test text annotations
     text_anns = person.to_text_annotation()
     print(f"\nText annotations: {len(text_anns)}")
@@ -156,5 +156,5 @@ def test_person_annotations(person):
     assert img_anns.texts_length == len(text_anns)
     assert img_anns.points_length == len(points_anns)
 
-    print(f"\n✓ Person annotations working correctly!")
+    print("\n✓ Person annotations working correctly!")
     print(f"  - {len(person.get_visible_keypoints(0.5))}/17 visible keypoints")

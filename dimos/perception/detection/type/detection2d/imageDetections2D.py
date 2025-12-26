@@ -14,24 +14,26 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import TYPE_CHECKING
 
-from dimos_lcm.vision_msgs import Detection2DArray
-from ultralytics.engine.results import Results
-
-from dimos.msgs.sensor_msgs import Image
 from dimos.perception.detection.type.detection2d.base import Detection2D
 from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.imageDetections import ImageDetections
+
+if TYPE_CHECKING:
+    from dimos_lcm.vision_msgs import Detection2DArray
+    from ultralytics.engine.results import Results
+
+    from dimos.msgs.sensor_msgs import Image
 
 
 class ImageDetections2D(ImageDetections[Detection2D]):
     @classmethod
     def from_ros_detection2d_array(
         cls, image: Image, ros_detections: Detection2DArray, **kwargs
-    ) -> "ImageDetections2D":
+    ) -> ImageDetections2D:
         """Convert from ROS Detection2DArray message to ImageDetections2D object."""
-        detections: List[Detection2D] = []
+        detections: list[Detection2D] = []
         for ros_det in ros_detections.detections:
             detection = Detection2DBBox.from_ros_detection2d(ros_det, image=image, **kwargs)
             if detection.is_valid():  # type: ignore[attr-defined]
@@ -41,8 +43,8 @@ class ImageDetections2D(ImageDetections[Detection2D]):
 
     @classmethod
     def from_ultralytics_result(
-        cls, image: Image, results: List[Results], **kwargs
-    ) -> "ImageDetections2D":
+        cls, image: Image, results: list[Results], **kwargs
+    ) -> ImageDetections2D:
         """Create ImageDetections2D from ultralytics Results.
 
         Dispatches to appropriate Detection2D subclass based on result type:
@@ -59,7 +61,7 @@ class ImageDetections2D(ImageDetections[Detection2D]):
         """
         from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 
-        detections: List[Detection2D] = []
+        detections: list[Detection2D] = []
         for result in results:
             if result.boxes is None:
                 continue

@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import os
-from dimos.simulation.isaac import IsaacSimulator
-from dimos.simulation.isaac import IsaacStream
+
+from dimos.simulation.isaac import IsaacSimulator, IsaacStream
 
 
 def main():

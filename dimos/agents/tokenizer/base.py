@@ -21,7 +21,7 @@ from abc import ABC, abstractmethod
 
 class AbstractTokenizer(ABC):
     @abstractmethod
-    def tokenize_text(self, text):
+    def tokenize_text(self, text: str):
         pass
 
     @abstractmethod
@@ -29,9 +29,9 @@ class AbstractTokenizer(ABC):
         pass
 
     @abstractmethod
-    def token_count(self, text):
+    def token_count(self, text: str):
         pass
 
     @abstractmethod
-    def image_token_count(self, image_width, image_height, image_detail="low"):
+    def image_token_count(self, image_width, image_height, image_detail: str = "low"):
         pass

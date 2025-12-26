@@ -34,13 +34,13 @@ class G1JoystickModule(Module):
 
     twist_out: Out[Twist] = None  # Standard velocity commands
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         Module.__init__(self, *args, **kwargs)
         self.pygame_ready = False
         self.running = False
 
     @rpc
-    def start(self):
+    def start(self) -> bool:
         """Initialize pygame and start control loop."""
         super().start()
 
@@ -75,7 +75,7 @@ class G1JoystickModule(Module):
 
         self.twist_out.publish(stop_twist)
 
-    def _pygame_loop(self):
+    def _pygame_loop(self) -> None:
         """Main pygame event loop - ALL pygame operations happen here."""
         import pygame
 
@@ -142,7 +142,7 @@ class G1JoystickModule(Module):
         pygame.quit()
         print("G1 JoystickModule stopped")
 
-    def _update_display(self, twist):
+    def _update_display(self, twist) -> None:
         """Update pygame window with current status."""
         import pygame
 

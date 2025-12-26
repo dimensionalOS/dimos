@@ -12,9 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import pickle
-import time
-from typing import Callable
 
 import reactivex as rx
 from reactivex import operators as ops
@@ -38,13 +37,13 @@ def live_connection() -> Observable[OccupancyGrid]:
         lcm.autoconf()
         l = lcm.LCM()
 
-        def on_message(grid: OccupancyGrid, _):
+        def on_message(grid: OccupancyGrid, _) -> None:
             observer.on_next(grid)
 
         l.subscribe(lcm.Topic("/global_costmap", OccupancyGrid), on_message)
         l.start()
 
-        def dispose():
+        def dispose() -> None:
             l.stop()
 
         return Disposable(dispose)

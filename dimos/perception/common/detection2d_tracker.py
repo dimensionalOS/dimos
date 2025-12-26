@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import numpy as np
 from collections import deque
+from collections.abc import Sequence
+
+import numpy as np
 
 
 def compute_iou(bbox1, bbox2):
@@ -80,12 +82,12 @@ class target2d:
         initial_mask,
         initial_bbox,
         track_id,
-        prob,
-        name,
+        prob: float,
+        name: str,
         texture_value,
         target_id,
-        history_size=10,
-    ):
+        history_size: int = 10,
+    ) -> None:
         """
         Args:
             initial_mask (torch.Tensor): Latest segmentation mask.
@@ -111,7 +113,7 @@ class target2d:
         self.missed_frames = 0  # Consecutive frames when no detection was assigned.
         self.history_size = history_size
 
-    def update(self, mask, bbox, track_id, prob, name, texture_value):
+    def update(self, mask, bbox, track_id, prob: float, name: str, texture_value) -> None:
         """
         Update the target with a new detection.
         """
@@ -126,7 +128,7 @@ class target2d:
         self.frame_count.append(1)
         self.missed_frames = 0
 
-    def mark_missed(self):
+    def mark_missed(self) -> None:
         """
         Increment the count of consecutive frames where this target was not updated.
         """
@@ -139,7 +141,7 @@ class target2d:
         min_area_ratio,
         max_area_ratio,
         texture_range=(0.0, 1.0),
-        border_safe_distance=50,
+        border_safe_distance: int = 50,
         weights=None,
     ):
         """
@@ -249,17 +251,17 @@ class target2dTracker:
 
     def __init__(
         self,
-        history_size=10,
-        score_threshold_start=0.5,
-        score_threshold_stop=0.3,
-        min_frame_count=10,
-        max_missed_frames=3,
-        min_area_ratio=0.001,
-        max_area_ratio=0.1,
+        history_size: int = 10,
+        score_threshold_start: float = 0.5,
+        score_threshold_stop: float = 0.3,
+        min_frame_count: int = 10,
+        max_missed_frames: int = 3,
+        min_area_ratio: float = 0.001,
+        max_area_ratio: float = 0.1,
         texture_range=(0.0, 1.0),
-        border_safe_distance=50,
+        border_safe_distance: int = 50,
         weights=None,
-    ):
+    ) -> None:
         """
         Args:
             history_size (int): Maximum history length (number of frames) per target.
@@ -291,7 +293,16 @@ class target2dTracker:
         self.targets = {}  # Dictionary mapping target_id -> target2d instance.
         self.next_target_id = 0
 
-    def update(self, frame, masks, bboxes, track_ids, probs, names, texture_values):
+    def update(
+        self,
+        frame,
+        masks,
+        bboxes,
+        track_ids,
+        probs: Sequence[float],
+        names: Sequence[str],
+        texture_values,
+    ):
         """
         Update the tracker with new detections from the current frame.
 
@@ -313,7 +324,7 @@ class target2dTracker:
 
         # For each detection, try to match with an existing target.
         for mask, bbox, det_tid, prob, name, texture in zip(
-            masks, bboxes, track_ids, probs, names, texture_values
+            masks, bboxes, track_ids, probs, names, texture_values, strict=False
         ):
             matched_target = None
 

@@ -2,10 +2,9 @@
 
 # Used when running `./bin/mypy-strict --for-me`
 
-import sys
 import re
 import subprocess
-
+import sys
 
 _blame = {}
 
