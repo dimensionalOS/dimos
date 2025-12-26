@@ -314,7 +314,7 @@ def simple_occupancy(
     cloud: PointCloud2,
     resolution: float = 0.05,
     min_height: float = 0.1,
-    max_height: float = 2.0,
+    max_height: float = 0.6,
     frame_id: str | None = None,
     closing_iterations: int = 1,
     closing_connectivity: int = 2,

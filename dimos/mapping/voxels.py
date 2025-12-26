@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import functools
 import time
 
@@ -26,33 +26,22 @@ from reactivex.disposable import Disposable
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
-from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
-from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.spec.map import Global3DMap, GlobalCostmap
+from dimos.spec.map import Global3DMap
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.metrics import timed
 
 
 @dataclass
-class CostmapConfig:
-    publish: bool = True
-    resolution: float = 0.05
-    can_pass_under: float = 0.6
-    can_climb: float = 0.15
-
-
-@dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
-    publish_interval: float = 0
+    publish_interval: float = 0.25
     voxel_size: float = 0.05
     block_count: int = 2_000_000
     device: str = "CUDA:0"
     carve_columns: bool = True
-    costmap: CostmapConfig = field(default_factory=CostmapConfig)
 
 
 class VoxelGridMapper(Module):
@@ -61,7 +50,6 @@ class VoxelGridMapper(Module):
 
     lidar: In[LidarMessage]
     global_map: Out[LidarMessage]
-    global_costmap: Out[OccupancyGrid]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -112,8 +100,6 @@ class VoxelGridMapper(Module):
 
     def publish_global_map(self) -> None:
         self.global_map.publish(self.get_global_pointcloud2())
-        if self.config.costmap.publish:
-            self.global_costmap.publish(self.get_global_occupancygrid())
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]
@@ -140,7 +126,6 @@ class VoxelGridMapper(Module):
 
         self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
         self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
-        self.get_global_occupancygrid.invalidate_cache(self)  # type: ignore[attr-defined]
 
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
@@ -200,15 +185,6 @@ class VoxelGridMapper(Module):
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
-
-    @simple_mcache
-    def get_global_occupancygrid(self) -> OccupancyGrid:
-        return height_cost_occupancy(
-            self.get_global_pointcloud2(),
-            resolution=self.config.costmap.resolution,
-            can_pass_under=self.config.costmap.can_pass_under,
-            can_climb=self.config.costmap.can_climb,
-        )
 
 
 # @timed()
