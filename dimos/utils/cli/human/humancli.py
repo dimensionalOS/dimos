@@ -14,10 +14,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 import textwrap
 import threading
-from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolCall, ToolMessage
 from rich.highlighter import JSONHighlighter
@@ -25,12 +25,14 @@ from rich.theme import Theme
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Container
-from textual.events import Key
 from textual.widgets import Input, RichLog
 
 from dimos.core import pLCMTransport
 from dimos.utils.cli import theme
 from dimos.utils.generic import truncate_display_string
+
+if TYPE_CHECKING:
+    from textual.events import Key
 
 # Custom theme for JSON highlighting
 JSON_THEME = Theme(
@@ -75,13 +77,13 @@ class HumanCLIApp(App):
         Binding("ctrl+l", "clear", "Clear chat"),
     ]
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self.human_transport = pLCMTransport("/human_input")
         self.agent_transport = pLCMTransport("/agent")
-        self.chat_log: Optional[RichLog] = None
-        self.input_widget: Optional[Input] = None
-        self._subscription_thread: Optional[threading.Thread] = None
+        self.chat_log: RichLog | None = None
+        self.input_widget: Input | None = None
+        self._subscription_thread: threading.Thread | None = None
         self._running = False
 
     def compose(self) -> ComposeResult:
@@ -122,7 +124,7 @@ class HumanCLIApp(App):
     def _subscribe_to_agent(self) -> None:
         """Subscribe to agent messages in a separate thread."""
 
-        def receive_msg(msg):
+        def receive_msg(msg) -> None:
             if not self._running:
                 return
 
@@ -265,7 +267,7 @@ class HumanCLIApp(App):
   /help  - Show this help message
   /exit  - Exit the application
   /quit  - Exit the application
-  
+
 Tool calls are displayed in cyan with ▶ prefix"""
             self._add_system_message(help_text)
             return
@@ -283,7 +285,7 @@ Tool calls are displayed in cyan with ▶ prefix"""
         self.exit()
 
 
-def main():
+def main() -> None:
     """Main entry point for the human CLI."""
     import sys
 

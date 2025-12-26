@@ -14,9 +14,8 @@
 
 from __future__ import annotations
 
-import time
 from dataclasses import dataclass, field
-from typing import Optional, Tuple
+import time
 
 import cv2
 import numpy as np
@@ -61,7 +60,7 @@ class NumpyImage(AbstractImage):
             return arr
         raise ValueError(f"Unsupported format: {self.format}")
 
-    def to_rgb(self) -> "NumpyImage":
+    def to_rgb(self) -> NumpyImage:
         if self.format == ImageFormat.RGB:
             return self.copy()  # type: ignore
         arr = self.data
@@ -80,7 +79,7 @@ class NumpyImage(AbstractImage):
             return NumpyImage(rgb, ImageFormat.RGB, self.frame_id, self.ts)
         return self.copy()  # type: ignore
 
-    def to_bgr(self) -> "NumpyImage":
+    def to_bgr(self) -> NumpyImage:
         if self.format == ImageFormat.BGR:
             return self.copy()  # type: ignore
         arr = self.data
@@ -103,7 +102,7 @@ class NumpyImage(AbstractImage):
             )
         return self.copy()  # type: ignore
 
-    def to_grayscale(self) -> "NumpyImage":
+    def to_grayscale(self) -> NumpyImage:
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
             return self.copy()  # type: ignore
         if self.format == ImageFormat.BGR:
@@ -127,9 +126,7 @@ class NumpyImage(AbstractImage):
             )
         raise ValueError(f"Unsupported format: {self.format}")
 
-    def resize(
-        self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR
-    ) -> "NumpyImage":
+    def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> NumpyImage:
         return NumpyImage(
             cv2.resize(self.data, (width, height), interpolation=interpolation),
             self.format,
@@ -137,7 +134,7 @@ class NumpyImage(AbstractImage):
             self.ts,
         )
 
-    def crop(self, x: int, y: int, width: int, height: int) -> "NumpyImage":
+    def crop(self, x: int, y: int, width: int, height: int) -> NumpyImage:
         """Crop the image to the specified region.
 
         Args:
@@ -185,9 +182,9 @@ class NumpyImage(AbstractImage):
         object_points: np.ndarray,
         image_points: np.ndarray,
         camera_matrix: np.ndarray,
-        dist_coeffs: Optional[np.ndarray] = None,
+        dist_coeffs: np.ndarray | None = None,
         flags: int = cv2.SOLVEPNP_ITERATIVE,
-    ) -> Tuple[bool, np.ndarray, np.ndarray]:
+    ) -> tuple[bool, np.ndarray, np.ndarray]:
         obj = np.asarray(object_points, dtype=np.float32).reshape(-1, 3)
         img = np.asarray(image_points, dtype=np.float32).reshape(-1, 2)
         K = np.asarray(camera_matrix, dtype=np.float64)
@@ -195,7 +192,7 @@ class NumpyImage(AbstractImage):
         ok, rvec, tvec = cv2.solvePnP(obj, img, K, dist, flags=flags)
         return bool(ok), rvec.astype(np.float64), tvec.astype(np.float64)
 
-    def create_csrt_tracker(self, bbox: Tuple[int, int, int, int]):
+    def create_csrt_tracker(self, bbox: tuple[int, int, int, int]):
         tracker = None
         if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"):
             tracker = cv2.legacy.TrackerCSRT_create()
@@ -208,7 +205,7 @@ class NumpyImage(AbstractImage):
             raise RuntimeError("Failed to initialize CSRT tracker")
         return tracker
 
-    def csrt_update(self, tracker) -> Tuple[bool, Tuple[int, int, int, int]]:
+    def csrt_update(self, tracker) -> tuple[bool, tuple[int, int, int, int]]:
         ok, box = tracker.update(self.to_bgr().to_opencv())
         if not ok:
             return False, (0, 0, 0, 0)
@@ -220,12 +217,12 @@ class NumpyImage(AbstractImage):
         object_points: np.ndarray,
         image_points: np.ndarray,
         camera_matrix: np.ndarray,
-        dist_coeffs: Optional[np.ndarray] = None,
+        dist_coeffs: np.ndarray | None = None,
         iterations_count: int = 100,
         reprojection_error: float = 3.0,
         confidence: float = 0.99,
         min_sample: int = 6,
-    ) -> Tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
+    ) -> tuple[bool, np.ndarray, np.ndarray, np.ndarray]:
         obj = np.asarray(object_points, dtype=np.float32).reshape(-1, 3)
         img = np.asarray(image_points, dtype=np.float32).reshape(-1, 2)
         K = np.asarray(camera_matrix, dtype=np.float64)

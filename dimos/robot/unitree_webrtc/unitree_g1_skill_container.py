@@ -19,14 +19,11 @@ Dynamically generates skills for G1 humanoid robot including arm controls and mo
 
 from __future__ import annotations
 
-import datetime
-import time
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING
 
 from dimos.core.core import rpc
-from dimos.msgs.geometry_msgs import Twist, TwistStamped, Vector3
+from dimos.msgs.geometry_msgs import TwistStamped, Vector3
 from dimos.protocol.skill.skill import skill
-from dimos.protocol.skill.type import Reducer, Stream
 from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
 from dimos.utils.logging_config import setup_logger
 
@@ -68,7 +65,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
     Inherits all Go2 skills and adds G1-specific arm controls and movement modes.
     """
 
-    def __init__(self, robot: Optional[Union[UnitreeG1, UnitreeGo2]] = None):
+    def __init__(self, robot: UnitreeG1 | UnitreeGo2 | None = None) -> None:
         """Initialize the skill container with robot reference.
 
         Args:
@@ -89,7 +86,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
     def stop(self) -> None:
         super().stop()
 
-    def _generate_arm_skills(self):
+    def _generate_arm_skills(self) -> None:
         """Dynamically generate arm control skills from G1_ARM_CONTROLS list."""
         logger.info(f"Generating {len(G1_ARM_CONTROLS)} G1 arm control skills")
 
@@ -97,7 +94,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             skill_name = self._convert_to_snake_case(name)
             self._create_arm_skill(skill_name, data_value, description, name)
 
-    def _generate_mode_skills(self):
+    def _generate_mode_skills(self) -> None:
         """Dynamically generate movement mode skills from G1_MODE_CONTROLS list."""
         logger.info(f"Generating {len(G1_MODE_CONTROLS)} G1 movement mode skills")
 
@@ -107,7 +104,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
 
     def _create_arm_skill(
         self, skill_name: str, data_value: int, description: str, original_name: str
-    ):
+    ) -> None:
         """Create a dynamic arm control skill method with the @skill decorator.
 
         Args:
@@ -138,7 +135,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
 
     def _create_mode_skill(
         self, skill_name: str, data_value: int, description: str, original_name: str
-    ):
+    ) -> None:
         """Create a dynamic movement mode skill method with the @skill decorator.
 
         Args:
@@ -200,7 +197,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            result = self._robot.connection.publish_request(
+            self._robot.connection.publish_request(
                 "rt/api/arm/request", {"api_id": 7106, "parameter": {"data": data_value}}
             )
             message = f"G1 arm action {name} executed successfully (data={data_value})"
@@ -222,7 +219,7 @@ class UnitreeG1SkillContainer(UnitreeSkillContainer):
             return f"Error: Robot not connected (cannot execute {name})"
 
         try:
-            result = self._robot.connection.publish_request(
+            self._robot.connection.publish_request(
                 "rt/api/sport/request", {"api_id": 7101, "parameter": {"data": data_value}}
             )
             message = f"G1 mode {name} activated successfully (data={data_value})"

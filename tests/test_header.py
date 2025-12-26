@@ -19,9 +19,9 @@ script and sets up the Python path to include the parent directory, allowing
 tests to import from the main application.
 """
 
-import sys
-import os
 import inspect
+import os
+import sys
 
 # Add the parent directory of 'tests' to the Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))

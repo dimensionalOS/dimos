@@ -28,20 +28,16 @@
 
 """Module for manipulation history tracking and search."""
 
-from typing import Dict, List, Optional, Any, Tuple, Union, Set, Callable
 from dataclasses import dataclass, field
-import time
 from datetime import datetime
-import os
 import json
+import os
 import pickle
-import uuid
+import time
+from typing import Any
 
 from dimos.types.manipulation import (
     ManipulationTask,
-    AbstractConstraint,
-    ManipulationTaskConstraint,
-    ManipulationMetadata,
 )
 from dimos.utils.logging_config import setup_logger
 
@@ -61,8 +57,8 @@ class ManipulationHistoryEntry:
 
     task: ManipulationTask
     timestamp: float = field(default_factory=time.time)
-    result: Dict[str, Any] = field(default_factory=dict)
-    manipulation_response: Optional[str] = (
+    result: dict[str, Any] = field(default_factory=dict)
+    manipulation_response: str | None = (
         None  # Any elaborative response from the motion planner / manipulation executor
     )
 
@@ -78,14 +74,14 @@ class ManipulationHistory:
     focusing on quick lookups and flexible search capabilities.
     """
 
-    def __init__(self, output_dir: str = None, new_memory: bool = False):
+    def __init__(self, output_dir: str | None = None, new_memory: bool = False) -> None:
         """Initialize a new manipulation history.
 
         Args:
             output_dir: Directory to save history to
             new_memory: If True, creates a new memory instead of loading existing one
         """
-        self._history: List[ManipulationHistoryEntry] = []
+        self._history: list[ManipulationHistoryEntry] = []
         self._output_dir = output_dir
 
         if output_dir and not new_memory:
@@ -192,7 +188,7 @@ class ManipulationHistory:
         except Exception as e:
             logger.error(f"Failed to load history: {e}")
 
-    def get_all_entries(self) -> List[ManipulationHistoryEntry]:
+    def get_all_entries(self) -> list[ManipulationHistoryEntry]:
         """Get all entries in chronological order.
 
         Returns:
@@ -200,7 +196,7 @@ class ManipulationHistory:
         """
         return self._history.copy()
 
-    def get_entry_by_index(self, index: int) -> Optional[ManipulationHistoryEntry]:
+    def get_entry_by_index(self, index: int) -> ManipulationHistoryEntry | None:
         """Get an entry by its index.
 
         Args:
@@ -215,7 +211,7 @@ class ManipulationHistory:
 
     def get_entries_by_timerange(
         self, start_time: float, end_time: float
-    ) -> List[ManipulationHistoryEntry]:
+    ) -> list[ManipulationHistoryEntry]:
         """Get entries within a specific time range.
 
         Args:
@@ -227,7 +223,7 @@ class ManipulationHistory:
         """
         return [entry for entry in self._history if start_time <= entry.timestamp <= end_time]
 
-    def get_entries_by_object(self, object_name: str) -> List[ManipulationHistoryEntry]:
+    def get_entries_by_object(self, object_name: str) -> list[ManipulationHistoryEntry]:
         """Get entries related to a specific object.
 
         Args:
@@ -239,7 +235,10 @@ class ManipulationHistory:
         return [entry for entry in self._history if entry.task.target_object == object_name]
 
     def create_task_entry(
-        self, task: ManipulationTask, result: Dict[str, Any] = None, agent_response: str = None
+        self,
+        task: ManipulationTask,
+        result: dict[str, Any] | None = None,
+        agent_response: str | None = None,
     ) -> ManipulationHistoryEntry:
         """Create a new manipulation history entry.
 
@@ -257,7 +256,7 @@ class ManipulationHistory:
         self.add_entry(entry)
         return entry
 
-    def search(self, **kwargs) -> List[ManipulationHistoryEntry]:
+    def search(self, **kwargs) -> list[ManipulationHistoryEntry]:
         """Flexible search method that can search by any field in ManipulationHistoryEntry using dot notation.
 
         This method supports dot notation to access nested fields. String values automatically use

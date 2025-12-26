@@ -14,14 +14,13 @@
 
 """Utility functions for gateway operations."""
 
-from typing import Any, Dict, List, Optional, Union
-import json
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def convert_tools_to_standard_format(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def convert_tools_to_standard_format(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert DimOS tool format to standard format accepted by gateways.
 
     DimOS tools come from pydantic_function_tool and have this format:
@@ -47,7 +46,7 @@ def convert_tools_to_standard_format(tools: List[Dict[str, Any]]) -> List[Dict[s
     return tools
 
 
-def parse_streaming_response(chunk: Dict[str, Any]) -> Dict[str, Any]:
+def parse_streaming_response(chunk: dict[str, Any]) -> dict[str, Any]:
     """Parse a streaming response chunk into a standard format.
 
     Args:
@@ -103,7 +102,7 @@ def parse_streaming_response(chunk: Dict[str, Any]) -> Dict[str, Any]:
     return {"type": "unknown", "content": chunk, "metadata": {}}
 
 
-def create_tool_response(tool_id: str, result: Any, is_error: bool = False) -> Dict[str, Any]:
+def create_tool_response(tool_id: str, result: Any, is_error: bool = False) -> dict[str, Any]:
     """Create a properly formatted tool response.
 
     Args:
@@ -124,7 +123,7 @@ def create_tool_response(tool_id: str, result: Any, is_error: bool = False) -> D
     }
 
 
-def extract_image_from_message(message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def extract_image_from_message(message: dict[str, Any]) -> dict[str, Any] | None:
     """Extract image data from a message if present.
 
     Args:

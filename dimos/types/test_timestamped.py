@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
 from datetime import datetime, timezone
+import time
 
 import pytest
 from reactivex import operators as ops
@@ -33,7 +33,7 @@ from dimos.utils.data import get_data
 from dimos.utils.reactive import backpressure
 
 
-def test_timestamped_dt_method():
+def test_timestamped_dt_method() -> None:
     ts = 1751075203.4120464
     timestamped = Timestamped(ts)
     dt = timestamped.dt()
@@ -42,7 +42,7 @@ def test_timestamped_dt_method():
     assert dt.tzinfo is not None, "datetime should be timezone-aware"
 
 
-def test_to_ros_stamp():
+def test_to_ros_stamp() -> None:
     """Test the to_ros_stamp function with different input types."""
 
     # Test with float timestamp
@@ -65,7 +65,7 @@ def test_to_ros_stamp():
     assert abs(result.nanosec - 123456000) < 1000  # Allow small rounding error
 
 
-def test_to_datetime():
+def test_to_datetime() -> None:
     """Test the to_datetime function with different input types."""
 
     # Test with float timestamp
@@ -108,7 +108,7 @@ def test_to_datetime():
 
 
 class SimpleTimestamped(Timestamped):
-    def __init__(self, ts: float, data: str):
+    def __init__(self, ts: float, data: str) -> None:
         super().__init__(ts)
         self.data = data
 
@@ -138,7 +138,7 @@ def collection(sample_items):
     return TimestampedCollection(sample_items)
 
 
-def test_empty_collection():
+def test_empty_collection() -> None:
     collection = TimestampedCollection()
     assert len(collection) == 0
     assert collection.duration() == 0.0
@@ -146,7 +146,7 @@ def test_empty_collection():
     assert collection.find_closest(1.0) is None
 
 
-def test_add_items():
+def test_add_items() -> None:
     collection = TimestampedCollection()
     item1 = SimpleTimestamped(2.0, "two")
     item2 = SimpleTimestamped(1.0, "one")
@@ -159,7 +159,7 @@ def test_add_items():
     assert collection[1].data == "two"
 
 
-def test_find_closest(collection):
+def test_find_closest(collection) -> None:
     # Exact match
     assert collection.find_closest(3.0).data == "third"
 
@@ -184,7 +184,7 @@ def test_find_closest(collection):
     assert collection.find_closest(10.0, tolerance=2.0) is None
 
 
-def test_find_before_after(collection):
+def test_find_before_after(collection) -> None:
     # Find before
     assert collection.find_before(2.0).data == "first"
     assert collection.find_before(5.5).data == "fifth"
@@ -196,7 +196,7 @@ def test_find_before_after(collection):
     assert collection.find_after(7.0) is None  # Nothing after last item
 
 
-def test_merge_collections():
+def test_merge_collections() -> None:
     collection1 = TimestampedCollection(
         [
             SimpleTimestamped(1.0, "a"),
@@ -216,12 +216,12 @@ def test_merge_collections():
     assert [item.data for item in merged] == ["a", "b", "c", "d"]
 
 
-def test_duration_and_range(collection):
+def test_duration_and_range(collection) -> None:
     assert collection.duration() == 6.0  # 7.0 - 1.0
     assert collection.time_range() == (1.0, 7.0)
 
 
-def test_slice_by_time(collection):
+def test_slice_by_time(collection) -> None:
     # Slice inclusive of boundaries
     sliced = collection.slice_by_time(2.0, 6.0)
     assert len(sliced) == 2
@@ -237,19 +237,19 @@ def test_slice_by_time(collection):
     assert len(all_slice) == 4
 
 
-def test_iteration(collection):
+def test_iteration(collection) -> None:
     items = list(collection)
     assert len(items) == 4
     assert [item.ts for item in items] == [1.0, 3.0, 5.0, 7.0]
 
 
-def test_single_item_collection():
+def test_single_item_collection() -> None:
     single = TimestampedCollection([SimpleTimestamped(5.0, "only")])
     assert single.duration() == 0.0
     assert single.time_range() == (5.0, 5.0)
 
 
-def test_time_window_collection():
+def test_time_window_collection() -> None:
     # Create a collection with a 2-second window
     window = TimestampedBufferCollection[SimpleTimestamped](window_duration=2.0)
 
@@ -278,7 +278,7 @@ def test_time_window_collection():
     assert window.end_ts == 5.5
 
 
-def test_timestamp_alignment(test_scheduler):
+def test_timestamp_alignment(test_scheduler) -> None:
     speed = 5.0
 
     # ensure that lfs package is downloaded
@@ -333,7 +333,7 @@ def test_timestamp_alignment(test_scheduler):
     assert len(aligned_frames) > 2
 
 
-def test_timestamp_alignment_primary_first():
+def test_timestamp_alignment_primary_first() -> None:
     """Test alignment when primary messages arrive before secondary messages."""
     from reactivex import Subject
 
@@ -394,7 +394,7 @@ def test_timestamp_alignment_primary_first():
     secondary_subject.on_completed()
 
 
-def test_timestamp_alignment_multiple_secondaries():
+def test_timestamp_alignment_multiple_secondaries() -> None:
     """Test alignment with multiple secondary observables."""
     from reactivex import Subject
 
@@ -464,7 +464,7 @@ def test_timestamp_alignment_multiple_secondaries():
     secondary2_subject.on_completed()
 
 
-def test_timestamp_alignment_delayed_secondary():
+def test_timestamp_alignment_delayed_secondary() -> None:
     """Test alignment when secondary messages arrive late but still within tolerance."""
     from reactivex import Subject
 
@@ -524,7 +524,7 @@ def test_timestamp_alignment_delayed_secondary():
     secondary_subject.on_completed()
 
 
-def test_timestamp_alignment_buffer_cleanup():
+def test_timestamp_alignment_buffer_cleanup() -> None:
     """Test that old buffered primaries are cleaned up."""
     import time as time_module
 

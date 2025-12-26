@@ -15,21 +15,18 @@
 import os
 import time
 
-import cv2
 import numpy as np
 import pytest
-import reactivex as rx
 from reactivex import operators as ops
 
 from dimos.perception.segmentation.sam_2d_seg import Sam2DSegmenter
 from dimos.perception.segmentation.utils import extract_masks_bboxes_probs_names
-from dimos.stream import video_provider
 from dimos.stream.video_provider import VideoProvider
 
 
 @pytest.mark.heavy
 class TestSam2DSegmenter:
-    def test_sam_segmenter_initialization(self):
+    def test_sam_segmenter_initialization(self) -> None:
         """Test FastSAM segmenter initializes correctly with default model path."""
         try:
             # Try to initialize with the default model path and existing device setting
@@ -40,7 +37,7 @@ class TestSam2DSegmenter:
             # If the model file doesn't exist, the test should still pass with a warning
             pytest.skip(f"Skipping test due to model initialization error: {e}")
 
-    def test_sam_segmenter_process_image(self):
+    def test_sam_segmenter_process_image(self) -> None:
         """Test FastSAM segmenter can process video frames and return segmentation masks."""
         # Import get data inside method to avoid pytest fixture confusion
         from dimos.utils.data import get_data
@@ -53,7 +50,6 @@ class TestSam2DSegmenter:
 
             # Note: conf and iou are parameters for process_image, not constructor
             # We'll monkey patch the process_image method to use lower thresholds
-            original_process_image = segmenter.process_image
 
             def patched_process_image(image):
                 results = segmenter.model.track(
@@ -70,7 +66,7 @@ class TestSam2DSegmenter:
                 )
 
                 if len(results) > 0:
-                    masks, bboxes, track_ids, probs, names, areas = (
+                    masks, bboxes, track_ids, probs, names, _areas = (
                         extract_masks_bboxes_probs_names(results[0])
                     )
                     return masks, bboxes, track_ids, probs, names
@@ -114,7 +110,7 @@ class TestSam2DSegmenter:
             frames_processed = 0
             target_frames = 5
 
-            def on_next(result):
+            def on_next(result) -> None:
                 nonlocal frames_processed, results
                 if not result:
                     return
@@ -126,10 +122,10 @@ class TestSam2DSegmenter:
                 if frames_processed >= target_frames:
                     subscription.dispose()
 
-            def on_error(error):
+            def on_error(error) -> None:
                 pytest.fail(f"Error in segmentation stream: {error}")
 
-            def on_completed():
+            def on_completed() -> None:
                 pass
 
             # Subscribe and wait for results

@@ -15,34 +15,29 @@
 import logging
 import time
 
-from dimos_lcm.foxglove_msgs import SceneUpdate
-
 from dimos.agents2.spec import Model, Provider
 from dimos.core import LCMTransport, start
 
 # from dimos.msgs.detection2d import Detection2DArray
 from dimos.msgs.foxglove_msgs import ImageAnnotations
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.module2D import Detection2DModule
-from dimos.perception.detection.module3D import Detection3DModule
-from dimos.perception.detection.person_tracker import PersonTracker
 from dimos.perception.detection.reid import ReidModule
 from dimos.protocol.pubsub import lcm
 from dimos.robot.foxglove_bridge import FoxgloveBridge
-from dimos.robot.unitree_webrtc.modular import deploy_connection, deploy_navigation
+from dimos.robot.unitree_webrtc.modular import deploy_connection
 from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("dimos.robot.unitree_webrtc.unitree_go2", level=logging.INFO)
 
 
-def detection_unitree():
+def detection_unitree() -> None:
     dimos = start(8)
     connection = deploy_connection(dimos)
 
-    def goto(pose):
+    def goto(pose) -> bool:
         print("NAVIGATION REQUESTED:", pose)
         return True
 
@@ -92,7 +87,7 @@ def detection_unitree():
     connection.start()
     reid.start()
 
-    from dimos.agents2 import Agent, Output, Reducer, Stream, skill
+    from dimos.agents2 import Agent
     from dimos.agents2.cli.human import HumanInput
 
     agent = Agent(
@@ -130,7 +125,7 @@ def detection_unitree():
         logger.info("Shutting down...")
 
 
-def main():
+def main() -> None:
     lcm.autoconf()
     detection_unitree()
 

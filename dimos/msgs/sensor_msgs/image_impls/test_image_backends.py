@@ -87,7 +87,7 @@ def alloc_timer(request):
     """Helper fixture for adaptive testing with optional GPU support."""
 
     def _alloc(
-        arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool = None, label: str | None = None
+        arr: np.ndarray, fmt: ImageFormat, *, to_cuda: bool | None = None, label: str | None = None
     ):
         tag = label or request.node.name
 
@@ -126,7 +126,7 @@ def alloc_timer(request):
         ((64, 64), ImageFormat.GRAY),
     ],
 )
-def test_color_conversions(shape, fmt, alloc_timer):
+def test_color_conversions(shape, fmt, alloc_timer) -> None:
     """Test color conversions with NumpyImage always, add CudaImage parity when available."""
     arr = _prepare_image(fmt, shape)
     cpu, gpu, _, _ = alloc_timer(arr, fmt)
@@ -147,7 +147,7 @@ def test_color_conversions(shape, fmt, alloc_timer):
         assert np.array_equal(cpu_round, gpu_round)
 
 
-def test_grayscale(alloc_timer):
+def test_grayscale(alloc_timer) -> None:
     """Test grayscale conversion with NumpyImage always, add CudaImage parity when available."""
     arr = _prepare_image(ImageFormat.BGR, (48, 32, 3))
     cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR)
@@ -168,7 +168,7 @@ def test_grayscale(alloc_timer):
 
 
 @pytest.mark.parametrize("fmt", [ImageFormat.BGR, ImageFormat.RGB, ImageFormat.BGRA])
-def test_resize(fmt, alloc_timer):
+def test_resize(fmt, alloc_timer) -> None:
     """Test resize with NumpyImage always, add CudaImage parity when available."""
     shape = (60, 80, 3) if fmt in (ImageFormat.BGR, ImageFormat.RGB) else (60, 80, 4)
     arr = _prepare_image(fmt, shape)
@@ -192,7 +192,7 @@ def test_resize(fmt, alloc_timer):
         assert np.max(np.abs(cpu_res.astype(np.int16) - gpu_res.astype(np.int16))) <= 1
 
 
-def test_perf_alloc(alloc_timer):
+def test_perf_alloc(alloc_timer) -> None:
     """Test allocation performance with NumpyImage always, add CudaImage when available."""
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     alloc_timer(arr, ImageFormat.BGR, label="test_perf_alloc-setup")
@@ -218,7 +218,7 @@ def test_perf_alloc(alloc_timer):
         print(f"alloc (avg per call) cpu={cpu_t:.6f}s")
 
 
-def test_sharpness(alloc_timer):
+def test_sharpness(alloc_timer) -> None:
     """Test sharpness computation with NumpyImage always, add CudaImage parity when available."""
     arr = _prepare_image(ImageFormat.BGR, (64, 64, 3))
     cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR)
@@ -235,7 +235,7 @@ def test_sharpness(alloc_timer):
         assert abs(s_cpu - s_gpu) < 5e-2
 
 
-def test_to_opencv(alloc_timer):
+def test_to_opencv(alloc_timer) -> None:
     """Test to_opencv conversion with NumpyImage always, add CudaImage parity when available."""
     # BGRA should drop alpha and produce BGR
     arr = _prepare_image(ImageFormat.BGRA, (32, 32, 4))
@@ -254,7 +254,7 @@ def test_to_opencv(alloc_timer):
         assert np.array_equal(cpu_bgr, gpu_bgr)
 
 
-def test_solve_pnp(alloc_timer):
+def test_solve_pnp(alloc_timer) -> None:
     """Test solve_pnp with NumpyImage always, add CudaImage parity when available."""
     # Synthetic camera and 3D points
     K = np.array([[400.0, 0.0, 32.0], [0.0, 400.0, 24.0], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -304,7 +304,7 @@ def test_solve_pnp(alloc_timer):
         assert err_gpu.max() < 1e-2
 
 
-def test_perf_grayscale(alloc_timer):
+def test_perf_grayscale(alloc_timer) -> None:
     """Test grayscale performance with NumpyImage always, add CudaImage when available."""
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR, label="test_perf_grayscale-setup")
@@ -330,7 +330,7 @@ def test_perf_grayscale(alloc_timer):
         print(f"grayscale (avg per call) cpu={cpu_t:.6f}s")
 
 
-def test_perf_resize(alloc_timer):
+def test_perf_resize(alloc_timer) -> None:
     """Test resize performance with NumpyImage always, add CudaImage when available."""
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR, label="test_perf_resize-setup")
@@ -356,7 +356,7 @@ def test_perf_resize(alloc_timer):
         print(f"resize (avg per call) cpu={cpu_t:.6f}s")
 
 
-def test_perf_sharpness(alloc_timer):
+def test_perf_sharpness(alloc_timer) -> None:
     """Test sharpness performance with NumpyImage always, add CudaImage when available."""
     arr = _prepare_image(ImageFormat.BGR, (480, 640, 3))
     cpu, gpu, _, _ = alloc_timer(arr, ImageFormat.BGR, label="test_perf_sharpness-setup")
@@ -382,7 +382,7 @@ def test_perf_sharpness(alloc_timer):
         print(f"sharpness (avg per call) cpu={cpu_t:.6f}s")
 
 
-def test_perf_solvepnp(alloc_timer):
+def test_perf_solvepnp(alloc_timer) -> None:
     """Test solve_pnp performance with NumpyImage always, add CudaImage when available."""
     K = np.array([[600.0, 0.0, 320.0], [0.0, 600.0, 240.0], [0.0, 0.0, 1.0]], dtype=np.float64)
     dist = None
@@ -419,7 +419,7 @@ def test_perf_solvepnp(alloc_timer):
 # this test is failing with
 #  raise RuntimeError("OpenCV CSRT tracker not available")
 @pytest.mark.skip
-def test_perf_tracker(alloc_timer):
+def test_perf_tracker(alloc_timer) -> None:
     """Test tracker performance with NumpyImage always, add CudaImage when available."""
     # Don't check - just let it fail if CSRT isn't available
 
@@ -467,7 +467,7 @@ def test_perf_tracker(alloc_timer):
 # this test is failing with
 #  raise RuntimeError("OpenCV CSRT tracker not available")
 @pytest.mark.skip
-def test_csrt_tracker(alloc_timer):
+def test_csrt_tracker(alloc_timer) -> None:
     """Test CSRT tracker with NumpyImage always, add CudaImage parity when available."""
     # Don't check - just let it fail if CSRT isn't available
 
@@ -500,7 +500,7 @@ def test_csrt_tracker(alloc_timer):
 
     # Compare to ground-truth expected bbox
     expected = (x0 + dx, y0 + dy, w0, h0)
-    err_cpu = sum(abs(a - b) for a, b in zip(bbox_cpu, expected))
+    err_cpu = sum(abs(a - b) for a, b in zip(bbox_cpu, expected, strict=False))
     assert err_cpu <= 8
 
     # Optionally test GPU parity when CUDA is available
@@ -509,11 +509,11 @@ def test_csrt_tracker(alloc_timer):
         ok_gpu, bbox_gpu = gpu2.csrt_update(trk_gpu)
         assert ok_gpu
 
-        err_gpu = sum(abs(a - b) for a, b in zip(bbox_gpu, expected))
+        err_gpu = sum(abs(a - b) for a, b in zip(bbox_gpu, expected, strict=False))
         assert err_gpu <= 10  # allow some slack for scale/window effects
 
 
-def test_solve_pnp_ransac(alloc_timer):
+def test_solve_pnp_ransac(alloc_timer) -> None:
     """Test solve_pnp_ransac with NumpyImage always, add CudaImage when available."""
     # Camera with distortion
     K = np.array([[500.0, 0.0, 320.0], [0.0, 500.0, 240.0], [0.0, 0.0, 1.0]], dtype=np.float64)
@@ -568,7 +568,7 @@ def test_solve_pnp_ransac(alloc_timer):
         assert err_gpu.max() < 4.0
 
 
-def test_solve_pnp_batch(alloc_timer):
+def test_solve_pnp_batch(alloc_timer) -> None:
     """Test solve_pnp batch processing with NumpyImage always, add CudaImage when available."""
     # Note: Batch processing is primarily a GPU feature, but we can still test CPU loop
     # Generate batched problems
@@ -625,7 +625,7 @@ def test_solve_pnp_batch(alloc_timer):
         print(f"solvePnP-batch (avg per pose) cpu={cpu_t:.6f}s (GPU batch not available)")
 
 
-def test_nvimgcodec_flag_and_fallback(monkeypatch):
+def test_nvimgcodec_flag_and_fallback(monkeypatch) -> None:
     # Test that to_base64() works with and without nvimgcodec by patching runtime flags
     import dimos.msgs.sensor_msgs.image_impls.AbstractImage as AbstractImageMod
 
@@ -668,7 +668,7 @@ def test_nvimgcodec_flag_and_fallback(monkeypatch):
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_nvimgcodec_gpu_path(monkeypatch):
+def test_nvimgcodec_gpu_path(monkeypatch) -> None:
     """Test nvimgcodec GPU encoding path when CUDA is available.
 
     This test specifically verifies that when nvimgcodec is available,
@@ -681,7 +681,6 @@ def test_nvimgcodec_gpu_path(monkeypatch):
         pytest.skip("nvimgcodec library not available")
 
     # Save original nvimgcodec module reference
-    original_nvimgcodec = AbstractImageMod.nvimgcodec
 
     # Create a CUDA image and encode using the actual nvimgcodec if available
     arr = _prepare_image(ImageFormat.BGR, (32, 32, 3))
@@ -709,7 +708,7 @@ def test_nvimgcodec_gpu_path(monkeypatch):
 
 
 @pytest.mark.skipif(not HAS_CUDA, reason="CuPy/CUDA not available")
-def test_to_cpu_format_preservation():
+def test_to_cpu_format_preservation() -> None:
     """Test that to_cpu() preserves image format correctly.
 
     This tests the fix for the bug where to_cpu() was using to_opencv()

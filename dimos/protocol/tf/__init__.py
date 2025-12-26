@@ -12,6 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos.protocol.tf.tf import TF, LCMTF, PubSubTF, TFSpec, TFConfig, TBuffer, MultiTBuffer
+from dimos.protocol.tf.tf import LCMTF, TF, MultiTBuffer, PubSubTF, TBuffer, TFConfig, TFSpec
 
-__all__ = ["TF", "LCMTF", "PubSubTF", "TFSpec", "TFConfig", "TBuffer", "MultiTBuffer"]
+__all__ = ["LCMTF", "TF", "MultiTBuffer", "PubSubTF", "TBuffer", "TFConfig", "TFSpec"]

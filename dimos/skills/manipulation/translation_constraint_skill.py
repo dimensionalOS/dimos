@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, List, Tuple, Literal
+from typing import Literal
+
 from pydantic import Field
 
 from dimos.skills.manipulation.abstract_manipulation_skill import AbstractManipulationSkill
-from dimos.skills.skills import AbstractRobotSkill
 from dimos.types.manipulation import TranslationConstraint, Vector
 from dimos.utils.logging_config import setup_logger
 
@@ -37,19 +37,19 @@ class TranslationConstraintSkill(AbstractManipulationSkill):
         "x", description="Axis to translate along: 'x', 'y', or 'z'"
     )
 
-    reference_point: Optional[Tuple[float, float]] = Field(
+    reference_point: tuple[float, float] | None = Field(
         None, description="Reference point (x,y) on the target object for translation constraining"
     )
 
-    bounds_min: Optional[Tuple[float, float]] = Field(
+    bounds_min: tuple[float, float] | None = Field(
         None, description="Minimum bounds (x,y) for bounded translation"
     )
 
-    bounds_max: Optional[Tuple[float, float]] = Field(
+    bounds_max: tuple[float, float] | None = Field(
         None, description="Maximum bounds (x,y) for bounded translation"
     )
 
-    target_point: Optional[Tuple[float, float]] = Field(
+    target_point: tuple[float, float] | None = Field(
         None, description="Final target position (x,y) for translation constraining"
     )
 

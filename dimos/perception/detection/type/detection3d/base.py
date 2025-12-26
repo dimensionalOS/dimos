@@ -16,12 +16,14 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import TYPE_CHECKING
 
-from dimos_lcm.sensor_msgs import CameraInfo
-
-from dimos.msgs.geometry_msgs import Transform
 from dimos.perception.detection.type.detection2d import Detection2DBBox
+
+if TYPE_CHECKING:
+    from dimos_lcm.sensor_msgs import CameraInfo
+
+    from dimos.msgs.geometry_msgs import Transform
 
 
 @dataclass
@@ -39,6 +41,6 @@ class Detection3D(Detection2DBBox):
         distance: float,
         camera_info: CameraInfo,
         world_to_optical_transform: Transform,
-    ) -> Optional["Detection3D"]:
+    ) -> Detection3D | None:
         """Create a 3D detection from a 2D detection."""
         ...

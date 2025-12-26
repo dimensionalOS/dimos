@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import List, Optional
+
 from pydantic import BaseModel
 
 
@@ -38,14 +38,14 @@ class PlacePosition(BaseModel):
     lon: float
     description: str
     address: str
-    types: List[str]
+    types: list[str]
 
 
 class NearbyPlace(BaseModel):
     """Information about a nearby place."""
 
     name: str
-    types: List[str]
+    types: list[str]
     distance: float
     vicinity: str
 
@@ -53,14 +53,14 @@ class NearbyPlace(BaseModel):
 class LocationContext(BaseModel):
     """Contextual information about a location."""
 
-    formatted_address: Optional[str] = None
-    street_number: Optional[str] = None
-    street: Optional[str] = None
-    neighborhood: Optional[str] = None
-    locality: Optional[str] = None
-    admin_area: Optional[str] = None
-    country: Optional[str] = None
-    postal_code: Optional[str] = None
-    nearby_places: List[NearbyPlace] = []
-    place_types_summary: Optional[str] = None
+    formatted_address: str | None = None
+    street_number: str | None = None
+    street: str | None = None
+    neighborhood: str | None = None
+    locality: str | None = None
+    admin_area: str | None = None
+    country: str | None = None
+    postal_code: str | None = None
+    nearby_places: list[NearbyPlace] = []
+    place_types_summary: str | None = None
     coordinates: Coordinates

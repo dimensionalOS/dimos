@@ -1,15 +1,13 @@
+from detectron2.modeling import build_backbone, build_proposal_generator, detector_postprocess
+from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
+from detectron2.structures import ImageList
 import torch
 from torch import nn
-
-from detectron2.modeling.meta_arch.build import META_ARCH_REGISTRY
-from detectron2.modeling import build_backbone, build_proposal_generator
-from detectron2.modeling import detector_postprocess
-from detectron2.structures import ImageList
 
 
 @META_ARCH_REGISTRY.register()
 class CenterNetDetector(nn.Module):
-    def __init__(self, cfg):
+    def __init__(self, cfg) -> None:
         super().__init__()
         self.mean, self.std = cfg.MODEL.PIXEL_MEAN, cfg.MODEL.PIXEL_STD
         self.register_buffer("pixel_mean", torch.Tensor(cfg.MODEL.PIXEL_MEAN).view(-1, 1, 1))
@@ -35,7 +33,7 @@ class CenterNetDetector(nn.Module):
         return self.pixel_mean.device
 
     @torch.no_grad()
-    def inference(self, batched_inputs, do_postprocess=True):
+    def inference(self, batched_inputs, do_postprocess: bool=True):
         images = self.preprocess_image(batched_inputs)
         inp = images.tensor
         features = self.backbone(inp)
@@ -43,7 +41,7 @@ class CenterNetDetector(nn.Module):
 
         processed_results = []
         for results_per_image, input_per_image, image_size in zip(
-            proposals, batched_inputs, images.image_sizes
+            proposals, batched_inputs, images.image_sizes, strict=False
         ):
             if do_postprocess:
                 height = input_per_image.get("height", image_size[0])

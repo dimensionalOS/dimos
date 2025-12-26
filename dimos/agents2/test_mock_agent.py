@@ -16,9 +16,9 @@
 
 import time
 
-import pytest
 from dimos_lcm.sensor_msgs import CameraInfo
 from langchain_core.messages import AIMessage, HumanMessage
+import pytest
 
 from dimos.agents2.agent import Agent
 from dimos.agents2.testing import MockModel
@@ -30,7 +30,7 @@ from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModul
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
-def test_tool_call():
+def test_tool_call() -> None:
     """Test agent initialization and tool call execution."""
     # Create a fake model that will respond with tool calls
     fake_model = MockModel(
@@ -74,7 +74,7 @@ def test_tool_call():
     agent.stop()
 
 
-def test_image_tool_call():
+def test_image_tool_call() -> None:
     """Test agent with image tool call execution."""
     dimos = start(2)
     # Create a fake model that will respond with image tool calls
@@ -131,7 +131,7 @@ def test_image_tool_call():
 
 
 @pytest.mark.tool
-def test_tool_call_implicit_detections():
+def test_tool_call_implicit_detections() -> None:
     """Test agent with image tool call execution."""
     dimos = start(2)
     # Create a fake model that will respond with image tool calls

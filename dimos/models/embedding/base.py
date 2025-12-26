@@ -14,15 +14,17 @@
 
 from __future__ import annotations
 
-import time
 from abc import ABC, abstractmethod
-from typing import Generic, Optional, TypeVar
+import time
+from typing import TYPE_CHECKING, Generic, Optional, TypeVar
 
 import numpy as np
 import torch
 
-from dimos.msgs.sensor_msgs import Image
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs import Image
 
 
 class Embedding(Timestamped):
@@ -34,14 +36,14 @@ class Embedding(Timestamped):
 
     vector: torch.Tensor | np.ndarray
 
-    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: Optional[float] = None):
+    def __init__(self, vector: torch.Tensor | np.ndarray, timestamp: float | None = None) -> None:
         self.vector = vector
         if timestamp:
             self.timestamp = timestamp
         else:
             self.timestamp = time.time()
 
-    def __matmul__(self, other: "Embedding") -> float:
+    def __matmul__(self, other: Embedding) -> float:
         """Compute cosine similarity via @ operator."""
         if isinstance(self.vector, torch.Tensor):
             other_tensor = other.to_torch(self.vector.device)
@@ -65,7 +67,7 @@ class Embedding(Timestamped):
             return self.vector.to(device)
         return self.vector
 
-    def to_cpu(self) -> "Embedding":
+    def to_cpu(self) -> Embedding:
         """Move embedding to CPU, returning self for chaining."""
         if isinstance(self.vector, torch.Tensor):
             self.vector = self.vector.cpu()
@@ -141,7 +143,7 @@ class EmbeddingModel(ABC, Generic[E]):
         """
         similarities = self.compare_one_to_many(query_emb, candidates)
         top_values, top_indices = similarities.topk(k=min(top_k, len(candidates)))
-        return [(idx.item(), val.item()) for idx, val in zip(top_indices, top_values)]
+        return [(idx.item(), val.item()) for idx, val in zip(top_indices, top_values, strict=False)]
 
     def warmup(self) -> None:
         """Optional warmup method to pre-load model."""

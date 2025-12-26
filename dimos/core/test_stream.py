@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import time
-from typing import Callable, Optional
 
 import pytest
 
@@ -34,16 +34,16 @@ class SubscriberBase(Module):
     sub1_msgs: list[Odometry] = None
     sub2_msgs: list[Odometry] = None
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.sub1_msgs = []
         self.sub2_msgs = []
         super().__init__()
 
     @rpc
-    def sub1(self): ...
+    def sub1(self) -> None: ...
 
     @rpc
-    def sub2(self): ...
+    def sub2(self) -> None: ...
 
     @rpc
     def active_subscribers(self):
@@ -60,19 +60,19 @@ class SubscriberBase(Module):
 
 class ClassicSubscriber(SubscriberBase):
     odom: In[Odometry] = None
-    unsub: Optional[Callable[[], None]] = None
-    unsub2: Optional[Callable[[], None]] = None
+    unsub: Callable[[], None] | None = None
+    unsub2: Callable[[], None] | None = None
 
     @rpc
-    def sub1(self):
+    def sub1(self) -> None:
         self.unsub = self.odom.subscribe(self.sub1_msgs.append)
 
     @rpc
-    def sub2(self):
+    def sub2(self) -> None:
         self.unsub2 = self.odom.subscribe(self.sub2_msgs.append)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self.unsub:
             self.unsub()
             self.unsub = None
@@ -83,21 +83,21 @@ class ClassicSubscriber(SubscriberBase):
 
 class RXPYSubscriber(SubscriberBase):
     odom: In[Odometry] = None
-    unsub: Optional[Callable[[], None]] = None
-    unsub2: Optional[Callable[[], None]] = None
+    unsub: Callable[[], None] | None = None
+    unsub2: Callable[[], None] | None = None
 
-    hot: Optional[Callable[[], None]] = None
+    hot: Callable[[], None] | None = None
 
     @rpc
-    def sub1(self):
+    def sub1(self) -> None:
         self.unsub = self.odom.observable().subscribe(self.sub1_msgs.append)
 
     @rpc
-    def sub2(self):
+    def sub2(self) -> None:
         self.unsub2 = self.odom.observable().subscribe(self.sub2_msgs.append)
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         if self.unsub:
             self.unsub.dispose()
             self.unsub = None
@@ -110,11 +110,11 @@ class RXPYSubscriber(SubscriberBase):
         return self.odom.get_next()
 
     @rpc
-    def start_hot_getter(self):
+    def start_hot_getter(self) -> None:
         self.hot = self.odom.hot_latest()
 
     @rpc
-    def stop_hot_getter(self):
+    def stop_hot_getter(self) -> None:
         self.hot.dispose()
 
     @rpc
@@ -128,7 +128,7 @@ class SpyLCMTransport(LCMTransport):
     def __reduce__(self):
         return (SpyLCMTransport, (self.topic.topic, self.topic.lcm_type))
 
-    def __init__(self, topic: str, type: type, **kwargs):
+    def __init__(self, topic: str, type: type, **kwargs) -> None:
         super().__init__(topic, type, **kwargs)
         self._subscriber_map = {}  # Maps unsubscribe functions to track active subs
 
@@ -139,7 +139,7 @@ class SpyLCMTransport(LCMTransport):
         # Increment counter
         self.active_subscribers += 1
 
-        def wrapped_unsubscribe():
+        def wrapped_unsubscribe() -> None:
             # Create wrapper that decrements counter when called
             if wrapped_unsubscribe in self._subscriber_map:
                 self.active_subscribers -= 1
@@ -154,7 +154,7 @@ class SpyLCMTransport(LCMTransport):
 
 @pytest.mark.parametrize("subscriber_class", [ClassicSubscriber, RXPYSubscriber])
 @pytest.mark.module
-def test_subscription(dimos, subscriber_class):
+def test_subscription(dimos, subscriber_class) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     robot.lidar.transport = SpyLCMTransport("/lidar", LidarMessage)
@@ -192,7 +192,7 @@ def test_subscription(dimos, subscriber_class):
 
 
 @pytest.mark.module
-def test_get_next(dimos):
+def test_get_next(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     robot.lidar.transport = SpyLCMTransport("/lidar", LidarMessage)
@@ -221,7 +221,7 @@ def test_get_next(dimos):
 
 
 @pytest.mark.module
-def test_hot_getter(dimos):
+def test_hot_getter(dimos) -> None:
     robot = dimos.deploy(MockRobotClient)
 
     robot.lidar.transport = SpyLCMTransport("/lidar", LidarMessage)

@@ -14,15 +14,13 @@
 
 """Test manipulation processor with LCM topic subscription."""
 
-import os
-import sys
-import cv2
-import numpy as np
 import argparse
-import threading
 import pickle
+import threading
+
+import cv2
 import matplotlib
-import tests.test_header
+import numpy as np
 
 # Try to use TkAgg backend for live display, fallback to Agg if not available
 try:
@@ -32,19 +30,13 @@ except:
         matplotlib.use("Qt5Agg")
     except:
         matplotlib.use("Agg")  # Fallback to non-interactive
-import matplotlib.pyplot as plt
-import open3d as o3d
-from typing import Dict, List, Optional
 
 # LCM imports
 import lcm
-from lcm_msgs.sensor_msgs import Image as LCMImage
-from lcm_msgs.sensor_msgs import CameraInfo as LCMCameraInfo
+from lcm_msgs.sensor_msgs import CameraInfo as LCMCameraInfo, Image as LCMImage
+import open3d as o3d
 
-from dimos.perception.pointcloud.utils import visualize_clustered_point_clouds, visualize_voxel_grid
 from dimos.manipulation.manip_aio_processer import ManipulationProcessor
-from dimos.perception.grasp_generation.utils import visualize_grasps_3d
-from dimos.perception.pointcloud.utils import visualize_pcd
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger("test_pipeline_lcm")
@@ -57,9 +49,9 @@ class LCMDataCollector:
         self.lcm = lcm.LCM(lcm_url)
 
         # Data storage
-        self.rgb_data: Optional[np.ndarray] = None
-        self.depth_data: Optional[np.ndarray] = None
-        self.camera_intrinsics: Optional[List[float]] = None
+        self.rgb_data: np.ndarray | None = None
+        self.depth_data: np.ndarray | None = None
+        self.camera_intrinsics: list[float] | None = None
 
         # Synchronization
         self.data_lock = threading.Lock()
@@ -278,14 +270,14 @@ def main():
     results = run_processor(color_img, depth_img, intrinsics)
 
     # Debug: Print what we received
-    print(f"\n✅ Processor Results:")
+    print("\n✅ Processor Results:")
     print(f"   Available results: {list(results.keys())}")
     print(f"   Processing time: {results.get('processing_time', 0):.3f}s")
 
     # Show timing breakdown if available
     if "timing_breakdown" in results:
         breakdown = results["timing_breakdown"]
-        print(f"   Timing breakdown:")
+        print("   Timing breakdown:")
         print(f"     - Detection: {breakdown.get('detection', 0):.3f}s")
         print(f"     - Segmentation: {breakdown.get('segmentation', 0):.3f}s")
         print(f"     - Point cloud: {breakdown.get('pointcloud', 0):.3f}s")
@@ -299,17 +291,17 @@ def main():
     print(f"   All objects processed: {all_count}")
 
     # Print misc clusters information
-    if "misc_clusters" in results and results["misc_clusters"]:
+    if results.get("misc_clusters"):
         cluster_count = len(results["misc_clusters"])
         total_misc_points = sum(
             len(np.asarray(cluster.points)) for cluster in results["misc_clusters"]
         )
         print(f"   Misc clusters: {cluster_count} clusters with {total_misc_points} total points")
     else:
-        print(f"   Misc clusters: None")
+        print("   Misc clusters: None")
 
     # Print grasp summary
-    if "grasps" in results and results["grasps"]:
+    if results.get("grasps"):
         total_grasps = 0
         best_score = 0
         for grasp in results["grasps"]:
@@ -414,7 +406,7 @@ def main():
     with open(pickle_path, "wb") as f:
         pickle.dump(pickle_data, f)
 
-    print(f"Results saved successfully with all 3D data serialized!")
+    print("Results saved successfully with all 3D data serialized!")
     print(f"Pickled data keys: {list(pickle_data['results'].keys())}")
 
     # Visualization code has been moved to visualization_script.py

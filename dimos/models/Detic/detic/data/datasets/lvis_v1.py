@@ -2,18 +2,19 @@
 import logging
 import os
 
-from fvcore.common.timer import Timer
-from detectron2.structures import BoxMode
-from fvcore.common.file_io import PathManager
 from detectron2.data import DatasetCatalog, MetadataCatalog
 from detectron2.data.datasets.lvis import get_lvis_instances_meta
+from detectron2.structures import BoxMode
+from fvcore.common.file_io import PathManager
+from fvcore.common.timer import Timer
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 __all__ = ["custom_load_lvis_json", "custom_register_lvis_instances"]
 
 
-def custom_register_lvis_instances(name, metadata, json_file, image_root):
+def custom_register_lvis_instances(name: str, metadata, json_file, image_root) -> None:
     """ """
     DatasetCatalog.register(name, lambda: custom_load_lvis_json(json_file, image_root, name))
     MetadataCatalog.get(name).set(
@@ -21,7 +22,7 @@ def custom_register_lvis_instances(name, metadata, json_file, image_root):
     )
 
 
-def custom_load_lvis_json(json_file, image_root, dataset_name=None):
+def custom_load_lvis_json(json_file, image_root, dataset_name: Optional[str]=None):
     """
     Modifications:
       use `file_name`
@@ -35,7 +36,7 @@ def custom_load_lvis_json(json_file, image_root, dataset_name=None):
     timer = Timer()
     lvis_api = LVIS(json_file)
     if timer.seconds() > 1:
-        logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
+        logger.info(f"Loading {json_file} takes {timer.seconds():.2f} seconds.")
 
     catid2contid = {
         x["id"]: i
@@ -49,12 +50,10 @@ def custom_load_lvis_json(json_file, image_root, dataset_name=None):
     anns = [lvis_api.img_ann_map[img_id] for img_id in img_ids]
 
     ann_ids = [ann["id"] for anns_per_image in anns for ann in anns_per_image]
-    assert len(set(ann_ids)) == len(ann_ids), "Annotation ids in '{}' are not unique".format(
-        json_file
-    )
+    assert len(set(ann_ids)) == len(ann_ids), f"Annotation ids in '{json_file}' are not unique"
 
-    imgs_anns = list(zip(imgs, anns))
-    logger.info("Loaded {} images in the LVIS v1 format from {}".format(len(imgs_anns), json_file))
+    imgs_anns = list(zip(imgs, anns, strict=False))
+    logger.info(f"Loaded {len(imgs_anns)} images in the LVIS v1 format from {json_file}")
 
     dataset_dicts = []
 

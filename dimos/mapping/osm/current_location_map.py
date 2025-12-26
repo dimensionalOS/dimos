@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
 
 from dimos.mapping.osm.osm import MapImage, get_osm_map
 from dimos.mapping.osm.query import query_for_one_position, query_for_one_position_and_context
@@ -20,16 +19,15 @@ from dimos.mapping.types import LatLon
 from dimos.models.vl.base import VlModel
 from dimos.utils.logging_config import setup_logger
 
-
 logger = setup_logger(__file__)
 
 
 class CurrentLocationMap:
     _vl_model: VlModel
-    _position: Optional[LatLon]
-    _map_image: Optional[MapImage]
+    _position: LatLon | None
+    _map_image: MapImage | None
 
-    def __init__(self, vl_model: VlModel):
+    def __init__(self, vl_model: VlModel) -> None:
         self._vl_model = vl_model
         self._position = None
         self._map_image = None
@@ -41,12 +39,12 @@ class CurrentLocationMap:
     def update_position(self, position: LatLon) -> None:
         self._position = position
 
-    def query_for_one_position(self, query: str) -> Optional[LatLon]:
+    def query_for_one_position(self, query: str) -> LatLon | None:
         return query_for_one_position(self._vl_model, self._get_current_map(), query)
 
     def query_for_one_position_and_context(
         self, query: str, robot_position: LatLon
-    ) -> Optional[tuple[LatLon, str]]:
+    ) -> tuple[LatLon, str] | None:
         return query_for_one_position_and_context(
             self._vl_model, self._get_current_map(), query, robot_position
         )

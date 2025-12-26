@@ -11,29 +11,27 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional, Tuple
+from typing import Any
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
-from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
 
-from dimos.core import In, Module, Out, rpc
+from dimos import spec
+from dimos.core import DimosCluster, In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import Transform, Vector3
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import CameraInfo, Image
 from dimos.msgs.sensor_msgs.Image import sharpness_barrier
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.perception.detection.detectors import Detector
-from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.detectors.yolo import Yolo2DDetector
-from dimos.perception.detection.type import (
-    ImageDetections2D,
-)
+from dimos.perception.detection.type import Filter2D, ImageDetections2D
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
@@ -41,8 +39,16 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     max_freq: float = 10
-    detector: Optional[Callable[[Any], Detector]] = YoloPersonDetector
-    camera_info: CameraInfo = CameraInfo()
+    detector: Callable[[Any], Detector] | None = Yolo2DDetector
+    publish_detection_images: bool = True
+    camera_info: CameraInfo = None  # type: ignore
+    filter: list[Filter2D] | Filter2D | None = None
+
+    def __post_init__(self) -> None:
+        if self.filter is None:
+            self.filter = []
+        elif not isinstance(self.filter, list):
+            self.filter = [self.filter]
 
 
 class Detection2DModule(Module):
@@ -61,15 +67,17 @@ class Detection2DModule(Module):
 
     cnt: int = 0
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
-        self.config: Config = Config(**kwargs)
         self.detector = self.config.detector()
         self.vlm_detections_subject = Subject()
         self.previous_detection_count = 0
 
     def process_image_frame(self, image: Image) -> ImageDetections2D:
-        return self.detector.process_image(image)
+        imageDetections = self.detector.process_image(image)
+        if not self.config.filter:
+            return imageDetections
+        return imageDetections.filter(*self.config.filter)
 
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
@@ -81,36 +89,9 @@ class Detection2DModule(Module):
 
     @simple_mcache
     def detection_stream_2d(self) -> Observable[ImageDetections2D]:
-        return backpressure(self.image.observable().pipe(ops.map(self.process_image_frame)))
+        return backpressure(self.sharp_image_stream().pipe(ops.map(self.process_image_frame)))
 
-    def pixel_to_3d(
-        self,
-        pixel: Tuple[int, int],
-        camera_info: CameraInfo,
-        assumed_depth: float = 1.0,
-    ) -> Vector3:
-        """Unproject 2D pixel coordinates to 3D position in camera optical frame.
-
-        Args:
-            camera_info: Camera calibration information
-            assumed_depth: Assumed depth in meters (default 1.0m from camera)
-
-        Returns:
-            Vector3 position in camera optical frame coordinates
-        """
-        # Extract camera intrinsics
-        fx, fy = camera_info.K[0], camera_info.K[4]
-        cx, cy = camera_info.K[2], camera_info.K[5]
-
-        # Unproject pixel to normalized camera coordinates
-        x_norm = (pixel[0] - cx) / fx
-        y_norm = (pixel[1] - cy) / fy
-
-        # Create 3D point at assumed depth in camera optical frame
-        # Camera optical frame: X right, Y down, Z forward
-        return Vector3(x_norm * assumed_depth, y_norm * assumed_depth, assumed_depth)
-
-    def track(self, detections: ImageDetections2D):
+    def track(self, detections: ImageDetections2D) -> None:
         sensor_frame = self.tf.get("sensor", "camera_optical", detections.image.ts, 5.0)
 
         if not sensor_frame:
@@ -150,8 +131,8 @@ class Detection2DModule(Module):
         self.tf.publish(*transforms)
 
     @rpc
-    def start(self):
-        self.detection_stream_2d().subscribe(self.track)
+    def start(self) -> None:
+        # self.detection_stream_2d().subscribe(self.track)
 
         self.detection_stream_2d().subscribe(
             lambda det: self.detections.publish(det.to_ros_detection2d_array())
@@ -161,12 +142,36 @@ class Detection2DModule(Module):
             lambda det: self.annotations.publish(det.to_foxglove_annotations())
         )
 
-        def publish_cropped_images(detections: ImageDetections2D):
+        def publish_cropped_images(detections: ImageDetections2D) -> None:
             for index, detection in enumerate(detections[:3]):
                 image_topic = getattr(self, "detected_image_" + str(index))
                 image_topic.publish(detection.cropped_image())
 
-        self.detection_stream_2d().subscribe(publish_cropped_images)
+        if self.config.publish_detection_images:
+            self.detection_stream_2d().subscribe(publish_cropped_images)
 
     @rpc
-    def stop(self): ...
+    def stop(self) -> None:
+        return super().stop()
+
+
+def deploy(
+    dimos: DimosCluster,
+    camera: spec.Camera,
+    prefix: str = "/detector2d",
+    **kwargs,
+) -> Detection2DModule:
+    from dimos.core import LCMTransport
+
+    detector = Detection2DModule(**kwargs)
+    detector.image.connect(camera.image)
+
+    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
+    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
+
+    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
+    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
+    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
+
+    detector.start()
+    return detector

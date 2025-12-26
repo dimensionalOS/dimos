@@ -1,15 +1,15 @@
 # Copyright (c) Facebook, Inc. and its affiliates.
 # Modified by Xingyi Zhou from https://github.com/facebookresearch/detectron2/blob/master/detectron2/data/datasets/coco.py
+import contextlib
 import io
 import logging
-import contextlib
 import os
 
-
-from fvcore.common.timer import Timer
-from fvcore.common.file_io import PathManager
-from detectron2.structures import BoxMode
 from detectron2.data import DatasetCatalog, MetadataCatalog
+from detectron2.structures import BoxMode
+from fvcore.common.file_io import PathManager
+from fvcore.common.timer import Timer
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ This file contains functions to register a COCO-format dataset to the DatasetCat
 __all__ = ["register_coco_instances", "register_coco_panoptic_separated"]
 
 
-def register_oid_instances(name, metadata, json_file, image_root):
+def register_oid_instances(name: str, metadata, json_file, image_root) -> None:
     """ """
     # 1. register a function which returns dicts
     DatasetCatalog.register(name, lambda: load_coco_json_mem_efficient(json_file, image_root, name))
@@ -33,7 +33,7 @@ def register_oid_instances(name, metadata, json_file, image_root):
 
 
 def load_coco_json_mem_efficient(
-    json_file, image_root, dataset_name=None, extra_annotation_keys=None
+    json_file, image_root, dataset_name: Optional[str]=None, extra_annotation_keys=None
 ):
     """
     Actually not mem efficient
@@ -45,7 +45,7 @@ def load_coco_json_mem_efficient(
     with contextlib.redirect_stdout(io.StringIO()):
         coco_api = COCO(json_file)
     if timer.seconds() > 1:
-        logger.info("Loading {} takes {:.2f} seconds.".format(json_file, timer.seconds()))
+        logger.info(f"Loading {json_file} takes {timer.seconds():.2f} seconds.")
 
     id_map = None
     if dataset_name is not None:
@@ -69,7 +69,7 @@ def load_coco_json_mem_efficient(
     # sort indices for reproducible results
     img_ids = sorted(coco_api.imgs.keys())
     imgs = coco_api.loadImgs(img_ids)
-    logger.info("Loaded {} images in COCO format from {}".format(len(imgs), json_file))
+    logger.info(f"Loaded {len(imgs)} images in COCO format from {json_file}")
 
     dataset_dicts = []
 

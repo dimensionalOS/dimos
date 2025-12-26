@@ -15,11 +15,10 @@
 # limitations under the License.
 
 
-import mujoco
-import numpy as np
 from etils import epath
+import mujoco
 from mujoco_playground._src import mjx_env
-
+import numpy as np
 
 from dimos.simulation.mujoco.policy import OnnxController
 from dimos.simulation.mujoco.types import InputController
@@ -53,7 +52,7 @@ def load_model(input_device: InputController, model=None, data=None):
 
     ctrl_dt = 0.02
     sim_dt = 0.01
-    n_substeps = int(round(ctrl_dt / sim_dt))
+    n_substeps = round(ctrl_dt / sim_dt)
     model.opt.timestep = sim_dt
 
     policy = OnnxController(
