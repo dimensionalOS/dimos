@@ -41,7 +41,8 @@ class CostMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        subscription = (
+
+        self._disposables.add(
             backpressure(
                 self.global_map.observable()  # type: ignore[no-untyped-call]
             )
@@ -51,10 +52,12 @@ class CostMapper(Module):
             )
         )
 
-        self._disposables.add(subscription)
+    @rpc
+    def stop(self) -> None:
+        return super().stop()
 
     def _calculate_costmap(self, msg: LidarMessage) -> OccupancyGrid:
-        return simple_occupancy(msg, resolution=self.config.resolution)
+        return height_cost_occupancy(msg, **self.config)
 
 
 cost_mapper = CostMapper.blueprint
