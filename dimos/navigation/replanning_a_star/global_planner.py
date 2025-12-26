@@ -277,24 +277,10 @@ class GlobalPlanner(Resource):
             logger.warning("Cannot handle goal request: missing odometry.")
             return
 
-        safe_goal = find_safe_goal(
-            self._navigation_map.binary_costmap,
-            current_goal.position,
-            algorithm="bfs_contiguous",
-            cost_threshold=CostValues.OCCUPIED,
-            min_clearance=self._global_config.robot_rotation_diameter / 2,
-            max_search_distance=self._safe_goal_tolerance,
-        )
+        safe_goal = self._find_safe_goal(current_goal.position)
 
-        if safe_goal is None:
-            logger.warning("No safe goal found near requested target.")
+        if not safe_goal:
             return
-
-        goals_distance = safe_goal.distance(current_goal.position)
-        if goals_distance > 0.2:
-            logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
-
-        logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
 
         path = self._find_wide_path(safe_goal, current_odom.position)
 
@@ -322,3 +308,30 @@ class GlobalPlanner(Resource):
                 return path
 
         return None
+
+    def _find_safe_goal(self, goal: Vector3) -> Vector3 | None:
+        costmap = self._navigation_map.binary_costmap
+
+        if costmap.cell_value(goal) == CostValues.UNKNOWN:
+            return goal
+
+        safe_goal = find_safe_goal(
+            costmap,
+            goal,
+            algorithm="bfs_contiguous",
+            cost_threshold=CostValues.OCCUPIED,
+            min_clearance=self._global_config.robot_rotation_diameter / 2,
+            max_search_distance=self._safe_goal_tolerance,
+        )
+
+        if safe_goal is None:
+            logger.warning("No safe goal found near requested target.")
+            return None
+
+        goals_distance = safe_goal.distance(goal)
+        if goals_distance > 0.2:
+            logger.warning(f"Travelling to goal {goals_distance}m away from requested goal.")
+
+        logger.info("Found safe goal.", x=round(safe_goal.x, 2), y=round(safe_goal.y, 2))
+
+        return safe_goal
