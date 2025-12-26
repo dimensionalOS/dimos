@@ -15,7 +15,6 @@
 from dataclasses import dataclass
 
 from reactivex import operators as ops
-from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -42,17 +41,19 @@ class CostMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        unsub = (
-            backpressure(self.global_map.observable())
+        subscription = (
+            backpressure(
+                self.global_map.observable()  # type: ignore[no-untyped-call]
+            )
             .pipe(ops.map(self._calculate_costmap))
             .subscribe(
                 self.global_costmap.publish,
             )
         )
 
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(subscription)
 
-    def _calculate_costmap(self, msg: LidarMessage) -> None:
+    def _calculate_costmap(self, msg: LidarMessage) -> OccupancyGrid:
         return simple_occupancy(msg, resolution=self.config.resolution)
 
 
