@@ -131,18 +131,18 @@ def test_autoconnect():
     )
 
 
-def test_with_transports():
+def test_transports():
     custom_transport = LCMTransport("/custom_topic", Data1)
-    blueprint_set = autoconnect(module_a(), module_b()).with_transports(
+    blueprint_set = autoconnect(module_a(), module_b()).transports(
         {("data1", Data1): custom_transport}
     )
 
-    assert ("data1", Data1) in blueprint_set.transports
-    assert blueprint_set.transports[("data1", Data1)] == custom_transport
+    assert ("data1", Data1) in blueprint_set.transport_map
+    assert blueprint_set.transport_map[("data1", Data1)] == custom_transport
 
 
-def test_with_global_config():
-    blueprint_set = autoconnect(module_a(), module_b()).with_global_config(option1=True, option2=42)
+def test_global_config():
+    blueprint_set = autoconnect(module_a(), module_b()).global_config(option1=True, option2=42)
 
     assert "option1" in blueprint_set.global_config_overrides
     assert blueprint_set.global_config_overrides["option1"] is True
@@ -200,15 +200,15 @@ def test_remapping():
     blueprint_set = autoconnect(
         SourceModule.blueprint(),
         TargetModule.blueprint(),
-    ).with_remappings(
+    ).remappings(
         [
             (SourceModule, "color_image", "remapped_data"),
         ]
     )
 
     # Verify remappings are stored correctly
-    assert (SourceModule, "color_image") in blueprint_set.remappings
-    assert blueprint_set.remappings[(SourceModule, "color_image")] == "remapped_data"
+    assert (SourceModule, "color_image") in blueprint_set.remapping_map
+    assert blueprint_set.remapping_map[(SourceModule, "color_image")] == "remapped_data"
 
     # Verify that remapped names are used in name resolution
     assert ("remapped_data", Data1) in blueprint_set._all_name_types
