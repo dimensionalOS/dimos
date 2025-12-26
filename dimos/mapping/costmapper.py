@@ -12,13 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.mapping.pointclouds.occupancy import simple_occupancy
+from dimos.mapping.pointclouds.occupancy import (
+    OCCUPANCY_ALGOS,
+    HeightCostConfig,
+    OccupancyConfig,
+)
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.reactive import backpressure
@@ -26,9 +30,8 @@ from dimos.utils.reactive import backpressure
 
 @dataclass
 class Config(ModuleConfig):
-    resolution: float = 0.05
-    can_pass_under: float = 0.6
-    can_climb: float = 0.15
+    algo: str = "height_cost"
+    config: OccupancyConfig = field(default_factory=HeightCostConfig)
 
 
 class CostMapper(Module):
@@ -54,10 +57,11 @@ class CostMapper(Module):
 
     @rpc
     def stop(self) -> None:
-        return super().stop()
+        super().stop()
 
     def _calculate_costmap(self, msg: LidarMessage) -> OccupancyGrid:
-        return height_cost_occupancy(msg, **self.config)
+        fn = OCCUPANCY_ALGOS[self.config.algo]
+        return fn(msg, **asdict(self.config.config))
 
 
 cost_mapper = CostMapper.blueprint

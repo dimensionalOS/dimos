@@ -37,7 +37,7 @@ from dimos.utils.metrics import timed
 @dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
-    publish_interval: float = 0.25
+    publish_interval: float = 0
     voxel_size: float = 0.05
     block_count: int = 2_000_000
     device: str = "CUDA:0"
