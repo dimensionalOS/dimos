@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
+import threading
+import time
 
 from reactivex import operators as ops
 
@@ -22,16 +24,22 @@ from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
     OccupancyConfig,
+    SimpleOccupancyConfig,
 )
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.utils.reactive import backpressure
+from dimos.utils.metrics import timed
+
+# @dataclass
+# class Config(ModuleConfig):
+#    algo: str = "height_cost"
+#    config: OccupancyConfig = field(default_factory=HeightCostConfig)
 
 
 @dataclass
 class Config(ModuleConfig):
-    algo: str = "height_cost"
-    config: OccupancyConfig = field(default_factory=HeightCostConfig)
+    algo: str = "simple"
+    config: OccupancyConfig = field(default_factory=SimpleOccupancyConfig)
 
 
 class CostMapper(Module):
@@ -46,9 +54,7 @@ class CostMapper(Module):
         super().start()
 
         self._disposables.add(
-            backpressure(
-                self.global_map.observable()  # type: ignore[no-untyped-call]
-            )
+            self.global_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.map(self._calculate_costmap))
             .subscribe(
                 self.global_costmap.publish,
@@ -59,6 +65,7 @@ class CostMapper(Module):
     def stop(self) -> None:
         super().stop()
 
+    @timed()
     def _calculate_costmap(self, msg: LidarMessage) -> OccupancyGrid:
         fn = OCCUPANCY_ALGOS[self.config.algo]
         return fn(msg, **asdict(self.config.config))
