@@ -29,12 +29,12 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
-from dimos.navigation.replanning_a_star.controllers import Controller, PdController
+from dimos.navigation.replanning_a_star.controllers import Controller, PController, PdController
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.transform_utils import normalize_angle, quaternion_to_euler
+from dimos.utils.trigonometry import angle_diff
 
 PlannerState: TypeAlias = Literal[
     "idle", "initial_rotation", "path_following", "final_rotation", "arrived"
@@ -65,7 +65,7 @@ class LocalPlanner(Resource):
 
     _speed: float = 0.55
     _control_frequency: float = 10
-    _goal_tolerance: float = 0.3
+    _goal_tolerance: float = 0.2
     _orientation_tolerance: float = 0.35
     _controller: Controller
 
@@ -82,7 +82,9 @@ class LocalPlanner(Resource):
         self._global_config = global_config
         self._navigation_map = navigation_map
 
-        self._controller = PdController(
+        controller = PController if global_config.simulation else PdController
+
+        self._controller = controller(
             self._global_config,
             self._speed,
             self._control_frequency,
@@ -166,9 +168,9 @@ class LocalPlanner(Resource):
         # Determine initial state: skip initial_rotation if already aligned.
         new_state: PlannerState = "initial_rotation"
         if current_odom is not None and len(path.poses) > 0:
-            first_yaw = quaternion_to_euler(path.poses[0].orientation).z
+            first_yaw = path.poses[0].orientation.euler[2]
             robot_yaw = current_odom.orientation.euler[2]
-            initial_yaw_error = normalize_angle(first_yaw - robot_yaw)
+            initial_yaw_error = angle_diff(first_yaw, robot_yaw)
             self._controller.reset_yaw_error(initial_yaw_error)
             if abs(initial_yaw_error) < self._orientation_tolerance:
                 new_state = "path_following"
@@ -227,9 +229,9 @@ class LocalPlanner(Resource):
         assert current_odom is not None
 
         first_pose = path.poses[0]
-        first_yaw = quaternion_to_euler(first_pose.orientation).z
+        first_yaw = first_pose.orientation.euler[2]
         robot_yaw = current_odom.orientation.euler[2]
-        yaw_error = normalize_angle(first_yaw - robot_yaw)
+        yaw_error = angle_diff(first_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:
             with self._lock:
@@ -283,9 +285,9 @@ class LocalPlanner(Resource):
         assert path is not None
         assert current_odom is not None
 
-        goal_yaw = quaternion_to_euler(path.poses[-1].orientation).z
+        goal_yaw = path.poses[-1].orientation.euler[2]
         robot_yaw = current_odom.orientation.euler[2]
-        yaw_error = normalize_angle(goal_yaw - robot_yaw)
+        yaw_error = angle_diff(goal_yaw, robot_yaw)
 
         if abs(yaw_error) < self._orientation_tolerance:
             logger.info("Final rotation complete, goal reached")
@@ -340,13 +342,3 @@ class LocalPlanner(Resource):
                             image.data[py, px] = [255, 255, 255]
 
         return image
-
-    def _angular_twist(self, angular_velocity: float) -> Twist:
-        # In simulation, add a small forward velocity to help the locomotion
-        # policy execute rotation (some policies don't handle pure in-place rotation).
-        linear_x = self._min_linear_velocity if self._global_config.simulation else 0.0
-
-        return Twist(
-            linear=Vector3(linear_x, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
