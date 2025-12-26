@@ -68,5 +68,5 @@ class GlobalConfig(BaseSettings):
     @cached_property
     def mujoco_camera_position_float(self) -> tuple[float, ...]:
         if self.mujoco_camera_position is None:
-            return [-0.906, 0.008, 1.101, 4.931, 89.749, -46.378]
+            return (-0.906, 0.008, 1.101, 4.931, 89.749, -46.378)
         return tuple(_get_all_numbers(self.mujoco_camera_position))

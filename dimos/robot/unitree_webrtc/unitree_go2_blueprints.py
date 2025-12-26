@@ -28,6 +28,7 @@ from dimos.agents.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
+from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image
@@ -75,52 +76,33 @@ mac = autoconnect(
 linux = autoconnect(foxglove_bridge())
 
 basic = autoconnect(
+    go2_connection(),
     linux if platform.system() == "Linux" else mac,
     websocket_vis(),
-    go2_connection(),
-    mapper(voxel_size=0.5, global_publish_interval=2.5),
-    astar_planner(),
-    holonomic_local_planner(),
-    behavior_tree_navigator(),
-    wavefront_frontier_explorer(),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")
 
-
-newmapper = autoconnect(
-    linux if platform.system() == "Linux" else mac,
-    go2_connection(),
-    # these values are defaults but leaving here for clarity
-    #
-    # no publish interval - publishes immediately on each lidar frame
-    # voxel size same as input
-    voxel_mapper(voxel_size=0.05, publish_interval=0),
-).global_config(n_dask_workers=4, robot_model="unitree_go2")
-
-
-standard = autoconnect(
+nav = autoconnect(
     basic,
+    voxel_mapper(voxel_size=0.05),
+    cost_mapper(),
+    replanning_a_star_planner(),
+    wavefront_frontier_explorer(),
+).global_config(n_dask_workers=6, robot_model="unitree_go2")
+
+spatial = autoconnect(
+    nav,
     spatial_memory(),
-    object_tracking(frame_id="camera_link"),
     utilization(),
 ).global_config(n_dask_workers=8)
 
-test_new_nav = autoconnect(
-    go2_connection(),
-    voxel_mapper(voxel_size=0.05, publish_interval=0),
-    replanning_a_star_planner(),
-    wavefront_frontier_explorer(),
-    websocket_vis(),
-    foxglove_bridge(),
-).global_config(n_dask_workers=4, robot_model="unitree_go2")
-
-standard_with_jpeglcm = standard.transports(
+with_jpeglcm = nav.transports(
     {
         ("color_image", Image): JpegLcmTransport("/color_image", Image),
     }
 )
 
-standard_with_jpegshm = autoconnect(
-    standard.transports(
+with_jpegshm = autoconnect(
+    nav.transports(
         {
             ("color_image", Image): JpegShmTransport("/color_image", quality=75),
         }
@@ -141,13 +123,13 @@ _common_agentic = autoconnect(
 )
 
 agentic = autoconnect(
-    standard,
+    spatial,
     llm_agent(),
     _common_agentic,
 )
 
 agentic_ollama = autoconnect(
-    standard,
+    spatial,
     llm_agent(
         model="qwen3:8b",
         provider=Provider.OLLAMA,  # type: ignore[attr-defined]
@@ -158,7 +140,7 @@ agentic_ollama = autoconnect(
 )
 
 agentic_huggingface = autoconnect(
-    standard,
+    spatial,
     llm_agent(
         model="Qwen/Qwen2.5-1.5B-Instruct",
         provider=Provider.HUGGINGFACE,  # type: ignore[attr-defined]
