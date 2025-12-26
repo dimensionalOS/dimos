@@ -275,7 +275,6 @@ class LocalPlanner(Resource):
 
         return self._controller.advance(lookahead_point, current_odom)
 
-
     def _compute_final_rotation(self) -> Twist:
         with self._lock:
             path = self._path
@@ -341,3 +340,13 @@ class LocalPlanner(Resource):
                             image.data[py, px] = [255, 255, 255]
 
         return image
+
+    def _angular_twist(self, angular_velocity: float) -> Twist:
+        # In simulation, add a small forward velocity to help the locomotion
+        # policy execute rotation (some policies don't handle pure in-place rotation).
+        linear_x = self._min_linear_velocity if self._global_config.simulation else 0.0
+
+        return Twist(
+            linear=Vector3(linear_x, 0.0, 0.0),
+            angular=Vector3(0.0, 0.0, angular_velocity),
+        )

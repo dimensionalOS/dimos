@@ -13,35 +13,27 @@
 # limitations under the License.
 
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import functools
 import time
 
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
-from reactivex import interval
+from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
+from reactivex.subject import Subject
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
-from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
-from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.spec.map import Global3DMap, GlobalCostmap
+from dimos.spec.map import Global3DMap
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.metrics import timed
-
-
-@dataclass
-class CostmapConfig:
-    publish: bool = True
-    resolution: float = 0.05
-    can_pass_under: float = 0.6
-    can_climb: float = 0.15
+from dimos.utils.reactive import backpressure
 
 
 @dataclass
@@ -52,7 +44,6 @@ class Config(ModuleConfig):
     block_count: int = 2_000_000
     device: str = "CUDA:0"
     carve_columns: bool = True
-    costmap: CostmapConfig = field(default_factory=CostmapConfig)
 
 
 class VoxelGridMapper(Module):
@@ -61,7 +52,6 @@ class VoxelGridMapper(Module):
 
     lidar: In[LidarMessage]
     global_map: Out[LidarMessage]
-    global_costmap: Out[OccupancyGrid]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -91,15 +81,24 @@ class VoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
+        # Subject to trigger publishing, with backpressure to drop if busy
+        self._publish_trigger: Subject[None] = Subject()
+        self._disposables.add(
+            backpressure(self._publish_trigger)
+            .pipe(ops.map(lambda _: self.publish_global_map()))
+            .subscribe()
+        )
+
         lidar_unsub = self.lidar.subscribe(self._on_frame)
         self._disposables.add(Disposable(lidar_unsub))
 
         # If publish_interval > 0, publish on timer; otherwise publish on each frame
         if self.config.publish_interval > 0:
-            disposable = interval(self.config.publish_interval).subscribe(
-                lambda _: self.publish_global_map()
+            self._disposables.add(
+                interval(self.config.publish_interval).subscribe(
+                    lambda _: self._publish_trigger.on_next(None)
+                )
             )
-            self._disposables.add(disposable)
 
     @rpc
     def stop(self) -> None:
@@ -108,12 +107,10 @@ class VoxelGridMapper(Module):
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
         if self.config.publish_interval <= 0:
-            self.publish_global_map()
+            self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
         self.global_map.publish(self.get_global_pointcloud2())
-        if self.config.costmap.publish:
-            self.global_costmap.publish(self.get_global_occupancygrid())
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]
@@ -140,7 +137,6 @@ class VoxelGridMapper(Module):
 
         self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
         self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
-        self.get_global_occupancygrid.invalidate_cache(self)  # type: ignore[attr-defined]
 
     def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
         """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
@@ -200,15 +196,6 @@ class VoxelGridMapper(Module):
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
-
-    @simple_mcache
-    def get_global_occupancygrid(self) -> OccupancyGrid:
-        return height_cost_occupancy(
-            self.get_global_pointcloud2(),
-            resolution=self.config.costmap.resolution,
-            can_pass_under=self.config.costmap.can_pass_under,
-            can_climb=self.config.costmap.can_climb,
-        )
 
 
 # @timed()

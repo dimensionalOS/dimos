@@ -37,7 +37,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger(level=logging.INFO)
 
@@ -75,7 +75,7 @@ def _camera_info_static() -> CameraInfo:
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "unitree_go2_office_walk2"
+    dir_name = "unitree_go2_bigoffice"
 
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
@@ -164,6 +164,17 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         Module.__init__(self, *args, **kwargs)
 
     @rpc
+    def record(self, recording_name: str) -> None:
+        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
+        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
+
+        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
+        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
+
+        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
+        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
+
+    @rpc
     def start(self) -> None:
         super().start()
 
@@ -181,6 +192,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self._camera_info_thread.start()
 
         self.standup()
+        # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:
