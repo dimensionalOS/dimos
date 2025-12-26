@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
 import os
 from threading import Event, RLock, Thread
 import time
@@ -30,6 +29,7 @@ from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
+from dimos.navigation.replanning_a_star.controllers import Controller, PdController
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.path_clearance import PathClearance
 from dimos.navigation.replanning_a_star.path_distancer import PathDistancer
@@ -64,18 +64,10 @@ class LocalPlanner(Resource):
     _navigation_map: NavigationMap
 
     _speed: float = 0.55
-    _min_linear_velocity: float = 0.2
-    _min_angular_velocity: float = 0.2
-    _k_angular: float = 0.5
-    _k_derivative: float = 0.15
-    _max_angular_accel: float = 2.0
+    _control_frequency: float = 10
     _goal_tolerance: float = 0.3
     _orientation_tolerance: float = 0.35
-    _control_frequency: float = 10.0
-    _rotation_threshold: float = 90
-
-    _prev_yaw_error: float
-    _prev_angular_velocity: float
+    _controller: Controller
 
     def __init__(self, global_config: GlobalConfig, navigation_map: NavigationMap) -> None:
         self.cmd_vel = Subject()
@@ -90,8 +82,11 @@ class LocalPlanner(Resource):
         self._global_config = global_config
         self._navigation_map = navigation_map
 
-        self._prev_yaw_error = 0.0
-        self._prev_angular_velocity = 0.0
+        self._controller = PdController(
+            self._global_config,
+            self._speed,
+            self._control_frequency,
+        )
 
     def start(self) -> None:
         pass
@@ -174,7 +169,7 @@ class LocalPlanner(Resource):
             first_yaw = quaternion_to_euler(path.poses[0].orientation).z
             robot_yaw = current_odom.orientation.euler[2]
             initial_yaw_error = normalize_angle(first_yaw - robot_yaw)
-            self._prev_yaw_error = initial_yaw_error
+            self._controller.reset_yaw_error(initial_yaw_error)
             if abs(initial_yaw_error) < self._orientation_tolerance:
                 new_state = "path_following"
 
@@ -223,41 +218,6 @@ class LocalPlanner(Resource):
         if stop_event.is_set():
             logger.info("Local planner loop exited due to stop event.")
 
-    def _apply_min_velocity(self, velocity: float, min_velocity: float) -> float:
-        """Apply minimum velocity threshold, preserving sign. Returns 0 if velocity is 0."""
-        if velocity == 0.0:
-            return 0.0
-        if abs(velocity) < min_velocity:
-            return min_velocity if velocity > 0 else -min_velocity
-        return velocity
-
-    def _compute_angular_velocity(self, yaw_error: float, max_speed: float) -> float:
-        dt = 1.0 / self._control_frequency
-
-        # PD control: proportional + derivative damping
-        yaw_error_derivative = (yaw_error - self._prev_yaw_error) / dt
-        angular_velocity = self._k_angular * yaw_error - self._k_derivative * yaw_error_derivative
-
-        # Rate limiting: limit angular acceleration to prevent jerky corrections
-        max_delta = self._max_angular_accel * dt
-        angular_velocity = np.clip(
-            angular_velocity,
-            self._prev_angular_velocity - max_delta,
-            self._prev_angular_velocity + max_delta,
-        )
-
-        # Clamp to max speed
-        angular_velocity = np.clip(angular_velocity, -max_speed, max_speed)
-
-        # Apply minimum velocity threshold
-        angular_velocity = self._apply_min_velocity(angular_velocity, self._min_angular_velocity)
-
-        # Update state for next iteration
-        self._prev_yaw_error = yaw_error
-        self._prev_angular_velocity = angular_velocity
-
-        return float(angular_velocity)
-
     def _compute_initial_rotation(self) -> Twist:
         with self._lock:
             path = self._path
@@ -276,8 +236,7 @@ class LocalPlanner(Resource):
                 self._change_state("path_following")
             return self._compute_path_following()
 
-        angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
-        return self._angular_twist(angular_velocity)
+        return self._controller.rotate(yaw_error)
 
     def get_distance_to_path(self) -> float | None:
         with self._lock:
@@ -314,35 +273,8 @@ class LocalPlanner(Resource):
 
         lookahead_point = path_distancer.find_lookahead_point(closest_index)
 
-        direction = lookahead_point - current_pos
-        distance = np.linalg.norm(direction)
+        return self._controller.advance(lookahead_point, current_odom)
 
-        if distance < 1e-6:
-            # Robot is coincidentally at the lookahead point; skip this cycle.
-            return Twist()
-
-        robot_yaw = current_odom.orientation.euler[2]
-        desired_yaw = np.arctan2(direction[1], direction[0])
-        yaw_error = normalize_angle(desired_yaw - robot_yaw)
-
-        # Rotate-then-drive: if heading error is large, rotate in place first
-        rotation_threshold = self._rotation_threshold * math.pi / 180
-        if abs(yaw_error) > rotation_threshold:
-            angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
-            return Twist(
-                linear=Vector3(0.0, 0.0, 0.0),
-                angular=Vector3(0.0, 0.0, angular_velocity),
-            )
-
-        # When aligned, drive forward with proportional angular correction
-        angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
-        linear_velocity = self._speed * (1.0 - abs(yaw_error) / rotation_threshold)
-        linear_velocity = self._apply_min_velocity(linear_velocity, self._min_linear_velocity)
-
-        return Twist(
-            linear=Vector3(linear_velocity, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
 
     def _compute_final_rotation(self) -> Twist:
         with self._lock:
@@ -362,8 +294,7 @@ class LocalPlanner(Resource):
                 self._change_state("arrived")
             return Twist()
 
-        angular_velocity = self._compute_angular_velocity(yaw_error, self._speed)
-        return self._angular_twist(angular_velocity)
+        return self._controller.rotate(yaw_error)
 
     def _reset_state(self) -> None:
         with self._lock:
@@ -372,8 +303,7 @@ class LocalPlanner(Resource):
             self._path_clearance = None
             self._path_distancer = None
             self._pose_index = 0
-            self._prev_yaw_error = 0.0
-            self._prev_angular_velocity = 0.0
+            self._controller.reset_errors()
 
     def _make_debug_navigation_image(self, path: Path, path_clearance: PathClearance) -> Image:
         scale = 8
@@ -411,13 +341,3 @@ class LocalPlanner(Resource):
                             image.data[py, px] = [255, 255, 255]
 
         return image
-
-    def _angular_twist(self, angular_velocity: float) -> Twist:
-        # In simulation, add a small forward velocity to help the locomotion
-        # policy execute rotation (some policies don't handle pure in-place rotation).
-        linear_x = self._min_linear_velocity if self._global_config.simulation else 0.0
-
-        return Twist(
-            linear=Vector3(linear_x, 0.0, 0.0),
-            angular=Vector3(0.0, 0.0, angular_velocity),
-        )
