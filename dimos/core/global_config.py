@@ -37,6 +37,7 @@ class GlobalConfig(BaseSettings):
     mujoco_global_costmap_from_occupancy: str | None = None
     mujoco_global_map_from_pointcloud: str | None = None
     mujoco_start_pos: str = "-1.0, 1.0"
+    mujoco_steps_per_frame: int = 7
     robot_model: str | None = None
     robot_width: float = 0.3
     robot_rotation_diameter: float = 0.6
@@ -65,7 +66,7 @@ class GlobalConfig(BaseSettings):
         return (x, y)
 
     @cached_property
-    def mujoco_camera_position_float(self) -> tuple[float, ...] | None:
+    def mujoco_camera_position_float(self) -> tuple[float, ...]:
         if self.mujoco_camera_position is None:
-            return None
+            return [-0.906, 0.008, 1.101, 4.931, 89.749, -46.378]
         return tuple(_get_all_numbers(self.mujoco_camera_position))
