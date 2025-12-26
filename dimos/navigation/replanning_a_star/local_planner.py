@@ -24,7 +24,7 @@ from reactivex import Subject
 from dimos.core.global_config import GlobalConfig
 from dimos.core.resource import Resource
 from dimos.mapping.occupancy.visualize_path import visualize_path
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs import Twist
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.msgs.nav_msgs import Path
 from dimos.msgs.sensor_msgs import Image
