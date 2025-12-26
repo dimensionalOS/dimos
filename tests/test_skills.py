@@ -17,7 +17,7 @@
 import unittest
 from unittest import mock
 
-from dimos.agents.agent import OpenAIAgent
+from dimos.agents_deprecated.agent import OpenAIAgent
 from dimos.robot.robot import MockRobot
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.skills.skills import AbstractSkill
@@ -123,7 +123,7 @@ class SkillWithAgentTest(unittest.TestCase):
             skills=self.skill_library,
         )
 
-    @mock.patch("dimos.agents.agent.OpenAIAgent.run_observable_query")
+    @mock.patch("dimos.agents_deprecated.agent.OpenAIAgent.run_observable_query")
     def test_agent_skill_identification(self, mock_query):
         """Test that the agent can identify skills based on natural language."""
         # Mock the agent response
@@ -139,7 +139,7 @@ class SkillWithAgentTest(unittest.TestCase):
         self.assertEqual(response, "I found the TestSkill and executed it.")
 
     @mock.patch.object(TestSkill, "__call__")
-    @mock.patch("dimos.agents.agent.OpenAIAgent.run_observable_query")
+    @mock.patch("dimos.agents_deprecated.agent.OpenAIAgent.run_observable_query")
     def test_agent_skill_execution(self, mock_query, mock_skill_call):
         """Test that the agent can execute skills properly."""
         # Mock the agent and skill call
