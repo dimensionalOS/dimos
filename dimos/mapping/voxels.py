@@ -20,8 +20,9 @@ import time
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
-from reactivex import interval
+from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
+from reactivex.subject import Subject
 
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -32,6 +33,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.spec.map import Global3DMap
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.metrics import timed
+from dimos.utils.reactive import backpressure
 
 
 @dataclass
@@ -79,15 +81,24 @@ class VoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
+        # Subject to trigger publishing, with backpressure to drop if busy
+        self._publish_trigger: Subject[None] = Subject()
+        self._disposables.add(
+            backpressure(self._publish_trigger)
+            .pipe(ops.map(lambda _: self.publish_global_map()))
+            .subscribe()
+        )
+
         lidar_unsub = self.lidar.subscribe(self._on_frame)
         self._disposables.add(Disposable(lidar_unsub))
 
         # If publish_interval > 0, publish on timer; otherwise publish on each frame
         if self.config.publish_interval > 0:
-            disposable = interval(self.config.publish_interval).subscribe(
-                lambda _: self.publish_global_map()
+            self._disposables.add(
+                interval(self.config.publish_interval).subscribe(
+                    lambda _: self._publish_trigger.on_next(None)
+                )
             )
-            self._disposables.add(disposable)
 
     @rpc
     def stop(self) -> None:
@@ -96,7 +107,7 @@ class VoxelGridMapper(Module):
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
         if self.config.publish_interval <= 0:
-            self.publish_global_map()
+            self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
         self.global_map.publish(self.get_global_pointcloud2())
