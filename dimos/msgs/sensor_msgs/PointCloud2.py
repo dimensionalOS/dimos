@@ -240,24 +240,35 @@ class PointCloud2(Timestamped):
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
 
-        # Extract points from binary data
+        # Extract points from binary data using numpy for bulk conversion
         num_points = msg.width * msg.height
-        points = np.zeros((num_points, 3), dtype=np.float32)
-
         data = msg.data
         point_step = msg.point_step
 
-        for i in range(num_points):
-            base_offset = i * point_step
-
-            # Extract X, Y, Z (assuming float32, little endian)
-            x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
-            y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
-            z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
-
-            points[i, 0] = struct.unpack("<f", x_bytes)[0]
-            points[i, 1] = struct.unpack("<f", y_bytes)[0]
-            points[i, 2] = struct.unpack("<f", z_bytes)[0]
+        # Check if we can use fast numpy path (common case: sequential float32 x,y,z)
+        if x_offset == 0 and y_offset == 4 and z_offset == 8 and point_step >= 12:
+            # Fast path: direct numpy conversion for tightly packed float32 x,y,z
+            if point_step == 12:
+                # Perfectly packed x,y,z with no padding
+                points = np.frombuffer(data, dtype=np.float32).reshape(-1, 3)
+            else:
+                # Has additional fields after x,y,z (e.g., intensity), extract with stride
+                dt = np.dtype(
+                    [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("_pad", f"V{point_step - 12}")]
+                )
+                structured = np.frombuffer(data, dtype=dt, count=num_points)
+                points = np.column_stack((structured["x"], structured["y"], structured["z"]))
+        else:
+            # Slow fallback for non-standard field layouts
+            points = np.zeros((num_points, 3), dtype=np.float32)
+            for i in range(num_points):
+                base_offset = i * point_step
+                x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
+                y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
+                z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
+                points[i, 0] = struct.unpack("<f", x_bytes)[0]
+                points[i, 1] = struct.unpack("<f", y_bytes)[0]
+                points[i, 2] = struct.unpack("<f", z_bytes)[0]
 
         # Create Open3D point cloud
         pc = o3d.geometry.PointCloud()

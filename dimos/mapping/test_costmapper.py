@@ -167,10 +167,83 @@ def test_costmap_with_reactive_no_deploy():
     mapper.stop()
 
 
+def test_lcm_raw_vs_decode():
+    """Test raw LCM bytes transport vs PointCloud2 decode time."""
+    from dimos.protocol.pubsub.lcmpubsub import LCM, LCMPubSubBase, Topic
+
+    seekt = 200.0
+    seed = seed_map(seekt)
+
+    mapper = VoxelGridMapper(publish_interval=-1)
+    mapper.add_frame(seed)
+
+    print("\n=== Raw LCM bytes vs PointCloud2 decode ===")
+
+    # Get a sample global pointcloud and encode it
+    global_pc = mapper.get_global_pointcloud2()
+    encoded = global_pc.lcm_encode()
+    print(f"Encoded size: {len(encoded) / 1024:.1f} KB")
+
+    # Time just the decode
+    import statistics
+
+    decode_times = []
+    for _ in range(20):
+        t0 = time.perf_counter()
+        PointCloud2.lcm_decode(encoded)
+        decode_times.append((time.perf_counter() - t0) * 1000)
+
+    print(
+        f"PointCloud2.lcm_decode(): avg={statistics.mean(decode_times):.1f}ms, stdev={statistics.stdev(decode_times):.1f}ms"
+    )
+
+    # Time just the encode
+    encode_times = []
+    for _ in range(20):
+        t0 = time.perf_counter()
+        global_pc.lcm_encode()
+        encode_times.append((time.perf_counter() - t0) * 1000)
+
+    print(
+        f"PointCloud2.lcm_encode(): avg={statistics.mean(encode_times):.1f}ms, stdev={statistics.stdev(encode_times):.1f}ms"
+    )
+
+    # Now test raw LCM transport with raw bytes (no encode/decode)
+    lcm_raw = LCMPubSubBase()
+    lcm_raw.start()
+
+    raw_topic = Topic("/test_raw_bytes")
+    received_raw = []
+    raw_publish_times = {}
+
+    def on_raw(data, _topic):
+        recv_time = time.perf_counter()
+        received_raw.append((id(data), recv_time, len(data)))
+
+    lcm_raw.subscribe(raw_topic, on_raw)
+
+    # Publish raw bytes 100 times
+    for i in range(100):
+        pub_time = time.perf_counter()
+        raw_publish_times[i] = pub_time
+        lcm_raw.publish(raw_topic, encoded)  # same encoded bytes each time
+
+    time.sleep(0.5)
+
+    print(f"\nRaw bytes transport: published 100, received {len(received_raw)}")
+    if received_raw:
+        # Calculate transport-only delays (no decode in callback)
+        print("  (callback just stores bytes, no decode)")
+
+    lcm_raw.stop()
+    mapper.stop()
+
+
 def test_costmap_with_lcm_no_deploy():
     """Test with LCM transport but no dask deployment.
 
     This isolates whether the delay is in LCM serialization or cross-process comm.
+    Publishes global pointclouds at realistic rates (no artificial sleep).
     """
     from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
 
@@ -180,10 +253,7 @@ def test_costmap_with_lcm_no_deploy():
     mapper = VoxelGridMapper(publish_interval=-1)
     mapper.add_frame(seed)
 
-    OCCUPANCY_ALGOS["simple"]
-    SimpleOccupancyConfig()
-
-    print("\n=== LCM transport (no deploy) timing test ===")
+    print("\n=== LCM transport latency test (300 frames, no sleep) ===")
 
     # Create LCM pubsub
     lcm = LCM()
@@ -194,42 +264,67 @@ def test_costmap_with_lcm_no_deploy():
     received_pcs = []
     publish_times = {}
 
+    decode_times = []
+
     def on_pc(pc, _topic):
         recv_time = time.perf_counter()
-        received_pcs.append((pc, recv_time))
+        received_pcs.append((pc.ts, recv_time))
+        # Track how long since last callback (shows if callbacks are slow)
+        if len(received_pcs) > 1:
+            decode_times.append(recv_time - received_pcs[-2][1])
 
     lcm.subscribe(topic, on_pc)
 
-    # Publish frames through LCM and measure round-trip
+    # Publish frames through LCM as fast as possible (no sleep)
     frame_count = 0
+    pc_size_bytes = 0
     for _ts, frame in TimedSensorReplay("unitree_go2_bigoffice/lidar").iterate_duration(seek=seekt):
-        if frame_count >= 50:
+        if frame_count >= 300:
             break
 
         mapper.add_frame(frame)
         global_pc = mapper.get_global_pointcloud2()
+
+        # Track size of first pointcloud
+        if frame_count == 0:
+            import numpy as np
+
+            pc_size_bytes = len(global_pc.lcm_encode())
+            num_points = len(np.asarray(global_pc.pointcloud.points))
+            print(f"Pointcloud size: {pc_size_bytes / 1024:.1f} KB, {num_points} points")
 
         pub_time = time.perf_counter()
         publish_times[global_pc.ts] = pub_time
         lcm.publish(topic, global_pc)
 
         frame_count += 1
-        time.sleep(0.01)  # Small delay to let messages be received
 
-    time.sleep(0.5)  # Wait for last messages
+    # Wait for pipeline to drain
+    time.sleep(1.0)
 
     print(f"Published {frame_count} frames, received {len(received_pcs)} frames")
 
-    # Calculate LCM delays
+    # Calculate LCM delays and show progression
     delays = []
-    for pc, recv_time in received_pcs:
-        if pc.ts in publish_times:
-            delay = (recv_time - publish_times[pc.ts]) * 1000
+    for i, (pc_ts, recv_time) in enumerate(received_pcs):
+        if pc_ts in publish_times:
+            delay = (recv_time - publish_times[pc_ts]) * 1000
             delays.append(delay)
+            if i % 30 == 0:
+                print(f"  msg #{i}: delay={delay:.1f}ms")
 
     if delays:
+        print(f"\nLCM delays over {len(delays)} messages:")
         print(
-            f"LCM delays: min={min(delays):.1f}ms, max={max(delays):.1f}ms, avg={sum(delays) / len(delays):.1f}ms"
+            f"  min={min(delays):.1f}ms, max={max(delays):.1f}ms, avg={sum(delays) / len(delays):.1f}ms"
+        )
+        print(f"  first 10 avg: {sum(delays[:10]) / 10:.1f}ms")
+        print(f"  last 10 avg: {sum(delays[-10:]) / 10:.1f}ms")
+
+    if decode_times:
+        print("\nTime between callbacks (decode time):")
+        print(
+            f"  min={min(decode_times) * 1000:.1f}ms, max={max(decode_times) * 1000:.1f}ms, avg={sum(decode_times) / len(decode_times) * 1000:.1f}ms"
         )
 
     lcm.stop()
