@@ -25,11 +25,11 @@ from dimos.utils.testing import TimedSensorReplay
 
 
 @pytest.mark.tool
-def build_map():
+def test_build_map():
     mapper = VoxelGridMapper(publish_interval=-1)
 
-    for frame in TimedSensorReplay("unitree_go2_bigoffice/lidar").iterate():
-        print(frame)
+    for ts, frame in TimedSensorReplay("unitree_go2_bigoffice/lidar").iterate_duration():
+        print(ts, frame)
         mapper.add_frame(frame)
 
     pickle_file = _get_data_dir() / "unitree_go2_bigoffice_map.pickle"
