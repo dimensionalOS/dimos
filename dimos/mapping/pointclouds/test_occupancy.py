@@ -30,6 +30,7 @@ from dimos.mapping.pointclouds.occupancy import (
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
@@ -72,7 +73,8 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
     ],
 )
 def test_occupancy2(big_office, occupancy_fn, output_name):
-    cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="map")
+    expected_image = Image.from_file(get_data(output_name))
+    cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="")
 
     start = time.perf_counter()
     occupancy_grid = occupancy_fn(cloud)
@@ -83,8 +85,8 @@ def test_occupancy2(big_office, occupancy_fn, output_name):
     print("-" * 100)
 
     actual = visualize_occupancy_grid(occupancy_grid, "rainbow")
-
-    actual.save(f"data/{output_name}")
+    actual.ts = expected_image.ts
+    np.testing.assert_array_equal(actual, expected_image)
 
 
 class HeightCostMoment(Go2Moment):
