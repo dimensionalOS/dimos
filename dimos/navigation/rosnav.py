@@ -24,25 +24,28 @@ import logging
 import threading
 import time
 
-from geometry_msgs.msg import (  # type: ignore[attr-defined]
+from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
     PointStamped as ROSPointStamped,
     PoseStamped as ROSPoseStamped,
     TwistStamped as ROSTwistStamped,
 )
-from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
-import rclpy
-from rclpy.node import Node
+from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined, import-untyped]
+import rclpy  # type: ignore[import-untyped]
+from rclpy.node import Node  # type: ignore[import-untyped]
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import (  # type: ignore[attr-defined]
+from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
     Joy as ROSJoy,
     PointCloud2 as ROSPointCloud2,
 )
-from std_msgs.msg import Bool as ROSBool, Int8 as ROSInt8  # type: ignore[attr-defined]
-from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
+from std_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    Bool as ROSBool,
+    Int8 as ROSInt8,
+)
+from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
 
 from dimos import spec
-from dimos.agents2 import Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.geometry_msgs import (
@@ -60,7 +63,7 @@ from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import euler_to_quaternion
 
-logger = setup_logger("dimos.robot.unitree_webrtc.nav_bot", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
 @dataclass
@@ -78,14 +81,14 @@ class ROSNav(
     config: Config
     default_config = Config
 
-    goal_req: In[PoseStamped] = None  # type: ignore
+    goal_req: In[PoseStamped]
 
-    pointcloud: Out[PointCloud2] = None  # type: ignore
-    global_pointcloud: Out[PointCloud2] = None  # type: ignore
+    pointcloud: Out[PointCloud2]
+    global_pointcloud: Out[PointCloud2]
 
-    goal_active: Out[PoseStamped] = None  # type: ignore
-    path_active: Out[Path] = None  # type: ignore
-    cmd_vel: Out[Twist] = None  # type: ignore
+    goal_active: Out[PoseStamped]
+    path_active: Out[Path]
+    cmd_vel: Out[Twist]
 
     # Using RxPY Subjects for reactive data flow instead of storing state
     _local_pointcloud_subject: Subject  # type: ignore[type-arg]
@@ -203,10 +206,10 @@ class ROSNav(
             position=Vector3(msg.point.x, msg.point.y, msg.point.z),
             orientation=Quaternion(0.0, 0.0, 0.0, 1.0),
         )
-        self.goal_active.publish(dimos_pose)  # type: ignore[no-untyped-call]
+        self.goal_active.publish(dimos_pose)
 
     def _on_ros_cmd_vel(self, msg: ROSTwistStamped) -> None:
-        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))  # type: ignore[no-untyped-call]
+        self.cmd_vel.publish(Twist.from_ros_msg(msg.twist))
 
     def _on_ros_registered_scan(self, msg: ROSPointCloud2) -> None:
         self._local_pointcloud_subject.on_next(msg)
@@ -217,7 +220,7 @@ class ROSNav(
     def _on_ros_path(self, msg: ROSPath) -> None:
         dimos_path = Path.from_ros_msg(msg)
         dimos_path.frame_id = "base_link"
-        self.path_active.publish(dimos_path)  # type: ignore[no-untyped-call]
+        self.path_active.publish(dimos_path)
 
     def _on_ros_tf(self, msg: ROSTFMessage) -> None:
         ros_tf = TFMessage.from_ros_msg(msg)

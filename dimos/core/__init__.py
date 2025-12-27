@@ -9,7 +9,7 @@ from rich.console import Console
 
 import dimos.core.colors as colors
 from dimos.core.core import rpc
-from dimos.core.module import Module, ModuleBase, ModuleConfig
+from dimos.core.module import Module, ModuleBase, ModuleConfig, ModuleConfigT
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
@@ -19,10 +19,13 @@ from dimos.core.transport import (
     pLCMTransport,
     pSHMTransport,
 )
-from dimos.protocol.rpc.lcmrpc import LCMRPC
+from dimos.protocol.rpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
 from dimos.protocol.tf import LCMTF, TF, PubSubTF, TFConfig, TFSpec
 from dimos.utils.actor_registry import ActorRegistry
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 __all__ = [
     "LCMRPC",
@@ -34,6 +37,7 @@ __all__ = [
     "Module",
     "ModuleBase",
     "ModuleConfig",
+    "ModuleConfigT",
     "Out",
     "PubSubTF",
     "RPCSpec",
@@ -91,7 +95,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
         **kwargs,
     ):
         console = Console()
-        with console.status(f"deploying [green]{actor_class.__name__}", spinner="arc"):
+        with console.status(f"deploying [green]{actor_class.__name__}\n", spinner="arc"):
             actor = dask_client.submit(  # type: ignore[no-untyped-call]
                 actor_class,
                 *args,
@@ -100,7 +104,7 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
             ).result()
 
             worker = actor.set_ref(actor).result()
-            print(f"deployed: {colors.blue(actor)} @ {colors.orange('worker ' + str(worker))}")
+            logger.info("Deployed module.", module=actor._cls.__name__, worker_id=worker)
 
             # Register actor deployment in shared memory
             ActorRegistry.update(str(actor), str(worker))

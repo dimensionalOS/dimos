@@ -7,24 +7,11 @@ This directory contains Docker configuration files to run DimOS and the ROS auto
 **For fresh Ubuntu systems**, use the automated setup script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dimensionalOS/dimos/dimos-rosnav-docker/docker/navigation/setup.sh | bash
-```
-
-Or download and run locally:
-
-```bash
-wget https://raw.githubusercontent.com/dimensionalOS/dimos/dimos-rosnav-docker/docker/navigation/setup.sh
-chmod +x setup.sh
-./setup.sh
+wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/docker/navigation/setup.sh?token=GHSAT0AAAAAADHM56ULLVHMU72XDZSKOZAM2ISY24A
+bash setup.sh
 ```
 
 **Installation time:** Approximately 20-30 minutes depending on your internet connection.
-
-**After installation, start the demo:**
-```bash
-cd ~/dimos/docker/navigation
-./start.sh --all
-```
 
 **Options:**
 ```bash

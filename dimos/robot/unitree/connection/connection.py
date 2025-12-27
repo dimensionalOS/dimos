@@ -20,24 +20,24 @@ import time
 from typing import TypeAlias
 
 from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
-from go2_webrtc_driver.constants import (  # type: ignore[import-untyped]
-    RTC_TOPIC,
-    SPORT_CMD,
-    VUI_COLOR,
-)
-from go2_webrtc_driver.webrtc_driver import (  # type: ignore[import-untyped]
-    Go2WebRTCConnection,
-    WebRTCConnectionMethod,
-)
 import numpy as np
 from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
+from unitree_webrtc_connect.constants import (  # type: ignore[import-untyped]
+    RTC_TOPIC,
+    SPORT_CMD,
+    VUI_COLOR,
+)
+from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+    UnitreeWebRTCConnection as LegionConnection,
+    WebRTCConnectionMethod,
+)
 
 from dimos.core import rpc
 from dimos.core.resource import Resource
-from dimos.msgs.geometry_msgs import Pose, Transform, TwistStamped
+from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
@@ -82,7 +82,7 @@ class UnitreeWebRTCConnection(Resource):
         self.mode = mode
         self.stop_timer: threading.Timer | None = None
         self.cmd_vel_timeout = 0.2
-        self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
+        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
         self.connect()
 
     def connect(self) -> None:
@@ -131,7 +131,11 @@ class UnitreeWebRTCConnection(Resource):
 
         async def async_disconnect() -> None:
             try:
-                self.move(TwistStamped())
+                # Send stop command directly since we're already in the event loop.
+                self.conn.datachannel.pub_sub.publish_without_callback(
+                    RTC_TOPIC["WIRELESS_CONTROLLER"],
+                    data={"lx": 0, "ly": 0, "rx": 0, "ry": 0},
+                )
                 await self.conn.disconnect()
             except Exception:
                 pass
@@ -144,7 +148,7 @@ class UnitreeWebRTCConnection(Resource):
         if self.thread.is_alive():
             self.thread.join(timeout=2.0)
 
-    def move(self, twist: TwistStamped, duration: float = 0.0) -> bool:
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
         """Send movement command to the robot using Twist commands.
 
         Args:
@@ -274,8 +278,8 @@ class UnitreeWebRTCConnection(Resource):
     def lowstate_stream(self) -> Observable[LowStateMsg]:
         return backpressure(self.unitree_sub_stream(RTC_TOPIC["LOW_STATE"]))
 
-    def standup_ai(self):  # type: ignore[no-untyped-def]
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})
+    def standup_ai(self) -> bool:
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["BalanceStand"]})  # type: ignore[no-any-return]
 
     def standup_normal(self) -> bool:
         self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandUp"]})
@@ -284,15 +288,15 @@ class UnitreeWebRTCConnection(Resource):
         return True
 
     @rpc
-    def standup(self):  # type: ignore[no-untyped-def]
+    def standup(self) -> bool:
         if self.mode == "ai":
-            return self.standup_ai()  # type: ignore[no-untyped-call]
+            return self.standup_ai()
         else:
             return self.standup_normal()
 
     @rpc
-    def liedown(self):  # type: ignore[no-untyped-def]
-        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})
+    def liedown(self) -> bool:
+        return self.publish_request(RTC_TOPIC["SPORT_MOD"], {"api_id": SPORT_CMD["StandDown"]})  # type: ignore[no-any-return]
 
     async def handstand(self):  # type: ignore[no-untyped-def]
         return self.publish_request(
@@ -346,7 +350,7 @@ class UnitreeWebRTCConnection(Resource):
 
         return subject.pipe(ops.finally_action(stop))
 
-    def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
+    def get_video_stream(self, fps: int = 30) -> Observable[Image]:
         """Get the video stream from the robot's camera.
 
         Implements the AbstractRobot interface method.
@@ -358,9 +362,7 @@ class UnitreeWebRTCConnection(Resource):
         Returns:
             Observable: An observable stream of video frames or None if video is not available.
         """
-        print("Starting WebRTC video stream...")
-        stream = self.video_stream()
-        return stream  # type: ignore[no-any-return]
+        return self.video_stream()  # type: ignore[no-any-return]
 
     def stop(self) -> bool:  # type: ignore[no-redef]
         """Stop the robot's movement.
@@ -399,18 +401,3 @@ class UnitreeWebRTCConnection(Resource):
 
         if hasattr(self, "thread") and self.thread.is_alive():
             self.thread.join(timeout=2.0)
-
-
-# def deploy(dimos: DimosCluster, ip: str) -> None:
-#     from dimos.robot.foxglove_bridge import FoxgloveBridge
-
-#     connection = dimos.deploy(UnitreeWebRTCConnection, ip=ip)
-
-#     bridge = FoxgloveBridge(
-#         shm_channels=[
-#             "/image#sensor_msgs.Image",
-#             "/lidar#sensor_msgs.PointCloud2",
-#         ]
-#     )
-#     bridge.start()
-#     connection.start()

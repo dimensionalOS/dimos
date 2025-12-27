@@ -24,11 +24,11 @@ import time
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi  # type: ignore[import-not-found]
+import gi  # type: ignore[import-untyped,import-not-found]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstVideo", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-not-found]
+from gi.repository import GLib, Gst  # type: ignore[import-untyped,import-not-found]
 
 # Initialize GStreamer
 Gst.init(None)

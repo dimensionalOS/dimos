@@ -35,10 +35,10 @@ assert dimos
 
 
 class Navigation(Module):
-    mov: Out[Vector3] = None
-    lidar: In[LidarMessage] = None
-    target_position: In[Vector3] = None
-    odometry: In[Odometry] = None
+    mov: Out[Vector3]
+    lidar: In[LidarMessage]
+    target_position: In[Vector3]
+    odometry: In[Odometry]
 
     odom_msg_count = 0
     lidar_msg_count = 0
@@ -87,7 +87,7 @@ def test_classmethods() -> None:
     # Check that we have the expected RPC methods
     assert "navigate_to" in class_rpcs, "navigate_to should be in rpcs"
     assert "start" in class_rpcs, "start should be in rpcs"
-    assert len(class_rpcs) == 8
+    assert len(class_rpcs) == 9
 
     # Check that the values are callable
     assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
