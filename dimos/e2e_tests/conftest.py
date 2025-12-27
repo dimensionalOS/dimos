@@ -21,6 +21,7 @@ from dimos.e2e_tests.dimos_cli_call import DimosCliCall
 from dimos.e2e_tests.lcm_spy import LcmSpy
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
+from dimos.msgs.std_msgs.Bool import Bool
 
 
 def _pose(x: float, y: float, theta: float) -> PoseStamped:
@@ -42,13 +43,14 @@ def lcm_spy() -> Iterator[LcmSpy]:
 @pytest.fixture
 def follow_points(lcm_spy: LcmSpy):
     def fun(*, points: list[tuple[float, float, float]], fail_message: str) -> None:
-        topic = "/rpc/HolonomicLocalPlanner/is_goal_reached/res"
+        topic = "/goal_reached#std_msgs.Bool"
         lcm_spy.save_topic(topic)
 
         for x, y, theta in points:
             lcm_spy.publish("/goal_request#geometry_msgs.PoseStamped", _pose(x, y, theta))
-            lcm_spy.wait_for_message_pickle_result(
+            lcm_spy.wait_for_message_result(
                 topic,
+                Bool,
                 predicate=lambda v: bool(v),
                 fail_message=fail_message,
                 timeout=60.0,

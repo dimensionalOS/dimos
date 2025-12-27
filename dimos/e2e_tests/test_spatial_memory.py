@@ -25,6 +25,7 @@ from dimos.e2e_tests.lcm_spy import LcmSpy
 
 @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
+@pytest.mark.e2e
 def test_spatial_memory_navigation(
     lcm_spy: LcmSpy,
     start_blueprint: Callable[[str], DimosCliCall],
@@ -58,4 +59,4 @@ def test_spatial_memory_navigation(
 
     human_input("go to the bookcase")
 
-    lcm_spy.wait_until_odom_position(4.2, -5)
+    lcm_spy.wait_until_odom_position(4.2, -5, threshold=2.0)

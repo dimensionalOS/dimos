@@ -180,8 +180,6 @@ class LcmSpy(LCMService):
         def predicate(msg: PoseStamped):
             pos = msg.position
             distance = math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
-            print("=" * 100)
-            print("distance", distance)
             return distance < threshold
 
         self.wait_for_message_result(
