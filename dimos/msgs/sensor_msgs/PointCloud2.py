@@ -102,9 +102,9 @@ class PointCloud2(Timestamped):
     def __setstate__(self, state: dict[str, object]) -> None:
         """Restore from pickled state."""
         points_obj = state.pop("_pcd_numpy", None)
-        points: np.ndarray = (
+        points: np.ndarray[tuple[int, int], np.dtype[np.float32]] = (
             points_obj if isinstance(points_obj, np.ndarray) else np.zeros((0, 3), dtype=np.float32)
-        )  # type: ignore[type-arg]
+        )  # type: ignore[assignment]
         self.__dict__.update(state)  # type: ignore[arg-type]
         # Recreate tensor from numpy
         self._pcd_tensor = o3d.t.geometry.PointCloud()
