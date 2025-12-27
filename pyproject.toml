@@ -296,8 +296,45 @@ module = [
     "mujoco",
     "mujoco_playground.*",
     "etils",
+    "xarm.*",
+    "dimos_lcm.*",
+    "piper_sdk.*",
+    "plum.*",
+    "pycuda.*",
+    "pycuda",
+    "plotext",
+    "torchreid",
+    "open_clip",
+    "pyzed.*",
+    "pyzed",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "dimos.msgs",
+    "dimos.msgs.*",
+    "dimos.msgs.geometry_msgs.*",
+    "dimos.msgs.sensor_msgs.*",
+    "dimos.msgs.trajectory_msgs.*",
+    "dimos.utils.cli.human.*",
+    "dimos.utils.cli.plot",
+    "dimos.utils.gpu_utils",
+    "dimos.hardware.sensors.camera.module",
+    "dimos.hardware.sensors.camera.zed.*",
+    "dimos.hardware.manipulators",
+    "dimos.hardware.manipulators.*",
+    "dimos.manipulation",
+    "dimos.manipulation.*",
+    "dimos.manipulation.control.*",
+    "dimos.manipulation.control.servo_control.*",
+    "dimos.manipulation.control.trajectory_controller.*",
+    "dimos.robot.unitree_webrtc.unitree_g1_blueprints",
+    "dimos.perception.segmentation.sam_2d_seg",
+    "dimos.models.embedding.treid",
+    "dimos.models.embedding.mobileclip",
+]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
