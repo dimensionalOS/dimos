@@ -162,6 +162,9 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
         super().start()
 
     def stop(self) -> None:
+        if hasattr(self, "transport") and self.transport:
+            self.transport.stop()
+            self.transport = None
         super().stop()
 
     @rpc
