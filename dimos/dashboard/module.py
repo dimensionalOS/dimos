@@ -78,12 +78,37 @@ class Dashboard(Module):
     https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH")
     logger: logging.Logger | None = None
 
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self,
+        *port: int,
+        dashboard_host: str,
+        terminal_commands: dict[str, str] | None,
+        https_enabled: bool,
+        zellij_host: str,
+        zellij_port: int,
+        zellij_token: str | None,
+        zellij_url: str | None,
+        zellij_session_name: str | None,
+        https_key_path: str | None,
+        https_cert_path: str | None,
+        logger: logging.Logger | None,
+    ) -> None:
         super().__init__()
-        self.__dict__.update(kwargs)
+        self.port = port
+        self.dashboard_host = dashboard_host
+        self.terminal_commands = terminal_commands
+        self.https_enabled = https_enabled
+        self.zellij_host = zellij_host
+        self.zellij_port = zellij_port
+        self.zellij_token = zellij_token
+        self.zellij_url = zellij_url
+        self.zellij_session_name = zellij_session_name
+        self.https_key_path = https_key_path
+        self.https_cert_path = https_cert_path
+        self.logger = logger
 
     @rpc
-    def start(self, **kwargs) -> None:
+    def start(self) -> None:
         # there's basically 3 parts to rerun
         # 1. some kind of python init that does local message aggregation
         # 2. the actual (separate process) grpc message aggregator
