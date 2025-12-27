@@ -85,7 +85,7 @@ class PointCloud2(Timestamped):
         if not hasattr(self, "_pcd_tensor"):
             self._pcd_tensor = o3d.t.geometry.PointCloud()
 
-    def __getstate__(self) -> dict:
+    def __getstate__(self) -> dict[str, object]:
         """Serialize to numpy for pickling (tensors don't pickle well)."""
         self._ensure_tensor_initialized()
         state = self.__dict__.copy()
@@ -99,10 +99,13 @@ class PointCloud2(Timestamped):
         state["_pcd_legacy_cache"] = None
         return state
 
-    def __setstate__(self, state: dict) -> None:
+    def __setstate__(self, state: dict[str, object]) -> None:
         """Restore from pickled state."""
-        points = state.pop("_pcd_numpy", np.zeros((0, 3), dtype=np.float32))
-        self.__dict__.update(state)
+        points_obj = state.pop("_pcd_numpy", None)
+        points: np.ndarray = (
+            points_obj if isinstance(points_obj, np.ndarray) else np.zeros((0, 3), dtype=np.float32)
+        )  # type: ignore[type-arg]
+        self.__dict__.update(state)  # type: ignore[arg-type]
         # Recreate tensor from numpy
         self._pcd_tensor = o3d.t.geometry.PointCloud()
         if len(points) > 0:
@@ -193,7 +196,8 @@ class PointCloud2(Timestamped):
         self._ensure_tensor_initialized()
         if "positions" not in self._pcd_tensor.point:
             return np.zeros((0, 3), dtype=np.float32)
-        return self._pcd_tensor.point["positions"].numpy()
+        result: np.ndarray = self._pcd_tensor.point["positions"].numpy()  # type: ignore[type-arg]
+        return result
 
     @functools.cache
     def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
@@ -404,7 +408,7 @@ class PointCloud2(Timestamped):
         self._ensure_tensor_initialized()
         if "positions" not in self._pcd_tensor.point:
             return 0
-        return self._pcd_tensor.point["positions"].shape[0]
+        return int(self._pcd_tensor.point["positions"].shape[0])
 
     def filter_by_height(
         self,

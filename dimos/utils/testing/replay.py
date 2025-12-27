@@ -256,13 +256,15 @@ class TimedSensorReplay(SensorReplay[T]):
     def iterate(self, loop: bool = False) -> Iterator[T | Any]:
         return (x[1] for x in super().iterate(loop=loop))  # type: ignore[index]
 
-    def iterate_duration(self, **kwargs) -> Iterator[tuple[float, T] | Any]:
+    def iterate_duration(self, **kwargs: Any) -> Iterator[tuple[float, T] | Any]:
         """Iterate with timestamps relative to the start of the dataset."""
         first_ts = self.first_timestamp()
+        if first_ts is None:
+            return
         for ts, data in self.iterate_ts(**kwargs):
             yield (ts - first_ts, data)
 
-    def iterate_realtime(self, speed: float = 1.0, **kwargs) -> Iterator[T | Any]:
+    def iterate_realtime(self, speed: float = 1.0, **kwargs: Any) -> Iterator[T | Any]:
         """Iterate data, sleeping to match original timing.
 
         Args:

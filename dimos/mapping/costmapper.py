@@ -30,16 +30,17 @@ from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.metrics import timed
 
-# @dataclass
-# class Config(ModuleConfig):
-#    algo: str = "height_cost"
-#    config: OccupancyConfig = field(default_factory=HeightCostConfig)
-
 
 @dataclass
 class Config(ModuleConfig):
-    algo: str = "simple"
-    config: OccupancyConfig = field(default_factory=SimpleOccupancyConfig)
+    algo: str = "height_cost"
+    config: OccupancyConfig = field(default_factory=HeightCostConfig)
+
+
+# @dataclass
+# class Config(ModuleConfig):
+#    algo: str = "simple"
+#    config: OccupancyConfig = field(default_factory=SimpleOccupancyConfig)
 
 
 class CostMapper(Module):
@@ -65,7 +66,7 @@ class CostMapper(Module):
     def stop(self) -> None:
         super().stop()
 
-    @timed()
+    # @timed()  # TODO: fix thread leak in timed decorator
     def _calculate_costmap(self, msg: LidarMessage) -> OccupancyGrid:
         fn = OCCUPANCY_ALGOS[self.config.algo]
         return fn(msg, **asdict(self.config.config))
