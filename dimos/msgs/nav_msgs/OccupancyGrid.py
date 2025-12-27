@@ -406,3 +406,13 @@ class OccupancyGrid(Timestamped):
             frame_id=self.frame_id,
             ts=self.ts,
         )
+
+    def cell_value(self, world_position: Vector3) -> int:
+        grid_position = self.world_to_grid(world_position)
+        x = int(grid_position.x)
+        y = int(grid_position.y)
+
+        if not (0 <= x < self.width and 0 <= y < self.height):
+            return CostValues.UNKNOWN
+
+        return int(self.grid[y, x])

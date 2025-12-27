@@ -12,23 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+import math
 
-# Video/Camera constants
-VIDEO_WIDTH = 320
-VIDEO_HEIGHT = 240
-DEPTH_CAMERA_FOV = 160
 
-# Depth camera range/filtering constants
-MAX_RANGE = 3
-MIN_RANGE = 0.2
-MAX_HEIGHT = 1.2
-
-# Lidar constants
-LIDAR_RESOLUTION = 0.05
-
-# Simulation timing constants
-VIDEO_FPS = 20
-LIDAR_FPS = 2
-
-LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"
+def angle_diff(a: float, b: float) -> float:
+    return (a - b + math.pi) % (2 * math.pi) - math.pi
