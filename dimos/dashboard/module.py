@@ -64,34 +64,22 @@ class Dashboard(Module):
         The start_dashboard_server_thread mostly handles the logic for Zellij, with only an iframe for rerun.
     """
 
-    # the following just get passed directly to start_dashboard_server_thread
-    port: int = int(os.environ.get("DASHBOARD_PORT", "4000"))
-    dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost")
-    terminal_commands: dict[str, str] | None = None
-    https_enabled: bool = env_bool("HTTPS_ENABLED", False)
-    zellij_host: str = os.environ.get("ZELLIJ_HOST", "127.0.0.1")
-    zellij_port: int = int(os.environ.get("ZELLIJ_PORT", "8083"))
-    zellij_token: str | None = os.environ.get("ZELLIJ_TOKEN")
-    zellij_url: str | None = None
-    zellij_session_name: str | None = "dimos-dashboard"
-    https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH")
-    https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH")
-    logger: logging.Logger | None = None
-
     def __init__(
         self,
-        *port: int,
-        dashboard_host: str,
-        terminal_commands: dict[str, str] | None,
-        https_enabled: bool,
-        zellij_host: str,
-        zellij_port: int,
-        zellij_token: str | None,
-        zellij_url: str | None,
-        zellij_session_name: str | None,
-        https_key_path: str | None,
-        https_cert_path: str | None,
-        logger: logging.Logger | None,
+        *,
+        port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
+        dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
+        terminal_commands: dict[str, str] | None = None,
+        https_enabled: bool = env_bool("HTTPS_ENABLED", False),
+        zellij_host: str = os.environ.get("ZELLIJ_HOST", "127.0.0.1"),
+        zellij_port: int = int(os.environ.get("ZELLIJ_PORT", "8083")),
+        zellij_token: str | None = os.environ.get("ZELLIJ_TOKEN"),
+        zellij_url: str | None = None,
+        zellij_session_name: str | None = "dimos-dashboard",
+        https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH"),
+        https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH"),
+        logger: logging.Logger | None = None,
+        auto_open: bool = False,
     ) -> None:
         super().__init__()
         self.port = port
@@ -106,6 +94,7 @@ class Dashboard(Module):
         self.https_key_path = https_key_path
         self.https_cert_path = https_cert_path
         self.logger = logger
+        self.auto_open = auto_open
 
     @rpc
     def start(self) -> None:
