@@ -28,6 +28,31 @@ from dimos.utils.data import _get_data_dir, get_data
 from dimos.utils.testing import TimedSensorReplay
 
 
+def test_load_old_pickled_pcd():
+    """Test that old pickled LidarMessage/PointCloud2 objects load correctly."""
+    # Load one frame from replay (old pickle format)
+    for _ts, frame in TimedSensorReplay("unitree_go2_bigoffice/lidar").iterate_duration():
+        print(f"Frame type: {type(frame)}")
+        print(f"Frame __dict__ keys: {list(frame.__dict__.keys())}")
+
+        # Check if pointcloud is in __dict__ (old format)
+        if "pointcloud" in frame.__dict__:
+            old_pcd = frame.__dict__["pointcloud"]
+            print(f"Old pointcloud in __dict__: {type(old_pcd)}, points: {len(old_pcd.points)}")
+
+        # Try accessing via property
+        print("Accessing .pointcloud property...")
+        pcd = frame.pointcloud
+        print(f"Pointcloud: {type(pcd)}, points: {len(pcd.points)}")
+
+        # Try as_numpy
+        print("Accessing .as_numpy()...")
+        pts = frame.as_numpy()
+        print(f"Numpy points shape: {pts.shape}")
+
+        break  # Just test one frame
+
+
 def test_costmap_direct_no_deploy():
     """Test costmap calculation directly without dask deployment.
 
