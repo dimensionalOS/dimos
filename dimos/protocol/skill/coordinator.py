@@ -273,7 +273,7 @@ class SkillCoordinator(Module):
     _updates_available: asyncio.Event | None
     _agent_loop: asyncio.AbstractEventLoop | None
 
-    def __init__(self, **kwargs) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._static_containers = []
         self._dynamic_containers = []
