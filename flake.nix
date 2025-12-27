@@ -43,7 +43,7 @@
           python312Packages.gst-python
 
           ### Open3D & build-time
-          eigen cmake ninja jsoncpp libjpeg libpng
+          eigen cmake ninja jsoncpp libjpeg libjpeg_turbo libpng
 
           ### LCM (Lightweight Communications and Marshalling)
           lcm
@@ -55,15 +55,23 @@
         devShell = pkgs.mkShell {
           packages = devPackages;
           shellHook = ''
-            export LD_LIBRARY_PATH="${pkgs.lib.makeLibraryPath [
+            # Create nvidia-only lib symlinks to avoid glibc conflicts
+            NVIDIA_LIBS_DIR="/tmp/nix-nvidia-libs-$$"
+            mkdir -p "$NVIDIA_LIBS_DIR"
+            for lib in /usr/lib/libcuda.so* /usr/lib/libnvidia*.so*; do
+              [ -e "$lib" ] && ln -sf "$lib" "$NVIDIA_LIBS_DIR/" 2>/dev/null
+            done
+
+            export LD_LIBRARY_PATH="$NVIDIA_LIBS_DIR:${pkgs.lib.makeLibraryPath [
               pkgs.stdenv.cc.cc.lib pkgs.libGL pkgs.libGLU pkgs.mesa pkgs.glfw
               pkgs.xorg.libX11 pkgs.xorg.libXi pkgs.xorg.libXext pkgs.xorg.libXrandr
               pkgs.xorg.libXinerama pkgs.xorg.libXcursor pkgs.xorg.libXfixes
               pkgs.xorg.libXrender pkgs.xorg.libXdamage pkgs.xorg.libXcomposite
               pkgs.xorg.libxcb pkgs.xorg.libXScrnSaver pkgs.xorg.libXxf86vm
               pkgs.udev pkgs.portaudio pkgs.SDL2.dev pkgs.zlib pkgs.glib pkgs.gtk3
-              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm pkgs.pcre2
-              pkgs.gst_all_1.gstreamer pkgs.gst_all_1.gst-plugins-base]}:$LD_LIBRARY_PATH"
+              pkgs.gdk-pixbuf pkgs.gobject-introspection pkgs.lcm
+              pkgs.gst_all_1.gstreamer pkgs.gst_all_1.gst-plugins-base
+              pkgs.libjpeg_turbo]}:$LD_LIBRARY_PATH"
 
             export DISPLAY=:0
             export GI_TYPELIB_PATH="${pkgs.gst_all_1.gstreamer}/lib/girepository-1.0:${pkgs.gst_all_1.gst-plugins-base}/lib/girepository-1.0:$GI_TYPELIB_PATH"

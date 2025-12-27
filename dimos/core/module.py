@@ -16,6 +16,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
 import inspect
+import sys
 import threading
 from typing import (
     Any,
@@ -27,13 +28,14 @@ from typing import (
 
 from dask.distributed import Actor, get_worker
 from reactivex.disposable import CompositeDisposable
+from typing_extensions import TypeVar
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.protocol.rpc import LCMRPC, RPCSpec  # type: ignore[attr-defined]
+from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.tf import LCMTF, TFSpec
@@ -72,9 +74,14 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 class ModuleConfig:
     rpc_transport: type[RPCSpec] = LCMRPC
     tf_transport: type[TFSpec] = LCMTF
+    frame_id_prefix: str | None = None
+    frame_id: str | None = None
 
 
-class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
+ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
+
+
+class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
     _rpc: RPCSpec | None = None
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
@@ -84,7 +91,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 
     rpc_calls: list[str] = []
 
-    default_config = ModuleConfig
+    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -100,6 +107,13 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
+
+    @property
+    def frame_id(self) -> str:
+        base = self.config.frame_id or self.__class__.__name__
+        if self.config.frame_id_prefix:
+            return f"{self.config.frame_id_prefix}/{base}"
+        return base
 
     @rpc
     def start(self) -> None:
@@ -275,9 +289,36 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return result[0] if len(result) == 1 else result
 
 
-class DaskModule(ModuleBase):
+class DaskModule(ModuleBase[ModuleConfigT]):
     ref: Actor
     worker: int
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        """Set class-level None attributes for In/Out type annotations.
+
+        This is needed because Dask's Actor proxy looks up attributes on the class
+        (not instance) when proxying attribute access. Without class-level attributes,
+        the proxy would fail with AttributeError even though the instance has the attrs.
+        """
+        super().__init_subclass__(**kwargs)
+
+        # Get type hints for this class only (not inherited ones).
+        globalns = {}
+        for c in cls.__mro__:
+            if c.__module__ in sys.modules:
+                globalns.update(sys.modules[c.__module__].__dict__)
+
+        try:
+            hints = get_type_hints(cls, globalns=globalns, include_extras=True)
+        except (NameError, AttributeError, TypeError):
+            hints = {}
+
+        for name, ann in hints.items():
+            origin = get_origin(ann)
+            if origin in (In, Out):
+                # Set class-level attribute if not already set.
+                if not hasattr(cls, name) or getattr(cls, name) is None:
+                    setattr(cls, name, None)
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         self.ref = None  # type: ignore[assignment]
@@ -319,7 +360,7 @@ class DaskModule(ModuleBase):
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
 
-    # called from remote
+    @rpc
     def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
         stream = getattr(self, stream_name, None)
         if not stream:

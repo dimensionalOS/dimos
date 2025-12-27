@@ -19,7 +19,7 @@ from dimos.msgs.sensor_msgs import CameraInfo, Image as ImageMsg, PointCloud2
 
 
 class Image(Protocol):
-    image: Out[ImageMsg]
+    color_image: Out[ImageMsg]
 
 
 class Camera(Image):

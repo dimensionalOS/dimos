@@ -33,7 +33,7 @@ from dimos.utils.logging_config import setup_logger
 from .b1_command import B1Command
 
 # Setup logger with DEBUG level for troubleshooting
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_b1.connection", level=logging.DEBUG)
+logger = setup_logger(level=logging.DEBUG)
 
 
 class RobotMode:
@@ -52,11 +52,11 @@ class B1ConnectionModule(Module):
     internally converts to B1Command format, and sends UDP packets at 50Hz.
     """
 
-    cmd_vel: In[TwistStamped] = None  # type: ignore[assignment]  # Timestamped velocity commands from ROS
-    mode_cmd: In[Int32] = None  # type: ignore[assignment]  # Mode changes
-    odom_in: In[Odometry] = None  # type: ignore[assignment]  # External odometry from ROS SLAM/lidar
+    cmd_vel: In[TwistStamped]  # Timestamped velocity commands from ROS
+    mode_cmd: In[Int32]  # Mode changes
+    odom_in: In[Odometry]  # External odometry from ROS SLAM/lidar
 
-    odom_pose: Out[PoseStamped] = None  # type: ignore[assignment]  # Converted pose for internal use
+    odom_pose: Out[PoseStamped]  # Converted pose for internal use
 
     def __init__(  # type: ignore[no-untyped-def]
         self, ip: str = "192.168.12.1", port: int = 9090, test_mode: bool = False, *args, **kwargs
@@ -282,7 +282,7 @@ class B1ConnectionModule(Module):
                 position=msg.pose.pose.position,
                 orientation=msg.pose.pose.orientation,
             )
-            self.odom_pose.publish(pose_stamped)  # type: ignore[no-untyped-call]
+            self.odom_pose.publish(pose_stamped)
 
     def _watchdog_loop(self) -> None:
         """Single watchdog thread that monitors command freshness."""

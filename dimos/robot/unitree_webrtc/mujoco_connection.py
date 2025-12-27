@@ -44,7 +44,7 @@ from dimos.utils.logging_config import setup_logger
 
 ODOM_FREQUENCY = 50
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 T = TypeVar("T")
 
@@ -58,10 +58,15 @@ class MujocoConnection:
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
 
+        # Pre-download the mujoco_sim data.
         get_data("mujoco_sim")
 
+        # Trigger the download of the mujoco_menajerie package. This is so it
+        # doesn't trigger in the mujoco process where it can time out.
+        import mujoco_playground
+
         self.global_config = global_config
-        self.process: subprocess.Popen[str] | None = None
+        self.process: subprocess.Popen[bytes] | None = None
         self.shm_data: ShmWriter | None = None
         self._last_video_seq = 0
         self._last_odom_seq = 0
@@ -80,12 +85,10 @@ class MujocoConnection:
 
         # Launch the subprocess
         try:
+            # mjpython must be used macOS (because of launch_passive inside mujoco_process.py)
+            executable = sys.executable if sys.platform != "darwin" else "mjpython"
             self.process = subprocess.Popen(
-                [sys.executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
+                [executable, str(LAUNCHER_PATH), config_pickle, shm_names_json],
             )
 
         except Exception as e:
@@ -93,8 +96,9 @@ class MujocoConnection:
             raise RuntimeError(f"Failed to start MuJoCo subprocess: {e}") from e
 
         # Wait for process to be ready
-        ready_timeout = 10
+        ready_timeout = 300.0
         start_time = time.time()
+        assert self.process is not None
         while time.time() - start_time < ready_timeout:
             if self.process.poll() is not None:
                 exit_code = self.process.returncode
@@ -114,6 +118,13 @@ class MujocoConnection:
             return
 
         self._is_cleaned_up = True
+
+        # clean up open file descriptors
+        if self.process:
+            if self.process.stderr:
+                self.process.stderr.close()
+            if self.process.stdout:
+                self.process.stdout.close()
 
         # Cancel any pending timers
         if self._stop_timer:
@@ -163,11 +174,11 @@ class MujocoConnection:
         self.odom_stream.cache_clear()
         self.video_stream.cache_clear()
 
-    def standup(self) -> None:
-        print("standup supressed")
+    def standup(self) -> bool:
+        return True
 
-    def liedown(self) -> None:
-        print("liedown supressed")
+    def liedown(self) -> bool:
+        return True
 
     def get_video_frame(self) -> NDArray[Any] | None:
         if self.shm_data is None:
@@ -265,9 +276,9 @@ class MujocoConnection:
 
         return self._create_stream(get_video_as_image, VIDEO_FPS, "Video")
 
-    def move(self, twist: Twist, duration: float = 0.0) -> None:
+    def move(self, twist: Twist, duration: float = 0.0) -> bool:
         if self._is_cleaned_up or self.shm_data is None:
-            return
+            return True
 
         linear = np.array([twist.linear.x, twist.linear.y, twist.linear.z], dtype=np.float32)
         angular = np.array([twist.angular.x, twist.angular.y, twist.angular.z], dtype=np.float32)
@@ -287,6 +298,8 @@ class MujocoConnection:
             self._stop_timer = threading.Timer(duration, stop_movement)
             self._stop_timer.daemon = True
             self._stop_timer.start()
+        return True
 
-    def publish_request(self, topic: str, data: dict[str, Any]) -> None:
+    def publish_request(self, topic: str, data: dict[str, Any]) -> dict[Any, Any]:
         print(f"publishing request, topic={topic}, data={data}")
+        return {}

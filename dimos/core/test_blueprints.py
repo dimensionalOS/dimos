@@ -14,6 +14,11 @@
 
 import pytest
 
+from dimos.core._test_future_annotations_helper import (
+    FutureData,
+    FutureModuleIn,
+    FutureModuleOut,
+)
 from dimos.core.blueprints import (
     ModuleBlueprint,
     ModuleBlueprintSet,
@@ -22,7 +27,6 @@ from dimos.core.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
-from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall
@@ -57,8 +61,8 @@ class Data3:
 
 
 class ModuleA(Module):
-    data1: Out[Data1] = None
-    data2: Out[Data2] = None
+    data1: Out[Data1]
+    data2: Out[Data2]
 
     @rpc
     def get_name(self) -> str:
@@ -66,9 +70,9 @@ class ModuleA(Module):
 
 
 class ModuleB(Module):
-    data1: In[Data1] = None
-    data2: In[Data2] = None
-    data3: Out[Data3] = None
+    data1: In[Data1]
+    data2: In[Data2]
+    data3: Out[Data3]
 
     _module_a_get_name: callable = None
 
@@ -85,7 +89,7 @@ class ModuleB(Module):
 
 
 class ModuleC(Module):
-    data3: In[Data3] = None
+    data3: In[Data3]
 
 
 module_a = ModuleA.blueprint
@@ -157,7 +161,7 @@ def test_build_happy_path() -> None:
 
     blueprint_set = autoconnect(module_a(), module_b(), module_c())
 
-    coordinator = blueprint_set.build(GlobalConfig())
+    coordinator = blueprint_set.build()
 
     try:
         assert isinstance(coordinator, ModuleCoordinator)
@@ -189,10 +193,10 @@ def test_build_happy_path() -> None:
 
 def test_name_conflicts_are_reported() -> None:
     class ModuleA(Module):
-        shared_data: Out[Data1] = None
+        shared_data: Out[Data1]
 
     class ModuleB(Module):
-        shared_data: In[Data2] = None
+        shared_data: In[Data2]
 
     blueprint_set = autoconnect(ModuleA.blueprint(), ModuleB.blueprint())
 
@@ -209,12 +213,12 @@ def test_name_conflicts_are_reported() -> None:
 
 def test_multiple_name_conflicts_are_reported() -> None:
     class Module1(Module):
-        sensor_data: Out[Data1] = None
-        control_signal: Out[Data2] = None
+        sensor_data: Out[Data1]
+        control_signal: Out[Data2]
 
     class Module2(Module):
-        sensor_data: In[Data2] = None
-        control_signal: In[Data3] = None
+        sensor_data: In[Data2]
+        control_signal: In[Data3]
 
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint())
 
@@ -230,14 +234,14 @@ def test_multiple_name_conflicts_are_reported() -> None:
 
 def test_that_remapping_can_resolve_conflicts() -> None:
     class Module1(Module):
-        data: Out[Data1] = None
+        data: Out[Data1]
 
     class Module2(Module):
-        data: Out[Data2] = None  # Would conflict with Module1.data
+        data: Out[Data2]  # Would conflict with Module1.data
 
     class Module3(Module):
-        data1: In[Data1] = None
-        data2: In[Data2] = None
+        data1: In[Data1]
+        data2: In[Data2]
 
     # Without remapping, should raise conflict error
     blueprint_set = autoconnect(Module1.blueprint(), Module2.blueprint(), Module3.blueprint())
@@ -268,10 +272,10 @@ def test_remapping() -> None:
 
     # Define test modules with connections that will be remapped
     class SourceModule(Module):
-        color_image: Out[Data1] = None  # Will be remapped to 'remapped_data'
+        color_image: Out[Data1]  # Will be remapped to 'remapped_data'
 
     class TargetModule(Module):
-        remapped_data: In[Data1] = None  # Receives the remapped connection
+        remapped_data: In[Data1]  # Receives the remapped connection
 
     # Create blueprint with remapping
     blueprint_set = autoconnect(
@@ -293,7 +297,7 @@ def test_remapping() -> None:
     assert ("color_image", Data1) not in blueprint_set._all_name_types
 
     # Build and verify connections work
-    coordinator = blueprint_set.build(GlobalConfig())
+    coordinator = blueprint_set.build()
 
     try:
         source_instance = coordinator.get_instance(SourceModule)
@@ -314,6 +318,53 @@ def test_remapping() -> None:
 
         # The topic should be /remapped_data since that's the remapped name
         assert target_instance.remapped_data.transport.topic == "/remapped_data"
+
+    finally:
+        coordinator.stop()
+
+
+def test_future_annotations_support() -> None:
+    """Test that modules using `from __future__ import annotations` work correctly.
+
+    PEP 563 (future annotations) stores annotations as strings instead of actual types.
+    This test verifies that _make_module_blueprint properly resolves string annotations
+    to the actual In/Out types.
+    """
+
+    # Test that connections are properly extracted from modules with future annotations
+    out_blueprint = _make_module_blueprint(FutureModuleOut, args=(), kwargs={})
+    assert len(out_blueprint.connections) == 1
+    assert out_blueprint.connections[0] == ModuleConnection(
+        name="data", type=FutureData, direction="out"
+    )
+
+    in_blueprint = _make_module_blueprint(FutureModuleIn, args=(), kwargs={})
+    assert len(in_blueprint.connections) == 1
+    assert in_blueprint.connections[0] == ModuleConnection(
+        name="data", type=FutureData, direction="in"
+    )
+
+
+def test_future_annotations_autoconnect() -> None:
+    """Test that autoconnect works with modules using `from __future__ import annotations`."""
+
+    blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
+
+    coordinator = blueprint_set.build()
+
+    try:
+        out_instance = coordinator.get_instance(FutureModuleOut)
+        in_instance = coordinator.get_instance(FutureModuleIn)
+
+        assert out_instance is not None
+        assert in_instance is not None
+
+        # Both should have transports set
+        assert out_instance.data.transport is not None
+        assert in_instance.data.transport is not None
+
+        # They should be connected via the same transport
+        assert out_instance.data.transport.topic == in_instance.data.transport.topic
 
     finally:
         coordinator.stop()

@@ -32,12 +32,11 @@ class ModuleCoordinator(Resource):
     def __init__(
         self,
         n: int | None = None,
-        memory_limit: str = "auto",
         global_config: GlobalConfig | None = None,
     ) -> None:
         cfg = global_config or GlobalConfig()
         self._n = n if n is not None else cfg.n_dask_workers
-        self._memory_limit = memory_limit
+        self._memory_limit = cfg.memory_limit
 
     def start(self) -> None:
         self._client = core.start(self._n, self._memory_limit)
