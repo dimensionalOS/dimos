@@ -19,6 +19,7 @@ python-dotenv
 openai
 tiktoken>=0.8.0
 Flask>=2.2
+Jinja2>=2.11,<3
 python-multipart==0.0.20
 reactivex
 git+https://github.com/dimensionalOS/rxpy-backpressure.git
