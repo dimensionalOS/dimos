@@ -76,6 +76,7 @@ class VoxelGridMapper(Module):
         self._dev = dev
         self._voxel_hashmap = self.vbg.hashmap()
         self._key_dtype = self._voxel_hashmap.key_tensor().dtype
+        self._latest_frame_ts: float = 0.0
 
     @rpc
     def start(self) -> None:
@@ -120,6 +121,10 @@ class VoxelGridMapper(Module):
 
     # @timed()  # TODO: fix thread leak in timed decorator
     def add_frame(self, frame: PointCloud2) -> None:
+        # Track latest frame timestamp for proper latency measurement
+        if hasattr(frame, "ts") and frame.ts:
+            self._latest_frame_ts = frame.ts
+
         # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
 
@@ -186,7 +191,7 @@ class VoxelGridMapper(Module):
             # we are potentially moving out of CUDA here
             ensure_legacy_pcd(self.get_global_pointcloud()),
             frame_id=self.frame_id,
-            ts=time.time(),
+            ts=self._latest_frame_ts if self._latest_frame_ts else time.time(),
         )
 
     @simple_mcache
