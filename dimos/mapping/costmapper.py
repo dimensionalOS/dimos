@@ -13,8 +13,6 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
-import threading
-import time
 
 from reactivex import operators as ops
 
@@ -35,12 +33,6 @@ from dimos.utils.metrics import timed
 class Config(ModuleConfig):
     algo: str = "height_cost"
     config: OccupancyConfig = field(default_factory=HeightCostConfig)
-
-
-# @dataclass
-# class Config(ModuleConfig):
-#    algo: str = "simple"
-#    config: OccupancyConfig = field(default_factory=SimpleOccupancyConfig)
 
 
 class CostMapper(Module):
