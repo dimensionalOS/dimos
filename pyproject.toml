@@ -311,6 +311,7 @@ module = [
     "open_clip",
     "pyzed.*",
     "pyzed",
+    "unitree_webrtc_connect.*",
 ]
 ignore_missing_imports = true
 
@@ -337,6 +338,7 @@ module = [
     "dimos.perception.segmentation.sam_2d_seg",
     "dimos.models.embedding.treid",
     "dimos.models.embedding.mobileclip",
+    "dimos.mapping.pointclouds.occupancy",
 ]
 ignore_errors = true
 
