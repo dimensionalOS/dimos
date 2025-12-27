@@ -39,6 +39,7 @@ from dimos.utils.reactive import backpressure
 @dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
+    # -1 never publishes, 0 publishes on every frame, >0 publishes at interval in seconds
     publish_interval: float = 0
     voxel_size: float = 0.05
     block_count: int = 2_000_000
