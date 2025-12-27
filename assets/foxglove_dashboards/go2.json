@@ -3,13 +3,13 @@
     "3D!3ezwzdr": {
       "cameraState": {
         "perspective": false,
-        "distance": 43.169390434335696,
-        "phi": 24.156826900904342,
-        "thetaOffset": 0.3206650831361572,
+        "distance": 10.26684166532264,
+        "phi": 29.073691502600532,
+        "thetaOffset": 93.32472375597958,
         "targetOffset": [
-          -1.497522603906827,
-          0.6788138652418518,
-          -1.8419947991856367e-20
+          3.280168913303102,
+          -1.418093876569801,
+          -2.6619087209849424e-16
         ],
         "target": [
           0,
@@ -29,7 +29,8 @@
       "followMode": "follow-pose",
       "scene": {
         "transforms": {
-          "labelSize": 0.1
+          "labelSize": 0.1,
+          "axisSize": 0.51
         }
       },
       "transforms": {
@@ -49,7 +50,7 @@
           "visible": false
         },
         "frame:map": {
-          "visible": true
+          "visible": false
         },
         "frame:world": {
           "visible": false
@@ -86,7 +87,9 @@
           "visible": false
         },
         "/camera_info": {
-          "visible": true
+          "visible": true,
+          "distance": 1,
+          "color": "#c4bcffff"
         },
         "/detectorDB/pointcloud/0": {
           "visible": true,
@@ -117,23 +120,24 @@
           "flatColor": "#00aaffff"
         },
         "/global_map": {
-          "visible": false,
+          "visible": true,
           "colorField": "z",
           "colorMode": "colormap",
           "colorMap": "turbo",
-          "pointSize": 3.66,
-          "pointShape": "square",
+          "pointSize": 4,
+          "pointShape": "circle",
           "explicitAlpha": 1,
           "cubeSize": 0.05,
           "cubeOutline": false,
           "flatColor": "#ed8080ff",
-          "minValue": -0.1
+          "minValue": -0.1,
+          "decayTime": 0
         },
         "/global_costmap": {
           "visible": true,
           "colorMode": "custom",
-          "unknownColor": "#80808000",
-          "minColor": "#36377cff",
+          "unknownColor": "#ff000000",
+          "minColor": "#484981ff",
           "maxColor": "#000000ff",
           "frameLocked": false,
           "drawBehind": false
@@ -208,6 +212,14 @@
         "/debug_navigation": {
           "visible": false,
           "cameraInfoTopic": "/camera_info"
+        },
+        "/path": {
+          "visible": true,
+          "lineWidth": 0.03,
+          "gradient": [
+            "#ff6b6bff",
+            "#ff0000ff"
+          ]
         }
       },
       "layers": {
@@ -233,6 +245,31 @@
           "frameId": "world",
           "divisions": 25,
           "lineWidth": 1
+        },
+        "aac2d29a-9580-442f-8067-104830c336c8": {
+          "displayMode": "auto",
+          "fallbackColor": "#ffffff",
+          "showAxis": false,
+          "axisScale": 1,
+          "showOutlines": true,
+          "opacity": 1,
+          "visible": true,
+          "frameLocked": true,
+          "instanceId": "aac2d29a-9580-442f-8067-104830c336c8",
+          "label": "URDF",
+          "layerId": "foxglove.Urdf",
+          "sourceType": "filePath",
+          "url": "",
+          "filePath": "/home/lesh/coding/dimos/dimos/robot/unitree/go2/go2.urdf",
+          "parameter": "",
+          "topic": "",
+          "framePrefix": "",
+          "order": 2,
+          "links": {
+            "base_link": {
+              "visible": true
+            }
+          }
         }
       },
       "publish": {
@@ -245,7 +282,7 @@
         "poseEstimateThetaDeviation": 0.26179939
       },
       "imageMode": {},
-      "followTf": "world"
+      "followTf": "map"
     },
     "command-center-extension.command-center!3xr2po0": {},
     "Plot!3cog9zw": {
@@ -256,6 +293,46 @@
           "enabled": true,
           "color": "#4e98e2",
           "id": "a1ff9a80-7a45-48ff-bdb1-232bda7bd492"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/metrics/get_global_pointcloud.data",
+          "enabled": true,
+          "color": "#f5774d",
+          "id": "5fe70fbd-33f9-4b15-849f-c7c49988af95"
+        },
+        {
+          "timestampMethod": "receiveTime",
+          "value": "/metrics/add_frame.data",
+          "enabled": true,
+          "color": "#f7df71",
+          "id": "bb4a56f8-78ae-45cb-850e-48c462dab40f"
+        }
+      ],
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": false,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    },
+    "Plot!47kna9v": {
+      "paths": [
+        {
+          "timestampMethod": "publishTime",
+          "value": "/global_map.header.stamp.sec",
+          "enabled": true,
+          "color": "#4e98e2",
+          "id": "19f95865-4d9e-4d38-b9d7-d227319d8ebd"
+        },
+        {
+          "timestampMethod": "publishTime",
+          "value": "/global_costmap.header.stamp.sec",
+          "enabled": true,
+          "color": "#f5774d",
+          "id": "86ddc0e2-8e9c-4d52-bd5a-d02cb0357efe"
         }
       ],
       "showXAxisLabels": true,
@@ -493,32 +570,6 @@
         "calibrationTopic": "/camera_info"
       },
       "foxglovePanelTitle": ""
-    },
-    "Plot!47kna9v": {
-      "paths": [
-        {
-          "timestampMethod": "receiveTime",
-          "value": "/global_map.header.stamp.sec",
-          "enabled": true,
-          "color": "#4e98e2",
-          "id": "19f95865-4d9e-4d38-b9d7-d227319d8ebd"
-        },
-        {
-          "timestampMethod": "receiveTime",
-          "value": "/global_costmap.header.stamp.sec",
-          "enabled": true,
-          "color": "#f5774d",
-          "id": "86ddc0e2-8e9c-4d52-bd5a-d02cb0357efe"
-        }
-      ],
-      "showXAxisLabels": true,
-      "showYAxisLabels": true,
-      "showLegend": true,
-      "legendDisplay": "floating",
-      "showPlotValuesInLegend": false,
-      "isSynced": true,
-      "xAxisVal": "timestamp",
-      "sidebarDimension": 240
     }
   },
   "globalVariables": {},
@@ -541,7 +592,8 @@
           "direction": "row"
         },
         "second": "Image!3mnp456",
-        "direction": "column"
+        "direction": "column",
+        "splitPercentage": 38.08411214953271
       },
       "direction": "column",
       "splitPercentage": 50.116550116550115
