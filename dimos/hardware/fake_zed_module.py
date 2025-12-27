@@ -17,13 +17,14 @@
 FakeZEDModule - Replays recorded ZED data for testing without hardware.
 """
 
+from dataclasses import dataclass
 import functools
 import logging
 
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 
-from dimos.core import Module, Out, rpc
+from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.std_msgs import Header
@@ -31,32 +32,38 @@ from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay
 
-logger = setup_logger(__name__, level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
-class FakeZEDModule(Module):
+@dataclass
+class FakeZEDModuleConfig(ModuleConfig):
+    frame_id: str = "zed_camera"
+
+
+class FakeZEDModule(Module[FakeZEDModuleConfig]):
     """
     Fake ZED module that replays recorded data instead of real camera.
     """
 
     # Define LCM outputs (same as ZEDModule)
-    color_image: Out[Image] = None  # type: ignore[assignment]
-    depth_image: Out[Image] = None  # type: ignore[assignment]
-    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
-    pose: Out[PoseStamped] = None  # type: ignore[assignment]
+    color_image: Out[Image]
+    depth_image: Out[Image]
+    camera_info: Out[CameraInfo]
+    pose: Out[PoseStamped]
 
-    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:  # type: ignore[no-untyped-def]
+    default_config = FakeZEDModuleConfig
+    config: FakeZEDModuleConfig
+
+    def __init__(self, recording_path: str, **kwargs: object) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
         Args:
             recording_path: Path to recorded data directory
-            frame_id: TF frame ID for messages
         """
         super().__init__(**kwargs)
 
         self.recording_path = recording_path
-        self.frame_id = frame_id
         self._running = False
 
         # Initialize TF publisher
@@ -214,7 +221,7 @@ class FakeZEDModule(Module):
         try:
             # Color image stream
             unsub = self._get_color_stream().subscribe(
-                lambda msg: self.color_image.publish(msg) if self._running else None  # type: ignore[no-untyped-call]
+                lambda msg: self.color_image.publish(msg) if self._running else None
             )
             self._disposables.add(unsub)
             logger.info("Started color image replay stream")
@@ -224,7 +231,7 @@ class FakeZEDModule(Module):
         try:
             # Depth image stream
             unsub = self._get_depth_stream().subscribe(
-                lambda msg: self.depth_image.publish(msg) if self._running else None  # type: ignore[no-untyped-call]
+                lambda msg: self.depth_image.publish(msg) if self._running else None
             )
             self._disposables.add(unsub)
             logger.info("Started depth image replay stream")
@@ -244,7 +251,7 @@ class FakeZEDModule(Module):
         try:
             # Camera info stream
             unsub = self._get_camera_info_stream().subscribe(
-                lambda msg: self.camera_info.publish(msg) if self._running else None  # type: ignore[no-untyped-call]
+                lambda msg: self.camera_info.publish(msg) if self._running else None
             )
             self._disposables.add(unsub)
             logger.info("Started camera info replay stream")
@@ -265,7 +272,7 @@ class FakeZEDModule(Module):
     def _publish_pose(self, msg) -> None:  # type: ignore[no-untyped-def]
         """Publish pose and TF transform."""
         if msg:
-            self.pose.publish(msg)  # type: ignore[no-untyped-call]
+            self.pose.publish(msg)
 
             # Publish TF transform from world to camera
             import time

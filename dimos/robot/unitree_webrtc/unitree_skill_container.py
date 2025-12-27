@@ -19,7 +19,7 @@ import difflib
 import time
 from typing import TYPE_CHECKING
 
-from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
+from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
@@ -32,7 +32,7 @@ from dimos.utils.logging_config import setup_logger
 if TYPE_CHECKING:
     from dimos.core.rpc_client import RpcCall
 
-logger = setup_logger("dimos.robot.unitree_webrtc.unitree_skill_container")
+logger = setup_logger()
 
 
 _UNITREE_COMMANDS = {
@@ -104,11 +104,6 @@ class UnitreeSkillContainer(SkillModule):
         while True:
             yield str(datetime.datetime.now())
             time.sleep(1)
-
-    @skill()
-    def speak(self, text: str) -> str:
-        """Speak text out loud through the robot's speakers."""
-        return f"This is being said aloud: {text}"
 
     @skill()
     def execute_sport_command(self, command_name: str) -> str:

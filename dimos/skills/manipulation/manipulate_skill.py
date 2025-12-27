@@ -28,7 +28,7 @@ from dimos.types.manipulation import (
 from dimos.utils.logging_config import setup_logger
 
 # Initialize logger
-logger = setup_logger("dimos.skills.manipulate_skill")
+logger = setup_logger()
 
 
 class Manipulate(AbstractManipulationSkill):

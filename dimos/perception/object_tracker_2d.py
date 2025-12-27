@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import logging
 import threading
 import time
@@ -30,36 +31,34 @@ from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Module, ModuleConfig, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.perception.object_tracker_2d", level=logging.INFO)
+logger = setup_logger(level=logging.INFO)
 
 
-class ObjectTracker2D(Module):
+@dataclass
+class ObjectTracker2DConfig(ModuleConfig):
+    frame_id: str = "camera_link"
+
+
+class ObjectTracker2D(Module[ObjectTracker2DConfig]):
     """Pure 2D object tracking module using OpenCV's CSRT tracker."""
 
-    color_image: In[Image] = None  # type: ignore[assignment]
+    color_image: In[Image]
 
-    detection2darray: Out[Detection2DArray] = None  # type: ignore[assignment]
-    tracked_overlay: Out[Image] = None  # type: ignore[assignment]  # Visualization output
+    detection2darray: Out[Detection2DArray]
+    tracked_overlay: Out[Image]  # Visualization output
 
-    def __init__(
-        self,
-        frame_id: str = "camera_link",
-    ) -> None:
-        """
-        Initialize 2D object tracking module using OpenCV's CSRT tracker.
+    default_config = ObjectTracker2DConfig
+    config: ObjectTracker2DConfig
 
-        Args:
-            frame_id: TF frame ID for the camera (default: "camera_link")
-        """
-        super().__init__()
-
-        self.frame_id = frame_id
+    def __init__(self, **kwargs: object) -> None:
+        """Initialize 2D object tracking module using OpenCV's CSRT tracker."""
+        super().__init__(**kwargs)
 
         # Tracker state
         self.tracker = None
@@ -178,7 +177,7 @@ class ObjectTracker2D(Module):
             detections_length=0, header=Header(time.time(), self.frame_id), detections=[]
         )
         self._latest_detection2d = empty_2d
-        self.detection2darray.publish(empty_2d)  # type: ignore[no-untyped-call]
+        self.detection2darray.publish(empty_2d)
 
     @rpc
     def stop_track(self) -> bool:

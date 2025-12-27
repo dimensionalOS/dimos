@@ -41,7 +41,7 @@ from dimos.types.manipulation import (
 )
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.types.manipulation_history")
+logger = setup_logger()
 
 
 @dataclass

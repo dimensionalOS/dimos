@@ -21,7 +21,7 @@ from collections import deque
 
 from dimos_lcm.vision_msgs import Detection3D  # type: ignore[import-untyped]
 import numpy as np
-from scipy.spatial.transform import Rotation as R
+from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 
 from dimos.manipulation.visual_servoing.utils import (
     create_pbvs_visualization,
@@ -33,7 +33,7 @@ from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.vision_msgs import Detection3DArray
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("dimos.manipulation.pbvs")
+logger = setup_logger()
 
 
 class PBVS:
