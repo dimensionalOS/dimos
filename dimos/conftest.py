@@ -13,66 +13,9 @@
 # limitations under the License.
 
 import asyncio
-import atexit
-import gc
 import threading
 
 import pytest
-
-
-def _cleanup_open3d_tensors() -> None:
-    """Clean up Open3D tensor resources before process exit.
-
-    Open3D's MemoryManagerStatistic tracks tensor allocations and will
-    force EXIT_FAILURE if any are unfreed at program end. This happens
-    because Python's garbage collector doesn't always run before C++
-    destructors during interpreter shutdown.
-
-    This atexit handler clears functools caches that may hold references
-    to Open3D objects, then runs garbage collection.
-    """
-    # Clear functools.cache on PointCloud2 methods that hold Open3D refs
-    try:
-        from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
-
-        for method_name in [
-            "get_axis_aligned_bounding_box",
-            "get_oriented_bounding_box",
-            "get_bounding_box_dimensions",
-        ]:
-            method = getattr(PointCloud2, method_name, None)
-            if method is not None and hasattr(method, "cache_clear"):
-                method.cache_clear()
-    except ImportError:
-        pass
-
-    gc.collect()
-    gc.collect()  # Run twice to handle reference cycles
-
-
-_atexit_registered = False
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    """Register cleanup handler after Open3D modules may have been loaded.
-
-    atexit handlers run in LIFO order. By registering our cleanup handler
-    in pytest_configure (which runs after conftest imports), we ensure it
-    runs AFTER any Open3D atexit handlers but BEFORE module unloading.
-    """
-    global _atexit_registered
-    if not _atexit_registered:
-        atexit.register(_cleanup_open3d_tensors)
-        _atexit_registered = True
-
-
-def pytest_unconfigure(config: pytest.Config) -> None:
-    """Clean up resources before pytest exits.
-
-    This hook runs before atexit handlers and helps ensure Open3D tensors
-    are garbage collected before Open3D's memory checker runs.
-    """
-    _cleanup_open3d_tensors()
 
 
 @pytest.fixture
