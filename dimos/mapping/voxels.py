@@ -195,45 +195,13 @@ class VoxelGridMapper(Module):
         )
 
     @simple_mcache
+    # @timed()
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
         pts = voxel_coords + (self.config.voxel_size * 0.5)
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
-
-
-# @timed()
-def splice_cylinder(
-    map_pcd: o3d.geometry.PointCloud,
-    patch_pcd: o3d.geometry.PointCloud,
-    axis: int = 2,
-    shrink: float = 0.95,
-) -> o3d.geometry.PointCloud:
-    center = patch_pcd.get_center()
-    patch_pts = np.asarray(patch_pcd.points)
-
-    # Axes perpendicular to cylinder
-    axes = [0, 1, 2]
-    axes.remove(axis)
-
-    planar_dists = np.linalg.norm(patch_pts[:, axes] - center[axes], axis=1)
-    radius = planar_dists.max() * shrink
-
-    axis_min = (patch_pts[:, axis].min() - center[axis]) * shrink + center[axis]
-    axis_max = (patch_pts[:, axis].max() - center[axis]) * shrink + center[axis]
-
-    map_pts = np.asarray(map_pcd.points)
-    planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
-
-    victims = np.nonzero(
-        (planar_dists_map < radius)
-        & (map_pts[:, axis] >= axis_min)
-        & (map_pts[:, axis] <= axis_max)
-    )[0]
-
-    survivors = map_pcd.select_by_index(victims, invert=True)
-    return survivors + patch_pcd
 
 
 def ensure_tensor_pcd(
