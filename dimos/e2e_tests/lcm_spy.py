@@ -155,7 +155,7 @@ class LcmSpy(LCMService):
     def wait_for_message_result(
         self,
         topic: str,
-        type: LCMMsg,
+        type: type[LCMMsg],
         predicate: Callable[[Any], bool],
         fail_message: str,
         timeout: float = 30.0,
@@ -177,7 +177,7 @@ class LcmSpy(LCMService):
     def wait_until_odom_position(
         self, x: float, y: float, threshold: float = 1, timeout: float = 60
     ) -> None:
-        def predicate(msg: PoseStamped):
+        def predicate(msg: PoseStamped) -> bool:
             pos = msg.position
             distance = math.sqrt((pos.x - x) ** 2 + (pos.y - y) ** 2)
             return distance < threshold
