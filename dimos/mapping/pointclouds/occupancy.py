@@ -17,11 +17,84 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
+from numba import njit, prange  # type: ignore[import-untyped]
 import numpy as np
 from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
+
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
+
+
+@njit(cache=True)  # type: ignore[untyped-decorator]
+def _height_map_kernel(
+    points: NDArray[np.floating[Any]],
+    min_height_map: NDArray[np.floating[Any]],
+    max_height_map: NDArray[np.floating[Any]],
+    min_x: float,
+    min_y: float,
+    inv_res: float,
+    width: int,
+    height: int,
+) -> None:
+    """Build min/max height maps from points (faster than np.fmax/fmin.at)."""
+    n = points.shape[0]
+    for i in range(n):
+        x = points[i, 0]
+        y = points[i, 1]
+        z = points[i, 2]
+
+        gx = int((x - min_x) * inv_res + 0.5)
+        gy = int((y - min_y) * inv_res + 0.5)
+
+        if 0 <= gx < width and 0 <= gy < height:
+            cur_min = min_height_map[gy, gx]
+            cur_max = max_height_map[gy, gx]
+            # NaN comparisons are always False, so first point sets the value
+            if z < cur_min or cur_min != cur_min:  # cur_min != cur_min checks for NaN
+                min_height_map[gy, gx] = z
+            if z > cur_max or cur_max != cur_max:
+                max_height_map[gy, gx] = z
+
+
+@njit(cache=True, parallel=True)  # type: ignore[untyped-decorator]
+def _simple_occupancy_kernel(
+    points: NDArray[np.floating[Any]],
+    grid: NDArray[np.signedinteger[Any]],
+    min_x: float,
+    min_y: float,
+    inv_res: float,
+    width: int,
+    height: int,
+    min_height: float,
+    max_height: float,
+) -> None:
+    """Numba-accelerated kernel for simple_occupancy grid population."""
+    n = points.shape[0]
+    # Pass 1: Mark ground as free
+    for i in prange(n):
+        x = points[i, 0]
+        y = points[i, 1]
+        z = points[i, 2]
+        if z < min_height:
+            gx = int((x - min_x) * inv_res + 0.5)
+            gy = int((y - min_y) * inv_res + 0.5)
+            if 0 <= gx < width and 0 <= gy < height:
+                grid[gy, gx] = 0
+
+    # Pass 2: Mark obstacles (overwrites ground)
+    for i in prange(n):
+        x = points[i, 0]
+        y = points[i, 1]
+        z = points[i, 2]
+        if min_height <= z <= max_height:
+            gx = int((x - min_x) * inv_res + 0.5)
+            gy = int((y - min_y) * inv_res + 0.5)
+            if 0 <= gx < width and 0 <= gy < height:
+                grid[gy, gx] = 100
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -83,7 +156,7 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with costs 0-100 based on terrain slope, -1 for unknown
     """
     cfg = HeightCostConfig(**kwargs)
-    points = cloud.as_numpy()
+    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
     ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
 
     if len(points) == 0:
@@ -123,17 +196,17 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     min_height_map = np.full((height, width), np.nan, dtype=np.float32)
     max_height_map = np.full((height, width), np.nan, dtype=np.float32)
 
-    # Convert point XY to grid indices
-    grid_x = np.round((points[:, 0] - min_x) / cfg.resolution).astype(np.int32)
-    grid_y = np.round((points[:, 1] - min_y) / cfg.resolution).astype(np.int32)
-
-    # Clip to grid bounds
-    grid_x = np.clip(grid_x, 0, width - 1)
-    grid_y = np.clip(grid_y, 0, height - 1)
-
-    # Use np.fmax/fmin.at which ignore NaN
-    np.fmax.at(max_height_map, (grid_y, grid_x), points[:, 2])
-    np.fmin.at(min_height_map, (grid_y, grid_x), points[:, 2])
+    # Use numba kernel (faster than np.fmax/fmin.at)
+    _height_map_kernel(
+        points,
+        min_height_map,
+        max_height_map,
+        min_x,
+        min_y,
+        1.0 / cfg.resolution,
+        width,
+        height,
+    )
 
     # Step 2: Determine effective height for each cell
     # If gap between min and max > can_pass_under, robot can pass under - use min (ground)
@@ -232,7 +305,7 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with occupied cells where points were projected
     """
     cfg = GeneralOccupancyConfig(**kwargs)
-    points = cloud.as_numpy()
+    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
 
     if len(points) == 0:
         return OccupancyGrid(
@@ -343,6 +416,10 @@ class SimpleOccupancyConfig(OccupancyConfig):
     max_height: float = 2.0
     closing_iterations: int = 1
     closing_connectivity: int = 2
+    can_pass_under: float = 0.6
+    can_climb: float = 0.15
+    ignore_noise: float = 0.05
+    smoothing: float = 1.0
 
 
 def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
@@ -357,7 +434,7 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with occupied/free cells
     """
     cfg = SimpleOccupancyConfig(**kwargs)
-    points = cloud.as_numpy()
+    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
 
     if len(points) == 0:
         return OccupancyGrid(
@@ -367,26 +444,11 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
             frame_id=cfg.frame_id or cloud.frame_id,
         )
 
-    # Filter points by height for obstacles
-    obstacle_mask = (points[:, 2] >= cfg.min_height) & (points[:, 2] <= cfg.max_height)
-    obstacle_points = points[obstacle_mask]
-
-    # Get points below min_height for marking as free space
-    ground_mask = points[:, 2] < cfg.min_height
-    ground_points = points[ground_mask]
-
-    # Find bounds of the point cloud in X-Y plane (use all points)
-    min_x = np.min(points[:, 0])
-    max_x = np.max(points[:, 0])
-    min_y = np.min(points[:, 1])
-    max_y = np.max(points[:, 1])
-
-    # Add some padding around the bounds
-    padding = 1.0  # 1 meter padding
-    min_x -= padding
-    max_x += padding
-    min_y -= padding
-    max_y += padding
+    # Find bounds of the point cloud in X-Y plane
+    min_x = float(np.min(points[:, 0])) - 1.0
+    max_x = float(np.max(points[:, 0])) + 1.0
+    min_y = float(np.min(points[:, 1])) - 1.0
+    max_y = float(np.max(points[:, 1])) + 1.0
 
     # Calculate grid dimensions
     width = int(np.ceil((max_x - min_x) / cfg.resolution))
@@ -397,49 +459,24 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
     origin.position.x = min_x
     origin.position.y = min_y
     origin.position.z = 0.0
-    origin.orientation.w = 1.0  # No rotation
+    origin.orientation.w = 1.0
 
     # Initialize grid (all unknown)
     grid = np.full((height, width), -1, dtype=np.int8)
 
-    # First, mark ground points as free space
-    if len(ground_points) > 0:
-        ground_x = np.round((ground_points[:, 0] - min_x) / cfg.resolution).astype(np.int32)
-        ground_y = np.round((ground_points[:, 1] - min_y) / cfg.resolution).astype(np.int32)
+    # Use numba kernel for fast grid population
+    _simple_occupancy_kernel(
+        points,
+        grid,
+        min_x,
+        min_y,
+        1.0 / cfg.resolution,
+        width,
+        height,
+        cfg.min_height,
+        cfg.max_height,
+    )
 
-        # Clip indices to grid bounds
-        ground_x = np.clip(ground_x, 0, width - 1)
-        ground_y = np.clip(ground_y, 0, height - 1)
-
-        # Mark ground cells as free
-        grid[ground_y, ground_x] = 0  # Free space
-
-    # Then mark obstacle points (will override ground if at same location)
-    if len(obstacle_points) > 0:
-        obs_x = np.round((obstacle_points[:, 0] - min_x) / cfg.resolution).astype(np.int32)
-        obs_y = np.round((obstacle_points[:, 1] - min_y) / cfg.resolution).astype(np.int32)
-
-        # Clip indices to grid bounds
-        obs_x = np.clip(obs_x, 0, width - 1)
-        obs_y = np.clip(obs_y, 0, height - 1)
-
-        # Mark cells as occupied
-        grid[obs_y, obs_x] = 100  # Lethal obstacle
-
-    # Fill small gaps in occupied regions using morphological closing
-    occupied_mask = grid == 100
-    if np.any(occupied_mask) and cfg.closing_iterations > 0:
-        # connectivity=1 gives 4-connectivity, connectivity=2 gives 8-connectivity
-        structure = ndimage.generate_binary_structure(2, cfg.closing_connectivity)
-        # Closing = dilation then erosion - fills small holes
-        closed_mask = ndimage.binary_closing(
-            occupied_mask, structure=structure, iterations=cfg.closing_iterations
-        )
-        # Fill gaps (both unknown and free space)
-        grid[closed_mask] = 100
-
-    # Create and return OccupancyGrid
-    # Get timestamp from cloud if available
     ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
 
     return OccupancyGrid(

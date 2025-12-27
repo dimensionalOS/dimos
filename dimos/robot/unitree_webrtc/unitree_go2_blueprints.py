@@ -16,8 +16,6 @@
 
 import platform
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
-
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
 from dimos.agents.cli.web import web_input
@@ -27,29 +25,19 @@ from dimos.agents.skills.speak_skill import speak_skill
 from dimos.agents.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
+from dimos.core.transport import JpegLcmTransport, JpegShmTransport, pSHMTransport
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
-from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image
-from dimos.navigation.bt_navigator.navigator import (
-    behavior_tree_navigator,
-)
 from dimos.navigation.frontier_exploration import (
     wavefront_frontier_explorer,
-)
-from dimos.navigation.global_planner.planner import astar_planner
-from dimos.navigation.local_planner.holonomic_local_planner import (
-    holonomic_local_planner,
 )
 from dimos.navigation.replanning_a_star.module import (
     replanning_a_star_planner,
 )
-from dimos.perception.object_tracker import object_tracking
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.go2 import go2_connection
-from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis

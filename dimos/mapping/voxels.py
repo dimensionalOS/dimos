@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 from dataclasses import dataclass
-import functools
 import time
 
 import numpy as np
@@ -24,21 +22,18 @@ from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 
-from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.spec.map import Global3DMap
 from dimos.utils.decorators import simple_mcache
-from dimos.utils.metrics import timed
 from dimos.utils.reactive import backpressure
 
 
 @dataclass
 class Config(ModuleConfig):
     frame_id: str = "world"
+    # -1 never publishes, 0 publishes on every frame, >0 publishes at interval in seconds
     publish_interval: float = 0
     voxel_size: float = 0.05
     block_count: int = 2_000_000
@@ -76,6 +71,7 @@ class VoxelGridMapper(Module):
         self._dev = dev
         self._voxel_hashmap = self.vbg.hashmap()
         self._key_dtype = self._voxel_hashmap.key_tensor().dtype
+        self._latest_frame_ts: float = 0.0
 
     @rpc
     def start(self) -> None:
@@ -106,7 +102,7 @@ class VoxelGridMapper(Module):
 
     def _on_frame(self, frame: LidarMessage) -> None:
         self.add_frame(frame)
-        if self.config.publish_interval <= 0:
+        if self.config.publish_interval == 0:
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
@@ -120,6 +116,10 @@ class VoxelGridMapper(Module):
 
     # @timed()  # TODO: fix thread leak in timed decorator
     def add_frame(self, frame: PointCloud2) -> None:
+        # Track latest frame timestamp for proper latency measurement
+        if hasattr(frame, "ts") and frame.ts:
+            self._latest_frame_ts = frame.ts
+
         # we are potentially moving into CUDA here
         pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
 
@@ -186,49 +186,17 @@ class VoxelGridMapper(Module):
             # we are potentially moving out of CUDA here
             ensure_legacy_pcd(self.get_global_pointcloud()),
             frame_id=self.frame_id,
-            ts=time.time(),
+            ts=self._latest_frame_ts if self._latest_frame_ts else time.time(),
         )
 
     @simple_mcache
+    # @timed()
     def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
         voxel_coords, _ = self.vbg.voxel_coordinates_and_flattened_indices()
         pts = voxel_coords + (self.config.voxel_size * 0.5)
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
-
-
-# @timed()
-def splice_cylinder(
-    map_pcd: o3d.geometry.PointCloud,
-    patch_pcd: o3d.geometry.PointCloud,
-    axis: int = 2,
-    shrink: float = 0.95,
-) -> o3d.geometry.PointCloud:
-    center = patch_pcd.get_center()
-    patch_pts = np.asarray(patch_pcd.points)
-
-    # Axes perpendicular to cylinder
-    axes = [0, 1, 2]
-    axes.remove(axis)
-
-    planar_dists = np.linalg.norm(patch_pts[:, axes] - center[axes], axis=1)
-    radius = planar_dists.max() * shrink
-
-    axis_min = (patch_pts[:, axis].min() - center[axis]) * shrink + center[axis]
-    axis_max = (patch_pts[:, axis].max() - center[axis]) * shrink + center[axis]
-
-    map_pts = np.asarray(map_pcd.points)
-    planar_dists_map = np.linalg.norm(map_pts[:, axes] - center[axes], axis=1)
-
-    victims = np.nonzero(
-        (planar_dists_map < radius)
-        & (map_pts[:, axis] >= axis_min)
-        & (map_pts[:, axis] <= axis_max)
-    )[0]
-
-    survivors = map_pcd.select_by_index(victims, invert=True)
-    return survivors + patch_pcd
 
 
 def ensure_tensor_pcd(

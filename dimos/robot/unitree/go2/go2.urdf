@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<robot name="go2">
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.7 0.31 0.4"/>
+      </geometry>
+      <material name="box_material">
+        <color rgba="0.0 0.0 0.0 0.2"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.7 0.31 0.4"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="15.0"/>
+      <inertia ixx="0.320125" ixy="0" ixz="0" iyy="0.812500" iyz="0" izz="0.732625"/>
+    </inertial>
+  </link>
+</robot>
