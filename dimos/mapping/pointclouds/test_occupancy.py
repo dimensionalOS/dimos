@@ -13,12 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import time
+
 import cv2
 import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 import pytest
 
 from dimos.core import LCMTransport
+from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import (
     general_occupancy,
     height_cost_occupancy,
@@ -35,6 +38,11 @@ from dimos.utils.testing.test_moment import Go2Moment
 @pytest.fixture
 def apartment() -> PointCloud:
     return read_pointcloud(get_data("apartment") / "sum.ply")
+
+
+@pytest.fixture
+def big_office() -> PointCloud:
+    return read_pointcloud(get_data("big_office.ply"))
 
 
 @pytest.mark.parametrize(
@@ -54,6 +62,29 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
     computed_image = (occupancy_grid.grid + 1).astype(np.uint8)
 
     np.testing.assert_array_equal(computed_image, expected_image)
+
+
+@pytest.mark.parametrize(
+    "occupancy_fn,output_name",
+    [
+        (height_cost_occupancy, "big_office_height_cost_occupancy.png"),
+        (simple_occupancy, "big_office_simple_occupancy.png"),
+    ],
+)
+def test_occupancy2(big_office, occupancy_fn, output_name):
+    cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="map")
+
+    start = time.perf_counter()
+    occupancy_grid = occupancy_fn(cloud)
+    total = time.perf_counter() - start
+
+    print("\n" + "-" * 100)
+    print("time", output_name, total)
+    print("-" * 100)
+
+    actual = visualize_occupancy_grid(occupancy_grid, "rainbow")
+
+    actual.save(f"data/{output_name}")
 
 
 class HeightCostMoment(Go2Moment):

@@ -343,6 +343,10 @@ class SimpleOccupancyConfig(OccupancyConfig):
     max_height: float = 2.0
     closing_iterations: int = 1
     closing_connectivity: int = 2
+    can_pass_under: float = 0.6
+    can_climb: float = 0.15
+    ignore_noise: float = 0.05
+    smoothing: float = 1.0
 
 
 def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
@@ -425,18 +429,6 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
 
         # Mark cells as occupied
         grid[obs_y, obs_x] = 100  # Lethal obstacle
-
-    # Fill small gaps in occupied regions using morphological closing
-    occupied_mask = grid == 100
-    if np.any(occupied_mask) and cfg.closing_iterations > 0:
-        # connectivity=1 gives 4-connectivity, connectivity=2 gives 8-connectivity
-        structure = ndimage.generate_binary_structure(2, cfg.closing_connectivity)
-        # Closing = dilation then erosion - fills small holes
-        closed_mask = ndimage.binary_closing(
-            occupied_mask, structure=structure, iterations=cfg.closing_iterations
-        )
-        # Fill gaps (both unknown and free space)
-        grid[closed_mask] = 100
 
     # Create and return OccupancyGrid
     # Get timestamp from cloud if available
