@@ -22,11 +22,9 @@ from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
     OccupancyConfig,
-    SimpleOccupancyConfig,
 )
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.utils.metrics import timed
 
 
 @dataclass
