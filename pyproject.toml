@@ -334,7 +334,8 @@ override-dependencies = [
 
 [tool.uv.sources]
 rxpy-backpressure = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git" }
-unitree-webrtc-connect = { git = "https://github.com/legion1581/go2_webrtc_connect.git", rev = "d0aec95ffb2125b7d2111f65a1b7ac718165a6b8" }
+# we are waiting for Legion to merge our PR https://github.com/legion1581/unitree_webrtc_connect/pull/46
+unitree-webrtc-connect = { git = "https://github.com/leshy/go2_webrtc_connect.git", rev = "2cbb6ce657383c788f4a48d9d87ecf4b9b7dba1d" }
 clip = { git = "https://github.com/openai/CLIP.git" }
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
