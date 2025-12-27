@@ -17,19 +17,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar
 
-from numba import njit, prange
+from numba import njit, prange  # type: ignore[import-untyped]
 import numpy as np
 from scipy import ndimage  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 
+if TYPE_CHECKING:
+    from numpy.typing import NDArray
 
-@njit(cache=True)
+
+@njit(cache=True)  # type: ignore[untyped-decorator]
 def _height_map_kernel(
-    points: np.ndarray,
-    min_height_map: np.ndarray,
-    max_height_map: np.ndarray,
+    points: NDArray[np.floating[Any]],
+    min_height_map: NDArray[np.floating[Any]],
+    max_height_map: NDArray[np.floating[Any]],
     min_x: float,
     min_y: float,
     inv_res: float,
@@ -56,10 +59,10 @@ def _height_map_kernel(
                 max_height_map[gy, gx] = z
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True, parallel=True)  # type: ignore[untyped-decorator]
 def _simple_occupancy_kernel(
-    points: np.ndarray,
-    grid: np.ndarray,
+    points: NDArray[np.floating[Any]],
+    grid: NDArray[np.signedinteger[Any]],
     min_x: float,
     min_y: float,
     inv_res: float,
