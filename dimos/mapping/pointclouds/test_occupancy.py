@@ -20,7 +20,6 @@ import pytest
 
 from dimos.core import LCMTransport
 from dimos.mapping.pointclouds.occupancy import (
-    general_occupancy,
     height_cost_occupancy,
     simple_occupancy,
 )
@@ -40,7 +39,6 @@ def apartment() -> PointCloud:
 @pytest.mark.parametrize(
     "occupancy_fn,output_name",
     [
-        (general_occupancy, "occupancy_general.png"),
         (simple_occupancy, "occupancy_simple.png"),
     ],
 )
