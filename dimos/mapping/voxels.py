@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 from dataclasses import dataclass
-import functools
 import time
 
 import numpy as np
@@ -24,15 +22,11 @@ from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 
-from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.spec.map import Global3DMap
 from dimos.utils.decorators import simple_mcache
-from dimos.utils.metrics import timed
 from dimos.utils.reactive import backpressure
 
 
