@@ -270,21 +270,26 @@ def test_costmap_calc():
     mapper.start()
     costmapper.start()
 
-    last_costmap = None
-    last_map = None
+    # Track wall clock times for latency measurement
+    map_wall_times = {}  # data_ts -> wall_time when map received
+    costmap_count = 0
+    latencies = []
 
     def on_costmap(costmap):
-        nonlocal last_costmap
-        last_costmap = costmap
-        print("costmap", costmap)
+        nonlocal costmap_count
+        recv_time = time.perf_counter()
+        costmap_count += 1
 
-        if last_map is not None:
-            print("delay", last_costmap.ts - last_map.ts)
+        # Find matching map by data timestamp
+        if costmap.ts in map_wall_times:
+            latency_ms = (recv_time - map_wall_times[costmap.ts]) * 1000
+            latencies.append(latency_ms)
+            print(f"costmap #{costmap_count}: {costmap} | latency={latency_ms:.1f}ms")
+        else:
+            print(f"costmap #{costmap_count}: {costmap} | no matching map ts")
 
     def on_map(pc):
-        nonlocal last_map
-        last_map = pc
-        # print("map", pc.ts)
+        map_wall_times[pc.ts] = time.perf_counter()
 
     costmapper.global_costmap.subscribe(on_costmap)
     mapper.global_map.subscribe(on_map)
@@ -295,6 +300,12 @@ def test_costmap_calc():
         mapper.lidar.transport.publish(msg)
 
     print("closing")
+
+    if latencies:
+        print(f"\n=== Latency Summary ({len(latencies)} samples) ===")
+        print(
+            f"Min: {min(latencies):.1f}ms, Max: {max(latencies):.1f}ms, Avg: {sum(latencies) / len(latencies):.1f}ms"
+        )
 
     mapper.stop()
     costmapper.stop()
