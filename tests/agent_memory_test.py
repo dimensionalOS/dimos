@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
+from dimos.agents_deprecated.memory.chroma_impl import OpenAISemanticMemory
 
 agent_memory = OpenAISemanticMemory()
 print("Initialization done.")
