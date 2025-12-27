@@ -62,12 +62,14 @@ class LocalPlanner(Resource):
     _state_unique_id: int
     _global_config: GlobalConfig
     _navigation_map: NavigationMap
+    _controller: Controller
 
     _speed: float = 0.55
     _control_frequency: float = 10
     _goal_tolerance: float = 0.2
     _orientation_tolerance: float = 0.35
-    _controller: Controller
+    _debug_navigation_interval: float = 1.0
+    _debug_navigation_last: float = 0.0
 
     def __init__(self, global_config: GlobalConfig, navigation_map: NavigationMap) -> None:
         self.cmd_vel = Subject()
@@ -185,10 +187,7 @@ class LocalPlanner(Resource):
                 path_clearance.update_costmap(self._navigation_map.binary_costmap)
                 path_clearance.update_pose_index(self._pose_index)
 
-            if "DEBUG_NAVIGATION" in os.environ:
-                self.debug_navigation.on_next(
-                    self._make_debug_navigation_image(path, path_clearance)
-                )
+            self._send_debug_navigation(path, path_clearance)
 
             if path_clearance.is_obstacle_ahead():
                 logger.info("Obstacle detected ahead, stopping local planner.")
@@ -305,6 +304,18 @@ class LocalPlanner(Resource):
             self._path_distancer = None
             self._pose_index = 0
             self._controller.reset_errors()
+
+    def _send_debug_navigation(self, path: Path, path_clearance: PathClearance) -> None:
+        if "DEBUG_NAVIGATION" not in os.environ:
+            return
+
+        now = time.time()
+        if now - self._debug_navigation_last < self._debug_navigation_interval:
+            return
+
+        self._debug_navigation_last = now
+
+        self.debug_navigation.on_next(self._make_debug_navigation_image(path, path_clearance))
 
     def _make_debug_navigation_image(self, path: Path, path_clearance: PathClearance) -> Image:
         scale = 8
