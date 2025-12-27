@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import time
-
 import cv2
 import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
@@ -76,13 +74,7 @@ def test_occupancy2(big_office, occupancy_fn, output_name):
     expected_image = Image.from_file(get_data(output_name))
     cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="")
 
-    start = time.perf_counter()
     occupancy_grid = occupancy_fn(cloud)
-    total = time.perf_counter() - start
-
-    print("\n" + "-" * 100)
-    print("time", output_name, total)
-    print("-" * 100)
 
     actual = visualize_occupancy_grid(occupancy_grid, "rainbow")
     actual.ts = expected_image.ts
