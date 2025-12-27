@@ -33,7 +33,7 @@ class ReplanLimiter:
 
     _attempt: int
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._lock = RLock()
         self._attempt = 0
 
