@@ -120,6 +120,8 @@ class TestROSBridge(unittest.TestCase):
             self.assertAlmostEqual(msg.linear.y, float(i * 2), places=5)
             self.assertAlmostEqual(msg.angular.z, float(i * 0.1), places=5)
 
+        lcm.stop()
+
     def test_dimos_to_ros_twist(self) -> None:
         """Test DIMOS TwistStamped to ROS conversion and transmission."""
         # Set up bridge
@@ -227,6 +229,8 @@ class TestROSBridge(unittest.TestCase):
                 msg=f"Frequency not preserved for {target_freq}Hz: sent={send_freq:.1f}Hz, received={receive_freq:.1f}Hz",
             )
 
+        lcm.stop()
+
     def test_pointcloud_conversion(self) -> None:
         """Test PointCloud2 message conversion with numpy optimization."""
         # Set up bridge
@@ -283,6 +287,8 @@ class TestROSBridge(unittest.TestCase):
         received_points = received_cloud[0].as_numpy()
         self.assertEqual(received_points.shape, points.shape)
         np.testing.assert_array_almost_equal(received_points, points, decimal=5)
+
+        lcm.stop()
 
     def test_tf_high_frequency(self) -> None:
         """Test TF message handling at high frequency."""
@@ -348,6 +354,8 @@ class TestROSBridge(unittest.TestCase):
                 delta=target_freq * 0.2,
                 msg=f"High frequency TF not preserved: expected={target_freq}Hz, got={receive_freq:.1f}Hz",
             )
+
+        lcm.stop()
 
     def test_bidirectional_bridge(self) -> None:
         """Test simultaneous bidirectional message flow."""
