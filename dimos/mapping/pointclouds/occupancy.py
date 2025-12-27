@@ -83,7 +83,7 @@ def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with costs 0-100 based on terrain slope, -1 for unknown
     """
     cfg = HeightCostConfig(**kwargs)
-    points = cloud.as_numpy()
+    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
     ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
 
     if len(points) == 0:
@@ -232,7 +232,7 @@ def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with occupied cells where points were projected
     """
     cfg = GeneralOccupancyConfig(**kwargs)
-    points = cloud.as_numpy()
+    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
 
     if len(points) == 0:
         return OccupancyGrid(
@@ -357,7 +357,7 @@ def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
         OccupancyGrid with occupied/free cells
     """
     cfg = SimpleOccupancyConfig(**kwargs)
-    points = cloud.as_numpy()
+    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
 
     if len(points) == 0:
         return OccupancyGrid(
