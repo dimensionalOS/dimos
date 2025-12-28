@@ -196,8 +196,8 @@ class WebsocketVisModule(Module):
         .rerun { flex: 1; border: none; }
         .panel { width: 220px; padding: 20px; background: #1e1e1e; color: white; display: flex; flex-direction: column; }
         h3 { margin: 0 0 20px 0; font-size: 20px; }
-        button { 
-            width: 100%; padding: 15px; margin: 8px 0; font-size: 15px; 
+        button {
+            width: 100%; padding: 15px; margin: 8px 0; font-size: 15px;
             border: none; border-radius: 8px; cursor: pointer; font-weight: 600;
             transition: all 0.2s;
         }
@@ -232,9 +232,9 @@ class WebsocketVisModule(Module):
     <script>
         const socket = io('http://localhost:7779');
         let navActive = false, exploreActive = false, keysHeld = new Set(), publishInterval = null;
-        
+
         socket.on('connect', () => console.log('Connected to dimos'));
-        
+
         function toggleExplore() {
             exploreActive = !exploreActive;
             if (exploreActive) {
@@ -250,7 +250,7 @@ class WebsocketVisModule(Module):
                 document.getElementById('mode').textContent = 'Idle';
             }
         }
-        
+
         function toggleNav() {
             navActive = !navActive;
             if (navActive) {
@@ -270,14 +270,14 @@ class WebsocketVisModule(Module):
                 sendTwist(0, 0, 0);
             }
         }
-        
+
         function onKeyDown(e) {
             if ([' ', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
             keysHeld.add(e.key.toLowerCase());
         }
-        
+
         function onKeyUp(e) { keysHeld.delete(e.key.toLowerCase()); }
-        
+
         function publishTwist() {
             let lx = 0, ly = 0, az = 0, speed = 1.0;
             if (keysHeld.has('shift')) speed = 2.0;
@@ -291,7 +291,7 @@ class WebsocketVisModule(Module):
             if (keysHeld.has('arrowright')) ly = -0.5 * speed;
             sendTwist(lx, ly, az);
         }
-        
+
         function sendTwist(lx, ly, az) {
             socket.emit('move_command', { linear: {x: lx, y: ly, z: 0}, angular: {x: 0, y: 0, z: az} });
         }

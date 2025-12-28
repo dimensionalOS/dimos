@@ -17,14 +17,14 @@ index ec3d1925..f4273929 100644
 +**/*.ignore.*
 +
  .vscode/
- 
+
  # Ignore Python cache files
 @@ -49,5 +53,8 @@ yolo11n.pt
  # symlink one of .envrc.* if you'd like to use
  .envrc
  .claude
 +.direnv/
- 
+
  /logs
 +
 +*.so
@@ -38,7 +38,7 @@ index e859c992..9a74d63a 100644
  from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
- 
+
  # Initialize robot
  robot = UnitreeGo2(ip=robot_ip,
 diff --git a/assets/agent/prompt_agents2.txt b/assets/agent/prompt_agents.txt
@@ -983,23 +983,23 @@ index fc771ffe..a232876f 100644
 +from dimos.protocol.skill.skill import SkillContainer
 +from dimos.protocol.skill.type import Output
 +from dimos.utils.logging_config import setup_logger
- 
+
 -"""Agent framework for LLM-based autonomous systems.
 +logger = setup_logger()
- 
+
 -This module provides a flexible foundation for creating agents that can:
 -- Process image and text inputs through LLM APIs
 -- Store and retrieve contextual information using semantic memory
 -- Handle tool/function calling
 -- Process streaming inputs asynchronously
- 
+
 -The module offers base classes (Agent, LLMAgent) and concrete implementations
 -like OpenAIAgent that connect to specific LLM providers.
 -"""
 +SYSTEM_MSG_APPEND = "\nYour message history will always be appended with a System Overview message that provides situational awareness."
- 
+
 -from __future__ import annotations
- 
+
 -# Standard library imports
 -import json
 -import os
@@ -1029,7 +1029,7 @@ index fc771ffe..a232876f 100644
 +        content = "output attached in separate messages"
 +    else:
 +        content = state.content()  # type: ignore[assignment]
- 
+
 -if TYPE_CHECKING:
 -    from reactivex.scheduler import ThreadPoolScheduler
 +    return ToolMessage(
@@ -1041,10 +1041,10 @@ index fc771ffe..a232876f 100644
 +        name=state.name,
 +        tool_call_id=state.call_id,
 +    )
- 
+
 -    from dimos.agents.memory.base import AbstractAgentSemanticMemory
 -    from dimos.agents.tokenizer.base import AbstractTokenizer
- 
+
 -# Initialize environment variables
 -load_dotenv()
 +class SkillStateSummary(TypedDict):
@@ -1052,10 +1052,10 @@ index fc771ffe..a232876f 100644
 +    call_id: str
 +    state: str
 +    data: Any
- 
+
 -# Initialize logger for the agent module
 -logger = setup_logger()
- 
+
 -# Constants
 -_TOKEN_BUDGET_PARTS = 4  # Number of parts to divide token budget
 -_MAX_SAVED_FRAMES = 100  # Maximum number of frames to save
@@ -1063,10 +1063,10 @@ index fc771ffe..a232876f 100644
 +    content = state.content()
 +    if isinstance(content, dict):
 +        content = json.dumps(content)
- 
+
 +    if not isinstance(content, str):
 +        content = str(content)
- 
+
 -# -----------------------------------------------------------------------------
 -# region Agent Base Class
 -# -----------------------------------------------------------------------------
@@ -1078,7 +1078,7 @@ index fc771ffe..a232876f 100644
 +        "state": state.state.name,
 +        "data": state.content() if not special_data else "data will be in a separate message",
 +    }
- 
+
 -    def __init__(
 -        self,
 -        dev_name: str = "NA",
@@ -1225,7 +1225,7 @@ index fc771ffe..a232876f 100644
 -                )
 -            )
 -        )
- 
+
 -        # Setup stream subscriptions based on inputs provided
 -        if (self.input_video_stream is not None) and (self.input_query_stream is not None):
 -            self.merged_stream = create_stream_merger(
@@ -1235,9 +1235,9 @@ index fc771ffe..a232876f 100644
 +    if isinstance(obj, datetime.date | datetime.datetime):
 +        return obj.isoformat()
 +    raise TypeError(f"Type {type(obj)} not serializable")
- 
+
 -            logger.info("Subscribing to merged input stream...")
- 
+
 -            # Define a query extractor for the merged stream
 -            def query_extractor(emission):  # type: ignore[no-untyped-def]
 -                return (emission[0], emission[1][0])
@@ -1251,7 +1251,7 @@ index fc771ffe..a232876f 100644
 +    tool_call_ids = set(
 +        map(itemgetter("id"), tool_calls),
 +    )
- 
+
 -            self.disposables.add(
 -                self.subscribe_to_image_processing(
 -                    self.merged_stream, query_extractor=query_extractor
@@ -1354,7 +1354,7 @@ index fc771ffe..a232876f 100644
 +class Agent(AgentSpec):
 +    system_message: SystemMessage
 +    state_messages: list[AIMessage | HumanMessage]
- 
+
 -    def _build_prompt(
 +    def __init__(  # type: ignore[no-untyped-def]
          self,
@@ -1406,7 +1406,7 @@ index fc771ffe..a232876f 100644
 +        **kwargs,
 +    ) -> None:
 +        AgentSpec.__init__(self, *args, **kwargs)
- 
+
 -    def _handle_tooling(self, response_message, messages):  # type: ignore[no-untyped-def]
 -        """Handles tooling callbacks in the response message.
 -
@@ -1471,7 +1471,7 @@ index fc771ffe..a232876f 100644
 +                self.system_message = self.config.system_prompt
 +        else:
 +            self.system_message = SystemMessage(get_system_prompt() + SYSTEM_MSG_APPEND)
- 
+
 -    def _observable_query(  # type: ignore[no-untyped-def]
 -        self,
 -        observer: Observer,  # type: ignore[type-arg]
@@ -1701,7 +1701,7 @@ index fc771ffe..a232876f 100644
 +                tool_call.get("name"),  # type: ignore[arg-type]
 +                tool_call.get("args"),  # type: ignore[arg-type]
              )
- 
+
 -        # Use a mutable flag to ensure only one frame is processed at a time.
 -        is_processing = [False]
 +    # used to inject skill calls into the agent loop without agent asking for it
@@ -1710,7 +1710,7 @@ index fc771ffe..a232876f 100644
 +            logger.warning("Agent is stopped, cannot execute implicit skill calls.")
 +            return
 +        self.coordinator.call_skill(False, skill_name, {"args": kwargs})
- 
+
 -        def process_if_free(emission):  # type: ignore[no-untyped-def]
 -            if not self.process_all_inputs and is_processing[0]:
 -                # Drop frame if a request is in progress and process_all_inputs is False
@@ -1731,7 +1731,7 @@ index fc771ffe..a232876f 100644
 -                )
 +    async def agent_loop(self, first_query: str = ""):  # type: ignore[no-untyped-def]
 +        # TODO: Should I add a lock here to prevent concurrent calls to agent_loop?
- 
+
 -        observable = frame_observable.pipe(
 -            MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
 -            RxOps.flat_map(process_if_free),
@@ -1741,7 +1741,7 @@ index fc771ffe..a232876f 100644
 +            logger.warning("Agent is stopped, cannot run agent loop.")
 +            # return "Agent is stopped."
 +            import traceback
- 
+
 -        disposable = observable.subscribe(
 -            on_next=lambda response: self._log_response_to_file(response, self.output_dir),
 -            on_error=lambda e: logger.error(f"Error encountered: {e}"),
@@ -1813,11 +1813,11 @@ index fc771ffe..a232876f 100644
 -                MyOps.print_emission(id="Pr B", **print_emission_args),  # type: ignore[arg-type]
 -            )
 +                    self.append_history(messages[-1])
- 
+
 -        # A mutable flag indicating whether a query is currently being processed.
 -        is_processing = [False]
 +                msg = self._llm.invoke(messages)
- 
+
 -        def process_if_free(query):  # type: ignore[no-untyped-def]
 -            logger.info(f"Processing Query: {query}")
 -            if not self.process_all_inputs and is_processing[0]:
@@ -1839,14 +1839,14 @@ index fc771ffe..a232876f 100644
 -                    MyOps.print_emission(id="E", **print_emission_args),  # type: ignore[arg-type]
 -                )
 +                self.append_history(msg)  # type: ignore[arg-type]
- 
+
 -        observable = query_observable.pipe(
 -            MyOps.print_emission(id="A", **print_emission_args),  # type: ignore[arg-type]
 -            RxOps.flat_map(lambda query: process_if_free(query)),  # type: ignore[no-untyped-call]
 -            MyOps.print_emission(id="F", **print_emission_args),  # type: ignore[arg-type]
 -        )
 +                logger.info(f"Agent response: {msg.content}")
- 
+
 -        disposable = observable.subscribe(
 -            on_next=lambda response: self._log_response_to_file(response, self.output_dir),
 -            on_error=lambda e: logger.error(f"Error processing query for {self.dev_name}: {e}"),
@@ -1867,7 +1867,7 @@ index fc771ffe..a232876f 100644
 -            RxOps.share(),
 -        )
 +                state = _get_state()
- 
+
 -    def run_observable_query(self, query_text: str, **kwargs) -> Observable:  # type: ignore[no-untyped-def, type-arg]
 -        """Creates an observable that processes a one-off text query to Agent and emits the response.
 -
@@ -1893,24 +1893,24 @@ index fc771ffe..a232876f 100644
 -        )
 +                if msg.tool_calls:  # type: ignore[attr-defined]
 +                    self.execute_tool_calls(msg.tool_calls)  # type: ignore[attr-defined]
- 
+
 -    def dispose_all(self) -> None:
 -        """Disposes of all active subscriptions managed by this agent."""
 -        super().dispose_all()
 -        self.response_subject.on_completed()
 +                # print(self)
 +                # print(self.coordinator)
- 
+
 +                self._write_debug_history_file()
- 
+
 -# endregion LLMAgent Base Class (Generic LLM Agent)
 +                if not self.coordinator.has_active_skills():
 +                    logger.info("No active tasks, exiting agent loop.")
 +                    return msg.content
- 
+
 +                # coordinator will continue once a skill state has changed in
 +                # such a way that agent call needs to be executed
- 
+
 -# -----------------------------------------------------------------------------
 -# region OpenAIAgent Subclass (OpenAI-Specific Implementation)
 -# -----------------------------------------------------------------------------
@@ -1918,7 +1918,7 @@ index fc771ffe..a232876f 100644
 -    """OpenAI agent implementation that uses OpenAI's API for processing.
 +                if state == _get_state():
 +                    await self.coordinator.wait_for_updates()
- 
+
 -    This class implements the _send_query method to interact with OpenAI's API.
 -    It also sets up OpenAI-specific parameters, such as the client, model name,
 -    tokenizer, and response model.
@@ -1926,7 +1926,7 @@ index fc771ffe..a232876f 100644
 +                # we request a full snapshot of currently running, finished or errored out skills
 +                # we ask for removal of finished skills from subsequent snapshots (clear=True)
 +                update = self.coordinator.generate_snapshot(clear=True)
- 
+
 -    def __init__(
 -        self,
 -        dev_name: str,
@@ -2131,11 +2131,11 @@ index fc771ffe..a232876f 100644
 -            raise
 +            logger.error(f"Error in agent loop: {e}")
 +            import traceback
- 
+
 -    def stream_query(self, query_text: str) -> Observable:  # type: ignore[type-arg]
 -        """Creates an observable that processes a text query and emits the response.
 +            traceback.print_exc()
- 
+
 -        This method provides a simple way to send a text query and get an observable
 -        stream of the response. It's designed for one-off queries rather than
 -        continuous processing of input streams.
@@ -2143,7 +2143,7 @@ index fc771ffe..a232876f 100644
 +    def loop_thread(self) -> bool:
 +        asyncio.run_coroutine_threadsafe(self.agent_loop(), self._loop)  # type: ignore[arg-type]
 +        return True
- 
+
 -        Args:
 -            query_text (str): The query text to process.
 +    @rpc
@@ -2152,7 +2152,7 @@ index fc771ffe..a232876f 100644
 +        # from distributed.utils import sync
 +        # return sync(self._loop, self.agent_loop, query)
 +        return asyncio.run_coroutine_threadsafe(self.agent_loop(query), self._loop).result()  # type: ignore[arg-type]
- 
+
 -        Returns:
 -            Observable: An observable that emits the response as a string.
 -        """
@@ -2231,8 +2231,8 @@ index fc771ffe..a232876f 100644
 +    agent.loop_thread()
 +
 +    return agent  # type: ignore[no-any-return]
- 
- 
+
+
 -# endregion OpenAIAgent Subclass (OpenAI-Specific Implementation)
 +__all__ = ["Agent", "deploy", "llm_agent"]
 diff --git a/dimos/agents2/cli/human.py b/dimos/agents/cli/human.py
@@ -2243,9 +2243,9 @@ index bbeee496..09e2ed24 100644
 --- a/dimos/agents2/cli/human.py
 +++ b/dimos/agents/cli/human.py
 @@ -16,7 +16,7 @@ import queue
- 
+
  from reactivex.disposable import Disposable
- 
+
 -from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 +from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
  from dimos.core import pLCMTransport, rpc
@@ -2263,16 +2263,16 @@ index 769523f8..757fc839 100644
 --- a/dimos/agents2/conftest.py
 +++ b/dimos/agents/conftest.py
 @@ -16,8 +16,8 @@ from pathlib import Path
- 
+
  import pytest
- 
+
 -from dimos.agents2.agent import Agent
 -from dimos.agents2.testing import MockModel
 +from dimos.agents.agent import Agent
 +from dimos.agents.testing import MockModel
  from dimos.protocol.skill.test_coordinator import SkillContainerTest
- 
- 
+
+
 diff --git a/dimos/agents2/constants.py b/dimos/agents/constants.py
 similarity index 97%
 rename from dimos/agents2/constants.py
@@ -2281,9 +2281,9 @@ index 0d7d4832..2f78e92f 100644
 --- a/dimos/agents2/constants.py
 +++ b/dimos/agents/constants.py
 @@ -14,4 +14,4 @@
- 
+
  from dimos.constants import DIMOS_PROJECT_ROOT
- 
+
 -AGENT_SYSTEM_PROMPT_PATH = DIMOS_PROJECT_ROOT / "assets/agent/prompt_agents2.txt"
 +AGENT_SYSTEM_PROMPT_PATH = DIMOS_PROJECT_ROOT / "assets/agent/prompt_agents.txt"
 diff --git a/dimos/agents2/fixtures/test_get_gps_position_for_queries.json b/dimos/agents/fixtures/test_get_gps_position_for_queries.json
@@ -2352,7 +2352,7 @@ index f7d15008..9b0b7b12 100644
 @@ -17,10 +17,10 @@ from functools import partial
  import pytest
  from reactivex.scheduler import ThreadPoolScheduler
- 
+
 -from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 -from dimos.agents2.skills.gps_nav_skill import GpsNavSkillContainer
 -from dimos.agents2.skills.navigation import NavigationSkillContainer
@@ -2362,7 +2362,7 @@ index f7d15008..9b0b7b12 100644
 +from dimos.agents.skills.navigation import NavigationSkillContainer
 +from dimos.agents.system_prompt import get_system_prompt
  from dimos.robot.unitree_webrtc.unitree_skill_container import UnitreeSkillContainer
- 
+
  system_prompt = get_system_prompt()
 diff --git a/dimos/agents2/skills/demo_calculator_skill.py b/dimos/agents/skills/demo_calculator_skill.py
 similarity index 100%
@@ -2376,9 +2376,9 @@ index 4bee8691..52b5917f 100644
 --- a/dimos/agents2/skills/demo_google_maps_skill.py
 +++ b/dimos/agents/skills/demo_google_maps_skill.py
 @@ -15,11 +15,11 @@
- 
+
  from dotenv import load_dotenv
- 
+
 -from dimos.agents2.agent import llm_agent
 -from dimos.agents2.cli.human import human_input
 -from dimos.agents2.skills.demo_robot import demo_robot
@@ -2390,7 +2390,7 @@ index 4bee8691..52b5917f 100644
 +from dimos.agents.skills.google_maps_skill_container import google_maps_skill
 +from dimos.agents.system_prompt import get_system_prompt
  from dimos.core.blueprints import autoconnect
- 
+
  load_dotenv()
 diff --git a/dimos/agents2/skills/demo_gps_nav.py b/dimos/agents/skills/demo_gps_nav.py
 similarity index 76%
@@ -2400,9 +2400,9 @@ index 55ffd052..f0eebd7e 100644
 --- a/dimos/agents2/skills/demo_gps_nav.py
 +++ b/dimos/agents/skills/demo_gps_nav.py
 @@ -15,11 +15,11 @@
- 
+
  from dotenv import load_dotenv
- 
+
 -from dimos.agents2.agent import llm_agent
 -from dimos.agents2.cli.human import human_input
 -from dimos.agents2.skills.demo_robot import demo_robot
@@ -2414,7 +2414,7 @@ index 55ffd052..f0eebd7e 100644
 +from dimos.agents.skills.gps_nav_skill import gps_nav_skill
 +from dimos.agents.system_prompt import get_system_prompt
  from dimos.core.blueprints import autoconnect
- 
+
  load_dotenv()
 diff --git a/dimos/agents2/skills/demo_robot.py b/dimos/agents/skills/demo_robot.py
 similarity index 100%
@@ -2428,9 +2428,9 @@ index f549e611..835bd6b2 100644
 --- a/dimos/agents2/skills/demo_skill.py
 +++ b/dimos/agents/skills/demo_skill.py
 @@ -15,10 +15,10 @@
- 
+
  from dotenv import load_dotenv
- 
+
 -from dimos.agents2.agent import llm_agent
 -from dimos.agents2.cli.human import human_input
 -from dimos.agents2.skills.demo_calculator_skill import demo_calculator_skill
@@ -2440,7 +2440,7 @@ index f549e611..835bd6b2 100644
 +from dimos.agents.skills.demo_calculator_skill import demo_calculator_skill
 +from dimos.agents.system_prompt import get_system_prompt
  from dimos.core.blueprints import autoconnect
- 
+
  load_dotenv()
 diff --git a/dimos/agents2/skills/google_maps_skill_container.py b/dimos/agents/skills/google_maps_skill_container.py
 similarity index 98%
@@ -2452,7 +2452,7 @@ index ba1af783..a62b4cdd 100644
 @@ -15,8 +15,6 @@
  import json
  from typing import Any
- 
+
 -from reactivex.disposable import Disposable
 -
  from dimos.core.core import rpc
@@ -2496,7 +2496,7 @@ index 93c0a4f5..4a4388e6 100644
 -    mocker.patch("dimos.agents2.skills.navigation.time.sleep")
 +    mocker.patch("dimos.agents.skills.navigation.time.sleep")
      agent = create_navigation_agent(fixture="test_take_a_look_around.json")
- 
+
      agent.query("take a look around for 10 seconds")
 @@ -54,15 +54,15 @@ def test_go_to_semantic_location(
      create_navigation_agent, navigation_skill_container, mocker
@@ -2535,12 +2535,12 @@ index 6b14f3e1..33bb887d 100644
 @@ -12,7 +12,7 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 -from dimos.agents2.constants import AGENT_SYSTEM_PROMPT_PATH
 +from dimos.agents.constants import AGENT_SYSTEM_PROMPT_PATH
- 
+
  _SYSTEM_PROMPT = None
- 
+
 diff --git a/dimos/agents2/temp/webcam_agent.py b/dimos/agents/temp/webcam_agent.py
 similarity index 95%
 rename from dimos/agents2/temp/webcam_agent.py
@@ -2550,17 +2550,17 @@ index 2a70770e..f3eae0ab 100644
 +++ b/dimos/agents/temp/webcam_agent.py
 @@ -14,7 +14,7 @@
  # limitations under the License.
- 
+
  """
 -Run script for Unitree Go2 robot with agents2 framework.
 +Run script for Unitree Go2 robot with agents framework.
  This is the migrated version using the new LangChain-based agent system.
  """
- 
+
 @@ -24,9 +24,9 @@ import time
  import reactivex as rx
  import reactivex.operators as ops
- 
+
 -from dimos.agents2 import Agent, Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 -from dimos.agents2.cli.human import HumanInput
 -from dimos.agents2.spec import Model, Provider
@@ -2580,12 +2580,12 @@ index 447d02e6..ed8ca749 100644
 @@ -15,7 +15,7 @@
  import pytest
  import pytest_asyncio
- 
+
 -from dimos.agents2.agent import Agent
 +from dimos.agents.agent import Agent
  from dimos.core import start
  from dimos.protocol.skill.test_coordinator import SkillContainerTest
- 
+
 diff --git a/dimos/agents2/test_agent_direct.py b/dimos/agents/test_agent_direct.py
 similarity index 98%
 rename from dimos/agents2/test_agent_direct.py
@@ -2594,14 +2594,14 @@ index ee3f9aa0..ae930745 100644
 --- a/dimos/agents2/test_agent_direct.py
 +++ b/dimos/agents/test_agent_direct.py
 @@ -16,7 +16,7 @@
- 
+
  from contextlib import contextmanager
- 
+
 -from dimos.agents2.agent import Agent
 +from dimos.agents.agent import Agent
  from dimos.core import start
  from dimos.protocol.skill.test_coordinator import SkillContainerTest
- 
+
 diff --git a/dimos/agents2/test_agent_fake.py b/dimos/agents/test_agent_fake.py
 similarity index 100%
 rename from dimos/agents2/test_agent_fake.py
@@ -2616,7 +2616,7 @@ index 4b113b45..fdda8f52 100644
 @@ -20,8 +20,8 @@ from dimos_lcm.sensor_msgs import CameraInfo
  from langchain_core.messages import AIMessage, HumanMessage
  import pytest
- 
+
 -from dimos.agents2.agent import Agent
 -from dimos.agents2.testing import MockModel
 +from dimos.agents.agent import Agent
@@ -2632,14 +2632,14 @@ index 8e297256..4cd8ccf7 100644
 --- a/dimos/agents2/test_stash_agent.py
 +++ b/dimos/agents/test_stash_agent.py
 @@ -14,7 +14,7 @@
- 
+
  import pytest
- 
+
 -from dimos.agents2.agent import Agent
 +from dimos.agents.agent import Agent
  from dimos.protocol.skill.test_coordinator import SkillContainerTest
- 
- 
+
+
 diff --git a/dimos/agents2/testing.py b/dimos/agents/testing.py
 similarity index 100%
 rename from dimos/agents2/testing.py
@@ -4048,12 +4048,12 @@ index 5b9027b0..ee6be0e3 100644
 +++ b/dimos/agents_deprecated/agent_config.py
 @@ -13,7 +13,7 @@
  # limitations under the License.
- 
- 
+
+
 -from dimos.agents.agent import Agent
 +from dimos.agents_deprecated.agent import Agent
- 
- 
+
+
  class AgentConfig:
 diff --git a/dimos/agents/agent_message.py b/dimos/agents_deprecated/agent_message.py
 similarity index 98%
@@ -4065,12 +4065,12 @@ index 7be0ad84..e43f141b 100644
 @@ -17,7 +17,7 @@
  from dataclasses import dataclass, field
  import time
- 
+
 -from dimos.agents.agent_types import AgentImage
 +from dimos.agents_deprecated.agent_types import AgentImage
  from dimos.msgs.sensor_msgs.Image import Image
- 
- 
+
+
 diff --git a/dimos/agents/agent_types.py b/dimos/agents_deprecated/agent_types.py
 similarity index 100%
 rename from dimos/agents/agent_types.py
@@ -4084,7 +4084,7 @@ index 0e3fda3d..cf104290 100644
 +++ b/dimos/agents_deprecated/claude_agent.py
 @@ -29,7 +29,7 @@ import anthropic
  from dotenv import load_dotenv
- 
+
  # Local imports
 -from dimos.agents.agent import LLMAgent
 +from dimos.agents_deprecated.agent import LLMAgent
@@ -4094,12 +4094,12 @@ index 0e3fda3d..cf104290 100644
 @@ -39,8 +39,8 @@ if TYPE_CHECKING:
      from reactivex import Observable
      from reactivex.scheduler import ThreadPoolScheduler
- 
+
 -    from dimos.agents.memory.base import AbstractAgentSemanticMemory
 -    from dimos.agents.prompt_builder.impl import PromptBuilder
 +    from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
 +    from dimos.agents_deprecated.prompt_builder.impl import PromptBuilder
- 
+
  # Initialize environment variables
  load_dotenv()
 diff --git a/dimos/agents/prompt_builder/__init__.py b/dimos/agents_deprecated/memory/__init__.py
@@ -4120,11 +4120,11 @@ index 96cc32aa..a594f4a6 100644
 @@ -19,7 +19,7 @@ from langchain_chroma import Chroma
  from langchain_openai import OpenAIEmbeddings
  import torch
- 
+
 -from dimos.agents.memory.base import AbstractAgentSemanticMemory
 +from dimos.agents_deprecated.memory.base import AbstractAgentSemanticMemory
- 
- 
+
+
  class ChromaAgentSemanticMemory(AbstractAgentSemanticMemory):
 diff --git a/dimos/agents/memory/image_embedding.py b/dimos/agents_deprecated/memory/image_embedding.py
 similarity index 100%
@@ -4140,21 +4140,21 @@ index 1e0611d6..69cbbbf9 100644
 @@ -24,7 +24,7 @@ from typing import Any
  import chromadb
  import numpy as np
- 
+
 -from dimos.agents.memory.visual_memory import VisualMemory
 +from dimos.agents_deprecated.memory.visual_memory import VisualMemory
  from dimos.types.robot_location import RobotLocation
  from dimos.utils.logging_config import setup_logger
- 
+
 @@ -247,7 +247,7 @@ class SpatialVectorDB:
              List of results, each containing the image, its metadata, and similarity score
          """
          if self.embedding_provider is None:
 -            from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 +            from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
- 
+
              self.embedding_provider = ImageEmbeddingProvider(model_name="clip")
- 
+
 diff --git a/dimos/agents/memory/test_image_embedding.py b/dimos/agents_deprecated/memory/test_image_embedding.py
 similarity index 99%
 rename from dimos/agents/memory/test_image_embedding.py
@@ -4165,12 +4165,12 @@ index b1e7cabf..98574462 100644
 @@ -23,7 +23,7 @@ import numpy as np
  import pytest
  from reactivex import operators as ops
- 
+
 -from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 +from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
  from dimos.stream.video_provider import VideoProvider
- 
- 
+
+
 diff --git a/dimos/agents/memory/visual_memory.py b/dimos/agents_deprecated/memory/visual_memory.py
 similarity index 100%
 rename from dimos/agents/memory/visual_memory.py
@@ -4187,9 +4187,9 @@ index 8714378a..898047e4 100644
 --- a/dimos/agents/modules/base.py
 +++ b/dimos/agents_deprecated/modules/base.py
 @@ -21,17 +21,17 @@ from typing import Any
- 
+
  from reactivex.subject import Subject
- 
+
 -from dimos.agents.agent_message import AgentMessage
 -from dimos.agents.agent_types import AgentResponse, ConversationHistory, ToolCall
 -from dimos.agents.memory.base import AbstractAgentSemanticMemory
@@ -4200,15 +4200,15 @@ index 8714378a..898047e4 100644
 +from dimos.agents_deprecated.memory.chroma_impl import OpenAISemanticMemory
  from dimos.skills.skills import AbstractSkill, SkillLibrary
  from dimos.utils.logging_config import setup_logger
- 
+
  try:
      from .gateway import UnifiedGatewayClient
  except ImportError:
 -    from dimos.agents.modules.gateway import UnifiedGatewayClient
 +    from dimos.agents_deprecated.modules.gateway import UnifiedGatewayClient
- 
+
  logger = setup_logger()
- 
+
 diff --git a/dimos/agents/modules/base_agent.py b/dimos/agents_deprecated/modules/base_agent.py
 similarity index 96%
 rename from dimos/agents/modules/base_agent.py
@@ -4219,7 +4219,7 @@ index 2ebd2535..0516a5a0 100644
 @@ -17,9 +17,9 @@
  import threading
  from typing import Any
- 
+
 -from dimos.agents.agent_message import AgentMessage
 -from dimos.agents.agent_types import AgentResponse
 -from dimos.agents.memory.base import AbstractAgentSemanticMemory
@@ -4235,9 +4235,9 @@ index 2ebd2535..0516a5a0 100644
  except ImportError:
 -    from dimos.agents.modules.base import BaseAgent
 +    from dimos.agents_deprecated.modules.base import BaseAgent
- 
+
  logger = setup_logger()
- 
+
 diff --git a/dimos/agents/modules/gateway/__init__.py b/dimos/agents_deprecated/modules/gateway/__init__.py
 similarity index 100%
 rename from dimos/agents/modules/gateway/__init__.py
@@ -4270,14 +4270,14 @@ index 42deea09..0714e398 100644
 --- a/dimos/agents/prompt_builder/impl.py
 +++ b/dimos/agents_deprecated/prompt_builder/impl.py
 @@ -15,8 +15,8 @@
- 
+
  from textwrap import dedent
- 
+
 -from dimos.agents.tokenizer.base import AbstractTokenizer
 -from dimos.agents.tokenizer.openai_tokenizer import OpenAITokenizer
 +from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
 +from dimos.agents_deprecated.tokenizer.openai_tokenizer import OpenAITokenizer
- 
+
  # TODO: Make class more generic when implementing other tokenizers. Presently its OpenAI specific.
  # TODO: Build out testing and logging
 diff --git a/dimos/agents_deprecated/tokenizer/__init__.py b/dimos/agents_deprecated/tokenizer/__init__.py
@@ -4295,14 +4295,14 @@ index cf513472..5b1eef73 100644
 --- a/dimos/agents/tokenizer/huggingface_tokenizer.py
 +++ b/dimos/agents_deprecated/tokenizer/huggingface_tokenizer.py
 @@ -14,7 +14,7 @@
- 
+
  from transformers import AutoTokenizer  # type: ignore[import-untyped]
- 
+
 -from dimos.agents.tokenizer.base import AbstractTokenizer
 +from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
  from dimos.utils.logging_config import setup_logger
- 
- 
+
+
 diff --git a/dimos/agents/tokenizer/openai_tokenizer.py b/dimos/agents_deprecated/tokenizer/openai_tokenizer.py
 similarity index 98%
 rename from dimos/agents/tokenizer/openai_tokenizer.py
@@ -4311,14 +4311,14 @@ index 15de95aa..a8b75b85 100644
 --- a/dimos/agents/tokenizer/openai_tokenizer.py
 +++ b/dimos/agents_deprecated/tokenizer/openai_tokenizer.py
 @@ -14,7 +14,7 @@
- 
+
  import tiktoken
- 
+
 -from dimos.agents.tokenizer.base import AbstractTokenizer
 +from dimos.agents_deprecated.tokenizer.base import AbstractTokenizer
  from dimos.utils.logging_config import setup_logger
- 
- 
+
+
 diff --git a/dimos/core/blueprints.py b/dimos/core/blueprints.py
 index 484e076a..5431476b 100644
 --- a/dimos/core/blueprints.py
@@ -4330,8 +4330,8 @@ index 484e076a..5431476b 100644
 +from dimos.utils.logging_config import setup_logger
 +
 +logger = setup_logger()
- 
- 
+
+
  @dataclass(frozen=True)
 @@ -205,6 +208,15 @@ class ModuleBlueprintSet:
              for module, original_name in connections[(remapped_name, type)]:
@@ -4346,13 +4346,13 @@ index 484e076a..5431476b 100644
 +                    module=module.__name__,
 +                    transport=transport.__class__.__name__,
 +                )
- 
+
      def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
          # Gather all RPC methods.
 @@ -268,10 +280,16 @@ class ModuleBlueprintSet:
                      requested_method_name, rpc_methods_dot[requested_method_name]
                  )
- 
+
 -    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
 +    def build(
 +        self,
@@ -4365,7 +4365,7 @@ index 484e076a..5431476b 100644
 +        global_config = global_config.model_copy(update=dict(self.global_config_overrides))
 +        if cli_config_overrides:
 +            global_config = global_config.model_copy(update=dict(cli_config_overrides))
- 
+
          self._check_requirements()
          self._verify_no_name_conflicts()
 diff --git a/dimos/core/global_config.py b/dimos/core/global_config.py
@@ -4374,12 +4374,12 @@ index 9b68a803..6fca91c8 100644
 +++ b/dimos/core/global_config.py
 @@ -13,9 +13,17 @@
  # limitations under the License.
- 
+
  from functools import cached_property
 +import re
- 
+
  from pydantic_settings import BaseSettings, SettingsConfigDict
- 
+
 +from dimos.mapping.occupancy.path_map import NavigationStrategy
 +from dimos.navigation.global_planner.types import AStarAlgorithm
 +
@@ -4387,7 +4387,7 @@ index 9b68a803..6fca91c8 100644
 +def _get_all_numbers(s: str) -> list[float]:
 +    return [float(x) for x in re.findall(r"-?\d+\.?\d*", s)]
 +
- 
+
  class GlobalConfig(BaseSettings):
      robot_ip: str | None = None
 @@ -23,8 +31,19 @@ class GlobalConfig(BaseSettings):
@@ -4407,7 +4407,7 @@ index 9b68a803..6fca91c8 100644
 +    planner_strategy: NavigationStrategy = "simple"
 +    astar_algorithm: AStarAlgorithm = "min_cost"
 +    planner_robot_speed: float | None = None
- 
+
      model_config = SettingsConfigDict(
          env_file=".env",
 @@ -40,3 +59,14 @@ class GlobalConfig(BaseSettings):
@@ -4432,7 +4432,7 @@ index 826d54ab..06bc1f1c 100644
 @@ -360,7 +360,7 @@ class DaskModule(ModuleBase[ModuleConfigT]):
      def __str__(self) -> str:
          return f"{self.__class__.__name__}"
- 
+
 -    # called from remote
 +    @rpc
      def set_transport(self, stream_name: str, transport: Transport) -> bool:  # type: ignore[type-arg]
@@ -4451,30 +4451,30 @@ index e48e5827..8a3a64c3 100644
  from dimos.core.module_coordinator import ModuleCoordinator
  from dimos.core.rpc_client import RpcCall
 @@ -162,7 +161,7 @@ def test_build_happy_path() -> None:
- 
+
      blueprint_set = autoconnect(module_a(), module_b(), module_c())
- 
+
 -    coordinator = blueprint_set.build(GlobalConfig())
 +    coordinator = blueprint_set.build()
- 
+
      try:
          assert isinstance(coordinator, ModuleCoordinator)
 @@ -298,7 +297,7 @@ def test_remapping() -> None:
      assert ("color_image", Data1) not in blueprint_set._all_name_types
- 
+
      # Build and verify connections work
 -    coordinator = blueprint_set.build(GlobalConfig())
 +    coordinator = blueprint_set.build()
- 
+
      try:
          source_instance = coordinator.get_instance(SourceModule)
 @@ -351,7 +350,7 @@ def test_future_annotations_autoconnect() -> None:
- 
+
      blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
- 
+
 -    coordinator = blueprint_set.build(GlobalConfig())
 +    coordinator = blueprint_set.build()
- 
+
      try:
          out_instance = coordinator.get_instance(FutureModuleOut)
 diff --git a/dimos/core/test_core.py b/dimos/core/test_core.py
@@ -4487,7 +4487,7 @@ index f9262acd..17ee300a 100644
      assert "start" in class_rpcs, "start should be in rpcs"
 -    assert len(class_rpcs) == 8
 +    assert len(class_rpcs) == 9
- 
+
      # Check that the values are callable
      assert callable(class_rpcs["navigate_to"]), "navigate_to should be callable"
 diff --git a/dimos/core/transport.py b/dimos/core/transport.py
@@ -4495,18 +4495,18 @@ index f517f98e..8980c180 100644
 --- a/dimos/core/transport.py
 +++ b/dimos/core/transport.py
 @@ -169,7 +169,7 @@ class SHMTransport(PubSubTransport[T]):
- 
+
          self.shm.publish(self.topic, msg)
- 
+
 -    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
 +    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[assignment, override]
          if not self._started:
              self.shm.start()
              self._started = True
 @@ -199,7 +199,7 @@ class JpegShmTransport(PubSubTransport[T]):
- 
+
          self.shm.publish(self.topic, msg)
- 
+
 -    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
 +    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[assignment, override]
          if not self._started:
@@ -5367,7 +5367,7 @@ index 929e9548..1cb30b67 100644
 +++ b/dimos/hardware/camera/module.py
 @@ -23,7 +23,7 @@ from reactivex import operators as ops
  from reactivex.observable import Observable
- 
+
  from dimos import spec
 -from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 +from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
@@ -5379,7 +5379,7 @@ index 6c9abb56..962c29c3 100644
 --- a/dimos/hardware/camera/webcam.py
 +++ b/dimos/hardware/camera/webcam.py
 @@ -14,6 +14,7 @@
- 
+
  from dataclasses import dataclass, field
  from functools import cache
 +import platform
@@ -5388,7 +5388,7 @@ index 6c9abb56..962c29c3 100644
  from typing import Literal
 @@ -119,7 +120,11 @@ class Webcam(CameraHardware[WebcamConfig]):
              raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")
- 
+
          # Convert BGR to RGB (OpenCV uses BGR by default)
 -        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 +        # conversion not needed on macOS for some reason
@@ -5396,7 +5396,7 @@ index 6c9abb56..962c29c3 100644
 +            frame_rgb = frame
 +        else:
 +            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
- 
+
          # Create Image message
          # Using Image.from_numpy() since it's designed for numpy arrays
 diff --git a/dimos/mapping/costmapper.py b/dimos/mapping/costmapper.py
@@ -7119,9 +7119,9 @@ index 20d9e40e..d35794aa 100644
 --- a/dimos/mapping/osm/demo_osm.py
 +++ b/dimos/mapping/osm/demo_osm.py
 @@ -15,11 +15,11 @@
- 
+
  from dotenv import load_dotenv
- 
+
 -from dimos.agents2.agent import llm_agent
 -from dimos.agents2.cli.human import human_input
 -from dimos.agents2.skills.demo_robot import demo_robot
@@ -7133,7 +7133,7 @@ index 20d9e40e..d35794aa 100644
 +from dimos.agents.skills.osm import osm_skill
 +from dimos.agents.system_prompt import get_system_prompt
  from dimos.core.blueprints import autoconnect
- 
+
  load_dotenv()
 diff --git a/dimos/mapping/pointclouds/accumulators/general.py b/dimos/mapping/pointclouds/accumulators/general.py
 new file mode 100644
@@ -7349,20 +7349,20 @@ index 6b4180ab..903339e9 100644
 --- a/dimos/mapping/pointclouds/occupancy.py
 +++ b/dimos/mapping/pointclouds/occupancy.py
 @@ -14,8 +14,10 @@
- 
+
  from __future__ import annotations
- 
+
 -from typing import TYPE_CHECKING
 +from dataclasses import dataclass
 +from typing import TYPE_CHECKING, Any, Protocol, TypeVar
- 
+
 +from numba import njit, prange  # type: ignore[import-untyped]
  import numpy as np
  from scipy import ndimage  # type: ignore[import-untyped]
- 
+
 @@ -23,18 +25,122 @@ from dimos.msgs.geometry_msgs import Pose
  from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
- 
+
  if TYPE_CHECKING:
 +    from numpy.typing import NDArray
 +
@@ -7439,8 +7439,8 @@ index 6b4180ab..903339e9 100644
 +    from collections.abc import Callable
 +
      from dimos.msgs.sensor_msgs import PointCloud2
- 
- 
+
+
 -def height_cost_occupancy(
 -    cloud: PointCloud2,
 -    resolution: float = 0.05,
@@ -7490,10 +7490,10 @@ index 6b4180ab..903339e9 100644
 +
 +def height_cost_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
      """Create a costmap based on terrain slope (rate of change of height).
- 
+
      Costs are assigned based on the gradient magnitude of the terrain height.
 @@ -43,21 +149,22 @@ def height_cost_occupancy(
- 
+
      Args:
          cloud: PointCloud2 message containing 3D points
 -        resolution: Grid resolution in meters/cell (default: 0.05)
@@ -7503,7 +7503,7 @@ index 6b4180ab..903339e9 100644
 -        frame_id: Reference frame for the grid (default: uses cloud's frame_id)
 +        **kwargs: HeightCostConfig fields - resolution, can_pass_under, can_climb,
 +                  ignore_noise, smoothing, frame_id
- 
+
      Returns:
          OccupancyGrid with costs 0-100 based on terrain slope, -1 for unknown
      """
@@ -7511,7 +7511,7 @@ index 6b4180ab..903339e9 100644
 +    cfg = HeightCostConfig(**kwargs)
 +    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
      ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
- 
+
      if len(points) == 0:
          return OccupancyGrid(
 -            width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
@@ -7520,23 +7520,23 @@ index 6b4180ab..903339e9 100644
 +            resolution=cfg.resolution,
 +            frame_id=cfg.frame_id or cloud.frame_id,
          )
- 
+
      # Find bounds of the point cloud in X-Y plane (use all points)
 @@ -74,8 +181,8 @@ def height_cost_occupancy(
      max_y += padding
- 
+
      # Calculate grid dimensions
 -    width = int(np.ceil((max_x - min_x) / resolution))
 -    height = int(np.ceil((max_y - min_y) / resolution))
 +    width = int(np.ceil((max_x - min_x) / cfg.resolution))
 +    height = int(np.ceil((max_y - min_y) / cfg.resolution))
- 
+
      # Create origin pose
      origin = Pose()
 @@ -89,37 +196,37 @@ def height_cost_occupancy(
      min_height_map = np.full((height, width), np.nan, dtype=np.float32)
      max_height_map = np.full((height, width), np.nan, dtype=np.float32)
- 
+
 -    # Convert point XY to grid indices
 -    grid_x = np.round((points[:, 0] - min_x) / resolution).astype(np.int32)
 -    grid_y = np.round((points[:, 1] - min_y) / resolution).astype(np.int32)
@@ -7559,17 +7559,17 @@ index 6b4180ab..903339e9 100644
 +        width,
 +        height,
 +    )
- 
+
      # Step 2: Determine effective height for each cell
      # If gap between min and max > can_pass_under, robot can pass under - use min (ground)
      # Otherwise use max (solid obstacle)
      height_gap = max_height_map - min_height_map
 -    height_map = np.where(height_gap > can_pass_under, min_height_map, max_height_map)
 +    height_map = np.where(height_gap > cfg.can_pass_under, min_height_map, max_height_map)
- 
+
      # Track which cells have observations
      observed_mask = ~np.isnan(height_map)
- 
+
      # Step 3: Apply smoothing to fill gaps while preserving unknown space
 -    if smoothing > 0 and np.any(observed_mask):
 +    if cfg.smoothing > 0 and np.any(observed_mask):
@@ -7577,45 +7577,45 @@ index 6b4180ab..903339e9 100644
          # Create a weight map (1 for observed, 0 for unknown)
          weights = observed_mask.astype(np.float32)
          height_map_filled = np.where(observed_mask, height_map, 0.0)
- 
+
          # Smooth both height values and weights
 -        smoothed_heights = ndimage.gaussian_filter(height_map_filled, sigma=smoothing)
 -        smoothed_weights = ndimage.gaussian_filter(weights, sigma=smoothing)
 +        smoothed_heights = ndimage.gaussian_filter(height_map_filled, sigma=cfg.smoothing)
 +        smoothed_weights = ndimage.gaussian_filter(weights, sigma=cfg.smoothing)
- 
+
          # Avoid division by zero (use np.divide with where to prevent warning)
          valid_smooth = smoothed_weights > 0.01
 @@ -139,22 +246,22 @@ def height_cost_occupancy(
          height_for_grad = np.where(observed_mask, height_map, 0.0)
- 
+
          # Calculate gradients (Sobel gives gradient in pixels, scale by resolution)
 -        grad_x = ndimage.sobel(height_for_grad, axis=1) / (8.0 * resolution)
 -        grad_y = ndimage.sobel(height_for_grad, axis=0) / (8.0 * resolution)
 +        grad_x = ndimage.sobel(height_for_grad, axis=1) / (8.0 * cfg.resolution)
 +        grad_y = ndimage.sobel(height_for_grad, axis=0) / (8.0 * cfg.resolution)
- 
+
          # Gradient magnitude = height change per meter
          gradient_magnitude = np.sqrt(grad_x**2 + grad_y**2)
- 
+
          # Map gradient to cost: can_climb height change over one cell maps to cost 100
          # gradient_magnitude is in m/m, so multiply by resolution to get height change per cell
 -        height_change_per_cell = gradient_magnitude * resolution
 +        height_change_per_cell = gradient_magnitude * cfg.resolution
- 
+
          # Ignore height changes below noise threshold (lidar floor noise)
          height_change_per_cell = np.where(
 -            height_change_per_cell < ignore_noise, 0.0, height_change_per_cell
 +            height_change_per_cell < cfg.ignore_noise, 0.0, height_change_per_cell
          )
- 
+
 -        cost_float = (height_change_per_cell / can_climb) * 100.0
 +        cost_float = (height_change_per_cell / cfg.can_climb) * 100.0
          cost_float = np.clip(cost_float, 0, 100)
- 
+
          # Erode observed mask - only trust gradients where all neighbors are observed
 @@ -169,65 +276,58 @@ def height_cost_occupancy(
- 
+
      return OccupancyGrid(
          grid=cost,
 -        resolution=resolution,
@@ -7625,8 +7625,8 @@ index 6b4180ab..903339e9 100644
 +        frame_id=cfg.frame_id or cloud.frame_id,
          ts=ts,
      )
- 
- 
+
+
 -def general_occupancy(
 -    cloud: PointCloud2,
 -    resolution: float = 0.05,
@@ -7647,7 +7647,7 @@ index 6b4180ab..903339e9 100644
 +# can remove, just needs pulling out of unitree type/map.py
 +def general_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
      """Create an OccupancyGrid from a PointCloud2 message.
- 
+
      Args:
          cloud: PointCloud2 message containing 3D points
 -        resolution: Grid resolution in meters/cell (default: 0.05)
@@ -7659,7 +7659,7 @@ index 6b4180ab..903339e9 100644
 -                            Set to preserve unknown areas for exploration.
 +        **kwargs: GeneralOccupancyConfig fields - resolution, min_height, max_height,
 +                  frame_id, mark_free_radius
- 
+
      Returns:
          OccupancyGrid with occupied cells where points were projected
      """
@@ -7668,7 +7668,7 @@ index 6b4180ab..903339e9 100644
 -    points = cloud.as_numpy()
 +    cfg = GeneralOccupancyConfig(**kwargs)
 +    points = cloud.as_numpy().astype(np.float64)  # Upcast to avoid float32 rounding
- 
+
      if len(points) == 0:
 -        # Return empty grid
          return OccupancyGrid(
@@ -7678,17 +7678,17 @@ index 6b4180ab..903339e9 100644
 +            resolution=cfg.resolution,
 +            frame_id=cfg.frame_id or cloud.frame_id,
          )
- 
+
      # Filter points by height for obstacles
 -    obstacle_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
 +    obstacle_mask = (points[:, 2] >= cfg.min_height) & (points[:, 2] <= cfg.max_height)
      obstacle_points = points[obstacle_mask]
- 
+
      # Get points below min_height for marking as free space
 -    ground_mask = points[:, 2] < min_height
 +    ground_mask = points[:, 2] < cfg.min_height
      ground_points = points[ground_mask]
- 
+
      # Find bounds of the point cloud in X-Y plane (use all points)
 -    if len(points) > 0:
 -        min_x = np.min(points[:, 0])
@@ -7704,61 +7704,61 @@ index 6b4180ab..903339e9 100644
 +    max_x = np.max(points[:, 0])
 +    min_y = np.min(points[:, 1])
 +    max_y = np.max(points[:, 1])
- 
+
      # Add some padding around the bounds
      padding = 1.0  # 1 meter padding
 @@ -237,8 +337,8 @@ def general_occupancy(
      max_y += padding
- 
+
      # Calculate grid dimensions
 -    width = int(np.ceil((max_x - min_x) / resolution))
 -    height = int(np.ceil((max_y - min_y) / resolution))
 +    width = int(np.ceil((max_x - min_x) / cfg.resolution))
 +    height = int(np.ceil((max_y - min_y) / cfg.resolution))
- 
+
      # Create origin pose (bottom-left corner of the grid)
      origin = Pose()
 @@ -252,8 +352,8 @@ def general_occupancy(
- 
+
      # First, mark ground points as free space
      if len(ground_points) > 0:
 -        ground_x = ((ground_points[:, 0] - min_x) / resolution).astype(np.int32)
 -        ground_y = ((ground_points[:, 1] - min_y) / resolution).astype(np.int32)
 +        ground_x = ((ground_points[:, 0] - min_x) / cfg.resolution).astype(np.int32)
 +        ground_y = ((ground_points[:, 1] - min_y) / cfg.resolution).astype(np.int32)
- 
+
          # Clip indices to grid bounds
          ground_x = np.clip(ground_x, 0, width - 1)
 @@ -264,8 +364,8 @@ def general_occupancy(
- 
+
      # Then mark obstacle points (will override ground if at same location)
      if len(obstacle_points) > 0:
 -        obs_x = ((obstacle_points[:, 0] - min_x) / resolution).astype(np.int32)
 -        obs_y = ((obstacle_points[:, 1] - min_y) / resolution).astype(np.int32)
 +        obs_x = ((obstacle_points[:, 0] - min_x) / cfg.resolution).astype(np.int32)
 +        obs_y = ((obstacle_points[:, 1] - min_y) / cfg.resolution).astype(np.int32)
- 
+
          # Clip indices to grid bounds
          obs_x = np.clip(obs_x, 0, width - 1)
 @@ -275,12 +375,12 @@ def general_occupancy(
          grid[obs_y, obs_x] = 100  # Lethal obstacle
- 
+
      # Apply mark_free_radius to expand free space areas
 -    if mark_free_radius > 0:
 +    if cfg.mark_free_radius > 0:
          # Expand existing free space areas by the specified radius
          # This will NOT expand from obstacles, only from free space
- 
+
          free_mask = grid == 0  # Current free space
 -        free_radius_cells = int(np.ceil(mark_free_radius / resolution))
 +        free_radius_cells = int(np.ceil(cfg.mark_free_radius / cfg.resolution))
- 
+
          # Create circular kernel
          y, x = np.ogrid[
 @@ -299,120 +399,100 @@ def general_occupancy(
      # Get timestamp from cloud if available
      ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
- 
+
 -    occupancy_grid = OccupancyGrid(
 +    return OccupancyGrid(
          grid=grid,
@@ -7769,13 +7769,13 @@ index 6b4180ab..903339e9 100644
 +        frame_id=cfg.frame_id or cloud.frame_id,
          ts=ts,
      )
- 
+
 -    return occupancy_grid
- 
+
 +@dataclass(frozen=True)
 +class SimpleOccupancyConfig(OccupancyConfig):
 +    """Config for simple occupancy with morphological closing."""
- 
+
 -def simple_occupancy(
 -    cloud: PointCloud2,
 -    resolution: float = 0.05,
@@ -7794,18 +7794,18 @@ index 6b4180ab..903339e9 100644
 +    can_climb: float = 0.15
 +    ignore_noise: float = 0.05
 +    smoothing: float = 1.0
- 
+
 -    if len(points) == 0:
 -        return OccupancyGrid(
 -            width=1, height=1, resolution=resolution, frame_id=frame_id or cloud.frame_id
 -        )
- 
+
 -    # Filter points by height for obstacles
 -    obstacle_mask = (points[:, 2] >= min_height) & (points[:, 2] <= max_height)
 -    obstacle_points = points[obstacle_mask]
 +def simple_occupancy(cloud: PointCloud2, **kwargs: Any) -> OccupancyGrid:
 +    """Create a simple occupancy grid with morphological closing.
- 
+
 -    # Get points below min_height for marking as free space
 -    ground_mask = points[:, 2] < min_height
 -    ground_points = points[ground_mask]
@@ -7813,7 +7813,7 @@ index 6b4180ab..903339e9 100644
 +        cloud: PointCloud2 message containing 3D points
 +        **kwargs: SimpleOccupancyConfig fields - resolution, min_height, max_height,
 +                  frame_id, closing_iterations, closing_connectivity
- 
+
 -    # Find bounds of the point cloud in X-Y plane (use all points)
 -    if len(points) > 0:
 -        min_x = np.min(points[:, 0])
@@ -7836,7 +7836,7 @@ index 6b4180ab..903339e9 100644
 +            resolution=cfg.resolution,
 +            frame_id=cfg.frame_id or cloud.frame_id,
          )
- 
+
 -    # Add some padding around the bounds
 -    padding = 1.0  # 1 meter padding
 -    min_x -= padding
@@ -7848,13 +7848,13 @@ index 6b4180ab..903339e9 100644
 +    max_x = float(np.max(points[:, 0])) + 1.0
 +    min_y = float(np.min(points[:, 1])) - 1.0
 +    max_y = float(np.max(points[:, 1])) + 1.0
- 
+
      # Calculate grid dimensions
 -    width = int(np.ceil((max_x - min_x) / resolution))
 -    height = int(np.ceil((max_y - min_y) / resolution))
 +    width = int(np.ceil((max_x - min_x) / cfg.resolution))
 +    height = int(np.ceil((max_y - min_y) / cfg.resolution))
- 
+
      # Create origin pose (bottom-left corner of the grid)
      origin = Pose()
      origin.position.x = min_x
@@ -7862,10 +7862,10 @@ index 6b4180ab..903339e9 100644
      origin.position.z = 0.0
 -    origin.orientation.w = 1.0  # No rotation
 +    origin.orientation.w = 1.0
- 
+
      # Initialize grid (all unknown)
      grid = np.full((height, width), -1, dtype=np.int8)
- 
+
 -    # First, mark ground points as free space
 -    if len(ground_points) > 0:
 -        ground_x = np.round((ground_points[:, 0] - min_x) / resolution).astype(np.int32)
@@ -7913,11 +7913,11 @@ index 6b4180ab..903339e9 100644
 +        cfg.min_height,
 +        cfg.max_height,
 +    )
- 
+
 -    # Create and return OccupancyGrid
 -    # Get timestamp from cloud if available
      ts = cloud.ts if hasattr(cloud, "ts") and cloud.ts is not None else 0.0
- 
+
 -    occupancy_grid = OccupancyGrid(
 +    return OccupancyGrid(
          grid=grid,
@@ -7928,7 +7928,7 @@ index 6b4180ab..903339e9 100644
 +        frame_id=cfg.frame_id or cloud.frame_id,
          ts=ts,
      )
- 
+
 -    return occupancy_grid
 +
 +# Populate algorithm registry
@@ -7945,7 +7945,7 @@ index 5ab712ec..8a12eb23 100644
 +++ b/dimos/mapping/pointclouds/test_occupancy.py
 @@ -19,14 +19,15 @@ from open3d.geometry import PointCloud  # type: ignore[import-untyped]
  import pytest
- 
+
  from dimos.core import LCMTransport
 +from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
  from dimos.mapping.pointclouds.occupancy import (
@@ -7962,8 +7962,8 @@ index 5ab712ec..8a12eb23 100644
  from dimos.utils.testing.test_moment import Go2Moment
 @@ -37,10 +38,14 @@ def apartment() -> PointCloud:
      return read_pointcloud(get_data("apartment") / "sum.ply")
- 
- 
+
+
 +@pytest.fixture
 +def big_office() -> PointCloud:
 +    return read_pointcloud(get_data("big_office.ply"))
@@ -7978,8 +7978,8 @@ index 5ab712ec..8a12eb23 100644
  )
 @@ -56,6 +61,24 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
      np.testing.assert_array_equal(computed_image, expected_image)
- 
- 
+
+
 +@pytest.mark.parametrize(
 +    "occupancy_fn,output_name",
 +    [
@@ -8000,7 +8000,7 @@ index 5ab712ec..8a12eb23 100644
 +
  class HeightCostMoment(Go2Moment):
      costmap: OutputMoment[OccupancyGrid] = OutputMoment(LCMTransport("/costmap", OccupancyGrid))
- 
+
 diff --git a/dimos/mapping/pointclouds/test_occupancy_speed.py b/dimos/mapping/pointclouds/test_occupancy_speed.py
 new file mode 100644
 index 00000000..0eb3d424
@@ -8072,15 +8072,15 @@ index 139d901a..6ae958bc 100644
 @@ -12,18 +12,15 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 -from collections.abc import Generator
 +from collections.abc import Callable, Generator
  import time
- 
+
  import numpy as np
 -import open3d as o3d  # type: ignore[import-untyped]
  import pytest
- 
+
 -from dimos.core import LCMTransport, Transport
 +from dimos.core import LCMTransport
  from dimos.mapping.voxels import VoxelGridMapper
@@ -8091,21 +8091,21 @@ index 139d901a..6ae958bc 100644
  from dimos.utils.testing.moment import OutputMoment
  from dimos.utils.testing.replay import TimedSensorReplay
 @@ -39,56 +36,77 @@ def mapper() -> Generator[VoxelGridMapper, None, None]:
- 
+
  class Go2MapperMoment(Go2Moment):
      global_map: OutputMoment[PointCloud2] = OutputMoment(LCMTransport("/global_map", PointCloud2))
 -    costmap: OutputMoment[OccupancyGrid] = OutputMoment(LCMTransport("/costmap", OccupancyGrid))
 +
 +
 +MomentFactory = Callable[[float, bool], Go2MapperMoment]
- 
- 
+
+
  @pytest.fixture
 -def moment():
 -    moment = Go2MapperMoment()
 +def moment() -> Generator[MomentFactory, None, None]:
 +    instances: list[Go2MapperMoment] = []
- 
+
 -    def get_moment(ts: float, publish: bool = True) -> Go2Moment:
 -        moment.seek(ts)
 +    def get_moment(ts: float, publish: bool = True) -> Go2MapperMoment:
@@ -8117,26 +8117,26 @@ index 139d901a..6ae958bc 100644
 +            m.publish()
 +        instances.append(m)
 +        return m
- 
+
      yield get_moment
 -    moment.stop()
 +    for m in instances:
 +        m.stop()
- 
- 
+
+
  @pytest.fixture
 -def moment1(moment):
 +def moment1(moment: MomentFactory) -> Go2MapperMoment:
      return moment(10, False)
- 
- 
+
+
  @pytest.fixture
 -def moment2(moment):
 -    return moment(10, False)
 +def moment2(moment: MomentFactory) -> Go2MapperMoment:
 +    return moment(85, False)
- 
- 
+
+
  @pytest.mark.tool
 -def two_perspectives_loop(moment):
 +def two_perspectives_loop(moment: MomentFactory) -> None:
@@ -8147,8 +8147,8 @@ index 139d901a..6ae958bc 100644
 -        moment(85)
 +        moment(85, True)
          time.sleep(1)
- 
- 
+
+
 -def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
 +def test_carving(
 +    mapper: VoxelGridMapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment
@@ -8159,7 +8159,7 @@ index 139d901a..6ae958bc 100644
 +    lidar_frame1_transport: LCMTransport[PointCloud2] = LCMTransport("/prev_lidar", PointCloud2)
      lidar_frame1_transport.publish(lidar_frame1)
      lidar_frame1_transport.stop()
- 
+
      lidar_frame2 = moment2.lidar.value
 +    assert lidar_frame2 is not None
 +
@@ -8175,20 +8175,20 @@ index 139d901a..6ae958bc 100644
 +    print(f"\nFrame1 XY columns: {len(xy1)}")
 +    print(f"Frame2 XY columns: {len(xy2)}")
 +    print(f"Overlapping XY columns: {len(overlap)}")
- 
+
      # Carving mapper (default, carve_columns=True)
      mapper.add_frame(lidar_frame1)
      mapper.add_frame(lidar_frame2)
- 
+
      moment2.global_map.set(mapper.get_global_pointcloud2())
 -    moment2.costmap.set(mapper.get_global_occupancygrid())
      moment2.publish()
- 
+
      count_carving = mapper.size()
 @@ -108,7 +126,9 @@ def test_carving(mapper, moment1: Go2MapperMoment, moment2: Go2MapperMoment):
          f"Carving should remove some voxels. Additive: {count_additive}, Carving: {count_carving}"
      )
- 
+
 -    additive_global_map = LCMTransport("additive_global_map", PointCloud2)
 +    additive_global_map: LCMTransport[PointCloud2] = LCMTransport(
 +        "additive_global_map", PointCloud2
@@ -8208,17 +8208,17 @@ index 139d901a..6ae958bc 100644
      mapper = VoxelGridMapper(voxel_size=voxel_size)
 -    mapper.add_frame(moment1.lidar.value)
 +    mapper.add_frame(lidar_frame)
- 
+
      global1 = mapper.get_global_pointcloud2()
      assert len(global1) == expected_points
- 
+
      # loseless roundtrip
      if voxel_size == 0.05:
 -        assert len(global1) == len(moment1.lidar.value)
 +        assert len(global1) == len(lidar_frame)
          # TODO: we want __eq__ on PointCloud2 - should actually compare
          # all points in both frames
- 
+
 diff --git a/dimos/mapping/voxels.py b/dimos/mapping/voxels.py
 index 3a2f598c..b37756f2 100644
 --- a/dimos/mapping/voxels.py
@@ -8226,13 +8226,13 @@ index 3a2f598c..b37756f2 100644
 @@ -12,50 +12,33 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 -from collections.abc import Callable
 -from dataclasses import dataclass, field
 -import functools
 +from dataclasses import dataclass
  import time
- 
+
  import numpy as np
  import open3d as o3d  # type: ignore[import-untyped]
  import open3d.core as o3c  # type: ignore[import-untyped]
@@ -8241,7 +8241,7 @@ index 3a2f598c..b37756f2 100644
  from reactivex.disposable import Disposable
 -import rerun as rr
 +from reactivex.subject import Subject
- 
+
 -from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
 -from dimos.core.global_config import GlobalConfig
 +from dimos.core import In, Module, Out, rpc
@@ -8265,8 +8265,8 @@ index 3a2f598c..b37756f2 100644
 -    can_pass_under: float = 0.6
 -    can_climb: float = 0.15
 +from dimos.utils.reactive import backpressure
- 
- 
+
+
  @dataclass
  class Config(ModuleConfig):
      frame_id: str = "world"
@@ -8277,15 +8277,15 @@ index 3a2f598c..b37756f2 100644
      device: str = "CUDA:0"
      carve_columns: bool = True
 -    costmap: CostmapConfig = field(default_factory=CostmapConfig)
- 
- 
+
+
  class VoxelGridMapper(Module):
 @@ -64,7 +47,6 @@ class VoxelGridMapper(Module):
- 
+
      lidar: In[LidarMessage]
      global_map: Out[LidarMessage]
 -    global_costmap: Out[OccupancyGrid]
- 
+
      def __init__(self, **kwargs: object) -> None:
          super().__init__(**kwargs)
 @@ -89,20 +71,30 @@ class VoxelGridMapper(Module):
@@ -8293,11 +8293,11 @@ index 3a2f598c..b37756f2 100644
          self._voxel_hashmap = self.vbg.hashmap()
          self._key_dtype = self._voxel_hashmap.key_tensor().dtype
 +        self._latest_frame_ts: float = 0.0
- 
+
      @rpc
      def start(self) -> None:
          super().start()
- 
+
 +        # Subject to trigger publishing, with backpressure to drop if busy
 +        self._publish_trigger: Subject[None] = Subject()
 +        self._disposables.add(
@@ -8308,7 +8308,7 @@ index 3a2f598c..b37756f2 100644
 +
          lidar_unsub = self.lidar.subscribe(self._on_frame)
          self._disposables.add(Disposable(lidar_unsub))
- 
+
          # If publish_interval > 0, publish on timer; otherwise publish on each frame
          if self.config.publish_interval > 0:
 -            disposable = interval(self.config.publish_interval).subscribe(
@@ -8319,33 +8319,33 @@ index 3a2f598c..b37756f2 100644
 +                )
              )
 -            self._disposables.add(disposable)
- 
+
      @rpc
      def stop(self) -> None:
 @@ -110,23 +102,24 @@ class VoxelGridMapper(Module):
- 
+
      def _on_frame(self, frame: LidarMessage) -> None:
          self.add_frame(frame)
 -        if self.config.publish_interval <= 0:
 -            self.publish_global_map()
 +        if self.config.publish_interval == 0:
 +            self._publish_trigger.on_next(None)
- 
+
      def publish_global_map(self) -> None:
          self.global_map.publish(self.get_global_pointcloud2())
 -        self.log_global_rerun()
 -        if self.config.costmap.publish:
 -            self.global_costmap.publish(self.get_global_occupancygrid())
- 
+
 -    def size(self):
 -        return self._voxel_hashmap.size()
 +    def size(self) -> int:
 +        return self._voxel_hashmap.size()  # type: ignore[no-any-return]
- 
+
 -    def __len__(self):
 +    def __len__(self) -> int:
          return self.size()
- 
+
      # @timed()  # TODO: fix thread leak in timed decorator
 -    def add_frame(self, frame: LidarMessage) -> None:
 +    def add_frame(self, frame: PointCloud2) -> None:
@@ -8355,13 +8355,13 @@ index 3a2f598c..b37756f2 100644
 +
          # we are potentially moving into CUDA here
          pcd = ensure_tensor_pcd(frame.pointcloud, self._dev)
- 
+
 @@ -144,7 +137,6 @@ class VoxelGridMapper(Module):
- 
+
          self.get_global_pointcloud.invalidate_cache(self)  # type: ignore[attr-defined]
          self.get_global_pointcloud2.invalidate_cache(self)  # type: ignore[attr-defined]
 -        self.get_global_occupancygrid.invalidate_cache(self)  # type: ignore[attr-defined]
- 
+
      def _carve_and_insert(self, new_keys: o3c.Tensor) -> None:
          """Column carving: remove all existing voxels sharing (X,Y) with new_keys, then insert."""
 @@ -194,25 +186,11 @@ class VoxelGridMapper(Module):
@@ -8386,7 +8386,7 @@ index 3a2f598c..b37756f2 100644
 -            rr.Points3D(positions, colors=colors, radii=self.config.voxel_size * 0.5),
 +            ts=self._latest_frame_ts if self._latest_frame_ts else time.time(),
          )
- 
+
      @simple_mcache
 +    # @timed()
      def get_global_pointcloud(self) -> o3d.t.geometry.PointCloud:
@@ -8395,7 +8395,7 @@ index 3a2f598c..b37756f2 100644
 @@ -220,48 +198,6 @@ class VoxelGridMapper(Module):
          out.point["positions"] = pts
          return out
- 
+
 -    @simple_mcache
 -    def get_global_occupancygrid(self) -> OccupancyGrid:
 -        return height_cost_occupancy(
@@ -8438,13 +8438,13 @@ index 3a2f598c..b37756f2 100644
 -    survivors = map_pcd.select_by_index(victims, invert=True)
 -    return survivors + patch_pcd
 -
- 
+
  def ensure_tensor_pcd(
      pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
 @@ -286,21 +222,6 @@ def ensure_tensor_pcd(
      return pcd_t
- 
- 
+
+
 -def turbo_colormap(t: np.ndarray) -> np.ndarray:
 -    """Attempt to use matplotlib's turbo colormap, fallback to simple gradient."""
 -    try:
@@ -8465,8 +8465,8 @@ index 3a2f598c..b37756f2 100644
  ) -> o3d.geometry.PointCloud:
 @@ -314,4 +235,4 @@ def ensure_legacy_pcd(
      return pcd_any.to_legacy()
- 
- 
+
+
 -mapper = VoxelGridMapper.blueprint
 +voxel_mapper = VoxelGridMapper.blueprint
 diff --git a/dimos/models/__init__.py b/dimos/models/__init__.py
@@ -8475,7 +8475,7 @@ index 422ec8eb..d8e2e143 100644
 +++ b/dimos/models/__init__.py
 @@ -1,3 +1,3 @@
  from dimos.models.base import HuggingFaceModel, LocalModel
- 
+
 -__all__ = ["LocalModel", "HuggingFaceModel"]
 +__all__ = ["HuggingFaceModel", "LocalModel"]
 diff --git a/dimos/models/qwen/video_query.py b/dimos/models/qwen/video_query.py
@@ -8485,13 +8485,13 @@ index 0b14bdfb..7ba80ae0 100644
 @@ -8,8 +8,8 @@ from openai import OpenAI
  from reactivex import Observable, operators as ops
  from reactivex.subject import Subject
- 
+
 -from dimos.agents.agent import OpenAIAgent
 -from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 +from dimos.agents_deprecated.agent import OpenAIAgent
 +from dimos.agents_deprecated.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
  from dimos.utils.threadpool import get_scheduler
- 
+
  BBox = tuple[float, float, float, float]  # (x1, y1, x2, y2)
 diff --git a/dimos/models/vl/__init__.py b/dimos/models/vl/__init__.py
 index 52467b61..6f120f91 100644
@@ -8513,7 +8513,7 @@ index 2389c61d..c19a7c35 100644
 --- a/dimos/models/vl/base.py
 +++ b/dimos/models/vl/base.py
 @@ -6,7 +6,7 @@ import warnings
- 
+
  from dimos.core.resource import Resource
  from dimos.msgs.sensor_msgs import Image
 -from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
@@ -8523,8 +8523,8 @@ index 2389c61d..c19a7c35 100644
  from dimos.utils.decorators import retry
 @@ -100,6 +100,55 @@ def vlm_detection_to_detection2d(
      )
- 
- 
+
+
 +# Type alias for VLM point format: [label, x, y]
 +VlmPoint = tuple[str, float, float]
 +
@@ -8579,7 +8579,7 @@ index 2389c61d..c19a7c35 100644
      """Configuration for VlModel."""
 @@ -199,15 +248,18 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
          full_query = f"""show me bounding boxes in pixels for this query: `{query}`
- 
+
          format should be:
 -        `[
 -        [label, x1, y1, x2, y2]
@@ -8589,19 +8589,19 @@ index 2389c61d..c19a7c35 100644
 +           ["label2", x1, y1, x2, y2]
          ...
          ]`
- 
+
          (etc, multiple matches are possible)
- 
+
          If there's no match return `[]`. Label is whatever you think is appropriate
 -        Only respond with the coordinates, no other text."""
 +        Only respond with JSON, no other text.
 +        """
- 
+
          image_detections = ImageDetections2D(image)
- 
+
 @@ -238,3 +290,53 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
                  image_detections.detections.append(detection2d)
- 
+
          return image_detections
 +
 +    def query_points(
@@ -8663,12 +8663,12 @@ index 75453f5c..f31611e8 100644
  from dimos.msgs.sensor_msgs import Image
 -from dimos.perception.detection.type import Detection2DBBox, ImageDetections2D
 +from dimos.perception.detection.type import Detection2DBBox, Detection2DPoint, ImageDetections2D
- 
+
  # Moondream works well with 512x512 max
  MOONDREAM_DEFAULT_AUTO_RESIZE = (512, 512)
 @@ -177,3 +177,44 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
                  image_detections.detections.append(detection)
- 
+
          return image_detections
 +
 +    def query_points(
@@ -8718,10 +8718,10 @@ index e7d4c8f2..46620dbf 100644
 @@ -1,10 +1,13 @@
  import os
  from unittest.mock import MagicMock
- 
+
 +from dimos_lcm.foxglove_msgs.ImageAnnotations import ImageAnnotations
  import pytest
- 
+
 +from dimos.core import LCMTransport
 +from dimos.models.vl.moondream import MoondreamVlModel
  from dimos.models.vl.qwen import QwenVlModel
@@ -8729,10 +8729,10 @@ index e7d4c8f2..46620dbf 100644
 +from dimos.msgs.sensor_msgs import Image, ImageFormat
  from dimos.perception.detection.type import ImageDetections2D
  from dimos.utils.data import get_data
- 
+
 @@ -103,3 +106,41 @@ def test_query_detections_real() -> None:
              assert detection.is_valid()
- 
+
      print(f"Found {len(detections.detections)} detections for query '{query}'")
 +
 +
@@ -8783,7 +8783,7 @@ index 5dcb6ec7..c03d0012 100644
 -from dimos.utils.cli.plot import Plot, bar
 +from dimos.utils.cli.plot import bar
  from dimos.utils.data import get_data
- 
+
  if TYPE_CHECKING:
 @@ -30,7 +30,7 @@ if TYPE_CHECKING:
      ],
@@ -8792,12 +8792,12 @@ index 5dcb6ec7..c03d0012 100644
 -def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
 +def test_vlm_bbox_detections(model_class: "type[VlModel]", model_name: str) -> None:
      image = Image.from_file(get_data("cafe.jpg")).to_rgb()
- 
+
      print(f"Testing {model_name}")
 @@ -90,6 +90,71 @@ def test_vlm(model_class: "type[VlModel]", model_name: str) -> None:
      model.stop()
- 
- 
+
+
 +@pytest.mark.parametrize(
 +    "model_class,model_name",
 +    [
@@ -8875,7 +8875,7 @@ index 3625429b..360664fc 100644
          points = self.points + other.points
          texts = self.texts + other.texts
 +        circles = self.circles + other.circles
- 
+
          return ImageAnnotations(
              texts=texts,
              texts_length=len(texts),
@@ -8884,7 +8884,7 @@ index 3625429b..360664fc 100644
 +            circles=circles,
 +            circles_length=len(circles),
          )
- 
+
      def agent_encode(self) -> str:
 diff --git a/dimos/msgs/geometry_msgs/PoseStamped.py b/dimos/msgs/geometry_msgs/PoseStamped.py
 index 0aca52c4..930bdb21 100644
@@ -8892,15 +8892,15 @@ index 0aca52c4..930bdb21 100644
 +++ b/dimos/msgs/geometry_msgs/PoseStamped.py
 @@ -18,7 +18,6 @@ import time
  from typing import BinaryIO, TypeAlias
- 
+
  from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped  # type: ignore[import-untyped]
 -import rerun as rr
- 
+
  try:
      from geometry_msgs.msg import (  # type: ignore[import-untyped]
 @@ -155,28 +154,3 @@ class PoseStamped(Pose, Timestamped):
          ros_msg.pose = Pose.to_ros_msg(self)
- 
+
          return ros_msg
 -
 -    def to_rerun(self, length: float = 0.5) -> rr.Arrows3D:
@@ -8937,17 +8937,17 @@ index e66ec4fb..a705df15 100644
  import numpy as np
 -from scipy import ndimage  # type: ignore[import-untyped]
 +from PIL import Image
- 
+
  from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
  from dimos.types.timestamped import Timestamped
- 
+
  if TYPE_CHECKING:
 -    from dimos.msgs.sensor_msgs import PointCloud2
 +    from pathlib import Path
 +
 +    from numpy.typing import NDArray
- 
- 
+
+
  class CostValues(IntEnum):
 @@ -59,11 +61,11 @@ class OccupancyGrid(Timestamped):
      ts: float
@@ -8955,7 +8955,7 @@ index e66ec4fb..a705df15 100644
      info: MapMetaData
 -    grid: np.ndarray  # type: ignore[type-arg]
 +    grid: NDArray[np.int8]
- 
+
      def __init__(
          self,
 -        grid: np.ndarray | None = None,  # type: ignore[type-arg]
@@ -8966,7 +8966,7 @@ index e66ec4fb..a705df15 100644
 @@ -175,40 +177,16 @@ class OccupancyGrid(Timestamped):
          """Percentage of cells that are unknown."""
          return (self.unknown_cells / self.total_cells * 100) if self.total_cells > 0 else 0.0
- 
+
 -    def inflate(self, radius: float) -> OccupancyGrid:
 -        """Inflate obstacles by a given radius (binary inflation).
 -        Args:
@@ -9011,13 +9011,13 @@ index e66ec4fb..a705df15 100644
 +                return cls(grid=np.array(img).astype(np.int8))
 +            case _:
 +                raise NotImplementedError(f"Unsupported file format: {path.suffix}")
- 
+
      def world_to_grid(self, point: VectorLike) -> Vector3:
          """Convert world coordinates to grid coordinates.
 @@ -329,201 +307,6 @@ class OccupancyGrid(Timestamped):
          instance.info = lcm_msg.info
          return instance
- 
+
 -    @classmethod
 -    def from_pointcloud(
 -        cls,
@@ -9215,10 +9215,10 @@ index e66ec4fb..a705df15 100644
 -
      def filter_above(self, threshold: int) -> OccupancyGrid:
          """Create a new OccupancyGrid with only values above threshold.
- 
+
 @@ -609,3 +392,27 @@ class OccupancyGrid(Timestamped):
          )
- 
+
          return maxed
 +
 +    def copy(self) -> OccupancyGrid:
@@ -9251,16 +9251,16 @@ index 859d268b..a16a30eb 100644
 @@ -31,6 +31,8 @@ try:
  except ImportError:
      ROSPath = None  # type: ignore[assignment, misc]
- 
+
 +import numpy as np
 +
  from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
  from dimos.types.timestamped import Timestamped
- 
+
 @@ -159,6 +161,13 @@ class Path(Timestamped):
          # Use header timestamp for the path
          return cls(ts=header_ts, frame_id=frame_id, poses=poses)
- 
+
 +    def to_rerun(self) -> rr.LineStrips3D:
 +        """Convert to a Rerun 3D line strip using pose positions."""
 +        import rerun as rr
@@ -9278,7 +9278,7 @@ index 65e18721..092f2822 100644
 @@ -20,6 +20,9 @@ import pickle
  import numpy as np
  import pytest
- 
+
 +from dimos.mapping.occupancy.gradient import gradient
 +from dimos.mapping.occupancy.inflation import simple_inflate
 +from dimos.mapping.pointclouds.occupancy import general_occupancy
@@ -9287,7 +9287,7 @@ index 65e18721..092f2822 100644
  from dimos.msgs.sensor_msgs import PointCloud2
 @@ -177,11 +180,9 @@ def test_from_pointcloud() -> None:
      pointcloud = PointCloud2.lcm_decode(lcm_msg)
- 
+
      # Convert pointcloud to occupancy grid
 -    occupancygrid = OccupancyGrid.from_pointcloud(
 -        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0
@@ -9296,30 +9296,30 @@ index 65e18721..092f2822 100644
      # Apply inflation separately if needed
 -    occupancygrid = occupancygrid.inflate(0.1)
 +    occupancygrid = simple_inflate(occupancygrid, 0.1)
- 
+
      # Check that grid was created with reasonable properties
      assert occupancygrid.width > 0
 @@ -200,7 +201,7 @@ def test_gradient() -> None:
      grid = OccupancyGrid(grid=data, resolution=0.1)  # 0.1m per cell
- 
+
      # Convert to gradient
 -    gradient_grid = grid.gradient(obstacle_threshold=50, max_distance=1.0)
 +    gradient_grid = gradient(grid, obstacle_threshold=50, max_distance=1.0)
- 
+
      # Check that we get an OccupancyGrid back
      assert isinstance(gradient_grid, OccupancyGrid)
 @@ -229,7 +230,7 @@ def test_gradient() -> None:
      data_with_unknown[8:10, 8:10] = -1  # Add unknown area (far from obstacle)
- 
+
      grid_with_unknown = OccupancyGrid(data_with_unknown, resolution=0.1)
 -    gradient_with_unknown = grid_with_unknown.gradient(max_distance=1.0)  # 1m max distance
 +    gradient_with_unknown = gradient(grid_with_unknown, max_distance=1.0)  # 1m max distance
- 
+
      # Unknown cells should remain unknown (new behavior - unknowns are preserved)
      assert gradient_with_unknown.grid[0, 0] == -1  # Should remain unknown
 @@ -375,14 +376,12 @@ def test_lcm_broadcast() -> None:
      pointcloud = PointCloud2.lcm_decode(lcm_msg)
- 
+
      # Create occupancy grid from pointcloud
 -    occupancygrid = OccupancyGrid.from_pointcloud(
 -        pointcloud, resolution=0.05, min_height=0.1, max_height=2.0
@@ -9328,11 +9328,11 @@ index 65e18721..092f2822 100644
      # Apply inflation separately if needed
 -    occupancygrid = occupancygrid.inflate(0.1)
 +    occupancygrid = simple_inflate(occupancygrid, 0.1)
- 
+
      # Create gradient field with larger max_distance for better visualization
 -    gradient_grid = occupancygrid.gradient(obstacle_threshold=70, max_distance=2.0)
 +    gradient_grid = gradient(occupancygrid, obstacle_threshold=70, max_distance=2.0)
- 
+
      # Debug: Print actual values to see the difference
      print("\n=== DEBUG: Comparing grids ===")
 diff --git a/dimos/msgs/sensor_msgs/Image.py b/dimos/msgs/sensor_msgs/Image.py
@@ -9341,26 +9341,26 @@ index 68429a0a..5d5f687a 100644
 +++ b/dimos/msgs/sensor_msgs/Image.py
 @@ -41,7 +41,6 @@ if TYPE_CHECKING:
      import os
- 
+
      from reactivex.observable import Observable
 -    import rerun as rr
- 
+
      from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
          AbstractImage,
 @@ -317,9 +316,6 @@ class Image(Timestamped):
      def to_bgr(self) -> Image:
          return Image(self._impl.to_bgr())
- 
+
 -    def to_rerun(self) -> rr.Image:
 -        return self._impl.to_rerun()
 -
      def to_grayscale(self) -> Image:
          return Image(self._impl.to_grayscale())
- 
+
 @@ -401,6 +397,14 @@ class Image(Timestamped):
              }
          ]
- 
+
 +    def to_rerun(self):
 +        """Convert to a Rerun image (RGB numpy array)."""
 +        rgb = self.to_rgb().to_opencv()
@@ -9381,11 +9381,11 @@ index 677c753c..0c31bb52 100644
  import numpy as np
  import open3d as o3d  # type: ignore[import-untyped]
 +import open3d.core as o3c  # type: ignore[import-untyped]
- 
+
  from dimos.msgs.geometry_msgs import Vector3
- 
+
 @@ -49,14 +50,89 @@ class PointCloud2(Timestamped):
- 
+
      def __init__(
          self,
 -        pointcloud: o3d.geometry.PointCloud = None,
@@ -9396,7 +9396,7 @@ index 677c753c..0c31bb52 100644
          self.ts = ts  # type: ignore[assignment]
 -        self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
          self.frame_id = frame_id
- 
+
 +        # Store internally as tensor pointcloud for speed
 +        if pointcloud is None:
 +            self._pcd_tensor: o3d.t.geometry.PointCloud = o3d.t.geometry.PointCloud()
@@ -9486,16 +9486,16 @@ index 677c753c..0c31bb52 100644
 +        pcd_t = o3d.t.geometry.PointCloud()
 +        pcd_t.point["positions"] = o3c.Tensor(points.astype(np.float32), dtype=o3c.float32)
 +        return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
- 
+
      def __str__(self) -> str:
 -        return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self.pointcloud.points)})"
 +        return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
- 
+
      @functools.cached_property
      def center(self) -> Vector3:
 @@ -88,7 +164,11 @@ class PointCloud2(Timestamped):
          return Vector3(*center)
- 
+
      def points(self):  # type: ignore[no-untyped-def]
 -        return self.pointcloud.points
 +        """Get points (returns tensor positions, use as_numpy() for numpy array)."""
@@ -9503,13 +9503,13 @@ index 677c753c..0c31bb52 100644
 +        if "positions" not in self._pcd_tensor.point:
 +            return o3c.Tensor(np.zeros((0, 3), dtype=np.float32))
 +        return self._pcd_tensor.point["positions"]
- 
+
      def __add__(self, other: PointCloud2) -> PointCloud2:
          """Combine two PointCloud2 instances into one.
 @@ -111,10 +191,13 @@ class PointCloud2(Timestamped):
              ts=max(self.ts, other.ts),
          )
- 
+
 -    # TODO what's the usual storage here? is it already numpy?
      def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
 -        """Get points as numpy array."""
@@ -9520,13 +9520,13 @@ index 677c753c..0c31bb52 100644
 +            return np.zeros((0, 3), dtype=np.float32)
 +        result: np.ndarray = self._pcd_tensor.point["positions"].numpy()  # type: ignore[type-arg]
 +        return result
- 
+
      @functools.cache
      def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
 @@ -155,6 +238,12 @@ class PointCloud2(Timestamped):
              and max1[2] >= min2[2]
          )
- 
+
 +    def to_rerun(self) -> rr.Points3D:
 +        """Convert to a Rerun point cloud."""
 +        import rerun as rr
@@ -9539,7 +9539,7 @@ index 677c753c..0c31bb52 100644
 @@ -240,31 +329,42 @@ class PointCloud2(Timestamped):
          if any(offset is None for offset in [x_offset, y_offset, z_offset]):
              raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
- 
+
 -        # Extract points from binary data
 +        # Extract points from binary data using numpy for bulk conversion
          num_points = msg.width * msg.height
@@ -9547,7 +9547,7 @@ index 677c753c..0c31bb52 100644
 -
          data = msg.data
          point_step = msg.point_step
- 
+
 -        for i in range(num_points):
 -            base_offset = i * point_step
 -
@@ -9591,7 +9591,7 @@ index 677c753c..0c31bb52 100644
 +        # Create Open3D tensor point cloud (fast, no Vector3dVector)
 +        pcd_t = o3d.t.geometry.PointCloud()
 +        pcd_t.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
- 
+
          return cls(
 -            pointcloud=pc,
 +            pointcloud=pcd_t,
@@ -9599,7 +9599,7 @@ index 677c753c..0c31bb52 100644
              ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
              if hasattr(msg, "header") and msg.header.stamp.sec > 0
 @@ -311,7 +411,10 @@ class PointCloud2(Timestamped):
- 
+
      def __len__(self) -> int:
          """Return number of points."""
 -        return len(self.pointcloud.points)
@@ -9607,7 +9607,7 @@ index 677c753c..0c31bb52 100644
 +        if "positions" not in self._pcd_tensor.point:
 +            return 0
 +        return int(self._pcd_tensor.point["positions"].shape[0])
- 
+
      def filter_by_height(
          self,
 diff --git a/dimos/msgs/sensor_msgs/image_impls/NumpyImage.py b/dimos/msgs/sensor_msgs/image_impls/NumpyImage.py
@@ -9615,17 +9615,17 @@ index a28dde38..6369792c 100644
 --- a/dimos/msgs/sensor_msgs/image_impls/NumpyImage.py
 +++ b/dimos/msgs/sensor_msgs/image_impls/NumpyImage.py
 @@ -19,7 +19,6 @@ import time
- 
+
  import cv2
  import numpy as np
 -import rerun as rr
- 
+
  from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
      AbstractImage,
 @@ -127,23 +126,6 @@ class NumpyImage(AbstractImage):
              )
          raise ValueError(f"Unsupported format: {self.format}")
- 
+
 -    def to_rerun(self) -> rr.Image:
 -        match self.format:
 -            case ImageFormat.RGB:
@@ -9651,13 +9651,13 @@ index cdf86cca..055ece9f 100644
 --- a/dimos/navigation/bt_navigator/goal_validator.py
 +++ b/dimos/navigation/bt_navigator/goal_validator.py
 @@ -16,6 +16,7 @@ from collections import deque
- 
+
  import numpy as np
- 
+
 +from dimos.mapping.occupancy.gradient import gradient
  from dimos.msgs.geometry_msgs import Vector3, VectorLike
  from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
- 
+
 @@ -54,6 +55,15 @@ def find_safe_goal(
              max_search_distance,
              connectivity_check_radius,
@@ -9676,8 +9676,8 @@ index cdf86cca..055ece9f 100644
              costmap,
 @@ -144,6 +154,73 @@ def _find_safe_goal_bfs(
      return None
- 
- 
+
+
 +def _find_safe_goal_bfs_contiguous(
 +    costmap: OccupancyGrid,
 +    goal: VectorLike,
@@ -9764,7 +9764,7 @@ index afcc86b9..856c8316 100644
 --- a/dimos/navigation/bt_navigator/navigator.py
 +++ b/dimos/navigation/bt_navigator/navigator.py
 @@ -27,6 +27,9 @@ from reactivex.disposable import Disposable
- 
+
  from dimos.core import In, Module, Out, rpc
  from dimos.core.rpc_client import RpcCall
 +from dimos.dashboard.module import RerunConnection
@@ -9776,16 +9776,16 @@ index afcc86b9..856c8316 100644
 @@ -112,6 +115,8 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
          # Recovery server for stuck detection
          self.recovery_server = RecoveryServer(stuck_duration=5.0)
- 
+
 +        self.rc: RerunConnection | None = None
 +
          logger.info("Navigator initialized with stuck detection")
- 
+
      @rpc
 @@ -128,6 +133,8 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
      def start(self) -> None:
          super().start()
- 
+
 +        self.rc = RerunConnection()
 +
          # Subscribe to inputs
@@ -9794,10 +9794,10 @@ index afcc86b9..856c8316 100644
 @@ -285,7 +292,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                          self.cancel_goal()
                          continue
- 
+
 -                    costmap = self.latest_costmap.inflate(0.1).gradient(max_distance=1.0)
 +                    costmap = gradient(simple_inflate(self.latest_costmap, 0.1), max_distance=1.0)
- 
+
                      # Find safe goal position
                      safe_goal_pos = find_safe_goal(
 @@ -306,6 +313,32 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
@@ -9898,7 +9898,7 @@ index e1701a66..dfa77fb7 100644
 +++ b/dimos/navigation/frontier_exploration/wavefront_frontier_goal_selector.py
 @@ -29,6 +29,8 @@ import numpy as np
  from reactivex.disposable import Disposable
- 
+
  from dimos.core import In, Module, Out, rpc
 +from dimos.dashboard.module import RerunConnection
 +from dimos.mapping.occupancy.inflation import simple_inflate
@@ -9908,32 +9908,32 @@ index e1701a66..dfa77fb7 100644
 @@ -148,12 +150,16 @@ class WavefrontFrontierExplorer(Module):
          self.exploration_thread: threading.Thread | None = None
          self.stop_event = threading.Event()
- 
+
 +        self.rc: RerunConnection | None = None
 +
          logger.info("WavefrontFrontierExplorer module initialized")
- 
+
      @rpc
      def start(self) -> None:
          super().start()
- 
+
 +        self.rc = RerunConnection()
 +
          unsub = self.global_costmap.subscribe(self._on_costmap)
          self._disposables.add(Disposable(unsub))
- 
+
 @@ -762,7 +768,7 @@ class WavefrontFrontierExplorer(Module):
              )
- 
+
              # Get exploration goal
 -            costmap = self.latest_costmap.inflate(0.25)
 +            costmap = simple_inflate(self.latest_costmap, 0.25)
              goal = self.get_exploration_goal(robot_pose, costmap)
- 
+
              if goal:
 @@ -776,6 +782,30 @@ class WavefrontFrontierExplorer(Module):
                  goal_msg.ts = self.latest_costmap.ts
- 
+
                  self.goal_request.publish(goal_msg)
 +                try:
 +                    if self.rc:
@@ -9960,7 +9960,7 @@ index e1701a66..dfa77fb7 100644
 +                except Exception as exc:  # pragma: no cover - best-effort logging
 +                    logger.debug(f"Failed to log exploration goal: {exc}")
                  logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
- 
+
                  goals_published += 1
 diff --git a/dimos/navigation/global_planner/__init__.py b/dimos/navigation/global_planner/__init__.py
 deleted file mode 100644
@@ -10039,8 +10039,8 @@ index aecfcfba..245786f6 100644
 +++ b/dimos/navigation/global_planner/general_astar.py
 @@ -21,7 +21,7 @@ from dimos.utils.logging_config import setup_logger
  logger = setup_logger()
- 
- 
+
+
 -def astar(
 +def general_astar(
      costmap: OccupancyGrid,
@@ -10588,7 +10588,7 @@ index 553a5f6c..1810f1a6 100644
 +++ b/dimos/navigation/global_planner/planner.py
 @@ -16,129 +16,17 @@
  from reactivex.disposable import Disposable
- 
+
  from dimos.core import In, Module, Out, rpc
 +from dimos.core.global_config import GlobalConfig
 +from dimos.dashboard.module import RerunConnection
@@ -10600,9 +10600,9 @@ index 553a5f6c..1810f1a6 100644
 +from dimos.navigation.global_planner.astar import astar
  from dimos.utils.logging_config import setup_logger
 -from dimos.utils.transform_utils import euler_to_quaternion
- 
+
  logger = setup_logger()
- 
+
 -import math
 -
 -from dimos.msgs.geometry_msgs import Quaternion, Vector3
@@ -10718,13 +10718,13 @@ index 553a5f6c..1810f1a6 100644
 -
 -    return Path(frame_id=path.frame_id, poses=resampled)
 -
- 
+
  class AstarPlanner(Module):
      # LCM inputs
 @@ -149,74 +37,77 @@ class AstarPlanner(Module):
      # LCM outputs
      path: Out[Path]
- 
+
 -    def __init__(self) -> None:
 +    _global_config: GlobalConfig
 +
@@ -10733,18 +10733,18 @@ index 553a5f6c..1810f1a6 100644
 +        global_config: GlobalConfig | None = None,
 +    ) -> None:
          super().__init__()
- 
+
 -        # Latest data
          self.latest_costmap: OccupancyGrid | None = None
          self.latest_odom: PoseStamped | None = None
 +        self.rc: RerunConnection | None = None
 +
 +        self._global_config = global_config or GlobalConfig()
- 
+
      @rpc
      def start(self) -> None:
          super().start()
- 
+
 -        unsub = self.target.subscribe(self._on_target)
 -        self._disposables.add(Disposable(unsub))
 -
@@ -10759,26 +10759,26 @@ index 553a5f6c..1810f1a6 100644
 +        self._disposables.add(Disposable(self.target.subscribe(self._on_target)))
 +        self._disposables.add(Disposable(self.global_costmap.subscribe(self._on_costmap)))
 +        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
- 
+
      @rpc
      def stop(self) -> None:
          super().stop()
- 
+
      def _on_costmap(self, msg: OccupancyGrid) -> None:
 -        """Handle incoming costmap messages."""
          self.latest_costmap = msg
- 
+
      def _on_odom(self, msg: PoseStamped) -> None:
 -        """Handle incoming odometry messages."""
          self.latest_odom = msg
- 
+
 -    def _on_target(self, msg: PoseStamped) -> None:
 -        """Handle incoming target messages and trigger planning."""
 +    def _on_target(self, goal_pose: PoseStamped) -> None:
          if self.latest_costmap is None or self.latest_odom is None:
              logger.warning("Cannot plan: missing costmap or odometry data")
              return
- 
+
 -        path = self.plan(msg)
 +        path = self.plan(goal_pose)
          if path:
@@ -10790,7 +10790,7 @@ index 553a5f6c..1810f1a6 100644
 +                    self.rc.log("/global_path", path.to_rerun())
 +            except Exception as exc:  # pragma: no cover - best-effort logging
 +                logger.debug(f"Failed to log global path: {exc}")
- 
+
 -    def plan(self, goal: Pose) -> Path | None:
 +    def plan(self, goal_pose: Pose) -> Path | None:
          """Plan a path from current position to goal."""
@@ -10798,14 +10798,14 @@ index 553a5f6c..1810f1a6 100644
          if self.latest_costmap is None or self.latest_odom is None:
              logger.warning("Cannot plan: missing costmap or odometry data")
              return None
- 
+
 -        logger.debug(f"Planning path to goal {goal}")
 +        logger.debug(f"Planning path to goal {goal_pose}")
- 
+
 -        # Get current position from odometry
          robot_pos = self.latest_odom.position
 -        costmap = self.latest_costmap.inflate(0.2).gradient(max_distance=1.5)
- 
+
 -        # Run A* planning
 -        path = astar(costmap, goal.position, robot_pos)
 +        costmap = make_navigation_map(
@@ -10813,7 +10813,7 @@ index 553a5f6c..1810f1a6 100644
 +            self._global_config.robot_width,
 +            strategy=self._global_config.planner_strategy,
 +        )
- 
+
 -        if path:
 -            path = resample_path(path, 0.1)
 -            logger.debug(f"Path found with {len(path.poses)} waypoints")
@@ -10823,12 +10823,12 @@ index 553a5f6c..1810f1a6 100644
 +        if not path:
 +            logger.warning("No path found to the goal.")
 +            return None
- 
+
 -        logger.warning("No path found to the goal.")
 -        return None
 +        return simple_resample_path(path, goal_pose, 0.1)
- 
- 
+
+
  astar_planner = AstarPlanner.blueprint
 diff --git a/dimos/navigation/global_planner/test_astar.py b/dimos/navigation/global_planner/test_astar.py
 new file mode 100644
@@ -10976,7 +10976,7 @@ index 8e3e161e..71e178f0 100644
 +++ b/dimos/navigation/local_planner/local_planner.py
 @@ -26,8 +26,11 @@ import time
  from reactivex.disposable import Disposable
- 
+
  from dimos.core import In, Module, Out, rpc
 +from dimos.mapping.occupancy.gradient import gradient
 +from dimos.mapping.pointclouds.occupancy import general_occupancy
@@ -10985,29 +10985,29 @@ index 8e3e161e..71e178f0 100644
 +from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
  from dimos.utils.logging_config import setup_logger
  from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
- 
+
 @@ -39,7 +42,7 @@ class BaseLocalPlanner(Module):
      local planner module for obstacle avoidance and path following.
- 
+
      Subscribes to:
 -        - /local_costmap: Local occupancy grid for obstacle detection
 +        - /lidar: Local lidar for obstacle detection
          - /odom: Robot odometry for current pose
          - /path: Path to follow (continuously updated at ~1Hz)
- 
+
 @@ -48,7 +51,7 @@ class BaseLocalPlanner(Module):
      """
- 
+
      # LCM inputs
 -    local_costmap: In[OccupancyGrid]
 +    lidar: In[LidarMessage]
      odom: In[PoseStamped]
      path: In[Path]
- 
+
 @@ -92,22 +95,25 @@ class BaseLocalPlanner(Module):
      def start(self) -> None:
          super().start()
- 
+
 -        unsub = self.local_costmap.subscribe(self._on_costmap)
 -        self._disposables.add(Disposable(unsub))
 -
@@ -11019,12 +11019,12 @@ index 8e3e161e..71e178f0 100644
 +        self._disposables.add(Disposable(self.lidar.subscribe(self._on_lidar)))
 +        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
 +        self._disposables.add(Disposable(self.path.subscribe(self._on_path)))
- 
+
      @rpc
      def stop(self) -> None:
          self.cancel_planning()
          super().stop()
- 
+
 -    def _on_costmap(self, msg: OccupancyGrid) -> None:
 -        self.latest_costmap = msg
 +    def _on_lidar(self, msg: LidarMessage) -> None:
@@ -11037,19 +11037,19 @@ index 8e3e161e..71e178f0 100644
 +            ),
 +            max_distance=0.25,
 +        )
- 
+
      def _on_odom(self, msg: PoseStamped) -> None:
          self.latest_odom = msg
 @@ -120,14 +126,11 @@ class BaseLocalPlanner(Module):
                  self._start_planning_thread()
- 
+
      def _start_planning_thread(self) -> None:
 -        """Start the planning thread."""
          self.stop_planning.clear()
          self.planning_thread = threading.Thread(target=self._follow_path_loop, daemon=True)
          self.planning_thread.start()
 -        logger.debug("Started follow path thread")
- 
+
      def _follow_path_loop(self) -> None:
 -        """Main planning loop that runs in a separate thread."""
          while not self.stop_planning.is_set():
@@ -11058,10 +11058,10 @@ index 8e3e161e..71e178f0 100644
 @@ -186,7 +189,7 @@ class BaseLocalPlanner(Module):
          # Calculate yaw difference and normalize to [-pi, pi]
          yaw_error = normalize_angle(goal_euler.z - current_euler.z)
- 
+
 -        return abs(yaw_error) < self.orientation_tolerance
 +        return bool(abs(yaw_error) < self.orientation_tolerance)
- 
+
      @rpc
      def reset(self) -> None:
 diff --git a/dimos/navigation/replanning_a_star/controllers.py b/dimos/navigation/replanning_a_star/controllers.py
@@ -12477,7 +12477,7 @@ index bc58e293..5c112e52 100644
 +++ b/dimos/navigation/rosnav.py
 @@ -45,7 +45,7 @@ from std_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
  from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
- 
+
  from dimos import spec
 -from dimos.agents2 import Reducer, Stream, skill  # type: ignore[attr-defined]
 +from dimos.agents import Reducer, Stream, skill  # type: ignore[attr-defined]
@@ -12490,7 +12490,7 @@ index a7602ce3..cb2d1fb3 100644
 +++ b/dimos/perception/detection/module3D.py
 @@ -21,7 +21,7 @@ from reactivex import operators as ops
  from reactivex.observable import Observable
- 
+
  from dimos import spec
 -from dimos.agents2 import skill  # type: ignore[attr-defined]
 +from dimos.agents import skill  # type: ignore[attr-defined]
@@ -12526,7 +12526,7 @@ index a0e22546..c9d47973 100644
  from dimos.perception.detection.type.detection2d.imageDetections2D import ImageDetections2D
  from dimos.perception.detection.type.detection2d.person import Detection2DPerson
 +from dimos.perception.detection.type.detection2d.point import Detection2DPoint
- 
+
  __all__ = [
      "Detection2D",
      "Detection2DBBox",
@@ -12541,18 +12541,18 @@ index 6f99e327..a7d4e370 100644
 @@ -15,10 +15,6 @@
  from abc import abstractmethod
  from collections.abc import Callable
- 
+
 -from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
 -    PointsAnnotation,
 -    TextAnnotation,
 -)
  from dimos_lcm.vision_msgs import Detection2D as ROSDetection2D  # type: ignore[import-untyped]
- 
+
  from dimos.msgs.foxglove_msgs import ImageAnnotations
 @@ -39,16 +35,6 @@ class Detection2D(Timestamped):
          """Convert detection to Foxglove ImageAnnotations for visualization."""
          ...
- 
+
 -    @abstractmethod
 -    def to_text_annotation(self) -> list[TextAnnotation]:
 -        """Return text annotations for visualization."""
@@ -12761,7 +12761,7 @@ index f616fe7f..4c522c31 100644
 --- a/dimos/perception/detection/type/detection3d/test_pointcloud.py
 +++ b/dimos/perception/detection/type/detection3d/test_pointcloud.py
 @@ -57,15 +57,12 @@ def test_detection3dpc(detection3dpc) -> None:
- 
+
      # def test_point_cloud_properties(detection3dpc):
      """Test point cloud data and boundaries."""
 -    pc_points = detection3dpc.pointcloud.points()
@@ -12771,7 +12771,7 @@ index f616fe7f..4c522c31 100644
      assert detection3dpc.pointcloud.frame_id == "world", (
          f"Expected frame_id 'world', got '{detection3dpc.pointcloud.frame_id}'"
      )
- 
+
 -    # Extract xyz coordinates from points
 -    points = np.array([[pt[0], pt[1], pt[2]] for pt in pc_points])
 -
@@ -12783,17 +12783,17 @@ index 5f919267..0e7990e0 100644
 --- a/dimos/perception/detection/type/imageDetections.py
 +++ b/dimos/perception/detection/type/imageDetections.py
 @@ -14,6 +14,8 @@
- 
+
  from __future__ import annotations
- 
+
 +from functools import reduce
 +from operator import add
  from typing import TYPE_CHECKING, Generic, TypeVar
- 
+
  from dimos_lcm.vision_msgs import Detection2DArray  # type: ignore[import-untyped]
 @@ -83,15 +85,8 @@ class ImageDetections(Generic[T], TableStr):
          )
- 
+
      def to_foxglove_annotations(self) -> ImageAnnotations:
 -        def flatten(xss):  # type: ignore[no-untyped-def]
 -            return [x for xs in xss for x in xs]
@@ -12818,10 +12818,10 @@ index 377cf42a..eefd14e4 100644
 +++ b/dimos/perception/object_tracker.py
 @@ -17,7 +17,6 @@ import threading
  import time
- 
+
  import cv2
 -from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
- 
+
  # Import LCM messages
  from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
 @@ -31,7 +30,11 @@ from reactivex.disposable import Disposable
@@ -12843,7 +12843,7 @@ index 58b51563..3c6de9a4 100644
 +++ b/dimos/perception/spatial_perception.py
 @@ -28,9 +28,9 @@ from reactivex import Observable, interval, operators as ops
  from reactivex.disposable import Disposable
- 
+
  from dimos import spec
 -from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
 -from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
@@ -12860,7 +12860,7 @@ index 5bdbcec8..aa1877a3 100644
 +++ b/dimos/protocol/skill/coordinator.py
 @@ -28,7 +28,7 @@ from rich.table import Table
  from rich.text import Text
- 
+
  from dimos.core import rpc
 -from dimos.core.module import Module, get_loop
 +from dimos.core.module import Module, ModuleConfig, get_loop
@@ -12868,14 +12868,14 @@ index 5bdbcec8..aa1877a3 100644
  from dimos.protocol.skill.skill import SkillConfig, SkillContainer  # type: ignore[attr-defined]
  from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
 @@ -39,7 +39,7 @@ logger = setup_logger()
- 
- 
+
+
  @dataclass
 -class SkillCoordinatorConfig:
 +class SkillCoordinatorConfig(ModuleConfig):
      skill_transport: type[SkillCommsSpec] = LCMSkillComms
- 
- 
+
+
 @@ -271,18 +271,15 @@ class SkillCoordinator(Module):
      _skill_state: SkillStateDict  # key is call_id, not skill_name
      _skills: dict[str, SkillConfig]
@@ -12883,7 +12883,7 @@ index 5bdbcec8..aa1877a3 100644
 -    _loop: asyncio.AbstractEventLoop | None
 -    _loop_thread: threading.Thread | None
      _agent_loop: asyncio.AbstractEventLoop | None
- 
+
 -    def __init__(self) -> None:
 -        # TODO: Why isn't this super().__init__() ?
 -        SkillContainer.__init__(self)
@@ -12909,7 +12909,7 @@ index 5d43fa3c..8342a604 100644
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.web.robot_web_interface import RobotWebInterface
- 
+
  def main():
 @@ -266,7 +266,7 @@ class MyRobot:
  import asyncio
@@ -12931,7 +12931,7 @@ index bc826977..a8d79ebe 100644
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.web.robot_web_interface import RobotWebInterface
- 
+
  def main():
 @@ -266,7 +266,7 @@ class MyRobot:
  import asyncio
@@ -12949,7 +12949,7 @@ index b810272e..38a231b2 100644
 @@ -26,7 +26,7 @@ from dotenv import load_dotenv
  import reactivex as rx
  import reactivex.operators as ops
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.robot.agilex.piper_arm import PiperArmRobot
@@ -12960,7 +12960,7 @@ index 60eb2dc3..85f42710 100644
 --- a/dimos/robot/all_blueprints.py
 +++ b/dimos/robot/all_blueprints.py
 @@ -16,11 +16,10 @@ from dimos.core.blueprints import ModuleBlueprintSet
- 
+
  # The blueprints are defined as import strings so as not to trigger unnecessary imports.
  all_blueprints = {
 -    "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard",
@@ -13019,8 +13019,8 @@ index 60eb2dc3..85f42710 100644
 -    "web_input": "dimos.agents2.cli.web",
 +    "web_input": "dimos.agents.cli.web",
  }
- 
- 
+
+
 diff --git a/dimos/robot/cli/README.md b/dimos/robot/cli/README.md
 index a8ceb37b..63087f48 100644
 --- a/dimos/robot/cli/README.md
@@ -13032,9 +13032,9 @@ index a8ceb37b..63087f48 100644
 -- Value coming from the CLI (`--simulation` or `--no-simulation`)
  - Value defined on the blueprint (`blueprint.global_config(simulation=True)`)
 +- Value coming from the CLI (`--simulation` or `--no-simulation`)
- 
+
  For environment variables/`.env` values, you have to prefix the name with `DIMOS_`.
- 
+
 diff --git a/dimos/robot/cli/dimos.py b/dimos/robot/cli/dimos.py
 index ee7e25b0..863dd77c 100644
 --- a/dimos/robot/cli/dimos.py
@@ -13045,58 +13045,58 @@ index ee7e25b0..863dd77c 100644
  import sys
 -from typing import Optional, get_args, get_origin
 +from typing import Any, Optional, get_args, get_origin
- 
+
  import typer
- 
+
 @@ -23,6 +23,7 @@ from dimos.core.blueprints import autoconnect
  from dimos.core.global_config import GlobalConfig
  from dimos.protocol import pubsub
  from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
 +from dimos.robot.cli.topic import topic_echo, topic_send
  from dimos.utils.logging_config import setup_exception_handler
- 
+
  RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
 @@ -89,8 +90,7 @@ def create_dynamic_callback():  # type: ignore[no-untyped-def]
- 
+
      def callback(**kwargs) -> None:  # type: ignore[no-untyped-def]
          ctx = kwargs.pop("ctx")
 -        overrides = {k: v for k, v in kwargs.items() if v is not None}
 -        ctx.obj = GlobalConfig().model_copy(update=overrides)
 +        ctx.obj = {k: v for k, v in kwargs.items() if v is not None}
- 
+
      callback.__signature__ = inspect.Signature(params)  # type: ignore[attr-defined]
- 
+
 @@ -111,7 +111,7 @@ def run(
      """Start a robot blueprint"""
      setup_exception_handler()
- 
+
 -    config: GlobalConfig = ctx.obj
 +    cli_config_overrides: dict[str, Any] = ctx.obj
      pubsub.lcm.autoconf()  # type: ignore[attr-defined]
      blueprint = get_blueprint_by_name(robot_type.value)
- 
+
 @@ -119,14 +119,15 @@ def run(
          loaded_modules = [get_module_by_name(mod_name) for mod_name in extra_modules]  # type: ignore[attr-defined]
          blueprint = autoconnect(blueprint, *loaded_modules)
- 
+
 -    dimos = blueprint.build(global_config=config)
 +    dimos = blueprint.build(cli_config_overrides=cli_config_overrides)
      dimos.loop()
- 
- 
+
+
  @main.command()
  def show_config(ctx: typer.Context) -> None:
      """Show current config settings and their values."""
 -    config: GlobalConfig = ctx.obj
 +    cli_config_overrides: dict[str, Any] = ctx.obj
 +    config = GlobalConfig().model_copy(update=cli_config_overrides)
- 
+
      for field_name, value in config.model_dump().items():
          typer.echo(f"{field_name}: {value}")
 @@ -176,5 +177,25 @@ def humancli(ctx: typer.Context) -> None:
      humancli_main()
- 
- 
+
+
 +topic_app = typer.Typer(help="Topic commands for pub/sub")
 +main.add_typer(topic_app, name="topic")
 +
@@ -13124,8 +13124,8 @@ index 72cf949e..b44e202a 100644
 --- a/dimos/robot/cli/test_dimos_robot_e2e.py
 +++ b/dimos/robot/cli/test_dimos_robot_e2e.py
 @@ -143,6 +143,7 @@ def human_input():
- 
- 
+
+
  @pytest.mark.skipif(bool(os.getenv("CI")), reason="LCM spy doesn't work in CI.")
 +@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="OPENAI_API_KEY not set.")
  def test_dimos_robot_demo_e2e(lcm_spy, dimos_robot_call, human_input) -> None:
@@ -13245,7 +13245,7 @@ index 7816d6a9..40f6d1fc 100644
 +++ b/dimos/robot/drone/drone.py
 @@ -28,8 +28,8 @@ from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
  from reactivex import Observable
- 
+
  from dimos import core
 -from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
 -from dimos.agents2.skills.osm import OsmSkill
@@ -13257,14 +13257,14 @@ index 7816d6a9..40f6d1fc 100644
 @@ -451,9 +451,9 @@ def main() -> None:
      print("  • /drone/tracking_overlay - Object tracking visualization (Image)")
      print("  • /drone/tracking_status - Tracking status (String/JSON)")
- 
+
 -    from dimos.agents2 import Agent  # type: ignore[attr-defined]
 -    from dimos.agents2.cli.human import HumanInput
 -    from dimos.agents2.spec import Model, Provider  # type: ignore[attr-defined]
 +    from dimos.agents import Agent  # type: ignore[attr-defined]
 +    from dimos.agents.cli.human import HumanInput
 +    from dimos.agents.spec import Model, Provider  # type: ignore[attr-defined]
- 
+
      assert drone.dimos is not None
      human_input = drone.dimos.deploy(HumanInput)  # type: ignore[attr-defined]
 diff --git a/dimos/robot/drone/test_drone.py b/dimos/robot/drone/test_drone.py
@@ -13273,7 +13273,7 @@ index 385aef3e..1ff0c1a7 100644
 +++ b/dimos/robot/drone/test_drone.py
 @@ -948,7 +948,7 @@ class TestVisualServoingEdgeCases(unittest.TestCase):
          )
- 
+
          # Large error should be clamped
 -        vx, vy, vz = controller.compute_velocity_control(
 +        vx, vy, _vz = controller.compute_velocity_control(
@@ -13283,7 +13283,7 @@ index 385aef3e..1ff0c1a7 100644
 @@ -1020,7 +1020,7 @@ class TestVisualServoingVelocity(unittest.TestCase):
          frame_center = (320, 180)
          bbox_center = (400, 180)
- 
+
 -        vx, vy, vz = controller.compute_velocity_control(
 +        vx, vy, _vz = controller.compute_velocity_control(
              target_x=bbox_center[0],
@@ -13296,7 +13296,7 @@ index 435766b9..e203999b 100644
 @@ -120,6 +120,8 @@ class TestROSBridge(unittest.TestCase):
              self.assertAlmostEqual(msg.linear.y, float(i * 2), places=5)
              self.assertAlmostEqual(msg.angular.z, float(i * 0.1), places=5)
- 
+
 +        lcm.stop()
 +
      def test_dimos_to_ros_twist(self) -> None:
@@ -13305,7 +13305,7 @@ index 435766b9..e203999b 100644
 @@ -227,6 +229,8 @@ class TestROSBridge(unittest.TestCase):
                  msg=f"Frequency not preserved for {target_freq}Hz: sent={send_freq:.1f}Hz, received={receive_freq:.1f}Hz",
              )
- 
+
 +        lcm.stop()
 +
      def test_pointcloud_conversion(self) -> None:
@@ -13314,7 +13314,7 @@ index 435766b9..e203999b 100644
 @@ -284,6 +288,8 @@ class TestROSBridge(unittest.TestCase):
          self.assertEqual(received_points.shape, points.shape)
          np.testing.assert_array_almost_equal(received_points, points, decimal=5)
- 
+
 +        lcm.stop()
 +
      def test_tf_high_frequency(self) -> None:
@@ -13323,7 +13323,7 @@ index 435766b9..e203999b 100644
 @@ -349,6 +355,8 @@ class TestROSBridge(unittest.TestCase):
                  msg=f"High frequency TF not preserved: expected={target_freq}Hz, got={receive_freq:.1f}Hz",
              )
- 
+
 +        lcm.stop()
 +
      def test_bidirectional_bridge(self) -> None:
@@ -13335,7 +13335,7 @@ index 6052b36c..82027069 100644
 +++ b/dimos/robot/unitree/connection/connection.py
 @@ -20,20 +20,20 @@ import time
  from typing import TypeAlias
- 
+
  from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
 -from go2_webrtc_driver.constants import (  # type: ignore[import-untyped]
 +import numpy as np
@@ -13359,7 +13359,7 @@ index 6052b36c..82027069 100644
 -from reactivex import operators as ops
 -from reactivex.observable import Observable
 -from reactivex.subject import Subject
- 
+
  from dimos.core import rpc
  from dimos.core.resource import Resource
 @@ -82,7 +82,7 @@ class UnitreeWebRTCConnection(Resource):
@@ -13369,7 +13369,7 @@ index 6052b36c..82027069 100644
 -        self.conn = Go2WebRTCConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
 +        self.conn = LegionConnection(WebRTCConnectionMethod.LocalSTA, ip=self.ip)
          self.connect()
- 
+
      def connect(self) -> None:
 diff --git a/dimos/robot/unitree/connection/go2.py b/dimos/robot/unitree/connection/go2.py
 index 790e5a4f..d37cec99 100644
@@ -13377,7 +13377,7 @@ index 790e5a4f..d37cec99 100644
 +++ b/dimos/robot/unitree/connection/go2.py
 @@ -13,6 +13,7 @@
  # limitations under the License.
- 
+
  import logging
 +import math
  from threading import Thread
@@ -13388,7 +13388,7 @@ index 790e5a4f..d37cec99 100644
  from reactivex.observable import Observable
  import rerun as rr
 +from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
- 
+
  from dimos import spec
  from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
  from dimos.core.global_config import GlobalConfig
@@ -13409,29 +13409,29 @@ index 790e5a4f..d37cec99 100644
  from dimos.utils.logging_config import setup_logger
 -from dimos.utils.testing import TimedSensorReplay
 +from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
- 
+
  logger = setup_logger(level=logging.INFO)
- 
- 
+
+
 -rr.init("rerun_go2", spawn=True)
 -
 -
  class Go2ConnectionProtocol(Protocol):
      """Protocol defining the interface for Go2 robot connections."""
- 
+
 @@ -79,7 +79,7 @@ def _camera_info_static() -> CameraInfo:
- 
- 
+
+
  class ReplayConnection(UnitreeWebRTCConnection):
 -    dir_name = "unitree_go2_office_walk2"
 +    dir_name = "unitree_go2_bigoffice"
- 
+
      # we don't want UnitreeWebRTCConnection to init
      def __init__(  # type: ignore[no-untyped-def]
 @@ -167,26 +167,68 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
- 
+
          Module.__init__(self, *args, **kwargs)
- 
+
 +    @rpc
 +    def record(self, recording_name: str) -> None:
 +        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
@@ -13446,7 +13446,7 @@ index 790e5a4f..d37cec99 100644
      @rpc
      def start(self) -> None:
          super().start()
- 
+
 -        self.connection.start()
 -
 -        def onimage(image: Image):
@@ -13495,12 +13495,12 @@ index 790e5a4f..d37cec99 100644
 +            # Wrap into [0, 360) for easier plotting; Rerun can plot scalars directly.
 +            # yaw_deg = R.from_quat(rotation_xyzw).as_euler("xyz", degrees=True)[2]
 +            # self.rc.log("/odom/yaw_deg", rr.Scalars(math.fmod(yaw_deg + 360.0, 360.0)))
- 
+
 -        def onodom(odom: PoseStamped):
 -            self._publish_tf(odom)
 -            rr.log("go2_odom", odom.to_rerun())
 +        self.connection.start()
- 
+
 -        self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
 -        self._disposables.add(self.connection.video_stream().subscribe(onimage))
 -        self._disposables.add(self.connection.odom_stream().subscribe(onodom))
@@ -13508,14 +13508,14 @@ index 790e5a4f..d37cec99 100644
 +        self._disposables.add(self.connection.odom_stream().subscribe(_log_and_publish_odom))
 +        self._disposables.add(self.connection.video_stream().subscribe(_log_and_publish_image))
          self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
- 
+
          self._camera_info_thread = Thread(
 @@ -196,6 +238,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
          self._camera_info_thread.start()
- 
+
          self.standup()
 +        # self.record("go2_bigoffice")
- 
+
      @rpc
      def stop(self) -> None:
 diff --git a/dimos/robot/unitree/g1/g1agent.py b/dimos/robot/unitree/g1/g1agent.py
@@ -13525,7 +13525,7 @@ index 9c94445a..ca89319f 100644
 @@ -12,8 +12,8 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 -from dimos import agents2
 -from dimos.agents2.skills.navigation import NavigationSkillContainer
 +from dimos import agents
@@ -13536,7 +13536,7 @@ index 9c94445a..ca89319f 100644
 @@ -37,7 +37,7 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
      )
      navskills.start()
- 
+
 -    agent = agents2.deploy(  # type: ignore[attr-defined]
 +    agent = agents.deploy(  # type: ignore[attr-defined]
          dimos,
@@ -13549,7 +13549,7 @@ index eee38a3c..11b369f1 100644
 @@ -32,6 +32,6 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
      #     lidar=connection,
      # )
- 
+
 -    # agent = agents2.deploy(dimos)
 +    # agent = agents.deploy(dimos)
      # agent.register_skills(detector)
@@ -13589,7 +13589,7 @@ index fb4e6ac5..0ff7528d 100644
 @@ -27,7 +27,7 @@ import reactivex as rx
  from reactivex import operators as ops
  from reactivex.observable import Observable
- 
+
 -from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 +from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
  from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
@@ -13602,7 +13602,7 @@ index 9c79274e..18f676a8 100644
 @@ -15,7 +15,7 @@
  import logging
  import time
- 
+
 -from dimos.agents2.spec import Model, Provider
 +from dimos.agents.spec import Model, Provider
  from dimos.core import LCMTransport, start
@@ -13611,12 +13611,12 @@ index 9c79274e..18f676a8 100644
 @@ -63,8 +63,8 @@ def detection_unitree() -> None:
      connection.start()
      reid.start()
- 
+
 -    from dimos.agents2 import Agent  # type: ignore[attr-defined]
 -    from dimos.agents2.cli.human import HumanInput
 +    from dimos.agents import Agent  # type: ignore[attr-defined]
 +    from dimos.agents.cli.human import HumanInput
- 
+
      agent = Agent(
          system_prompt="You are a helpful assistant for controlling a Unitree Go2 robot.",
 diff --git a/dimos/robot/unitree_webrtc/mujoco_connection.py b/dimos/robot/unitree_webrtc/mujoco_connection.py
@@ -13626,10 +13626,10 @@ index 4a544c53..d95c616b 100644
 @@ -58,8 +58,13 @@ class MujocoConnection:
          except ImportError:
              raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
- 
+
 +        # Pre-download the mujoco_sim data.
          get_data("mujoco_sim")
- 
+
 +        # Trigger the download of the mujoco_menajerie package. This is so it
 +        # doesn't trigger in the mujoco process where it can time out.
 +        import mujoco_playground
@@ -13647,7 +13647,7 @@ index 2e5bb550..82a5eb86 100644
      raw_msg: RawLidarMsg | None
 +    default_render_size: float = 0.03
      # _costmap: Optional[Costmap] = None  # TODO: Fix after costmap migration
- 
+
      def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
 @@ -129,3 +130,17 @@ class LidarMessage(PointCloud2):
      #         self._costmap = Costmap(grid=grid, origin=[*origin_xy, 0.0], resolution=self.resolution)
@@ -13674,17 +13674,17 @@ index a1eac3b1..848d434a 100644
 @@ -12,15 +12,21 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 +from pathlib import Path
  import time
 +from typing import Any
- 
+
 -import numpy as np
  import open3d as o3d  # type: ignore[import-untyped]
  from reactivex import interval
  from reactivex.disposable import Disposable
 +import rerun as rr
- 
+
  from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
  from dimos.core.global_config import GlobalConfig
 +from dimos.dashboard.module import RerunConnection
@@ -13699,12 +13699,12 @@ index a1eac3b1..848d434a 100644
      global_map: Out[LidarMessage]
      global_costmap: Out[OccupancyGrid]
 -    local_costmap: Out[OccupancyGrid]
- 
+
 -    pointcloud: o3d.geometry.PointCloud = o3d.geometry.PointCloud()
 +    _point_cloud_accumulator: PointCloudAccumulator
 +    _global_config: GlobalConfig
 +    _preloaded_occupancy: OccupancyGrid | None = None
- 
+
      def __init__(  # type: ignore[no-untyped-def]
          self,
          voxel_size: float = 0.05,
@@ -13725,15 +13725,15 @@ index a1eac3b1..848d434a 100644
 +        self._point_cloud_accumulator = GeneralPointCloudAccumulator(
 +            self.voxel_size, self._global_config
 +        )
- 
+
 -        if global_config:
 -            if global_config.simulation:
 -                self.min_height = 0.3
 +        if self._global_config.simulation:
 +            self.min_height = 0.3
- 
+
          super().__init__(**kwargs)
- 
+
      @rpc
      def start(self) -> None:
          super().start()
@@ -13756,24 +13756,24 @@ index a1eac3b1..848d434a 100644
 -            self.global_costmap.publish(occupancygrid)
 +        self.rc = RerunConnection()
 +        self._disposables.add(Disposable(self.lidar.subscribe(self.add_frame)))
- 
+
          if self.global_publish_interval is not None:
 -            unsub = interval(self.global_publish_interval).subscribe(publish)  # type: ignore[assignment]
 -            self._disposables.add(unsub)  # type: ignore[arg-type]
 +            unsub = interval(self.global_publish_interval).subscribe(self._publish)
 +            self._disposables.add(unsub)
- 
+
      @rpc
      def stop(self) -> None:
 @@ -88,84 +83,49 @@ class Map(Module):
- 
+
      def to_PointCloud2(self) -> PointCloud2:
          return PointCloud2(
 -            pointcloud=self.pointcloud,
 +            pointcloud=self._point_cloud_accumulator.get_point_cloud(),
              ts=time.time(),
          )
- 
+
      def to_lidar_message(self) -> LidarMessage:
          return LidarMessage(
 -            pointcloud=self.pointcloud,
@@ -13782,7 +13782,7 @@ index a1eac3b1..848d434a 100644
              resolution=self.voxel_size,
              ts=time.time(),
          )
- 
+
 +    # TODO: Why is this RPC?
      @rpc
 -    def add_frame(self, frame: LidarMessage) -> "Map":  # type: ignore[return]
@@ -13803,18 +13803,18 @@ index a1eac3b1..848d434a 100644
 -        self.local_costmap.publish(local_costmap)
 +    def add_frame(self, frame: LidarMessage) -> None:
 +        self._point_cloud_accumulator.add(frame.pointcloud)
- 
+
      @property
      def o3d_geometry(self) -> o3d.geometry.PointCloud:
 -        return self.pointcloud
 +        return self._point_cloud_accumulator.get_point_cloud()
- 
+
 +    def _publish(self, _: Any) -> None:
 +        lidar_message = self.to_lidar_message()
 +        self.rc = RerunConnection()
 +        self.global_map.publish(lidar_message)
 +        self.rc.log("/global_map", lidar_message.to_rerun(colors=[[0, 0, 255]]))
- 
+
 -def splice_sphere(
 -    map_pcd: o3d.geometry.PointCloud,
 -    patch_pcd: o3d.geometry.PointCloud,
@@ -13856,7 +13856,7 @@ index a1eac3b1..848d434a 100644
 +            max_height=self.max_height,
 +        )
 +        self.rc.log("/global_costmap", rr.DepthImage(occupancy_grid.grid.astype("float32")))
- 
+
 -    victims = np.nonzero(
 -        (planar_dists_map < radius)
 -        & (map_pts[:, axis] >= axis_min)
@@ -13868,12 +13868,12 @@ index a1eac3b1..848d434a 100644
 +                path = Path(self._global_config.mujoco_global_costmap_from_occupancy)
 +                self._preloaded_occupancy = OccupancyGrid.from_path(path)
 +            occupancy_grid = self._preloaded_occupancy
- 
+
 -    survivors = map_pcd.select_by_index(victims, invert=True)
 -    return survivors + patch_pcd
 +        self.global_costmap.publish(occupancy_grid)
- 
- 
+
+
  mapper = Map.blueprint
 @@ -175,7 +135,6 @@ def deploy(dimos: DimosCluster, connection: Go2ConnectionProtocol):  # type: ign
      mapper = dimos.deploy(Map, global_publish_interval=1.0)  # type: ignore[attr-defined]
@@ -13893,35 +13893,35 @@ index e939022e..78ce6bf0 100644
  # limitations under the License.
 -import time
  from typing import Literal, TypedDict
- 
+
  from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
  from dimos.robot.unitree_webrtc.type.timeseries import (
      Timestamped,
  )
 +from dimos.types.timestamped import to_timestamp
- 
+
  raw_odometry_msg_sample = {
      "type": "msg",
 @@ -95,10 +95,7 @@ class Odometry(PoseStamped, Timestamped):  # type: ignore[misc]
              pose["orientation"].get("w"),
          )
- 
+
 -        # ts = to_timestamp(msg["data"]["header"]["stamp"])
 -        # lidar / video timestamps are not available from the robot
 -        # so we are deferring to local time for everything
 -        ts = time.time()
 +        ts = to_timestamp(msg["data"]["header"]["stamp"])
          return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
- 
+
      def __repr__(self) -> str:
 diff --git a/dimos/robot/unitree_webrtc/type/test_map.py b/dimos/robot/unitree_webrtc/type/test_map.py
 index 12ee8f83..d0479a78 100644
 --- a/dimos/robot/unitree_webrtc/type/test_map.py
 +++ b/dimos/robot/unitree_webrtc/type/test_map.py
 @@ -14,10 +14,11 @@
- 
+
  import pytest
- 
+
 +from dimos.mapping.pointclouds.accumulators.general import _splice_cylinder
  from dimos.robot.unitree_webrtc.testing.helpers import show3d
  from dimos.robot.unitree_webrtc.testing.mock import Mock
@@ -13929,16 +13929,16 @@ index 12ee8f83..d0479a78 100644
 -from dimos.robot.unitree_webrtc.type.map import Map, splice_sphere
 +from dimos.robot.unitree_webrtc.type.map import Map
  from dimos.utils.testing import SensorReplay
- 
- 
+
+
 @@ -48,7 +49,7 @@ def test_reconstruction_with_realtime_vis() -> None:
      for frame in mock.iterate():
          map.add_frame(frame)
- 
+
 -    show3d(map.pointcloud, title="Reconstructed Map").run()
 +    show3d(map.o3d_geometry, title="Reconstructed Map").run()
- 
- 
+
+
  @pytest.mark.vis
 @@ -56,7 +57,7 @@ def test_splice_vis() -> None:
      mock = Mock("test")
@@ -13946,17 +13946,17 @@ index 12ee8f83..d0479a78 100644
      insert = mock.load("b")
 -    show3d(splice_sphere(target.pointcloud, insert.pointcloud, shrink=0.7)).run()
 +    show3d(_splice_cylinder(target.pointcloud, insert.pointcloud, shrink=0.7)).run()
- 
- 
+
+
  @pytest.mark.vis
 @@ -69,32 +70,35 @@ def test_robot_vis() -> None:
      for frame in mock.iterate():
          map.add_frame(frame)
- 
+
 -    show3d(map.pointcloud, title="global dynamic map test").run()
 +    show3d(map.o3d_geometry, title="global dynamic map test").run()
- 
- 
+
+
 -def test_robot_mapping() -> None:
 -    lidar_replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
 +@pytest.fixture
@@ -13968,28 +13968,28 @@ index 12ee8f83..d0479a78 100644
 +
 +def test_robot_mapping(map_) -> None:
 +    lidar_replay = SensorReplay("office_lidar", autocast=LidarMessage.from_msg)
- 
+
      # Mock the output streams to avoid publishing errors
      class MockStream:
          def publish(self, msg) -> None:
              pass  # Do nothing
- 
+
 -    map.local_costmap = MockStream()
 -    map.global_costmap = MockStream()
 -    map.global_map = MockStream()
 +    map_.global_costmap = MockStream()
 +    map_.global_map = MockStream()
- 
+
      # Process all frames from replay
      for frame in lidar_replay.iterate():
 -        map.add_frame(frame)
 +        map_.add_frame(frame)
- 
+
      # Check the built map
 -    global_map = map.to_lidar_message()
 +    global_map = map_.to_lidar_message()
      pointcloud = global_map.pointcloud
- 
+
      # Verify map has points
      assert len(pointcloud.points) > 0
      print(f"Map contains {len(pointcloud.points)} points")
@@ -14002,7 +14002,7 @@ index 0ebceac5..c4fd583a 100644
 @@ -25,9 +25,9 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-un
  )
  from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
- 
+
 -from dimos.agents2.agent import llm_agent
 -from dimos.agents2.cli.human import human_input
 -from dimos.agents2.skills.navigation import navigation_skill
@@ -14027,13 +14027,13 @@ index 7b1b0757..7e027afc 100644
 +++ b/dimos/robot/unitree_webrtc/unitree_g1_skill_container.py
 @@ -13,7 +13,7 @@
  # limitations under the License.
- 
+
  """
 -Unitree G1 skill container for the new agents2 framework.
 +Unitree G1 skill container for the new agents framework.
  Dynamically generates skills for G1 humanoid robot including arm controls and movement modes.
  """
- 
+
 diff --git a/dimos/robot/unitree_webrtc/unitree_go2_blueprints.py b/dimos/robot/unitree_webrtc/unitree_go2_blueprints.py
 index f7077874..acd4503e 100644
 --- a/dimos/robot/unitree_webrtc/unitree_go2_blueprints.py
@@ -14041,11 +14041,11 @@ index f7077874..acd4503e 100644
 @@ -14,87 +14,87 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 -from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 -import rerun as rr
 +import platform
- 
+
 -from dimos.agents2.agent import llm_agent
 -from dimos.agents2.cli.human import human_input
 -from dimos.agents2.cli.web import web_input
@@ -14090,7 +14090,7 @@ index f7077874..acd4503e 100644
  from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
  from dimos.utils.monitoring import utilization
  from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
- 
+
 -# class Rerun(Module):
 -#     def start(self):
 -#         rr.init("rerun_go2", spawn=True)
@@ -14110,11 +14110,11 @@ index f7077874..acd4503e 100644
 +        ),
 +    }
 +)
- 
+
 -#     def stop(self): ...
- 
+
 +linux = autoconnect(dashboard)
- 
+
  basic = autoconnect(
 -    #    Rerun.blueprint(),
      go2_connection(),
@@ -14131,7 +14131,7 @@ index f7077874..acd4503e 100644
 -    robot_model="unitree_go2",
 -)
 +).global_config(n_dask_workers=4, robot_model="unitree_go2")
- 
+
 -standard = autoconnect(
 +nav = autoconnect(
      basic,
@@ -14147,7 +14147,7 @@ index f7077874..acd4503e 100644
 -    object_tracking(frame_id="camera_link"),
      utilization(),
  ).global_config(n_dask_workers=8)
- 
+
 -standard_with_jpeglcm = standard.transports(
 +with_jpeglcm = nav.transports(
      {
@@ -14155,7 +14155,7 @@ index f7077874..acd4503e 100644
 +        ("color_image", Image): JpegLcmTransport("/color_image", Image),
      }
  )
- 
+
 -standard_with_jpegshm = autoconnect(
 -    standard.transports(
 +with_jpegshm = autoconnect(
@@ -14172,18 +14172,18 @@ index f7077874..acd4503e 100644
 -    ),
 +    dashboard,
  )
- 
+
  _common_agentic = autoconnect(
 @@ -106,13 +106,13 @@ _common_agentic = autoconnect(
  )
- 
+
  agentic = autoconnect(
 -    standard,
 +    spatial,
      llm_agent(),
      _common_agentic,
  )
- 
+
  agentic_ollama = autoconnect(
 -    standard,
 +    spatial,
@@ -14192,7 +14192,7 @@ index f7077874..acd4503e 100644
          provider=Provider.OLLAMA,  # type: ignore[attr-defined]
 @@ -123,7 +123,7 @@ agentic_ollama = autoconnect(
  )
- 
+
  agentic_huggingface = autoconnect(
 -    standard,
 +    spatial,
@@ -14206,10 +14206,10 @@ index 9501d037..b6d22d04 100644
 @@ -19,7 +19,7 @@ import difflib
  import time
  from typing import TYPE_CHECKING
- 
+
 -from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
 +from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
- 
+
  from dimos.core.core import rpc
  from dimos.core.skill_module import SkillModule
 diff --git a/dimos/robot/unitree_webrtc/unitree_skills.py b/dimos/robot/unitree_webrtc/unitree_skills.py
@@ -14219,10 +14219,10 @@ index c9a525ed..680efa92 100644
 @@ -25,7 +25,7 @@ else:
      Robot = "Robot"
      MockRobot = "MockRobot"
- 
+
 -from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
 +from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
- 
+
  from dimos.msgs.geometry_msgs import Twist, Vector3
  from dimos.skills.skills import AbstractRobotSkill, AbstractSkill, SkillLibrary
 diff --git a/dimos/simulation/mujoco/constants.py b/dimos/simulation/mujoco/constants.py
@@ -14231,52 +14231,52 @@ index 59e8f580..1631b68c 100644
 +++ b/dimos/simulation/mujoco/constants.py
 @@ -28,7 +28,6 @@ MAX_HEIGHT = 1.2
  LIDAR_RESOLUTION = 0.05
- 
+
  # Simulation timing constants
 -STEPS_PER_FRAME = 7
  VIDEO_FPS = 20
  LIDAR_FPS = 2
- 
+
 diff --git a/dimos/simulation/mujoco/model.py b/dimos/simulation/mujoco/model.py
 index 43975c86..a8c7857b 100644
 --- a/dimos/simulation/mujoco/model.py
 +++ b/dimos/simulation/mujoco/model.py
 @@ -15,6 +15,7 @@
  # limitations under the License.
- 
- 
+
+
 +from pathlib import Path
  import xml.etree.ElementTree as ET
- 
+
  from etils import epath  # type: ignore[import-untyped]
 @@ -22,6 +23,9 @@ import mujoco  # type: ignore[import-untyped]
  from mujoco_playground._src import mjx_env  # type: ignore[import-untyped]
  import numpy as np
- 
+
 +from dimos.core.global_config import GlobalConfig
 +from dimos.mapping.occupancy.extrude_occupancy import generate_mujoco_scene
 +from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
  from dimos.simulation.mujoco.input_controller import InputController
  from dimos.simulation.mujoco.policy import G1OnnxController, Go1OnnxController, OnnxController
- 
+
 @@ -41,11 +45,11 @@ def get_assets() -> dict[str, bytes]:
- 
- 
+
+
  def load_model(
 -    input_device: InputController, robot: str, scene: str
 +    input_device: InputController, robot: str, scene_xml: str
  ) -> tuple[mujoco.MjModel, mujoco.MjData]:
      mujoco.set_mjcb_control(None)
- 
+
 -    xml_string = get_model_xml(robot, scene)
 +    xml_string = get_model_xml(robot, scene_xml)
      model = mujoco.MjModel.from_xml_string(xml_string, assets=get_assets())
      data = mujoco.MjData(model)
- 
+
 @@ -83,11 +87,30 @@ def load_model(
      return model, data
- 
- 
+
+
 -def get_model_xml(robot: str, scene: str) -> str:
 -    xml_file = (DATA_DIR / f"scene_{scene}.xml").as_posix()
 -
@@ -14328,11 +14328,11 @@ index dd98a283..e88ffcd2 100755
 +from dimos.simulation.mujoco.model import load_model, load_scene_xml
  from dimos.simulation.mujoco.shared_memory import ShmReader
  from dimos.utils.logging_config import setup_logger
- 
+
 @@ -76,12 +75,8 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
      if robot_name == "unitree_go2":
          robot_name = "unitree_go1"
- 
+
 -    mujoco_room = getattr(config, "mujoco_room", "office1")
 -    if mujoco_room is None:
 -        mujoco_room = "office1"
@@ -14340,24 +14340,24 @@ index dd98a283..e88ffcd2 100755
      controller = MockController(shm)
 -    model, data = load_model(controller, robot=robot_name, scene=mujoco_room)
 +    model, data = load_model(controller, robot=robot_name, scene_xml=load_scene_xml(config))
- 
+
      if model is None or data is None:
          raise ValueError("Failed to load MuJoCo model: model or data is None")
 @@ -94,7 +89,9 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
          case _:
              z = 0
- 
+
 -    data.qpos[0:3] = [-1, 1, z]
 +    pos = config.mujoco_start_pos_float
 +
 +    data.qpos[0:3] = [pos[0], pos[1], z]
- 
+
      mujoco.mj_forward(model, data)
- 
+
 @@ -129,11 +126,16 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
          video_interval = 1.0 / VIDEO_FPS
          lidar_interval = 1.0 / LIDAR_FPS
- 
+
 +        m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
 +        m_viewer.cam.distance = config.mujoco_camera_position_float[3]
 +        m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
@@ -14365,12 +14365,12 @@ index dd98a283..e88ffcd2 100755
 +
          while m_viewer.is_running() and not shm.should_stop():
              step_start = time.time()
- 
+
              # Step simulation
 -            for _ in range(STEPS_PER_FRAME):
 +            for _ in range(config.mujoco_steps_per_frame):
                  mujoco.mj_step(model, data)
- 
+
              m_viewer.sync()
 diff --git a/dimos/skills/unitree/unitree_speak.py b/dimos/skills/unitree/unitree_speak.py
 index 6956efad..52dc99e5 100644
@@ -14379,14 +14379,14 @@ index 6956efad..52dc99e5 100644
 @@ -19,11 +19,11 @@ import os
  import tempfile
  import time
- 
+
 -from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
  import numpy as np
  from openai import OpenAI
  from pydantic import Field
  import soundfile as sf  # type: ignore[import-untyped]
 +from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
- 
+
  from dimos.skills.skills import AbstractRobotSkill
  from dimos.utils.logging_config import setup_logger
 diff --git a/dimos/utils/data.py b/dimos/utils/data.py
@@ -14395,7 +14395,7 @@ index 8b70c2ad..117269af 100644
 +++ b/dimos/utils/data.py
 @@ -13,6 +13,7 @@
  # limitations under the License.
- 
+
  from functools import cache
 +import os
  from pathlib import Path
@@ -14404,7 +14404,7 @@ index 8b70c2ad..117269af 100644
 @@ -70,11 +71,14 @@ def _lfs_pull(file_path: Path, repo_root: Path) -> None:
      try:
          relative_path = file_path.relative_to(repo_root)
- 
+
 +        env = os.environ.copy()
 +        env["GIT_LFS_FORCE_PROGRESS"] = "1"
 +
@@ -14422,14 +14422,14 @@ index 73339995..3f21e704 100644
 --- a/dimos/utils/metrics.py
 +++ b/dimos/utils/metrics.py
 @@ -19,7 +19,7 @@ from typing import Any, TypeVar, cast
- 
+
  from dimos_lcm.std_msgs import Float32  # type: ignore[import-untyped]
- 
+
 -from dimos.core import DimosCluster, In, LCMTransport, Module, Out, Transport, rpc
 +from dimos.core import LCMTransport, Transport
- 
+
  F = TypeVar("F", bound=Callable[..., Any])
- 
+
 diff --git a/dimos/utils/test_trigonometry.py b/dimos/utils/test_trigonometry.py
 new file mode 100644
 index 00000000..70137edf
@@ -14479,7 +14479,7 @@ index bf6eaaa8..f6fa71c5 100644
 @@ -256,6 +256,39 @@ class TimedSensorReplay(SensorReplay[T]):
      def iterate(self, loop: bool = False) -> Iterator[T | Any]:
          return (x[1] for x in super().iterate(loop=loop))  # type: ignore[index]
- 
+
 +    def iterate_duration(self, **kwargs: Any) -> Iterator[tuple[float, T] | Any]:
 +        """Iterate with timestamps relative to the start of the dataset."""
 +        first_ts = self.first_timestamp()
@@ -14527,19 +14527,19 @@ index bf6eaaa8..f6fa71c5 100644
 @@ -355,7 +389,7 @@ class TimedSensorReplay(SensorReplay[T]):
                          if hasattr(scheduler, "dispose"):
                              scheduler.dispose()
- 
+
 -                disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
 +                scheduler.schedule_relative(delay, lambda sc, _: emit())
- 
+
              schedule_emission(next_message)
- 
+
 diff --git a/dimos/utils/testing/test_moment.py b/dimos/utils/testing/test_moment.py
 index 975f6653..3f49c117 100644
 --- a/dimos/utils/testing/test_moment.py
 +++ b/dimos/utils/testing/test_moment.py
 @@ -14,7 +14,7 @@
  import time
- 
+
  from dimos.core import LCMTransport
 -from dimos.msgs.geometry_msgs import PoseStamped
 +from dimos.msgs.geometry_msgs import PoseStamped, Transform
@@ -14547,8 +14547,8 @@ index 975f6653..3f49c117 100644
  from dimos.protocol.tf import TF
  from dimos.robot.unitree.connection import go2
 @@ -25,12 +25,17 @@ data_dir = get_data("unitree_go2_office_walk2")
- 
- 
+
+
  class Go2Moment(Moment):
 -    lidar = SensorMoment(f"{data_dir}/lidar", LCMTransport("/lidar", PointCloud2))
 -    video = SensorMoment(f"{data_dir}/video", LCMTransport("/color_image", Image))
@@ -14561,17 +14561,17 @@ index 975f6653..3f49c117 100644
 +        self.lidar = SensorMoment(f"{data_dir}/lidar", LCMTransport("/lidar", PointCloud2))
 +        self.video = SensorMoment(f"{data_dir}/video", LCMTransport("/color_image", Image))
 +        self.odom = SensorMoment(f"{data_dir}/odom", LCMTransport("/odom", PoseStamped))
- 
+
      @property
 -    def transforms(self):
 +    def transforms(self) -> list[Transform]:
          if self.odom.value is None:
              return []
- 
+
 @@ -40,7 +45,7 @@ class Go2Moment(Moment):
          odom.ts = time.time()
          return go2.GO2Connection._odom_to_tf(odom)
- 
+
 -    def publish(self):
 +    def publish(self) -> None:
          t = TF()
@@ -14580,11 +14580,11 @@ index 975f6653..3f49c117 100644
 @@ -51,7 +56,7 @@ class Go2Moment(Moment):
          camera_info_transport.publish(camera_info)
          camera_info_transport.stop()
- 
+
 -        return super().publish()
 +        super().publish()
- 
- 
+
+
  def test_moment_seek_and_publish() -> None:
 diff --git a/dimos/utils/trigonometry.py b/dimos/utils/trigonometry.py
 new file mode 100644
@@ -14692,7 +14692,7 @@ index c7bcd5df..28f418bb 100644
 +++ b/dimos/web/README.md
 @@ -85,7 +85,7 @@ The frontend will be available at http://localhost:3000
  ### Unitree Go2 Example
- 
+
  ```python
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
@@ -14718,7 +14718,7 @@ index 37cafd6e..a2c15015 100644
 +++ b/dimos/web/dimos_interface/api/README.md
 @@ -34,7 +34,7 @@ The server will start on `http://0.0.0.0:5555`.
  See DimOS Documentation for more info.
- 
+
  ```python
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
@@ -14731,7 +14731,7 @@ index 341c19a6..6ce7ef82 100644
 +++ b/dimos/web/websocket_vis/websocket_vis_module.py
 @@ -32,6 +32,8 @@ from starlette.routing import Route
  import uvicorn
- 
+
  from dimos.core import In, Module, Out, rpc
 +from dimos.mapping.occupancy.gradient import gradient
 +from dimos.mapping.occupancy.inflation import simple_inflate
@@ -14746,26 +14746,26 @@ index 341c19a6..6ce7ef82 100644
 +            logger.info(
 +                "Click goal published", x=round(goal.position.x, 3), y=round(goal.position.y, 3)
 +            )
- 
+
          @self.sio.event  # type: ignore[misc, untyped-decorator]
          async def gps_goal(sid: str, goal: dict[str, float]) -> None:
 @@ -312,7 +316,7 @@ class WebsocketVisModule(Module):
- 
+
      def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
          """Convert OccupancyGrid to visualization format."""
 -        costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
 +        costmap = gradient(simple_inflate(costmap, 0.1), max_distance=1.0)
          grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
- 
+
          return {
 diff --git a/docker/navigation/README.md b/docker/navigation/README.md
 index 50276a6c..15057869 100644
 --- a/docker/navigation/README.md
 +++ b/docker/navigation/README.md
 @@ -2,26 +2,6 @@
- 
+
  This directory contains Docker configuration files to run DimOS and the ROS autonomy stack in the same container, enabling communication between the two systems.
- 
+
 -## New Ubuntu Installation
 -
 -**For fresh Ubuntu systems**, use the automated setup script:
@@ -14787,7 +14787,7 @@ index 50276a6c..15057869 100644
 -If the automated script encounters issues, follow the manual setup below.
 -
  ## Prerequisites
- 
+
  1. **Install Docker with `docker compose` support**. Follow the [official Docker installation guide](https://docs.docker.com/engine/install/).
 diff --git a/docker/navigation/setup.sh b/docker/navigation/setup.sh
 deleted file mode 100755
@@ -15510,7 +15510,7 @@ index 676dc9b3..a5d4199c 100644
 -requires = ["setuptools>=70", "wheel"]
 +requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
  build-backend = "setuptools.build_meta"
- 
+
  [tool.setuptools]
 @@ -29,7 +29,7 @@ dependencies = [
      "anthropic>=0.19.0",
@@ -15532,10 +15532,10 @@ index 676dc9b3..a5d4199c 100644
 +    "unitree-webrtc-connect",
      "tensorzero==2025.7.5",
      "structlog>=25.5.0,<26",
- 
+
 @@ -54,13 +54,13 @@ dependencies = [
      "uvicorn>=0.34.0",
- 
+
      # Agents
 -    "langchain>=0.3.27,<1",
 -    "langchain-chroma>=0.2.6,<1",
@@ -15553,7 +15553,7 @@ index 676dc9b3..a5d4199c 100644
 +    "langchain-ollama>=1,<2",
      "bitsandbytes>=0.48.2,<1.0; sys_platform == 'linux'",
      "ollama>=0.6.0",
- 
+
 @@ -97,7 +97,7 @@ dependencies = [
      "scipy>=1.15.1",
      "scikit-learn",
@@ -15565,16 +15565,16 @@ index 676dc9b3..a5d4199c 100644
      "opencv-contrib-python==4.10.0.84",
 @@ -119,15 +119,22 @@ dependencies = [
      "dask[complete]==2025.5.1",
- 
+
      # LCM / DimOS utilities
 -    "dimos-lcm @ git+https://github.com/dimensionalOS/dimos-lcm.git@3aeb724863144a8ba6cf72c9f42761d1007deda4",
 +    "dimos-lcm",
- 
+
      # CLI
      "pydantic-settings>=2.11.0,<3",
      "typer>=0.19.2,<1",
      "plotext==5.3.2",
- 
+
 +    # rerun
 +    "rerun-sdk>=0.27.3",
 +    "aiohttp>=3.13.2",
@@ -15585,7 +15585,7 @@ index 676dc9b3..a5d4199c 100644
 +    "numba>=0.60.0",    # First version supporting Python 3.12
 +    "llvmlite>=0.42.0", # Required by numba 0.59+
  ]
- 
+
  [project.scripts]
 @@ -151,7 +158,7 @@ manipulation = [
      "pandas>=1.5.2",
@@ -15593,7 +15593,7 @@ index 676dc9b3..a5d4199c 100644
      "pyyaml>=6.0",
 -    "contact-graspnet-pytorch @ git+https://github.com/dimensionalOS/contact_graspnet_pytorch.git",
 +    "contact-graspnet-pytorch",
- 
+
      # piper arm
      "piper-sdk",
 @@ -185,8 +192,8 @@ cuda = [
@@ -15605,7 +15605,7 @@ index 676dc9b3..a5d4199c 100644
 +    "clip",
 +    "detectron2",
  ]
- 
+
  dev = [
 @@ -198,6 +205,7 @@ dev = [
      "pytest-mock==3.15.0",
@@ -15618,7 +15618,7 @@ index 676dc9b3..a5d4199c 100644
 @@ -229,14 +237,15 @@ sim = [
      "playground>=0.0.5",
  ]
- 
+
 -jetson-jp6-cuda126 = [
 -    # Jetson Jetpack 6.2 with CUDA 12.6 specific wheels
 -    # Note: Alternative torch wheel from docs: https://developer.download.nvidia.com/compute/redist/jp/v61/pytorch/torch-2.5.0a0+872d972e41.nv24.08.17622132-cp310-cp310-linux_aarch64.whl
@@ -15636,7 +15636,7 @@ index 676dc9b3..a5d4199c 100644
 +#     "onnxruntime-gpu @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../onnxruntime_gpu-1.23.0-cp310-cp310-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
 +#     "xformers @ https://pypi.jetson-ai-lab.io/jp6/cu126/+f/.../xformers-0.0.33-cp39-abi3-linux_aarch64.whl ; platform_machine == 'aarch64' and sys_platform == 'linux'",
 +# ]
- 
+
  drone = [
      "pymavlink"
 @@ -317,3 +326,18 @@ env = [
@@ -15767,12 +15767,12 @@ index 15fa5aa7..2ce49d00 100644
 @@ -12,9 +12,30 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 +import os
 +
 +from pybind11.setup_helpers import Pybind11Extension, build_ext
  from setuptools import find_packages, setup
- 
+
 +# C++ extensions
 +ext_modules = [
 +    Pybind11Extension(
@@ -15801,7 +15801,7 @@ index 7f788700..7a7504e6 100644
 +++ b/tests/agent_manip_flow_flask_test.py
 @@ -31,7 +31,7 @@ from reactivex.disposable import CompositeDisposable
  from reactivex.scheduler import ThreadPoolScheduler
- 
+
  # Local application imports
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
@@ -15813,12 +15813,12 @@ index c2c41ad5..44f1a383 100644
 --- a/tests/agent_memory_test.py
 +++ b/tests/agent_memory_test.py
 @@ -18,7 +18,7 @@ from dotenv import load_dotenv
- 
+
  load_dotenv()
- 
+
 -from dimos.agents.memory.chroma_impl import OpenAISemanticMemory
 +from dimos.agents_deprecated.memory.chroma_impl import OpenAISemanticMemory
- 
+
  agent_memory = OpenAISemanticMemory()
  print("Initialization done.")
 diff --git a/tests/simple_agent_test.py b/tests/simple_agent_test.py
@@ -15826,9 +15826,9 @@ index f2cf8493..482f131f 100644
 --- a/tests/simple_agent_test.py
 +++ b/tests/simple_agent_test.py
 @@ -14,7 +14,7 @@
- 
+
  import os
- 
+
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
  from dimos.robot.unitree.unitree_go2 import UnitreeGo2
@@ -15839,9 +15839,9 @@ index fa4dfe80..1b26a7f0 100644
 --- a/tests/test_agent_alibaba.py
 +++ b/tests/test_agent_alibaba.py
 @@ -16,8 +16,8 @@ import os
- 
+
  from openai import OpenAI
- 
+
 -from dimos.agents.agent import OpenAIAgent
 -from dimos.agents.tokenizer.huggingface_tokenizer import HuggingFaceTokenizer
 +from dimos.agents_deprecated.agent import OpenAIAgent
@@ -15856,7 +15856,7 @@ index d79d2040..be1322be 100644
 @@ -12,7 +12,7 @@
  # See the License for the specific language governing permissions and
  # limitations under the License.
- 
+
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
  from dimos.stream.audio.pipelines import stt, tts
@@ -15867,9 +15867,9 @@ index 27340fcd..68c523d0 100644
 --- a/tests/test_audio_robot_agent.py
 +++ b/tests/test_audio_robot_agent.py
 @@ -14,7 +14,7 @@
- 
+
  import os
- 
+
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
  from dimos.robot.unitree.unitree_go2 import UnitreeGo2
@@ -15880,12 +15880,12 @@ index 05893a6b..548ed435 100644
 --- a/tests/test_claude_agent_query.py
 +++ b/tests/test_claude_agent_query.py
 @@ -14,7 +14,7 @@
- 
+
  from dotenv import load_dotenv
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
- 
+
  # Load API key from environment
  load_dotenv()
 diff --git a/tests/test_claude_agent_skills_query.py b/tests/test_claude_agent_skills_query.py
@@ -15895,7 +15895,7 @@ index bb5753d2..c02e895b 100644
 @@ -19,7 +19,7 @@ from dotenv import load_dotenv
  import reactivex as rx
  import reactivex.operators as ops
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.robot.unitree.unitree_go2 import UnitreeGo2
@@ -16206,7 +16206,7 @@ index 7651d38f..312b5307 100644
 @@ -22,7 +22,7 @@ import reactivex as rx
  import reactivex.operators as ops
  from reactivex.subject import BehaviorSubject
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
@@ -16219,7 +16219,7 @@ index ca5671f7..e788e92c 100644
 @@ -20,7 +20,7 @@ import threading
  from dotenv import load_dotenv
  from reactivex import operators as ops
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
@@ -16232,7 +16232,7 @@ index f35fdb53..2791f232 100644
 @@ -17,7 +17,7 @@ import os
  import cv2
  from reactivex import Subject, operators as RxOps
- 
+
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
  from dimos.perception.semantic_seg import SemanticSegmentationStream
@@ -16245,7 +16245,7 @@ index 139a4efe..a4bdd594 100644
 @@ -17,7 +17,7 @@
  import unittest
  from unittest import mock
- 
+
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
  from dimos.robot.robot import MockRobot
@@ -16254,7 +16254,7 @@ index 139a4efe..a4bdd594 100644
 @@ -123,7 +123,7 @@ class SkillWithAgentTest(unittest.TestCase):
              skills=self.skill_library,
          )
- 
+
 -    @mock.patch("dimos.agents.agent.OpenAIAgent.run_observable_query")
 +    @mock.patch("dimos.agents_deprecated.agent.OpenAIAgent.run_observable_query")
      def test_agent_skill_identification(self, mock_query):
@@ -16262,7 +16262,7 @@ index 139a4efe..a4bdd594 100644
          # Mock the agent response
 @@ -139,7 +139,7 @@ class SkillWithAgentTest(unittest.TestCase):
          self.assertEqual(response, "I found the TestSkill and executed it.")
- 
+
      @mock.patch.object(TestSkill, "__call__")
 -    @mock.patch("dimos.agents.agent.OpenAIAgent.run_observable_query")
 +    @mock.patch("dimos.agents_deprecated.agent.OpenAIAgent.run_observable_query")
@@ -16276,7 +16276,7 @@ index a9493e3c..6d3afc52 100644
 @@ -18,7 +18,7 @@ from dotenv import load_dotenv
  import reactivex as rx
  import reactivex.operators as ops
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.skills.rest.rest import GenericRestSkill
@@ -16289,11 +16289,11 @@ index e9c8c623..5cd587f2 100644
 @@ -22,7 +22,7 @@ import matplotlib.pyplot as plt
  import reactivex
  from reactivex import operators as ops
- 
+
 -from dimos.agents.memory.visual_memory import VisualMemory
 +from dimos.agents_deprecated.memory.visual_memory import VisualMemory
  from dimos.msgs.geometry_msgs import Quaternion, Vector3
- 
+
  # from dimos.robot.unitree_webrtc.unitree_go2 import UnitreeGo2  # Uncomment when properly configured
 diff --git a/tests/test_spatial_memory_query.py b/tests/test_spatial_memory_query.py
 index 539f5f5e..d6935a21 100644
@@ -16302,30 +16302,30 @@ index 539f5f5e..d6935a21 100644
 @@ -28,7 +28,7 @@ import chromadb
  import cv2
  import matplotlib.pyplot as plt
- 
+
 -from dimos.agents.memory.visual_memory import VisualMemory
 +from dimos.agents_deprecated.memory.visual_memory import VisualMemory
  from dimos.perception.spatial_perception import SpatialMemory
- 
- 
+
+
 diff --git a/tests/test_standalone_project_out.py b/tests/test_standalone_project_out.py
 index 9a924f7f..13211d80 100644
 --- a/tests/test_standalone_project_out.py
 +++ b/tests/test_standalone_project_out.py
 @@ -122,14 +122,14 @@ def extract_function_info(filename):
- 
- 
+
+
  # Usage:
 -file_path = "./dimos/agents/memory/base.py"
 +file_path = "./dimos/agents_deprecated/memory/base.py"
  extracted_info = extract_function_info(file_path)
  print(extracted_info)
- 
+
 -file_path = "./dimos/agents/memory/chroma_impl.py"
 +file_path = "./dimos/agents_deprecated/memory/chroma_impl.py"
  extracted_info = extract_function_info(file_path)
  print(extracted_info)
- 
+
 -file_path = "./dimos/agents/agent.py"
 +file_path = "./dimos/agents_deprecated/agent.py"
  extracted_info = extract_function_info(file_path)
@@ -16335,9 +16335,9 @@ index 5c4b6acb..c9999b6f 100644
 --- a/tests/test_unitree_agent.py
 +++ b/tests/test_unitree_agent.py
 @@ -21,7 +21,7 @@ print(f"Current working directory: {os.getcwd()}")
- 
+
  # -----
- 
+
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
  from dimos.robot.unitree.unitree_go2 import UnitreeGo2
@@ -16349,7 +16349,7 @@ index e144b885..77c36c14 100644
 +++ b/tests/test_unitree_agent_queries_fastapi.py
 @@ -30,7 +30,7 @@ import reactivex as rx
  import reactivex.operators as ops
- 
+
  # Local application imports
 -from dimos.agents.agent import OpenAIAgent
 +from dimos.agents_deprecated.agent import OpenAIAgent
@@ -16363,7 +16363,7 @@ index efb39be2..bee088b8 100644
 @@ -18,7 +18,7 @@ from dotenv import load_dotenv
  import reactivex as rx
  import reactivex.operators as ops
- 
+
 -from dimos.agents.claude_agent import ClaudeAgent
 +from dimos.agents_deprecated.claude_agent import ClaudeAgent
  from dimos.perception.detection2d.detic_2d_det import Detic2DDetector

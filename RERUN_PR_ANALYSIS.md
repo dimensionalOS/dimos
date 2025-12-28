@@ -34,15 +34,15 @@ def onodom(odom: PoseStamped):
 **Total additions**: ~100 lines
 
 ### Pros:
-✅ Simple, works immediately  
-✅ No abstractions  
-✅ Easy to debug  
-✅ Minimal code  
+✅ Simple, works immediately
+✅ No abstractions
+✅ Easy to debug
+✅ Minimal code
 
 ### Cons (from code review):
-⚠️ `rr.init()` at module level (runs on import even in tests)  
-⚠️ `to_rerun()` will crash for CudaImage (not implemented)  
-⚠️ Leftover test code (`example()` function in PoseStamped)  
+⚠️ `rr.init()` at module level (runs on import even in tests)
+⚠️ `to_rerun()` will crash for CudaImage (not implemented)
+⚠️ Leftover test code (`example()` function in PoseStamped)
 
 ---
 
@@ -57,7 +57,7 @@ from dimos.dashboard.module import Dashboard, RerunConnection
 class MyModule(Module):
     def start(self):
         self.rc = RerunConnection()  # One per worker
-        
+
         def on_image(img):
             self.rc.log("my_image", img.to_rerun())
 
@@ -78,32 +78,32 @@ blueprint = autoconnect(
 **Total additions**: ~500+ lines
 
 ### Pros:
-✅ Proper multi-worker safety  
-✅ Centralized rerun management  
-✅ Extensible (web terminal, etc.)  
+✅ Proper multi-worker safety
+✅ Centralized rerun management
+✅ Extensible (web terminal, etc.)
 
 ### Cons:
-❌ Over-engineered for simple use case  
-❌ File-based locks seem hacky  
-❌ Harder to understand/debug  
-❌ Still has race conditions (see Paul's comments)  
+❌ Over-engineered for simple use case
+❌ File-based locks seem hacky
+❌ Harder to understand/debug
+❌ Still has race conditions (see Paul's comments)
 
 ---
 
 ## The Debate (From PR Comments)
 
 ### Paul's Questions:
-> "About Zellij, why do we want this?"  
-> "I find the file-based parent PID search a bit odd"  
+> "About Zellij, why do we want this?"
+> "I find the file-based parent PID search a bit odd"
 > "Why not just environment variables?"
 
 ### Jeff's Defense:
-> "File locks prevent gRPC crashes on MacOS"  
-> "Zellij is flexible for CLI tools (htop, etc.)"  
+> "File locks prevent gRPC crashes on MacOS"
+> "Zellij is flexible for CLI tools (htop, etc.)"
 > "Shared memory requires locks in main module"
 
 ### Lesh's Response:
-> "Not sold on file locks until shown the actual issue"  
+> "Not sold on file locks until shown the actual issue"
 > "My PR doesn't use locks, just getting started instructions, seems to work"
 
 ---
@@ -172,25 +172,25 @@ class GO2Connection(Module):
     def __init__(self):
         super().__init__()
         self._rerun_initialized = False
-    
+
     @rpc
     def start(self):
         super().start()
-        
+
         # Init rerun once per module
         if not self._rerun_initialized:
             rr.init("dimos_go2", spawn=True)
             self._rerun_initialized = True
-        
+
         # Log to rerun
         def onimage(image: Image):
             self.color_image.publish(image)
             rr.log("go2/color_image", image.to_rerun())
-        
+
         def onodom(odom: PoseStamped):
             self._publish_tf(odom)
             rr.log("go2/odom", odom.to_rerun())
-        
+
         self._disposables.add(self.connection.video_stream().subscribe(onimage))
         self._disposables.add(self.connection.odom_stream().subscribe(onodom))
 ```
@@ -211,5 +211,3 @@ class GO2Connection(Module):
 | Maintainability | Good | Poor | Good |
 
 **Verdict**: Take Lesh's approach but fix the `rr.init()` placement.
-
-
