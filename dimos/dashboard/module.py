@@ -40,6 +40,8 @@ DASHBOARD_CONSTANTS = make_constant_across_workers(
 FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"]).set(False)
 
 
+# these should be args for the dashboard constructor, but its a pain to share data between modules
+# so right now they're just a function of ENV vars
 @dataclasses.dataclass
 class RerunInfo:
     logging_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
