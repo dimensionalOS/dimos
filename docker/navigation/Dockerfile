@@ -111,6 +111,9 @@ COPY . ${DIMOS_PATH}/
 # The container will always use its own dependencies, independent of the host
 RUN python3 -m venv /opt/dimos-venv
 
+# Activate Python virtual environment in interactive shells
+RUN echo "source /opt/dimos-venv/bin/activate" >> ~/.bashrc
+
 # Install Python dependencies for dimos
 WORKDIR ${DIMOS_PATH}
 RUN /bin/bash -c "source /opt/dimos-venv/bin/activate && \
