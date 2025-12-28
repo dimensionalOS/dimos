@@ -82,7 +82,7 @@ class Dashboard(Module):
                 rrb.Tabs(
                     rrb.Horizontal(
                         rrb.Spatial3DView(
-                            name="WorldView",
+                            name="WorldView1",
                             origin="/",
                             line_grid=rrb.LineGrid3D(spacing=1.0, stroke_width=1.0),
                         ),
@@ -121,8 +121,10 @@ class Dashboard(Module):
 
 
 class RerunConnection:
-    def __init__(self) -> None:
+    def __init__(self, logger: logging.Logger | None = None) -> None:
+        self._logger = ensure_logger(logger, "RerunConnection")
         self._init_id = mp.current_process().pid
+        self._dropped_logs = 0
         self.stream = None
 
     def __pickle__(self):
@@ -133,7 +135,16 @@ class RerunConnection:
     def log(self, msg: str, value, **kwargs) -> None:
         if not self.stream:
             if not FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"]).get():
+                if self._dropped_logs == 0:
+                    self._logger.info(
+                        "[RerunConnection] rerun grpc not started yet, dropping rerun log. Will notify when this changes"
+                    )
+                self._dropped_logs += 1
                 return
+            if self._dropped_logs > 1:
+                self._dropped_logs = 0
+                self._logger.info("[RerunConnection] rerun grpc connection found")
+
             self.stream = rr.RecordingStream(
                 rerun_info.logging_id, recording_id=rerun_info.logging_id
             )
