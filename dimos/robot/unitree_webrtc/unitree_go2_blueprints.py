@@ -74,7 +74,7 @@ linux = autoconnect(foxglove_bridge())
 
 basic = autoconnect(
     go2_connection(),
-    rerun_module(),
+    rerun_module(urdf_path="unitree_go2"),
     linux if platform.system() == "Linux" else mac,
     websocket_vis(),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")

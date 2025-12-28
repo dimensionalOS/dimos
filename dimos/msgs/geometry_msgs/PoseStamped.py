@@ -86,8 +86,26 @@ class PoseStamped(Pose, Timestamped):
             f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
         )
 
-    def to_rerun(self, length: float = 0.5):  # type: ignore[no-untyped-def]
-        """Convert to rerun Arrows3D format."""
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Transform3D format.
+
+        Returns a Transform3D that can be logged to Rerun to position
+        child entities in the transform hierarchy.
+        """
+        import rerun as rr
+
+        return rr.Transform3D(
+            translation=[self.x, self.y, self.z],
+            rotation=rr.Quaternion(xyzw=[
+                self.orientation.x,
+                self.orientation.y,
+                self.orientation.z,
+                self.orientation.w,
+            ]),
+        )
+
+    def to_rerun_arrow(self, length: float = 0.5):  # type: ignore[no-untyped-def]
+        """Convert to rerun Arrows3D format for visualization."""
         import rerun as rr
 
         origin = [[self.x, self.y, self.z]]
