@@ -27,12 +27,14 @@ dependencies = [
     "PyTurboJPEG==1.8.2",
 
     # Core
+    "numpy>=1.26.4",
     "scipy>=1.15.1",
     "reactivex",
     "rxpy-backpressure",
     "asyncio==3.4.3",
     "sortedcontainers==2.4.0",
     "pydantic",
+    "python-dotenv",
 
     # Multiprocess
     "dask[complete]==2025.5.1",
@@ -40,6 +42,7 @@ dependencies = [
 
     # Logging
     "structlog>=25.5.0,<26",
+    "colorlog==6.9.0",
 
     # Core Msgs
     "opencv-python",
@@ -47,6 +50,10 @@ dependencies = [
 
     # CLI
     "pydantic-settings>=2.11.0,<3",
+    "textual==3.7.1",
+    "terminaltexteffects==0.12.2",
+    "typer>=0.19.2,<1",
+    "plotext==5.3.2",
 ]
 
 
@@ -59,15 +66,11 @@ humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
 
 [project.optional-dependencies]
-core = [
+misc = [
     # Core requirements
-    "python-dotenv",
     "openai",
     "anthropic>=0.19.0",
     "cerebras-cloud-sdk",
-    "moondream",
-    "numpy>=1.26.4",
-    "colorlog==6.9.0",
     "yapf==0.40.2",
     "typeguard",
     "empy==3.3.4",
@@ -76,34 +79,18 @@ core = [
     "tiktoken>=0.8.0",
     "Flask>=2.2",
     "python-multipart==0.0.20",
-    "unitree-webrtc-connect",
     "tensorzero==2025.7.5",
 
     # Developer Specific
     "ipykernel",
 
-    # Unitree webrtc streaming
-    "aiortc==1.9.0",
-    "pycryptodome",
-    "sounddevice",
-    "pyaudio",
-    "requests",
-    "wasmtime",
-
-    # Hugging Face
-    "transformers[torch]==4.49.0",
-
     # Vector Embedding
     "sentence_transformers",
 
     # Perception Dependencies
-    "ultralytics>=8.3.70",
-    "filterpy>=1.4.5",
     "scikit-learn",
-    "Pillow",
     "clip",
     "timm>=1.0.15",
-    "lap>=0.5.12",
     "opencv-contrib-python==4.10.0.84",
 
     # embedding models
@@ -118,10 +105,6 @@ core = [
     # Inference
     "onnx",
     "einops==0.8.1",
-
-    # CLI
-    "typer>=0.19.2,<1",
-    "plotext==5.3.2",
 
     # Teleop
     "pygame>=2.6.1",
@@ -143,6 +126,7 @@ agents = [
 
     # Audio
     "openai-whisper",
+    "sounddevice",
 ]
 
 web = [
@@ -153,8 +137,24 @@ web = [
     "soundfile",
 ]
 
+perception = [
+    "ultralytics>=8.3.70",
+    "filterpy>=1.4.5",
+    "Pillow",
+    "lap>=0.5.12",
+    "transformers[torch]==4.49.0",
+    "moondream",
+]
+
 unitree = [
-    "dimos[agents,web]",
+    "dimos[agents,web,perception]",
+    # WebRTC streaming
+    "aiortc==1.9.0",
+    "unitree-webrtc-connect",
+    "pycryptodome",
+    "pyaudio",
+    "requests",
+    "wasmtime",
 ]
 
 manipulation = [
@@ -217,9 +217,7 @@ dev = [
     "pytest-env==1.1.5",
     "pytest-timeout==2.4.0",
     "coverage>=7.0",  # Required for numba compatibility (coverage.types)
-    "textual==3.7.1",
     "requests-mock==1.12.1",
-    "terminaltexteffects==0.12.2",
 
     # Types
     "lxml-stubs>=0.5.1,<1",

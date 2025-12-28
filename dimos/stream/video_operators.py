@@ -21,7 +21,6 @@ from typing import TYPE_CHECKING, Any
 import cv2
 import numpy as np
 from reactivex import Observable, Observer, create, operators as ops
-import zmq
 
 if TYPE_CHECKING:
     from dimos.stream.frame_processor import FrameProcessor
@@ -213,27 +212,6 @@ class VideoOperators:
             ops.map(lambda result: result[1]),  # type: ignore[index]  # Extract flow component
             ops.filter(lambda flow: flow is not None),
             ops.map(frame_processor.visualize_flow),
-        )
-
-    @staticmethod
-    def with_zmq_socket(
-        socket: zmq.Socket,  # type: ignore[type-arg]
-        scheduler: Any | None = None,
-    ) -> Callable[[Observable], Observable]:  # type: ignore[type-arg]
-        def send_frame(frame, socket) -> None:  # type: ignore[no-untyped-def]
-            _, img_encoded = cv2.imencode(".jpg", frame)
-            socket.send(img_encoded.tobytes())
-            # print(f"Frame received: {frame.shape}")
-
-        # Use a default scheduler if none is provided
-        if scheduler is None:
-            from reactivex.scheduler import ThreadPoolScheduler
-
-            scheduler = ThreadPoolScheduler(1)  # Single-threaded pool for isolation
-
-        return lambda source: source.pipe(
-            ops.observe_on(scheduler),  # Ensure this part runs on its own thread
-            ops.do_action(lambda frame: send_frame(frame, socket)),
         )
 
     @staticmethod
