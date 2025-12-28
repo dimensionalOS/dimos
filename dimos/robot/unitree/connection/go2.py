@@ -180,8 +180,10 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
-        # Initialize rerun
-        rr.init("rerun_go2", spawn=True)
+        # Initialize rerun with web viewer (serves on port 9090)
+        rr.init("rerun_go2")
+        server_uri = rr.serve_grpc()
+        rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
 
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
