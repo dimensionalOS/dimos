@@ -208,8 +208,9 @@ class ZellijManager:
         self.log.info("Found %s sessions", len(sessions))
         return {"success": True, "sessions": sessions, "count": len(sessions)}
 
+    @staticmethod
     def init_zellij_session(
-        self,
+        log: logging.Logger,
         session_name: str,
         terminal_commands: dict[str, str],
         zellij_layout: str | None = None,
@@ -218,7 +219,7 @@ class ZellijManager:
         # stop old session (if any)
         #
         try:
-            self.info(f"Killing old session {session_name}")
+            log.info(f"Killing old session {session_name}")
             subprocess.run(
                 ["zellij", "kill-session", session_name],
                 check=False,
@@ -226,10 +227,10 @@ class ZellijManager:
                 stderr=subprocess.DEVNULL,
             )
         except FileNotFoundError:
-            self.error("zellij executable not found; cannot manage session %s", session_name)
+            log.error("zellij executable not found; cannot manage session %s", session_name)
             # break
         except Exception as exc:
-            self.warning("Unable to kill session %s: %s", session_name, exc)
+            log.warning("Unable to kill session %s: %s", session_name, exc)
         #
         # write layout to tmp file
         #
@@ -238,7 +239,7 @@ class ZellijManager:
         )
         print(f"""zellij_path = {zellij_path}""")
         try:
-            self.info(f"Writing zellij layout {session_name}")
+            log.info(f"Writing zellij layout {session_name}")
             if not zellij_layout:
                 files_to_run = []
                 for command in terminal_commands.values():
@@ -269,7 +270,7 @@ class ZellijManager:
             with open(zellij_path, "w") as file:
                 file.write(zellij_layout)
         except Exception as exc:
-            self.error("Failed to write zellij layout: %s", exc)
+            log.error("Failed to write zellij layout: %s", exc)
             return
 
         #
@@ -295,4 +296,4 @@ class ZellijManager:
                 stderr=subprocess.PIPE,
             )
         except Exception as exc:
-            self.error("Failed to start zellij session %s: %s", session_name, exc)
+            log.error("Failed to start zellij session %s: %s", session_name, exc)
