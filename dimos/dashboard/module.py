@@ -66,7 +66,7 @@ class Dashboard(Module):
         https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH"),
         https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH"),
         logger: logging.Logger | None = None,
-        auto_open: bool = False,
+        launcher: str | None = None,
     ) -> None:
         super().__init__()
         self.port = port
@@ -75,12 +75,13 @@ class Dashboard(Module):
         self.https_key_path = https_key_path
         self.https_cert_path = https_cert_path
         self.logger = logger
-        self.auto_open = auto_open
+        self.launcher = launcher
 
     @rpc
     def start(self) -> None:
         print("""[Dashboard] calling rr.init""")
-        rr.init(rerun_info.logging_id, spawn=False, recording_id=rerun_info.logging_id)
+        spawn = self.launcher == "rerun"
+        rr.init(rerun_info.logging_id, spawn=spawn, recording_id=rerun_info.logging_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
         default_blueprint = self.__dict__.get(
             "rerun_default_blueprint",

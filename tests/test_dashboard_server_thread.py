@@ -47,7 +47,7 @@ def test_thread_passes_config_and_daemon_flag(monkeypatch, dashboard_server):
 
     logger = logging.getLogger("test-thread-config")
     thread = dashboard_server.start_dashboard_server_thread(
-        auto_open=True,
+        launcher="browser",
         port=5555,
         dashboard_host="0.0.0.0",
         https_enabled=True,
@@ -263,7 +263,7 @@ def test_auto_open_launches_browser(monkeypatch, dashboard_server):
     monkeypatch.setattr(dashboard_server.webbrowser, "open", lambda url: browser_calls.append(url))
 
     thread = dashboard_server.start_dashboard_server_thread(
-        auto_open=True,
+        launcher="browser",
         port=4444,
         dashboard_host="dash.local",
         rrd_url="rrd://noop",

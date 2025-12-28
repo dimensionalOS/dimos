@@ -27,7 +27,7 @@ from dimos.dashboard.support.utils import ensure_logger, env_bool, path_matches
 
 
 def start_dashboard_server(config: dict, log: logging.Logger):
-    auto_open = config["auto_open"]
+    launcher = config["launcher"]
     port = config["port"]
     dashboard_host = config["dashboard_host"]
     https_enabled = config["https_enabled"]
@@ -117,7 +117,7 @@ def start_dashboard_server(config: dict, log: logging.Logger):
         )
         log.info("   ❤️  Health Check:          %s://%s:%s/health", protocol, dashboard_host, port)
         log.info("🚀 Ready to tunnel port %s!", port)
-        if auto_open:
+        if launcher == "browser":
             target_url = f"{protocol}://{dashboard_host}:{port}{frontend_base_path}"
 
             async def _open_browser():
@@ -171,7 +171,7 @@ def start_dashboard_server(config: dict, log: logging.Logger):
 
 def start_dashboard_server_thread(
     *,
-    auto_open: bool = False,
+    launcher: str | None = None,
     port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
     dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
     https_enabled: bool = env_bool("HTTPS_ENABLED", False),
@@ -187,7 +187,7 @@ def start_dashboard_server_thread(
         target=start_dashboard_server,
         args=(
             dict(
-                auto_open=auto_open,
+                launcher=launcher,
                 port=port,
                 dashboard_host=dashboard_host,
                 https_enabled=https_enabled,

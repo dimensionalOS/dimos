@@ -56,7 +56,7 @@ basic = (
         behavior_tree_navigator(),
         wavefront_frontier_explorer(),
         Dashboard.blueprint(
-            auto_open=True,
+            launcher="browser",
         ),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_go2")
