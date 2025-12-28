@@ -64,7 +64,7 @@ class VoxelGridMapper(Module):
     config: Config
 
     lidar: In[LidarMessage]
-    global_map: Out[LidarMessage]
+    global_map: Out[PointCloud2]
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
