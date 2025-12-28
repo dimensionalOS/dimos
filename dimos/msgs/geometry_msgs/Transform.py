@@ -361,10 +361,10 @@ class Transform(Timestamped):
         )
 
     def to_rerun(self):  # type: ignore[no-untyped-def]
-        """Convert to rerun Transform3D format.
+        """Convert to rerun Transform3D format with frame IDs.
 
         Returns:
-            rr.Transform3D archetype for logging to rerun
+            rr.Transform3D archetype for logging to rerun with parent/child frames
         """
         import rerun as rr
 
@@ -373,4 +373,6 @@ class Transform(Timestamped):
             rotation=rr.Quaternion(
                 xyzw=[self.rotation.x, self.rotation.y, self.rotation.z, self.rotation.w]
             ),
+            parent_frame=self.frame_id,
+            child_frame=self.child_frame_id,
         )
