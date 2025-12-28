@@ -38,15 +38,18 @@ Input stream names are designed to match existing module outputs:
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.nav_msgs import OccupancyGrid, Path
+    from dimos.msgs.sensor_msgs import Image, PointCloud2
 
 logger = setup_logger()
 
