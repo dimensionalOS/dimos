@@ -86,6 +86,15 @@ class PoseStamped(Pose, Timestamped):
             f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
         )
 
+    def to_rerun(self, length: float = 0.5):  # type: ignore[no-untyped-def]
+        """Convert to rerun Arrows3D format."""
+        import rerun as rr
+
+        origin = [[self.x, self.y, self.z]]
+        forward = self.orientation.rotate_vector(Vector3(length, 0, 0))
+        vector = [[forward.x, forward.y, forward.z]]
+        return rr.Arrows3D(origins=origin, vectors=vector)
+
     def new_transform_to(self, name: str) -> Transform:
         return self.find_transform(
             PoseStamped(

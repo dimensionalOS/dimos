@@ -30,6 +30,7 @@ dependencies = [
     "cerebras-cloud-sdk",
     "moondream",
     "numpy>=1.26.4",
+    "rerun-sdk>=0.20.0",
     "colorlog==6.9.0",
     "yapf==0.40.2",
     "typeguard",
