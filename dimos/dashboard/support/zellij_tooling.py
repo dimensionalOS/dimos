@@ -209,7 +209,7 @@ class ZellijManager:
         return {"success": True, "sessions": sessions, "count": len(sessions)}
 
     def init_zellij_session(
-        self: logging.Logger,
+        self,
         session_name: str,
         terminal_commands: dict[str, str],
         zellij_layout: str | None = None,
