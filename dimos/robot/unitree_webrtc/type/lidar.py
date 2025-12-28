@@ -16,8 +16,10 @@ import time
 from typing import TypedDict
 
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
+import open3d as o3d
+import rerun as rr
 
+from dimos.dashboard.support.colors import color_by_height
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.types.timestamped import to_human_readable
@@ -132,15 +134,10 @@ class LidarMessage(PointCloud2):
     #     return self._costmap
 
     def to_rerun(self, colors=None, color_func=None):
-        import rerun as rr  # type: ignore[import-untyped]
-
         points = self.as_numpy()
         if type(colors) != type(None):
             return rr.Points3D(points, radii=self.default_render_size, colors=colors)
         if color_func is not None:
             return rr.Points3D(points, radii=self.default_render_size, colors=color_func(points))
-
-        # default to color by height
-        from dimos.dashboard.support.colors import color_by_height
 
         return rr.Points3D(points, radii=self.default_render_size, colors=color_by_height(points))

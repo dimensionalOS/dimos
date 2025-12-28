@@ -27,6 +27,7 @@ import threading
 from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.dashboard.module import RerunConnection
@@ -782,30 +783,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.ts = self.latest_costmap.ts
 
                 self.goal_request.publish(goal_msg)
-                try:
-                    if self.rc:
-                        import rerun as rr
-
-                        self.rc.log(
-                            "/global_target",
-                            rr.Transform3D(
-                                translation=[
-                                    goal_msg.position.x,
-                                    goal_msg.position.y,
-                                    goal_msg.position.z,
-                                ],
-                                rotation=rr.Quaternion(
-                                    xyzw=[  # type: ignore[arg-type]
-                                        goal_msg.orientation.x,
-                                        goal_msg.orientation.y,
-                                        goal_msg.orientation.z,
-                                        goal_msg.orientation.w,
-                                    ]
-                                ),
-                            ),
-                        )
-                except Exception as exc:  # pragma: no cover - best-effort logging
-                    logger.debug(f"Failed to log exploration goal: {exc}")
+                self.rc.log("global_target", goal_msg.to_rerun())
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1

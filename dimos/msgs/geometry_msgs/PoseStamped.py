@@ -18,6 +18,7 @@ import time
 from typing import BinaryIO, TypeAlias
 
 from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped  # type: ignore[import-untyped]
+import rerun as rr
 
 try:
     from geometry_msgs.msg import (  # type: ignore[import-untyped]
@@ -154,3 +155,9 @@ class PoseStamped(Pose, Timestamped):
         ros_msg.pose = Pose.to_ros_msg(self)
 
         return ros_msg
+
+    def to_rerun(self, length: float = 0.5) -> rr.Arrows3D:
+        origin = [[self.x, self.y, self.z]]
+        forward = self.orientation.rotate_vector(Vector3(length, 0, 0))
+        vector = [[forward.x, forward.y, forward.z]]
+        return rr.Arrows3D(origins=origin, vectors=vector)

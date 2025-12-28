@@ -24,6 +24,7 @@ import time
 
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
@@ -313,33 +314,8 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                             ts=goal.ts,
                         )
                         self.target.publish(safe_goal)
-                        try:
-                            if self.rc:
-                                import rerun as rr
-
-                                self.rc.log(
-                                    "/global_target",
-                                    rr.Transform3D(
-                                        translation=[
-                                            safe_goal.position.x,
-                                            safe_goal.position.y,
-                                            safe_goal.position.z,
-                                        ],
-                                        rotation=rr.Quaternion(
-                                            xyzw=[  # type: ignore[arg-type]
-                                                safe_goal.orientation.x,
-                                                safe_goal.orientation.y,
-                                                safe_goal.orientation.z,
-                                                safe_goal.orientation.w,
-                                            ]
-                                        ),
-                                    ),
-                                )
-                        except Exception as exc:  # pragma: no cover - best-effort logging
-                            logger.debug(
-                                f"[BehaviorTreeNavigator] rerun failed to log global target: {exc}"
-                            )
                         self.current_goal = safe_goal
+                        self.rc.log("global_target", safe_goal.to_rerun())
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
                         self.cancel_goal()

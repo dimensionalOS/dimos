@@ -19,6 +19,7 @@ import time
 
 import cv2
 import numpy as np
+import rerun as rr
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     AbstractImage,
@@ -241,3 +242,20 @@ class NumpyImage(AbstractImage):
         if inliers is not None and len(inliers) > 0:
             mask[inliers.flatten()] = 1
         return bool(ok), rvec.astype(np.float64), tvec.astype(np.float64), mask
+
+    def to_rerun(self) -> rr.Image:
+        match self.format:
+            case ImageFormat.RGB:
+                return rr.Image(self.data, color_model="RGB")
+            case ImageFormat.RGBA:
+                return rr.Image(self.data, color_model="RGBA")
+            case ImageFormat.BGR:
+                return rr.Image(self.data, color_model="BGR")
+            case ImageFormat.BGRA:
+                return rr.Image(self.data, color_model="BGRA")
+            case ImageFormat.GRAY | ImageFormat.DEPTH:
+                return rr.Image(self.data, color_model="L")
+            case ImageFormat.GRAY16 | ImageFormat.DEPTH16:
+                return rr.Image(self.data, color_model="L")
+            case _:
+                raise ValueError(f"Unsupported format for Rerun: {self.format}")

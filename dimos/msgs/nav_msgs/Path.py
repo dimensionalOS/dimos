@@ -25,6 +25,7 @@ from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
 )
 from dimos_lcm.nav_msgs import Path as LCMPath  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime  # type: ignore[import-untyped]
+import rerun as rr
 
 try:
     from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined, import-untyped]
@@ -163,8 +164,6 @@ class Path(Timestamped):
 
     def to_rerun(self) -> rr.LineStrips3D:
         """Convert to a Rerun 3D line strip using pose positions."""
-        import rerun as rr
-
         points = np.array([(pose.x, pose.y, pose.z) for pose in self.poses], dtype=np.float32)
         return rr.LineStrips3D(strips=[points], radii=0.02 if len(points) else None)
 

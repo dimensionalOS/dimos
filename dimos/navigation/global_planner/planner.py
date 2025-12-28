@@ -78,11 +78,7 @@ class AstarPlanner(Module):
         path = self.plan(goal_pose)
         if path:
             self.path.publish(path)
-            try:
-                if self.rc:
-                    self.rc.log("/global_path", path.to_rerun())
-            except Exception as exc:  # pragma: no cover - best-effort logging
-                logger.debug(f"Failed to log global path: {exc}")
+            self.rc.log("/global_path", path.to_rerun())
 
     def plan(self, goal_pose: Pose) -> Path | None:
         """Plan a path from current position to goal."""

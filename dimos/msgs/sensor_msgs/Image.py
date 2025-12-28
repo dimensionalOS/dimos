@@ -24,6 +24,7 @@ from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
+import rerun as rr
 from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
@@ -397,13 +398,11 @@ class Image(Timestamped):
             }
         ]
 
-    def to_rerun(self):
+    def to_rerun(self) -> rr.Image:
         """Convert to a Rerun image (RGB numpy array)."""
-        rgb = self.to_rgb().to_opencv()
-        import rerun as rr
-
-        # return rr.Image(cv2.cvtColor(rgb, cv2.COLOR_BGR2RGB))
-        return rr.Image(rgb)
+        if hasattr(self._impl, "to_rerun"):
+            return self._impl.to_rerun()
+        return rr.Image(self.to_rgb().to_opencv())
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: str | None = None) -> bytes:

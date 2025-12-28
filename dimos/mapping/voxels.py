@@ -21,9 +21,12 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.dashboard import RerunConnection
+from dimos.dashboard.support.colors import color_by_height
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
@@ -77,6 +80,7 @@ class VoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
+        self.rc = RerunConnection()
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()
         self._disposables.add(
@@ -106,7 +110,9 @@ class VoxelGridMapper(Module):
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
-        self.global_map.publish(self.get_global_pointcloud2())
+        pointcloud = self.get_global_pointcloud2()
+        self.global_map.publish(pointcloud)
+        self.log_global_rerun()
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]
@@ -197,6 +203,21 @@ class VoxelGridMapper(Module):
         out = o3d.t.geometry.PointCloud(device=self._dev)
         out.point["positions"] = pts
         return out
+
+    def log_global_rerun(self) -> None:
+        pcd = self.get_global_pointcloud()
+        if pcd.is_empty():
+            return
+
+        positions = pcd.point["positions"].cpu().numpy()
+        self.rc.log(
+            "global_map",
+            rr.Points3D(
+                positions,
+                colors=color_by_height(positions, colormap="turbo"),
+                radii=self.config.voxel_size * 0.5,
+            ),
+        )
 
 
 def ensure_tensor_pcd(

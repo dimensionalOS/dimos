@@ -26,6 +26,7 @@ from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Vector3
 
@@ -239,9 +240,6 @@ class PointCloud2(Timestamped):
         )
 
     def to_rerun(self) -> rr.Points3D:
-        """Convert to a Rerun point cloud."""
-        import rerun as rr
-
         return rr.Points3D(self.as_numpy())
 
     def lcm_encode(self, frame_id: str | None = None) -> bytes:
