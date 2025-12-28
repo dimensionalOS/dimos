@@ -189,7 +189,7 @@ class BaseLocalPlanner(Module):
         # Calculate yaw difference and normalize to [-pi, pi]
         yaw_error = normalize_angle(goal_euler.z - current_euler.z)
 
-        return abs(yaw_error) < self.orientation_tolerance
+        return bool(abs(yaw_error) < self.orientation_tolerance)
 
     @rpc
     def reset(self) -> None:

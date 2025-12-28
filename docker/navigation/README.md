@@ -2,26 +2,6 @@
 
 This directory contains Docker configuration files to run DimOS and the ROS autonomy stack in the same container, enabling communication between the two systems.
 
-## New Ubuntu Installation
-
-**For fresh Ubuntu systems**, use the automated setup script:
-
-```bash
-wget https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/docker/navigation/setup.sh?token=GHSAT0AAAAAADHM56ULLVHMU72XDZSKOZAM2ISY24A
-bash setup.sh
-```
-
-**Installation time:** Approximately 20-30 minutes depending on your internet connection.
-
-**Options:**
-```bash
-./setup.sh --help                    # Show all options
-./setup.sh --install-dir /opt/dimos  # Custom installation directory
-./setup.sh --skip-build              # Skip Docker image build
-```
-
-If the automated script encounters issues, follow the manual setup below.
-
 ## Prerequisites
 
 1. **Install Docker with `docker compose` support**. Follow the [official Docker installation guide](https://docs.docker.com/engine/install/).

@@ -19,14 +19,15 @@ from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 import pytest
 
 from dimos.core import LCMTransport
+from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.mapping.pointclouds.occupancy import (
-    general_occupancy,
     height_cost_occupancy,
     simple_occupancy,
 )
 from dimos.mapping.pointclouds.util import read_pointcloud
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.msgs.sensor_msgs.Image import Image
 from dimos.utils.data import get_data
 from dimos.utils.testing.moment import OutputMoment
 from dimos.utils.testing.test_moment import Go2Moment
@@ -37,10 +38,14 @@ def apartment() -> PointCloud:
     return read_pointcloud(get_data("apartment") / "sum.ply")
 
 
+@pytest.fixture
+def big_office() -> PointCloud:
+    return read_pointcloud(get_data("big_office.ply"))
+
+
 @pytest.mark.parametrize(
     "occupancy_fn,output_name",
     [
-        (general_occupancy, "occupancy_general.png"),
         (simple_occupancy, "occupancy_simple.png"),
     ],
 )
@@ -54,6 +59,24 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
     computed_image = (occupancy_grid.grid + 1).astype(np.uint8)
 
     np.testing.assert_array_equal(computed_image, expected_image)
+
+
+@pytest.mark.parametrize(
+    "occupancy_fn,output_name",
+    [
+        (height_cost_occupancy, "big_office_height_cost_occupancy.png"),
+        (simple_occupancy, "big_office_simple_occupancy.png"),
+    ],
+)
+def test_occupancy2(big_office, occupancy_fn, output_name):
+    expected_image = Image.from_file(get_data(output_name))
+    cloud = PointCloud2.from_numpy(np.asarray(big_office.points), frame_id="")
+
+    occupancy_grid = occupancy_fn(cloud)
+
+    actual = visualize_occupancy_grid(occupancy_grid, "rainbow")
+    actual.ts = expected_image.ts
+    np.testing.assert_array_equal(actual, expected_image)
 
 
 class HeightCostMoment(Go2Moment):
