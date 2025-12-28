@@ -60,9 +60,7 @@ mac = autoconnect(
 )
 
 
-linux = autoconnect(
-    dashboard
-)
+linux = autoconnect(dashboard)
 
 basic = autoconnect(
     go2_connection(),
