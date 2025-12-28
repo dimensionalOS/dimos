@@ -25,6 +25,7 @@ from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-u
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
+import open3d.core as o3c  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Vector3
 
@@ -49,13 +50,88 @@ class PointCloud2(Timestamped):
 
     def __init__(
         self,
-        pointcloud: o3d.geometry.PointCloud = None,
+        pointcloud: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud | None = None,
         frame_id: str = "world",
         ts: float | None = None,
     ) -> None:
         self.ts = ts  # type: ignore[assignment]
-        self.pointcloud = pointcloud if pointcloud is not None else o3d.geometry.PointCloud()
         self.frame_id = frame_id
+
+        # Store internally as tensor pointcloud for speed
+        if pointcloud is None:
+            self._pcd_tensor: o3d.t.geometry.PointCloud = o3d.t.geometry.PointCloud()
+        elif isinstance(pointcloud, o3d.t.geometry.PointCloud):
+            self._pcd_tensor = pointcloud
+        else:
+            # Convert legacy to tensor
+            self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(pointcloud)
+        self._pcd_legacy_cache: o3d.geometry.PointCloud | None = None
+
+    def _ensure_tensor_initialized(self) -> None:
+        """Ensure _pcd_tensor and _pcd_legacy_cache exist (handles unpickled old objects)."""
+        # Always ensure _pcd_legacy_cache exists
+        if not hasattr(self, "_pcd_legacy_cache"):
+            self._pcd_legacy_cache = None
+
+        # Check for old pickled format: 'pointcloud' directly in __dict__
+        # This takes priority even if _pcd_tensor exists (it might be empty)
+        old_pcd = self.__dict__.get("pointcloud")
+        if old_pcd is not None and isinstance(old_pcd, o3d.geometry.PointCloud):
+            self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(old_pcd)
+            self._pcd_legacy_cache = old_pcd  # reuse it
+            del self.__dict__["pointcloud"]
+            return
+
+        if not hasattr(self, "_pcd_tensor"):
+            self._pcd_tensor = o3d.t.geometry.PointCloud()
+
+    def __getstate__(self) -> dict[str, object]:
+        """Serialize to numpy for pickling (tensors don't pickle well)."""
+        self._ensure_tensor_initialized()
+        state = self.__dict__.copy()
+        # Convert tensor to numpy for serialization
+        if "positions" in self._pcd_tensor.point:
+            state["_pcd_numpy"] = self._pcd_tensor.point["positions"].numpy()
+        else:
+            state["_pcd_numpy"] = np.zeros((0, 3), dtype=np.float32)
+        # Remove non-picklable objects
+        del state["_pcd_tensor"]
+        state["_pcd_legacy_cache"] = None
+        return state
+
+    def __setstate__(self, state: dict[str, object]) -> None:
+        """Restore from pickled state."""
+        points_obj = state.pop("_pcd_numpy", None)
+        points: np.ndarray[tuple[int, int], np.dtype[np.float32]] = (
+            points_obj if isinstance(points_obj, np.ndarray) else np.zeros((0, 3), dtype=np.float32)
+        )  # type: ignore[assignment]
+        self.__dict__.update(state)  # type: ignore[arg-type]
+        # Recreate tensor from numpy
+        self._pcd_tensor = o3d.t.geometry.PointCloud()
+        if len(points) > 0:
+            self._pcd_tensor.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
+
+    @property
+    def pointcloud(self) -> o3d.geometry.PointCloud:
+        """Legacy pointcloud property for backwards compatibility. Cached."""
+        self._ensure_tensor_initialized()
+        if self._pcd_legacy_cache is None:
+            self._pcd_legacy_cache = self._pcd_tensor.to_legacy()
+        return self._pcd_legacy_cache
+
+    @pointcloud.setter
+    def pointcloud(self, value: o3d.geometry.PointCloud | o3d.t.geometry.PointCloud) -> None:
+        if isinstance(value, o3d.t.geometry.PointCloud):
+            self._pcd_tensor = value
+        else:
+            self._pcd_tensor = o3d.t.geometry.PointCloud.from_legacy(value)
+        self._pcd_legacy_cache = None
+
+    @property
+    def pointcloud_tensor(self) -> o3d.t.geometry.PointCloud:
+        """Direct access to tensor pointcloud (faster, no conversion)."""
+        self._ensure_tensor_initialized()
+        return self._pcd_tensor
 
     @classmethod
     def from_numpy(
@@ -74,12 +150,12 @@ class PointCloud2(Timestamped):
         Returns:
             PointCloud2 instance
         """
-        pcd = o3d.geometry.PointCloud()
-        pcd.points = o3d.utility.Vector3dVector(points)
-        return cls(pointcloud=pcd, ts=timestamp, frame_id=frame_id)
+        pcd_t = o3d.t.geometry.PointCloud()
+        pcd_t.point["positions"] = o3c.Tensor(points.astype(np.float32), dtype=o3c.float32)
+        return cls(pointcloud=pcd_t, ts=timestamp, frame_id=frame_id)
 
     def __str__(self) -> str:
-        return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self.pointcloud.points)})"
+        return f"PointCloud2(frame_id='{self.frame_id}', num_points={len(self)})"
 
     @functools.cached_property
     def center(self) -> Vector3:
@@ -88,7 +164,11 @@ class PointCloud2(Timestamped):
         return Vector3(*center)
 
     def points(self):  # type: ignore[no-untyped-def]
-        return self.pointcloud.points
+        """Get points (returns tensor positions, use as_numpy() for numpy array)."""
+        self._ensure_tensor_initialized()
+        if "positions" not in self._pcd_tensor.point:
+            return o3c.Tensor(np.zeros((0, 3), dtype=np.float32))
+        return self._pcd_tensor.point["positions"]
 
     def __add__(self, other: PointCloud2) -> PointCloud2:
         """Combine two PointCloud2 instances into one.
@@ -111,10 +191,13 @@ class PointCloud2(Timestamped):
             ts=max(self.ts, other.ts),
         )
 
-    # TODO what's the usual storage here? is it already numpy?
     def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
-        """Get points as numpy array."""
-        return np.asarray(self.pointcloud.points)
+        """Get points as numpy array (fast, no legacy conversion)."""
+        self._ensure_tensor_initialized()
+        if "positions" not in self._pcd_tensor.point:
+            return np.zeros((0, 3), dtype=np.float32)
+        result: np.ndarray = self._pcd_tensor.point["positions"].numpy()  # type: ignore[type-arg]
+        return result
 
     @functools.cache
     def get_axis_aligned_bounding_box(self) -> o3d.geometry.AxisAlignedBoundingBox:
@@ -240,31 +323,42 @@ class PointCloud2(Timestamped):
         if any(offset is None for offset in [x_offset, y_offset, z_offset]):
             raise ValueError("PointCloud2 message missing X, Y, or Z msgfields")
 
-        # Extract points from binary data
+        # Extract points from binary data using numpy for bulk conversion
         num_points = msg.width * msg.height
-        points = np.zeros((num_points, 3), dtype=np.float32)
-
         data = msg.data
         point_step = msg.point_step
 
-        for i in range(num_points):
-            base_offset = i * point_step
+        # Check if we can use fast numpy path (common case: sequential float32 x,y,z)
+        if x_offset == 0 and y_offset == 4 and z_offset == 8 and point_step >= 12:
+            # Fast path: direct numpy conversion for tightly packed float32 x,y,z
+            if point_step == 12:
+                # Perfectly packed x,y,z with no padding
+                points = np.frombuffer(data, dtype=np.float32).reshape(-1, 3)
+            else:
+                # Has additional fields after x,y,z (e.g., intensity), extract with stride
+                dt = np.dtype(
+                    [("x", "<f4"), ("y", "<f4"), ("z", "<f4"), ("_pad", f"V{point_step - 12}")]
+                )
+                structured = np.frombuffer(data, dtype=dt, count=num_points)
+                points = np.column_stack((structured["x"], structured["y"], structured["z"]))
+        else:
+            # Slow fallback for non-standard field layouts
+            points = np.zeros((num_points, 3), dtype=np.float32)
+            for i in range(num_points):
+                base_offset = i * point_step
+                x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
+                y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
+                z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
+                points[i, 0] = struct.unpack("<f", x_bytes)[0]
+                points[i, 1] = struct.unpack("<f", y_bytes)[0]
+                points[i, 2] = struct.unpack("<f", z_bytes)[0]
 
-            # Extract X, Y, Z (assuming float32, little endian)
-            x_bytes = data[base_offset + x_offset : base_offset + x_offset + 4]
-            y_bytes = data[base_offset + y_offset : base_offset + y_offset + 4]
-            z_bytes = data[base_offset + z_offset : base_offset + z_offset + 4]
-
-            points[i, 0] = struct.unpack("<f", x_bytes)[0]
-            points[i, 1] = struct.unpack("<f", y_bytes)[0]
-            points[i, 2] = struct.unpack("<f", z_bytes)[0]
-
-        # Create Open3D point cloud
-        pc = o3d.geometry.PointCloud()
-        pc.points = o3d.utility.Vector3dVector(points)
+        # Create Open3D tensor point cloud (fast, no Vector3dVector)
+        pcd_t = o3d.t.geometry.PointCloud()
+        pcd_t.point["positions"] = o3c.Tensor(points, dtype=o3c.float32)
 
         return cls(
-            pointcloud=pc,
+            pointcloud=pcd_t,
             frame_id=msg.header.frame_id if hasattr(msg, "header") else "",
             ts=msg.header.stamp.sec + msg.header.stamp.nsec / 1e9
             if hasattr(msg, "header") and msg.header.stamp.sec > 0
@@ -311,7 +405,10 @@ class PointCloud2(Timestamped):
 
     def __len__(self) -> int:
         """Return number of points."""
-        return len(self.pointcloud.points)
+        self._ensure_tensor_initialized()
+        if "positions" not in self._pcd_tensor.point:
+            return 0
+        return int(self._pcd_tensor.point["positions"].shape[0])
 
     def filter_by_height(
         self,

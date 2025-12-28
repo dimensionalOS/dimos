@@ -256,6 +256,39 @@ class TimedSensorReplay(SensorReplay[T]):
     def iterate(self, loop: bool = False) -> Iterator[T | Any]:
         return (x[1] for x in super().iterate(loop=loop))  # type: ignore[index]
 
+    def iterate_duration(self, **kwargs: Any) -> Iterator[tuple[float, T] | Any]:
+        """Iterate with timestamps relative to the start of the dataset."""
+        first_ts = self.first_timestamp()
+        if first_ts is None:
+            return
+        for ts, data in self.iterate_ts(**kwargs):
+            yield (ts - first_ts, data)
+
+    def iterate_realtime(self, speed: float = 1.0, **kwargs: Any) -> Iterator[T | Any]:
+        """Iterate data, sleeping to match original timing.
+
+        Args:
+            speed: Playback speed multiplier (1.0 = realtime, 2.0 = 2x speed)
+            **kwargs: Passed to iterate_ts (seek, duration, from_timestamp, loop)
+        """
+        iterator = self.iterate_ts(**kwargs)
+
+        try:
+            first_ts, first_data = next(iterator)
+        except StopIteration:
+            return
+
+        start_time = time.time()
+        start_ts = first_ts
+        yield first_data
+
+        for ts, data in iterator:
+            target_time = start_time + (ts - start_ts) / speed
+            sleep_duration = target_time - time.time()
+            if sleep_duration > 0:
+                time.sleep(sleep_duration)
+            yield data
+
     def iterate_ts(
         self,
         seek: float | None = None,
@@ -263,6 +296,7 @@ class TimedSensorReplay(SensorReplay[T]):
         from_timestamp: float | None = None,
         loop: bool = False,
     ) -> Iterator[tuple[float, T] | Any]:
+        """Iterate with absolute timestamps, with optional seek and duration."""
         first_ts = None
         if (seek is not None) or (duration is not None):
             first_ts = self.first_timestamp()

@@ -35,7 +35,6 @@ from dimos.simulation.mujoco.constants import (
     DEPTH_CAMERA_FOV,
     LIDAR_FPS,
     LIDAR_RESOLUTION,
-    STEPS_PER_FRAME,
     VIDEO_FPS,
     VIDEO_HEIGHT,
     VIDEO_WIDTH,
@@ -127,17 +126,16 @@ def _run_simulation(config: GlobalConfig, shm: ShmReader) -> None:
         video_interval = 1.0 / VIDEO_FPS
         lidar_interval = 1.0 / LIDAR_FPS
 
-        if config.mujoco_camera_position_float is not None:
-            m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
-            m_viewer.cam.distance = config.mujoco_camera_position_float[3]
-            m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
-            m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
+        m_viewer.cam.lookat = config.mujoco_camera_position_float[0:3]
+        m_viewer.cam.distance = config.mujoco_camera_position_float[3]
+        m_viewer.cam.azimuth = config.mujoco_camera_position_float[4]
+        m_viewer.cam.elevation = config.mujoco_camera_position_float[5]
 
         while m_viewer.is_running() and not shm.should_stop():
             step_start = time.time()
 
             # Step simulation
-            for _ in range(STEPS_PER_FRAME):
+            for _ in range(config.mujoco_steps_per_frame):
                 mujoco.mj_step(model, data)
 
             m_viewer.sync()

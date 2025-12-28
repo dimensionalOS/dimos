@@ -12,23 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from pathlib import Path
+import math
 
-# Video/Camera constants
-VIDEO_WIDTH = 320
-VIDEO_HEIGHT = 240
-DEPTH_CAMERA_FOV = 160
+import pytest
 
-# Depth camera range/filtering constants
-MAX_RANGE = 3
-MIN_RANGE = 0.2
-MAX_HEIGHT = 1.2
+from dimos.utils.trigonometry import angle_diff
 
-# Lidar constants
-LIDAR_RESOLUTION = 0.05
 
-# Simulation timing constants
-VIDEO_FPS = 20
-LIDAR_FPS = 2
+def from_rad(x):
+    return x / (math.pi / 180)
 
-LAUNCHER_PATH = Path(__file__).parent / "mujoco_process.py"
+
+def to_rad(x):
+    return x * (math.pi / 180)
+
+
+def test_angle_diff():
+    a = to_rad(1)
+    b = to_rad(359)
+
+    assert from_rad(angle_diff(a, b)) == pytest.approx(2, abs=0.00000000001)
+
+    assert from_rad(angle_diff(b, a)) == pytest.approx(-2, abs=0.00000000001)
