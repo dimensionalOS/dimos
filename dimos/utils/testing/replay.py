@@ -389,7 +389,7 @@ class TimedSensorReplay(SensorReplay[T]):
                         if hasattr(scheduler, "dispose"):
                             scheduler.dispose()
 
-                disp.add(scheduler.schedule_relative(delay, lambda sc, _: emit()))
+                scheduler.schedule_relative(delay, lambda sc, _: emit())
 
             schedule_emission(next_message)
 
