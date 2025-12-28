@@ -30,7 +30,8 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
 from dimos.utils.reactive import backpressure
 
-rr.init("rerun_go2", spawn=True)
+# Lazy rerun connection flag (connects on first log call)
+_rerun_connected = False
 
 
 def turbo_colormap(t: np.ndarray) -> np.ndarray:  # type: ignore[type-arg]
@@ -219,6 +220,15 @@ class VoxelGridMapper(Module):
 
     def log_global_rerun(self) -> None:
         """Log global point cloud map to rerun with height-based coloring."""
+        global _rerun_connected
+        if not _rerun_connected:
+            try:
+                rr.init("rerun_go2")
+                rr.connect_grpc("rerun+http://localhost:9876/proxy")
+                _rerun_connected = True
+            except Exception:
+                return  # Server not ready yet, skip this frame
+
         pcd = self.get_global_pointcloud()
         if pcd.is_empty():
             return

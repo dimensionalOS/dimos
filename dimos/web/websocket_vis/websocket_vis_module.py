@@ -212,7 +212,7 @@ class WebsocketVisModule(Module):
 </head>
 <body>
     <div class="container">
-        <iframe class="rerun" src="http://localhost:9090/viewer"></iframe>
+        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
         <div class="panel">
             <h3>🤖 Go2 Control</h3>
             <div class="status">Mode: <span class="mode" id="mode">Idle</span></div>
@@ -228,7 +228,7 @@ class WebsocketVisModule(Module):
             </div>
         </div>
     </div>
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script>
         const socket = io('http://localhost:7779');
         let navActive = false, exploreActive = false, keysHeld = new Set(), publishInterval = null;
@@ -238,7 +238,7 @@ class WebsocketVisModule(Module):
         function toggleExplore() {
             exploreActive = !exploreActive;
             if (exploreActive) {
-                socket.emit('explore');
+                socket.emit('start_explore');
                 document.getElementById('exploreBtn').innerHTML = '⏹️ Stop Exploration';
                 document.getElementById('exploreBtn').classList.add('active');
                 document.getElementById('mode').textContent = 'Exploring';
@@ -293,7 +293,7 @@ class WebsocketVisModule(Module):
         }
         
         function sendTwist(lx, ly, az) {
-            socket.emit('cmd_vel', { linear: {x: lx, y: ly, z: 0}, angular: {x: 0, y: 0, z: az} });
+            socket.emit('move_command', { linear: {x: lx, y: ly, z: 0}, angular: {x: 0, y: 0, z: az} });
         }
     </script>
 </body>
