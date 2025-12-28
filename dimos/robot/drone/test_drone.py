@@ -948,7 +948,7 @@ class TestVisualServoingEdgeCases(unittest.TestCase):
         )
 
         # Large error should be clamped
-        vx, vy, vz = controller.compute_velocity_control(
+        vx, vy, _vz = controller.compute_velocity_control(
             target_x=1000, target_y=1000, center_x=0, center_y=0, dt=0.1
         )
         self.assertLessEqual(abs(vx), max_vel)
@@ -1020,7 +1020,7 @@ class TestVisualServoingVelocity(unittest.TestCase):
         frame_center = (320, 180)
         bbox_center = (400, 180)
 
-        vx, vy, vz = controller.compute_velocity_control(
+        vx, vy, _vz = controller.compute_velocity_control(
             target_x=bbox_center[0],
             target_y=bbox_center[1],
             center_x=frame_center[0],

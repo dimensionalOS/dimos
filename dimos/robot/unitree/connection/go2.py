@@ -18,7 +18,6 @@ from threading import Thread
 import time
 from typing import Any, Protocol
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun as rr
@@ -36,14 +35,13 @@ from dimos.msgs.geometry_msgs import (
     Twist,
     Vector3,
 )
-from dimos.msgs.sensor_msgs import Image, PointCloud2
-from dimos.msgs.std_msgs import Header
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.data import get_data
 from dimos.utils.decorators.decorators import simple_mcache
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.testing import TimedSensorReplay
+from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger(level=logging.INFO)
 
@@ -66,36 +64,22 @@ def _camera_info_static() -> CameraInfo:
     fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
     width, height = (1280, 720)
 
-    # Camera matrix K (3x3)
-    K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-
-    # No distortion coefficients for now
-    D = [0.0, 0.0, 0.0, 0.0, 0.0]
-
-    # Identity rotation matrix
-    R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-    # Projection matrix P (3x4)
-    P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
-
-    base_msg = {
-        "D_length": len(D),
-        "height": height,
-        "width": width,
-        "distortion_model": "plumb_bob",
-        "D": D,
-        "K": K,
-        "R": R,
-        "P": P,
-        "binning_x": 0,
-        "binning_y": 0,
-    }
-
-    return CameraInfo(**base_msg, header=Header("camera_optical"))
+    return CameraInfo(
+        frame_id="camera_optical",
+        height=height,
+        width=width,
+        distortion_model="plumb_bob",
+        D=[0.0, 0.0, 0.0, 0.0, 0.0],
+        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+        binning_x=0,
+        binning_y=0,
+    )
 
 
 class ReplayConnection(UnitreeWebRTCConnection):
-    dir_name = "unitree_go2_office_walk2"
+    dir_name = "unitree_go2_bigoffice"
 
     # we don't want UnitreeWebRTCConnection to init
     def __init__(  # type: ignore[no-untyped-def]
@@ -184,6 +168,17 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         Module.__init__(self, *args, **kwargs)
 
     @rpc
+    def record(self, recording_name: str) -> None:
+        lidar_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/lidar")  # type: ignore[type-arg]
+        lidar_store.save_stream(self.connection.lidar_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
+
+        odom_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/odom")  # type: ignore[type-arg]
+        odom_store.save_stream(self.connection.odom_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
+
+        video_store: TimedSensorStorage = TimedSensorStorage(f"{recording_name}/video")  # type: ignore[type-arg]
+        video_store.save_stream(self.connection.video_stream()).subscribe(lambda x: x)  # type: ignore[arg-type, attr-defined]
+
+    @rpc
     def start(self) -> None:
         super().start()
 
@@ -243,6 +238,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self._camera_info_thread.start()
 
         self.standup()
+        # self.record("go2_bigoffice")
 
     @rpc
     def stop(self) -> None:

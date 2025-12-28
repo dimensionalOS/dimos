@@ -14,3 +14,4 @@
 *.mp4 filter=lfs diff=lfs merge=lfs -text binary
 *.mov filter=lfs diff=lfs merge=lfs -text binary
 *.gif filter=lfs diff=lfs merge=lfs -text binary
+*.foxe filter=lfs diff=lfs merge=lfs -text binary

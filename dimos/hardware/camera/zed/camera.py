@@ -547,7 +547,6 @@ class ZEDModule(Module):
         enable_imu_fusion: bool = True,
         set_floor_as_origin: bool = True,
         publish_rate: float = 30.0,
-        frame_id: str = "zed_camera",
         recording_path: str | None = None,
         **kwargs,
     ) -> None:
@@ -574,7 +573,6 @@ class ZEDModule(Module):
         self.enable_imu_fusion = enable_imu_fusion
         self.set_floor_as_origin = set_floor_as_origin
         self.publish_rate = publish_rate
-        self.frame_id = frame_id
         self.recording_path = recording_path
 
         # Convert string parameters to ZED enums
