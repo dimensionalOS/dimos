@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+import rerun as rr
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
@@ -179,9 +180,20 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
+        # Initialize rerun
+        rr.init("rerun_go2", spawn=True)
+
+        def onimage(image: Image) -> None:
+            self.color_image.publish(image)
+            rr.log("go2/color_image", image.to_rerun())
+
+        def onodom(odom: PoseStamped) -> None:
+            self._publish_tf(odom)
+            rr.log("go2/odom", odom.to_rerun())
+
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
-        self._disposables.add(self.connection.video_stream().subscribe(self.color_image.publish))
+        self._disposables.add(self.connection.odom_stream().subscribe(onodom))
+        self._disposables.add(self.connection.video_stream().subscribe(onimage))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 
         self._camera_info_thread = Thread(
