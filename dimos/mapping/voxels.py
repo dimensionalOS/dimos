@@ -198,6 +198,7 @@ class VoxelGridMapper(Module):
         out.point["positions"] = pts
         return out
 
+
 def ensure_tensor_pcd(
     pcd_any: o3d.t.geometry.PointCloud | o3d.geometry.PointCloud,
     device: o3c.Device,

@@ -31,6 +31,7 @@ from dimos.agents.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
+from dimos.dashboard.rerun_module import rerun_module
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
 from dimos.msgs.sensor_msgs import Image, PointCloud2
@@ -49,7 +50,6 @@ from dimos.robot.unitree.connection.go2 import GO2Connection, go2_connection
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
-from dimos.dashboard.rerun_module import rerun_module
 
 # Mac has some issue with high bandwidth UDP
 #
