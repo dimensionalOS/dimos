@@ -18,11 +18,14 @@ import logging
 import re
 import shutil
 import subprocess
-from typing import Optional
-
-from aiohttp import ClientSession
 
 SESSION_LINE_RE = re.compile(r"^(.+?)\s+\[Created\s+(.+?)\s+ago\](.*)$")
+
+
+# Note: this is intentionally not in utils as to keep this working as a standalone file
+def shell_escape(arg: str) -> str:
+    """Escape a string for use in a single-quoted shell command."""
+    return arg.replace("'", """'"'"'""")
 
 
 class ZellijManager:
@@ -44,7 +47,7 @@ class ZellijManager:
         self.terminal_commands = terminal_commands
         self.zellij_layout = zellij_layout
         self.enabled = zellij_layout or (terminal_commands and len(terminal_commands.keys()) > 0)
-        # check for tried-to-use but wasnt available
+        # tried-to-use zellij but it wasnt available (as opposed to no attempt to use )
         if self.enabled:
             command_exists = shutil.which("zellij") is not None
             version_is_high_enough = False
@@ -214,10 +217,13 @@ class ZellijManager:
         session_name: str,
         terminal_commands: dict[str, str],
         zellij_layout: str | None = None,
+        shell_sources: list[str] | None = None,
     ):
         #
         # stop old session (if any)
         #
+        if shell_sources is None:
+            shell_sources = []
         try:
             log.info(f"Killing old session {session_name}")
             subprocess.run(
@@ -245,28 +251,20 @@ class ZellijManager:
                 for command in terminal_commands.values():
                     sanitized_command = re.sub(r"[^A-Za-z\s_\-\=\*]", "", command)
                     file_path = f"/tmp/{sanitized_command}.sh"
+                    source_string = ""
+                    if len(shell_sources) > 0:
+                        source_string = "\n".join(
+                            [f". '{shell_escape(source)}'" for source in shell_sources]
+                        )
+
                     with open(file_path, "w") as file:
-                        file.write(f"""
-                            . .envrc
-                            . source.ignore.sh
-                            . ./venv/bin/activate
-                            {command}
-                        """)
+                        file.write(f"""{source_string}\n{command}\n""")
                     files_to_run.append(file_path)
-                zellij_layout = (
-                    """
-                    layout {
-                        """
-                    + "\n".join(
-                        f"""pane command=\"zsh\" {{
-                                args "{file_path}"
-                            }}"""
-                        for file_path in files_to_run
-                    )
-                    + """
-                    }
-                """
+                panes = "\n".join(
+                    f"""pane command="zsh" {{\nargs "{file_path}"\n }}"""
+                    for file_path in files_to_run
                 )
+                zellij_layout = f"""layout {{\n{panes}\n}}"""
             with open(zellij_path, "w") as file:
                 file.write(zellij_layout)
         except Exception as exc:
