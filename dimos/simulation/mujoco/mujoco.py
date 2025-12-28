@@ -25,6 +25,7 @@ from mujoco import viewer
 import numpy as np
 import open3d as o3d
 
+from dimos.core.global_config import GlobalConfig
 from dimos.msgs.geometry_msgs import Quaternion, Twist, Vector3
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -33,23 +34,27 @@ from dimos.simulation.mujoco.model import load_model
 
 LIDAR_RESOLUTION = 0.05
 DEPTH_CAMERA_FOV = 160
-STEPS_PER_FRAME = 2
+STEPS_PER_FRAME = 7
 VIDEO_FPS = 20
-LIDAR_FPS = 4
+LIDAR_FPS = 2
 
 logger = logging.getLogger(__name__)
 
 
 class MujocoThread(threading.Thread):
-    def __init__(self) -> None:
+    def __init__(self, global_config: GlobalConfig):
         super().__init__(daemon=True)
+        self.global_config = global_config
         self.shared_pixels = None
         self.pixels_lock = threading.RLock()
         self.shared_depth_front = None
+        self.shared_depth_front_pose = None
         self.depth_lock_front = threading.RLock()
         self.shared_depth_left = None
+        self.shared_depth_left_pose = None
         self.depth_left_lock = threading.RLock()
         self.shared_depth_right = None
+        self.shared_depth_right_pose = None
         self.depth_right_lock = threading.RLock()
         self.odom_data = None
         self.odom_lock = threading.RLock()
@@ -67,10 +72,14 @@ class MujocoThread(threading.Thread):
         self._depth_right_renderer = None
         self._cleanup_registered = False
 
+        # Store initial reference pose for stable point cloud generation
+        self._reference_base_pos = None
+        self._reference_base_quat = None
+
         # Register cleanup on exit
         atexit.register(self.cleanup)
 
-    def run(self) -> None:
+    def run(self):
         try:
             self.run_simulation()
         except Exception as e:
@@ -78,8 +87,30 @@ class MujocoThread(threading.Thread):
         finally:
             self._cleanup_resources()
 
-    def run_simulation(self) -> None:
-        self.model, self.data = load_model(self)
+    def run_simulation(self):
+        # Go2 isn't in the MuJoCo models yet, so use Go1 as a substitute
+        robot_name = self.global_config.robot_model or "unitree_go1"
+        if robot_name == "unitree_go2":
+            robot_name = "unitree_go1"
+
+        scene_name = self.global_config.mujoco_room or "office1"
+
+        self.model, self.data = load_model(self, robot=robot_name, scene=scene_name)
+
+        # Set initial robot position
+        match robot_name:
+            case "unitree_go1":
+                z = 0.3
+            case "unitree_g1":
+                z = 0.8
+            case _:
+                z = 0
+        self.data.qpos[0:3] = [-1, 1, z]
+        mujoco.mj_forward(self.model, self.data)
+
+        # Store initial reference pose for stable point cloud generation
+        self._reference_base_pos = self.data.qpos[0:3].copy()
+        self._reference_base_quat = self.data.qpos[3:7].copy()
 
         camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, "head_camera")
         lidar_camera_id = mujoco.mj_name2id(
@@ -166,8 +197,13 @@ class MujocoThread(threading.Thread):
                     # When depth rendering is enabled, render() returns depth as float array in meters
                     depth = self._depth_renderer.render()
 
+                    # Capture camera pose at render time
+                    camera_pos = self.data.cam_xpos[lidar_camera_id].copy()
+                    camera_mat = self.data.cam_xmat[lidar_camera_id].reshape(3, 3).copy()
+
                     with self.depth_lock_front:
                         self.shared_depth_front = depth.copy()
+                        self.shared_depth_front_pose = (camera_pos, camera_mat)
 
                     # Render left depth camera
                     self._depth_left_renderer.update_scene(
@@ -175,8 +211,13 @@ class MujocoThread(threading.Thread):
                     )
                     depth_left = self._depth_left_renderer.render()
 
+                    # Capture left camera pose at render time
+                    camera_pos_left = self.data.cam_xpos[lidar_left_camera_id].copy()
+                    camera_mat_left = self.data.cam_xmat[lidar_left_camera_id].reshape(3, 3).copy()
+
                     with self.depth_left_lock:
                         self.shared_depth_left = depth_left.copy()
+                        self.shared_depth_left_pose = (camera_pos_left, camera_mat_left)
 
                     # Render right depth camera
                     self._depth_right_renderer.update_scene(
@@ -184,8 +225,15 @@ class MujocoThread(threading.Thread):
                     )
                     depth_right = self._depth_right_renderer.render()
 
+                    # Capture right camera pose at render time
+                    camera_pos_right = self.data.cam_xpos[lidar_right_camera_id].copy()
+                    camera_mat_right = (
+                        self.data.cam_xmat[lidar_right_camera_id].reshape(3, 3).copy()
+                    )
+
                     with self.depth_right_lock:
                         self.shared_depth_right = depth_right.copy()
+                        self.shared_depth_right_pose = (camera_pos_right, camera_mat_right)
 
                     last_lidar_time = current_time
 
@@ -194,26 +242,26 @@ class MujocoThread(threading.Thread):
                 if time_until_next_step > 0:
                     time.sleep(time_until_next_step)
 
-    def _process_depth_camera(self, camera_name: str, depth_data, depth_lock) -> np.ndarray | None:
+    def _process_depth_camera(self, depth_data, depth_lock, pose_data) -> np.ndarray | None:
         """Process a single depth camera and return point cloud points."""
         with depth_lock:
-            if depth_data is None:
+            if depth_data is None or pose_data is None:
                 return None
 
             depth_image = depth_data.copy()
-            camera_id = mujoco.mj_name2id(self.model, mujoco.mjtObj.mjOBJ_CAMERA, camera_name)
-            if camera_id == -1:
-                return None
+            camera_pos, camera_mat = pose_data
 
-            camera_pos = self.data.cam_xpos[camera_id]
-            camera_mat = self.data.cam_xmat[camera_id].reshape(3, 3)
             points = depth_image_to_point_cloud(
                 depth_image,
                 camera_pos,
                 camera_mat,
                 fov_degrees=DEPTH_CAMERA_FOV,
             )
-            return points if points.size > 0 else None
+
+            if points.size == 0:
+                return None
+
+            return points
 
     def get_lidar_message(self) -> LidarMessage | None:
         all_points = []
@@ -225,13 +273,25 @@ class MujocoThread(threading.Thread):
                 origin = Vector3(pos[0], pos[1], pos[2])
 
                 cameras = [
-                    ("lidar_front_camera", self.shared_depth_front, self.depth_lock_front),
-                    ("lidar_left_camera", self.shared_depth_left, self.depth_left_lock),
-                    ("lidar_right_camera", self.shared_depth_right, self.depth_right_lock),
+                    (
+                        self.shared_depth_front,
+                        self.depth_lock_front,
+                        self.shared_depth_front_pose,
+                    ),
+                    (
+                        self.shared_depth_left,
+                        self.depth_left_lock,
+                        self.shared_depth_left_pose,
+                    ),
+                    (
+                        self.shared_depth_right,
+                        self.depth_right_lock,
+                        self.shared_depth_right_pose,
+                    ),
                 ]
 
-                for camera_name, depth_data, depth_lock in cameras:
-                    points = self._process_depth_camera(camera_name, depth_data, depth_lock)
+                for depth_data, depth_lock, pose_data in cameras:
+                    points = self._process_depth_camera(depth_data, depth_lock, pose_data)
                     if points is not None:
                         all_points.append(points)
 
@@ -271,12 +331,12 @@ class MujocoThread(threading.Thread):
         )
         return odom_to_publish
 
-    def _stop_move(self) -> None:
+    def _stop_move(self):
         with self._command_lock:
             self._command = np.zeros(3, dtype=np.float32)
         self._stop_timer = None
 
-    def move(self, twist: Twist, duration: float = 0.0) -> None:
+    def move(self, twist: Twist, duration: float = 0.0):
         if self._stop_timer:
             self._stop_timer.cancel()
 
@@ -296,7 +356,7 @@ class MujocoThread(threading.Thread):
         with self._command_lock:
             return self._command.copy()
 
-    def stop(self) -> None:
+    def stop(self):
         """Stop the simulation thread gracefully."""
         self._is_running = False
 
@@ -311,7 +371,7 @@ class MujocoThread(threading.Thread):
             if self.is_alive():
                 logger.warning("MuJoCo thread did not stop gracefully within timeout")
 
-    def cleanup(self) -> None:
+    def cleanup(self):
         """Clean up all resources. Can be called multiple times safely."""
         if self._cleanup_registered:
             return
@@ -321,7 +381,7 @@ class MujocoThread(threading.Thread):
         self.stop()
         self._cleanup_resources()
 
-    def _cleanup_resources(self) -> None:
+    def _cleanup_resources(self):
         """Internal method to clean up MuJoCo-specific resources."""
         try:
             # Cancel any timers
@@ -368,12 +428,15 @@ class MujocoThread(threading.Thread):
 
             with self.depth_lock_front:
                 self.shared_depth_front = None
+                self.shared_depth_front_pose = None
 
             with self.depth_left_lock:
                 self.shared_depth_left = None
+                self.shared_depth_left_pose = None
 
             with self.depth_right_lock:
                 self.shared_depth_right = None
+                self.shared_depth_right_pose = None
 
             with self.odom_lock:
                 self.odom_data = None
@@ -391,7 +454,7 @@ class MujocoThread(threading.Thread):
         except Exception as e:
             logger.error(f"Error during resource cleanup: {e}")
 
-    def __del__(self) -> None:
+    def __del__(self):
         """Destructor to ensure cleanup on object deletion."""
         try:
             self.cleanup()
