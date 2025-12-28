@@ -57,11 +57,6 @@ basic = (
         wavefront_frontier_explorer(),
         Dashboard.blueprint(
             auto_open=True,
-            terminal_commands={
-                "agent-spy": "htop",
-                "lcm-spy": "dimos lcmspy",
-                # "htop": "htop",
-            },
         ),
     )
     .global_config(n_dask_workers=4, robot_model="unitree_go2")

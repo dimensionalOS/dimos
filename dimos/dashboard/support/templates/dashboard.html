@@ -61,64 +61,9 @@
         </style>
     </head>
     <body>
-        {% if zellij_enabled %}
-        <div id="terminal-side">
-            <iframe
-                data-is-zellij="true"
-                id="iframe-{{ session_name }}"
-                src="/{{ session_name }}"
-                frameborder="0"
-                onload="this.style.opacity = '1'"
-            > </iframe>
-        </div>
-        {% endif %}
     </body>
     <script type="module">
-        //
-        // zellij
-        //
-        {% if zellij_enabled %}
-        const zellijToken = {{ zellij_token | tojson }};
-        const iframes = document.querySelectorAll('iframe[data-is-zellij="true"]')
-        await new Promise((r) => setTimeout(r, 200))
-        for (let each of iframes) {
-            let input
-            if ((input = each.contentDocument.body?.querySelector("#remember"))) {
-                input.checked = true
-            }
-            if ((input = each.contentDocument.body?.querySelector("#token"))) {
-                if (zellijToken) {
-                    input.value = zellijToken
-                    if ((input = each.contentDocument.body?.querySelector("#submit"))) {
-                        input.click()
-                    }
-                }
-            }
-            if (input) {
-                await new Promise(r=>setTimeout(r,300))
-            }
-            // to get past the startup "press enter"
-            sendEnterKeyTo(each)
-        }
-        function sendEnterKeyTo(target) {
-            const eventTypes = ["keydown", "keypress", "keyup"]
-            const keyInfo = { key: "Enter", code: "Enter", keyCode: 13, which: 13 }
-            for (const type of eventTypes) {
-                const evt = new KeyboardEvent(type, {
-                    key: keyInfo.key,
-                    code: keyInfo.code,
-                    keyCode: keyInfo.keyCode,
-                    which: keyInfo.which,
-                    bubbles: true,
-                    cancelable: true,
-                })
-
-                target.dispatchEvent(evt)
-            }
-        }
-        {% else %}
         document.body.style.setProperty('--terminal-panel-width', '0vw');
-        {% endif %}
 
         //
         // rerun

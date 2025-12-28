@@ -20,128 +20,29 @@ import ssl
 import threading
 import webbrowser
 
-from aiohttp import ClientSession, WSMsgType, web
+from aiohttp import web
 
 from dimos.dashboard.support.html_generation import html_code_gen
-from dimos.dashboard.support.utils import build_target_url, ensure_logger, env_bool, path_matches
-from dimos.dashboard.support.zellij_tooling import ZellijManager
-
-HOP_BY_HOP_HEADERS = {
-    "connection",
-    "keep-alive",
-    "proxy-authenticate",
-    "proxy-authorization",
-    "te",
-    "trailers",
-    "transfer-encoding",
-    "upgrade",
-}
+from dimos.dashboard.support.utils import ensure_logger, env_bool, path_matches
 
 
 def start_dashboard_server(config: dict, log: logging.Logger):
     auto_open = config["auto_open"]
     port = config["port"]
     dashboard_host = config["dashboard_host"]
-    zellij_port = config["zellij_port"]
-    zellij_url = config["zellij_url"]
-    zellij_session_name = config["zellij_session_name"]
     https_enabled = config["https_enabled"]
     https_key_path = config["https_key_path"]
     https_cert_path = config["https_cert_path"]
     protocol = config["protocol"]
     rrd_url = config["rrd_url"]
-    zellij_token = config["zellij_token"]
-    terminals = config["terminals"]
+
+    if not rrd_url:
+        raise RuntimeError("rrd_url must be provided to start the dashboard server")
 
     # NOTE: whatever name is picked for the frontend base path cannot be a zellij session name
     # we pick/generate the session names so its not that big of a deal to avoid collisions
     frontend_base_path = "/zviewer"
     api_base_path = f"{frontend_base_path}/api"
-
-    zellij_token_holder = {"token": zellij_token}
-    zellij_manager = ZellijManager(
-        log=log,
-        session_name=zellij_session_name,
-        port=zellij_port,
-        terminal_commands=terminals,
-        token=zellij_token,
-    )
-
-    async def proxy_http(
-        request: web.Request,
-        target_base: str,
-        strip_prefix: str | None = None,
-        add_prefix: str | None = None,
-    ) -> web.StreamResponse:
-        session: ClientSession = request.app["client"]
-        target_url = build_target_url(request, target_base, strip_prefix, add_prefix)
-
-        try:
-            data = await request.read()
-            headers = {
-                k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP_HEADERS
-            }
-
-            async with session.request(
-                request.method,
-                target_url,
-                headers=headers,
-                data=data if data else None,
-                allow_redirects=False,
-            ) as resp:
-                resp_headers = {
-                    k: v for k, v in resp.headers.items() if k.lower() not in HOP_BY_HOP_HEADERS
-                }
-                body = await resp.read()
-                return web.Response(status=resp.status, headers=resp_headers, body=body)
-        except Exception as exc:  # pragma: no cover - network errors
-            log.error("Proxy error to %s: %s", target_url, exc)
-            return web.Response(status=502, text="Upstream unavailable")
-
-    async def proxy_websocket(
-        request: web.Request,
-        target_base: str,
-        strip_prefix: str | None = None,
-        add_prefix: str | None = None,
-    ) -> web.StreamResponse:
-        session: ClientSession = request.app["client"]
-        target_url = build_target_url(request, target_base, strip_prefix, add_prefix)
-        target_url = target_url.with_scheme("wss" if target_url.scheme == "https" else "ws")
-
-        ws_server = web.WebSocketResponse()
-        await ws_server.prepare(request)
-
-        headers = {k: v for k, v in request.headers.items() if k.lower() not in HOP_BY_HOP_HEADERS}
-
-        try:
-            async with session.ws_connect(target_url, headers=headers) as ws_client:
-
-                async def relay(ws_from, ws_to):
-                    async for msg in ws_from:
-                        if msg.type == WSMsgType.TEXT:
-                            await ws_to.send_str(msg.data)
-                        elif msg.type == WSMsgType.BINARY:
-                            await ws_to.send_bytes(msg.data)
-                        elif msg.type == WSMsgType.CLOSE:
-                            await ws_to.close()
-                            break
-                        elif msg.type == WSMsgType.ERROR:
-                            break
-
-                tasks = [
-                    asyncio.create_task(relay(ws_server, ws_client)),
-                    asyncio.create_task(relay(ws_client, ws_server)),
-                ]
-                done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-                for task in pending:
-                    task.cancel()
-                await asyncio.gather(*pending, return_exceptions=True)
-        except Exception as exc:  # pragma: no cover - network errors
-            log.error("WebSocket proxy error to %s: %s", target_url, exc)
-        finally:
-            await ws_server.close()
-
-        return ws_server
 
     def add_cors_headers(resp: web.StreamResponse) -> web.StreamResponse:
         resp.headers["Access-Control-Allow-Origin"] = "*"
@@ -163,27 +64,16 @@ def start_dashboard_server(config: dict, log: logging.Logger):
             }
             return add_cors_headers(web.json_response(data))
 
-        if subpath in ("sessions", "sessions/"):
-            try:
-                data = await zellij_manager.run_zellij_list_sessions()
-                return add_cors_headers(web.json_response(data))
-            except Exception as exc:
-                log.error("Error fetching zellij sessions: %s", exc)
-                data = {"success": False, "error": str(exc)}
-                return add_cors_headers(web.json_response(data, status=500))
-
         return add_cors_headers(web.json_response({"error": "Not found"}, status=404))
 
     async def dispatch(request: web.Request) -> web.StreamResponse:
         path = request.rel_url.path
-        is_ws = request.headers.get("upgrade", "").lower() == "websocket"
 
         if path in ("/", "", "/zviewer", "/zviewer/"):
             html_code = html_code_gen(
                 rrd_url,
-                zellij_enabled=zellij_manager.enabled,
-                zellij_token=zellij_token_holder["token"],
-                session_name=zellij_manager.session_name,
+                zellij_enabled=False,
+                zellij_token=None,
             )
             return web.Response(text=html_code, content_type="text/html")
 
@@ -196,34 +86,21 @@ def start_dashboard_server(config: dict, log: logging.Logger):
                         "frontend": f"{protocol}://{dashboard_host}:{port}/zviewer",
                         "api": f"{protocol}://{dashboard_host}:{port}{api_base_path}",
                         "rerun": rrd_url,
-                        "zellij": zellij_url,
                     },
                 }
             )
 
         if path_matches(api_base_path, path):
-            if is_ws:
-                return web.Response(status=400, text="WebSocket not supported on API")
             subpath = path[len(api_base_path) :]
             return await handle_api(request, subpath)
 
-        proxy_fn = proxy_websocket if is_ws else proxy_http
-        return await proxy_fn(request, zellij_url)
+        return web.Response(status=404, text="Not found")
 
     async def on_startup(app: web.Application):
-        app["client"] = ClientSession()
-        if zellij_manager.enabled:
-            app["zellij_process"] = await zellij_manager.start_zellij_server(zellij_token_holder)
-            log.info("🚀 Starting Zellij Session Viewer Reverse Proxy (Python)")
-            log.info(
-                "🎯 Reverse Proxy Server running on %s://%s:%s", protocol, dashboard_host, port
-            )
-
         log.info("📋 Service Routes:")
         log.info("   🎛  Main Dashboard:        %s://%s:%s/", protocol, dashboard_host, port)
-        if zellij_manager.enabled:
-            log.info("   🖥️  Zellij Web Client:     %s://%s:%s/", protocol, dashboard_host, port)
-        log.info(f"   📈 Rerun GRPC:            {rrd_url.replace('rerun+', '')}")
+        rrd_display = rrd_url.replace("rerun+", "") if isinstance(rrd_url, str) else str(rrd_url)
+        log.info(f"   📈 Rerun GRPC:            {rrd_display}")
         log.info(
             "   📱 Session Manager UI:    %s://%s:%s%s/",
             protocol,
@@ -256,15 +133,7 @@ def start_dashboard_server(config: dict, log: logging.Logger):
             asyncio.create_task(_open_browser())
 
     async def on_cleanup(app: web.Application):
-        client: ClientSession = app["client"]
-        await client.close()
-        proc: asyncio.subprocess.Process | None = app.get("zellij_process", None)
-        if proc and proc.returncode is None:
-            proc.terminate()
-            try:
-                await asyncio.wait_for(proc.wait(), timeout=2)
-            except asyncio.TimeoutError:
-                proc.kill()
+        return None
 
     def create_app() -> web.Application:
         app = web.Application()
@@ -305,13 +174,7 @@ def start_dashboard_server_thread(
     auto_open: bool = False,
     port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
     dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
-    terminal_commands: dict[str, str] | None = None,
     https_enabled: bool = env_bool("HTTPS_ENABLED", False),
-    zellij_host: str = os.environ.get("ZELLIJ_HOST", "127.0.0.1"),
-    zellij_port: int = int(os.environ.get("ZELLIJ_PORT", "8083")),
-    zellij_token: str | None = os.environ.get("ZELLIJ_TOKEN"),
-    zellij_url: str | None = None,
-    zellij_session_name: str | None = "dimos-dashboard",
     https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH"),
     https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH"),
     logger: logging.Logger | None = None,
@@ -327,21 +190,16 @@ def start_dashboard_server_thread(
                 auto_open=auto_open,
                 port=port,
                 dashboard_host=dashboard_host,
-                zellij_port=zellij_port,
-                zellij_url=zellij_url or f"{protocol}://{zellij_host}:{zellij_port}",
-                zellij_session_name=zellij_session_name,
                 https_enabled=https_enabled,
                 https_key_path=https_key_path,
                 https_cert_path=https_cert_path,
                 protocol=protocol,
                 rrd_url=rrd_url,
-                zellij_token=zellij_token,
-                terminals=terminal_commands,
             ),
             ensure_logger(logger, "dashboard"),
         ),
         daemon=not keep_alive,
-        name="proxy-server",
+        name="dashboard-server",
     )
     thread.start()
     return thread
@@ -374,13 +232,7 @@ if __name__ == "__main__":
     )
     print("starting server")
     t = start_dashboard_server_thread(
-        zellij_session_name="dimos-dashboard",
         rrd_url=rr.serve_grpc(),
-        terminals={
-            "agent-spy": "dimos agentspy",
-            "lcm-spy": "dimos lcmspy",
-            # "skill-spy": "dimos skillspy",
-        },
     )
     try:
         while t.is_alive():

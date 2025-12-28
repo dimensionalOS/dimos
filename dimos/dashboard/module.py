@@ -57,25 +57,12 @@ rerun_info = RerunInfo()
 
 # there can only be one dashboard at a time (e.g. global dashboard_config is alright)
 class Dashboard(Module):
-    """
-    Internals Note:
-        The Dashboard handles rendering the terminals (Zellij) and the viewer (Rerun).
-        The Layout (elsewhere) handles the layout of rerun.
-        The start_dashboard_server_thread mostly handles the logic for Zellij, with only an iframe for rerun.
-    """
-
     def __init__(
         self,
         *,
         port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
         dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
-        terminal_commands: dict[str, str] | None = None,
         https_enabled: bool = env_bool("HTTPS_ENABLED", False),
-        zellij_host: str = os.environ.get("ZELLIJ_HOST", "127.0.0.1"),
-        zellij_port: int = int(os.environ.get("ZELLIJ_PORT", "8083")),
-        zellij_token: str | None = os.environ.get("ZELLIJ_TOKEN"),
-        zellij_url: str | None = None,
-        zellij_session_name: str | None = "dimos-dashboard",
         https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH"),
         https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH"),
         logger: logging.Logger | None = None,
@@ -84,13 +71,7 @@ class Dashboard(Module):
         super().__init__()
         self.port = port
         self.dashboard_host = dashboard_host
-        self.terminal_commands = terminal_commands
         self.https_enabled = https_enabled
-        self.zellij_host = zellij_host
-        self.zellij_port = zellij_port
-        self.zellij_token = zellij_token
-        self.zellij_url = zellij_url
-        self.zellij_session_name = zellij_session_name
         self.https_key_path = https_key_path
         self.https_cert_path = https_cert_path
         self.logger = logger
@@ -98,13 +79,6 @@ class Dashboard(Module):
 
     @rpc
     def start(self) -> None:
-        # there's basically 3 parts to rerun
-        # 1. some kind of python init that does local message aggregation
-        # 2. the actual (separate process) grpc message aggregator
-        # 3. the viewer/renderer
-        # init starts part 1 (needed before rr.log or rr.send_blueprint)
-        # we manually start the gprc here (part 2)
-        # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
         print("""[Dashboard] calling rr.init""")
         rr.init(rerun_info.logging_id, spawn=False, recording_id=rerun_info.logging_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
