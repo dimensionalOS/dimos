@@ -24,7 +24,8 @@ from dimos.mapping.pointclouds.occupancy import (
     OccupancyConfig,
 )
 from dimos.msgs.nav_msgs import OccupancyGrid
-from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
+from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.utils.metrics import timed
 
 
 @dataclass
@@ -37,7 +38,7 @@ class CostMapper(Module):
     default_config = Config
     config: Config
 
-    global_map: In[LidarMessage]
+    global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
 
     @rpc
@@ -57,7 +58,7 @@ class CostMapper(Module):
         super().stop()
 
     # @timed()  # TODO: fix thread leak in timed decorator
-    def _calculate_costmap(self, msg: LidarMessage) -> OccupancyGrid:
+    def _calculate_costmap(self, msg: PointCloud2) -> OccupancyGrid:
         fn = OCCUPANCY_ALGOS[self.config.algo]
         return fn(msg, **asdict(self.config.config))
 
