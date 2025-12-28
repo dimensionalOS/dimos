@@ -16,8 +16,8 @@
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
-from dimos.dashboard.module import RerunConnection
 from dimos.core.global_config import GlobalConfig
+from dimos.dashboard.module import RerunConnection
 from dimos.mapping.occupancy.path_map import make_navigation_map
 from dimos.mapping.occupancy.path_resampling import simple_resample_path
 from dimos.msgs.geometry_msgs import Pose, PoseStamped
