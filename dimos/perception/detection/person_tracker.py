@@ -29,7 +29,7 @@ from dimos.utils.reactive import backpressure
 
 class PersonTracker(Module):
     detections: In[Detection2DArray]
-    image: In[Image]
+    color_image: In[Image]
     target: Out[PoseStamped]
 
     camera_info: CameraInfo
@@ -76,7 +76,7 @@ class PersonTracker(Module):
     def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
             align_timestamped(
-                self.image.pure_observable(),
+                self.color_image.pure_observable(),
                 self.detections.pure_observable().pipe(
                     ops.filter(lambda d: d.detections_length > 0)  # type: ignore[attr-defined]
                 ),
