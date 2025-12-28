@@ -41,16 +41,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path as FilePath
+from typing import TYPE_CHECKING
 
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, rpc
 from dimos.core.module import ModuleConfig
-from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.nav_msgs import OccupancyGrid, Path
-from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
-from dimos.msgs.tf2_msgs import TFMessage
 from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.msgs.geometry_msgs import PoseStamped
+    from dimos.msgs.nav_msgs import OccupancyGrid, Path
+    from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
+    from dimos.msgs.tf2_msgs import TFMessage
 
 logger = setup_logger()
 

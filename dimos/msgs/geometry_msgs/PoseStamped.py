@@ -96,12 +96,14 @@ class PoseStamped(Pose, Timestamped):
 
         return rr.Transform3D(
             translation=[self.x, self.y, self.z],
-            rotation=rr.Quaternion(xyzw=[
-                self.orientation.x,
-                self.orientation.y,
-                self.orientation.z,
-                self.orientation.w,
-            ]),
+            rotation=rr.Quaternion(
+                xyzw=[
+                    self.orientation.x,
+                    self.orientation.y,
+                    self.orientation.z,
+                    self.orientation.w,
+                ]
+            ),
         )
 
     def to_rerun_arrow(self, length: float = 0.5):  # type: ignore[no-untyped-def]
