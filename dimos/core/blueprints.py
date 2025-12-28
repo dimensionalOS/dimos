@@ -109,16 +109,9 @@ class ModuleBlueprintSet:
     def _is_name_unique(self, name: str) -> bool:
         return sum(1 for n, _ in self._all_name_types if n == name) == 1
 
-    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
-        if global_config is None:
-            global_config = GlobalConfig()
-        global_config = global_config.model_copy(update=self.global_config_overrides)
-
-        module_coordinator = ModuleCoordinator(global_config=global_config)
-
-        module_coordinator.start()
-
-        # Deploy all modules.
+    def _deploy_all_modules(
+        self, module_coordinator: ModuleCoordinator, global_config: GlobalConfig
+    ) -> None:
         for blueprint in self.blueprints:
             kwargs = {**blueprint.kwargs}
             sig = inspect.signature(blueprint.module.__init__)
@@ -126,6 +119,7 @@ class ModuleBlueprintSet:
                 kwargs["global_config"] = global_config
             module_coordinator.deploy(blueprint.module, *blueprint.args, **kwargs)
 
+    def _connect_transports(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all the In/Out connections with remapping applied.
         connections = defaultdict(list)
         # Track original name -> remapped name for each module
@@ -145,9 +139,9 @@ class ModuleBlueprintSet:
             transport = self._get_transport_for(remapped_name, type)
             for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
-                # Use the remote method to set transport on Dask actors
                 instance.set_transport(original_name, transport)
 
+    def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.
         rpc_methods = {}
         for blueprint in self.blueprints:
@@ -165,6 +159,18 @@ class ModuleBlueprintSet:
                     continue
                 instance = module_coordinator.get_instance(blueprint.module)
                 getattr(instance, method_name)(rpc_methods[linked_name])
+
+    def build(self, global_config: GlobalConfig | None = None) -> ModuleCoordinator:
+        if global_config is None:
+            global_config = GlobalConfig()
+        global_config = global_config.model_copy(update=self.global_config_overrides)
+
+        module_coordinator = ModuleCoordinator(global_config=global_config)
+        module_coordinator.start()
+
+        self._deploy_all_modules(module_coordinator, global_config)
+        self._connect_transports(module_coordinator)
+        self._connect_rpc_methods(module_coordinator)
 
         module_coordinator.start_all_modules()
 
