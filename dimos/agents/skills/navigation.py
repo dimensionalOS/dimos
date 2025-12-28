@@ -18,7 +18,6 @@ from typing import Any
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
 from dimos.core.stream import In
-from dimos.models.qwen.video_query import BBox
 from dimos.models.vl.qwen import QwenVlModel
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.msgs.geometry_msgs.Vector3 import make_vector3
@@ -134,15 +133,15 @@ class NavigationSkillContainer(SkillModule):
 
         logger.info(f"No tagged location found for {query}")
 
-        success_msg = self._navigate_to_object(query)
-        if success_msg:
-            return success_msg
+        # success_msg = self._navigate_to_object(query)
+        # if success_msg:
+        #     return success_msg
 
-        logger.info(f"No object in view found for {query}")
+        # logger.info(f"No object in view found for {query}")
 
-        success_msg = self._navigate_using_semantic_map(query)
-        if success_msg:
-            return success_msg
+        # success_msg = self._navigate_using_semantic_map(query)
+        # if success_msg:
+        #     return success_msg
 
         return f"No tagged location called '{query}'. No object in view matching '{query}'. No matching location found in semantic map for '{query}'."
 
@@ -201,75 +200,75 @@ class NavigationSkillContainer(SkillModule):
             logger.info("Navigation goal reached")
             return True
 
-    def _navigate_to_object(self, query: str) -> str | None:
-        try:
-            bbox = self._get_bbox_for_current_frame(query)
-        except Exception:
-            logger.error(f"Failed to get bbox for {query}", exc_info=True)
-            return None
+    # def _navigate_to_object(self, query: str) -> str | None:
+    #     try:
+    #         bbox = self._get_bbox_for_current_frame(query)
+    #     except Exception:
+    #         logger.error(f"Failed to get bbox for {query}", exc_info=True)
+    #         return None
 
-        if bbox is None:
-            return None
+    #     if bbox is None:
+    #         return None
 
-        try:
-            track_rpc, stop_track_rpc, is_tracking_rpc = self.get_rpc_calls(
-                "ObjectTracking.track", "ObjectTracking.stop_track", "ObjectTracking.is_tracking"
-            )
-        except Exception:
-            logger.error("ObjectTracking module not connected properly")
-            return None
+    #     try:
+    #         track_rpc, stop_track_rpc, is_tracking_rpc = self.get_rpc_calls(
+    #             "ObjectTracking.track", "ObjectTracking.stop_track", "ObjectTracking.is_tracking"
+    #         )
+    #     except Exception:
+    #         logger.error("ObjectTracking module not connected properly")
+    #         return None
 
-        try:
-            get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
-                "NavigationInterface.get_state", "NavigationInterface.is_goal_reached"
-            )
-        except Exception:
-            logger.error("Navigation module not connected properly")
-            return None
+    #     try:
+    #         get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
+    #             "NavigationInterface.get_state", "NavigationInterface.is_goal_reached"
+    #         )
+    #     except Exception:
+    #         logger.error("Navigation module not connected properly")
+    #         return None
 
-        logger.info(f"Found {query} at {bbox}")
+    #     logger.info(f"Found {query} at {bbox}")
 
-        # Start tracking - BBoxNavigationModule automatically generates goals
-        track_rpc(bbox)
+    #     # Start tracking - BBoxNavigationModule automatically generates goals
+    #     track_rpc(bbox)
 
-        start_time = time.time()
-        timeout = 30.0
-        goal_set = False
+    #     start_time = time.time()
+    #     timeout = 30.0
+    #     goal_set = False
 
-        while time.time() - start_time < timeout:
-            # Check if navigator finished
-            if get_state_rpc() == NavigationState.IDLE and goal_set:
-                logger.info("Waiting for goal result")
-                time.sleep(1.0)
-                if not is_goal_reached_rpc():
-                    logger.info(f"Goal cancelled, tracking '{query}' failed")
-                    stop_track_rpc()
-                    return None
-                else:
-                    logger.info(f"Reached '{query}'")
-                    stop_track_rpc()
-                    return f"Successfully arrived at '{query}'"
+    #     while time.time() - start_time < timeout:
+    #         # Check if navigator finished
+    #         if get_state_rpc() == NavigationState.IDLE and goal_set:
+    #             logger.info("Waiting for goal result")
+    #             time.sleep(1.0)
+    #             if not is_goal_reached_rpc():
+    #                 logger.info(f"Goal cancelled, tracking '{query}' failed")
+    #                 stop_track_rpc()
+    #                 return None
+    #             else:
+    #                 logger.info(f"Reached '{query}'")
+    #                 stop_track_rpc()
+    #                 return f"Successfully arrived at '{query}'"
 
-            # If goal set and tracking lost, just continue (tracker will resume or timeout)
-            if goal_set and not is_tracking_rpc():
-                continue
+    #         # If goal set and tracking lost, just continue (tracker will resume or timeout)
+    #         if goal_set and not is_tracking_rpc():
+    #             continue
 
-            # BBoxNavigationModule automatically sends goals when tracker publishes
-            # Just check if we have any detections to mark goal_set
-            if is_tracking_rpc():
-                goal_set = True
+    #         # BBoxNavigationModule automatically sends goals when tracker publishes
+    #         # Just check if we have any detections to mark goal_set
+    #         if is_tracking_rpc():
+    #             goal_set = True
 
-            time.sleep(0.25)
+    #         time.sleep(0.25)
 
-        logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
-        stop_track_rpc()
-        return None
+    #     logger.warning(f"Navigation to '{query}' timed out after {timeout}s")
+    #     stop_track_rpc()
+    #     return None
 
-    def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
-        if self._latest_image is None:
-            return None
+    # def _get_bbox_for_current_frame(self, query: str) -> BBox | None:
+    #     if self._latest_image is None:
+    #         return None
 
-        return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
+    #     return get_object_bbox_from_image(self._vl_model, self._latest_image, query)
 
     def _navigate_using_semantic_map(self, query: str) -> str:
         try:
