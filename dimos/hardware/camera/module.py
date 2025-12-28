@@ -65,6 +65,7 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
 
     @rpc
     def start(self) -> str:  # type: ignore[return]
+        super().start()
         if callable(self.config.hardware):  # type: ignore[attr-defined]
             self.hardware = self.config.hardware()  # type: ignore[attr-defined]
         else:
