@@ -21,7 +21,6 @@ import sys
 import threading
 from typing import (
     Any,
-    Tuple,
     get_args,
     get_origin,
     get_type_hints,
@@ -37,6 +36,7 @@ from dimos.core.core import T, rpc
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
+from dimos.core.viz import VizMessageType, Viz
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
@@ -45,7 +45,6 @@ from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.utils.generic import classproperty
 
 logger = logging.getLogger(__name__)
-
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
     # we are actually instantiating a new loop here
@@ -85,12 +84,7 @@ class ModuleConfig:
 
 ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
 
-
-def get_dash_name(name: str) -> str:
-    return f"dimos_dashboard__{name}"
-
-
-class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
+class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource, Viz):
     _rpc: RPCSpec | None = None
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
@@ -126,7 +120,7 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
 
     @rpc
     def start(self) -> None:
-        self._attach_dashboard_defaults()
+        self._viz_attach_publish_hooks()
 
     @rpc
     def stop(self) -> None:
@@ -297,46 +291,6 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
         result = tuple(self._bound_rpc_calls[m] for m in methods)
         return result[0] if len(result) == 1 else result
 
-    def _attach_dashboard_defaults(self) -> None:
-        """Mirror Image outputs to their companion <name>_dashboard channel."""
-        try:
-            globalns = {}
-            for cls in self.__class__.__mro__:
-                if cls.__module__ in sys.modules:
-                    globalns.update(sys.modules[cls.__module__].__dict__)
-            hints = get_type_hints(self.__class__, globalns=globalns, include_extras=True)
-        except Exception:
-            hints = {}
-
-        for name, ann in hints.items():
-            if get_origin(ann) is not Out:
-                continue
-            inner_args = get_args(ann) or ()
-            inner = inner_args[0] if inner_args else None
-            if inner is not Image:
-                continue
-
-            dash_name = get_dash_name(name)
-            out_stream = getattr(self, name, None)
-            dash_stream = getattr(self, dash_name, None)
-            if not isinstance(out_stream, Out) or not isinstance(dash_stream, Out):
-                continue
-
-            orig_publish = out_stream.publish
-
-            def _wrapped_publish(msg, _orig=orig_publish, _dash=dash_stream):
-                print("re-publishing", msg)
-                _orig(msg)
-                try:
-                    options = {}
-                    address = f"{self.__module__}:{self.__class__.__name__}/{name}"
-                    _dash.publish((msg, address, options))
-                except Exception as e:  # pragma: no cover - defensive
-                    logger.warning(f"Dashboard mirror publish failed for {dash_name}: {e}")
-
-            out_stream.publish = _wrapped_publish  # type: ignore[assignment]
-
-
 class DaskModule(ModuleBase[ModuleConfigT]):
     ref: Actor
     worker: int
@@ -349,7 +303,8 @@ class DaskModule(ModuleBase[ModuleConfigT]):
         the proxy would fail with AttributeError even though the instance has the attrs.
         """
         super().__init_subclass__(**kwargs)
-
+        cls._viz_attach_channel()
+        
         # Get type hints for this class only (not inherited ones).
         globalns = {}
         for c in cls.__mro__:
@@ -360,24 +315,7 @@ class DaskModule(ModuleBase[ModuleConfigT]):
             hints = get_type_hints(cls, globalns=globalns, include_extras=True)
         except (NameError, AttributeError, TypeError):
             hints = {}
-
-        # Auto-add dashboard channels for image outputs.
-        ann_dict = getattr(cls, "__annotations__", None) or {}
-        added_dashboard_hints: dict[str, Any] = {}
-        for name, ann in list(hints.items()):
-            if get_origin(ann) is Out:
-                inner_args = get_args(ann) or ()
-                inner = inner_args[0] if inner_args else None
-                if inner is Image:
-                    dash_name = get_dash_name(name)
-                    dash_ann = Out[tuple[Image, str, dict]]
-                    if dash_name not in ann_dict:
-                        ann_dict[dash_name] = dash_ann
-                        added_dashboard_hints[dash_name] = dash_ann
-        if added_dashboard_hints:
-            hints.update(added_dashboard_hints)
-            cls.__annotations__ = ann_dict
-
+        
         for name, ann in hints.items():
             origin = get_origin(ann)
             if origin in (In, Out):

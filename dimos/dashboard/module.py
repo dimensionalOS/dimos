@@ -23,7 +23,8 @@ from reactivex.disposable import Disposable
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 
-from dimos.core import Module, rpc
+from dimos.core import Module, rpc, In
+from dimos.core.viz import VizMessageType, Viz
 from dimos.dashboard.support.utils import (
     FileBasedBoolean,
     ensure_logger,
@@ -57,9 +58,14 @@ class RerunInfo:
 
 rerun_info = RerunInfo()
 
+from dimos.msgs.sensor_msgs.Image import Image
+Viz.viz_auto_log_types.add(Image) # add image as a viz type
 
 # there can only be one dashboard at a time (e.g. global dashboard_config is alright)
 class Dashboard(Module):
+    viz_auto_log_types = tuple() # disable auto-viz for this module
+    viz: In[VizMessageType]
+    
     def __init__(
         self,
         *,
@@ -107,7 +113,18 @@ class Dashboard(Module):
                 )
             except Exception as error:
                 self.logger.error(f"Failed to start Rerun GRPC server: {error}")
-
+        
+        def _on_viz(msg) -> None:
+            try:
+                rr.init(rerun_info.logging_id, spawn=False, recording_id=rerun_info.logging_id)
+                value, address, metadata = msg
+                print(f"[Dashboard] logging message: {value}")
+                rr.log(address, value.to_rerun(**metadata.get("to_rerun", {})), metadata.get("rerun_log", False))
+                print(f"[Dashboard] logged message: {value}")
+            except Exception as error:
+                self.logger.error(f"[Dashboard] Failed to receive viz message. Might be missing .to_rerun() method on data type: {error}")
+        
+        self._disposables.add(Disposable(self.viz.subscribe(_on_viz)))
         # set the lock
         dashboard_started.set(True)
 
@@ -133,26 +150,27 @@ class RerunConnection:
         )
 
     def log(self, msg: str, value, **kwargs) -> None:
-        if not self.stream:
-            if not FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"]).get():
-                if self._dropped_logs == 0:
-                    self._logger.info(
-                        "[RerunConnection] rerun grpc not started yet, dropping rerun log. Will notify when this changes"
-                    )
-                self._dropped_logs += 1
-                return
-            if self._dropped_logs > 1:
-                self._dropped_logs = 0
-                self._logger.info("[RerunConnection] rerun grpc connection found")
+        # if not self.stream:
+        #     if not FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"]).get():
+        #         if self._dropped_logs == 0:
+        #             self._logger.info(
+        #                 "[RerunConnection] rerun grpc not started yet, dropping rerun log. Will notify when this changes"
+        #             )
+        #         self._dropped_logs += 1
+        #         return
+        #     if self._dropped_logs > 1:
+        #         self._dropped_logs = 0
+        #         self._logger.info("[RerunConnection] rerun grpc connection found")
 
-            self.stream = rr.RecordingStream(
-                rerun_info.logging_id, recording_id=rerun_info.logging_id
-            )
-            self.stream.connect_grpc(rerun_info.url)
+        #     self.stream = rr.RecordingStream(
+        #         rerun_info.logging_id, recording_id=rerun_info.logging_id
+        #     )
+        #     self.stream.connect_grpc(rerun_info.url)
 
-        if self._init_id != mp.current_process().pid:
-            raise Exception(
-                """Looks like you are somehow using RerunConnection to log data to rerun. However, the process/thread where you init RerunConnection is different from where you are logging. A RerunConnection object needs to be created once per process/thread."""
-            )
+        # if self._init_id != mp.current_process().pid:
+        #     raise Exception(
+        #         """Looks like you are somehow using RerunConnection to log data to rerun. However, the process/thread where you init RerunConnection is different from where you are logging. A RerunConnection object needs to be created once per process/thread."""
+        #     )
 
-        self.stream.log(msg, value, **kwargs)
+        # self.stream.log(msg, value, **kwargs)
+        pass

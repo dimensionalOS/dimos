@@ -14,10 +14,9 @@
 
 """Minimal blueprint runner that reads from a webcam and logs frames."""
 
-from typing import Tuple
-
 import numpy as np
 from reactivex.disposable import Disposable
+from typing import Any
 import rerun as rr
 
 from dimos.core import In, Module, Out, pSHMTransport
@@ -32,6 +31,9 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 
 
 class CameraListener(Module):
+    auto_log_types = tuple() # disable auto-logging
+    dashboard: In[tuple[Any, str, dict]] = None
+    
     color_image: In[Image] = None
     dimos_dashboard__color_image: In[tuple[Image, str, dict]] = None
     color_image_1: Out[Image] = None
@@ -40,21 +42,21 @@ class CameraListener(Module):
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-
+    
     @rpc
     def start(self) -> None:
         super().start()
 
         self.rc = RerunConnection()  # one connection per process
 
-        def _on_frame_dashboard(data) -> None:
-            value, address, metadata = data
-            self.rc.log(address, value.to_rerun())
-            print(f"""metadata = {metadata}""")
+        def _on_frame_dashboard(*args) -> None:
+            print(f'''[_on_frame_dashboard] args = {args}''')
+            # self.rc.log(address, value.to_rerun())
+            # print(f"""metadata = {metadata}""")
             # print(f'''metadata["self"].__class__.__name__ = {metadata["self"].__class__.__name__}''')
             pass
 
-        self.dimos_dashboard__color_image.subscribe(_on_frame_dashboard)
+        self.dashboard.subscribe(_on_frame_dashboard)
 
         # def _on_frame(img: Image) -> None:
         #     # Expect HxWx3 uint8
@@ -97,12 +99,14 @@ class CameraListener(Module):
 
 
 if __name__ == "__main__":
-    cam_listener = CameraListener.blueprint()
     cam_generator = CameraModule.blueprint()
+    # cam_listener = CameraListener.blueprint()
+    # print(f'''cam_generator = {cam_generator}''')
+    # print(f'''cam_listener = {cam_listener}''')
     blueprint = (
         autoconnect(
             cam_generator,
-            cam_listener,
+            # cam_listener,
             Dashboard.blueprint(
                 open_rerun=True,
             ),
