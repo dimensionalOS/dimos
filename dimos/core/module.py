@@ -28,6 +28,7 @@ from typing import (
 
 from dask.distributed import Actor, get_worker
 from reactivex.disposable import CompositeDisposable
+from typing_extensions import TypeVar
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
@@ -74,9 +75,14 @@ def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
 class ModuleConfig:
     rpc_transport: type[RPCSpec] = LCMRPC
     tf_transport: type[TFSpec] = LCMTF
+    frame_id_prefix: str | None = None
+    frame_id: str | None = None
 
 
-class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
+ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
+
+
+class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
     _rpc: RPCSpec | None = None
     _tf: TFSpec | None = None
     _loop: asyncio.AbstractEventLoop | None = None
@@ -86,7 +92,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
 
     rpc_calls: list[str] = []
 
-    default_config = ModuleConfig
+    default_config: type[ModuleConfigT] = ModuleConfig  # type: ignore[assignment]
 
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
@@ -102,6 +108,13 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
             self.rpc.start()  # type: ignore[attr-defined]
         except ValueError:
             ...
+
+    @property
+    def frame_id(self) -> str:
+        base = self.config.frame_id or self.__class__.__name__
+        if self.config.frame_id_prefix:
+            return f"{self.config.frame_id_prefix}/{base}"
+        return base
 
     @rpc
     def start(self) -> None:
@@ -341,7 +354,7 @@ class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource):
         return result[0] if len(result) == 1 else result
 
 
-class DaskModule(ModuleBase):
+class DaskModule(ModuleBase[ModuleConfigT]):
     ref: Actor
     worker: int
 

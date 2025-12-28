@@ -22,7 +22,7 @@ import reactivex as rx
 import reactivex.operators as ops
 from reactivex.subject import BehaviorSubject
 
-from dimos.agents.claude_agent import ClaudeAgent
+from dimos.agents_deprecated.claude_agent import ClaudeAgent
 from dimos.perception.detection2d.detic_2d_det import Detic2DDetector
 from dimos.perception.object_detection_stream import ObjectDetectionStream
 from dimos.robot.robot import MockManipulationRobot

@@ -91,6 +91,17 @@ def get_model_xml(robot: str, scene_xml: str) -> str:
     root = ET.fromstring(scene_xml)
     root.set("model", f"{robot}_scene")
     root.insert(0, ET.Element("include", file=f"{robot}.xml"))
+
+    # Ensure visual/map element exists with znear and zfar
+    visual = root.find("visual")
+    if visual is None:
+        visual = ET.SubElement(root, "visual")
+    map_elem = visual.find("map")
+    if map_elem is None:
+        map_elem = ET.SubElement(visual, "map")
+    map_elem.set("znear", "0.01")
+    map_elem.set("zfar", "10000")
+
     return ET.tostring(root, encoding="unicode")
 
 

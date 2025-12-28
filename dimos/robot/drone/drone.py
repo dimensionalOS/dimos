@@ -28,8 +28,8 @@ from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
 from reactivex import Observable
 
 from dimos import core
-from dimos.agents2.skills.google_maps_skill_container import GoogleMapsSkillContainer
-from dimos.agents2.skills.osm import OsmSkill
+from dimos.agents.skills.google_maps_skill_container import GoogleMapsSkillContainer
+from dimos.agents.skills.osm import OsmSkill
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -451,9 +451,9 @@ def main() -> None:
     print("  • /drone/tracking_overlay - Object tracking visualization (Image)")
     print("  • /drone/tracking_status - Tracking status (String/JSON)")
 
-    from dimos.agents2 import Agent  # type: ignore[attr-defined]
-    from dimos.agents2.cli.human import HumanInput
-    from dimos.agents2.spec import Model, Provider  # type: ignore[attr-defined]
+    from dimos.agents import Agent  # type: ignore[attr-defined]
+    from dimos.agents.cli.human import HumanInput
+    from dimos.agents.spec import Model, Provider  # type: ignore[attr-defined]
 
     assert drone.dimos is not None
     human_input = drone.dimos.deploy(HumanInput)  # type: ignore[attr-defined]

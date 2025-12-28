@@ -28,7 +28,7 @@ from rich.table import Table
 from rich.text import Text
 
 from dimos.core import rpc
-from dimos.core.module import Module, get_loop
+from dimos.core.module import Module, ModuleConfig, get_loop
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer  # type: ignore[attr-defined]
 from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
@@ -39,7 +39,7 @@ logger = setup_logger()
 
 
 @dataclass
-class SkillCoordinatorConfig:
+class SkillCoordinatorConfig(ModuleConfig):
     skill_transport: type[SkillCommsSpec] = LCMSkillComms
 
 
@@ -271,18 +271,15 @@ class SkillCoordinator(Module):
     _skill_state: SkillStateDict  # key is call_id, not skill_name
     _skills: dict[str, SkillConfig]
     _updates_available: asyncio.Event | None
-    _loop: asyncio.AbstractEventLoop | None
-    _loop_thread: threading.Thread | None
     _agent_loop: asyncio.AbstractEventLoop | None
 
-    def __init__(self) -> None:
-        # TODO: Why isn't this super().__init__() ?
-        SkillContainer.__init__(self)
-        self._loop, self._loop_thread = get_loop()
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
         self._static_containers = []
         self._dynamic_containers = []
         self._skills = {}
         self._skill_state = SkillStateDict()
+
         # Defer event creation until we're in the correct loop context
         self._updates_available = None
         self._agent_loop = None

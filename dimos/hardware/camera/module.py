@@ -23,7 +23,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.camera.spec import CameraHardware
 from dimos.hardware.camera.webcam import Webcam
@@ -49,17 +49,15 @@ class CameraModuleConfig(ModuleConfig):
     frequency: float = 5.0
 
 
-class CameraModule(Module, spec.Camera):
+class CameraModule(Module[CameraModuleConfig], spec.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None  # type: ignore[assignment, type-arg]
     _skill_stream: Observable[Image] | None = None
 
+    config: CameraModuleConfig
     default_config = CameraModuleConfig
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
 
     @property
     def hardware_camera_info(self) -> CameraInfo:
