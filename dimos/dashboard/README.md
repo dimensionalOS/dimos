@@ -67,11 +67,7 @@ blueprint = (
         ),
         CameraListener.blueprint(),
         Dashboard.blueprint(
-            auto_open=True,
-            terminal_commands={
-                "lcm-spy": "dimos lcmspy",
-                "skill-spy": "dimos skillspy",
-            },
+            open_rerun=True,
         ),
     )
     .transports({("color_image", Image): pSHMTransport("/cam/image")})

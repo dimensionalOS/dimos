@@ -17,7 +17,6 @@ import dataclasses
 import logging
 import multiprocessing as mp
 import os
-from pathlib import Path
 import tempfile
 
 from reactivex.disposable import Disposable
@@ -25,30 +24,32 @@ import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 
 from dimos.core import Module, rpc
-from dimos.dashboard.server import env_bool, start_dashboard_server_thread
-from dimos.dashboard.support.utils import make_constants
+from dimos.dashboard.support.utils import (
+    FileBasedBoolean,
+    ensure_logger,
+    make_constant_across_workers,
+)
 
-config = make_constants(
+DASHBOARD_CONSTANTS = make_constant_across_workers(
     dict(
         default_rerun_grpc_port=9876,
-        dashboard_started_lock=tempfile.NamedTemporaryFile(delete=False).name,
+        dashboard_started_signal=tempfile.NamedTemporaryFile(delete=False).name,
     )
 )
 
-try:
-    os.unlink(config["dashboard_started_lock"])
-except Exception:
-    pass
+FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"]).set(False)
 
 
 @dataclasses.dataclass
 class RerunInfo:
     logging_id: str = os.environ.get("RERUN_ID", "dimos_main_rerun")
-    grpc_port: int = int(os.environ.get("RERUN_GRPC_PORT", config["default_rerun_grpc_port"]))
+    grpc_port: int = int(
+        os.environ.get("RERUN_GRPC_PORT", DASHBOARD_CONSTANTS["default_rerun_grpc_port"])
+    )
     server_memory_limit: str = os.environ.get("RERUN_SERVER_MEMORY_LIMIT", "0%")
     url: str = os.environ.get(
         "RERUN_URL",
-        f"rerun+http://127.0.0.1:{os.environ.get('RERUN_GRPC_PORT', config['default_rerun_grpc_port'])!s}/proxy",
+        f"rerun+http://127.0.0.1:{os.environ.get('RERUN_GRPC_PORT', DASHBOARD_CONSTANTS['default_rerun_grpc_port'])!s}/proxy",
     )
 
 
@@ -60,28 +61,18 @@ class Dashboard(Module):
     def __init__(
         self,
         *,
-        port: int = int(os.environ.get("DASHBOARD_PORT", "4000")),
-        dashboard_host: str = os.environ.get("DASHBOARD_HOST", "localhost"),
-        https_enabled: bool = env_bool("HTTPS_ENABLED", False),
-        https_key_path: str | None = os.environ.get("HTTPS_KEY_PATH"),
-        https_cert_path: str | None = os.environ.get("HTTPS_CERT_PATH"),
         logger: logging.Logger | None = None,
-        launcher: str | None = None,
+        open_rerun: bool = False,
     ) -> None:
         super().__init__()
-        self.port = port
-        self.dashboard_host = dashboard_host
-        self.https_enabled = https_enabled
-        self.https_key_path = https_key_path
-        self.https_cert_path = https_cert_path
-        self.logger = logger
-        self.launcher = launcher
+        self.logger = ensure_logger(logger, "dashboard")
+        self.open_rerun = open_rerun
 
     @rpc
     def start(self) -> None:
-        print("""[Dashboard] calling rr.init""")
-        spawn = self.launcher == "rerun"
-        rr.init(rerun_info.logging_id, spawn=spawn, recording_id=rerun_info.logging_id)
+        dashboard_started = FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"])
+        self.logger.debug("[Dashboard] calling rr.init")
+        rr.init(rerun_info.logging_id, spawn=self.open_rerun, recording_id=rerun_info.logging_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
         default_blueprint = self.__dict__.get(
             "rerun_default_blueprint",
@@ -101,10 +92,10 @@ class Dashboard(Module):
                 )
             ),
         )
-        print("[Dashboard] sending empty blueprint")
+        self.logger.debug("[Dashboard] sending empty blueprint")
         rr.send_blueprint(default_blueprint)
         # get the rrd_url if it wasn't provided
-        print("[Dashboard] starting rerun grpc if needed")
+        self.logger.debug("[Dashboard] starting rerun grpc if needed")
         if not os.environ.get("RERUN_URL", None):
             try:
                 rr.serve_grpc(
@@ -115,39 +106,33 @@ class Dashboard(Module):
             except Exception as error:
                 self.logger.error(f"Failed to start Rerun GRPC server: {error}")
 
-        thread = start_dashboard_server_thread(
-            **self.__dict__, keep_alive=True, rrd_url=rerun_info.url
-        )
         # set the lock
-        with open(config["dashboard_started_lock"], "w+") as the_file:
-            the_file.write("1")
+        dashboard_started.set(True)
 
         @self._disposables.add
         @Disposable
         def _cleanup_dashboard_thread():
-            try:
-                os.unlink(config["dashboard_started_lock"])
-            except FileNotFoundError:
-                pass
-            # Attempt to let the server thread shut down gracefully when the module stops.
-            if thread.is_alive():
-                thread.join(timeout=1.0)
+            dashboard_started.clean()
 
 
 class RerunConnection:
     def __init__(self) -> None:
-        self._init_id = None
+        self._init_id = mp.current_process().pid
         self.stream = None
+
+    def __pickle__(self):
+        raise Exception(
+            f"""{self.__class__.__name__} is not picklable. Do not save it, and do not pass it between workers/processes. Create a fresh RerunConnection object within each worker/process/thread."""
+        )
 
     def log(self, msg: str, value, **kwargs) -> None:
         if not self.stream:
-            if not Path(config["dashboard_started_lock"]).exists():
+            if not FileBasedBoolean(DASHBOARD_CONSTANTS["dashboard_started_signal"]).get():
                 return
             self.stream = rr.RecordingStream(
                 rerun_info.logging_id, recording_id=rerun_info.logging_id
             )
             self.stream.connect_grpc(rerun_info.url)
-            self._init_id = mp.current_process().pid
 
         if self._init_id != mp.current_process().pid:
             raise Exception(

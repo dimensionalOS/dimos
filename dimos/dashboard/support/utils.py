@@ -11,45 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import logging
 import os
-
-from aiohttp import web
-from yarl import URL
-
-
-def env_bool(name: str, default: bool = False) -> bool:
-    value = os.environ.get(name)
-    if value is None:
-        return default
-    return value.lower() in {"1", "true", "yes", "on"}
-
-
-def path_matches(prefix: str, path: str) -> bool:
-    return path == prefix or path.startswith(prefix + "/")
-
-
-def build_target_url(
-    request: web.Request,
-    target_base: str,
-    strip_prefix: str | None = None,
-    add_prefix: str | None = None,
-) -> URL:
-    target = URL(target_base)
-    path = request.rel_url.path
-
-    if strip_prefix and path_matches(strip_prefix, path):
-        path = path[len(strip_prefix) :] or "/"
-        if not path.startswith("/"):
-            path = "/" + path
-
-    if add_prefix:
-        add_prefix = add_prefix.rstrip("/")
-        path = f"{add_prefix}{path}"
-
-    full_path = target.path.rstrip("/") + path
-    return target.with_path(full_path or "/").with_query(request.rel_url.query)
 
 
 def ensure_logger(logger: logging.Logger | None, log_name: str = "proxy") -> logging.Logger:
@@ -58,14 +21,13 @@ def ensure_logger(logger: logging.Logger | None, log_name: str = "proxy") -> log
             level=logging.INFO,
             format="%(asctime)s [%(levelname)s] %(message)s",
         )
-        return logging.getLogger("proxy")
+        return logging.getLogger(log_name)
     else:
         return logger
 
 
-def make_constants(json_data):
+def make_constant_across_workers(json_data):
     import json
-    import os
 
     import psutil
 
@@ -79,3 +41,31 @@ def make_constants(json_data):
     with open(f"/tmp/{os.getpid()}.json", "w") as outfile:
         json.dump(json_data, outfile)
     return json_data
+
+
+class FileBasedBoolean:
+    def __init__(self, path):
+        import tempfile
+
+        self._path = path or tempfile.NamedTemporaryFile(delete=False).name
+
+    def set(self, value):
+        if value:
+            with open(self._path, "w+") as the_file:
+                the_file.write("1")
+        else:
+            try:
+                os.unlink(self._path)
+            except Exception:
+                pass
+
+    def get(self):
+        from pathlib import Path
+
+        return Path(self._path).exists()
+
+    def clean(self):
+        try:
+            os.unlink(self._path)
+        except Exception:
+            pass

@@ -17,7 +17,6 @@ import importlib
 import json
 import logging
 import sys
-import threading
 
 from aiohttp.test_utils import make_mocked_request
 import psutil
@@ -36,64 +35,40 @@ def dashboard_server(monkeypatch):
     return importlib.import_module("dimos.dashboard.server")
 
 
-def test_thread_passes_config_and_daemon_flag(monkeypatch, dashboard_server):
+def test_build_and_start_uses_config(monkeypatch, dashboard_server):
     captured: dict = {}
 
-    def fake_start_dashboard_server(config, log):
-        captured["config"] = config
-        captured["thread"] = threading.current_thread()
+    def fake_run_app(
+        app, host=None, port=None, ssl_context=None, access_log=None, handle_signals=None
+    ):
+        captured.update(host=host, port=port, ssl_context=ssl_context)
+        return None
 
-    monkeypatch.setattr(dashboard_server, "start_dashboard_server", fake_start_dashboard_server)
+    monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
 
-    logger = logging.getLogger("test-thread-config")
-    thread = dashboard_server.start_dashboard_server_thread(
+    cfg = dashboard_server.build_dashboard_config(
         launcher="browser",
         port=5555,
         dashboard_host="0.0.0.0",
-        https_enabled=True,
-        https_key_path="/tmp/key.pem",
-        https_cert_path="/tmp/cert.pem",
-        logger=logger,
-        rrd_url="rrd+tcp://localhost:2222",
-        keep_alive=True,
-    )
-    thread.join(timeout=1)
-    assert not thread.is_alive()
-    assert captured["thread"] == thread
-
-    config = captured["config"]
-    assert config["port"] == 5555
-    assert config["dashboard_host"] == "0.0.0.0"
-    assert config["https_enabled"] is True
-    assert config["https_key_path"] == "/tmp/key.pem"
-    assert config["https_cert_path"] == "/tmp/cert.pem"
-    assert config["protocol"] == "https"
-    assert config["rrd_url"] == "rrd+tcp://localhost:2222"
-    assert thread.daemon is False
-    assert thread.name == "dashboard-server"
-
-
-def test_default_protocol_and_daemon(monkeypatch, dashboard_server):
-    captured: dict = {}
-
-    def fake_start_dashboard_server(config, log):
-        captured.update(config=config, thread=threading.current_thread())
-
-    monkeypatch.setattr(dashboard_server, "start_dashboard_server", fake_start_dashboard_server)
-
-    thread = dashboard_server.start_dashboard_server_thread(
-        port=1234,
         https_enabled=False,
-        rrd_url="rrd://example",
+        rrd_url="rrd+tcp://localhost:2222",
     )
-    thread.join(timeout=1)
-    assert not thread.is_alive()
+    logger = logging.getLogger("test-config")
+    dashboard_server.start_dashboard_server(cfg, logger)
 
-    config = captured["config"]
-    assert config["protocol"] == "http"
-    assert config["port"] == 1234
-    assert config["https_enabled"] is False
-    assert captured["thread"].daemon is True
+    assert captured["host"] == "0.0.0.0"
+    assert captured["port"] == 5555
+    assert cfg.protocol == "http"
+    assert cfg.rrd_url == "rrd+tcp://localhost:2222"
+
+
+def test_build_dashboard_config_defaults(monkeypatch, dashboard_server):
+    cfg = dashboard_server.build_dashboard_config(
+        port=1234, https_enabled=False, rrd_url="rrd://example"
+    )
+    assert cfg.protocol == "http"
+    assert cfg.port == 1234
+    assert cfg.https_enabled is False
 
 
 def test_serves_html_without_zellij(monkeypatch, dashboard_server):
@@ -132,13 +107,12 @@ def test_serves_html_without_zellij(monkeypatch, dashboard_server):
     monkeypatch.setattr(dashboard_server, "html_code_gen", fake_html_code_gen)
     monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
 
-    thread = dashboard_server.start_dashboard_server_thread(
+    cfg = dashboard_server.build_dashboard_config(
         port=9876,
         dashboard_host="localhost",
         rrd_url="rrd://abc",
     )
-    thread.join(timeout=5)
-    assert not thread.is_alive()
+    dashboard_server.start_dashboard_server(cfg, logging.getLogger("serve-html"))
 
     assert responses["status"] == 200
     assert responses.get("body") == "<html><body>no-zellij</body></html>"
@@ -174,13 +148,12 @@ def test_health_endpoint_reports_services(monkeypatch, dashboard_server):
 
     monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
 
-    thread = dashboard_server.start_dashboard_server_thread(
+    cfg = dashboard_server.build_dashboard_config(
         port=5050,
         dashboard_host="dash.test",
         rrd_url="rrd+tcp://rrd:123",
     )
-    thread.join(timeout=5)
-    assert not thread.is_alive()
+    dashboard_server.start_dashboard_server(cfg, logging.getLogger("health"))
 
     payload = responses["payload"]
     assert payload["status"] == "ok"
@@ -225,12 +198,11 @@ def test_api_routes_have_cors(monkeypatch, dashboard_server):
 
     monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
 
-    thread = dashboard_server.start_dashboard_server_thread(
+    cfg = dashboard_server.build_dashboard_config(
         dashboard_host="127.0.0.1",
         rrd_url="rrd://noop",
     )
-    thread.join(timeout=5)
-    assert not thread.is_alive()
+    dashboard_server.start_dashboard_server(cfg, logging.getLogger("cors"))
 
     assert responses["health_status"] == 200
     assert responses["health_payload"]["status"] == "ok"
@@ -262,14 +234,13 @@ def test_auto_open_launches_browser(monkeypatch, dashboard_server):
     monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
     monkeypatch.setattr(dashboard_server.webbrowser, "open", lambda url: browser_calls.append(url))
 
-    thread = dashboard_server.start_dashboard_server_thread(
+    cfg = dashboard_server.build_dashboard_config(
         launcher="browser",
         port=4444,
         dashboard_host="dash.local",
         rrd_url="rrd://noop",
     )
-    thread.join(timeout=5)
-    assert not thread.is_alive()
+    dashboard_server.start_dashboard_server(cfg, logging.getLogger("autoopen"))
     assert browser_calls == ["http://dash.local:4444/zviewer"]
 
 
@@ -305,15 +276,14 @@ def test_https_context_is_built_and_passed(monkeypatch, dashboard_server):
     monkeypatch.setattr(dashboard_server.ssl, "SSLContext", FakeSSLContext)
     monkeypatch.setattr(dashboard_server.web, "run_app", fake_run_app)
 
-    thread = dashboard_server.start_dashboard_server_thread(
+    cfg = dashboard_server.build_dashboard_config(
         https_enabled=True,
         https_key_path="/certs/key.pem",
         https_cert_path="/certs/cert.pem",
         port=4433,
         rrd_url="rrd://noop",
     )
-    thread.join(timeout=5)
-    assert not thread.is_alive()
+    dashboard_server.start_dashboard_server(cfg, logging.getLogger("https"))
 
     ctx = responses["ssl_context"]
     assert isinstance(ctx, FakeSSLContext)
