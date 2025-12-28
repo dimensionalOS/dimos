@@ -647,6 +647,35 @@ class CudaImage(AbstractImage):
             _resize_bilinear_hwc_cuda(self.data, height, width), self.format, self.frame_id, self.ts
         )
 
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format.
+
+        Transfers data from GPU to CPU and converts to appropriate format.
+
+        Returns:
+            rr.Image archetype for logging to rerun
+        """
+        import rerun as rr
+
+        # Transfer to CPU
+        cpu_data = cp.asnumpy(self.data)
+
+        match self.format:
+            case ImageFormat.RGB:
+                return rr.Image(cpu_data, color_model="RGB")
+            case ImageFormat.RGBA:
+                return rr.Image(cpu_data, color_model="RGBA")
+            case ImageFormat.BGR:
+                return rr.Image(cpu_data, color_model="BGR")
+            case ImageFormat.BGRA:
+                return rr.Image(cpu_data, color_model="BGRA")
+            case ImageFormat.GRAY | ImageFormat.DEPTH:
+                return rr.Image(cpu_data, color_model="L")
+            case ImageFormat.GRAY16 | ImageFormat.DEPTH16:
+                return rr.Image(cpu_data, color_model="L")
+            case _:
+                raise ValueError(f"Unsupported format for Rerun: {self.format}")
+
     def crop(self, x: int, y: int, width: int, height: int) -> CudaImage:
         """Crop the image to the specified region.
 

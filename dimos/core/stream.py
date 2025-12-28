@@ -137,7 +137,7 @@ class Stream(Generic[T]):
         )
 
 
-class Out(Stream[T]):
+class Out(Stream[T], ObservableMixin[T]):
     _transport: Transport  # type: ignore[type-arg]
 
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
@@ -174,6 +174,17 @@ class Out(Stream[T]):
             logger.warning(f"Trying to publish on Out {self} without a transport")
             return
         self._transport.broadcast(self, msg)
+
+    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
+        """Subscribe to this output stream.
+
+        Args:
+            cb: Callback function to receive messages
+
+        Returns:
+            Unsubscribe function
+        """
+        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
 
 
 class RemoteStream(Stream[T]):

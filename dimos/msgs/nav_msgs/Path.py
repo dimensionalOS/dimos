@@ -231,3 +231,20 @@ class Path(Timestamped):
             ros_msg.poses.append(pose.to_ros_msg())
 
         return ros_msg
+
+    def to_rerun(self, color: tuple[int, int, int] = (0, 255, 128)):  # type: ignore[no-untyped-def]
+        """Convert to rerun LineStrips3D format.
+
+        Args:
+            color: RGB color tuple for the path line
+
+        Returns:
+            rr.LineStrips3D archetype for logging to rerun
+        """
+        import rerun as rr
+
+        if not self.poses:
+            return rr.LineStrips3D([])
+
+        points = [[p.x, p.y, p.z] for p in self.poses]
+        return rr.LineStrips3D([points], colors=[color])

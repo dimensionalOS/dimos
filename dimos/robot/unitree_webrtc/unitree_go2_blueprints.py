@@ -49,6 +49,7 @@ from dimos.robot.unitree.connection.go2 import GO2Connection, go2_connection
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
+from dimos.dashboard.rerun_module import rerun_module
 
 # Mac has some issue with high bandwidth UDP
 #
@@ -73,6 +74,7 @@ linux = autoconnect(foxglove_bridge())
 
 basic = autoconnect(
     go2_connection(),
+    rerun_module(),
     linux if platform.system() == "Linux" else mac,
     websocket_vis(),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")

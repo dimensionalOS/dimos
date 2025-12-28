@@ -19,7 +19,6 @@ from typing import Any, Protocol
 
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
-import rerun as rr
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
@@ -180,18 +179,11 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
-        # Initialize rerun with web viewer (serves on port 9090)
-        rr.init("rerun_go2")
-        server_uri = rr.serve_grpc()
-        rr.serve_web_viewer(connect_to=server_uri, open_browser=False)
-
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
-            rr.log("go2/color_image", image.to_rerun())
 
         def onodom(odom: PoseStamped) -> None:
             self._publish_tf(odom)
-            rr.log("go2/odom", odom.to_rerun())
 
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
         self._disposables.add(self.connection.odom_stream().subscribe(onodom))
