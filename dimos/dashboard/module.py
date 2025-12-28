@@ -116,6 +116,9 @@ class Dashboard(Module):
         def _cleanup_dashboard_thread():
             dashboard_started.clean()
 
+    def stop(self) -> None:
+        self.logger.info("Stopping dashboard server")
+
 
 class RerunConnection:
     def __init__(self) -> None:
