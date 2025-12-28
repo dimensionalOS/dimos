@@ -14,6 +14,8 @@
 
 """Minimal blueprint runner that reads from a webcam and logs frames."""
 
+from typing import Tuple
+
 import numpy as np
 from reactivex.disposable import Disposable
 import rerun as rr
@@ -30,7 +32,8 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 
 
 class CameraListener(Module):
-    color_image: In[Image] = None  # type: ignore[assignment]
+    color_image: In[Image] = None
+    dimos_dashboard__color_image: In[tuple[Image, str, dict]] = None
     color_image_1: Out[Image] = None
     color_image_2: Out[Image] = None
     color_image_3: Out[Image] = None
@@ -44,68 +47,72 @@ class CameraListener(Module):
 
         self.rc = RerunConnection()  # one connection per process
 
-        def _on_frame(img: Image) -> None:
-            # Expect HxWx3 uint8
-            frame = img.to_rgb().to_opencv()
-            try:
-                r = frame.copy()
-                r[..., 1] = 0
-                r[..., 2] = 0
+        def _on_frame_dashboard(data) -> None:
+            value, address, metadata = data
+            self.rc.log(address, value.to_rerun())
+            print(f"""metadata = {metadata}""")
+            # print(f'''metadata["self"].__class__.__name__ = {metadata["self"].__class__.__name__}''')
+            pass
 
-                g = frame.copy()
-                g[..., 0] = 0
-                g[..., 2] = 0
+        self.dimos_dashboard__color_image.subscribe(_on_frame_dashboard)
 
-                b = frame.copy()
-                b[..., 0] = 0
-                b[..., 1] = 0
+        # def _on_frame(img: Image) -> None:
+        #     # Expect HxWx3 uint8
+        #     frame = img.to_rgb().to_opencv()
+        #     try:
+        #         r = frame.copy()
+        #         r[..., 1] = 0
+        #         r[..., 2] = 0
 
-                out1 = Image(data=r, format=ImageFormat.RGB)
-                out2 = Image(data=g, format=ImageFormat.RGB)
-                out3 = Image(data=b, format=ImageFormat.RGB)
+        #         g = frame.copy()
+        #         g[..., 0] = 0
+        #         g[..., 2] = 0
 
-                self.color_image_1.publish(out1)
-                self.color_image_2.publish(out2)
-                self.color_image_3.publish(out3)
+        #         b = frame.copy()
+        #         b[..., 0] = 0
+        #         b[..., 1] = 0
 
-                print("logging color images")
-                self.rc.log(f"/{self.__class__.__name__}/color_image_1", out1.to_rerun())
-                self.rc.log(f"/{self.__class__.__name__}/color_image_2", out2.to_rerun())
-                self.rc.log(f"/{self.__class__.__name__}/color_image_3", out3.to_rerun())
-            except Exception as error:
-                print(f"""error = {error}""")
+        #         out1 = Image(data=r, format=ImageFormat.RGB)
+        #         out2 = Image(data=g, format=ImageFormat.RGB)
+        #         out3 = Image(data=b, format=ImageFormat.RGB)
 
-        print("camera subscribing")
-        unsub = self.color_image.subscribe(_on_frame)
-        self._disposables.add(Disposable(unsub))
+        #         self.color_image_1.publish(out1)
+        #         self.color_image_2.publish(out2)
+        #         self.color_image_3.publish(out3)
+
+        #         print("logging color images")
+        #         self.rc.log(f"/{self.__class__.__name__}/color_image_1", out1.to_rerun())
+        #         self.rc.log(f"/{self.__class__.__name__}/color_image_2", out2.to_rerun())
+        #         self.rc.log(f"/{self.__class__.__name__}/color_image_3", out3.to_rerun())
+        #     except Exception as error:
+        #         print(f"""error = {error}""")
+
+        # print("camera subscribing")
+        # unsub = self.color_image.subscribe(_on_frame)
+        # self._disposables.add(Disposable(unsub))
 
     @rpc
     def stop(self) -> None:
         super().stop()
 
 
-cam_listener = CameraListener.blueprint()
-
-blueprint = (
-    autoconnect(
-        CameraModule.blueprint(),
-        cam_listener,
-        Dashboard.blueprint(
-            open_rerun=True,
-        ),
+if __name__ == "__main__":
+    cam_listener = CameraListener.blueprint()
+    cam_generator = CameraModule.blueprint()
+    blueprint = (
+        autoconnect(
+            cam_generator,
+            cam_listener,
+            Dashboard.blueprint(
+                open_rerun=True,
+            ),
+        )
+        # .transports({
+        #     ("color_image", Image): pSHMTransport("/cam/image")
+        #     ("dimos_dashboard__color_image", Tuple[Image, dict]): pSHMTransport("/cam/image_dashboard")
+        # })
+        .global_config(n_dask_workers=3)
     )
-    .transports({("color_image", Image): pSHMTransport("/cam/image")})
-    .global_config(n_dask_workers=3)
-)
-
-
-def main() -> None:
-    # Use the default webcam-based CameraModule, then tap its images with CameraListener.
-    # Force the image transport to shared memory to avoid LCM env issues.
     coordinator = blueprint.build()
     print("Webcam pipeline running. Press Ctrl+C to stop.")
     coordinator.loop()
-
-
-if __name__ == "__main__":
-    main()
