@@ -173,7 +173,7 @@ class MockSDK(BaseManipulatorSDK):
 # =============================================================================
 
 
-def test_connection(driver, hardware: bool) -> bool:
+def check_connection(driver, hardware: bool) -> bool:
     """Test that driver connects to hardware/mock."""
     print("Testing connection...")
 
@@ -190,7 +190,7 @@ def test_connection(driver, hardware: bool) -> bool:
     return True
 
 
-def test_read_joint_state(driver, hardware: bool) -> bool:
+def check_read_joint_state(driver, hardware: bool) -> bool:
     """Test reading joint state."""
     print("Testing read joint state...")
 
@@ -215,7 +215,7 @@ def test_read_joint_state(driver, hardware: bool) -> bool:
     return True
 
 
-def test_get_robot_state(driver, hardware: bool) -> bool:
+def check_get_robot_state(driver, hardware: bool) -> bool:
     """Test getting robot state."""
     print("Testing robot state...")
 
@@ -232,7 +232,7 @@ def test_get_robot_state(driver, hardware: bool) -> bool:
     return True
 
 
-def test_servo_enable_disable(driver, hardware: bool) -> bool:
+def check_servo_enable_disable(driver, hardware: bool) -> bool:
     """Test enabling and disabling servos."""
     print("Testing servo enable/disable...")
 
@@ -269,7 +269,7 @@ def test_servo_enable_disable(driver, hardware: bool) -> bool:
     return True
 
 
-def test_joint_limits(driver, hardware: bool) -> bool:
+def check_joint_limits(driver, hardware: bool) -> bool:
     """Test getting joint limits."""
     print("Testing joint limits...")
 
@@ -292,7 +292,7 @@ def test_joint_limits(driver, hardware: bool) -> bool:
     return True
 
 
-def test_stop_motion(driver, hardware: bool) -> bool:
+def check_stop_motion(driver, hardware: bool) -> bool:
     """Test stop motion command."""
     print("Testing stop motion...")
 
@@ -313,7 +313,7 @@ def test_stop_motion(driver, hardware: bool) -> bool:
     return True
 
 
-def test_small_motion(driver, hardware: bool) -> bool:
+def check_small_motion(driver, hardware: bool) -> bool:
     """Test a small joint motion (5 degrees on joint 1).
 
     WARNING: With --hardware, this MOVES the real robot!
@@ -513,18 +513,18 @@ def run_tests(
 
     # Define tests (stop_motion last since it leaves arm in stopped state)
     tests = [
-        ("connection", test_connection),
-        ("read_state", test_read_joint_state),
-        ("robot_state", test_get_robot_state),
-        ("joint_limits", test_joint_limits),
-        # ("servo", test_servo_enable_disable),
+        ("connection", check_connection),
+        ("read_state", check_read_joint_state),
+        ("robot_state", check_get_robot_state),
+        ("joint_limits", check_joint_limits),
+        # ("servo", check_servo_enable_disable),
     ]
 
     if not skip_motion:
-        tests.append(("motion", test_small_motion))
+        tests.append(("motion", check_small_motion))
 
     # Stop test always last (leaves arm in stopped state)
-    tests.append(("stop", test_stop_motion))
+    tests.append(("stop", check_stop_motion))
 
     # Run tests
     results = {}
