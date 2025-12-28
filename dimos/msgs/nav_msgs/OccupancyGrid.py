@@ -416,3 +416,38 @@ class OccupancyGrid(Timestamped):
             return CostValues.UNKNOWN
 
         return int(self.grid[y, x])
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format (grayscale visualization).
+
+        Returns:
+            rr.Image archetype for logging to rerun
+
+        The visualization uses:
+        - White (255) for free space (value 0)
+        - Gray (128) for unknown space (value -1)
+        - Black (0) for occupied space (value > 0)
+        - Gradient for cost values between 1-99
+        """
+        import rerun as rr
+
+        if self.grid.size == 0:
+            return rr.Image(np.zeros((1, 1), dtype=np.uint8), color_model="L")
+
+        # Create visualization array
+        vis = np.zeros((self.height, self.width), dtype=np.uint8)
+
+        # Free space = white
+        vis[self.grid == 0] = 255
+
+        # Unknown = gray
+        vis[self.grid == -1] = 128
+
+        # Occupied (100) = black, costs (1-99) = gradient
+        occupied_mask = self.grid > 0
+        if np.any(occupied_mask):
+            # Map 1-100 to 127-0 (darker = more occupied)
+            costs = self.grid[occupied_mask].astype(np.float32)
+            vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
+
+        return rr.Image(vis, color_model="L")
