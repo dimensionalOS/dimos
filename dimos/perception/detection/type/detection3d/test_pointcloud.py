@@ -57,14 +57,11 @@ def test_detection3dpc(detection3dpc) -> None:
 
     # def test_point_cloud_properties(detection3dpc):
     """Test point cloud data and boundaries."""
-    pc_points = detection3dpc.pointcloud.points()
-    assert len(pc_points) > 60
+    points = detection3dpc.pointcloud.as_numpy()
+    assert len(points) > 60
     assert detection3dpc.pointcloud.frame_id == "world", (
         f"Expected frame_id 'world', got '{detection3dpc.pointcloud.frame_id}'"
     )
-
-    # Extract xyz coordinates from points
-    points = np.array([[pt[0], pt[1], pt[2]] for pt in pc_points])
 
     min_pt = np.min(points, axis=0)
     max_pt = np.max(points, axis=0)
