@@ -17,12 +17,9 @@ from dimos.dashboard.module import Dashboard
 from dimos.hardware.camera.module import CameraModule
 
 if __name__ == "__main__":
-    blueprint = (
-        autoconnect(
-            CameraModule.blueprint(),
-            Dashboard.blueprint(),
-        )
-        .global_config(n_dask_workers=3)
-    )
+    blueprint = autoconnect(
+        CameraModule.blueprint(),
+        Dashboard.blueprint(),
+    ).global_config(n_dask_workers=3)
     coordinator = blueprint.build()
     coordinator.loop()

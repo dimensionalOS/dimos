@@ -17,15 +17,15 @@ import dataclasses
 import logging
 import multiprocessing as mp
 import os
-import tempfile
 from random import random
+import tempfile
 
 from reactivex.disposable import Disposable
 import rerun as rr  # pip install rerun-sdk
 import rerun.blueprint as rrb
 
-from dimos.core import Module, rpc, In
-from dimos.core.viz import VizMessageType, Viz
+from dimos.core import In, Module, rpc
+from dimos.core.viz import Viz, VizMessageType
 from dimos.dashboard.support.utils import (
     ensure_logger,
 )
@@ -34,12 +34,11 @@ from dimos.msgs.sensor_msgs.Image import Image
 # the types that are auto-rendered
 Viz.viz_auto_log_types.add(Image)
 
+
 # these should be args for the dashboard constructor, but its a pain to share data between modules
 # so right now they're just a function of ENV vars
 @dataclasses.dataclass
 class RerunConfig:
-    open_rerun: bool = False
-    open_browser: bool = False
     serve_web: bool = False
     web_port: int = 5555
     application_id: str = "dimos_main_rerun"
@@ -50,38 +49,46 @@ class RerunConfig:
 
 # there can only be one dashboard at a time (e.g. global dashboard_config is alright)
 class Dashboard(Module):
-    viz_auto_log_types = tuple() # disable auto-viz for this module
+    viz_auto_log_types = tuple()  # disable auto-viz for this module
     viz: In[VizMessageType]
-    
+
     def __init__(
         self,
         *,
+        open_rerun: bool = False,
+        open_browser: bool = False,
         rerun_config: RerunConfig = RerunConfig(),
         logger: logging.Logger | None = None,
     ) -> None:
         super().__init__()
+        self.open_rerun = open_rerun
+        self.open_browser = open_browser
         self.rerun_config = rerun_config
         self.logger = ensure_logger(logger, "dashboard")
 
     @rpc
     def start(self) -> None:
         self.logger.debug("[Dashboard] calling rr.init")
-        print(f'''self.rerun_config.application_id = {self.rerun_config.application_id}''')
-        rr.init(self.rerun_config.application_id, spawn=self.rerun_config.open_rerun, recording_id=self.rerun_config.recording_id)
+        print(f"""self.rerun_config.application_id = {self.rerun_config.application_id}""")
+        rr.init(
+            self.rerun_config.application_id,
+            spawn=self.open_rerun,
+            recording_id=self.rerun_config.recording_id,
+        )
         # get the rrd_url if it wasn't provided
         self.logger.debug("[Dashboard] starting rerun grpc")
         server_uri = rr.serve_grpc(
             grpc_port=self.rerun_config.grpc_port,
             server_memory_limit=self.rerun_config.server_memory_limit,
         )
-        if self.rerun_config.serve_web:
+        if self.open_browser or self.rerun_config.serve_web:
             rr.serve_web_viewer(
                 connect_to=server_uri,
-                open_browser=self.rerun_config.config.open_browser,
-                web_port=self.rerun_config.config.web_port,
+                open_browser=self.open_browser,
+                web_port=self.rerun_config.web_port,
             )
-            self.logger.info(f"Rerun web viewer serving on port {self.rerun_config.config.web_port}")
-        
+            self.logger.info(f"Rerun web viewer serving on port {self.rerun_config.web_port}")
+
         def _on_viz(msg) -> None:
             try:
                 value, address, metadata = msg
@@ -90,10 +97,13 @@ class Dashboard(Module):
                 rr_value = value.to_rerun(**kwargs_for_to_rerun)
                 rr.log(address, rr_value, **kwargs_for_rerun_log)
             except Exception as error:
-                self.logger.error(f"[Dashboard] Failed to receive viz message. Might be missing .to_rerun() method on data type: {error}")
-        
+                self.logger.error(
+                    f"[Dashboard] Failed to receive viz message. Might be missing .to_rerun() method on data type: {error}"
+                )
+
         self._disposables.add(Disposable(self.viz.subscribe(_on_viz)))
-        
+
+    @rpc
     @rr.shutdown_at_exit
     def stop(self) -> None:
         self.logger.info("Stopping dashboard server")
