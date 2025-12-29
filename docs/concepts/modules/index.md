@@ -17,11 +17,11 @@ it will by the end of this document.
 ```python output=assets/go2_basic.svg
 from dimos.core.introspection.blueprint import dot2
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic
-dot2.render_svg(basic, "go2_basic.svg")
+dot2.render_svg(basic, "assets/go2_basic.svg")
 ```
 
 <!--Result:-->
-![output](go2_basic.svg)
+![output](assets/go2_basic.svg)
 
 ## Camera Module
 
@@ -30,11 +30,10 @@ Let's learn how to build stuff like the above, starting with a simple camera mod
 ```python session=camera_module_demo output=assets/camera_module.svg
 from dimos.hardware.camera.module import CameraModule
 from dimos.core.introspection.module import dot
-dot.render_svg(CameraModule.module_info(), "camera_module.svg")
+dot.render_svg(CameraModule.module_info(), "assets/camera_module.svg")
 ```
 
-<!--Result:-->
-![output](camera_module.svg)
+
 
 We can always also print out Module I/O quickly into console via `.io()` call, we will do this from now on.
 
@@ -47,13 +46,14 @@ print(CameraModule.io())
 ┌┴─────────────┐
 │ CameraModule │
 └┬─────────────┘
- ├─ color_image: Image
- ├─ camera_info: CameraInfo
+ ├─ [93mcolor_image[0m: [92mImage[0m
+ ├─ [93mcamera_info[0m: [92mCameraInfo[0m
  │
- ├─ RPC start() -> str
- ├─ RPC stop() -> None
+ ├─ RPC [94mset_transport[0m(stream_name: [92mstr[0m, transport: [92mTransport[0m) -> [92mbool[0m
+ ├─ RPC [94mstart[0m() -> [92mstr[0m
+ ├─ RPC [94mstop[0m() -> [92mNone[0m
  │
- ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=assets/image)
+ ├─ Skill [96mvideo_stream[0m (stream=passive, reducer=latest_reducer, output=image)
 ```
 
 We can see that camera module outputs two streams:
@@ -83,11 +83,16 @@ camera.stop()
 
 <!--Result:-->
 ```
-Out color_image[Image] @ CameraModule
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:39)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:39)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:39)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:40)
+Out [94mcolor_image[Image][0m @ [92mCameraModule[0m
+<function Out.subscribe.<locals>.<lambda> at 0x7f3439ce2fc0>
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
+[2m2025-12-29T05:48:28.403054Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
+[2m2025-12-29T05:48:28.609584Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
+[2m2025-12-29T05:48:28.814366Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
+[2m2025-12-29T05:48:29.019135Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
 ```
 
 ## Connecting modules
@@ -101,18 +106,19 @@ print(Detection2DModule.io())
 
 <!--Result:-->
 ```
- ├─ image: Image
+ ├─ [93mimage[0m: [92mImage[0m
 ┌┴──────────────────┐
 │ Detection2DModule │
 └┬──────────────────┘
- ├─ detections: Detection2DArray
- ├─ annotations: ImageAnnotations
- ├─ detected_image_0: Image
- ├─ detected_image_1: Image
- ├─ detected_image_2: Image
+ ├─ [93mdetections[0m: [92mDetection2DArray[0m
+ ├─ [93mannotations[0m: [92mImageAnnotations[0m
+ ├─ [93mdetected_image_0[0m: [92mImage[0m
+ ├─ [93mdetected_image_1[0m: [92mImage[0m
+ ├─ [93mdetected_image_2[0m: [92mImage[0m
  │
- ├─ RPC start() -> None
- ├─ RPC stop() -> None
+ ├─ RPC [94mset_transport[0m(stream_name: [92mstr[0m, transport: [92mTransport[0m) -> [92mbool[0m
+ ├─ RPC [94mstart[0m() -> [92mNone[0m
+ ├─ RPC [94mstop[0m() -> [92mNone[0m
 ```
 
 TODO: add easy way to print config
@@ -164,8 +170,5 @@ Basic unitree go2 blueprint looks like what we saw before,
 from dimos.core.introspection.blueprint import dot2, LayoutAlgo
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, agentic
 
-dot2.render_svg(agentic, "go2_agentic.svg")
+dot2.render_svg(agentic, "assets/go2_agentic.svg")
 ```
-
-<!--Result:-->
-![output](go2_agentic.svg)

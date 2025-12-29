@@ -43,29 +43,6 @@ In a robot:
 
 Each sensor, joint, and reference point has its own frame.
 
-## Why Do We Need Transforms?
-
-Because you constantly need to answer questions like:
-- "The camera sees an obstacle 2m ahead—will the robot body collide with it?"
-- "Where should the gripper go to pick up the object the camera detected?"
-- "The LIDAR sees a wall on the left—where is that relative to the navigation planner's map?"
-
-A **transform** is the mathematical bridge between two frames. It encodes: "Frame B is located at position (x, y, z) and rotated by (roll, pitch, yaw) relative to Frame A."
-
-With transforms, you can take a point measured in one frame and convert it to any other frame. The camera says "object 1.2m ahead of me" → transform tells you "that's 1.7m ahead of the robot base, because the camera is mounted 0.5m forward."
-
-## How Frames Connect
-
-Transforms form a **tree structure** where frames are connected by parent-child relationships:
-
-```
-world
-  └── base_link
-        ├── camera_link
-        │     └── camera_optical
-        └── lidar_link
-```
-
 ## The Transform Class
 
 The `Transform` class at [`Transform.py`](/dimos/msgs/geometry_msgs/Transform.py#L21) represents a spatial transformation with:
@@ -341,6 +318,9 @@ LCMTF(1 buffers):
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.
 
 ## Further Reading
+
+For a visual introduction to transforms and coordinate frames:
+- [Coordinate Transforms (YouTube)](https://www.youtube.com/watch?v=NGPn9nvLPmg)
 
 For the mathematical foundations, the ROS documentation provides detailed background:
 
