@@ -61,11 +61,11 @@ More information on this in [doclinks](/docs/agents/docs_agent/doclinks.md)
 color = white
 fill = none
 
-A: box "Step 1" rad 5px fit wid 130% ht 140%
+A: box "Step 1" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
-B: box "Step 2" rad 5px fit wid 130% ht 140%
+B: box "Step 2" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
-C: box "Step 3" rad 5px fit wid 130% ht 140%
+C: box "Step 3" rad 5px fit wid 170% ht 170%
 ```
 
 <!--Result:-->
@@ -79,12 +79,12 @@ Use `fit` with percentage scaling to auto-size boxes with padding:
 color = white
 fill = none
 
-# fit wid 130% ht 140% = auto-size + padding
-A: box "short" rad 5px fit wid 130% ht 140%
+# fit wid 170% ht 170% = auto-size + padding
+A: box "short" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
-B: box ".subscribe()" rad 5px fit wid 130% ht 140%
+B: box ".subscribe()" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
-C: box "two lines" "of text" rad 5px fit wid 130% ht 130%
+C: box "two lines" "of text" rad 5px fit wid 170% ht 170%
 ```
 
 <!--Result:-->
@@ -136,6 +136,8 @@ D: box "Path B" rad 5px fit wid 170% ht 170%
 
 <!--Result:-->
 ![output](assets/pikchr_branch.svg)
+
+**Tip:** For tree/hierarchy diagrams, prefer left-to-right layout (root on left, children branching right). This reads more naturally and avoids awkward vertical stacking.
 
 ## Adding labels
 

@@ -13,14 +13,32 @@ To convert camera measurements to arm coordinates, you need to know:
 
 This chain of conversions—(pixels + depth) → 3D point in camera frame → robot coordinates—is what **transforms** handle.
 
+```pikchr output=assets/transforms_tree.svg
+color = white
+fill = none
+
+# Root (left side)
+W: box "world" rad 5px fit wid 170% ht 170%
+arrow right 0.4in
+RB: box "robot_base" rad 5px fit wid 170% ht 170%
+
+# Camera branch (top)
+arrow from RB.e right 0.3in then up 0.4in then right 0.3in
+CL: box "camera_link" rad 5px fit wid 170% ht 170%
+arrow right 0.4in
+CO: box "camera_optical" rad 5px fit wid 170% ht 170%
+text "mug here" small italic at (CO.s.x, CO.s.y - 0.25in)
+
+# Arm branch (bottom)
+arrow from RB.e right 0.3in then down 0.4in then right 0.3in
+AB: box "arm_base" rad 5px fit wid 170% ht 170%
+arrow right 0.4in
+GR: box "gripper" rad 5px fit wid 170% ht 170%
+text "target here" small italic at (GR.s.x, GR.s.y - 0.25in)
 ```
-world
-  └── robot_base
-        ├── camera_link
-        │     └── camera_optical ← mug at (0.3, 0.1, 1.2)m from camera
-        └── arm_base
-              └── gripper ← needs target here to pick up mug
-```
+
+<!--Result:-->
+![output](assets/transforms_tree.svg)
 
 Each arrow in this tree is a transform. To get the mug's position in gripper coordinates, you chain transforms through their common parent: camera → robot_base → arm → gripper.
 
@@ -274,9 +292,19 @@ The [`hardware/camera/module.py`](/dimos/hardware/camera/module.py) demonstrates
 
 This creates the transform chain:
 
+```pikchr output=assets/transforms_chain.svg
+color = white
+fill = none
+
+A: box "base_link" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+B: box "camera_link" rad 5px fit wid 170% ht 170%
+arrow right 0.3in
+C: box "camera_optical" rad 5px fit wid 170% ht 170%
 ```
-base_link -> camera_link -> camera_optical
-```
+
+<!--Result:-->
+![output](assets/transforms_chain.svg)
 
 ## Transform Buffers
 
@@ -312,7 +340,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 LCMTF(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 12:26:10 - 2025-12-29 12:26:10])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 14:39:48 - 2025-12-29 14:39:49])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

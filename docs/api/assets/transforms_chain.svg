@@ -1,0 +1,12 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 674.911 55.728">
+<path d="M9.66,53.568L148.394,53.568A7.5 7.5 0 0 0 155.894 46.068L155.894,9.66A7.5 7.5 0 0 0 148.394 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,46.068A7.5 7.5 0 0 0 9.66 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="79.0272" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">base_link</text>
+<polygon points="199.094,27.864 187.574,32.184 187.574,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M155.894,27.864L193.334,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M206.594,53.568L385.084,53.568A7.5 7.5 0 0 0 392.584 46.068L392.584,9.66A7.5 7.5 0 0 0 385.084 2.16L206.594,2.16A7.5 7.5 0 0 0 199.094 9.66L199.094,46.068A7.5 7.5 0 0 0 206.594 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="295.839" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera_link</text>
+<polygon points="435.784,27.864 424.264,32.184 424.264,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M392.584,27.864L430.024,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M443.284,53.568L665.251,53.568A7.5 7.5 0 0 0 672.751 46.068L672.751,9.66A7.5 7.5 0 0 0 665.251 2.16L443.284,2.16A7.5 7.5 0 0 0 435.784 9.66L435.784,46.068A7.5 7.5 0 0 0 443.284 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="554.268" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera_optical</text>
+</svg>

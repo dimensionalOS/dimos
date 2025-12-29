@@ -1,0 +1,26 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 913.882 220.032">
+<path d="M9.66,111.168L95.7134,111.168A7.5 7.5 0 0 0 103.213 103.668L103.213,67.26A7.5 7.5 0 0 0 95.7134 59.76L9.66,59.76A7.5 7.5 0 0 0 2.16 67.26L2.16,103.668A7.5 7.5 0 0 0 9.66 111.168Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="52.6867" y="85.464" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">world</text>
+<polygon points="160.813,85.464 149.293,89.784 149.293,81.144" style="fill:rgb(255,255,255)"/>
+<path d="M103.213,85.464L155.053,85.464"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M168.313,111.168L329.765,111.168A7.5 7.5 0 0 0 337.265 103.668L337.265,67.26A7.5 7.5 0 0 0 329.765 59.76L168.313,59.76A7.5 7.5 0 0 0 160.813 67.26L160.813,103.668A7.5 7.5 0 0 0 168.313 111.168Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="249.039" y="85.464" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">robot_base</text>
+<polygon points="423.665,27.864 412.145,32.184 412.145,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M337.265,85.464L380.465,85.464L380.465,27.864L417.905,27.864"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M431.165,53.568L609.655,53.568A7.5 7.5 0 0 0 617.155 46.068L617.155,9.66A7.5 7.5 0 0 0 609.655 2.16L431.165,2.16A7.5 7.5 0 0 0 423.665 9.66L423.665,46.068A7.5 7.5 0 0 0 431.165 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="520.41" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera_link</text>
+<polygon points="674.755,27.864 663.235,32.184 663.235,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M617.155,27.864L668.995,27.864"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M682.255,53.568L904.222,53.568A7.5 7.5 0 0 0 911.722 46.068L911.722,9.66A7.5 7.5 0 0 0 904.222 2.16L682.255,2.16A7.5 7.5 0 0 0 674.755 9.66L674.755,46.068A7.5 7.5 0 0 0 682.255 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="793.238" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">camera_optical</text>
+<text x="793.238" y="89.568" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" font-size="80%" dominant-baseline="central">mug here</text>
+<polygon points="423.665,143.064 412.145,147.384 412.145,138.744" style="fill:rgb(255,255,255)"/>
+<path d="M337.265,85.464L380.465,85.464L380.465,143.064L417.905,143.064"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M431.165,168.768L572.837,168.768A7.5 7.5 0 0 0 580.337 161.268L580.337,124.86A7.5 7.5 0 0 0 572.837 117.36L431.165,117.36A7.5 7.5 0 0 0 423.665 124.86L423.665,161.268A7.5 7.5 0 0 0 431.165 168.768Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="502.001" y="143.064" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">arm_base</text>
+<polygon points="637.937,143.064 626.417,147.384 626.417,138.744" style="fill:rgb(255,255,255)"/>
+<path d="M580.337,143.064L632.177,143.064"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M645.437,168.768L756.95,168.768A7.5 7.5 0 0 0 764.45 161.268L764.45,124.86A7.5 7.5 0 0 0 756.95 117.36L645.437,117.36A7.5 7.5 0 0 0 637.937 124.86L637.937,161.268A7.5 7.5 0 0 0 645.437 168.768Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="701.194" y="143.064" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">gripper</text>
+<text x="701.194" y="204.768" text-anchor="middle" font-style="italic" fill="rgb(255,255,255)" font-size="80%" dominant-baseline="central">target here</text>
+</svg>
