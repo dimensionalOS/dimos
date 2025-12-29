@@ -18,12 +18,14 @@ import time
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
+import rerun as rr
 from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
@@ -106,7 +108,10 @@ class VoxelGridMapper(Module):
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
-        self.global_map.publish(self.get_global_pointcloud2())
+        pc = self.get_global_pointcloud2()
+        self.global_map.publish(pc)
+        # Log map points (transform is set statically by GO2Connection)
+        rr.log("world/map", pc.to_rerun())
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]
