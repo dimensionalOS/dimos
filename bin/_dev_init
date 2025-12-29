@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+
+# TODO: combine this script into bin/dev, let bin/dev handle choosing between docker/nix/manual setup
+
+# summary:
+#   This script should be run after:
+#   1. all system dependencies are installed (e.g. after `nix develop` or manual installation)
+#   2. the project is cloned
+#   This script is designed to be user-interactive
+#   It handles setting up a python virtual environment, git lfs installing python dependencies, and running tests
+
+PROJECT_ROOT=$(git rev-parse --show-toplevel)
+cd "$PROJECT_ROOT"
+
+cyan="$(printf '%b' "\e[0;36m")"
+light_green="$(printf '%b' "\e[0;1;32m")"
+color_reset="$(printf '%b' "\e[0m")"
+red="$(printf '%b' "\e[0;31m")"
+newline="$(printf "\n")"
+
+# helper
+confirm_ask() {
+    echo
+    echo
+    question="$1";answer=""
+    while true; do
+        echo $light_green"$question"$color_reset; read response
+        if [ -z "$response" ]; then
+            echo
+            return 0 # success
+            break
+        fi
+        case "$response" in
+            [Yy]* ) answer='yes'; break;;
+            [Nn]* ) answer='no'; break;;
+            * ) echo "Please answer yes or no.";;
+        esac
+    done
+    if [ "$answer" = "yes" ]; then
+        echo
+        return 0 # success
+    fi
+    echo
+    return 1 # failure
+}
+
+macos_version="$(sw_vers -productVersion 2>/dev/null || echo "0.0")"
+macos_major_version="''${macos_version%%.*}"
+echo $light_green"Making sure git lfs is installed..."$color_reset
+git lfs install --skip-smudge
+
+if confirm_ask "Should I donwload the models and data? (around 17Gb) this will be needed to run the simulation [y/n]"; then
+    echo "Downloading the models and data..."
+    git lfs fetch --all
+    git lfs pull
+    echo "Done!"
+fi
+
+# check if no .env
+if ! [ -f ".env" ]
+then
+    echo "Setting up .env file..."
+    cp default.env .env
+    echo
+    echo "note: you might want to edit the .env file with your own settings"
+    echo
+fi
+
+echo $light_green"Setting up virtualenv..."$color_reset
+python3 -m venv venv
+echo "Activating virtualenv..."
+. venv/bin/activate
+echo "Installing python dependencies..."
+pip install -e .
+
+# if really old MacOS then ignore the lcm dependency (it'll be supplied by nix)
+if [ "$(uname)" = "Darwin" ] && [ "$macos_major_version" -le 13 ]; then
+    echo "You're on a really old MacOS version. Ignore the errors above (and probably later below) about LCM"
+    echo "Got it? (press enter)";read _
+    rm -f pyproject.original.toml
+    cp pyproject.toml pyproject.original.toml
+    # install dimos-lcm without installing lcm
+    pip install --no-deps 'git+https://github.com/dimensionalOS/dimos-lcm.git'
+    # manually install dependencies of dimos-lcm
+    pip install foxglove-websocket numpy
+    # remove dimos-lcm from pyproject.toml for a moment
+    grep -v '^\s*#' pyproject.original.toml | grep -v "dimos-lcm @ .*"  | grep -v "opencv-python"  > pyproject.toml
+    pip install -e '.[cpu,dev,sim]' 2>&1 | grep -v -E "Could not find a version that satisfies the requirement lcm |ERROR: No matching distribution found for lcm"
+    # restore pyproject.toml
+    rm -f pyproject.toml
+    mv pyproject.original.toml pyproject.toml
+fi
+
+# CUDA/CPU dependencies
+if ! [ "$(uname)" = "Darwin" ] && confirm_ask "Want me to install the cuda dependencies? [y/n]"; then
+    # get around weird "pytorch not found" error that seems to be a detection2 issue (how did that install ever work?)
+    pip install 'detectron2 @ git+https://github.com/facebookresearch/detectron2.git@v0.6' --no-build-isolation
+
+    rm -f pyproject.original.toml
+    cp pyproject.toml pyproject.original.toml
+    # for just a moment, remove facebookresearch/detectron2 from pyproject.toml
+    grep -v '^\s*#' pyproject.original.toml | grep -v "facebookresearch/detectron2" > pyproject.toml
+    pip install -e '.[cuda,dev]'
+    # restore pyproject.toml
+    rm -f pyproject.toml
+    mv pyproject.original.toml pyproject.toml
+else
+    echo "installing CPU dependencies"
+    pip install -e '.[cpu,dev]'
+fi
+
+# Mujoco/Simulation dependencies
+if confirm_ask "Want me to install the optional simulation (mujoco) dependencies? [y/n]"; then
+    pip install -e '.[sim]'
+fi
+
+if confirm_ask "Would you like me to run the tests to make sure everything is working? [y/n]"; then
+    echo "Running tests..."
+    echo "$cyan    "'python -m pytest -s "./dimos/"'$color_reset
+    python -m pytest -s "$PROJECT_ROOT/dimos/" && echo "${light_green}${newline}tests finished${color_reset}"
+fi
+
+echo
+echo
+echo $light_green"here's the main example command to run:"$color_reset
+echo "$cyan    dimos --replay run unitree-go2 $color_reset"
+echo
