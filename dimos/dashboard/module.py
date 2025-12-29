@@ -29,10 +29,12 @@ from dimos.core.viz import Viz, VizMessageType
 from dimos.dashboard.support.utils import (
     ensure_logger,
 )
+from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs.Image import Image
 
 # the types that are auto-rendered
 Viz.viz_auto_log_types.add(Image)
+Viz.viz_auto_log_types.add(PoseStamped)
 
 
 # these should be args for the dashboard constructor, but its a pain to share data between modules
@@ -69,7 +71,6 @@ class Dashboard(Module):
     @rpc
     def start(self) -> None:
         self.logger.debug("[Dashboard] calling rr.init")
-        print(f"""self.rerun_config.application_id = {self.rerun_config.application_id}""")
         rr.init(
             self.rerun_config.application_id,
             spawn=self.open_rerun,
@@ -91,6 +92,7 @@ class Dashboard(Module):
 
         def _on_viz(msg) -> None:
             try:
+                print("_on_viz")
                 value, address, metadata = msg
                 kwargs_for_to_rerun = metadata.get("to_rerun", {})
                 kwargs_for_rerun_log = metadata.get("rerun_log", {})
