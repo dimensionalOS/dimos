@@ -23,7 +23,7 @@ from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex import create
 from reactivex.observable import Observable
 
-from dimos.hardware.camera.spec import CameraConfig, CameraHardware
+from dimos.hardware.sensors.camera.spec import CameraConfig, CameraHardware
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.utils.reactive import backpressure

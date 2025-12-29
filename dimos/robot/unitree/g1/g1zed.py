@@ -16,9 +16,9 @@ from typing import TypedDict, cast
 
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core import DimosCluster, LCMTransport, pSHMTransport
-from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import CameraModule
-from dimos.hardware.camera.webcam import Webcam
+from dimos.hardware.sensors.camera import zed
+from dimos.hardware.sensors.camera.module import CameraModule
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import (
     Quaternion,
     Transform,
