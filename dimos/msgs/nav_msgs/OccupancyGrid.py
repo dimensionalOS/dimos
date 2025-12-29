@@ -501,7 +501,8 @@ class OccupancyGrid(Timestamped):
             if np.any(unknown_mask):
                 vis[unknown_mask] = [128, 128, 128, 100]  # Semi-transparent gray
 
-            return rr.Image(vis, color_model="RGBA")
+            # Flip vertically to match world coordinates (y=0 at bottom)
+            return rr.Image(np.flipud(vis), color_model="RGBA")
         else:
             # Grayscale visualization
             vis = np.zeros((self.height, self.width), dtype=np.uint8)
@@ -519,7 +520,8 @@ class OccupancyGrid(Timestamped):
                 costs = self.grid[occupied_mask].astype(np.float32)
                 vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
 
-            return rr.Image(vis, color_model="L")
+            # Flip vertically to match world coordinates (y=0 at bottom)
+            return rr.Image(np.flipud(vis), color_model="L")
 
     def _to_rerun_points(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
         """Convert to 3D points for occupied cells."""
