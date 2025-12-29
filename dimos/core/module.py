@@ -36,7 +36,7 @@ from dimos.core.core import T, rpc
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
-from dimos.core.viz import VizMessageType, Viz
+from dimos.core.viz import Viz, VizMessageType
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.rpc import LCMRPC, RPCSpec
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
@@ -45,6 +45,7 @@ from dimos.protocol.tf import LCMTF, TFSpec
 from dimos.utils.generic import classproperty
 
 logger = logging.getLogger(__name__)
+
 
 def get_loop() -> tuple[asyncio.AbstractEventLoop, threading.Thread | None]:
     # we are actually instantiating a new loop here
@@ -83,6 +84,7 @@ class ModuleConfig:
 
 
 ModuleConfigT = TypeVar("ModuleConfigT", bound=ModuleConfig, default=ModuleConfig)
+
 
 class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource, Viz):
     _rpc: RPCSpec | None = None
@@ -291,6 +293,7 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource, Viz):
         result = tuple(self._bound_rpc_calls[m] for m in methods)
         return result[0] if len(result) == 1 else result
 
+
 class DaskModule(ModuleBase[ModuleConfigT]):
     ref: Actor
     worker: int
@@ -304,7 +307,7 @@ class DaskModule(ModuleBase[ModuleConfigT]):
         """
         super().__init_subclass__(**kwargs)
         cls._viz_attach_channel()
-        
+
         # Get type hints for this class only (not inherited ones).
         globalns = {}
         for c in cls.__mro__:
@@ -315,7 +318,7 @@ class DaskModule(ModuleBase[ModuleConfigT]):
             hints = get_type_hints(cls, globalns=globalns, include_extras=True)
         except (NameError, AttributeError, TypeError):
             hints = {}
-        
+
         for name, ann in hints.items():
             origin = get_origin(ann)
             if origin in (In, Out):
