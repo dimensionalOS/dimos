@@ -109,9 +109,9 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
         self.tf.publish(camera_link, camera_optical)
 
     def camera_info_stream(self, frequency: float = 1.0) -> Observable[CameraInfo]:
-        def camera_info(_) -> CameraInfo:  # type: ignore[no-untyped-def]
-            self.hardware.camera_info.ts = time.time()  # type: ignore[union-attr]
-            return self.hardware.camera_info  # type: ignore[union-attr]
+        def camera_info(_) -> CameraInfo:
+            self.hardware.camera_info.ts = time.time()
+            return self.hardware.camera_info
 
         return rx.interval(1.0 / frequency).pipe(ops.map(camera_info))
 

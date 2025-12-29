@@ -30,13 +30,22 @@ from dimos.msgs.sensor_msgs.Image import ImageFormat
 from dimos.utils.reactive import backpressure
 
 
+# TODO: probably should put this into dimos-lcm. Not sure why CameraInfo doesn't have a ts field
+class CameraInfoWithTs(CameraInfo):
+    ts: float | None = None
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.ts = None
+
+
 @dataclass
 class WebcamConfig(CameraConfig):
     camera_index: int = 0  # /dev/videoN
     frame_width: int = 640
     frame_height: int = 480
     frequency: int = 15
-    camera_info: CameraInfo = field(default_factory=CameraInfo)
+    camera_info: CameraInfoWithTs = field(default_factory=CameraInfoWithTs)
     frame_id_prefix: str | None = None
     stereo_slice: Literal["left", "right"] | None = None  # For stereo cameras
 
