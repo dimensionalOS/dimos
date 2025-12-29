@@ -20,9 +20,7 @@ if __name__ == "__main__":
     blueprint = (
         autoconnect(
             CameraModule.blueprint(),
-            Dashboard.blueprint(
-                open_rerun=True,
-            ),
+            Dashboard.blueprint(),
         )
         .global_config(n_dask_workers=3)
     )

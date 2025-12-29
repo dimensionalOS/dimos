@@ -1,3 +1,3 @@
-from dimos.dashboard.module import Dashboard, RerunConnection
+from dimos.dashboard.module import Dashboard
 
-__all__ = ["Dashboard", "RerunConnection"]
+__all__ = ["Dashboard"]

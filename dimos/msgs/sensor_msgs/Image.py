@@ -402,7 +402,7 @@ class Image(Timestamped):
         """Convert to a Rerun image (RGB numpy array)."""
         if hasattr(self._impl, "to_rerun"):
             return self._impl.to_rerun()
-        return rr.Image(self.to_rgb().to_opencv())
+        return rr.Image(self.to_bgr().to_opencv(), color_model="BGR")
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: str | None = None) -> bytes:

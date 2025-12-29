@@ -120,12 +120,8 @@ class Webcam(CameraHardware[WebcamConfig]):
             raise RuntimeError(f"Failed to read frame from camera {self.config.camera_index}")
 
         # Convert BGR to RGB (OpenCV uses BGR by default)
-        # conversion not needed on macOS for some reason
-        if platform.system() == "Darwin":
-            frame_rgb = frame
-        else:
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        
         # Create Image message
         # Using Image.from_numpy() since it's designed for numpy arrays
         # Setting format to RGB since we converted from BGR->RGB above
