@@ -26,7 +26,6 @@ from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.dashboard.module import RerunConnection
 from dimos.dashboard.support.colors import color_by_height
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
@@ -182,19 +181,17 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     def start(self) -> None:
         super().start()
 
-        self.rc = RerunConnection()
-
         def _log_and_publish_lidar(msg: LidarMessage) -> None:
             self.lidar.publish(msg)
-            self.rc.log("go2_lidar", msg.to_rerun(color_func=color_by_height))
+            # rr.log("go2_lidar", msg.to_rerun(color_func=color_by_height))
 
         def _log_and_publish_image(img: Image) -> None:
             self.color_image.publish(img)
-            self.rc.log("go2_video", img.to_rerun())
+            # rr.log("go2_video", img.to_rerun())
 
         def _log_and_publish_odom(msg: PoseStamped) -> None:
             self._publish_tf(msg)
-            self.rc.log("go2_odom", msg.to_rerun())
+            # rr.log("go2_odom", msg.to_rerun())
 
         self.connection.start()
 

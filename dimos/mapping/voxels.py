@@ -25,7 +25,6 @@ import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.dashboard import RerunConnection
 from dimos.dashboard.support.colors import color_by_height
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -80,7 +79,6 @@ class VoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
-        self.rc = RerunConnection()
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()
         self._disposables.add(
@@ -209,15 +207,15 @@ class VoxelGridMapper(Module):
         if pcd.is_empty():
             return
 
-        positions = pcd.point["positions"].cpu().numpy()
-        self.rc.log(
-            "global_map",
-            rr.Points3D(
-                positions,
-                colors=color_by_height(positions, colormap="turbo"),
-                radii=self.config.voxel_size * 0.5,
-            ),
-        )
+        pcd.point["positions"].cpu().numpy()
+        # rr.log(
+        #     "global_map",
+        #     rr.Points3D(
+        #         positions,
+        #         colors=color_by_height(positions, colormap="turbo"),
+        #         radii=self.config.voxel_size * 0.5,
+        #     ),
+        # )
 
 
 def ensure_tensor_pcd(

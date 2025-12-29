@@ -28,7 +28,6 @@ import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
-from dimos.dashboard.module import RerunConnection
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped
@@ -116,8 +115,6 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
         # Recovery server for stuck detection
         self.recovery_server = RecoveryServer(stuck_duration=5.0)
 
-        self.rc: RerunConnection | None = None
-
         logger.info("Navigator initialized with stuck detection")
 
     @rpc
@@ -133,8 +130,6 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
-
-        self.rc = RerunConnection()
 
         # Subscribe to inputs
         unsub = self.odom.subscribe(self._on_odom)
@@ -315,7 +310,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                         )
                         self.target.publish(safe_goal)
                         self.current_goal = safe_goal
-                        self.rc.log("global_target", safe_goal.to_rerun())
+                        # rr.log("global_target", safe_goal.to_rerun())
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
                         self.cancel_goal()

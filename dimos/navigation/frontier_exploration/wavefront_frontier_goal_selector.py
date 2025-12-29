@@ -30,7 +30,6 @@ from reactivex.disposable import Disposable
 import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
-from dimos.dashboard.module import RerunConnection
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.nav_msgs import CostValues, OccupancyGrid
@@ -151,15 +150,11 @@ class WavefrontFrontierExplorer(Module):
         self.exploration_thread: threading.Thread | None = None
         self.stop_event = threading.Event()
 
-        self.rc: RerunConnection | None = None
-
         logger.info("WavefrontFrontierExplorer module initialized")
 
     @rpc
     def start(self) -> None:
         super().start()
-
-        self.rc = RerunConnection()
 
         unsub = self.global_costmap.subscribe(self._on_costmap)
         self._disposables.add(Disposable(unsub))
@@ -783,7 +778,7 @@ class WavefrontFrontierExplorer(Module):
                 goal_msg.ts = self.latest_costmap.ts
 
                 self.goal_request.publish(goal_msg)
-                self.rc.log("global_target", goal_msg.to_rerun())
+                # rr.log("global_target", goal_msg.to_rerun())
                 logger.info(f"Published frontier goal: ({goal.x:.2f}, {goal.y:.2f})")
 
                 goals_published += 1
