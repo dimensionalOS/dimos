@@ -13,16 +13,19 @@
 # limitations under the License.
 
 import logging
+from pathlib import Path
 from threading import Thread
 import time
 from typing import Any, Protocol
 
+import rerun as rr
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -39,6 +42,9 @@ from dimos.utils.logging_config import setup_logger
 from dimos.utils.testing import TimedSensorReplay, TimedSensorStorage
 
 logger = setup_logger(level=logging.INFO)
+
+# URDF path for Go2 robot
+_GO2_URDF = Path(__file__).parent.parent / "go2" / "go2.urdf"
 
 
 class Go2ConnectionProtocol(Protocol):
@@ -179,8 +185,12 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
+        # Initialize Rerun and load URDF
+        self._init_rerun()
+
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
+            rr.log("world/robot/camera/rgb", image.to_rerun())
 
         def onodom(odom: PoseStamped) -> None:
             self._publish_tf(odom)
@@ -198,6 +208,51 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.standup()
         # self.record("go2_bigoffice")
+
+    def _init_rerun(self) -> None:
+        """Set up Rerun visualization (world frame, URDF, camera)."""
+        import rerun.blueprint as rrb
+
+        # Set up world coordinate system AND register it as a named frame
+        # This is KEY - it connects entity paths to the named frame system
+        rr.log(
+            "world",
+            rr.ViewCoordinates.RIGHT_HAND_Z_UP,
+            rr.CoordinateFrame("world"),
+            static=True,
+        )
+
+        # Bridge the named frame "world" to the implicit frame hierarchy "tf#/world"
+        # This connects TF named frames to entity path hierarchy
+        rr.log(
+            "world",
+            rr.Transform3D(
+                parent_frame="world",
+                child_frame="tf#/world",
+            ),
+            static=True,
+        )
+
+        # Load robot URDF
+        if _GO2_URDF.exists():
+            rr.log_file_from_path(
+                str(_GO2_URDF),
+                entity_path_prefix="world/robot",
+                static=True,
+            )
+            logger.info(f"Loaded URDF from {_GO2_URDF}")
+
+        # Log static camera pinhole (for frustum)
+        rr.log("world/robot/camera", _camera_info_static().to_rerun(), static=True)
+
+        # Send blueprint with 3D view origin set to "world" entity
+        blueprint = rrb.Blueprint(
+            rrb.Spatial3DView(
+                name="3D View",
+                origin="world",
+            ),
+        )
+        rr.send_blueprint(blueprint)
 
     @rpc
     def stop(self) -> None:
@@ -254,9 +309,46 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:
-        self.tf.publish(*self._odom_to_tf(msg))
+        transforms = self._odom_to_tf(msg)
+        self.tf.publish(*transforms)
         if self.odom.transport:
             self.odom.publish(msg)
+
+        # Log to Rerun: robot pose (relative to parent entity "world")
+        rr.log(
+            "world/robot",
+            rr.Transform3D(
+                translation=[msg.x, msg.y, msg.z],
+                rotation=rr.Quaternion(
+                    xyzw=[
+                        msg.orientation.x,
+                        msg.orientation.y,
+                        msg.orientation.z,
+                        msg.orientation.w,
+                    ]
+                ),
+            ),
+        )
+        # Log axes as a child entity for visualization
+        rr.log("world/robot/axes", rr.TransformAxes3D(0.5))
+
+        # Log camera transform (compose base_link -> camera_link -> camera_optical)
+        # transforms[1] is camera_link, transforms[2] is camera_optical
+        cam_tf = transforms[1] + transforms[2]  # compose transforms
+        rr.log(
+            "world/robot/camera",
+            rr.Transform3D(
+                translation=[cam_tf.translation.x, cam_tf.translation.y, cam_tf.translation.z],
+                rotation=rr.Quaternion(
+                    xyzw=[
+                        cam_tf.rotation.x,
+                        cam_tf.rotation.y,
+                        cam_tf.rotation.z,
+                        cam_tf.rotation.w,
+                    ]
+                ),
+            ),
+        )
 
     def publish_camera_info(self) -> None:
         while True:

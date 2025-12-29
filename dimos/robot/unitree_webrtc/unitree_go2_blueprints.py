@@ -31,7 +31,6 @@ from dimos.agents.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
-from dimos.dashboard.rerun_module import rerun_module
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
 from dimos.msgs.sensor_msgs import Image, PointCloud2
@@ -74,7 +73,6 @@ linux = autoconnect(foxglove_bridge())
 
 basic = autoconnect(
     go2_connection(),
-    rerun_module(urdf_path="unitree_go2"),
     linux if platform.system() == "Linux" else mac,
     websocket_vis(),
 ).global_config(n_dask_workers=4, robot_model="unitree_go2")

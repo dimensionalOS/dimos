@@ -14,10 +14,12 @@
 
 from dataclasses import asdict, dataclass, field
 
+import rerun as rr
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
+from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,
@@ -45,12 +47,14 @@ class CostMapper(Module):
     def start(self) -> None:
         super().start()
 
+        def _publish_costmap(grid: OccupancyGrid) -> None:
+            self.global_costmap.publish(grid)
+            rr.log("world/nav/costmap", grid.to_rerun())
+
         self._disposables.add(
             self.global_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.map(self._calculate_costmap))
-            .subscribe(
-                self.global_costmap.publish,
-            )
+            .subscribe(_publish_costmap)
         )
 
     @rpc
