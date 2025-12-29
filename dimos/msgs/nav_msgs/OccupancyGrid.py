@@ -554,7 +554,9 @@ class OccupancyGrid(Timestamped):
         else:
             # Default: red gradient based on cost
             intensity = (costs / 100.0 * 255).astype(np.uint8)
-            point_colors = np.column_stack([intensity, np.zeros_like(intensity), np.zeros_like(intensity)])
+            point_colors = np.column_stack(
+                [intensity, np.zeros_like(intensity), np.zeros_like(intensity)]
+            )
 
         return rr.Points3D(
             positions=points,
@@ -573,18 +575,24 @@ class OccupancyGrid(Timestamped):
         h = self.height * self.resolution
 
         # Mesh vertices (4 corners of the grid)
-        vertices = np.array([
-            [ox, oy, z_offset],           # bottom-left
-            [ox + w, oy, z_offset],       # bottom-right
-            [ox + w, oy + h, z_offset],   # top-right
-            [ox, oy + h, z_offset],       # top-left
-        ], dtype=np.float32)
+        vertices = np.array(
+            [
+                [ox, oy, z_offset],  # bottom-left
+                [ox + w, oy, z_offset],  # bottom-right
+                [ox + w, oy + h, z_offset],  # top-right
+                [ox, oy + h, z_offset],  # top-left
+            ],
+            dtype=np.float32,
+        )
 
         # Two triangles to form a quad
-        indices = np.array([
-            [0, 1, 2],
-            [0, 2, 3],
-        ], dtype=np.uint32)
+        indices = np.array(
+            [
+                [0, 1, 2],
+                [0, 2, 3],
+            ],
+            dtype=np.uint32,
+        )
 
         # Generate texture from grid
         if colormap is not None:
@@ -634,12 +642,15 @@ class OccupancyGrid(Timestamped):
             texture = np.flipud(texture)
 
         # UV coordinates for texture mapping
-        texcoords = np.array([
-            [0.0, 0.0],  # bottom-left
-            [1.0, 0.0],  # bottom-right
-            [1.0, 1.0],  # top-right
-            [0.0, 1.0],  # top-left
-        ], dtype=np.float32)
+        texcoords = np.array(
+            [
+                [0.0, 0.0],  # bottom-left
+                [1.0, 0.0],  # bottom-right
+                [1.0, 1.0],  # top-right
+                [0.0, 1.0],  # top-left
+            ],
+            dtype=np.float32,
+        )
 
         return rr.Mesh3D(
             vertex_positions=vertices,
