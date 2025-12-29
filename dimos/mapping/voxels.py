@@ -21,7 +21,6 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
-import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -79,6 +78,14 @@ class VoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
+        # Auto-log global_map to Rerun (subscription happens automatically)
+        self.global_map.to_rerun(
+            "world/map",
+            rate_limit=5.0,  # 5 Hz max
+            radii=0.02,
+            colormap="turbo",
+        )
+
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()
         self._disposables.add(
@@ -109,9 +116,7 @@ class VoxelGridMapper(Module):
 
     def publish_global_map(self) -> None:
         pc = self.get_global_pointcloud2()
-        self.global_map.publish(pc)
-        # Log map points (transform is set statically by GO2Connection)
-        rr.log("world/map", pc.to_rerun())
+        self.global_map.publish(pc)  # Auto-logs to Rerun via to_rerun() in start()
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]

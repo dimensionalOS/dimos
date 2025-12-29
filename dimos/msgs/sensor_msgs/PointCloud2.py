@@ -410,6 +410,49 @@ class PointCloud2(Timestamped):
             return 0
         return int(self._pcd_tensor.point["positions"].shape[0])
 
+    def to_rerun(
+        self,
+        radii: float = 0.02,
+        colormap: str | None = None,
+        colors: list[int] | None = None,
+        **kwargs,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        """Convert to Rerun Points3D archetype.
+
+        Args:
+            radii: Point radius for visualization
+            colormap: Optional colormap name (e.g., "turbo", "viridis") to color by height
+            colors: Optional RGB color [r, g, b] for all points (0-255)
+            **kwargs: Additional args (ignored for compatibility)
+
+        Returns:
+            rr.Points3D archetype for logging to Rerun
+        """
+        import rerun as rr
+
+        points = self.as_numpy()
+        if len(points) == 0:
+            return rr.Points3D([])
+
+        # Determine colors
+        point_colors = None
+        if colormap is not None:
+            # Color by height (z-coordinate)
+            import matplotlib.pyplot as plt
+
+            z = points[:, 2]
+            z_norm = (z - z.min()) / (z.max() - z.min() + 1e-8)
+            cmap = plt.get_cmap(colormap)
+            point_colors = (cmap(z_norm)[:, :3] * 255).astype(np.uint8)
+        elif colors is not None:
+            point_colors = colors
+
+        return rr.Points3D(
+            positions=points,
+            radii=radii,
+            colors=point_colors,
+        )
+
     def filter_by_height(
         self,
         min_height: float | None = None,

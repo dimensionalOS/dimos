@@ -142,6 +142,8 @@ class Out(Stream[T], ObservableMixin[T]):
 
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*argv, **kwargs)
+        self._rerun_config: dict | None = None  # type: ignore[type-arg]
+        self._rerun_last_log: float = 0.0
 
     @property
     def transport(self) -> Transport[T]:
@@ -149,8 +151,7 @@ class Out(Stream[T], ObservableMixin[T]):
 
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
-        # just for type checking
-        ...
+        self._transport = value
 
     @property
     def state(self) -> State:
@@ -173,6 +174,11 @@ class Out(Stream[T], ObservableMixin[T]):
         if not hasattr(self, "_transport") or self._transport is None:
             logger.warning(f"Trying to publish on Out {self} without a transport")
             return
+
+        # Log to Rerun directly if configured
+        if self._rerun_config is not None:
+            self._log_to_rerun(msg)
+
         self._transport.broadcast(self, msg)
 
     def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
@@ -185,6 +191,57 @@ class Out(Stream[T], ObservableMixin[T]):
             Unsubscribe function
         """
         return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
+
+    def to_rerun(
+        self,
+        entity_path: str,
+        rate_limit: float | None = None,
+        **rerun_kwargs,  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Configure this output to auto-log to Rerun.
+
+        Call once in start() - messages logged directly when published.
+
+        Args:
+            entity_path: Rerun entity path (e.g., "world/map")
+            rate_limit: Max Hz to log (None = unlimited)
+            **rerun_kwargs: Passed to msg.to_rerun() for rendering config
+                           (e.g., radii=0.02, colormap="turbo", colors=[255,0,0])
+
+        Example:
+            def start(self):
+                super().start()
+                # Just declare it - fire and forget!
+                self.global_map.to_rerun("world/map", rate_limit=5.0, radii=0.02)
+        """
+        self._rerun_config = {
+            "entity_path": entity_path,
+            "rate_limit": rate_limit,
+            "rerun_kwargs": rerun_kwargs,
+        }
+        self._rerun_last_log = 0.0
+
+    def _log_to_rerun(self, msg: T) -> None:
+        """Log message to Rerun with rate limiting."""
+        if not hasattr(msg, "to_rerun"):
+            return
+
+        import time
+
+        import rerun as rr
+
+        config = self._rerun_config
+
+        # Rate limiting
+        if config["rate_limit"] is not None:
+            now = time.monotonic()
+            min_interval = 1.0 / config["rate_limit"]
+            if now - self._rerun_last_log < min_interval:
+                return  # Skip - too soon
+            self._rerun_last_log = now
+
+        rerun_data = msg.to_rerun(**config["rerun_kwargs"])
+        rr.log(config["entity_path"], rerun_data)
 
 
 class RemoteStream(Stream[T]):
