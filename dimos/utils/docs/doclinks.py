@@ -28,7 +28,22 @@ from collections import defaultdict
 import os
 from pathlib import Path
 import re
+import subprocess
 import sys
+
+
+def find_git_root() -> Path | None:
+    """Find the git repository root from current directory."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return Path(result.stdout.strip())
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
 
 
 def load_gitignore_patterns(root: Path) -> list[str]:
@@ -110,6 +125,47 @@ def build_file_index(root: Path) -> dict[str, list[Path]]:
     return index
 
 
+def build_doc_index(root: Path) -> dict[str, list[Path]]:
+    """
+    Build an index mapping lowercase doc names to .md file paths.
+
+    For docs/concepts/modules.md, creates entry:
+    - "modules" -> [Path("docs/concepts/modules.md")]
+
+    Also indexes directory index files:
+    - "modules" -> [Path("docs/modules/index.md")] (if modules/index.md exists)
+    """
+    index: dict[str, list[Path]] = defaultdict(list)
+    patterns = load_gitignore_patterns(root)
+
+    for dirpath, dirnames, filenames in os.walk(root):
+        current = Path(dirpath)
+
+        # Filter out ignored directories
+        dirnames[:] = [d for d in dirnames if not should_ignore(current / d, root, patterns)]
+
+        for filename in filenames:
+            if not filename.endswith(".md"):
+                continue
+
+            filepath = current / filename
+            if should_ignore(filepath, root, patterns):
+                continue
+
+            rel_path = filepath.relative_to(root)
+            stem = filepath.stem.lower()
+
+            # For index.md files, also index by parent directory name
+            if stem == "index":
+                parent_name = filepath.parent.name.lower()
+                if parent_name:
+                    index[parent_name].append(rel_path)
+            else:
+                index[stem].append(rel_path)
+
+    return index
+
+
 def find_symbol_line(file_path: Path, symbol: str) -> int | None:
     """Find the first line number where symbol appears."""
     try:
@@ -167,18 +223,23 @@ def process_markdown(
     link_mode: str,
     github_url: str | None,
     github_ref: str,
+    doc_index: dict[str, list[Path]] | None = None,
 ) -> tuple[str, list[str], list[str]]:
     """
-    Process markdown content, replacing file links.
+    Process markdown content, replacing file and doc links.
 
     Returns (new_content, changes, errors).
     """
-    # Pattern: [`filename`](link)
-    pattern = r"\[`([^`]+)`\]\(([^)]*)\)"
     changes = []
     errors = []
 
-    def replace_match(match: re.Match) -> str:
+    # Pattern 1: [`filename`](link) - code file links
+    code_pattern = r"\[`([^`]+)`\]\(([^)]*)\)"
+
+    # Pattern 2: [Text](.md) - doc file links
+    doc_pattern = r"\[([^\]]+)\]\(\.md\)"
+
+    def replace_code_match(match: re.Match) -> str:
         file_ref = match.group(1)
         current_link = match.group(2)
         full_match = match.group(0)
@@ -237,7 +298,37 @@ def process_markdown(
 
         return new_match
 
-    new_content = re.sub(pattern, replace_match, content)
+    def replace_doc_match(match: re.Match) -> str:
+        """Replace [Text](.md) with resolved doc path."""
+        if doc_index is None:
+            return match.group(0)
+
+        link_text = match.group(1)
+        full_match = match.group(0)
+        lookup_key = link_text.lower()
+
+        # Look up in doc index
+        candidates = doc_index.get(lookup_key, [])
+
+        if len(candidates) == 0:
+            errors.append(f"No doc matching '{link_text}' found")
+            return full_match
+        elif len(candidates) > 1:
+            errors.append(f"'{link_text}' matches multiple docs: {[str(c) for c in candidates]}")
+            return full_match
+
+        resolved_path = candidates[0]
+        new_link = generate_link(resolved_path, root, doc_path, link_mode, github_url, github_ref)
+        new_match = f"[{link_text}]({new_link})"
+
+        if new_match != full_match:
+            changes.append(f"  {link_text}: .md -> {new_link}")
+
+        return new_match
+
+    # Process code links first, then doc links
+    new_content = re.sub(code_pattern, replace_code_match, content)
+    new_content = re.sub(doc_pattern, replace_doc_match, new_content)
     return new_content, changes, errors
 
 
@@ -259,15 +350,17 @@ doclinks - Update markdown file links to correct codebase paths
 Finds [`filename.py`](...) patterns and resolves them to actual file paths.
 Also auto-links symbols: `Configurable` on same line adds #L<line> fragment.
 
+Supports doc-to-doc linking: [Modules](.md) resolves to modules.md or modules/index.md.
+
 Usage:
-  doclinks --root <repo> [options] <paths...>
+  doclinks [options] <paths...>
 
 Examples:
-  # Single file
-  doclinks --root . docs/guide.md
+  # Single file (auto-detects git root)
+  doclinks docs/guide.md
 
   # Recursive directory
-  doclinks --root . docs/
+  doclinks docs/
 
   # GitHub links
   doclinks --root . --link-mode github \\
@@ -283,12 +376,13 @@ Examples:
   doclinks --root . --dry-run docs/
 
 Options:
-  --root PATH          Repository root (required)
+  --root PATH          Repository root (default: git root)
   --link-mode MODE     absolute (default), relative, or github
   --github-url URL     Base GitHub URL (for github mode)
   --github-ref REF     Branch/ref for GitHub links (default: main)
   --dry-run            Show changes without modifying files
   --check              Exit with error if changes needed
+  --watch              Watch for changes and re-process (requires watchdog)
   -h, --help           Show this help
 """
 
@@ -320,6 +414,7 @@ def main():
     parser.add_argument(
         "--check", action="store_true", help="Exit with error if changes needed (CI mode)"
     )
+    parser.add_argument("--watch", action="store_true", help="Watch for changes and re-process")
 
     args = parser.parse_args()
 
@@ -327,10 +422,14 @@ def main():
         print(USAGE)
         sys.exit(0)
 
-    if not args.root:
-        print("Error: --root is required\n", file=sys.stderr)
-        print(USAGE)
-        sys.exit(1)
+    # Auto-detect git root if --root not provided
+    if args.root:
+        root = args.root.resolve()
+    else:
+        root = find_git_root()
+        if root is None:
+            print("Error: --root not provided and not in a git repository\n", file=sys.stderr)
+            sys.exit(1)
 
     if not args.paths:
         print("Error: at least one path is required\n", file=sys.stderr)
@@ -341,18 +440,100 @@ def main():
         print("Error: --github-url is required when using --link-mode=github\n", file=sys.stderr)
         sys.exit(1)
 
-    root = args.root.resolve()
     if not root.is_dir():
         print(f"Error: {root} is not a directory", file=sys.stderr)
         sys.exit(1)
 
     print(f"Building file index from {root}...")
     file_index = build_file_index(root)
-    print(f"Indexed {sum(len(v) for v in file_index.values())} file path entries")
+    doc_index = build_doc_index(root)
+    print(
+        f"Indexed {sum(len(v) for v in file_index.values())} file paths, {len(doc_index)} doc names"
+    )
 
-    all_errors = []
-    any_changes = False
+    def process_file(md_path: Path, quiet: bool = False) -> tuple[bool, list[str]]:
+        """Process a single markdown file. Returns (changed, errors)."""
+        md_path = md_path.resolve()
+        if not quiet:
+            rel = md_path.relative_to(root) if md_path.is_relative_to(root) else md_path
+            print(f"\nProcessing {rel}...")
 
+        content = md_path.read_text()
+        new_content, changes, errors = process_markdown(
+            content,
+            root,
+            md_path,
+            file_index,
+            args.link_mode,
+            args.github_url,
+            args.github_ref,
+            doc_index=doc_index,
+        )
+
+        if errors:
+            for err in errors:
+                print(f"  Error: {err}", file=sys.stderr)
+
+        if changes:
+            if not quiet:
+                print("  Changes:")
+                for change in changes:
+                    print(change)
+            if not args.dry_run and not args.check:
+                md_path.write_text(new_content)
+                if not quiet:
+                    print("  Updated")
+            return True, errors
+        else:
+            if not quiet:
+                print("  No changes needed")
+            return False, errors
+
+    # Watch mode
+    if args.watch:
+        try:
+            from watchdog.events import FileCreatedEvent, FileModifiedEvent, FileSystemEventHandler
+            from watchdog.observers import Observer
+        except ImportError:
+            print(
+                "Error: --watch requires watchdog. Install with: pip install watchdog",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        watch_paths = args.paths if args.paths else [str(root / "docs")]
+
+        class MarkdownHandler(FileSystemEventHandler):
+            def on_modified(self, event):
+                if not event.is_directory and event.src_path.endswith(".md"):
+                    process_file(Path(event.src_path))
+
+            def on_created(self, event):
+                if not event.is_directory and event.src_path.endswith(".md"):
+                    process_file(Path(event.src_path))
+
+        observer = Observer()
+        handler = MarkdownHandler()
+
+        for watch_path in watch_paths:
+            p = Path(watch_path)
+            if p.is_file():
+                p = p.parent
+            print(f"Watching {p} for changes...")
+            observer.schedule(handler, str(p), recursive=True)
+
+        observer.start()
+        try:
+            while True:
+                import time
+
+                time.sleep(1)
+        except KeyboardInterrupt:
+            observer.stop()
+        observer.join()
+        return
+
+    # Normal mode
     markdown_files = collect_markdown_files(args.paths)
     if not markdown_files:
         print("No markdown files found", file=sys.stderr)
@@ -360,34 +541,14 @@ def main():
 
     print(f"Found {len(markdown_files)} markdown file(s)")
 
+    all_errors = []
+    any_changes = False
+
     for md_path in markdown_files:
-        md_path = md_path.resolve()
-
-        print(
-            f"\nProcessing {md_path.relative_to(root) if md_path.is_relative_to(root) else md_path}..."
-        )
-        content = md_path.read_text()
-
-        new_content, changes, errors = process_markdown(
-            content, root, md_path, file_index, args.link_mode, args.github_url, args.github_ref
-        )
-
-        if errors:
-            all_errors.extend(errors)
-            for err in errors:
-                print(f"  Error: {err}", file=sys.stderr)
-
-        if changes:
+        changed, errors = process_file(md_path)
+        if changed:
             any_changes = True
-            print("  Changes:")
-            for change in changes:
-                print(change)
-
-            if not args.dry_run and not args.check:
-                md_path.write_text(new_content)
-                print("  Updated")
-        else:
-            print("  No changes needed")
+        all_errors.extend(errors)
 
     if all_errors:
         print(f"\n{len(all_errors)} error(s) encountered", file=sys.stderr)

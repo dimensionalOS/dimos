@@ -140,6 +140,7 @@ skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
 dimos = "dimos.robot.cli.dimos:main"
+doclinks = "dimos.utils.docs.doclinks:main"
 
 [project.optional-dependencies]
 manipulation = [
@@ -205,6 +206,7 @@ dev = [
     "textual==3.7.1",
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
+    "watchdog>=4.0.0",
 
     # Types
     "lxml-stubs>=0.5.1,<1",

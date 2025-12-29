@@ -17,6 +17,7 @@
 from pathlib import Path
 
 from doclinks import (
+    build_doc_index,
     build_file_index,
     extract_other_backticks,
     find_symbol_line,
@@ -32,6 +33,12 @@ REPO_ROOT = Path(__file__).parent.parent.parent.parent
 def file_index():
     """Build file index once for all tests."""
     return build_file_index(REPO_ROOT)
+
+
+@pytest.fixture(scope="module")
+def doc_index():
+    """Build doc index once for all tests."""
+    return build_doc_index(REPO_ROOT)
 
 
 class TestFileIndex:
@@ -262,6 +269,139 @@ class TestProcessMarkdown:
 
         assert new_content.startswith("See [`service/spec.py`](../../")
         assert "dimos/protocol/service/spec.py" in new_content
+
+
+class TestDocIndex:
+    def test_indexes_by_stem(self, doc_index):
+        """Should index docs by lowercase stem."""
+        assert "configuration" in doc_index
+        assert "modules" in doc_index
+        assert "development" in doc_index
+
+    def test_case_insensitive(self, doc_index):
+        """Should use lowercase keys."""
+        # All keys should be lowercase
+        for key in doc_index:
+            assert key == key.lower()
+
+
+class TestDocLinking:
+    def test_resolves_doc_link(self, file_index, doc_index):
+        """Should resolve [Text](.md) to doc path."""
+        content = "See [Configuration](.md) for details"
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="absolute",
+            github_url=None,
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert len(errors) == 0
+        assert len(changes) == 1
+        assert "[Configuration](/docs/" in new_content
+        assert ".md)" in new_content
+
+    def test_case_insensitive_lookup(self, file_index, doc_index):
+        """Should match case-insensitively."""
+        content = "See [CONFIGURATION](.md) for details"
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="absolute",
+            github_url=None,
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert len(errors) == 0
+        assert "[CONFIGURATION](" in new_content  # Preserves original text
+        assert ".md)" in new_content
+
+    def test_doc_link_github_mode(self, file_index, doc_index):
+        """Should generate GitHub URLs for doc links."""
+        content = "See [Configuration](.md)"
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="github",
+            github_url="https://github.com/org/repo",
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert "https://github.com/org/repo/blob/main/docs/" in new_content
+        assert ".md)" in new_content
+
+    def test_doc_link_relative_mode(self, file_index, doc_index):
+        """Should generate relative paths for doc links."""
+        content = "See [Development](.md)"
+        doc_path = REPO_ROOT / "docs/concepts/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="relative",
+            github_url=None,
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert len(errors) == 0
+        # Should be relative path from docs/concepts/ to docs/
+        assert "../" in new_content
+
+    def test_doc_not_found_error(self, file_index, doc_index):
+        """Should error when doc doesn't exist."""
+        content = "See [NonexistentDoc](.md)"
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="absolute",
+            github_url=None,
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert len(errors) == 1
+        assert "No doc matching" in errors[0]
+
+    def test_skips_regular_links(self, file_index, doc_index):
+        """Should not affect regular markdown links."""
+        content = "See [regular link](https://example.com) here"
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="absolute",
+            github_url=None,
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert new_content == content  # Unchanged
 
 
 if __name__ == "__main__":
