@@ -14,6 +14,7 @@
 
 from dataclasses import asdict, dataclass, field
 
+import rerun as rr
 from reactivex import operators as ops
 
 from dimos.core import In, Module, Out, rpc
@@ -46,14 +47,20 @@ class CostMapper(Module):
     def start(self) -> None:
         super().start()
 
-        # Auto-log costmap to Rerun (subscription happens automatically)
-        self.global_costmap.to_rerun(
-            "world/nav/costmap",
-            rate_limit=5.0,  # 5 Hz max
-        )
-
         def _publish_costmap(grid: OccupancyGrid) -> None:
-            self.global_costmap.publish(grid)  # Auto-logs to Rerun
+            self.global_costmap.publish(grid)
+
+            # Log BOTH 2D image panel AND 3D floor overlay to Rerun
+            # 2D image panel (for costmap visualization)
+            rr.log("world/nav/costmap/image", grid.to_rerun(
+                mode="image",
+                colormap="RdBu_r",
+            ))
+            # 3D floor overlay (visible in 3D view)
+            rr.log("world/nav/costmap/floor", grid.to_rerun(
+                mode="points",
+                colormap="RdBu_r",
+            ))
 
         self._disposables.add(
             self.global_map.observable()  # type: ignore[no-untyped-call]

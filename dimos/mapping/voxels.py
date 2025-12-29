@@ -78,11 +78,11 @@ class VoxelGridMapper(Module):
     def start(self) -> None:
         super().start()
 
-        # Auto-log global_map to Rerun (subscription happens automatically)
+        # Auto-log global_map to Rerun as voxel boxes
         self.global_map.to_rerun(
             "world/map",
-            rate_limit=5.0,  # 5 Hz max
-            radii=0.02,
+            mode="boxes",
+            size=self.config.voxel_size,
             colormap="turbo",
         )
 

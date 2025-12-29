@@ -417,37 +417,233 @@ class OccupancyGrid(Timestamped):
 
         return int(self.grid[y, x])
 
-    def to_rerun(self):  # type: ignore[no-untyped-def]
-        """Convert to rerun Image format (grayscale visualization).
+    def to_rerun(
+        self,
+        colormap: str | None = None,
+        mode: str = "image",
+        z_offset: float = 0.01,
+        **kwargs,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        """Convert to Rerun visualization format.
+
+        Args:
+            colormap: Optional colormap name (e.g., "RdBu_r" for blue=free, red=occupied).
+                     If None, uses grayscale for image mode or default colors for 3D modes.
+            mode: Visualization mode:
+                - "image": 2D grayscale/colored image (default)
+                - "mesh": 3D textured plane overlay on floor
+                - "points": 3D points for occupied cells only
+            z_offset: Height offset for 3D modes (default 0.01m above floor)
+            **kwargs: Additional args (ignored for compatibility)
 
         Returns:
-            rr.Image archetype for logging to rerun
+            Rerun archetype for logging (rr.Image, rr.Mesh3D, or rr.Points3D)
 
         The visualization uses:
-        - White (255) for free space (value 0)
-        - Gray (128) for unknown space (value -1)
-        - Black (0) for occupied space (value > 0)
-        - Gradient for cost values between 1-99
+        - Free space (value 0): white/blue
+        - Unknown space (value -1): gray/transparent
+        - Occupied space (value > 0): black/red with gradient
         """
         import rerun as rr
 
         if self.grid.size == 0:
-            return rr.Image(np.zeros((1, 1), dtype=np.uint8), color_model="L")
+            if mode == "image":
+                return rr.Image(np.zeros((1, 1), dtype=np.uint8), color_model="L")
+            elif mode == "mesh":
+                return rr.Mesh3D(vertex_positions=[])
+            else:
+                return rr.Points3D([])
 
-        # Create visualization array
-        vis = np.zeros((self.height, self.width), dtype=np.uint8)
+        if mode == "points":
+            return self._to_rerun_points(colormap, z_offset)
+        elif mode == "mesh":
+            return self._to_rerun_mesh(colormap, z_offset)
+        else:
+            return self._to_rerun_image(colormap)
 
-        # Free space = white
-        vis[self.grid == 0] = 255
+    def _to_rerun_image(self, colormap: str | None = None):  # type: ignore[no-untyped-def]
+        """Convert to 2D image visualization."""
+        import rerun as rr
 
-        # Unknown = gray
-        vis[self.grid == -1] = 128
+        if colormap is not None:
+            # Use matplotlib colormap for colored visualization
+            import matplotlib.pyplot as plt
 
-        # Occupied (100) = black, costs (1-99) = gradient
+            # Normalize grid values: -1 (unknown) -> 0.5, 0 (free) -> 0, 100 (occupied) -> 1
+            grid_float = self.grid.astype(np.float32)
+
+            # Create RGBA image
+            vis = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+
+            # Free space: low cost (blue in RdBu_r)
+            free_mask = self.grid == 0
+            # Occupied: high cost (red in RdBu_r)
+            occupied_mask = self.grid > 0
+            # Unknown: transparent gray
+            unknown_mask = self.grid == -1
+
+            cmap = plt.get_cmap(colormap)
+
+            # Map free to 0, costs to normalized value
+            if np.any(free_mask):
+                colors_free = (cmap(0.0)[:3] * np.array([255, 255, 255])).astype(np.uint8)
+                vis[free_mask, :3] = colors_free
+                vis[free_mask, 3] = 255
+
+            if np.any(occupied_mask):
+                # Normalize costs 1-100 to 0.5-1.0 range
+                costs = grid_float[occupied_mask]
+                cost_norm = 0.5 + (costs / 100) * 0.5
+                colors_occ = (cmap(cost_norm)[:, :3] * 255).astype(np.uint8)
+                vis[occupied_mask, :3] = colors_occ
+                vis[occupied_mask, 3] = 255
+
+            if np.any(unknown_mask):
+                vis[unknown_mask] = [128, 128, 128, 100]  # Semi-transparent gray
+
+            return rr.Image(vis, color_model="RGBA")
+        else:
+            # Grayscale visualization
+            vis = np.zeros((self.height, self.width), dtype=np.uint8)
+
+            # Free space = white
+            vis[self.grid == 0] = 255
+
+            # Unknown = gray
+            vis[self.grid == -1] = 128
+
+            # Occupied (100) = black, costs (1-99) = gradient
+            occupied_mask = self.grid > 0
+            if np.any(occupied_mask):
+                # Map 1-100 to 127-0 (darker = more occupied)
+                costs = self.grid[occupied_mask].astype(np.float32)
+                vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
+
+            return rr.Image(vis, color_model="L")
+
+    def _to_rerun_points(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
+        """Convert to 3D points for occupied cells."""
+        import rerun as rr
+
+        # Find occupied cells (cost > 0)
         occupied_mask = self.grid > 0
-        if np.any(occupied_mask):
-            # Map 1-100 to 127-0 (darker = more occupied)
-            costs = self.grid[occupied_mask].astype(np.float32)
-            vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
+        if not np.any(occupied_mask):
+            return rr.Points3D([])
 
-        return rr.Image(vis, color_model="L")
+        # Get grid coordinates of occupied cells
+        gy, gx = np.where(occupied_mask)
+        costs = self.grid[occupied_mask].astype(np.float32)
+
+        # Convert to world coordinates
+        ox = self.origin.position.x
+        oy = self.origin.position.y
+        wx = ox + (gx + 0.5) * self.resolution
+        wy = oy + (gy + 0.5) * self.resolution
+        wz = np.full_like(wx, z_offset)
+
+        points = np.column_stack([wx, wy, wz])
+
+        # Determine colors
+        if colormap is not None:
+            import matplotlib.pyplot as plt
+
+            # Normalize costs to 0-1 range
+            cost_norm = costs / 100.0
+            cmap = plt.get_cmap(colormap)
+            point_colors = (cmap(cost_norm)[:, :3] * 255).astype(np.uint8)
+        else:
+            # Default: red gradient based on cost
+            intensity = (costs / 100.0 * 255).astype(np.uint8)
+            point_colors = np.column_stack([intensity, np.zeros_like(intensity), np.zeros_like(intensity)])
+
+        return rr.Points3D(
+            positions=points,
+            radii=self.resolution / 2,
+            colors=point_colors,
+        )
+
+    def _to_rerun_mesh(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
+        """Convert to 3D mesh overlay on floor plane."""
+        import rerun as rr
+
+        # Create a textured quad for the entire grid
+        ox = self.origin.position.x
+        oy = self.origin.position.y
+        w = self.width * self.resolution
+        h = self.height * self.resolution
+
+        # Mesh vertices (4 corners of the grid)
+        vertices = np.array([
+            [ox, oy, z_offset],           # bottom-left
+            [ox + w, oy, z_offset],       # bottom-right
+            [ox + w, oy + h, z_offset],   # top-right
+            [ox, oy + h, z_offset],       # top-left
+        ], dtype=np.float32)
+
+        # Two triangles to form a quad
+        indices = np.array([
+            [0, 1, 2],
+            [0, 2, 3],
+        ], dtype=np.uint32)
+
+        # Generate texture from grid
+        if colormap is not None:
+            import matplotlib.pyplot as plt
+
+            grid_float = self.grid.astype(np.float32)
+            texture = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+
+            free_mask = self.grid == 0
+            occupied_mask = self.grid > 0
+            unknown_mask = self.grid == -1
+
+            cmap = plt.get_cmap(colormap)
+
+            if np.any(free_mask):
+                colors_free = (cmap(0.0)[:3] * np.array([255, 255, 255])).astype(np.uint8)
+                texture[free_mask, :3] = colors_free
+                texture[free_mask, 3] = 200
+
+            if np.any(occupied_mask):
+                costs = grid_float[occupied_mask]
+                cost_norm = 0.5 + (costs / 100) * 0.5
+                colors_occ = (cmap(cost_norm)[:, :3] * 255).astype(np.uint8)
+                texture[occupied_mask, :3] = colors_occ
+                texture[occupied_mask, 3] = 255
+
+            if np.any(unknown_mask):
+                texture[unknown_mask] = [128, 128, 128, 50]  # Very transparent
+
+            # Flip texture vertically for correct orientation
+            texture = np.flipud(texture)
+        else:
+            # Grayscale texture
+            texture = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+            texture[self.grid == 0] = [255, 255, 255, 200]  # Free = white, semi-transparent
+            texture[self.grid == -1] = [128, 128, 128, 50]  # Unknown = gray, mostly transparent
+
+            occupied_mask = self.grid > 0
+            if np.any(occupied_mask):
+                costs = self.grid[occupied_mask].astype(np.float32)
+                intensity = (255 * (1 - costs / 100)).astype(np.uint8)
+                texture[occupied_mask, 0] = intensity
+                texture[occupied_mask, 1] = intensity
+                texture[occupied_mask, 2] = intensity
+                texture[occupied_mask, 3] = 255
+
+            texture = np.flipud(texture)
+
+        # UV coordinates for texture mapping
+        texcoords = np.array([
+            [0.0, 0.0],  # bottom-left
+            [1.0, 0.0],  # bottom-right
+            [1.0, 1.0],  # top-right
+            [0.0, 1.0],  # top-left
+        ], dtype=np.float32)
+
+        return rr.Mesh3D(
+            vertex_positions=vertices,
+            triangle_indices=indices,
+            vertex_texcoords=texcoords,
+            albedo_texture=rr.components.ImageBuffer(texture),
+        )
