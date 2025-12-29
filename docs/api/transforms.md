@@ -16,7 +16,7 @@ This chain of conversions—(pixels + depth) → 3D point in camera frame → ro
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/transforms_tree.svg
+```pikchrx output=assets/transforms_tree.svg
 color = white
 fill = none
 
@@ -203,90 +203,166 @@ Every module has access to `self.tf`, a transform service that:
 
 The TF service is implemented in [`tf.py`](/dimos/protocol/tf/tf.py) and is lazily initialized on first access.
 
-### Publishing Transforms
+### Multi-Module Transform Example
 
-```python
-from dimos.core import Module
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
+This example demonstrates how multiple modules publish and receive transforms. Three modules work together:
+
+1. **RobotBaseModule** - Publishes `world -> base_link` (robot's position in the world)
+2. **CameraModule** - Publishes `base_link -> camera_link` (camera mounting position) and `camera_link -> camera_optical` (optical frame convention)
+3. **PerceptionModule** - Looks up transforms between any frames
+
+```python ansi=false
+import time
+import reactivex as rx
+from reactivex import operators as ops
+from dimos.core import Module, rpc, start
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+
+
+class RobotBaseModule(Module):
+    """Publishes the robot's position in the world frame at 10Hz."""
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        def publish_pose(_):
+            robot_pose = Transform(
+                translation=Vector3(2.5, 3.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="world",
+                child_frame_id="base_link",
+                ts=time.time(),
+            )
+            self.tf.publish(robot_pose)
+
+        self._disposables.add(
+            rx.interval(0.1).subscribe(publish_pose)
+        )
+
 
 class CameraModule(Module):
-    def publish_transform(self):
-        camera_link = Transform(
-            translation=Vector3(0.5, 0.0, 0.3),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="base_link",
-            child_frame_id="camera_link",
+    """Publishes camera transforms at 10Hz."""
+    @rpc
+    def start(self) -> None:
+        super().start()
+
+        def publish_transforms(_):
+            camera_mount = Transform(
+                translation=Vector3(1.0, 0.0, 0.3),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id="base_link",
+                child_frame_id="camera_link",
+                ts=time.time(),
+            )
+            optical_frame = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
+                frame_id="camera_link",
+                child_frame_id="camera_optical",
+                ts=time.time(),
+            )
+            self.tf.publish(camera_mount, optical_frame)
+
+        self._disposables.add(
+            rx.interval(0.1).subscribe(publish_transforms)
         )
-        # Publish one or more transforms
-        self.tf.publish(camera_link)
 
-# Demo the module structure
-print(f"CameraModule defined with publish_transform method")
+
+class PerceptionModule(Module):
+    """Receives transforms and performs lookups."""
+
+    def start(self) -> None:
+        # this is just to init transforms system
+        # touching the property for the first time enables the system for this module.
+        # transform lookups normally happen in fast loops in IRL modules
+        _ = self.tf
+
+    @rpc
+    def lookup(self) -> None:
+
+        # will pretty print information on transforms in the buffer
+        print(self.tf)
+
+        direct = self.tf.get("world", "base_link")
+        print(f"Direct: robot is at ({direct.translation.x}, {direct.translation.y})m in world\n")
+
+        # Chained lookup - automatically composes world->base->camera->optical
+        chained = self.tf.get("world", "camera_optical")
+        print(f"Chained: {chained}\n")
+
+        # Inverse lookup - automatically inverts direction
+        inverse = self.tf.get("camera_optical", "world")
+        print(f"Inverse: {inverse}\n")
+
+        print("Transform tree:")
+        print(self.tf.graph())
+
+
+if __name__ == "__main__":
+    dimos = start(3)
+
+    # Deploy and start modules xo
+    robot = dimos.deploy(RobotBaseModule)
+    camera = dimos.deploy(CameraModule)
+    perception = dimos.deploy(PerceptionModule)
+
+    robot.start()
+    camera.start()
+    perception.start()
+
+    time.sleep(0.2)
+
+    perception.lookup()
+
+    dimos.stop()
+
 ```
 
 <!--Result:-->
 ```
-CameraModule defined with publish_transform method
-```
+Initialized dimos local cluster with 3 workers, memory limit: auto
+2025-12-29T10:19:12.728760Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=RobotBaseModule worker_id=1
+2025-12-29T10:19:12.993349Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=CameraModule worker_id=2
+2025-12-29T10:19:13.139302Z [info     ] Deployed module.                                             [dimos/core/__init__.py] module=PerceptionModule worker_id=0
+LCMTF(3 buffers):
+  TBuffer(world -> base_link, 2 msgs, 0.09s [2025-12-29 18:19:13 - 2025-12-29 18:19:13])
+  TBuffer(base_link -> camera_link, 2 msgs, 0.10s [2025-12-29 18:19:13 - 2025-12-29 18:19:13])
+  TBuffer(camera_link -> camera_optical, 2 msgs, 0.10s [2025-12-29 18:19:13 - 2025-12-29 18:19:13])
+Direct: robot is at (2.5, 3.0)m in world
 
-### Looking Up Transforms
-
-```python
-from dimos.protocol.tf import TF
-from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
-import time
-
-# Create a TF service (autostart=False to skip pubsub for demo)
-tf = TF(autostart=False)
-
-# Add some transforms
-t1 = Transform(
-    translation=Vector3(1.0, 0.0, 0.0),
-    rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-    frame_id="base_link",
-    child_frame_id="camera_link",
-    ts=time.time(),
-)
-t2 = Transform(
-    translation=Vector3(0.0, 0.0, 0.1),
-    rotation=Quaternion(-0.5, 0.5, -0.5, 0.5),
-    frame_id="camera_link",
-    child_frame_id="camera_optical",
-    ts=time.time(),
-)
-tf.receive_transform(t1, t2)
-
-print(
-   "Look up direct transform:\n",
-   tf.get("base_link", "camera_link"),
-)
-
-print(
-   "Look up chained transform (automatically composes t1 + t2)\n",
-   tf.get("base_link", "camera_optical")
-)
-
-print(
-   "Look up inverse (automatically inverts)\n",
-   tf.get("camera_link", "base_link")
-)
-```
-
-<!--Result:-->
-```
-Look up direct transform:
- base_link -> camera_link
-  Translation: → Vector Vector([1. 0. 0.])
-  Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
-Look up chained transform (automatically composes t1 + t2)
- base_link -> camera_optical
-  Translation: → Vector Vector([1.  0.  0.1])
+Chained: world -> camera_optical
+  Translation: → Vector Vector([3.5 3.  0.3])
   Rotation: Quaternion(-0.500000, 0.500000, -0.500000, 0.500000)
-Look up inverse (automatically inverts)
- camera_link -> base_link
-  Translation: ← Vector Vector([-1. -0. -0.])
-  Rotation: Quaternion(-0.000000, -0.000000, -0.000000, 1.000000)
+
+Inverse: camera_optical -> world
+  Translation: → Vector Vector([ 3.   0.3 -3.5])
+  Rotation: Quaternion(0.500000, -0.500000, 0.500000, 0.500000)
+
+Transform tree:
+┌─────┐
+│world│
+└┬────┘
+┌▽────────┐
+│base_link│
+└┬────────┘
+┌▽──────────┐
+│camera_link│
+└┬──────────┘
+┌▽─────────────┐
+│camera_optical│
+└──────────────┘
 ```
+
+You can also run `foxglove-bridge` in the next terminal (binary provided by dimos and should be in your py env) and `foxglove-studio` to view these transforms in 3D
+
+![transforms](assets/transforms.png)
+
+Key points:
+
+- **Automatic broadcasting**: `self.tf.publish()` broadcasts via LCM to all modules
+- **Chained lookups**: TF finds paths through the tree automatically
+- **Inverse lookups**: Request transforms in either direction
+- **Temporal buffering**: Transforms are timestamped and buffered (default 10s) for sensor fusion
 
 ## Example: Camera Module
 
@@ -300,7 +376,7 @@ This creates the transform chain:
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/transforms_chain.svg
+```pikchrx output=assets/transforms_chain.svg
 color = white
 fill = none
 
@@ -350,7 +426,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 LCMTF(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 14:45:56 - 2025-12-29 14:45:57])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 18:19:18 - 2025-12-29 18:19:18])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.
