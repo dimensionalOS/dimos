@@ -18,14 +18,14 @@ from threading import Thread
 import time
 from typing import Any, Protocol
 
-import rerun as rr
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
+import rerun as rr
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
+from dimos.dashboard import rerun_init
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,

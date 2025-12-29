@@ -25,6 +25,6 @@ Usage in modules:
             rr.log("my/entity", my_data.to_rerun())
 """
 
-from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun init at import
+from dimos.dashboard import rerun_init
 
 __all__ = ["rerun_init"]

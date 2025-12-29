@@ -14,12 +14,12 @@
 
 from dataclasses import asdict, dataclass, field
 
-import rerun as rr
 from reactivex import operators as ops
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
-from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
+from dimos.dashboard import rerun_init
 from dimos.mapping.pointclouds.occupancy import (
     OCCUPANCY_ALGOS,
     HeightCostConfig,

@@ -15,12 +15,12 @@
 import os
 
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
-import rerun as rr
 from reactivex.disposable import Disposable
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
-from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
+from dimos.dashboard import rerun_init
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
