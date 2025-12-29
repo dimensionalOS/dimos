@@ -1,4 +1,8 @@
+# Configuration
 
+Modules are inheriting from a simple `Configurable` class, see [`service/spec.py`](/dimos/protocol/service/spec.py#L22)
+
+Which means we can use dataclasses to specify configuration structure and default values per module.
 
 ```python
 from dataclasses import dataclass
