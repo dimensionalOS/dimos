@@ -18,7 +18,7 @@ import asyncio
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 from dimos import core
-from dimos.hardware.camera.zed import ZEDModule
+from dimos.hardware.sensors.camera.zed import ZEDModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol import pubsub
