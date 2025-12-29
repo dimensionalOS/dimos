@@ -16,7 +16,6 @@ import os
 
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
-import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -52,6 +51,12 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     def start(self) -> None:
         super().start()
 
+        # Auto-log path to Rerun (subscription happens automatically)
+        self.path.to_rerun(
+            "world/nav/path",
+            rate_limit=10.0,  # 10 Hz max
+        )
+
         unsub = self.odom.subscribe(self._planner.handle_odom)
         self._disposables.add(Disposable(unsub))
 
@@ -65,8 +70,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         self._disposables.add(Disposable(unsub))
 
         def _publish_path(nav_path: Path) -> None:
-            self.path.publish(nav_path)
-            rr.log("world/nav/path", nav_path.to_rerun())
+            self.path.publish(nav_path)  # Auto-logs to Rerun
 
         self._disposables.add(self._planner.path.subscribe(_publish_path))
 
