@@ -1,5 +1,18 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import sys
-from dimos.core.stream import Out
 from typing import (
     Any,
     get_args,
@@ -7,24 +20,27 @@ from typing import (
     get_type_hints,
 )
 
+from dimos.core.stream import Out
+
 # value, address, metadata
 VizMessageType = tuple[Any, str, dict]
 
+
 class Viz:
     viz_auto_log_types = set()
-    
+
     # this can be overridden by subclasses to customize where viz messages are sent
     def viz_auto_type_sender(self, msg: Any, channel_name: str, kwargs: dict) -> None:
         address = f"{self.__module__}:{self.__class__.__name__}/{channel_name}"
         self.viz.publish((msg, address, kwargs))
-    
+
     @classmethod
     def _viz_attach_channel(cls) -> None:
         # Auto-add viz channel for automated outputs
         ann_dict = getattr(cls, "__annotations__", None) or {}
         ann_dict.setdefault("viz", Out[VizMessageType])
         cls.__annotations__ = ann_dict
-    
+
     def _viz_attach_publish_hooks(self) -> None:
         """Mirror viz-able outputs to the viz channel."""
         try:
@@ -54,5 +70,5 @@ class Viz:
                         self.viz_auto_type_sender(msg, name, {})
                     except Exception as e:  # pragma: no cover - defensive
                         print(f"viz_auto_type_sender failed for {name}: {e}", file=sys.stderr)
-            
+
             out_stream.publish = _wrapped_publish  # type: ignore[assignment]
