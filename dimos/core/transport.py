@@ -73,6 +73,11 @@ class pLCMTransport(PubSubTransport[T]):
             self._started = True
         return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.lcm.stop()
+
 
 class LCMTransport(PubSubTransport[T]):
     _started: bool = False
@@ -81,6 +86,11 @@ class LCMTransport(PubSubTransport[T]):
         super().__init__(LCMTopic(topic, type))
         if not hasattr(self, "lcm"):
             self.lcm = LCM(**kwargs)
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.lcm.stop()
 
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (LCMTransport, (self.topic.topic, self.topic.lcm_type))
@@ -107,6 +117,11 @@ class JpegLcmTransport(LCMTransport):  # type: ignore[type-arg]
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (JpegLcmTransport, (self.topic.topic, self.topic.lcm_type))
 
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.lcm.stop()
+
 
 class pSHMTransport(PubSubTransport[T]):
     _started: bool = False
@@ -131,6 +146,11 @@ class pSHMTransport(PubSubTransport[T]):
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
 
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.shm.stop()
+
 
 class SHMTransport(PubSubTransport[T]):
     _started: bool = False
@@ -149,11 +169,16 @@ class SHMTransport(PubSubTransport[T]):
 
         self.shm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.shm.start()
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None:
+        self.shm.stop()
 
 
 class JpegShmTransport(PubSubTransport[T]):
@@ -174,11 +199,15 @@ class JpegShmTransport(PubSubTransport[T]):
 
         self.shm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[assignment, override]
         if not self._started:
             self.shm.start()
             self._started = True
         return self.shm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[arg-type, return-value]
+
+    def start(self) -> None: ...
+
+    def stop(self) -> None: ...
 
 
 class ZenohTransport(PubSubTransport[T]): ...
