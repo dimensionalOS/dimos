@@ -128,12 +128,6 @@ class CpuShmChannel(FrameChannel):
         self._shape = tuple(shape)
         self._dtype = np.dtype(dtype)
         self._nbytes = int(self._dtype.itemsize * np.prod(self._shape))
-        # on MacOS the name (only for SharedMemory) can only be 30 chars for some stupid reason, so we truncate
-        if sys.platform == "darwin":
-            if data_name:
-                data_name = data_name[0:30]
-            if ctrl_name:
-                ctrl_name = ctrl_name[0:30]
 
         def _create_or_open(name: str, size: int):
             try:

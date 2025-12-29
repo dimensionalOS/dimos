@@ -27,6 +27,7 @@
           { vals.pkg=pkgs.libsysprof-capture; flags.packageConfGroup=true; onlyIf=pkgs.stdenv.isDarwin; }
           { vals.pkg=pkgs.git-lfs;            flags={}; }
           { vals.pkg=pkgs.unixtools.ifconfig; flags={}; }
+          { vals.pkg=pkgs.unixtools.netstat;  flags={}; }
 
           ### Python + static analysis
           { vals.pkg=pkgs.python312;                    flags={}; }
