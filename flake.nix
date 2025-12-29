@@ -47,6 +47,9 @@
 
           ### LCM (Lightweight Communications and Marshalling)
           lcm
+
+          ### Documentation tools
+          pikchr
         ];
 
         # ------------------------------------------------------------
