@@ -245,12 +245,27 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         # Log static camera pinhole (for frustum)
         rr.log("world/robot/camera", _camera_info_static().to_rerun(), static=True)
 
-        # Send blueprint with 3D view origin set to "world" entity
+        # Send blueprint with proper panel layout
         blueprint = rrb.Blueprint(
-            rrb.Spatial3DView(
-                name="3D View",
-                origin="world",
+            rrb.Horizontal(
+                rrb.Spatial3DView(
+                    name="3D View",
+                    origin="world",
+                ),
+                rrb.Vertical(
+                    rrb.Spatial2DView(
+                        name="Camera",
+                        origin="world/robot/camera/rgb",
+                    ),
+                    rrb.Spatial2DView(
+                        name="Costmap",
+                        origin="world/nav/costmap",
+                    ),
+                    row_shares=[2, 1],
+                ),
+                column_shares=[3, 1],
             ),
+            rrb.TimePanel(state="collapsed"),
         )
         rr.send_blueprint(blueprint)
 

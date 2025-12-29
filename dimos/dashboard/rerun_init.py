@@ -14,8 +14,24 @@
 
 """Rerun initialization with multi-process support.
 
-Main process starts gRPC server + web viewer, worker processes connect to it.
+Main process starts gRPC server + viewer, worker processes connect to it.
 All processes share the same Rerun recording stream.
+
+Viewer modes (set via RERUN_VIEWER environment variable):
+    - "web" (default): Web viewer on port 9090
+    - "native": Native Rerun viewer (requires display)
+    - "none": gRPC only, connect externally with `rerun --connect`
+
+Usage:
+    # Web viewer (default)
+    dimos --replay run unitree-go2
+
+    # Native viewer
+    RERUN_VIEWER=native dimos --replay run unitree-go2
+
+    # No viewer (connect externally)
+    RERUN_VIEWER=none dimos --replay run unitree-go2
+    rerun --connect rerun+http://127.0.0.1:9876/proxy
 
 Usage in modules:
     import rerun as rr
@@ -26,6 +42,7 @@ Usage in modules:
             rr.log("my/entity", my_data.to_rerun())
 """
 
+import os
 import socket
 
 import rerun as rr
@@ -37,6 +54,9 @@ logger = setup_logger()
 RERUN_GRPC_PORT = 9876
 RERUN_WEB_PORT = 9090
 RERUN_GRPC_ADDR = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
+
+# Environment variable to control viewer mode: "web", "native", or "none"
+RERUN_VIEWER_MODE = os.environ.get("RERUN_VIEWER", "web").lower()
 
 
 def _is_port_in_use(port: int) -> bool:
@@ -64,13 +84,25 @@ def _init_rerun() -> None:
             break
         time.sleep(0.5)  # Wait for server to come up
 
-    # No server running (we're main process) - start gRPC server + web viewer
-    server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
-    rr.serve_web_viewer(web_port=RERUN_WEB_PORT, open_browser=False, connect_to=server_uri)
-    logger.info(
-        f"Rerun: started gRPC on port {RERUN_GRPC_PORT}, "
-        f"web viewer on http://localhost:{RERUN_WEB_PORT}"
-    )
+    # Main process - start server based on viewer mode
+    if RERUN_VIEWER_MODE == "native":
+        # Spawn native viewer (requires display)
+        rr.spawn(port=RERUN_GRPC_PORT, connect=True)
+        logger.info(f"Rerun: spawned native viewer on port {RERUN_GRPC_PORT}")
+    elif RERUN_VIEWER_MODE == "web":
+        # Start gRPC + web viewer (headless friendly)
+        server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
+        rr.serve_web_viewer(
+            web_port=RERUN_WEB_PORT, open_browser=False, connect_to=server_uri
+        )
+        logger.info(f"Rerun: web viewer on http://localhost:{RERUN_WEB_PORT}")
+    else:
+        # Just gRPC server, no viewer (connect externally)
+        rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
+        logger.info(
+            f"Rerun: gRPC only on port {RERUN_GRPC_PORT}, "
+            f"connect with: rerun --connect {RERUN_GRPC_ADDR}"
+        )
 
 
 # Initialize at import time

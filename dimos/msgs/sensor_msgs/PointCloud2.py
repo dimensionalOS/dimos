@@ -486,49 +486,6 @@ class PointCloud2(Timestamped):
         """String representation."""
         return f"PointCloud(points={len(self)}, frame_id='{self.frame_id}', ts={self.ts})"
 
-    def to_rerun(
-        self,
-        radii: float = 0.02,
-        colormap: str = "turbo",
-    ):  # type: ignore[no-untyped-def]
-        """Convert to rerun Points3D format.
-
-        Args:
-            radii: Point radius for visualization
-            colormap: Matplotlib colormap name for height-based coloring
-
-        Returns:
-            rr.Points3D archetype for logging to rerun
-        """
-        import rerun as rr
-
-        points = self.as_numpy()
-        if len(points) == 0:
-            return rr.Points3D([])
-
-        # Height-based coloring
-        heights = points[:, 2]
-        h_min, h_max = heights.min(), heights.max()
-        h_range = h_max - h_min
-        if h_range < 1e-6:
-            normalized = np.zeros_like(heights)
-        else:
-            normalized = (heights - h_min) / h_range
-
-        # Apply colormap
-        try:
-            from matplotlib import colormaps
-
-            cmap = colormaps[colormap]
-            colors = (cmap(normalized)[:, :3] * 255).astype(np.uint8)
-        except ImportError:
-            # Fallback: simple blue->red gradient
-            colors = np.zeros((len(normalized), 3), dtype=np.uint8)
-            colors[:, 0] = (normalized * 255).astype(np.uint8)  # R
-            colors[:, 2] = ((1 - normalized) * 255).astype(np.uint8)  # B
-
-        return rr.Points3D(points, colors=colors, radii=radii)
-
     @classmethod
     def from_ros_msg(cls, ros_msg: ROSPointCloud2) -> PointCloud2:
         """Convert from ROS sensor_msgs/PointCloud2 message.
