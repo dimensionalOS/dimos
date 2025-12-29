@@ -415,24 +415,30 @@ class PointCloud2(Timestamped):
         radii: float = 0.02,
         colormap: str | None = None,
         colors: list[int] | None = None,
+        mode: str = "boxes",
+        size: float | None = None,
+        fill_mode: str = "solid",
         **kwargs,  # type: ignore[no-untyped-def]
     ):  # type: ignore[no-untyped-def]
-        """Convert to Rerun Points3D archetype.
+        """Convert to Rerun Points3D or Boxes3D archetype.
 
         Args:
-            radii: Point radius for visualization
+            radii: Point radius for visualization (only for mode="points")
             colormap: Optional colormap name (e.g., "turbo", "viridis") to color by height
             colors: Optional RGB color [r, g, b] for all points (0-255)
+            mode: Visualization mode - "points" for spheres, "boxes" for cubes (default)
+            size: Box size for mode="boxes" (e.g., voxel_size). Defaults to radii*2.
+            fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
             **kwargs: Additional args (ignored for compatibility)
 
         Returns:
-            rr.Points3D archetype for logging to Rerun
+            rr.Points3D or rr.Boxes3D archetype for logging to Rerun
         """
         import rerun as rr
 
         points = self.as_numpy()
         if len(points) == 0:
-            return rr.Points3D([])
+            return rr.Points3D([]) if mode == "points" else rr.Boxes3D(centers=[])
 
         # Determine colors
         point_colors = None
@@ -447,11 +453,22 @@ class PointCloud2(Timestamped):
         elif colors is not None:
             point_colors = colors
 
-        return rr.Points3D(
-            positions=points,
-            radii=radii,
-            colors=point_colors,
-        )
+        if mode == "boxes":
+            # Use boxes for voxel visualization
+            box_size = size if size is not None else radii * 2
+            half = box_size / 2
+            return rr.Boxes3D(
+                centers=points,
+                half_sizes=[half, half, half],
+                colors=point_colors,
+                fill_mode=fill_mode,
+            )
+        else:
+            return rr.Points3D(
+                positions=points,
+                radii=radii,
+                colors=point_colors,
+            )
 
     def filter_by_height(
         self,
