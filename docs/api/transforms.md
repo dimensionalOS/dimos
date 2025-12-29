@@ -13,6 +13,9 @@ To convert camera measurements to arm coordinates, you need to know:
 
 This chain of conversions—(pixels + depth) → 3D point in camera frame → robot coordinates—is what **transforms** handle.
 
+<details>
+<summary>diagram source</summary>
+
 ```pikchr output=assets/transforms_tree.svg
 color = white
 fill = none
@@ -36,6 +39,8 @@ arrow right 0.4in
 GR: box "gripper" rad 5px fit wid 170% ht 170%
 text "target here" small italic at (GR.s.x, GR.s.y - 0.25in)
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/transforms_tree.svg)
@@ -292,6 +297,9 @@ The [`hardware/camera/module.py`](/dimos/hardware/camera/module.py) demonstrates
 
 This creates the transform chain:
 
+<details>
+<summary>diagram source</summary>
+
 ```pikchr output=assets/transforms_chain.svg
 color = white
 fill = none
@@ -302,6 +310,8 @@ B: box "camera_link" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
 C: box "camera_optical" rad 5px fit wid 170% ht 170%
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/transforms_chain.svg)
@@ -340,7 +350,7 @@ print(tf)
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
 LCMTF(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 14:39:48 - 2025-12-29 14:39:49])
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 14:45:56 - 2025-12-29 14:45:57])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.

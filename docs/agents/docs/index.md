@@ -55,7 +55,12 @@ More information on this in [doclinks](/docs/agents/docs_agent/doclinks.md)
 
 [Pikchr](https://pikchr.org/) is a diagram language from SQLite. Use it for flowcharts and architecture diagrams.
 
+**Important:** Always wrap pikchr blocks in `<details>` tags so the source is collapsed by default on GitHub. The rendered SVG stays visible outside the fold. Code blocks (Python, etc.) should NOT be folded—they're meant to be read.
+
 ## Basic syntax
+
+<details>
+<summary>diagram source</summary>
 
 ```pikchr output=assets/pikchr_basic.svg
 color = white
@@ -68,12 +73,17 @@ arrow right 0.3in
 C: box "Step 3" rad 5px fit wid 170% ht 170%
 ```
 
+</details>
+
 <!--Result:-->
 ![output](assets/pikchr_basic.svg)
 
 ## Box sizing
 
 Use `fit` with percentage scaling to auto-size boxes with padding:
+
+<details>
+<summary>diagram source</summary>
 
 ```pikchr output=assets/pikchr_sizing.svg
 color = white
@@ -87,12 +97,17 @@ arrow right 0.3in
 C: box "two lines" "of text" rad 5px fit wid 170% ht 170%
 ```
 
+</details>
+
 <!--Result:-->
 ![output](assets/pikchr_sizing.svg)
 
 The pattern `fit wid 170% ht 170%` means: auto-size to text, then scale width by 170% and height by 170%.
 
 For explicit sizing (when you need consistent box sizes):
+
+<details>
+<summary>diagram source</summary>
 
 ```pikchr output=assets/pikchr_explicit.svg
 color = white
@@ -102,6 +117,8 @@ A: box "Step 1" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
 B: box "Step 2" rad 5px fit wid 170% ht 170%
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/pikchr_explicit.svg)
@@ -116,6 +133,9 @@ fill = none      # transparent box fill
 ```
 
 ## Branching paths
+
+<details>
+<summary>diagram source</summary>
 
 ```pikchr output=assets/pikchr_branch.svg
 color = white
@@ -134,12 +154,17 @@ arrow from B.e right 0.3in then down 0.35in then right 0.3in
 D: box "Path B" rad 5px fit wid 170% ht 170%
 ```
 
+</details>
+
 <!--Result:-->
 ![output](assets/pikchr_branch.svg)
 
 **Tip:** For tree/hierarchy diagrams, prefer left-to-right layout (root on left, children branching right). This reads more naturally and avoids awkward vertical stacking.
 
 ## Adding labels
+
+<details>
+<summary>diagram source</summary>
 
 ```pikchr output=assets/pikchr_labels.svg
 color = white
@@ -148,6 +173,8 @@ fill = none
 A: box "Box" rad 5px fit wid 170% ht 170%
 text "label below" at (A.x, A.y - 0.4in)
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/pikchr_labels.svg)

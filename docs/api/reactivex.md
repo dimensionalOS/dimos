@@ -180,6 +180,9 @@ An Observable is a **lazy push-based collection**:
 - **Push-based**: Producer pushes values to consumers (vs pull where consumer requests)
 - **Collection**: Represents 0 to infinite values over time
 
+<details>
+<summary>diagram source</summary>
+
 ```pikchr output=assets/observable_flow.svg
 color = white
 fill = none
@@ -192,6 +195,8 @@ Sub: box ".subscribe()" rad 5px fit wid 170% ht 170%
 arrow right 0.3in
 Handler: box "callback" rad 5px fit wid 170% ht 170%
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/observable_flow.svg)
@@ -222,6 +227,9 @@ done
 
 **Problem**: A fast producer can overwhelm a slow consumer, causing memory buildup or dropped frames.
 
+<details>
+<summary>diagram source</summary>
+
 ```pikchr output=assets/backpressure.svg
 color = white
 fill = none
@@ -234,6 +242,8 @@ Slow: box "ML Model" "2 fps" rad 5px fit wid 130% ht 130%
 
 text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/backpressure.svg)
@@ -283,6 +293,9 @@ slow got 7 items (skipped 13)
 
 ### How it works
 
+<details>
+<summary>diagram source</summary>
+
 ```pikchr output=assets/backpressure_solution.svg
 color = white
 fill = none
@@ -298,6 +311,8 @@ SlowPre: box "LATEST" rad 5px fit wid 170% ht 170%
 arrow
 Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/backpressure_solution.svg)

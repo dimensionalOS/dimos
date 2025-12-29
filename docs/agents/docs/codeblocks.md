@@ -117,6 +117,9 @@ plt.savefig('{output}', transparent=True)
 
 SQLite's diagram language:
 
+<details>
+<summary>diagram source</summary>
+
 ```pikchr output=assets/pikchr-demo.svg
 color = white
 fill = none
@@ -147,6 +150,8 @@ line from Py.e right until even with X then up to X
 Out: file "README.md" fit with .w at (X.x + 0.3in, X.y)
 arrow from X to Out.w
 ```
+
+</details>
 
 <!--Result:-->
 ![output](assets/pikchr-demo.svg)
