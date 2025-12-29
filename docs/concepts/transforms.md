@@ -1,10 +1,60 @@
 # Transforms
 
-Transforms describe the spatial relationship between coordinate frames in a robotics system. DimOS uses a transform system inspired by [ROS tf2](http://wiki.ros.org/tf2) to track how different parts of a robot (sensors, joints, end effectors) relate to each other in 3D space.
+## The Problem: Everything Measures from Its Own Perspective
 
-## Core Concepts
+Imagine your robot has an RGB-D camera—a camera that captures both color images and depth (distance to each pixel). These are common in robotics: Intel RealSense, Microsoft Kinect, and similar sensors.
 
-A **transform** represents the translation and rotation from one coordinate frame (the parent) to another (the child). For example, a camera mounted on a robot has a transform describing its position and orientation relative to the robot's base.
+The camera spots a coffee mug at pixel (320, 240), and the depth sensor says it's 1.2 meters away. You want the robot arm to pick it up—but the arm doesn't understand pixels or camera-relative distances. It needs coordinates in its own workspace: "move to position (0.8, 0.3, 0.1) meters from my base."
+
+To convert camera measurements to arm coordinates, you need to know:
+- The camera's intrinsic parameters (focal length, sensor size) to convert pixels to a 3D direction
+- The depth value to get the full 3D position relative to the camera
+- Where the camera is mounted relative to the arm, and at what angle
+
+This chain of conversions—(pixels + depth) → 3D point in camera frame → robot coordinates—is what **transforms** handle.
+
+```
+world
+  └── robot_base
+        ├── camera_link
+        │     └── camera_optical ← mug at (0.3, 0.1, 1.2)m from camera
+        └── arm_base
+              └── gripper ← needs target here to pick up mug
+```
+
+Each arrow in this tree is a transform. To get the mug's position in gripper coordinates, you chain transforms through their common parent: camera → robot_base → arm → gripper.
+
+## What's a Coordinate Frame?
+
+A **coordinate frame** is simply a point of view—an origin point and a set of axes (X, Y, Z) from which you measure positions and orientations.
+
+Think of it like giving directions:
+- **GPS** says you're at 37.7749° N, 122.4194° W
+- The **coffee shop floor plan** says "table 5 is 3 meters from the entrance"
+- Your **friend** says "I'm two tables to your left"
+
+These all describe positions in the same physical space, but from different reference points. Each is a coordinate frame.
+
+In a robot:
+- The **camera** measures in pixels, or in meters relative to its lens
+- The **LIDAR** measures distances from its own mounting point
+- The **robot arm** thinks in terms of its base or end-effector position
+- The **world** has a fixed coordinate system everything lives in
+
+Each sensor, joint, and reference point has its own frame.
+
+## Why Do We Need Transforms?
+
+Because you constantly need to answer questions like:
+- "The camera sees an obstacle 2m ahead—will the robot body collide with it?"
+- "Where should the gripper go to pick up the object the camera detected?"
+- "The LIDAR sees a wall on the left—where is that relative to the navigation planner's map?"
+
+A **transform** is the mathematical bridge between two frames. It encodes: "Frame B is located at position (x, y, z) and rotated by (roll, pitch, yaw) relative to Frame A."
+
+With transforms, you can take a point measured in one frame and convert it to any other frame. The camera says "object 1.2m ahead of me" → transform tells you "that's 1.7m ahead of the robot base, because the camera is mounted 0.5m forward."
+
+## How Frames Connect
 
 Transforms form a **tree structure** where frames are connected by parent-child relationships:
 
@@ -41,8 +91,8 @@ print(camera_transform)
 
 <!--Result:-->
 ```
-Transform:
- base_link -> camera_link Translation: → Vector Vector([0.5 0.  0.3])
+base_link -> camera_link
+  Translation: → Vector Vector([0.5 0.  0.3])
   Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
 ```
 
@@ -182,12 +232,12 @@ CameraModule defined with publish_transform method
 ### Looking Up Transforms
 
 ```python
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.protocol.tf import TF
 from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 import time
 
-# Create a transform buffer directly for demo
-tf = MultiTBuffer()
+# Create a TF service (autostart=False to skip pubsub for demo)
+tf = TF(autostart=False)
 
 # Add some transforms
 t1 = Transform(
@@ -206,24 +256,36 @@ t2 = Transform(
 )
 tf.receive_transform(t1, t2)
 
-# Look up direct transform
-result = tf.get("base_link", "camera_link")
-print(f"base_link -> camera_link: translation=({result.translation.x}, {result.translation.y}, {result.translation.z})")
+print(
+   "Look up direct transform:\n",
+   tf.get("base_link", "camera_link"),
+)
 
-# Look up chained transform (automatically composes t1 + t2)
-result = tf.get("base_link", "camera_optical")
-print(f"base_link -> camera_optical: translation=({result.translation.x:.2f}, {result.translation.y:.2f}, {result.translation.z:.2f})")
+print(
+   "Look up chained transform (automatically composes t1 + t2)\n",
+   tf.get("base_link", "camera_optical")
+)
 
-# Look up inverse (automatically inverts)
-result = tf.get("camera_link", "base_link")
-print(f"camera_link -> base_link: translation=({result.translation.x}, {result.translation.y}, {result.translation.z})")
+print(
+   "Look up inverse (automatically inverts)\n",
+   tf.get("camera_link", "base_link")
+)
 ```
 
 <!--Result:-->
 ```
-base_link -> camera_link: translation=(1.0, 0.0, 0.0)
-base_link -> camera_optical: translation=(1.00, 0.00, 0.10)
-camera_link -> base_link: translation=(-1.0, -0.0, -0.0)
+Look up direct transform:
+ base_link -> camera_link
+  Translation: → Vector Vector([1. 0. 0.])
+  Rotation: Quaternion(0.000000, 0.000000, 0.000000, 1.000000)
+Look up chained transform (automatically composes t1 + t2)
+ base_link -> camera_optical
+  Translation: → Vector Vector([1.  0.  0.1])
+  Rotation: Quaternion(-0.500000, 0.500000, -0.500000, 0.500000)
+Look up inverse (automatically inverts)
+ camera_link -> base_link
+  Translation: ← Vector Vector([-1. -0. -0.])
+  Rotation: Quaternion(-0.000000, -0.000000, -0.000000, 1.000000)
 ```
 
 ## Example: Camera Module
@@ -244,11 +306,11 @@ base_link -> camera_link -> camera_optical
 The TF service maintains a temporal buffer of transforms (default 10 seconds) allowing queries at past timestamps:
 
 ```python
-from dimos.protocol.tf.tf import MultiTBuffer
+from dimos.protocol.tf import TF
 from dimos.msgs.geometry_msgs import Transform, Vector3, Quaternion
 import time
 
-tf = MultiTBuffer()
+tf = TF(autostart=False)
 
 # Simulate transforms at different times
 for i in range(5):
@@ -272,15 +334,15 @@ print(tf)
 ```
 Latest transform: x=4.0
 Buffer has 1 transform pair(s)
-MultiTBuffer(1 buffers):
-  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 12:17:01 - 2025-12-29 12:17:01])
+LCMTF(1 buffers):
+  TBuffer(base_link -> camera_link, 5 msgs, 0.40s [2025-12-29 12:26:10 - 2025-12-29 12:26:10])
 ```
 
 This is essential for sensor fusion where you need to know where the camera was when an image was captured, not where it is now.
 
 ## Further Reading
 
-For the mathematical foundations of transforms and coordinate frames, the ROS documentation provides excellent background:
+For the mathematical foundations, the ROS documentation provides detailed background:
 
 - [ROS tf2 Concepts](http://wiki.ros.org/tf2)
 - [ROS REP 103 - Standard Units and Coordinate Conventions](https://www.ros.org/reps/rep-0103.html)

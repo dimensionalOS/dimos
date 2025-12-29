@@ -14,7 +14,7 @@ Some examples of are:
 A common module structure for controling a robot looks something like this, black blocks are modules, colored lines are connections and message types, it's ok if this doesn't make sense now,
 it will by the end of this document.
 
-```python output=go2_basic.svg
+```python output=assets/go2_basic.svg
 from dimos.core.introspection.blueprint import dot2
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic
 dot2.render_svg(basic, "go2_basic.svg")
@@ -27,7 +27,7 @@ dot2.render_svg(basic, "go2_basic.svg")
 
 Let's learn how to build stuff like the above, starting with a simple camera module.
 
-```python session=camera_module_demo output=camera_module.svg
+```python session=camera_module_demo output=assets/camera_module.svg
 from dimos.hardware.camera.module import CameraModule
 from dimos.core.introspection.module import dot
 dot.render_svg(CameraModule.module_info(), "camera_module.svg")
@@ -53,7 +53,7 @@ print(CameraModule.io())
  ├─ RPC start() -> str
  ├─ RPC stop() -> None
  │
- ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
+ ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=assets/image)
 ```
 
 We can see that camera module outputs two streams:
@@ -160,7 +160,7 @@ Blueprint is a pre-defined structure of interconnected modules. You can include 
 
 Basic unitree go2 blueprint looks like what we saw before,
 
-```python  session=blueprints output=go2_agentic.svg
+```python  session=blueprints output=assets/go2_agentic.svg
 from dimos.core.introspection.blueprint import dot2, LayoutAlgo
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, agentic
 
