@@ -14,20 +14,17 @@
 
 """Dashboard module for visualization and monitoring.
 
-Use RerunModule for Rerun visualization:
+Importing this module initializes Rerun (happens at import time, before multiprocessing).
 
-    from dimos.dashboard.rerun_module import rerun_module
+Usage in modules:
+    import rerun as rr
+    from dimos.dashboard import rerun_init  # triggers Rerun initialization
 
-    blueprint = autoconnect(
-        my_module(),
-        rerun_module(),
-    )
+    class MyModule(Module):
+        def start(self):
+            rr.log("my/entity", my_data.to_rerun())
 """
 
-from dimos.dashboard.rerun_module import RerunModule, RerunModuleConfig, rerun_module
+from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun init at import
 
-__all__ = [
-    "RerunModule",
-    "RerunModuleConfig",
-    "rerun_module",
-]
+__all__ = ["rerun_init"]

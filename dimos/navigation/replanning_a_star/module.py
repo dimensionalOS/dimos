@@ -15,10 +15,12 @@
 import os
 
 from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
+import rerun as rr
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
+from dimos.dashboard import rerun_init  # noqa: F401 - triggers Rerun initialization
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
@@ -62,7 +64,11 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         unsub = self.target.subscribe(self._planner.handle_goal_request)
         self._disposables.add(Disposable(unsub))
 
-        self._disposables.add(self._planner.path.subscribe(self.path.publish))
+        def _publish_path(nav_path: Path) -> None:
+            self.path.publish(nav_path)
+            rr.log("world/nav/path", nav_path.to_rerun())
+
+        self._disposables.add(self._planner.path.subscribe(_publish_path))
 
         self._disposables.add(self._planner.cmd_vel.subscribe(self.cmd_vel.publish))
 
