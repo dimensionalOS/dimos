@@ -35,6 +35,7 @@ dot.render_svg(CameraModule.module_info(), "assets/camera_module.svg")
 
 
 
+
 We can always also print out Module I/O quickly into console via `.io()` call, we will do this from now on.
 
 ```python session=camera_module_demo ansi=false
@@ -84,15 +85,15 @@ camera.stop()
 <!--Result:-->
 ```
 Out [94mcolor_image[Image][0m @ [92mCameraModule[0m
-<function Out.subscribe.<locals>.<lambda> at 0x7f3439ce2fc0>
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
-[2m2025-12-29T05:48:28.403054Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
-[2m2025-12-29T05:48:28.609584Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
-[2m2025-12-29T05:48:28.814366Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 13:48:28)
-[2m2025-12-29T05:48:29.019135Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+<function Out.subscribe.<locals>.<lambda> at 0x7feb06af2fc0>
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:51)
+[2m2025-12-29T06:54:51.555218Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:51)
+[2m2025-12-29T06:54:51.760800Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:51)
+[2m2025-12-29T06:54:51.965721Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:52)
+[2m2025-12-29T06:54:52.170731Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
 ```
 
 ## Connecting modules
