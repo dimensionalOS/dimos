@@ -92,9 +92,7 @@ def _init_rerun() -> None:
     elif RERUN_VIEWER_MODE == "web":
         # Start gRPC + web viewer (headless friendly)
         server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
-        rr.serve_web_viewer(
-            web_port=RERUN_WEB_PORT, open_browser=False, connect_to=server_uri
-        )
+        rr.serve_web_viewer(web_port=RERUN_WEB_PORT, open_browser=False, connect_to=server_uri)
         logger.info(f"Rerun: web viewer on http://localhost:{RERUN_WEB_PORT}")
     else:
         # Just gRPC server, no viewer (connect externally)
