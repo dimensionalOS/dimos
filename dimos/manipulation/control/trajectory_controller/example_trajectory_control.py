@@ -29,14 +29,13 @@ Use trajectory_setter.py to interactively create and execute trajectories.
 """
 
 import signal
-import sys
 import time
 
 from dimos import core
 from dimos.hardware.manipulators.xarm import XArmDriver
 from dimos.manipulation.control import JointTrajectoryController
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
-from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryPoint, TrajectoryState
+from dimos.msgs.trajectory_msgs import JointTrajectory, TrajectoryState
 
 # Global flag for graceful shutdown
 shutdown_requested = False
