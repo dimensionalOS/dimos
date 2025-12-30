@@ -77,7 +77,6 @@ misc = [
     "catkin_pkg",
     "lark",
     "tiktoken>=0.8.0",
-    "Flask>=2.2",
     "python-multipart==0.0.20",
     "tensorzero==2025.7.5",
 
@@ -148,13 +147,7 @@ perception = [
 
 unitree = [
     "dimos[agents,web,perception]",
-    # WebRTC streaming
-    "aiortc==1.9.0",
     "unitree-webrtc-connect",
-    "pycryptodome",
-    "pyaudio",
-    "requests",
-    "wasmtime",
 ]
 
 manipulation = [
