@@ -27,6 +27,7 @@ requires-python = ">=3.10"
 
 dependencies = [
     "aioice",
+    "av==12.3.0",
     # Core requirements
     "opencv-python",
     "numba>=0.60.0",      # Python 3.12 support
