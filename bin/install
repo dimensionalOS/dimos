@@ -28,7 +28,7 @@ if ! has curl;then
     fi
 fi
 
-# using MacOS/OpenBSD's tar command as unzip (macos doesnt ship with unzip)
+# using OpenBSD/MacOS's tar command as unzip (they don't ship with unzip)
 if [ "$(uname)" = "Darwin" ];then
     # we create a fake unzip for deno's installer to use
     unzip () {
@@ -89,7 +89,7 @@ if ! has unzip && ! has 7z;then
 fi
 
 #
-# stage0.2: slimmed down deno installer
+# stage0.2: use deno to bootstrap python
 #
 echo "Bootstrapping, stage 0.2"
 export deno_version="2.5.3"
