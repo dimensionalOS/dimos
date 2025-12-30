@@ -381,6 +381,5 @@ default-groups = []
 
 [tool.uv.sources]
 clip = { git = "https://github.com/openai/CLIP.git" }
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
 detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }

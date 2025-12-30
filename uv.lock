@@ -1629,7 +1629,7 @@ requires-dist = [
     { name = "dask", extras = ["complete"], specifier = "==2025.5.1" },
     { name = "dataclasses", marker = "extra == 'cuda'" },
     { name = "detectron2", marker = "extra == 'cuda'", git = "https://github.com/facebookresearch/detectron2.git?tag=v0.6" },
-    { name = "dimos-lcm", git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=3aeb724863144a8ba6cf72c9f42761d1007deda4" },
+    { name = "dimos-lcm" },
     { name = "einops", specifier = "==0.8.1" },
     { name = "empy", specifier = "==3.3.4" },
     { name = "fastapi", specifier = ">=0.115.6" },
@@ -1757,12 +1757,16 @@ provides-extras = ["manipulation", "cpu", "cuda", "dev", "sim", "drone"]
 [[package]]
 name = "dimos-lcm"
 version = "0.1.0"
-source = { git = "https://github.com/dimensionalOS/dimos-lcm.git?rev=3aeb724863144a8ba6cf72c9f42761d1007deda4#3aeb724863144a8ba6cf72c9f42761d1007deda4" }
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "foxglove-websocket" },
     { name = "lcm" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/8c/b8/66093e6503d861f03abfda7b5393c335f5d91dec1700b564d07faedc77ae/dimos_lcm-0.1.0.tar.gz", hash = "sha256:6a648e646ae5fbf85fb0445add946dc70608f77973d43485cb453440f5ac8f74", size = 405547, upload-time = "2025-12-30T06:53:37.748Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/48/93/6319e4f89fb0143f772ddca13be7177333de473a8a801e3a1a2566b6463c/dimos_lcm-0.1.0-py3-none-any.whl", hash = "sha256:637edf653fb1c9cff9f5b1245658fd9c8c93f96b58b4ad70fd085fec02589193", size = 1714080, upload-time = "2025-12-30T06:53:35.543Z" },
 ]
 
 [[package]]
