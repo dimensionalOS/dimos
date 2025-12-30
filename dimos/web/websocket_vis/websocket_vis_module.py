@@ -219,7 +219,11 @@ class WebsocketVisModule(Module):
         # Add static file serving for command-center assets if build exists
         if _COMMAND_CENTER_DIR.exists():
             routes.append(
-                Mount("/assets", app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"), name="assets")
+                Mount(
+                    "/assets",
+                    app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"),
+                    name="assets",
+                )
             )
         starlette_app = Starlette(routes=routes)
 
