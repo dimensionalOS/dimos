@@ -14,7 +14,7 @@
 
 """Validation utilities for manipulator drivers."""
 
-from typing import Any, Optional, cast
+from typing import cast
 
 
 def validate_joint_limits(

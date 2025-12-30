@@ -23,7 +23,7 @@ Provides RPC methods for querying robot state including:
 """
 
 import threading
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 from dimos.core import rpc
 from dimos.msgs.sensor_msgs import JointState, RobotState

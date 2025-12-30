@@ -18,8 +18,6 @@ from typing import Any, Protocol
 
 from numpy.typing import NDArray
 
-from dimos.hardware.end_effectors.end_effector import EndEffector
-
 
 class InputController(Protocol):
     """A protocol for input devices to control the robot."""
