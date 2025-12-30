@@ -330,7 +330,7 @@ class JointTrajectoryController(Module):
                             )
                         else:
                             # Sample trajectory
-                            q_ref, qd_ref = self._trajectory.sample(t)
+                            q_ref, _qd_ref = self._trajectory.sample(t)
 
                             # Create and publish command (outside lock would be better but simpler here)
                             cmd = JointCommand(positions=q_ref, timestamp=time.time())
