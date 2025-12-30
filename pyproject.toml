@@ -26,6 +26,7 @@ description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
 
 dependencies = [
+    "aioice",
     # Core requirements
     "opencv-python",
     "numba>=0.60.0",      # Python 3.12 support
@@ -382,5 +383,6 @@ default-groups = []
 [tool.uv.sources]
 clip = { git = "https://github.com/openai/CLIP.git" }
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
+aioice = { git = "https://github.com/legion1581/aioice.git?rev=go2", rev = "ff5755a1e37127411b5fc797c105804db8437445" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
 detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }
