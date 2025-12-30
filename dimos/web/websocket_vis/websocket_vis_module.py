@@ -16,9 +16,13 @@
 
 """
 WebSocket Visualization Module for Dimos navigation and mapping.
+
+This module provides a WebSocket data server for real-time visualization.
+The frontend is served from a separate HTML file.
 """
 
 import asyncio
+from pathlib import Path
 import threading
 import time
 from typing import Any
@@ -27,9 +31,15 @@ from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse
-from starlette.routing import Route
+from starlette.responses import FileResponse, Response
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 import uvicorn
+
+# Path to the frontend HTML templates and command-center build
+_TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+_DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
+_COMMAND_CENTER_DIR = Path(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.occupancy.gradient import gradient
@@ -186,121 +196,31 @@ class WebsocketVisModule(Module):
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
-            html = """<!DOCTYPE html>
-<html>
-<head>
-    <title>Dimos Go2</title>
-    <style>
-        body { margin: 0; overflow: hidden; font-family: -apple-system, system-ui, sans-serif; }
-        .container { display: flex; height: 100vh; }
-        .rerun { flex: 1; border: none; }
-        .panel { width: 220px; padding: 20px; background: #1e1e1e; color: white; display: flex; flex-direction: column; }
-        h3 { margin: 0 0 20px 0; font-size: 20px; }
-        button {
-            width: 100%; padding: 15px; margin: 8px 0; font-size: 15px;
-            border: none; border-radius: 8px; cursor: pointer; font-weight: 600;
-            transition: all 0.2s;
-        }
-        button:hover { opacity: 0.9; transform: translateY(-1px); }
-        .explore { background: #28a745; color: white; }
-        .nav { background: #007bff; color: white; }
-        .active { box-shadow: 0 0 15px rgba(255,255,255,0.6); }
-        .status { padding: 12px; background: #333; border-radius: 8px; margin: 15px 0; font-size: 14px; }
-        .mode { font-weight: bold; color: #00ff88; }
-        .help { font-size: 12px; color: #888; margin-top: auto; line-height: 1.6; padding-top: 20px; border-top: 1px solid #333; }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
-        <div class="panel">
-            <h3>🤖 Go2 Control</h3>
-            <div class="status">Mode: <span class="mode" id="mode">Idle</span></div>
-            <button id="exploreBtn" class="explore" onclick="toggleExplore()">🗺️ Start Exploration</button>
-            <button id="navBtn" class="nav" onclick="toggleNav()">🎮 Enable Navigation</button>
-            <div class="help">
-                <strong>Navigation Keys:</strong><br>
-                W/S: Forward/Back<br>
-                A/D: Turn L/R<br>
-                ←/→: Strafe L/R<br>
-                Space: Stop<br>
-                Shift: 2x Speed
-            </div>
-        </div>
-    </div>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <script>
-        const socket = io('http://localhost:7779');
-        let navActive = false, exploreActive = false, keysHeld = new Set(), publishInterval = null;
+            """Serve the dashboard HTML from external file."""
+            return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
-        socket.on('connect', () => console.log('Connected to dimos'));
+        async def serve_command_center(request):  # type: ignore[no-untyped-def]
+            """Serve the command center 2D visualization (built React app)."""
+            index_file = _COMMAND_CENTER_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file, media_type="text/html")
+            else:
+                return Response(
+                    content="Command center not built. Run: cd dimos/web/command-center-extension && npm install && npm run build:standalone",
+                    status_code=503,
+                    media_type="text/plain",
+                )
 
-        function toggleExplore() {
-            exploreActive = !exploreActive;
-            if (exploreActive) {
-                socket.emit('start_explore');
-                document.getElementById('exploreBtn').innerHTML = '⏹️ Stop Exploration';
-                document.getElementById('exploreBtn').classList.add('active');
-                document.getElementById('mode').textContent = 'Exploring';
-                if (navActive) toggleNav();
-            } else {
-                socket.emit('stop_explore');
-                document.getElementById('exploreBtn').innerHTML = '🗺️ Start Exploration';
-                document.getElementById('exploreBtn').classList.remove('active');
-                document.getElementById('mode').textContent = 'Idle';
-            }
-        }
+        routes = [
+            Route("/", serve_index),
+            Route("/command-center", serve_command_center),
+        ]
 
-        function toggleNav() {
-            navActive = !navActive;
-            if (navActive) {
-                document.getElementById('navBtn').classList.add('active');
-                document.getElementById('mode').textContent = 'Navigating';
-                document.addEventListener('keydown', onKeyDown);
-                document.addEventListener('keyup', onKeyUp);
-                publishInterval = setInterval(publishTwist, 100);
-                if (exploreActive) toggleExplore();
-            } else {
-                document.getElementById('navBtn').classList.remove('active');
-                document.getElementById('mode').textContent = 'Idle';
-                document.removeEventListener('keydown', onKeyDown);
-                document.removeEventListener('keyup', onKeyUp);
-                if (publishInterval) { clearInterval(publishInterval); publishInterval = null; }
-                keysHeld.clear();
-                sendTwist(0, 0, 0);
-            }
-        }
-
-        function onKeyDown(e) {
-            if ([' ', 'ArrowLeft', 'ArrowRight'].includes(e.key)) e.preventDefault();
-            keysHeld.add(e.key.toLowerCase());
-        }
-
-        function onKeyUp(e) { keysHeld.delete(e.key.toLowerCase()); }
-
-        function publishTwist() {
-            let lx = 0, ly = 0, az = 0, speed = 1.0;
-            if (keysHeld.has('shift')) speed = 2.0;
-            if (keysHeld.has('control')) speed = 0.5;
-            if (keysHeld.has(' ')) { sendTwist(0, 0, 0); return; }
-            if (keysHeld.has('w')) lx = 0.5 * speed;
-            if (keysHeld.has('s')) lx = -0.5 * speed;
-            if (keysHeld.has('a')) az = 0.8 * speed;
-            if (keysHeld.has('d')) az = -0.8 * speed;
-            if (keysHeld.has('arrowleft')) ly = 0.5 * speed;
-            if (keysHeld.has('arrowright')) ly = -0.5 * speed;
-            sendTwist(lx, ly, az);
-        }
-
-        function sendTwist(lx, ly, az) {
-            socket.emit('move_command', { linear: {x: lx, y: ly, z: 0}, angular: {x: 0, y: 0, z: az} });
-        }
-    </script>
-</body>
-</html>"""
-            return HTMLResponse(html)
-
-        routes = [Route("/", serve_index)]
+        # Add static file serving for command-center assets if build exists
+        if _COMMAND_CENTER_DIR.exists():
+            routes.append(
+                Mount("/assets", app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"), name="assets")
+            )
         starlette_app = Starlette(routes=routes)
 
         self.app = socketio.ASGIApp(self.sio, starlette_app)
