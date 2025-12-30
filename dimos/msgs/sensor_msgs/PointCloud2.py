@@ -474,7 +474,7 @@ class PointCloud2(Timestamped):
                 positions=points,
                 radii=radii,
                 colors=point_colors,
-            )
+        )
 
     def filter_by_height(
         self,
