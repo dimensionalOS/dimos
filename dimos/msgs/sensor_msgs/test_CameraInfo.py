@@ -394,7 +394,15 @@ def test_camera_info_from_yaml() -> None:
     """Test loading CameraInfo from YAML file."""
 
     # Get path to the single webcam YAML file
-    yaml_path = get_project_root() / "dimos" / "hardware" / "sensors" / "camera" / "zed" / "single_webcam.yaml"
+    yaml_path = (
+        get_project_root()
+        / "dimos"
+        / "hardware"
+        / "sensors"
+        / "camera"
+        / "zed"
+        / "single_webcam.yaml"
+    )
 
     # Load CameraInfo from YAML
     camera_info = CameraInfo.from_yaml(str(yaml_path))

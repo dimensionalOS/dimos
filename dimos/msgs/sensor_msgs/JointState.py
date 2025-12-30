@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import time
-from typing import List, TypeAlias
+from typing import TypeAlias
 
 from dimos_lcm.sensor_msgs import JointState as LCMJointState
 
@@ -29,7 +29,7 @@ from plum import dispatch
 from dimos.types.timestamped import Timestamped
 
 # Types that can be converted to/from JointState
-JointStateConvertable: TypeAlias = dict[str, List[str] | List[float]] | LCMJointState
+JointStateConvertable: TypeAlias = dict[str, list[str] | list[float]] | LCMJointState
 
 
 def sec_nsec(ts):
@@ -41,20 +41,20 @@ class JointState(Timestamped):
     msg_name = "sensor_msgs.JointState"
     ts: float
     frame_id: str
-    name: List[str]
-    position: List[float]
-    velocity: List[float]
-    effort: List[float]
+    name: list[str]
+    position: list[float]
+    velocity: list[float]
+    effort: list[float]
 
     @dispatch
     def __init__(
         self,
         ts: float = 0.0,
         frame_id: str = "",
-        name: List[str] | None = None,
-        position: List[float] | None = None,
-        velocity: List[float] | None = None,
-        effort: List[float] | None = None,
+        name: list[str] | None = None,
+        position: list[float] | None = None,
+        velocity: list[float] | None = None,
+        effort: list[float] | None = None,
     ) -> None:
         """Initialize a JointState message.
 
@@ -74,7 +74,7 @@ class JointState(Timestamped):
         self.effort = effort if effort is not None else []
 
     @dispatch
-    def __init__(self, joint_dict: dict[str, List[str] | List[float]]) -> None:
+    def __init__(self, joint_dict: dict[str, list[str] | list[float]]) -> None:
         """Initialize from a dictionary."""
         self.ts = joint_dict.get("ts", time.time())
         self.frame_id = joint_dict.get("frame_id", "")
@@ -152,7 +152,7 @@ class JointState(Timestamped):
         )
 
     @classmethod
-    def from_ros_msg(cls, ros_msg: ROSJointState) -> "JointState":
+    def from_ros_msg(cls, ros_msg: ROSJointState) -> JointState:
         """Create a JointState from a ROS sensor_msgs/JointState message.
 
         Args:

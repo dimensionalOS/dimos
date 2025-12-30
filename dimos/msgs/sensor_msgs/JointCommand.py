@@ -20,10 +20,9 @@ DO NOT MODIFY BY HAND!!!!
 from io import BytesIO
 import struct
 import time
-from typing import List
 
 
-class JointCommand(object):
+class JointCommand:
     """
     Joint command message for robotic manipulators.
 
@@ -34,13 +33,15 @@ class JointCommand(object):
 
     msg_name = "sensor_msgs.JointCommand"
 
-    __slots__ = ["timestamp", "num_joints", "positions"]
+    __slots__ = ["num_joints", "positions", "timestamp"]
 
     __typenames__ = ["double", "int32_t", "double"]
 
     __dimensions__ = [None, None, ["num_joints"]]
 
-    def __init__(self, positions: List[float] = None, timestamp: float = None):
+    def __init__(
+        self, positions: list[float] | None = None, timestamp: float | None = None
+    ) -> None:
         """
         Initialize JointCommand.
 
@@ -71,7 +72,7 @@ class JointCommand(object):
         self._encode_one(buf)
         return buf.getvalue()
 
-    def _encode_one(self, buf):
+    def _encode_one(self, buf) -> None:
         # Encode timestamp
         buf.write(struct.pack(">d", self.timestamp))
 
@@ -109,7 +110,7 @@ class JointCommand(object):
 
         # Decode positions array
         self.positions = []
-        for i in range(self.num_joints):
+        for _i in range(self.num_joints):
             self.positions.append(struct.unpack(">d", buf.read(8))[0])
 
         return self
@@ -135,8 +136,8 @@ class JointCommand(object):
         """Get the LCM hash of the struct"""
         return struct.unpack(">Q", JointCommand._get_packed_fingerprint())[0]
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"JointCommand(timestamp={self.timestamp:.6f}, num_joints={self.num_joints}, positions={self.positions})"
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"JointCommand(positions={self.positions}, timestamp={self.timestamp})"

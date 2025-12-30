@@ -21,20 +21,20 @@ from io import BytesIO
 import struct
 
 
-class RobotState(object):
+class RobotState:
     msg_name = "sensor_msgs.RobotState"
 
     __slots__ = [
-        "state",
-        "mode",
-        "error_code",
-        "warn_code",
         "cmdnum",
-        "mt_brake",
-        "mt_able",
-        "tcp_pose",
-        "tcp_offset",
+        "error_code",
         "joints",
+        "mode",
+        "mt_able",
+        "mt_brake",
+        "state",
+        "tcp_offset",
+        "tcp_pose",
+        "warn_code",
     ]
 
     __typenames__ = [
@@ -54,17 +54,17 @@ class RobotState(object):
 
     def __init__(
         self,
-        state=0,
-        mode=0,
-        error_code=0,
-        warn_code=0,
-        cmdnum=0,
-        mt_brake=0,
-        mt_able=0,
+        state: int = 0,
+        mode: int = 0,
+        error_code: int = 0,
+        warn_code: int = 0,
+        cmdnum: int = 0,
+        mt_brake: int = 0,
+        mt_able: int = 0,
         tcp_pose=None,
         tcp_offset=None,
         joints=None,
-    ):
+    ) -> None:
         # LCM Type: int32_t
         self.state = state
         # LCM Type: int32_t
@@ -96,7 +96,7 @@ class RobotState(object):
         self._encode_one(buf)
         return buf.getvalue()
 
-    def _encode_one(self, buf):
+    def _encode_one(self, buf) -> None:
         buf.write(
             struct.pack(
                 ">iiiiiii",

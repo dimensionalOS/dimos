@@ -22,8 +22,8 @@ Usage:
     python tests/test_xarm_rt_driver.py
 """
 
-import sys
 import os
+import sys
 
 # Add dimos root to path
 script_dir = os.path.dirname(os.path.abspath(__file__))

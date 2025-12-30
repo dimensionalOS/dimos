@@ -24,6 +24,7 @@ Usage:
 
 import time
 from unittest.mock import MagicMock, patch
+
 import pytest
 
 from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
@@ -221,7 +222,7 @@ def test_enable_servo_mode_rpc(driver):
     driver.start()
     time.sleep(0.3)
 
-    code, msg = driver.enable_servo_mode()
+    code, _msg = driver.enable_servo_mode()
 
     assert code == 0, "enable_servo_mode should return success code"
 
@@ -233,7 +234,7 @@ def test_disable_servo_mode_rpc(driver):
     driver.start()
     time.sleep(0.3)
 
-    code, msg = driver.disable_servo_mode()
+    code, _msg = driver.disable_servo_mode()
 
     assert code == 0, "disable_servo_mode should return success code"
 
@@ -245,7 +246,7 @@ def test_clean_error_rpc(driver):
     driver.start()
     time.sleep(0.3)
 
-    code, msg = driver.clean_error()
+    code, _msg = driver.clean_error()
 
     assert code == 0, "clean_error should return success code"
 
@@ -305,7 +306,7 @@ def test_readiness_check_initialization():
 
         # Call readiness check - should not raise AttributeError
         try:
-            is_ready = driver._xarm_is_ready_write()
+            driver._xarm_is_ready_write()
             # Should complete without AttributeError
             assert True
         except AttributeError as e:

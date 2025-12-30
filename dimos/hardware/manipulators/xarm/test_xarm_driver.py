@@ -38,8 +38,8 @@ import pytest
 
 from dimos import core
 from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
-from dimos.msgs.sensor_msgs import JointState, RobotState
 from dimos.msgs.geometry_msgs import WrenchStamped
+from dimos.msgs.sensor_msgs import JointState, RobotState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
@@ -108,7 +108,7 @@ def driver(dimos_cluster):
 
 
 @pytest.mark.tool
-def test_basic_connection(driver):
+def test_basic_connection(driver) -> None:
     """Test basic connection and startup with dimos deployment."""
     logger.info("=" * 80)
     logger.info("TEST 1: Basic Connection with dimos.deploy()")
@@ -135,7 +135,7 @@ def test_basic_connection(driver):
 
 
 @pytest.mark.tool
-def test_joint_state_reading(driver):
+def test_joint_state_reading(driver) -> None:
     """Test joint state reading via LCM topic subscription."""
     logger.info("=" * 80)
     logger.info("TEST 2: Joint State Reading via LCM Transport")
@@ -171,7 +171,7 @@ def test_joint_state_reading(driver):
     joint_states_received = []
     robot_states_received = []
 
-    def on_joint_state(msg):
+    def on_joint_state(msg) -> None:
         """Callback for receiving joint state messages from LCM."""
         joint_states_received.append(msg)
         if len(joint_states_received) <= 3:
@@ -181,7 +181,7 @@ def test_joint_state_reading(driver):
                 f"(showing first 3 joints)"
             )
 
-    def on_robot_state(msg):
+    def on_robot_state(msg) -> None:
         """Callback for receiving robot state messages from LCM."""
         robot_states_received.append(msg)
         if len(robot_states_received) <= 3:
@@ -249,7 +249,7 @@ def test_joint_state_reading(driver):
 
 
 @pytest.mark.tool
-def test_command_sending(driver):
+def test_command_sending(driver) -> None:
     """Test that command RPC methods are available and functional."""
     logger.info("=" * 80)
     logger.info("TEST 3: Command RPC Methods")
@@ -317,7 +317,7 @@ def test_command_sending(driver):
 
 
 @pytest.mark.tool
-def test_rpc_methods(driver):
+def test_rpc_methods(driver) -> None:
     """Test RPC method calls."""
     logger.info("=" * 80)
     logger.info("TEST 4: RPC Methods")
@@ -374,7 +374,7 @@ def test_rpc_methods(driver):
     logger.info("✓ TEST 4 PASSED\n")
 
 
-def run_tests():
+def run_tests() -> None:
     """Run all tests."""
     logger.info("=" * 80)
     logger.info("XArm Driver Test Suite (Full dimos Deployment)")
@@ -441,7 +441,7 @@ def run_tests():
         logger.error("❌ SOME TESTS FAILED")
 
 
-def run_driver():
+def run_driver() -> None:
     """Start the xArm driver and keep it running."""
     logger.info("=" * 80)
     logger.info("XArm Driver - Starting in continuous mode")
@@ -501,9 +501,8 @@ def run_driver():
         logger.info("✓ Driver stopped")
 
 
-def main():
+def main() -> None:
     """Main entry point."""
-    import sys
     import argparse
 
     # Parse command-line arguments

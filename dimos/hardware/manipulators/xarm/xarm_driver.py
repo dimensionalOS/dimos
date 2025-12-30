@@ -33,6 +33,8 @@ Key Insight:
   robot state updates at 5Hz (normal mode).
 """
 
+from dataclasses import dataclass
+import threading
 import time
 import threading
 import math
@@ -41,7 +43,9 @@ from dataclasses import dataclass
 
 from xarm.wrapper import XArmAPI
 
-from dimos.core import Module, In, Out, rpc
+from reactivex.disposable import Disposable
+
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.msgs.sensor_msgs import JointState, JointCommand, RobotState
 from dimos.msgs.geometry_msgs import WrenchStamped
@@ -126,7 +130,7 @@ class XArmDriver(
     ft_ext: Out[WrenchStamped] = None  # External force/torque (compensated)
     ft_raw: Out[WrenchStamped] = None  # Raw force/torque sensor data
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         """Initialize the xArm driver."""
         super().__init__(*args, **kwargs)
 
@@ -277,7 +281,7 @@ class XArmDriver(
         logger.info("xArm driver started successfully")
 
     @rpc
-    def stop(self):
+    def stop(self) -> None:
         """Stop the xArm driver and disable servo mode."""
         logger.info("Stopping xArm driver...")
 
@@ -442,7 +446,7 @@ class XArmDriver(
         self._last_err = curr_err
         return curr_err == 0
 
-    def _attempt_error_clearing(self):
+    def _attempt_error_clearing(self) -> None:
         """
         Attempt to clear the current error.
 
@@ -463,7 +467,7 @@ class XArmDriver(
         except Exception as e:
             logger.debug(f"[{self.config.ip_address}] Error clearing failed: {e}")
 
-    def _attempt_error_recovery(self):
+    def _attempt_error_recovery(self) -> None:
         """
         Attempt to recover from error by re-initializing the arm.
 
@@ -571,7 +575,7 @@ class XArmDriver(
     # Private Methods: Initialization
     # =========================================================================
 
-    def _init_publisher(self):
+    def _init_publisher(self) -> None:
         """
         Initialize publisher message structures.
         Mirrors C++ XArmDriver::_init_publisher().
@@ -588,7 +592,7 @@ class XArmDriver(
 
         logger.info("Publishers initialized")
 
-    def _report_connect_changed_callback(self, connected: bool, reported: bool = True):
+    def _report_connect_changed_callback(self, connected: bool, reported: bool = True) -> None:
         """
         Callback invoked when connection state changes.
 
@@ -601,7 +605,7 @@ class XArmDriver(
         else:
             logger.error("xArm disconnected! Please reconnect...")
 
-    def _check_and_clear_servo_errors(self):
+    def _check_and_clear_servo_errors(self) -> None:
         """
         Check servo debug messages and clear low-voltage or other errors.
         Mirrors the C++ dbmsg handling logic.
@@ -655,7 +659,7 @@ class XArmDriver(
             or (fw_maj == major and fw_min == minor and fw_pat >= patch)
         )
 
-    def _start_joint_state_thread(self):
+    def _start_joint_state_thread(self) -> None:
         """
         Start the joint state publishing thread.
         Mirrors the C++ joint state publishing thread logic.
@@ -675,7 +679,7 @@ class XArmDriver(
         )
         self._state_thread.start()
 
-    def _start_control_thread(self):
+    def _start_control_thread(self) -> None:
         """
         Start the control thread for sending commands.
         This thread ONLY sends joint commands to the robot.
@@ -687,7 +691,7 @@ class XArmDriver(
         )
         self._control_thread.start()
 
-    def _start_robot_state_thread(self):
+    def _start_robot_state_thread(self) -> None:
         """
         Start the robot state publishing thread.
         This thread publishes robot state at robot_state_rate Hz,
@@ -748,7 +752,7 @@ class XArmDriver(
     # Private Methods: Callbacks (Non-blocking)
     # =========================================================================
 
-    def _on_joint_position_command(self, cmd_msg: JointCommand):
+    def _on_joint_position_command(self, cmd_msg: JointCommand) -> None:
         """
         Callback when joint position command is received.
         Non-blocking: just store the latest command.
@@ -760,7 +764,7 @@ class XArmDriver(
             self._joint_cmd_ = list(cmd_msg.positions)
             self._last_cmd_time = time.time()  # Update timestamp for timeout detection
 
-    def _on_joint_velocity_command(self, cmd_msg: JointCommand):
+    def _on_joint_velocity_command(self, cmd_msg: JointCommand) -> None:
         """
         Callback when joint velocity command is received.
         Non-blocking: just store the latest command.
@@ -776,7 +780,7 @@ class XArmDriver(
     # Private Methods: Thread Loops
     # =========================================================================
 
-    def _joint_state_loop(self):
+    def _joint_state_loop(self) -> None:
         """
         Joint state publishing loop.
         Mirrors the C++ lambda thread in XArmDriver::init (line 234-256).
@@ -894,7 +898,7 @@ class XArmDriver(
 
         logger.info("Joint state loop stopped")
 
-    def _control_loop(self):
+    def _control_loop(self) -> None:
         """
         Control loop for sending joint commands.
 
@@ -1014,7 +1018,7 @@ class XArmDriver(
 
         logger.info("Control loop stopped")
 
-    def _robot_state_loop(self):
+    def _robot_state_loop(self) -> None:
         """
         Robot state publishing loop.
 
@@ -1076,7 +1080,7 @@ class XArmDriver(
     # Private Methods: SDK Report Callback (Event-Driven)
     # =========================================================================
 
-    def _report_data_callback(self, data: dict):
+    def _report_data_callback(self, data: dict) -> None:
         """
         Callback invoked by xArm SDK when new report data is available.
 
@@ -1133,7 +1137,7 @@ class XArmDriver(
         except Exception as e:
             logger.error(f"Error in report data callback: {e}")
 
-    def _publish_ft_sensor_data(self):
+    def _publish_ft_sensor_data(self) -> None:
         """Publish force/torque sensor data from SDK properties."""
         try:
             # External force (compensated) - ft_ext_force is a list property

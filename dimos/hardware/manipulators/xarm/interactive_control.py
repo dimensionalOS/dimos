@@ -27,22 +27,22 @@ Usage:
     venv/bin/python dimos/hardware/manipulators/xarm/interactive_control.py
 """
 
+import math
 import os
 import time
-import math
 
 from dimos import core
-from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
 from dimos.hardware.manipulators.xarm.sample_trajectory_generator import (
     SampleTrajectoryGenerator,
 )
-from dimos.msgs.sensor_msgs import JointState, RobotState, JointCommand
+from dimos.hardware.manipulators.xarm.xarm_driver import XArmDriver
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger(__file__)
 
 
-def print_banner():
+def print_banner() -> None:
     """Print welcome banner."""
     print("\n" + "=" * 80)
     print("  xArm Interactive Control")
@@ -50,7 +50,7 @@ def print_banner():
     print("=" * 80)
 
 
-def print_current_state(traj_gen):
+def print_current_state(traj_gen) -> None:
     """Display current joint positions."""
     state = traj_gen.get_current_state()
 
@@ -99,7 +99,7 @@ def get_control_mode():
             return None
 
 
-def get_joint_selection(num_joints):
+def get_joint_selection(num_joints: int):
     """Get joint selection from user."""
     while True:
         try:
@@ -240,14 +240,14 @@ def confirm_motion_velocity(joint_index, velocity_deg_s, duration):
         f"  Velocity: {velocity_deg_s:+.2f}°/s ({'clockwise' if velocity_deg_s < 0 else 'counterclockwise'})"
     )
     print(f"  Duration: {duration:.2f}s (with ramp up/down)")
-    print(f"  Profile: 20% ramp up, 60% constant, 20% ramp down")
+    print("  Profile: 20% ramp up, 60% constant, 20% ramp down")
     print("=" * 80)
 
     confirm = input("\nExecute this motion? (y/n): ").strip().lower()
     return confirm == "y"
 
 
-def wait_for_trajectory_completion(traj_gen, duration):
+def wait_for_trajectory_completion(traj_gen, duration) -> None:
     """Wait for trajectory to complete and show progress."""
     print("\n⚙ Executing motion...")
 
@@ -272,7 +272,7 @@ def wait_for_trajectory_completion(traj_gen, duration):
     print("✓ Motion complete!")
 
 
-def interactive_control_loop(xarm, traj_gen, num_joints):
+def interactive_control_loop(xarm, traj_gen, num_joints: int) -> None:
     """Main interactive control loop."""
     print_banner()
 
@@ -424,7 +424,7 @@ def interactive_control_loop(xarm, traj_gen, num_joints):
     print("=" * 80)
 
 
-def main():
+def main() -> None:
     """Run interactive xArm control."""
     import argparse
 
