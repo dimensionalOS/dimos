@@ -1,15 +1,34 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../support/dax.js"
+import { $$ } from "../support/dax.js"
 
-import { dimosEnvVars } from "../support/constants.ts"
-import { addGitIgnorePatterns, getProjectDirectory } from "../support/misc.ts"
+import { discordInviteUrl } from "../support/constants.ts"
 import * as p from "../support/prompt_tools.js"
 
 export async function phase4() {
     p.clearScreen()
     p.header("Next Phase: Dimos Check")
 
-    // FIXME: test the dimos cli by running `dimos --version`
-    // FIXME: test the dimos pip module by importing dimos in a python runtime
-    // if there's an error, report it, give the standard message about messaging in the discord
+    const bail = (msg: string) => {
+        console.log("")
+        p.error(msg)
+        p.error(`Please message us in our discord and we'll help you get it installed:\n    ${discordInviteUrl}`)
+        Deno.exit(1)
+    }
+
+    const checks: Array<{ label: string; run: () => Promise<{ code: number }> }> = [
+        { label: "dimos --version", run: () => $$`dimos --version` },
+        { label: "import dimos (python)", run: () => $$`python -c "import dimos;"` },
+    ]
+
+    let passed = 0
+    for (const check of checks) {
+        const res = await check.run()
+        if (res.code !== 0) {
+            bail(`Failed to run ${check.label} 😕`)
+        }
+        passed++
+        p.boringLog(`- ${check.label} succeeded`)
+    }
+
+    p.boringLog(`- ${passed} Dimos checks passed`)
 }
