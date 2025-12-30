@@ -1,12 +1,12 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../dax.js"
+import { $, $$ } from "../support/dax.js"
 
-import { RenderLogo } from "../dimos_banner.js"
-import { getToolCheckResults, type ToolResult } from "../get_tool_check_results.ts"
-import { activateVenv } from "../venv.js"
-import { dependencyListHumanNames, dependencyListAptPackages } from "../core_dependencies.js"
-import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, ensureVenv } from "../misc.ts"
-import * as p from "../prompt_tools.js"
+import { RenderLogo } from "../support/dimos_banner.js"
+import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
+import { activateVenv } from "../support/venv.js"
+import { dependencyListHumanNames, dependencyListAptPackages } from "../support/core_dependencies.js"
+import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, ensureVenv } from "../support/misc.ts"
+import * as p from "../support/prompt_tools.js"
 
 //
 // Phase 0: Logo and Basic Checks
