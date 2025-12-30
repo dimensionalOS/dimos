@@ -14,8 +14,10 @@
 
 """Rerun initialization with multi-process support.
 
-Main process starts gRPC server + viewer, worker processes connect to it.
-All processes share the same Rerun recording stream.
+Architecture:
+    - Main process calls init_rerun_server() to start gRPC server + viewer
+    - Worker processes call connect_rerun() to connect to the server
+    - All processes share the same Rerun recording stream
 
 Viewer modes (set via RERUN_VIEWER environment variable):
     - "web" (default): Web viewer on port 9090
@@ -23,27 +25,21 @@ Viewer modes (set via RERUN_VIEWER environment variable):
     - "none": gRPC only, connect externally with `rerun --connect`
 
 Usage:
-    # Web viewer (default)
-    dimos --replay run unitree-go2
+    # In main process (e.g., blueprints.build or robot connection):
+    from dimos.dashboard.rerun_init import init_rerun_server
+    server_addr = init_rerun_server()  # Returns server address
 
-    # Native viewer
-    RERUN_VIEWER=native dimos --replay run unitree-go2
+    # In worker modules:
+    from dimos.dashboard.rerun_init import connect_rerun
+    connect_rerun()  # Connects to server started by main process
 
-    # No viewer (connect externally)
-    RERUN_VIEWER=none dimos --replay run unitree-go2
-    rerun --connect rerun+http://127.0.0.1:9876/proxy
-
-Usage in modules:
-    import rerun as rr
-    from dimos.dashboard import rerun_init  # triggers initialization
-
-    class MyModule(Module):
-        def start(self):
-            rr.log("my/entity", my_data.to_rerun())
+    # On shutdown:
+    from dimos.dashboard.rerun_init import shutdown_rerun
+    shutdown_rerun()
 """
 
+import atexit
 import os
-import socket
 
 import rerun as rr
 
@@ -58,33 +54,31 @@ RERUN_GRPC_ADDR = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
 # Environment variable to control viewer mode: "web", "native", or "none"
 RERUN_VIEWER_MODE = os.environ.get("RERUN_VIEWER", "web").lower()
 
-
-def _is_port_in_use(port: int) -> bool:
-    """Check if a port is already in use."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        return s.connect_ex(("127.0.0.1", port)) == 0
+# Track initialization state
+_server_started = False
+_connected = False
 
 
-def _init_rerun() -> None:
-    """Initialize Rerun - start server if main process, connect if worker."""
-    import time
+def init_rerun_server() -> str:
+    """Initialize Rerun server in the main process.
+
+    Starts the gRPC server and optionally the web/native viewer.
+    Should only be called once from the main process.
+
+    Returns:
+        Server address for workers to connect to.
+
+    Raises:
+        RuntimeError: If server initialization fails.
+    """
+    global _server_started
+
+    if _server_started:
+        logger.debug("Rerun server already started")
+        return RERUN_GRPC_ADDR
 
     rr.init("dimos")
 
-    # Check if server is already running (with retry for workers starting
-    # before main process server is fully up)
-    for attempt in range(5):
-        if _is_port_in_use(RERUN_GRPC_PORT):
-            # Server already running (we're a worker) - connect to it
-            rr.connect_grpc(RERUN_GRPC_ADDR)
-            logger.info(f"Rerun: connected to server at {RERUN_GRPC_ADDR}")
-            return
-        if attempt == 0:
-            # First attempt failed - we're likely the main process, start server
-            break
-        time.sleep(0.5)  # Wait for server to come up
-
-    # Main process - start server based on viewer mode
     if RERUN_VIEWER_MODE == "native":
         # Spawn native viewer (requires display)
         rr.spawn(port=RERUN_GRPC_PORT, connect=True)
@@ -102,12 +96,45 @@ def _init_rerun() -> None:
             f"connect with: rerun --connect {RERUN_GRPC_ADDR}"
         )
 
+    _server_started = True
 
-# Initialize at import time
-try:
-    _init_rerun()
-except Exception as e:
-    logger.warning(f"Failed to initialize Rerun: {e}")
+    # Register shutdown handler
+    atexit.register(shutdown_rerun)
+
+    return RERUN_GRPC_ADDR
 
 
-__all__ = ["rr"]
+def connect_rerun(server_addr: str | None = None) -> None:
+    """Connect to Rerun server from a worker process.
+
+    Args:
+        server_addr: Server address to connect to. Defaults to RERUN_GRPC_ADDR.
+    """
+    global _connected
+
+    if _connected:
+        logger.debug("Already connected to Rerun server")
+        return
+
+    addr = server_addr or RERUN_GRPC_ADDR
+
+    rr.init("dimos")
+    rr.connect_grpc(addr)
+    logger.info(f"Rerun: connected to server at {addr}")
+
+    _connected = True
+
+
+def shutdown_rerun() -> None:
+    """Disconnect from Rerun and cleanup resources."""
+    global _server_started, _connected
+
+    if _server_started or _connected:
+        try:
+            rr.disconnect()
+            logger.info("Rerun: disconnected")
+        except Exception as e:
+            logger.warning(f"Rerun: error during disconnect: {e}")
+
+    _server_started = False
+    _connected = False
