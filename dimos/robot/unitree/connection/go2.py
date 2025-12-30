@@ -260,9 +260,25 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
                         name="Camera",
                         origin="world/robot/camera/rgb",
                     ),
-                    rrb.Spatial2DView(
-                        name="Costmap",
-                        origin="world/nav/costmap",
+                    rrb.Horizontal(
+                        rrb.TimeSeriesView(
+                            name="Timing (ms)",
+                            origin="/metrics",
+                            contents=[
+                                "+ /metrics/voxel_map/publish_ms",
+                                "+ /metrics/costmap/calc_ms",
+                            ],
+                            axis_y=rrb.ScalarAxis(range=(0, 100)),
+                        ),
+                        rrb.TimeSeriesView(
+                            name="Latency (ms)",
+                            origin="/metrics",
+                            contents=[
+                                "+ /metrics/voxel_map/latency_ms",
+                                "+ /metrics/costmap/latency_ms",
+                            ],
+                            axis_y=rrb.ScalarAxis(range=(0, 500)),
+                        ),
                     ),
                     row_shares=[2, 1],
                 ),

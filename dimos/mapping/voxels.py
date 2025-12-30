@@ -21,6 +21,7 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
@@ -116,8 +117,18 @@ class VoxelGridMapper(Module):
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
+        start = time.perf_counter()
         pc = self.get_global_pointcloud2()
         self.global_map.publish(pc)  # Auto-logs to Rerun via to_rerun() in start()
+        
+        # Log timing metrics to Rerun
+        elapsed_ms = (time.perf_counter() - start) * 1000
+        rr.log("metrics/voxel_map/publish_ms", rr.Scalars(elapsed_ms))
+        
+        # Log message latency (time from frame capture to now)
+        if pc.ts:
+            latency_ms = (time.time() - pc.ts) * 1000
+            rr.log("metrics/voxel_map/latency_ms", rr.Scalars(latency_ms))
 
     def size(self) -> int:
         return self._voxel_hashmap.size()  # type: ignore[no-any-return]
