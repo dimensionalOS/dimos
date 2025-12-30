@@ -585,94 +585,76 @@ class OccupancyGrid(Timestamped):
         )
 
     def _to_rerun_mesh(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
-        """Convert to 3D mesh overlay on floor plane."""
+        """Convert to 3D mesh overlay on floor plane.
+
+        Only renders known cells (free or occupied), skipping unknown cells.
+        Uses per-vertex colors for proper alpha blending.
+        """
         import rerun as rr
 
-        # Create a textured quad for the entire grid
+        # Only render known cells (not unknown = -1)
+        known_mask = self.grid != -1
+        if not np.any(known_mask):
+            return rr.Mesh3D(vertex_positions=[])
+
+        # Get grid coordinates of known cells
+        gy, gx = np.where(known_mask)
+        n_cells = len(gy)
+
+        # Pre-allocate arrays for all quads
+        # Each cell has 4 vertices and 2 triangles (6 indices)
+        vertices = np.zeros((n_cells * 4, 3), dtype=np.float32)
+        indices = np.zeros((n_cells * 2, 3), dtype=np.uint32)
+        colors = np.zeros((n_cells * 4, 4), dtype=np.uint8)
+
+        # Get colormap
+        cmap = _get_matplotlib_cmap(colormap) if colormap else None
+
         ox = self.origin.position.x
         oy = self.origin.position.y
-        w = self.width * self.resolution
-        h = self.height * self.resolution
+        r = self.resolution
 
-        # Mesh vertices (4 corners of the grid)
-        vertices = np.array(
-            [
-                [ox, oy, z_offset],  # bottom-left
-                [ox + w, oy, z_offset],  # bottom-right
-                [ox + w, oy + h, z_offset],  # top-right
-                [ox, oy + h, z_offset],  # top-left
-            ],
-            dtype=np.float32,
-        )
+        for i, (y, x) in enumerate(zip(gy, gx)):
+            # World position of cell corner
+            wx = ox + x * r
+            wy = oy + y * r
 
-        # Two triangles to form a quad
-        indices = np.array(
-            [
-                [0, 1, 2],
-                [0, 2, 3],
-            ],
-            dtype=np.uint32,
-        )
+            # 4 vertices for this cell's quad
+            base_v = i * 4
+            vertices[base_v] = [wx, wy, z_offset]
+            vertices[base_v + 1] = [wx + r, wy, z_offset]
+            vertices[base_v + 2] = [wx + r, wy + r, z_offset]
+            vertices[base_v + 3] = [wx, wy + r, z_offset]
 
-        # Generate texture from grid
-        if colormap is not None:
-            grid_float = self.grid.astype(np.float32)
-            texture = np.zeros((self.height, self.width, 4), dtype=np.uint8)
+            # 2 triangles for this quad
+            base_i = i * 2
+            indices[base_i] = [base_v, base_v + 1, base_v + 2]
+            indices[base_i + 1] = [base_v, base_v + 2, base_v + 3]
 
-            free_mask = self.grid == 0
-            occupied_mask = self.grid > 0
-            unknown_mask = self.grid == -1
+            # Color based on cell value
+            cell_value = self.grid[y, x]
+            if cmap is not None:
+                if cell_value == 0:
+                    # Free space
+                    rgb = (np.array(cmap(0.0)[:3]) * 255).astype(np.uint8)
+                    color = [rgb[0], rgb[1], rgb[2], 180]
+                else:
+                    # Occupied/cost (1-100)
+                    cost_norm = 0.5 + (cell_value / 100) * 0.5
+                    rgb = (np.array(cmap(cost_norm)[:3]) * 255).astype(np.uint8)
+                    color = [rgb[0], rgb[1], rgb[2], 220]
+            else:
+                if cell_value == 0:
+                    color = [200, 200, 255, 150]  # Light blue for free
+                else:
+                    intensity = int(255 * (1 - cell_value / 100))
+                    color = [255, intensity, intensity, 200]  # Red gradient for cost
 
-            cmap = _get_matplotlib_cmap(colormap)
-
-            if np.any(free_mask):
-                colors_free = (cmap(0.0)[:3] * np.array([255, 255, 255])).astype(np.uint8)
-                texture[free_mask, :3] = colors_free
-                texture[free_mask, 3] = 200
-
-            if np.any(occupied_mask):
-                costs = grid_float[occupied_mask]
-                cost_norm = 0.5 + (costs / 100) * 0.5
-                colors_occ = (cmap(cost_norm)[:, :3] * 255).astype(np.uint8)
-                texture[occupied_mask, :3] = colors_occ
-                texture[occupied_mask, 3] = 255
-
-            if np.any(unknown_mask):
-                texture[unknown_mask] = [128, 128, 128, 50]  # Very transparent
-
-            # Flip texture vertically for correct orientation
-            texture = np.flipud(texture)
-        else:
-            # Grayscale texture
-            texture = np.zeros((self.height, self.width, 4), dtype=np.uint8)
-            texture[self.grid == 0] = [255, 255, 255, 200]  # Free = white, semi-transparent
-            texture[self.grid == -1] = [128, 128, 128, 50]  # Unknown = gray, mostly transparent
-
-            occupied_mask = self.grid > 0
-            if np.any(occupied_mask):
-                costs = self.grid[occupied_mask].astype(np.float32)
-                intensity = (255 * (1 - costs / 100)).astype(np.uint8)
-                texture[occupied_mask, 0] = intensity
-                texture[occupied_mask, 1] = intensity
-                texture[occupied_mask, 2] = intensity
-                texture[occupied_mask, 3] = 255
-
-            texture = np.flipud(texture)
-
-        # UV coordinates for texture mapping
-        texcoords = np.array(
-            [
-                [0.0, 0.0],  # bottom-left
-                [1.0, 0.0],  # bottom-right
-                [1.0, 1.0],  # top-right
-                [0.0, 1.0],  # top-left
-            ],
-            dtype=np.float32,
-        )
+            # Same color for all 4 vertices of this quad
+            colors[base_v : base_v + 4] = color
 
         return rr.Mesh3D(
             vertex_positions=vertices,
             triangle_indices=indices,
-            vertex_texcoords=texcoords,
-            albedo_texture=rr.components.ImageBuffer(texture),
+            vertex_colors=colors,
         )

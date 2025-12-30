@@ -60,12 +60,13 @@ class CostMapper(Module):
                     colormap="RdBu_r",
                 ),
             )
-            # 3D floor overlay (visible in 3D view)
+            # 3D floor overlay (textured mesh, slightly above floor)
             rr.log(
                 "world/nav/costmap/floor",
                 grid.to_rerun(
-                    mode="points",
+                    mode="mesh",
                     colormap="RdBu_r",
+                    z_offset=0.02,
                 ),
             )
 
