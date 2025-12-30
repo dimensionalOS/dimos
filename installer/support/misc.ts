@@ -3,13 +3,15 @@ import { dependencyListHumanNames } from "./constants.ts"
 import * as p from "./prompt_tools.ts"
 import * as Toml from 'https://esm.sh/smol-toml@1.6.0'
 
+const depPromise = import("./pip_dependency_database.ts")
+
 let cachedTomls = {}
-// FIXME: change default branch to "main" upon launch
-export async function getProjectToml({branch="dev"}) {
+export async function getProjectToml({branch="main"}={}) {
     if (!cachedTomls[branch]) {
-        // FIXME: remove token once code is public
+        // FIXME: switch to main once code is public
         // NOTE: its a temp token so if you're reading this its no good anymore (I'm just testing)
-        const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/${branch}/pyproject.toml?token=GHSAT0AAAAAADJ4QAIODK4EQKAG3ITUBA2Q2KUKYPA`)
+        // const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/${branch}/pyproject.toml`)
+        const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/pyproject.toml?token=GHSAT0AAAAAADJ4QAIP3VI2QL6IDRXIWXDA2KUNPRQ`)
         let err
         if (pyprojectToml.ok) {
             const tomlText = await pyprojectToml.text()
@@ -21,9 +23,60 @@ export async function getProjectToml({branch="dev"}) {
                 err = error
             }
         }
-        throw new Error(`Unable to download/parse pyproject.toml for dimos: ${err}`)
+        throw new Error(`Unable to download/parse pyproject.toml for dimos: ${err||""}`)
     }
     return cachedTomls[branch]
+}
+
+export async function getSystemDeps(feature: string | null) {
+    const depDatabase = (await depPromise).default
+    const tomlData = await getProjectToml()
+    const aptDeps = new Set()
+    const nixDeps = new Set()
+    const brewDeps = new Set()
+    let pipDeps
+    if (feature==null) {
+        pipDeps = tomlData.project.dependencies
+    } else {
+        pipDeps = tomlData.project["optional-dependencies"][feature] || []
+    }
+    pipDeps = pipDeps.map(each=>each.replace(/[<=>,;].+/,""))
+    let missing = []
+    for (const pipDep of pipDeps) {
+        const pipDepNoFeature = pipDep.replace(/\[.+/,"")
+        let systemDepInfo = depDatabase[pipDep] || depDatabase[pipDepNoFeature]
+        if (!systemDepInfo) {
+            missing.push(pipDep)
+        } else {
+            for (const [key, value] of Object.entries(systemDepInfo)) {
+                if (key == "apt_dependencies") {
+                    const systemDepList = value
+                    for (let eachSysDep of systemDepList) {
+                        aptDeps.add(eachSysDep)
+                    }
+                }
+                if (key == "nix_dependencies") {
+                    const systemDepList = value
+                    for (let eachSysDep of systemDepList) {
+                        nixDeps.add(eachSysDep)
+                    }
+                }
+                if (key == "brew_dependencies") {
+                    const systemDepList = value
+                    for (let eachSysDep of systemDepList) {
+                         brewDeps.add(eachSysDep)
+                    }
+                }
+            }
+        }
+    }
+    return {
+        aptDeps: [...aptDeps].sort(),
+        nixDeps: [...nixDeps].sort(),
+        brewDeps: [...brewDeps].sort(),
+        pipDeps: [...pipDeps].sort(),
+        missing,
+    }
 }
 
 export function mentionSystemDependencies() {
