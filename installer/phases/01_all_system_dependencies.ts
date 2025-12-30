@@ -20,7 +20,7 @@ export async function phase1(systemAnalysis: Record<string, ToolResult> | null) 
 
     let toolsWereAutoInstalled = false
     // TODO: later check the debian version (make sure not older than whatever ubuntu's 20.04 debian version is)
-    const osInfo = analysis.os
+    const osInfo = systemAnalysis.os
     if (osInfo.name === "debianBased") {
         p.boringLog("Detected Debian-based OS")
         const installDeps = p.confirm("Install these system dependencies for you via apt-get? (NOTE: sudo may prompt for a password)")
