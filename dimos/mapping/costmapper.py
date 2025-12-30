@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
+import time
 
 from reactivex import operators as ops
 import rerun as rr
@@ -48,7 +49,7 @@ class CostMapper(Module):
         super().start()
         connect_rerun()
 
-        def _publish_costmap(grid: OccupancyGrid) -> None:
+        def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float) -> None:
             self.global_costmap.publish(grid)
 
             # Log BOTH 2D image panel AND 3D floor overlay to Rerun
@@ -70,10 +71,24 @@ class CostMapper(Module):
                 ),
             )
 
+            # Log timing metrics to Rerun
+            rr.log("metrics/costmap/calc_ms", rr.Scalars(calc_time_ms))
+
+            # Log message latency (time from pointcloud capture to now)
+            if grid.ts:
+                latency_ms = (time.time() - grid.ts) * 1000
+                rr.log("metrics/costmap/latency_ms", rr.Scalars(latency_ms))
+
+        def _calculate_and_time(msg: PointCloud2) -> tuple[OccupancyGrid, float]:
+            start = time.perf_counter()
+            grid = self._calculate_costmap(msg)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            return grid, elapsed_ms
+
         self._disposables.add(
             self.global_map.observable()  # type: ignore[no-untyped-call]
-            .pipe(ops.map(self._calculate_costmap))
-            .subscribe(_publish_costmap)
+            .pipe(ops.map(_calculate_and_time))
+            .subscribe(lambda result: _publish_costmap(result[0], result[1]))
         )
 
     @rpc
