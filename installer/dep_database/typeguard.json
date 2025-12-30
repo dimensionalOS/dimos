@@ -1,0 +1,6 @@
+{
+  "package": "typeguard",
+  "apt_dependencies": [],
+  "description": "System dependencies required for typeguard pip package on Ubuntu/Debian systems",
+  "notes": "typeguard is a pure Python package that provides runtime type checking for Python type hints. It has no native code or system library dependencies. Its only dependencies are typing_extensions (pure Python) and importlib_metadata for Python < 3.10 (also pure Python). Only Python itself needs to be installed."
+}

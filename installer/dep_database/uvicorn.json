@@ -1,0 +1,11 @@
+{
+  "package": "uvicorn>=0.34.0",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "python3-dev",
+    "build-essential"
+  ],
+  "description": "System dependencies required for uvicorn>=0.34.0 pip package on Ubuntu/Debian systems",
+  "notes": "Uvicorn is primarily a pure Python ASGI server. The core package only requires Python 3.8+. However, python3-dev and build-essential are included because uvicorn's optional performance dependencies (uvloop and httptools) are compiled extensions that require C headers and build tools during pip installation. For standard installations with 'uvicorn[standard]', these build dependencies ensure optimal performance. For minimal installations without compiled extensions, only python3 and python3-pip are strictly necessary."
+}

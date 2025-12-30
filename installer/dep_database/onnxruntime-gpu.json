@@ -1,0 +1,21 @@
+{
+  "package": "onnxruntime-gpu",
+  "apt_dependencies": [
+    "libgomp1",
+    "libstdc++6",
+    "libc6",
+    "cuda-toolkit-12-0",
+    "libcudnn8",
+    "libcublas-12-0",
+    "libcufft-12-0",
+    "libcurand-12-0",
+    "libcusolver-12-0",
+    "libcusparse-12-0",
+    "libnvinfer8",
+    "libnvinfer-plugin8",
+    "libnvonnxparsers8",
+    "nvidia-cuda-toolkit"
+  ],
+  "description": "System dependencies required for onnxruntime-gpu>=1.17.1 pip package on Ubuntu/Debian systems",
+  "notes": "ONNX Runtime GPU version requires CUDA 12.x runtime libraries and cuDNN 8.x for GPU acceleration. The package is distributed as pre-built wheels with some CUDA components bundled, but system CUDA libraries are still required. libgomp1 is needed for OpenMP support. CUDA toolkit includes the core GPU compute libraries (cuBLAS, cuFFT, cuRAND, cuSOLVER, cuSPARSE). cuDNN provides optimized primitives for deep learning. TensorRT libraries (libnvinfer*) are optional but recommended for additional optimization. For ONNX Runtime 1.17.1+, CUDA 12.0+ and cuDNN 8.9+ are the recommended versions. Note that the exact CUDA version may need to match what the wheel was built against - check the official ONNX Runtime release notes for the specific version compatibility."
+}

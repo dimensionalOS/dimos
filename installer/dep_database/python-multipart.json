@@ -1,0 +1,6 @@
+{
+  "package": "python-multipart",
+  "apt_dependencies": [],
+  "description": "",
+  "notes": "Pure Python package with no system-level dependencies. Only requires Python runtime."
+}

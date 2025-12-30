@@ -1,0 +1,17 @@
+{
+  "package": "python-fcl",
+  "version": ">=0.7.0.4",
+  "apt_dependencies": [
+    "libfcl-dev",
+    "liboctomap-dev",
+    "libeigen3-dev",
+    "libccd-dev",
+    "build-essential",
+    "cmake",
+    "pkg-config",
+    "python3-dev",
+    "libassimp-dev"
+  ],
+  "description": "System dependencies required for python-fcl>=0.7.0.4 pip package on Ubuntu/Debian systems",
+  "notes": "python-fcl is a Python binding for the Flexible Collision Library (FCL), used for performing collision detection and proximity queries. Key dependencies: libfcl-dev provides the core FCL library for collision detection, liboctomap-dev enables octree-based collision checking for 3D environments, libeigen3-dev provides linear algebra operations used throughout FCL, libccd-dev implements the GJK-based continuous collision detection algorithm, build-essential and cmake are required for compiling the Python bindings from source, pkg-config helps locate library dependencies during compilation, python3-dev provides Python headers needed for building C++ extensions, and libassimp-dev enables loading various 3D model formats for collision meshes. Note that python-fcl typically needs to be built from source, so all build dependencies are essential."
+}

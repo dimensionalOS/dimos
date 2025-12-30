@@ -1,0 +1,20 @@
+{
+  "package": "moondream",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "libjpeg-dev",
+    "zlib1g-dev",
+    "libtiff-dev",
+    "libfreetype6-dev",
+    "liblcms2-dev",
+    "libwebp-dev",
+    "libharfbuzz-dev",
+    "libfribidi-dev",
+    "libxcb1-dev",
+    "libopenjp2-7-dev"
+  ],
+  "description": "System dependencies required for moondream pip package on Ubuntu/Debian systems",
+  "notes": "Moondream is a vision language model that depends on Pillow (>=10.4.0,<11.0.0) for image processing. The listed dependencies are primarily for building and running Pillow with full image format support. Requires Python >=3.10,<4.0. The actual moondream model inference may have additional runtime dependencies (like PyTorch) that are bundled with the package or installed as hidden dependencies."
+}

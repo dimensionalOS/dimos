@@ -1,0 +1,6 @@
+{
+  "package": "lark",
+  "apt_dependencies": [],
+  "description": "System dependencies required for lark pip package on Ubuntu/Debian systems",
+  "notes": "Lark (lark-parser) is a pure Python parsing library with no native code or system library dependencies. It only requires Python >= 3.6 to be installed. The package provides a modern parsing library capable of parsing any context-free grammar and has no apt-get dependencies. It works entirely with Python standard library and has no external system requirements."
+}

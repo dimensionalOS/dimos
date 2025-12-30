@@ -1,0 +1,13 @@
+{
+  "package": "cupy-cuda12x==13.6.0",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "libgomp1",
+    "gcc",
+    "g++"
+  ],
+  "description": "System dependencies required for cupy-cuda12x==13.6.0 pip package on Ubuntu/Debian systems",
+  "notes": "CuPy CUDA 12.x is distributed as a binary wheel package that includes CUDA Toolkit libraries (cuDNN, cuTENSOR, NCCL, cutensor) bundled within the package, so CUDA installation is not required as a system dependency. The apt dependencies listed are minimal runtime requirements. libgomp1 is required for OpenMP support used by CuPy. build-essential (gcc, g++) may be needed for some operations that require compilation of custom CUDA kernels at runtime. For most use cases with pre-built wheels, only python3, python3-pip, and libgomp1 are strictly necessary."
+}

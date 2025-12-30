@@ -1,0 +1,11 @@
+{
+  "package": "ipykernel",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "libzmq3-dev",
+    "build-essential"
+  ],
+  "description": "System dependencies required for ipykernel>=7.1.0 pip package on Ubuntu/Debian systems",
+  "notes": "ipykernel is the IPython kernel for Jupyter. The main system dependency is libzmq3-dev for the pyzmq package (ZeroMQ messaging library). Most other dependencies (debugpy, psutil, tornado, ipython, jupyter-client, etc.) are pure Python packages. build-essential is included for compiling native extensions during installation. For pre-built wheels (most common), only python3, python3-pip, and libzmq3-dev runtime libraries are strictly required."
+}

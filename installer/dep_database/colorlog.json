@@ -1,0 +1,6 @@
+{
+  "package": "colorlog",
+  "apt_dependencies": [],
+  "description": "System dependencies required for colorlog==6.9.0 pip package on Ubuntu/Debian systems",
+  "notes": "colorlog is a pure Python package with no native code or system library dependencies. It only requires Python >= 3.6 to be installed. The package provides colored terminal output for Python's logging module and has no apt-get dependencies. On Windows, it optionally uses colorama for color support, but this is not needed on Linux systems."
+}

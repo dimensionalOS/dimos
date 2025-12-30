@@ -1,0 +1,8 @@
+{
+  "package": "openai-whisper",
+  "version": "latest",
+  "apt_dependencies": [
+    "ffmpeg"
+  ],
+  "description": "OpenAI Whisper is a speech recognition model that requires FFmpeg for audio file processing and format conversion"
+}

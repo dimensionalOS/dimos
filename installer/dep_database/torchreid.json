@@ -1,0 +1,29 @@
+{
+  "package": "torchreid",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "python3-dev",
+    "build-essential",
+    "libgl1-mesa-glx",
+    "libglib2.0-0",
+    "libsm6",
+    "libxext6",
+    "libxrender-dev",
+    "libgomp1",
+    "libgfortran5",
+    "libjpeg-dev",
+    "libpng-dev",
+    "libtiff-dev",
+    "libavcodec-dev",
+    "libavformat-dev",
+    "libswscale-dev",
+    "libv4l-dev",
+    "libxvidcore-dev",
+    "libx264-dev",
+    "libatlas-base-dev",
+    "gfortran"
+  ],
+  "description": "System dependencies required for torchreid==0.2.5 pip package on Ubuntu/Debian systems",
+  "notes": "Torchreid (Torch Re-Identification) is a PyTorch-based deep learning library for person re-identification in computer vision. It depends on PyTorch, torchvision, and various image processing libraries. The OpenGL libraries (libgl1-mesa-glx, libglib2.0-0, libsm6, libxext6, libxrender-dev) are required for GUI and visualization features. Image codec libraries (libjpeg-dev, libpng-dev, libtiff-dev) support various image formats. Video codec libraries (libavcodec-dev, libavformat-dev, libswscale-dev, libv4l-dev, libxvidcore-dev, libx264-dev) enable video processing capabilities. Math libraries (libatlas-base-dev, gfortran, libgfortran5, libgomp1) provide optimized numerical operations for PyTorch. Build tools (build-essential, python3-dev) are needed for compiling extensions and dependencies."
+}

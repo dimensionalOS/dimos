@@ -1,0 +1,11 @@
+{
+  "package": "pycryptodome",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "python3-dev"
+  ],
+  "description": "System dependencies required for pycryptodome pip package on Ubuntu/Debian systems",
+  "notes": "PyCryptodome is a self-contained cryptographic library. For most installations using pre-built wheels, only python3 and python3-pip are required. build-essential (gcc, make) and python3-dev are needed when building from source or when pre-built wheels are unavailable for the platform. The library includes its own C implementations and does not depend on external cryptographic libraries like OpenSSL."
+}

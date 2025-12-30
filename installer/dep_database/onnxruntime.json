@@ -1,0 +1,10 @@
+{
+  "package": "onnxruntime",
+  "apt_dependencies": [
+    "libgomp1",
+    "libstdc++6",
+    "libc6"
+  ],
+  "description": "System dependencies required for onnxruntime pip package on Ubuntu/Debian systems",
+  "notes": "ONNX Runtime is distributed as pre-built wheels for most platforms and has minimal system dependencies. libgomp1 is needed for OpenMP support (parallel execution). libstdc++6 and libc6 are standard C++ and C libraries typically already present on most systems. For GPU support (onnxruntime-gpu), additional CUDA/cuDNN libraries are required but those are handled separately. The Python wheel includes most dependencies statically linked, making it relatively self-contained compared to building from source."
+}

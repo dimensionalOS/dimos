@@ -1,0 +1,12 @@
+{
+  "package": "pyaudio",
+  "apt_dependencies": [
+    "portaudio19-dev",
+    "python3-pyaudio",
+    "libasound2-dev",
+    "libportaudio2",
+    "libportaudiocpp0"
+  ],
+  "description": "System dependencies required for pyaudio pip package on Ubuntu/Debian systems",
+  "notes": "PyAudio provides Python bindings for PortAudio, the cross-platform audio I/O library. The portaudio19-dev package is essential for building/installing pyaudio from pip. python3-pyaudio is the system package alternative. libasound2-dev provides ALSA (Advanced Linux Sound Architecture) development files which PortAudio uses as a backend on Linux systems."
+}

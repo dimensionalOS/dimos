@@ -1,0 +1,16 @@
+{
+  "package": "langchain-core>=1,<2",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "cargo",
+    "rustc",
+    "libyaml-dev",
+    "libssl-dev",
+    "libffi-dev",
+    "pkg-config"
+  ],
+  "description": "System dependencies required for langchain-core>=1,<2 pip package on Ubuntu/Debian systems",
+  "notes": "langchain-core is the core abstractions and base classes for the LangChain framework. Key system dependencies: (1) cargo/rustc are required for building pydantic-core (Pydantic v2's Rust-based validation core), (2) libyaml-dev for PyYAML C extensions, (3) build-essential for uuid-utils C extensions, (4) libssl-dev and libffi-dev for cryptographic dependencies. When installing from pre-built wheels on common platforms (x86_64 Linux with recent pip), only python3 and python3-pip are strictly required at runtime, but the build dependencies ensure compatibility across all architectures and when building from source."
+}

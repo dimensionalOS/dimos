@@ -1,0 +1,18 @@
+{
+  "package": "langchain-chroma",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "gcc",
+    "g++",
+    "cmake",
+    "python3-dev",
+    "libopenblas-dev",
+    "liblapack-dev",
+    "pkg-config",
+    "curl"
+  ],
+  "description": "System dependencies required for langchain-chroma>=1,<2 pip package on Ubuntu/Debian systems",
+  "notes": "langchain-chroma depends on chromadb which requires several native dependencies. The main requirements are: (1) build-essential, gcc, g++, and cmake for compiling native extensions including chroma-hnswlib (HNSW library for vector similarity search) and potentially onnxruntime components; (2) python3-dev for Python C extension headers; (3) libopenblas-dev and liblapack-dev for numpy numerical operations (inherited from numpy>=1.26.0 dependency); (4) pkg-config for build configuration; (5) curl for potential runtime operations. For pre-built wheels on common architectures (x86_64, aarch64), only python3, python3-pip, and runtime libraries may be strictly required, but build dependencies are included to support source compilation on systems without wheel support or for custom builds."
+}

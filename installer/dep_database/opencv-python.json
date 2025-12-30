@@ -1,0 +1,20 @@
+{
+  "package": "opencv-python",
+  "apt_dependencies": [
+    "python3-opencv",
+    "libopencv-dev",
+    "libgl1-mesa-glx",
+    "libglib2.0-0",
+    "libsm6",
+    "libxext6",
+    "libxrender-dev",
+    "libgomp1",
+    "libgstreamer1.0-0",
+    "libgstreamer-plugins-base1.0-0",
+    "libavcodec58",
+    "libavformat58",
+    "libswscale5"
+  ],
+  "description": "System dependencies required for opencv-python pip package on Ubuntu/Debian systems",
+  "notes": "These are the core system libraries that opencv-python needs to function properly. The exact versions may vary by Ubuntu/Debian release."
+}

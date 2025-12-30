@@ -1,0 +1,9 @@
+{
+  "package": "catkin_pkg",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for catkin_pkg pip package on Ubuntu/Debian systems",
+  "notes": "catkin_pkg is a pure Python package used in ROS for handling catkin workspace packages. It has minimal system dependencies - only requiring Python 3 and pip. The package itself depends on other Python packages (python-dateutil, pyparsing, docutils) which are installed via pip and don't require additional system libraries. While catkin_pkg is commonly used in ROS environments, the pip package itself doesn't require ROS system packages to be installed."
+}

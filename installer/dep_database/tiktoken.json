@@ -1,0 +1,12 @@
+{
+  "package": "tiktoken",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "cargo",
+    "rustc"
+  ],
+  "description": "System dependencies required for tiktoken>=0.8.0 pip package on Ubuntu/Debian systems",
+  "notes": "tiktoken is a BPE tokenizer library with Rust extensions. Pre-built wheels are available for common platforms (x86_64, aarch64 on Linux/macOS/Windows), which only require python3 and python3-pip at runtime. However, build-essential, cargo, and rustc are required for platforms without pre-built wheels or when building from source. The Rust toolchain (cargo and rustc) is essential for compiling the tiktoken-rust core library."
+}

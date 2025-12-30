@@ -1,0 +1,6 @@
+{
+  "package": "empy",
+  "apt_dependencies": [],
+  "description": "System dependencies required for empy==3.3.4 pip package on Ubuntu/Debian systems",
+  "notes": "empy is a pure Python templating system with no native code or system library dependencies. It only requires Python itself to be installed. The package is entirely self-contained and works with any Python 3 installation."
+}

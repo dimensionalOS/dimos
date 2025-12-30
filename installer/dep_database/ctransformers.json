@@ -1,0 +1,16 @@
+{
+  "package": "ctransformers",
+  "version": "0.2.27",
+  "apt_dependencies": [
+    "python3-dev",
+    "python3-pip",
+    "build-essential",
+    "gcc",
+    "g++",
+    "make",
+    "cmake",
+    "libstdc++6"
+  ],
+  "description": "System dependencies required for ctransformers==0.2.27 pip package on Ubuntu/Debian systems",
+  "notes": "ctransformers is a Python library providing bindings for transformer models using GGML/GGUF format (similar to llama.cpp). It requires C/C++ compilation toolchain as it includes native extensions. build-essential provides essential compilation tools (gcc, g++, make). cmake is needed for the build process. python3-dev provides Python header files needed to compile C extensions. libstdc++6 provides the standard C++ library runtime. While pre-built wheels may be available for some platforms, these dependencies ensure the package can be built from source if needed."
+}

@@ -1,0 +1,9 @@
+{
+  "package": "einops==0.8.1",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for einops==0.8.1 pip package on Ubuntu/Debian systems",
+  "notes": "einops (Einstein Operations) is a pure Python package for tensor operations with no external dependencies beyond Python itself. It works with various deep learning frameworks (PyTorch, TensorFlow, JAX, etc.) but does not require them directly. The package is distributed as a universal wheel, so no build tools are needed for installation."
+}

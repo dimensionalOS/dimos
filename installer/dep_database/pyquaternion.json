@@ -1,0 +1,9 @@
+{
+  "package": "pyquaternion",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for pyquaternion>=0.9.9 pip package on Ubuntu/Debian systems",
+  "notes": "pyquaternion is a pure Python library for quaternion math that depends only on numpy. It requires no additional system libraries beyond basic Python. All mathematical operations are handled by numpy, so only python3 and python3-pip are needed. The package uses numpy's array operations and does not have any compiled extensions or external library dependencies."
+}

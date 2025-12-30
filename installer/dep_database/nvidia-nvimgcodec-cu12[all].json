@@ -1,0 +1,15 @@
+{
+  "package": "nvidia-nvimgcodec-cu12[all]",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "libgomp1",
+    "libjpeg-dev",
+    "libjpeg8-dev",
+    "libpng-dev",
+    "libtiff-dev",
+    "libwebp-dev"
+  ],
+  "description": "System dependencies required for nvidia-nvimgcodec-cu12[all] pip package on Ubuntu/Debian systems",
+  "notes": "nvidia-nvimgcodec-cu12 is NVIDIA's nvImageCodec library providing GPU-accelerated image decoding and encoding for CUDA 12. The package comes as a binary wheel with bundled CUDA libraries, so CUDA installation is not required as a system dependency. The [all] extra includes support for all available image codecs (JPEG, PNG, TIFF, WebP, etc.). libgomp1 is required for OpenMP support. The image format libraries (libjpeg-dev, libpng-dev, libtiff-dev, libwebp-dev) provide codec support at the system level. For basic functionality with pre-built wheels, only python3, python3-pip, and libgomp1 are strictly necessary, but the additional libraries enable full codec support."
+}

@@ -1,0 +1,11 @@
+{
+  "package": "sounddevice",
+  "apt_dependencies": [
+    "libportaudio2",
+    "portaudio19-dev",
+    "python3-dev",
+    "libasound2-dev"
+  ],
+  "description": "System dependencies required for sounddevice pip package on Ubuntu/Debian systems",
+  "notes": "sounddevice is a Python wrapper for PortAudio. libportaudio2 provides the runtime library for PortAudio. portaudio19-dev contains the development headers needed for building the Python bindings. python3-dev provides Python headers required for compiling the C extensions. libasound2-dev is the ALSA development library which PortAudio uses for audio I/O on Linux systems."
+}

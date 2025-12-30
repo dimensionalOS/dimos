@@ -1,0 +1,15 @@
+{
+  "package": "ffmpeg-python",
+  "apt_dependencies": [
+    "ffmpeg",
+    "libavcodec-dev",
+    "libavformat-dev",
+    "libavutil-dev",
+    "libswscale-dev",
+    "libswresample-dev",
+    "libavfilter-dev",
+    "libavdevice-dev"
+  ],
+  "description": "System dependencies required for ffmpeg-python pip package on Ubuntu/Debian systems",
+  "notes": "ffmpeg-python is a Python wrapper for FFmpeg. The main runtime dependency is the 'ffmpeg' package which provides the ffmpeg command-line tool. The lib*-dev packages are development libraries that may be needed for compilation or advanced use cases. At minimum, 'ffmpeg' must be installed for ffmpeg-python to work."
+}

@@ -1,0 +1,23 @@
+{
+  "package": "Pillow",
+  "apt_dependencies": [
+    "python3-dev",
+    "python3-pip",
+    "libjpeg-dev",
+    "libjpeg8-dev",
+    "zlib1g-dev",
+    "libtiff-dev",
+    "libfreetype6-dev",
+    "liblcms2-dev",
+    "libwebp-dev",
+    "libharfbuzz-dev",
+    "libfribidi-dev",
+    "libopenjp2-7-dev",
+    "libimagequant-dev",
+    "libxcb1-dev",
+    "tk-dev",
+    "tcl-dev"
+  ],
+  "description": "System dependencies required for Pillow (PIL Fork) pip package on Ubuntu/Debian systems",
+  "notes": "Pillow is the Python Imaging Library fork. These dependencies enable full image format support including JPEG (libjpeg-dev), PNG (zlib1g-dev), TIFF (libtiff-dev), WebP (libwebp-dev), JPEG 2000 (libopenjp2-7-dev), and text rendering with TrueType/OpenType fonts (libfreetype6-dev, libharfbuzz-dev, libfribidi-dev). liblcms2-dev provides color management support. tk-dev and tcl-dev enable ImageTk module for Tkinter integration. While pre-built wheels are available for most platforms, these dependencies are required for building from source or for optimal feature support."
+}

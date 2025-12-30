@@ -1,0 +1,22 @@
+{
+  "package": "clip",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "git",
+    "libjpeg-dev",
+    "libpng-dev",
+    "zlib1g-dev",
+    "libfreetype6-dev",
+    "liblcms2-dev",
+    "libopenjp2-7-dev",
+    "libtiff-dev",
+    "libwebp-dev",
+    "libharfbuzz-dev",
+    "libfribidi-dev",
+    "libxcb1-dev"
+  ],
+  "description": "System dependencies required for OpenAI CLIP (openai-clip) pip package on Ubuntu/Debian systems",
+  "notes": "CLIP (Contrastive Language-Image Pre-Training) requires PyTorch and Pillow as main Python dependencies. The apt packages listed here are primarily for Pillow's image processing capabilities and build tools. For GPU support, additional CUDA-related packages would be needed (these are typically handled separately through PyTorch installation). The git package is required because the official installation is done via 'pip install git+https://github.com/openai/CLIP.git'."
+}

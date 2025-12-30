@@ -1,0 +1,24 @@
+{
+  "package": "open_clip_torch",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "python3-dev",
+    "build-essential",
+    "git",
+    "libjpeg-dev",
+    "libjpeg8-dev",
+    "libpng-dev",
+    "zlib1g-dev",
+    "libtiff-dev",
+    "libfreetype6-dev",
+    "liblcms2-dev",
+    "libwebp-dev",
+    "libharfbuzz-dev",
+    "libfribidi-dev",
+    "libopenjp2-7-dev",
+    "libxcb1-dev"
+  ],
+  "description": "System dependencies required for open_clip_torch==3.2.0 pip package on Ubuntu/Debian systems",
+  "notes": "open_clip_torch is an open source implementation of OpenAI's CLIP (Contrastive Language-Image Pre-training). It requires PyTorch and torchvision as Python dependencies (installed via pip). The apt packages listed here are primarily for: (1) build-essential and python3-dev for compiling native extensions, (2) image processing libraries (libjpeg, libpng, libtiff, libwebp, etc.) required by Pillow which is a core dependency for image loading and preprocessing, and (3) font rendering libraries (libfreetype6, libharfbuzz, libfribidi) for text processing capabilities. For GPU support, CUDA libraries are required but are typically handled separately through PyTorch's CUDA-enabled wheel or system CUDA installation. Git may be needed for some dependency installations."
+}

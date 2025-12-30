@@ -1,0 +1,12 @@
+{
+  "package": "googlemaps",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "ca-certificates",
+    "libssl3",
+    "openssl"
+  ],
+  "description": "System dependencies required for googlemaps>=4.10.0 pip package on Ubuntu/Debian systems",
+  "notes": "The googlemaps package is a pure Python library that depends on requests>=2.20.0,<3.0 for making HTTP/HTTPS API calls to Google Maps services. It requires SSL/TLS support for secure HTTPS connections. ca-certificates provides trusted certificate authorities for SSL verification. libssl3 and openssl provide the SSL/TLS implementation required by the underlying requests library. For most modern Python installations with pip, googlemaps can be installed with just python3 and python3-pip, but the SSL libraries are essential for secure HTTPS communications with Google Maps APIs."
+}

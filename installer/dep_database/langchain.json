@@ -1,0 +1,12 @@
+{
+  "package": "langchain>=1,<2",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "libssl-dev",
+    "libffi-dev"
+  ],
+  "description": "System dependencies required for langchain>=1,<2 pip package on Ubuntu/Debian systems",
+  "notes": "LangChain is primarily a pure Python package for building LLM applications. Core dependencies are minimal - mainly python3 and pip. build-essential, libssl-dev, and libffi-dev are included for building cryptography-related dependencies (like pydantic-core and other compiled extensions) that langchain and its dependencies may require. Many of langchain's features depend on optional integrations (vector stores, specific LLM providers, etc.) which may have their own system requirements, but these are not included as they are optional."
+}

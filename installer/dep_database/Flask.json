@@ -1,0 +1,9 @@
+{
+  "package": "Flask>=2.2",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for Flask>=2.2 pip package on Ubuntu/Debian systems",
+  "notes": "Flask is a pure Python web framework and does not require additional system-level dependencies beyond Python itself. All of Flask's dependencies (Werkzeug, Jinja2, MarkupSafe, ItsDangerous, Click) are also pure Python packages available via pip. For production deployments with WSGI servers like gunicorn or uWSGI, those packages may have their own system dependencies, but Flask itself only requires Python 3.7+ and pip."
+}

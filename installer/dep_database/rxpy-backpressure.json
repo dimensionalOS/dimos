@@ -1,0 +1,9 @@
+{
+  "package": "rxpy-backpressure",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for rxpy-backpressure pip package on Ubuntu/Debian systems",
+  "notes": "rxpy-backpressure is a pure Python package that provides reactive extensions with backpressure support. It does not require additional system-level dependencies beyond Python itself. All of its dependencies are Python packages available via pip. The package only requires Python 3.6+ and pip."
+}

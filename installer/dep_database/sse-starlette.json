@@ -1,0 +1,9 @@
+{
+  "package": "sse-starlette",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for sse-starlette>=2.2.1 pip package on Ubuntu/Debian systems",
+  "notes": "sse-starlette is a pure Python package for Server-Sent Events (SSE) support in Starlette/FastAPI applications. It has no native extensions or system library requirements. The package depends on starlette>=0.49.1 and anyio>=4.7.0, both of which are also pure Python. Therefore, only the basic Python runtime (python3) and pip (python3-pip) are required. No build tools or additional system libraries are needed."
+}

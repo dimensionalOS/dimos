@@ -1,0 +1,20 @@
+{
+  "package": "pyrender",
+  "apt_dependencies": [
+    "libosmesa6-dev",
+    "libgl1-mesa-glx",
+    "libgl1-mesa-dev",
+    "libglu1-mesa-dev",
+    "freeglut3-dev",
+    "libglfw3",
+    "libglfw3-dev",
+    "libglew-dev",
+    "libxrandr-dev",
+    "libxinerama-dev",
+    "libxcursor-dev",
+    "libxi-dev",
+    "libxxf86vm-dev"
+  ],
+  "description": "System dependencies required for pyrender>=0.1.45 pip package on Ubuntu/Debian systems",
+  "notes": "Pyrender is a pure Python rendering library built on top of OpenGL for rendering trimeshes and point clouds. Key dependencies: libosmesa6-dev enables off-screen rendering without a display (essential for headless servers), libgl1-mesa-glx and libgl1-mesa-dev provide OpenGL support, libglu1-mesa-dev provides OpenGL utility libraries, freeglut3-dev offers window management utilities, libglfw3/libglfw3-dev provide modern OpenGL context creation and window handling, libglew-dev manages OpenGL extension loading. The X11 libraries (libxrandr-dev, libxinerama-dev, libxcursor-dev, libxi-dev, libxxf86vm-dev) support windowing and input on Linux systems. OSMesa is particularly important for rendering in Docker containers or SSH sessions without GPU access."
+}

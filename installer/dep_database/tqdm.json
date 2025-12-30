@@ -1,0 +1,9 @@
+{
+  "package": "tqdm",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for tqdm>=4.65.0 pip package on Ubuntu/Debian systems",
+  "notes": "tqdm is a pure Python package for creating progress bars. It has no compiled extensions and requires no additional system dependencies beyond Python itself. The package works with the Python standard library and has optional dependencies for specific features (like colorama for Windows), but these are also pure Python packages. No C libraries or build tools are needed."
+}

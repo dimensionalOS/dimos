@@ -1,0 +1,19 @@
+{
+  "package": "sentence_transformers",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "cargo",
+    "rustc",
+    "libssl-dev",
+    "libffi-dev",
+    "libyaml-dev",
+    "pkg-config",
+    "gfortran",
+    "libopenblas-dev",
+    "liblapack-dev"
+  ],
+  "description": "System dependencies required for sentence_transformers pip package on Ubuntu/Debian systems",
+  "notes": "sentence_transformers is built on PyTorch and Transformers libraries for computing sentence/text embeddings. Key system dependencies: (1) cargo/rustc are required for building the 'tokenizers' package (Rust-based fast tokenization library used by transformers), (2) build-essential provides gcc/g++ for compiling C/C++ extensions in PyTorch, NumPy, and other numerical packages, (3) gfortran, libopenblas-dev, and liblapack-dev are needed for BLAS/LAPACK linear algebra operations (critical for tensor operations in PyTorch and NumPy), (4) libssl-dev and libffi-dev for cryptographic operations in huggingface-hub and other dependencies, (5) libyaml-dev for PyYAML C extensions, (6) pkg-config for library detection during builds. The package depends on transformers, torch, torchvision, numpy, scikit-learn, scipy, nltk, and sentencepiece. When installing from pre-built wheels on common platforms (x86_64/aarch64 Linux with recent pip and glibc), only python3 and python3-pip are strictly required at runtime, but the build dependencies ensure compatibility across all architectures and when building from source or working with older systems."
+}

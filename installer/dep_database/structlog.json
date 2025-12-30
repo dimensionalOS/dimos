@@ -1,0 +1,6 @@
+{
+  "package": "structlog",
+  "apt_dependencies": [],
+  "description": "System dependencies required for structlog>=25.5.0,<26 pip package on Ubuntu/Debian systems",
+  "notes": "structlog is a pure Python package with no native code or system library dependencies. It only requires Python itself to be installed. The package provides structured logging capabilities using only Python's standard library and has no C extensions or binary dependencies."
+}

@@ -1,0 +1,14 @@
+{
+  "package": "llvmlite>=0.42.0",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "llvm-14-dev",
+    "libedit-dev",
+    "libxml2-dev",
+    "zlib1g-dev"
+  ],
+  "description": "System dependencies required for llvmlite>=0.42.0 pip package on Ubuntu/Debian systems",
+  "notes": "llvmlite requires LLVM development libraries to build and run. Version 0.42.0 typically supports LLVM 11-14. llvm-14-dev is recommended for best compatibility. libedit-dev and libxml2-dev are required by LLVM. build-essential provides gcc/g++ needed for compilation. For pre-built wheels, some of these may not be strictly required at runtime, but they are needed for systems that compile from source or lack wheel support."
+}

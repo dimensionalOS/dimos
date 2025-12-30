@@ -1,0 +1,9 @@
+{
+  "package": "soundfile",
+  "apt_dependencies": [
+    "libsndfile1",
+    "libsndfile1-dev"
+  ],
+  "description": "System dependencies required for soundfile pip package on Ubuntu/Debian systems",
+  "notes": "soundfile is a Python wrapper for libsndfile, a C library for reading and writing audio files in various formats (WAV, FLAC, OGG, etc.). libsndfile1 provides the runtime library required for the package to function. libsndfile1-dev contains the development headers needed for building the Python bindings during pip installation."
+}

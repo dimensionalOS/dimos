@@ -1,0 +1,13 @@
+{
+  "package": "lap",
+  "apt_dependencies": [
+    "python3-dev",
+    "python3-pip",
+    "build-essential",
+    "gcc",
+    "g++",
+    "cython3"
+  ],
+  "description": "System dependencies required for lap>=0.5.12 pip package on Ubuntu/Debian systems",
+  "notes": "LAP (Linear Assignment Problem) is a library for solving assignment problems. It requires Cython and C++ compilation tools to build the native extensions. python3-dev provides Python header files needed for building C extensions. build-essential, gcc, and g++ provide the C/C++ compiler toolchain. cython3 is required to compile the Cython source files. NumPy is a Python dependency that will be installed via pip. For pre-built wheels on common platforms (x86_64 Linux with glibc), only python3 and python3-pip may be needed at runtime, but build dependencies are included for source installation or platforms without wheel support."
+}

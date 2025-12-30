@@ -1,0 +1,27 @@
+{
+  "package": "kaleido",
+  "apt_dependencies": [
+    "python3-dev",
+    "python3-pip",
+    "libglib2.0-0",
+    "libnss3",
+    "libnspr4",
+    "libatk1.0-0",
+    "libatk-bridge2.0-0",
+    "libcups2",
+    "libdrm2",
+    "libdbus-1-3",
+    "libxkbcommon0",
+    "libxcomposite1",
+    "libxdamage1",
+    "libxfixes3",
+    "libxrandr2",
+    "libgbm1",
+    "libpango-1.0-0",
+    "libcairo2",
+    "libasound2",
+    "libatspi2.0-0"
+  ],
+  "description": "System dependencies required for kaleido>=0.2.1 pip package on Ubuntu/Debian systems",
+  "notes": "Kaleido is a cross-platform library for generating static images of plotly charts. It bundles a Chromium-based rendering engine and has minimal external dependencies. The listed dependencies are primarily for the bundled Chromium runtime: libglib2.0-0 for GLib support, libnss3/libnspr4 for network security, libatk*/libatspi2.0-0 for accessibility, libcups2 for printing support, libdrm2/libgbm1 for GPU access, X11 libraries (libxkbcommon0, libxcomposite1, libxdamage1, libxfixes3, libxrandr2) for display management, libpango-1.0-0/libcairo2 for text and graphics rendering, libdbus-1-3 for inter-process communication, and libasound2 for audio support. Pre-built wheels include the rendering engine, so these are runtime dependencies for the embedded Chromium to function properly. Works with plotly>=4.0"
+}

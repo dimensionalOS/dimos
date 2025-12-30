@@ -1,0 +1,10 @@
+{
+  "package": "langchain-text-splitters>=1,<2",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential"
+  ],
+  "description": "System dependencies required for langchain-text-splitters>=1,<2 pip package on Ubuntu/Debian systems",
+  "notes": "langchain-text-splitters is a pure Python package for text splitting and chunking utilities. It has minimal system dependencies. The package primarily depends on langchain-core and standard Python libraries. build-essential is included for potential compilation of dependencies like pydantic-core and other compiled extensions that may be required by its dependencies. For most installations using pre-built wheels, only python3 and python3-pip are strictly required."
+}

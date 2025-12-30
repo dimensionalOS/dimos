@@ -1,0 +1,14 @@
+{
+  "package": "numpy",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "gfortran",
+    "libopenblas-dev",
+    "liblapack-dev",
+    "pkg-config"
+  ],
+  "description": "System dependencies required for numpy>=1.26.4 pip package on Ubuntu/Debian systems",
+  "notes": "NumPy requires BLAS/LAPACK libraries for numerical operations. libopenblas-dev provides optimized BLAS implementation. gfortran is needed for building from source. For pre-built wheels (most common installation method), only python3 and python3-pip are strictly required at runtime, but the build dependencies are included for systems that need to compile from source or for older architectures without wheel support."
+}

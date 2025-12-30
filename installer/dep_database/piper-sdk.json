@@ -1,0 +1,10 @@
+{
+  "package": "piper-sdk",
+  "apt_dependencies": [
+    "can-utils",
+    "ethtool",
+    "iproute2"
+  ],
+  "description": "System dependencies required for piper-sdk pip package on Ubuntu/Debian systems",
+  "notes": "piper-sdk is a Python SDK for controlling Agilex Piper robotic arms via CAN bus communication. The package requires can-utils for CAN interface configuration tools, ethtool for network interface diagnostics, and iproute2 for the 'ip' command used in the CAN module activation scripts. These dependencies are essential for detecting, configuring, and activating USB-to-CAN modules at the required 1000000 baud rate."
+}

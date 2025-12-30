@@ -1,0 +1,9 @@
+{
+  "package": "tensorboard==2.20.0",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for tensorboard==2.20.0 pip package on Ubuntu/Debian systems",
+  "notes": "TensorBoard 2.20.0 is a pure Python web application for visualizing TensorFlow/PyTorch training metrics. It does not require additional system-level dependencies beyond Python 3.9+ and pip. All of TensorBoard's dependencies (including werkzeug, protobuf, grpcio, markdown, numpy, setuptools, wheel, absl-py, google-auth, google-auth-oauthlib, requests) are available as pip packages. The web server runs on Python's built-in networking capabilities. For the frontend, static assets are bundled with the package. If using TensorBoard with GPU-accelerated frameworks, those frameworks (TensorFlow, PyTorch) will have their own GPU dependencies (CUDA, cuDNN), but TensorBoard itself only needs Python runtime."
+}

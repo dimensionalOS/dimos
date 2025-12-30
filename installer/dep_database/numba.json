@@ -1,0 +1,15 @@
+{
+  "package": "numba",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "llvm-14",
+    "llvm-14-dev",
+    "libedit-dev",
+    "libxml2-dev",
+    "zlib1g-dev"
+  ],
+  "description": "System dependencies required for numba>=0.60.0 pip package on Ubuntu/Debian systems",
+  "notes": "Numba is a JIT compiler that translates Python and NumPy code to LLVM-compiled machine code. It requires llvmlite (which itself depends on LLVM) as a critical dependency. LLVM 14 is recommended for numba 0.60.0. The llvm-14-dev package provides LLVM headers and libraries needed for llvmlite. libedit-dev, libxml2-dev, and zlib1g-dev are additional LLVM build dependencies. build-essential provides gcc/g++ compilers. For pre-built wheels (most common installation method), the LLVM runtime libraries are typically bundled, but having LLVM installed system-wide ensures compatibility. When building from source or when wheels are unavailable, all build dependencies are required. Numba also requires NumPy as a prerequisite at runtime."
+}

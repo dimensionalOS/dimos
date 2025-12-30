@@ -1,0 +1,6 @@
+{
+  "package": "python-dotenv",
+  "apt_dependencies": [],
+  "description": "System dependencies required for python-dotenv pip package on Ubuntu/Debian systems",
+  "notes": "python-dotenv is a pure Python package with no native code or system library dependencies. It only requires Python itself to be installed."
+}

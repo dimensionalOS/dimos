@@ -1,0 +1,9 @@
+{
+  "package": "PyTurboJPEG",
+  "version": "1.8.2",
+  "apt_dependencies": [
+    "libturbojpeg0-dev",
+    "libturbojpeg"
+  ],
+  "description": "PyTurboJPEG is a Python wrapper for libjpeg-turbo, which requires the TurboJPEG library to be installed on the system"
+}

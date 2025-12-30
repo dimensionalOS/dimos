@@ -1,0 +1,12 @@
+{
+  "package": "trimesh",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "libspatialindex-dev",
+    "libgeos-dev",
+    "libgeos++-dev"
+  ],
+  "description": "System dependencies required for trimesh>=3.22.0 pip package on Ubuntu/Debian systems",
+  "notes": "Trimesh is a pure Python library for loading and using triangular meshes. While trimesh itself is pure Python and has minimal system dependencies, some of its optional features require system libraries. libspatialindex-dev is needed for rtree (spatial indexing), and libgeos-dev/libgeos++-dev are needed for shapely (2D geometry operations). The core trimesh functionality works with just Python, but these dependencies enable the full feature set. For minimal installations, only python3 and python3-pip are strictly required."
+}

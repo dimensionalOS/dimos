@@ -1,0 +1,12 @@
+{
+  "package": "gdown",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "ca-certificates",
+    "libssl3",
+    "openssl"
+  ],
+  "description": "System dependencies required for gdown==5.2.0 pip package on Ubuntu/Debian systems",
+  "notes": "gdown is a pure Python package for downloading files from Google Drive. It has no direct system library dependencies. However, it depends on requests[socks] which requires SSL/TLS support for HTTPS connections to Google Drive. ca-certificates provides trusted certificate authorities for SSL verification, while libssl3 and openssl provide the SSL/TLS implementation. For most modern Python installations with pip, gdown can be installed with just python3 and python3-pip, but the SSL libraries are essential for secure HTTPS communications with Google Drive."
+}

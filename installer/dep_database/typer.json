@@ -1,0 +1,9 @@
+{
+  "package": "typer",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip"
+  ],
+  "description": "System dependencies required for typer>=0.19.2,<1 pip package on Ubuntu/Debian systems",
+  "notes": "Typer is a pure Python CLI library built on top of Click and Pydantic. It has no native code or system library dependencies beyond Python itself. The package only requires Python 3.6+ and pip for installation. All its dependencies (click, typing-extensions, etc.) are also pure Python packages available as wheels, so no compilation or additional system libraries are needed."
+}

@@ -1,0 +1,13 @@
+{
+  "package": "h5py",
+  "apt_dependencies": [
+    "python3",
+    "python3-pip",
+    "build-essential",
+    "libhdf5-dev",
+    "libhdf5-serial-dev",
+    "pkg-config"
+  ],
+  "description": "System dependencies required for h5py>=3.7.0 pip package on Ubuntu/Debian systems",
+  "notes": "h5py is a Python interface to the HDF5 library and requires HDF5 development headers and libraries. libhdf5-dev provides the core HDF5 C library development files. libhdf5-serial-dev provides the serial (non-MPI) version of HDF5. pkg-config is used to locate the HDF5 libraries during installation. For pre-built wheels (most common installation method on x86_64), only python3 and python3-pip are required at runtime, but build dependencies are included for systems that need to compile from source or for architectures without wheel support."
+}
