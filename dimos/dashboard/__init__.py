@@ -31,4 +31,4 @@ Usage in modules:
 
 from dimos.dashboard.rerun_init import connect_rerun, init_rerun_server, shutdown_rerun
 
-__all__ = ["init_rerun_server", "connect_rerun", "shutdown_rerun"]
+__all__ = ["connect_rerun", "init_rerun_server", "shutdown_rerun"]

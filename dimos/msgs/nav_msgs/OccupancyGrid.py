@@ -38,6 +38,7 @@ def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
 
     return plt.get_cmap(name)
 
+
 if TYPE_CHECKING:
     from pathlib import Path
 
