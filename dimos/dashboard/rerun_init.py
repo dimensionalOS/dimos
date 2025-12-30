@@ -136,5 +136,5 @@ def shutdown_rerun() -> None:
         except Exception as e:
             logger.warning(f"Rerun: error during disconnect: {e}")
 
-    _server_started = False
-    _connected = False
+            _server_started = False
+            _connected = False
