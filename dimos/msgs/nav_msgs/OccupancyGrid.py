@@ -614,7 +614,7 @@ class OccupancyGrid(Timestamped):
         oy = self.origin.position.y
         r = self.resolution
 
-        for i, (y, x) in enumerate(zip(gy, gx)):
+        for i, (y, x) in enumerate(zip(gy, gx, strict=False)):
             # World position of cell corner
             wx = ox + x * r
             wy = oy + y * r
