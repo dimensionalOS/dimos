@@ -48,23 +48,30 @@ logger = setup_logger(__file__)
 ROBOT_IP = "192.168.1.235"
 
 
-@pytest.mark.tool
-def test_basic_connection():
-    """Test basic connection and startup with dimos deployment."""
-    logger.info("=" * 80)
-    logger.info("TEST 1: Basic Connection with dimos.deploy()")
-    logger.info("=" * 80)
+# =========================================================================
+# Pytest Fixtures - Automatic Setup/Cleanup
+# =========================================================================
 
-    # Get IP from global variable
-    ip_address = ROBOT_IP
 
-    # Start dimos with 1 worker
+@pytest.fixture
+def dimos_cluster():
+    """Fixture to start and stop dimos cluster automatically."""
     logger.info("Starting dimos...")
     dimos = core.start(1)
+    try:
+        yield dimos
+    finally:
+        logger.info("Stopping dimos...")
+        dimos.stop()
 
-    # Deploy XArmDriver using dimos.deploy()
+
+@pytest.fixture
+def driver(dimos_cluster):
+    """Fixture to deploy and manage XArmDriver with automatic cleanup."""
+    ip_address = ROBOT_IP
+
     logger.info(f"Deploying XArmDriver for {ip_address}...")
-    driver = dimos.deploy(
+    driver = dimos_cluster.deploy(
         XArmDriver,
         ip_address=ip_address,
         control_frequency=100.0,
@@ -88,15 +95,30 @@ def test_basic_connection():
     # Wait for initialization
     time.sleep(2.0)
 
+    try:
+        yield driver
+    finally:
+        logger.info("Stopping driver...")
+        driver.stop()
+
+
+# =========================================================================
+# Tests - Using Fixtures for Automatic Cleanup
+# =========================================================================
+
+
+@pytest.mark.tool
+def test_basic_connection(driver):
+    """Test basic connection and startup with dimos deployment."""
+    logger.info("=" * 80)
+    logger.info("TEST 1: Basic Connection with dimos.deploy()")
+    logger.info("=" * 80)
+
     # Check connection via RPC
     logger.info("Checking connection via RPC...")
     code, version = driver.get_version()
-    if code == 0:
-        logger.info(f"✓ Firmware version: {version}")
-    else:
-        logger.error(f"✗ Failed to get firmware version: code={code}")
-        dimos.stop()
-        return False
+    assert code == 0, "Failed to get firmware version"
+    logger.info(f"✓ Firmware version: {version}")
 
     # Get robot state via RPC
     logger.info("Getting robot state via RPC...")
@@ -109,48 +131,19 @@ def test_basic_connection():
     else:
         logger.warning("✗ No robot state available yet")
 
-    # Stop the driver and dimos
-    logger.info("Stopping driver and dimos...")
-    driver.stop()
-    dimos.stop()
-
     logger.info("✓ TEST 1 PASSED\n")
-    return True
 
 
 @pytest.mark.tool
-def test_joint_state_reading():
+def test_joint_state_reading(driver):
     """Test joint state reading via LCM topic subscription."""
     logger.info("=" * 80)
     logger.info("TEST 2: Joint State Reading via LCM Transport")
     logger.info("=" * 80)
 
-    ip_address = os.getenv("XARM_IP", "192.168.1.235")
-
-    # Start dimos
-    logger.info("Starting dimos...")
-    dimos = core.start(1)
-
-    # Deploy driver
-    logger.info("Deploying XArmDriver...")
-    driver = dimos.deploy(
-        XArmDriver,
-        ip_address=ip_address,
-        control_frequency=100.0,
-        joint_state_rate=100.0,
-        report_type="dev",
-        enable_on_start=False,
-        num_joints=6,
-    )
-
-    # Set up LCM transports for both joint states and robot state
-    joint_state_transport = core.LCMTransport("/xarm/joint_states", JointState)
-    robot_state_transport = core.LCMTransport("/xarm/robot_state", RobotState)
-
-    driver.joint_state.transport = joint_state_transport
-    driver.robot_state.transport = robot_state_transport
-    driver.ft_ext.transport = core.LCMTransport("/xarm/ft_ext", WrenchStamped)
-    driver.ft_raw.transport = core.LCMTransport("/xarm/ft_raw", WrenchStamped)
+    # Get the already-configured transports from the driver fixture
+    joint_state_transport = driver.joint_state.transport
+    robot_state_transport = driver.robot_state.transport
 
     # Subscribe to the LCM topics to receive messages
     joint_states_received = []
@@ -183,10 +176,7 @@ def test_joint_state_reading():
     logger.info("Subscribing to /xarm/robot_state LCM topic...")
     unsubscribe_robot = robot_state_transport.subscribe(on_robot_state, driver.robot_state)
 
-    logger.info("Starting driver - joint states will publish at 100Hz...")
-    driver.start()
-
-    # Wait 3 seconds to collect messages
+    # Wait 3 seconds to collect messages (driver already started by fixture)
     logger.info("Collecting messages for 3 seconds...")
     time.sleep(3.0)
 
@@ -199,27 +189,20 @@ def test_joint_state_reading():
     logger.info(f"Received {len(robot_states_received)} robot state messages via LCM")
 
     # Validate joint state messages
-    if len(joint_states_received) > 0:
-        logger.info("✓ Joint state publishing working via LCM transport")
+    assert len(joint_states_received) > 0, "No joint states received via LCM"
+    logger.info("✓ Joint state publishing working via LCM transport")
 
-        # Calculate rate
-        rate = len(joint_states_received) / 3.0
-        logger.info(f"✓ Joint state publishing rate: ~{rate:.1f} Hz (expected ~100 Hz)")
+    # Calculate rate
+    rate = len(joint_states_received) / 3.0
+    logger.info(f"✓ Joint state publishing rate: ~{rate:.1f} Hz (expected ~100 Hz)")
 
-        # Check last state
-        last_state = joint_states_received[-1]
-        logger.info(f"✓ Last state has {len(last_state.position)} joint positions")
-        logger.info(f"✓ Full joint positions: {[f'{p:.3f}' for p in last_state.position[:6]]}")
+    # Check last state
+    last_state = joint_states_received[-1]
+    logger.info(f"✓ Last state has {len(last_state.position)} joint positions")
+    logger.info(f"✓ Full joint positions: {[f'{p:.3f}' for p in last_state.position[:6]]}")
 
-        if rate > 50:
-            logger.info("✓ Joint state publishing rate is good (>50 Hz)")
-        else:
-            logger.warning(f"⚠ Joint state publishing rate seems low: {rate:.1f} Hz")
-    else:
-        logger.error("✗ No joint states received via LCM")
-        driver.stop()
-        dimos.stop()
-        return False
+    assert rate > 50, f"Joint state publishing rate too low: {rate:.1f} Hz (expected >50 Hz)"
+    logger.info("✓ Joint state publishing rate is good (>50 Hz)")
 
     # Validate robot state messages
     if len(robot_states_received) > 0:
@@ -240,43 +223,15 @@ def test_joint_state_reading():
             "⚠ No robot states received via LCM (might be expected with 'dev' report type)"
         )
 
-    driver.stop()
-    dimos.stop()
     logger.info("✓ TEST 2 PASSED\n")
-    return True
 
 
 @pytest.mark.tool
-def test_command_sending():
+def test_command_sending(driver):
     """Test that command RPC methods are available and functional."""
     logger.info("=" * 80)
     logger.info("TEST 3: Command RPC Methods")
     logger.info("=" * 80)
-
-    ip_address = os.getenv("XARM_IP", "192.168.1.235")
-
-    # Start dimos
-    dimos = core.start(1)
-
-    # Deploy driver
-    driver = dimos.deploy(
-        XArmDriver,
-        ip_address=ip_address,
-        control_frequency=100.0,
-        joint_state_rate=100.0,
-        report_type="dev",
-        enable_on_start=False,
-        num_joints=6,
-    )
-
-    # Set up transports
-    driver.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
-    driver.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
-    driver.ft_ext.transport = core.LCMTransport("/xarm/ft_ext", WrenchStamped)
-    driver.ft_raw.transport = core.LCMTransport("/xarm/ft_raw", WrenchStamped)
-
-    driver.start()
-    time.sleep(2.0)
 
     # Test that command methods exist and are callable
     logger.info("Testing command RPC methods are available...")
@@ -312,81 +267,41 @@ def test_command_sending():
     logger.info("\n✓ All command RPC methods are functional")
     logger.info("Note: Actual robot movement testing requires specific robot state")
     logger.info("      and is environment-dependent. The driver API is working correctly.")
-
-    driver.stop()
-    dimos.stop()
     logger.info("✓ TEST 3 PASSED\n")
-    return True
 
 
 @pytest.mark.tool
-def test_rpc_methods():
+def test_rpc_methods(driver):
     """Test RPC method calls."""
     logger.info("=" * 80)
     logger.info("TEST 4: RPC Methods")
     logger.info("=" * 80)
 
-    ip_address = os.getenv("XARM_IP", "192.168.1.235")
-
-    # Start dimos
-    dimos = core.start(1)
-
-    # Deploy driver
-    driver = dimos.deploy(
-        XArmDriver,
-        ip_address=ip_address,
-        control_frequency=100.0,
-        joint_state_rate=100.0,
-        report_type="normal",  # Use normal for this test
-        enable_on_start=False,
-        num_joints=6,
-    )
-
-    # Set up transports
-    driver.joint_state.transport = core.LCMTransport("/xarm/joint_states", JointState)
-    driver.robot_state.transport = core.LCMTransport("/xarm/robot_state", RobotState)
-    driver.ft_ext.transport = core.LCMTransport("/xarm/ft_ext", WrenchStamped)
-    driver.ft_raw.transport = core.LCMTransport("/xarm/ft_raw", WrenchStamped)
-
-    driver.start()
-    time.sleep(2.0)
-
     # Test get_version
     logger.info("Testing get_version() RPC...")
     code, version = driver.get_version()
-    if code == 0:
-        logger.info(f"✓ get_version: {version}")
-    else:
-        logger.error(f"✗ get_version failed: code={code}")
+    assert code == 0, "Failed to get firmware version"
+    logger.info(f"✓ get_version: {version}")
 
     # Test get_position (TCP pose)
     logger.info("Testing get_position() RPC...")
     code, position = driver.get_position()
-    if code == 0:
-        logger.info(f"✓ get_position: {[f'{p:.3f}' for p in position]}")
-    else:
-        logger.error(f"✗ get_position failed: code={code}")
+    assert code == 0, f"Failed to get position: code={code}"
+    logger.info(f"✓ get_position: {[f'{p:.3f}' for p in position]}")
 
     # Test motion_enable
     logger.info("Testing motion_enable() RPC...")
     code, msg = driver.motion_enable(enable=True)
-    if code == 0:
-        logger.info(f"✓ motion_enable: {msg}")
-    else:
-        logger.error(f"✗ motion_enable failed: code={code}, msg={msg}")
+    assert code == 0, f"Failed to enable motion: code={code}, msg={msg}"
+    logger.info(f"✓ motion_enable: {msg}")
 
     # Test clean_error
     logger.info("Testing clean_error() RPC...")
     code, msg = driver.clean_error()
-    if code == 0:
-        logger.info(f"✓ clean_error: {msg}")
-    else:
-        logger.warning(f"⚠ clean_error: code={code}, msg={msg}")
+    assert code == 0, f"Failed to clean error: code={code}, msg={msg}"
+    logger.info(f"✓ clean_error: {msg}")
 
-    driver.stop()
-    dimos.stop()
     logger.info("✓ TEST 4 PASSED\n")
-    return True
 
 
 def run_tests():

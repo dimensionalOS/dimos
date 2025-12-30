@@ -153,13 +153,9 @@ class XArmDriver(
         self._last_cmd_time: float = 0.0  # Timestamp of last command received (for timeout)
 
         # Thread management
-        self._running = False
         self._state_thread: Optional[threading.Thread] = None  # Joint state publishing
         self._control_thread: Optional[threading.Thread] = None  # Command sending
-        self._stop_event = threading.Event()
-
-        # Subscription management
-        self._disposables = CompositeDisposable()
+        self._stop_event = threading.Event()  # Thread-safe stop signal
 
         # Joint names based on number of joints
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
@@ -192,6 +188,9 @@ class XArmDriver(
         self.curr_tcp_offset = []
         self.curr_joints = []
         self.arm = None
+
+        # Subscription management
+        # self._disposables = CompositeDisposable()   # already exists in module 
 
         # Joint names based on configuration
         self._joint_names = [f"joint{i + 1}" for i in range(self.config.num_joints)]
@@ -285,8 +284,7 @@ class XArmDriver(
         """Stop the xArm driver and disable servo mode."""
         logger.info("Stopping xArm driver...")
 
-        # Stop both threads
-        self._running = False
+        # Signal threads to stop
         self._stop_event.set()
 
         # Wait for state thread to finish
@@ -536,6 +534,14 @@ class XArmDriver(
         if not self._xarm_is_ready_read():
             self._last_not_ready = True
             return False
+        
+            # Initialize tracking variables if not present
+        if not hasattr(self, "_last_state"):
+            self._last_state = 0
+        if not hasattr(self, "_last_mode"):
+            self._last_mode = 0
+        if not hasattr(self, "_last_not_ready"):
+            self._last_not_ready = False
 
         curr_state = self.curr_state
         curr_mode = self.curr_mode
@@ -671,10 +677,10 @@ class XArmDriver(
 
         logger.info(f"Starting joint state thread at {joint_state_rate}Hz")
 
-        # Start state publishing thread
-        self._running = True
+        # Clear stop event for new start cycle
         self._stop_event.clear()
 
+        # Start state publishing thread
         self._state_thread = threading.Thread(
             target=self._joint_state_loop, daemon=True, name="xarm_state_thread"
         )
@@ -809,7 +815,7 @@ class XArmDriver(
 
         next_time = time.time()
 
-        while self._running and self.arm.connected:
+        while not self._stop_event.is_set() and self.arm.connected:
             try:
                 curr_time = time.time()
 
@@ -915,7 +921,7 @@ class XArmDriver(
         # last_log_time = time.time()  # Disabled - used for logging
         timeout_logged = False
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 current_time = time.time()
 
@@ -941,7 +947,7 @@ class XArmDriver(
                     if self.config.velocity_control:
                         zero_vel = [0.0] * self.config.num_joints
                         self.arm.vc_set_joint_velocity(
-                            zero_vel, True, self.config.velocity_duration
+                            zero_vel, False, self.config.velocity_duration
                         )
                     continue
                 else:
@@ -950,6 +956,10 @@ class XArmDriver(
                 # Send command if available
                 if joint_cmd is not None and len(joint_cmd) == self.config.num_joints:
                     code = None  # Initialize code variable
+
+                    if not self._xarm_is_ready_write():
+                        # Robot not ready for writing commands
+                        continue
 
                     if self.config.velocity_control:
                         # Velocity control mode (mode 4)
@@ -1031,7 +1041,7 @@ class XArmDriver(
 
         logger.info(f"Robot state loop started at {self.config.robot_state_rate}Hz")
 
-        while self._running:
+        while not self._stop_event.is_set():
             try:
                 # Create robot state message from current state variables
                 # These are updated by _report_data_callback when SDK pushes updates
