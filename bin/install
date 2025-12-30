@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+
+# stop on error
+set -e
+
+#
+# stage0.1 tools (curl, wget, unzip, etc)
+#
+echo "Bootstrapping, stage 0.1"
+
+has () {
+    # POSIX compliant altnerative to "which"
+    command -v "$1" >/dev/null;
+};
+
+# using wget as curl
+if ! has curl;then
+    if ! has wget;then
+        # wrap wget in curl-like interface for the deno installer
+        curl () {
+            # use $5 and $6 because deno uses curl below as:
+            #      curl --fail --location --progress-bar --output "$exe.zip" "$deno_uri";
+            wget --output-document="$5" "$6";
+        };
+    else
+        echo "Sorry this script needs curl or wget, please install one or the other and re-run";
+        exit 1;
+    fi
+fi
+
+# using MacOS/OpenBSD's tar command as unzip (macos doesnt ship with unzip)
+if [ "$(uname)" = "Darwin" ];then
+    # we create a fake unzip for deno's installer to use
+    unzip () {
+        # use $4 and $2 because deno uses unzip below as:
+        #      unzip -d "$bin_dir" -o "$exe.zip"
+        /usr/bin/tar xvf "$4" -C "$2" 2>/dev/null 1>/dev/null;
+    }
+fi
+
+# check for an unzip tool (most common problem)
+if ! has unzip && ! has 7z;then
+    echo "Either the unzip or 7z command are needed for this script";
+    echo "Should I try to install unzip for you?";read ANSWER;echo;
+    if [ "$ANSWER" =~ ^[Yy] ];then
+        # if nix is available, use it becuase it won't require modifying the user's environment or sudo
+        if has nix-shell;then
+            # this gets unzip without modifying the user's environment
+            unzip_path="$(NIX_PATH='nixpkgs=https://github.com/NixOS/nixpkgs/archive/release-25.05.tar.gz' nix-shell -p unzip which --run "which unzip")"
+            alias unzip="$unzip_path"
+        else :;
+            if has apt-get;then
+                _install_cmd="apt-get install unzip -y";
+            elif has dnf;then
+                _install_cmd="dnf install unzip -y";
+            elif has pacman;then
+                _install_cmd="pacman -S --noconfirm unzip";
+            else
+                # we did our best
+                echo "Sorry, I don't know how to install unzip on this system";
+                echo "Please install unzip manually and re-run this script";
+                exit 1;
+            fi
+
+            # run the install command according to context/user
+            if [ "$(whoami)" = "root" ];then
+                # Note: many systems (ex: docker) default to root user
+                # trying to use sudo as root will usually fail with "sudo command not found"
+                "$_install_cmd";
+            elif has sudo;then
+                sudo "$_install_cmd";
+            elif has doas;then
+                doas "$_install_cmd";
+            else
+                # just try, even if no sudo/doas
+                "$_install_cmd";
+            fi
+        fi
+    fi
+
+    # if still doesn't have unzip somehow
+    if ! has unzip;then
+        echo "";
+        echo "So I couldn't find an 'unzip' or '7z' command";
+        echo "And I tried to auto install unzip, but it seems that failed";
+        echo "Please install the unzip or 7z command manually then re-run this script";
+        exit 1;
+    fi
+fi
+
+#
+# stage0.2: slimmed down deno installer
+#
+echo "Bootstrapping, stage 0.2"
+export deno_version="2.5.3"
+export DENO_INSTALL="$HOME/.deno/$deno_version"
+
+# note the rest of stage0.2 is from: https://raw.githubusercontent.com/denoland/deno_install/1f1d6faeaf3a58b6709d34bbaf8af51ec56ff566/install.sh
+
+if [ "$OS" = "Windows_NT" ]; then
+	target="x86_64-pc-windows-msvc"
+else
+	case $(uname -sm) in
+	"Darwin x86_64") target="x86_64-apple-darwin" ;;
+	"Darwin arm64") target="aarch64-apple-darwin" ;;
+	"Linux aarch64") target="aarch64-unknown-linux-gnu" ;;
+	*) target="x86_64-unknown-linux-gnu" ;;
+	esac
+fi
+
+# Initialize variables
+deno_uri="https://dl.deno.land/release/${deno_version}/deno-${target}.zip"
+deno_install="${DENO_INSTALL:-$HOME/.deno}"
+bin_dir="$deno_install/bin"
+exe="$bin_dir/deno"
+
+if [ ! -d "$bin_dir" ]; then
+	mkdir -p "$bin_dir"
+fi
+
+curl --fail --location --progress-bar --output "$exe.zip" "$deno_uri"
+if command -v unzip >/dev/null; then
+	unzip -d "$bin_dir" -o "$exe.zip"
+else
+	7z x -o"$bin_dir" -y "$exe.zip"
+fi
+chmod +x "$exe"
+rm "$exe.zip"
+
+#
+# stage0.3: use deno to run the rest
+#
+echo "Bootstrapping, stage 0.3"
+# FIXME: change to `main` instead of `dev` before launch
+# "$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalos/dimos/dev/bin/lfs_push"
+"$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/jeff_user_install_exp/installer_support/main.js?token=GHSAT0AAAAAADJ4QAIOSJGPQFRKZCUMNCXU2KTCSQQ"
+# "$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/installer_support/main.js?token=GHSAT0AAAAAADJ4QAIOSJGPQFRKZCUMNCXU2KTCSQQ"
