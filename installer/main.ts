@@ -13,6 +13,5 @@ if (import.meta.main) {
     await phase3()                        // pip install dimos
     await phase4()                        // test dimos was installed correctly
     await phase5()                        // .env and .envrc setup
-    // FIXME: phase 5 - envrc setup (dimos env vars)
     // FIXME: phase 6 - ask about extras (sim, cuda, etc)
 }

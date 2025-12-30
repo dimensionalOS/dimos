@@ -1,12 +1,12 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../support/dax.js"
+import { $, $$ } from "../support/dax.ts"
 
-import { RenderLogo } from "../support/dimos_banner.js"
+import { RenderLogo } from "../support/dimos_banner.ts"
 import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
-import { activateVenv, getVenvDirsAt } from "../support/venv.js"
+import { activateVenv, getVenvDirsAt } from "../support/venv.ts"
 import { dependencyListHumanNames, dependencyListAptPackages, discordUrl} from "../support/constants.ts"
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
-import * as p from "../support/prompt_tools.js"
+import * as p from "../support/prompt_tools.ts"
 
 // NOTE: this part always gets run regardless of nix/docker/manual install
 export async function phase2() {

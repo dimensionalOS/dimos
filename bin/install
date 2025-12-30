@@ -133,5 +133,5 @@ rm "$exe.zip"
 echo "Bootstrapping, stage 0.3"
 # FIXME: change to `main` instead of `dev` before launch
 # "$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalos/dimos/dev/bin/lfs_push"
-"$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/jeff_user_install_exp/installer_support/main.js?token=GHSAT0AAAAAADJ4QAIOSJGPQFRKZCUMNCXU2KTCSQQ"
+"$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/jeff_user_install_exp/installer_support/main.ts?token=GHSAT0AAAAAADJ4QAIOSJGPQFRKZCUMNCXU2KTCSQQ"
 # "$bin_dir/deno" run --allow-all --no-lock --no-check "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/installer_support/main.js?token=GHSAT0AAAAAADJ4QAIOSJGPQFRKZCUMNCXU2KTCSQQ"

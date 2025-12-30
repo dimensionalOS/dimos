@@ -1,12 +1,12 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../support/dax.js"
+import { $, $$ } from "../support/dax.ts"
 
-import { RenderLogo } from "../support/dimos_banner.js"
+import { RenderLogo } from "../support/dimos_banner.ts"
 import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
-import { activateVenv } from "../support/venv.js"
+import { activateVenv } from "../support/venv.ts"
 import { dependencyListHumanNames, dependencyListAptPackages } from "../support/constants.ts"
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, ensureVenv, aptInstall } from "../support/misc.ts"
-import * as p from "../support/prompt_tools.js"
+import * as p from "../support/prompt_tools.ts"
 
 // NOTE: skip this phase if system dependencies already exist (e.g. docker, or nix environment)
 export async function phase1(systemAnalysis: Record<string, ToolResult> | null) {

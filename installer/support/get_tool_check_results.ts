@@ -13,7 +13,7 @@
  *   - else "unknownLinux"
  */
 
-import $ from "https://esm.sh/@jsr/david__dax@0.43.2/mod.ts";
+import { $ } from "./dax.ts"
 
 export type ToolResult = {
     /** Stable identifier for the check (for OS this is dynamic from OS_NAMES). */

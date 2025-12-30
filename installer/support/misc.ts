@@ -1,7 +1,6 @@
-import { $, $$ } from "./dax.js"
-import { activateVenv, getVenvDirsAt } from "./venv.js"
+import { $, $$ } from "./dax.ts"
 import { dependencyListHumanNames } from "./constants.ts"
-import * as p from "./prompt_tools.js"
+import * as p from "./prompt_tools.ts"
 
 export function mentionSystemDependencies() {
     console.log("- we will need the following system dependencies:")
@@ -89,8 +88,8 @@ export async function aptInstall(packageNames) {
         }
         alreadyCalledAptGetUpdate = true
     }
-    let failedPackages = []
-    for (const eachAptPackage of dependencyListAptPackages) {
+    const failedPackages = []
+    for (const eachAptPackage of packageNames) {
         const res = await $$`dpkg -s ${eachAptPackage}`
         if (res.code === 0) {
             console.log(`- ✅ looks like ${p.highlight(eachAptPackage)} is already installed`)

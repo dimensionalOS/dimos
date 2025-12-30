@@ -44,9 +44,9 @@ export function _deactivateExternal() {
 
 
 /**
- * Emulates Python venv's `bin/activate` returns a deactivate function
+ * Emulates Python venv's `bin/activate` within deno (child process python/pip command becomes venv's python/pip command)
  *
- * @param {string} projectDirectory - replaces "/Users/jeffhykin/repos/dimos/venv"
+ * @param {string} projectDirectory
  * @param {object} [options]
  * @param {boolean} [options.apply=false] - if true, also writes to Deno.env in this process
  * @returns {Function}
@@ -81,9 +81,10 @@ export function activateVenv(projectDirectory) {
 export function getVenvDirsAt(path) {
     const currentPwd = Deno.cwd()
     Deno.chdir(path)
+    let validActivatePaths = []
     let err
     try {
-        const validActivatePaths = globSync(`*/bin/activate`).filter(each=>{
+        validActivatePaths = globSync(`*/bin/activate`).filter(each=>{
             const pathToPythonCommand = each.replace(/\/activate$/,"/python")
             try {
                 return Deno.statSync(pathToPythonCommand).isFile

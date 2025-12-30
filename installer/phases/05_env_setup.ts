@@ -1,9 +1,9 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../support/dax.js"
+import { $, $$ } from "../support/dax.ts"
 
 import { dimosEnvVars } from "../support/constants.ts"
 import { addGitIgnorePatterns, getProjectDirectory } from "../support/misc.ts"
-import * as p from "../support/prompt_tools.js"
+import * as p from "../support/prompt_tools.ts"
 
 export async function phase5() {
     p.clearScreen()
