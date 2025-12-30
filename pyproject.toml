@@ -152,7 +152,7 @@ perception = [
 
 unitree = [
     "dimos[agents,web,perception]",
-    "unitree-webrtc-connect-leshy",
+    "unitree-webrtc-connect-leshy>=2.0.4"
 ]
 
 manipulation = [
