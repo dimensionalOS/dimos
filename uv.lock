@@ -68,15 +68,11 @@ wheels = [
 
 [[package]]
 name = "aioice"
-version = "0.10.2"
-source = { registry = "https://pypi.org/simple" }
+version = "0.9.0"
+source = { git = "https://github.com/legion1581/aioice.git?rev=go2#ff5755a1e37127411b5fc797c105804db8437445" }
 dependencies = [
     { name = "dnspython" },
     { name = "ifaddr" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/67/04/df7286233f468e19e9bedff023b6b246182f0b2ccb04ceeb69b2994021c6/aioice-0.10.2.tar.gz", hash = "sha256:bf236c6829ee33c8e540535d31cd5a066b531cb56de2be94c46be76d68b1a806", size = 44307, upload-time = "2025-11-28T15:56:48.836Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/c7/e3/0d23b1f930c17d371ce1ec36ee529f22fd19ebc2a07fe3418e3d1d884ce2/aioice-0.10.2-py3-none-any.whl", hash = "sha256:14911c15ab12d096dd14d372ebb4aecbb7420b52c9b76fdfcf54375dec17fcbf", size = 24875, upload-time = "2025-11-28T15:56:47.847Z" },
 ]
 
 [[package]]
@@ -1469,6 +1465,7 @@ dependencies = [
     { name = "filterpy" },
     { name = "flask" },
     { name = "gdown" },
+    { name = "go2-webrtc-connect" },
     { name = "googlemaps" },
     { name = "ipykernel" },
     { name = "langchain" },
@@ -1524,7 +1521,6 @@ dependencies = [
     { name = "typeguard" },
     { name = "typer" },
     { name = "ultralytics" },
-    { name = "unitree-webrtc-connect-leshy" },
     { name = "uvicorn" },
     { name = "wasmtime" },
     { name = "xarm-python-sdk" },
@@ -1639,6 +1635,7 @@ requires-dist = [
     { name = "flask", specifier = ">=2.2" },
     { name = "ftfy", marker = "extra == 'cuda'" },
     { name = "gdown", specifier = "==5.2.0" },
+    { name = "go2-webrtc-connect", git = "https://github.com/dimensionalOS/go2_webrtc_connect.git" },
     { name = "googlemaps", specifier = ">=4.10.0" },
     { name = "h5py", marker = "extra == 'manipulation'", specifier = ">=3.7.0" },
     { name = "ipykernel" },
@@ -1745,7 +1742,6 @@ requires-dist = [
     { name = "types-tensorflow", marker = "extra == 'dev'", specifier = ">=2.18.0.20251008,<3" },
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.67.0.20250809,<5" },
     { name = "ultralytics", specifier = ">=8.3.70" },
-    { name = "unitree-webrtc-connect-leshy", specifier = ">=2.0.4" },
     { name = "uvicorn", specifier = ">=0.34.0" },
     { name = "wasmtime" },
     { name = "xarm-python-sdk", specifier = ">=1.17.0" },
@@ -2367,6 +2363,24 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/02/6e639e90f181dc9127046e00d0528f9f7ad12d428972e3a5378b9aefdb0b/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.p39.p310.p311.p312.p313-none-manylinux_2_28_x86_64.whl", hash = "sha256:7916034efa867927892635733a3b6af8cd95ceb10566fd7f1e0d2763c2ee8b12", size = 243525, upload-time = "2025-09-12T08:54:34.006Z" },
     { url = "https://files.pythonhosted.org/packages/84/06/cb588ca65561defe0fc48d1df4c2ac12569b81231ae4f2b52ab37007d0bd/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.p39.p310.p311.p312.p313-none-win32.whl", hash = "sha256:6c9549da71b93e367b4d71438798daae1da2592039fd14204a80a1a2348ae127", size = 552685, upload-time = "2025-09-12T08:54:35.723Z" },
     { url = "https://files.pythonhosted.org/packages/86/27/00c9c96af18ac0a5eac2ff61cbe306551a2d770d7173f396d0792ee1a59e/glfw-2.10.0-py2.py27.py3.py30.py31.py32.py33.py34.py35.py36.py37.py38.p39.p310.p311.p312.p313-none-win_amd64.whl", hash = "sha256:6292d5d6634d668cd23d337e6089491d3945a9aa4ac6e1667b0003520d7caa51", size = 559466, upload-time = "2025-09-12T08:54:37.661Z" },
+]
+
+[[package]]
+name = "go2-webrtc-connect"
+version = "0.0.1"
+source = { git = "https://github.com/dimensionalOS/go2_webrtc_connect.git#ba8b343fca482e55dc126e9254b81437b6f800d0" }
+dependencies = [
+    { name = "aioice" },
+    { name = "aiortc" },
+    { name = "flask-socketio" },
+    { name = "lz4" },
+    { name = "opencv-python" },
+    { name = "pyaudio" },
+    { name = "pycryptodome" },
+    { name = "pydub" },
+    { name = "requests" },
+    { name = "sounddevice" },
+    { name = "wasmtime" },
 ]
 
 [[package]]
@@ -9136,30 +9150,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1f/63/21a32e1facfeee245dbdfb7b4669faf7a36ff7c00b50987932bdab126f4b/ultralytics_thop-2.0.18.tar.gz", hash = "sha256:21103bcd39cc9928477dc3d9374561749b66a1781b35f46256c8d8c4ac01d9cf", size = 34557, upload-time = "2025-10-29T16:58:13.526Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/7f/c7/fb42228bb05473d248c110218ffb8b1ad2f76728ed8699856e5af21112ad/ultralytics_thop-2.0.18-py3-none-any.whl", hash = "sha256:2bb44851ad224b116c3995b02dd5e474a5ccf00acf237fe0edb9e1506ede04ec", size = 28941, upload-time = "2025-10-29T16:58:12.093Z" },
-]
-
-[[package]]
-name = "unitree-webrtc-connect-leshy"
-version = "2.0.4"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "aiortc" },
-    { name = "flask-socketio" },
-    { name = "lz4" },
-    { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "numpy", version = "2.3.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "opencv-python" },
-    { name = "packaging" },
-    { name = "pyaudio" },
-    { name = "pycryptodome" },
-    { name = "pydub" },
-    { name = "requests" },
-    { name = "sounddevice" },
-    { name = "wasmtime" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/e0/1c/877fa100fbbbf60880ad799368e0365b5c8d7107b1850504b1d705aad434/unitree_webrtc_connect_leshy-2.0.4.tar.gz", hash = "sha256:10c0bd7e5449cf05d031dbe259d6787e729bbc601d25fec7c02f3b9edbb1556c", size = 34364, upload-time = "2025-12-29T21:41:10.422Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/84/3486e84ee07502a76911e83c40066d551a053c1df6994860cd2b45144710/unitree_webrtc_connect_leshy-2.0.4-py3-none-any.whl", hash = "sha256:4403bd844993f37aaea4de076d079b76ba1479301fc68d0bc0c3a835c8905df6", size = 39987, upload-time = "2025-12-29T21:41:08.834Z" },
 ]
 
 [[package]]
