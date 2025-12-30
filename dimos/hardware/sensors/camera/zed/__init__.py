@@ -28,7 +28,7 @@ except ImportError:
 
 # Only import ZED classes if SDK is available
 if HAS_ZED_SDK:
-    from dimos.hardware.camera.zed.camera import ZEDCamera, ZEDModule
+    from dimos.hardware.sensors.camera.zed.camera import ZEDCamera, ZEDModule
 else:
     # Provide stub classes when SDK is not available
     class ZEDCamera:  # type: ignore[no-redef]
