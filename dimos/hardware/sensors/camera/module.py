@@ -16,7 +16,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import queue
 import time
-from typing import Any, Generic, Literal, Optional, Protocol, TypeVar
 
 from dimos_lcm.sensor_msgs import CameraInfo
 import reactivex as rx
@@ -28,7 +27,7 @@ from dimos import spec
 from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.sensors.camera.spec import CameraHardware
-from dimos.hardware.sensors.camera.webcam import Webcam, WebcamConfig
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
