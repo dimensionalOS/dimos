@@ -1527,6 +1527,7 @@ dependencies = [
     { name = "unitree-webrtc-connect" },
     { name = "uvicorn" },
     { name = "wasmtime" },
+    { name = "xarm-python-sdk" },
     { name = "yapf" },
 ]
 
@@ -1747,6 +1748,7 @@ requires-dist = [
     { name = "unitree-webrtc-connect", specifier = ">=2.0.3" },
     { name = "uvicorn", specifier = ">=0.34.0" },
     { name = "wasmtime" },
+    { name = "xarm-python-sdk", specifier = ">=1.17.0" },
     { name = "xformers", marker = "extra == 'cuda'", specifier = ">=0.0.20" },
     { name = "yapf", specifier = "==0.40.2" },
 ]
@@ -9572,6 +9574,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/79/12135bdf8b9c9367b8701c2c19a14c913c120b882d50b014ca0d38083c2c/wsproto-1.3.2.tar.gz", hash = "sha256:b86885dcf294e15204919950f666e06ffc6c7c114ca900b060d6e16293528294", size = 50116, upload-time = "2025-11-20T18:18:01.871Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/a4/f5/10b68b7b1544245097b2a1b8238f66f2fc6dcaeb24ba5d917f52bd2eed4f/wsproto-1.3.2-py3-none-any.whl", hash = "sha256:61eea322cdf56e8cc904bd3ad7573359a242ba65688716b0710a5eb12beab584", size = 24405, upload-time = "2025-11-20T18:18:00.454Z" },
+]
+
+[[package]]
+name = "xarm-python-sdk"
+version = "1.17.3"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/27/dd/073cf64fa9e74cfb97c9ded97750ed4652ada1b4921cd0e7d895ff242f7c/xarm_python_sdk-1.17.3.tar.gz", hash = "sha256:e61b988bc3be684c15f8e686958c00e619e14725130ee94148074b8ef5bd9ec3", size = 215842, upload-time = "2025-12-02T03:09:49.342Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/40/0a/85b3df0fa6ddd4f1a9d23cd63948aa145797631c9e20d165ada8e13a058c/xarm_python_sdk-1.17.3-py3-none-any.whl", hash = "sha256:3dee2f9819d54f0ba476ea51ff63f2d1eb248e0658da1b1dcab8c519008955bb", size = 186790, upload-time = "2025-12-02T03:09:47.606Z" },
 ]
 
 [[package]]

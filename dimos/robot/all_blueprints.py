@@ -33,6 +33,17 @@ all_blueprints = {
     "unitree-g1-joystick": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:with_joystick",
     "unitree-g1-full": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:full_featured",
     "unitree-g1-detection": "dimos.robot.unitree_webrtc.unitree_g1_blueprints:detection",
+    # xArm manipulator blueprints
+    "xarm-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_servo",
+    "xarm5-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm5_servo",
+    "xarm7-servo": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm7_servo",
+    "xarm-cartesian": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_cartesian",
+    "xarm-trajectory": "dimos.hardware.manipulators.xarm.xarm_blueprints:xarm_trajectory",
+    # Piper manipulator blueprints
+    "piper-servo": "dimos.hardware.manipulators.piper.piper_blueprints:piper_servo",
+    "piper-cartesian": "dimos.hardware.manipulators.piper.piper_blueprints:piper_cartesian",
+    "piper-trajectory": "dimos.hardware.manipulators.piper.piper_blueprints:piper_trajectory",
+    # Demo blueprints
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents.skills.demo_skill:demo_skill",
     "demo-gps-nav": "dimos.agents.skills.demo_gps_nav:demo_gps_nav_skill",
@@ -72,6 +83,10 @@ all_modules = {
     "wavefront_frontier_explorer": "dimos.navigation.frontier_exploration.wavefront_frontier_goal_selector",
     "websocket_vis": "dimos.web.websocket_vis.websocket_vis_module",
     "web_input": "dimos.agents.cli.web",
+    # xArm manipulator modules
+    "xarm_driver": "dimos.hardware.manipulators.xarm.xarm_driver",
+    "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
+    "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
 }
 
 

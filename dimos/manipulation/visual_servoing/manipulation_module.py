@@ -29,7 +29,7 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
-from dimos.hardware.piper_arm import PiperArm
+from dimos.hardware.manipulators.piper.piper_arm import PiperArm
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.manipulation.visual_servoing.utils import (
