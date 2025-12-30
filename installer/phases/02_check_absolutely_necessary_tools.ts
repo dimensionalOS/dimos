@@ -12,7 +12,7 @@ import * as p from "../support/prompt_tools.js"
 // Phase 2: Check absolutely necessary tools
 //
 // NOTE: this part always gets run regardless of nix/docker/manual install
-export async function phase2(systemAnalysis: Record<string, ToolResult> | null) {
+export async function phase2() {
     p.clearScreen()
     p.header("Phase 2: Check vital dependencies")
     await ensureGitAndLfs()
