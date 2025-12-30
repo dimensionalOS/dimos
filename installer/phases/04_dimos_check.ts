@@ -16,8 +16,14 @@ export async function phase4() {
     }
 
     const checks: Array<{ label: string; run: () => Promise<{ code: number }> }> = [
-        { label: "dimos --version", run: () => $$`dimos --version` },
-        { label: "import dimos (python)", run: () => $$`python -c "import dimos;"` },
+        {
+            label: "dimos --version",
+            run: () => $$`dimos --version`,
+        },
+        {
+            label: "import dimos (python)",
+            run: () => $$`python -c "import dimos;"`,
+        },
     ]
 
     let passed = 0
