@@ -1,6 +1,30 @@
 import { $, $$ } from "./dax.ts"
 import { dependencyListHumanNames } from "./constants.ts"
 import * as p from "./prompt_tools.ts"
+import * as Toml from 'https://esm.sh/smol-toml@1.6.0'
+
+let cachedTomls = {}
+// FIXME: change default branch to "main" upon launch
+export async function getProjectToml({branch="dev"}) {
+    if (!cachedTomls[branch]) {
+        // FIXME: remove token once code is public
+        // NOTE: its a temp token so if you're reading this its no good anymore (I'm just testing)
+        const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/${branch}/pyproject.toml?token=GHSAT0AAAAAADJ4QAIODK4EQKAG3ITUBA2Q2KUKYPA`)
+        let err
+        if (pyprojectToml.ok) {
+            const tomlText = await pyprojectToml.text()
+            try {
+                const obj = Toml.parse(tomlText)
+                cachedTomls[branch] = obj
+                return obj
+            } catch (error) {
+                err = error
+            }
+        }
+        throw new Error(`Unable to download/parse pyproject.toml for dimos: ${err}`)
+    }
+    return cachedTomls[branch]
+}
 
 export function mentionSystemDependencies() {
     console.log("- we will need the following system dependencies:")
