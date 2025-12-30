@@ -49,7 +49,7 @@ dependencies = [
     "python-multipart==0.0.20",
     "reactivex",
     "asyncio==3.4.3",
-    "unitree_webrtc_connect>=2.0.3",
+    "unitree-webrtc-connect-leshy>=2.0.4",
     "tensorzero==2025.7.5",
     "structlog>=25.5.0,<26",
 
