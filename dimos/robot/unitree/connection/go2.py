@@ -269,6 +269,8 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
                 column_shares=[3, 1],
             ),
             rrb.TimePanel(state="collapsed"),
+            rrb.SelectionPanel(state="collapsed"),
+            rrb.BlueprintPanel(state="collapsed"),
         )
         rr.send_blueprint(blueprint)
 
