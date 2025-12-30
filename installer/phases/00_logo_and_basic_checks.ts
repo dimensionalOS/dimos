@@ -5,7 +5,7 @@ import { RenderLogo } from "../support/dimos_banner.ts"
 import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
 import { activateVenv } from "../support/venv.ts"
 import { dependencyListHumanNames, dependencyListAptPackages } from "../support/constants.ts"
-import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, ensureVenv } from "../support/misc.ts"
+import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.ts"
 
 // NOTE: this is basically only user-interactive (if not in an interactive environment, skip this phase)

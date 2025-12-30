@@ -1,7 +1,7 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
 import { $$ } from "../support/dax.ts"
 
-import { discordInviteUrl } from "../support/constants.ts"
+import { discordUrl } from "../support/constants.ts"
 import * as p from "../support/prompt_tools.ts"
 
 export async function phase4() {
@@ -11,7 +11,7 @@ export async function phase4() {
     const bail = (msg: string) => {
         console.log("")
         p.error(msg)
-        p.error(`Please message us in our discord and we'll help you get it installed:\n    ${discordInviteUrl}`)
+        p.error(`Please message us in our discord and we'll help you get it installed:\n    ${discordUrl}`)
         Deno.exit(1)
     }
 
