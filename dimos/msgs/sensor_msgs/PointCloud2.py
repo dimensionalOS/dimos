@@ -44,6 +44,14 @@ except ImportError:
 from dimos.types.timestamped import Timestamped
 
 
+@functools.lru_cache(maxsize=16)
+def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
+    """Get a matplotlib colormap by name (cached for performance)."""
+    import matplotlib.pyplot as plt
+
+    return plt.get_cmap(name)
+
+
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
 class PointCloud2(Timestamped):
     msg_name = "sensor_msgs.PointCloud2"
@@ -444,11 +452,9 @@ class PointCloud2(Timestamped):
         point_colors = None
         if colormap is not None:
             # Color by height (z-coordinate)
-            import matplotlib.pyplot as plt
-
             z = points[:, 2]
             z_norm = (z - z.min()) / (z.max() - z.min() + 1e-8)
-            cmap = plt.get_cmap(colormap)
+            cmap = _get_matplotlib_cmap(colormap)
             point_colors = (cmap(z_norm)[:, :3] * 255).astype(np.uint8)
         elif colors is not None:
             point_colors = colors

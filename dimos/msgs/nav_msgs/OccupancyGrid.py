@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from functools import lru_cache
 import time
 from typing import TYPE_CHECKING, BinaryIO
 
@@ -28,6 +29,14 @@ from PIL import Image
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
+
+
+@lru_cache(maxsize=16)
+def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
+    """Get a matplotlib colormap by name (cached for performance)."""
+    import matplotlib.pyplot as plt
+
+    return plt.get_cmap(name)
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -465,11 +474,23 @@ class OccupancyGrid(Timestamped):
         """Convert to 2D image visualization."""
         import rerun as rr
 
-        if colormap is not None:
-            # Use matplotlib colormap for colored visualization
-            import matplotlib.pyplot as plt
+        # Use existing cached visualization functions for supported palettes
+        if colormap in ("turbo", "rainbow"):
+            from dimos.mapping.occupancy.visualizations import rainbow_image, turbo_image
 
-            # Normalize grid values: -1 (unknown) -> 0.5, 0 (free) -> 0, 100 (occupied) -> 1
+            if colormap == "turbo":
+                bgr_image = turbo_image(self.grid)
+            else:
+                bgr_image = rainbow_image(self.grid)
+
+            # Convert BGR to RGB and flip for world coordinates
+            rgb_image = np.flipud(bgr_image[:, :, ::-1])
+            return rr.Image(rgb_image, color_model="RGB")
+
+        if colormap is not None:
+            # Use matplotlib colormap (cached for performance)
+            cmap = _get_matplotlib_cmap(colormap)
+
             grid_float = self.grid.astype(np.float32)
 
             # Create RGBA image
@@ -481,8 +502,6 @@ class OccupancyGrid(Timestamped):
             occupied_mask = self.grid > 0
             # Unknown: transparent gray
             unknown_mask = self.grid == -1
-
-            cmap = plt.get_cmap(colormap)
 
             # Map free to 0, costs to normalized value
             if np.any(free_mask):
@@ -503,25 +522,25 @@ class OccupancyGrid(Timestamped):
 
             # Flip vertically to match world coordinates (y=0 at bottom)
             return rr.Image(np.flipud(vis), color_model="RGBA")
-        else:
-            # Grayscale visualization
-            vis = np.zeros((self.height, self.width), dtype=np.uint8)
 
-            # Free space = white
-            vis[self.grid == 0] = 255
+        # Grayscale visualization (no colormap)
+        vis = np.zeros((self.height, self.width), dtype=np.uint8)
 
-            # Unknown = gray
-            vis[self.grid == -1] = 128
+        # Free space = white
+        vis[self.grid == 0] = 255
 
-            # Occupied (100) = black, costs (1-99) = gradient
-            occupied_mask = self.grid > 0
-            if np.any(occupied_mask):
-                # Map 1-100 to 127-0 (darker = more occupied)
-                costs = self.grid[occupied_mask].astype(np.float32)
-                vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
+        # Unknown = gray
+        vis[self.grid == -1] = 128
 
-            # Flip vertically to match world coordinates (y=0 at bottom)
-            return rr.Image(np.flipud(vis), color_model="L")
+        # Occupied (100) = black, costs (1-99) = gradient
+        occupied_mask = self.grid > 0
+        if np.any(occupied_mask):
+            # Map 1-100 to 127-0 (darker = more occupied)
+            costs = self.grid[occupied_mask].astype(np.float32)
+            vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
+
+        # Flip vertically to match world coordinates (y=0 at bottom)
+        return rr.Image(np.flipud(vis), color_model="L")
 
     def _to_rerun_points(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
         """Convert to 3D points for occupied cells."""
@@ -547,11 +566,9 @@ class OccupancyGrid(Timestamped):
 
         # Determine colors
         if colormap is not None:
-            import matplotlib.pyplot as plt
-
             # Normalize costs to 0-1 range
             cost_norm = costs / 100.0
-            cmap = plt.get_cmap(colormap)
+            cmap = _get_matplotlib_cmap(colormap)
             point_colors = (cmap(cost_norm)[:, :3] * 255).astype(np.uint8)
         else:
             # Default: red gradient based on cost
@@ -598,8 +615,6 @@ class OccupancyGrid(Timestamped):
 
         # Generate texture from grid
         if colormap is not None:
-            import matplotlib.pyplot as plt
-
             grid_float = self.grid.astype(np.float32)
             texture = np.zeros((self.height, self.width, 4), dtype=np.uint8)
 
@@ -607,7 +622,7 @@ class OccupancyGrid(Timestamped):
             occupied_mask = self.grid > 0
             unknown_mask = self.grid == -1
 
-            cmap = plt.get_cmap(colormap)
+            cmap = _get_matplotlib_cmap(colormap)
 
             if np.any(free_mask):
                 colors_free = (cmap(0.0)[:3] * np.array([255, 255, 255])).astype(np.uint8)
