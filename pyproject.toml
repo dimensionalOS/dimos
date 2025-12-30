@@ -3,14 +3,18 @@ requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-include-package-data = true
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dimos*"]
+exclude = ["dimos.web.websocket_vis.node_modules*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+"dimos" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+"dimos.robot.unitree_webrtc.params" = ["*.yaml", "*.yml"]
+"dimos.web.dimos_interface" = ["**/*.html", "**/*.css", "**/*.js"]
+"dimos.web.templates" = ["*"]
 
 [project]
 name = "dimos"
@@ -24,6 +28,8 @@ requires-python = ">=3.10"
 dependencies = [
     # Core requirements
     "opencv-python",
+    "numba>=0.60.0",      # Python 3.12 support
+    "llvmlite>=0.42.0",   # Required by numba 0.60+
     "python-dotenv",
     "openai",
     "anthropic>=0.19.0",
@@ -42,9 +48,8 @@ dependencies = [
     "Flask>=2.2",
     "python-multipart==0.0.20",
     "reactivex",
-    "rxpy-backpressure",
     "asyncio==3.4.3",
-    "unitree-webrtc-connect",
+    "unitree-webrtc-connect-leshy>=2.0.4",
     "tensorzero==2025.7.5",
     "structlog>=25.5.0,<26",
 
@@ -287,7 +292,7 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
@@ -314,6 +319,10 @@ module = [
     "unitree_webrtc_connect.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
+follow_imports = "skip"
 
 [[tool.mypy.overrides]]
 module = [
@@ -371,9 +380,6 @@ extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = 
 default-groups = []
 
 [tool.uv.sources]
-rxpy-backpressure = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git" }
-# we are waiting for Legion to merge our PR https://github.com/legion1581/unitree_webrtc_connect/pull/46
-unitree-webrtc-connect = { git = "https://github.com/leshy/unitree_webrtc_connect.git", rev = "2cbb6ce657383c788f4a48d9d87ecf4b9b7dba1d" }
 clip = { git = "https://github.com/openai/CLIP.git" }
 dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
