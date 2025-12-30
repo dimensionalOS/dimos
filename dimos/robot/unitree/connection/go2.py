@@ -251,6 +251,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
                 rrb.Spatial3DView(
                     name="3D View",
                     origin="world",
+                    background=[0, 0, 0],
                 ),
                 rrb.Vertical(
                     rrb.Spatial2DView(
