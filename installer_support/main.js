@@ -2,6 +2,8 @@
 import { RenderLogo } from "./dimos_banner.js"
 import { getToolCheckResults } from "./get_tool_check_results.ts"
 import $ from "https://esm.sh/@jsr/david__dax@0.43.2/mod.ts"
+import { activateVenv } from "./venv.js"
+
 const $$ = (...args)=>$(...args).noThrow()
 // await $$`false`
 // (await $$`false`).code
@@ -26,7 +28,7 @@ const tooling = await getToolCheckResults()
 
 for (const [key, {name, exists, version, note}] of Object.entries(tooling)) {
     // sleep so user can actually read whats happening before clearing the screen
-    await new Promise(r=>setTimeout(r,300))
+    await new Promise(r=>setTimeout(r,500))
     if (!exists) {
         logo.log(`- ❌ ${name||key} ${note||""}`)
     } else {
