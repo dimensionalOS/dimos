@@ -103,6 +103,7 @@ class CartesianMotionController(Module):
     # Output topics
     joint_position_command: Out[JointCommand] = None  # Commands to arm driver
     cartesian_velocity: Out[Twist] = None  # Debug: Cartesian velocity commands
+    current_pose: Out[PoseStamped] = None  # Current TCP pose (for target setters)
 
     def __init__(self, arm_driver: ArmDriverSpec, *args, **kwargs) -> None:
         """
@@ -398,6 +399,15 @@ class CartesianMotionController(Module):
                         position=position_m,
                         orientation=[quat.x, quat.y, quat.z, quat.w],
                     )
+
+                    # Publish current pose for target setters to use
+                    current_pose_stamped = PoseStamped(
+                        ts=current_time,
+                        frame_id="world",
+                        position=position_m,
+                        orientation=[quat.x, quat.y, quat.z, quat.w],
+                    )
+                    self.current_pose.publish(current_pose_stamped)
                 else:
                     logger.warning(f"Unexpected FK result format: {current_pose_list}")
                     time.sleep(period)
