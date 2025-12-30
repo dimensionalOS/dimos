@@ -120,11 +120,11 @@ class VoxelGridMapper(Module):
         start = time.perf_counter()
         pc = self.get_global_pointcloud2()
         self.global_map.publish(pc)  # Auto-logs to Rerun via to_rerun() in start()
-        
+
         # Log timing metrics to Rerun
         elapsed_ms = (time.perf_counter() - start) * 1000
         rr.log("metrics/voxel_map/publish_ms", rr.Scalars(elapsed_ms))
-        
+
         # Log message latency (time from frame capture to now)
         if pc.ts:
             latency_ms = (time.time() - pc.ts) * 1000
