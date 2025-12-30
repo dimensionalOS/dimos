@@ -1,6 +1,6 @@
 import { $, $$ } from "./dax.js"
 import { activateVenv, getVenvDirsAt } from "./venv.js"
-import { dependencyListHumanNames } from "./core_dependencies.js"
+import { dependencyListHumanNames } from "./constants.ts"
 import * as p from "./prompt_tools.js"
 
 export function mentionSystemDependencies() {
@@ -45,7 +45,8 @@ export async function ensureGitAndLfs() {
 }
 
 export async function ensurePortAudio() {
-    const portAudioRes = await $$`pkg-config --modversion portaudio-2.0`
+    p.boringLog("Checking if portaudio is available")
+    const portAudioRes = await $$`pkg-config --modversion portaudio-2.0`.printCommand()
     if (portAudioRes.code !== 0) {
         throw Error("- ❌ portaudio is required. Please install portaudio and rerun.")
     }

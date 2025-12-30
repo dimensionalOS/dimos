@@ -1,3 +1,18 @@
+export const discordUrl = "https://discord.gg/S6E9MHsu"
+export const dimosEnvVars = {
+    OPENAI_API_KEY:"",
+    HUGGINGFACE_ACCESS_TOKEN:"",
+    ALIBABA_API_KEY:"",
+    ANTHROPIC_API_KEY:"",
+    HF_TOKEN:"",
+    HUGGINGFACE_PRV_ENDPOINT:"",
+    ROBOT_IP:"",
+    CONN_TYPE:"webrtc",
+    WEBRTC_SERVER_HOST:"0.0.0.0",
+    WEBRTC_SERVER_PORT:"9991",
+    DISPLAY:":0",
+}
+
 export const dependencyListHumanNames = [
     "git",
     "git-lfs",

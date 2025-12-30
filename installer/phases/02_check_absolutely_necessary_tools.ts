@@ -4,7 +4,7 @@ import { $, $$ } from "../support/dax.js"
 import { RenderLogo } from "../support/dimos_banner.js"
 import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
 import { activateVenv, getVenvDirsAt } from "../support/venv.js"
-import { dependencyListHumanNames, dependencyListAptPackages } from "../support/core_dependencies.js"
+import { dependencyListHumanNames, dependencyListAptPackages, discordUrl} from "../support/constants.ts"
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.js"
 
@@ -15,10 +15,21 @@ import * as p from "../support/prompt_tools.js"
 export async function phase2() {
     p.clearScreen()
     p.header("Phase 2: Check vital dependencies")
-    await ensureGitAndLfs()
-    await ensurePortAudio()
-    const pythonCmd = await ensurePython()
-    await ensureVenvActive(pythonCmd)
+    try {
+        await ensureGitAndLfs()
+        await ensurePortAudio()
+        const pythonCmd = await ensurePython()
+        await ensureVenvActive(pythonCmd)
+    } catch (error) {
+        console.log(``)
+        console.log(``)
+        p.error(`One of the vital dependencies was missing or had versioning issues`)
+        p.error(`    error: ${error.message}`)
+        p.error(`Message us in the discord if you're having trouble: ${p.highlight(discordUrl)}`)
+        if (p.askYesNo(`It is NOT recommended to continue. Would you like to stop the setup? [y=exit, n=continue]`)) {
+            Deno.exit(1)
+        }
+    }
 }
 
 const defaultVenvName = "venv"
