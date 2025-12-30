@@ -17,7 +17,6 @@ from copy import copy
 from dataclasses import dataclass
 from enum import Enum
 import json
-import threading
 import time
 from typing import Any, Literal
 
@@ -28,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 
 from dimos.core import rpc
-from dimos.core.module import Module, ModuleConfig, get_loop
+from dimos.core.module import Module, ModuleConfig
 from dimos.protocol.skill.comms import LCMSkillComms, SkillCommsSpec
 from dimos.protocol.skill.skill import SkillConfig, SkillContainer  # type: ignore[attr-defined]
 from dimos.protocol.skill.type import MsgType, Output, Reducer, Return, SkillMsg, Stream
