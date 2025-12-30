@@ -18,13 +18,8 @@
 @tailwind components;
 @tailwind utilities;
 
-@font-face {
-  font-family: 'Cascadia Code';
-  src: url('/fonts/CascadiaCode.ttf')
-}
-
 * {
-  font-family: 'Cascadia Code', monospace;
+  font-family: monospace;
 }
 
 * {
