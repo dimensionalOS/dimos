@@ -1,7 +1,7 @@
 {
   "name": "command-center-extension",
   "displayName": "command-center-extension",
-  "description": "",
+  "description": "2D costmap visualization with robot and path overlay",
   "publisher": "dimensional",
   "homepage": "",
   "version": "0.0.1",
@@ -10,6 +10,9 @@
   "keywords": [],
   "scripts": {
     "build": "foxglove-extension build",
+    "build:standalone": "vite build",
+    "dev": "vite",
+    "preview": "vite preview",
     "foxglove:prepublish": "foxglove-extension build --mode production",
     "lint": "eslint .",
     "lint:ci": "eslint .",
@@ -25,12 +28,14 @@
     "@types/leaflet": "^1.9.21",
     "@types/react": "18.3.24",
     "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "^4.3.4",
     "create-foxglove-extension": "1.0.6",
     "eslint": "9.34.0",
     "prettier": "3.6.2",
     "react": "18.3.1",
     "react-dom": "^18.3.1",
-    "typescript": "5.9.2"
+    "typescript": "5.9.2",
+    "vite": "^6.0.0"
   },
   "dependencies": {
     "@types/pako": "^2.0.4",
