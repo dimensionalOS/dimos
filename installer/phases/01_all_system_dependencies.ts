@@ -8,13 +8,10 @@ import { dependencyListHumanNames, dependencyListAptPackages } from "../support/
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, ensureVenv, aptInstall } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.js"
 
-//
-// Phase 1: Full system dependencies
-//
 // NOTE: skip this phase if system dependencies already exist (e.g. docker, or nix environment)
 export async function phase1(systemAnalysis: Record<string, ToolResult> | null) {
     p.clearScreen()
-    p.header("Phase 1: System dependencies prerequisites")
+    p.header("Next Phase: System Dependency Install")
     if (!systemAnalysis) {
         systemAnalysis = await getToolCheckResults()
     }

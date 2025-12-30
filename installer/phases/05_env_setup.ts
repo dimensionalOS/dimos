@@ -5,12 +5,9 @@ import { dimosEnvVars } from "../support/constants.ts"
 import { addGitIgnorePatterns, getProjectDirectory } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.js"
 
-//
-// Phase 4: Environment files (.env / .envrc)
-//
-export async function phase4() {
+export async function phase5() {
     p.clearScreen()
-    p.header("Phase 4: Environment configuration")
+    p.header("Next Phase: Environment configuration")
 
     const projectPath = await getProjectDirectory()
     const envPath = `${projectPath}/.env`

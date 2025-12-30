@@ -8,16 +8,13 @@ import { dependencyListHumanNames, dependencyListAptPackages, discordUrl } from 
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.js"
 
-//
-// Phase 3: Pip install dimos
-//
 export async function phase3() {
     p.clearScreen()
-    p.header("Phase 3: Pip installing dimos")
+    p.header("Next Phase: Pip Installing Dimos")
     const res = await $$`pip install 'dimos @ git+https://github.com/dimensionalOS/dimos.git'`.printCommand()
     if (res.code != 0) {
         console.log(``)
-        p.error(`Failed to pip install dimos 😕\nPlease message us in our discord and we'll help you get it installed!:\n    ${discordUrl}`)
+        p.error(`Failed to pip install dimos 😕\nPlease message us in our discord and we'll help you get it installed!:\n    ${p.highlight(discordUrl)}`)
         Deno.exit(1)
     }
 }

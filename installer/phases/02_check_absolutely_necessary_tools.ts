@@ -8,13 +8,10 @@ import { dependencyListHumanNames, dependencyListAptPackages, discordUrl} from "
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.js"
 
-//
-// Phase 2: Check absolutely necessary tools
-//
 // NOTE: this part always gets run regardless of nix/docker/manual install
 export async function phase2() {
     p.clearScreen()
-    p.header("Phase 2: Check vital dependencies")
+    p.header("Next Phase: Check Install of Vital System Dependencies")
     try {
         await ensureGitAndLfs()
         await ensurePortAudio()
@@ -24,7 +21,7 @@ export async function phase2() {
         console.log(``)
         console.log(``)
         p.error(`One of the vital dependencies was missing or had versioning issues`)
-        p.error(`    error: ${error.message}`)
+        p.error(`    error: ${error?.message}`)
         p.error(`Message us in the discord if you're having trouble: ${p.highlight(discordUrl)}`)
         if (p.askYesNo(`It is NOT recommended to continue. Would you like to stop the setup? [y=exit, n=continue]`)) {
             Deno.exit(1)

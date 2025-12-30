@@ -8,9 +8,6 @@ import { dependencyListHumanNames, dependencyListAptPackages } from "../support/
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, ensureVenv } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.js"
 
-//
-// Phase 0: Logo and Basic Checks
-//
 // NOTE: this is basically only user-interactive (if not in an interactive environment, skip this phase)
 export async function phase0() : Promise<Record<string, ToolResult>> {
     const logo = new RenderLogo({
