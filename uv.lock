@@ -1479,7 +1479,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyturbojpeg" },
     { name = "reactivex" },
-    { name = "rxpy-backpressure" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "scipy", version = "1.16.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "sortedcontainers" },
@@ -1639,7 +1638,7 @@ unitree = [
     { name = "sse-starlette" },
     { name = "transformers", extra = ["torch"] },
     { name = "ultralytics" },
-    { name = "unitree-webrtc-connect" },
+    { name = "unitree-webrtc-connect-leshy" },
     { name = "uvicorn" },
 ]
 web = [
@@ -1745,7 +1744,6 @@ requires-dist = [
     { name = "requests-mock", marker = "extra == 'dev'", specifier = "==1.12.1" },
     { name = "rtree", marker = "extra == 'manipulation'" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.14.3" },
-    { name = "rxpy-backpressure", git = "https://github.com/dimensionalOS/rxpy-backpressure.git" },
     { name = "scikit-learn", marker = "extra == 'misc'" },
     { name = "scipy", specifier = ">=1.15.1" },
     { name = "sentence-transformers", marker = "extra == 'misc'" },
@@ -1783,7 +1781,7 @@ requires-dist = [
     { name = "types-tensorflow", marker = "extra == 'dev'", specifier = ">=2.18.0.20251008,<3" },
     { name = "types-tqdm", marker = "extra == 'dev'", specifier = ">=4.67.0.20250809,<5" },
     { name = "ultralytics", marker = "extra == 'perception'", specifier = ">=8.3.70" },
-    { name = "unitree-webrtc-connect", marker = "extra == 'unitree'", git = "https://github.com/leshy/unitree_webrtc_connect.git?rev=2cbb6ce657383c788f4a48d9d87ecf4b9b7dba1d" },
+    { name = "unitree-webrtc-connect-leshy", marker = "extra == 'unitree'" },
     { name = "uvicorn", marker = "extra == 'web'", specifier = ">=0.34.0" },
     { name = "xarm-python-sdk", marker = "extra == 'misc'", specifier = ">=1.17.0" },
     { name = "xformers", marker = "extra == 'cuda'", specifier = ">=0.0.20" },
@@ -7754,11 +7752,6 @@ wheels = [
 ]
 
 [[package]]
-name = "rxpy-backpressure"
-version = "1.0.0"
-source = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git#e3a696950c0483ad3f405616a3a60b8b7c60e1a8" }
-
-[[package]]
 name = "safetensors"
 version = "0.7.0"
 source = { registry = "https://pypi.org/simple" }
@@ -9143,7 +9136,7 @@ wheels = [
 
 [[package]]
 name = "ultralytics"
-version = "8.3.242"
+version = "8.3.243"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "matplotlib" },
@@ -9161,9 +9154,9 @@ dependencies = [
     { name = "torchvision" },
     { name = "ultralytics-thop" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f5/8d/24c54f3eef472009fae4ecd74390bad3c4902a3f15908fe647043db2a1d7/ultralytics-8.3.242.tar.gz", hash = "sha256:6f63673760df6200783960520016712d8d54d7d9d3470ed3d3a740b96953a8df", size = 984432, upload-time = "2025-12-29T15:14:58.952Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/fa/0e/f3ad6895024d149304241bf184592b4d718b66f9de80bcd68b66b2e50307/ultralytics-8.3.243.tar.gz", hash = "sha256:db35212c508ddf506f2f7eeaa8d1dd9755d70f531665c1180ca8936167c00410", size = 987190, upload-time = "2025-12-30T02:35:37.703Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e7/ec/9e651bd8a004409452436d33320d7156d37c6160d135ed64cbc51035ebe4/ultralytics-8.3.242-py3-none-any.whl", hash = "sha256:e79ecbd168ebd1eafacf818d0747d05d2a03f46d13f495ca3fdc907f8a0775b9", size = 1147824, upload-time = "2025-12-29T15:14:55.235Z" },
+    { url = "https://files.pythonhosted.org/packages/71/b0/f138123e3d8038b0c9e0c6986497d1e023ec20d0d5c8d1e30d77ef9a79b9/ultralytics-8.3.243-py3-none-any.whl", hash = "sha256:39822c06465e1b3a5dc9366e6d9c2f231f3d356555faafdf14c53e992d7834db", size = 1150673, upload-time = "2025-12-30T02:35:34.389Z" },
 ]
 
 [[package]]
@@ -9181,9 +9174,9 @@ wheels = [
 ]
 
 [[package]]
-name = "unitree-webrtc-connect"
-version = "2.0.3"
-source = { git = "https://github.com/leshy/unitree_webrtc_connect.git?rev=2cbb6ce657383c788f4a48d9d87ecf4b9b7dba1d#2cbb6ce657383c788f4a48d9d87ecf4b9b7dba1d" }
+name = "unitree-webrtc-connect-leshy"
+version = "2.0.4"
+source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "aiortc" },
     { name = "flask-socketio" },
@@ -9198,6 +9191,10 @@ dependencies = [
     { name = "requests" },
     { name = "sounddevice" },
     { name = "wasmtime" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/e0/1c/877fa100fbbbf60880ad799368e0365b5c8d7107b1850504b1d705aad434/unitree_webrtc_connect_leshy-2.0.4.tar.gz", hash = "sha256:10c0bd7e5449cf05d031dbe259d6787e729bbc601d25fec7c02f3b9edbb1556c", size = 34364, upload-time = "2025-12-29T21:41:10.422Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/49/84/3486e84ee07502a76911e83c40066d551a053c1df6994860cd2b45144710/unitree_webrtc_connect_leshy-2.0.4-py3-none-any.whl", hash = "sha256:4403bd844993f37aaea4de076d079b76ba1479301fc68d0bc0c3a835c8905df6", size = 39987, upload-time = "2025-12-29T21:41:08.834Z" },
 ]
 
 [[package]]

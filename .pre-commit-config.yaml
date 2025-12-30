@@ -9,7 +9,7 @@ repos:
       - id: remove-crlf
       - id: insert-license
         files: \.py$
-        exclude: __init__\.py$
+        exclude: (__init__\.py$)|(dimos/rxpy_backpressure/)
         args:
           # use if you want to remove licences from all files
           # (for globally changing wording or something)
