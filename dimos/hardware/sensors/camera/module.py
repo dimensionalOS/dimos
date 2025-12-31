@@ -48,6 +48,7 @@ class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
+    frequency: float = 30.0  # target fps, selects sharpest frame per window. 0 = passthrough
 
 
 class CameraModule(Module[CameraModuleConfig], spec.Camera):
@@ -79,7 +80,10 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
         if self._module_subscription:
             return "already started"
 
-        stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))  # type: ignore[attr-defined, union-attr]
+        if self.config.frequency > 0:
+            stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))  # type: ignore[attr-defined, union-attr]
+        else:
+            stream = self.hardware.image_stream()  # type: ignore[union-attr]
         self._disposables.add(stream.subscribe(self.color_image.publish))
 
         # camera_info_stream = self.camera_info_stream(frequency=5.0)
@@ -103,7 +107,7 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
             self.tf.publish(camera_link, camera_optical)
 
         self._camera_info_subscription = self.camera_info_stream().subscribe(publish_info)
-        self._module_subscription = stream.subscribe(self.image.publish)
+        self._module_subscription = stream.subscribe(self.color_image.publish)
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)
     def video_stream(self) -> Image:

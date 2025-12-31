@@ -27,13 +27,13 @@ dot2.render_svg(basic, "assets/go2_basic.svg")
 Let's learn how to build stuff like the above, starting with a simple camera module.
 
 ```python session=camera_module_demo output=assets/camera_module.svg
-from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import CameraModule
 from dimos.core.introspection.module import dot
 dot.render_svg(CameraModule.module_info(), "assets/camera_module.svg")
 ```
 
-
-
+<!--Result:-->
+![output](assets/camera_module.svg)
 
 We can always also print out Module I/O quickly into console via `.io()` call, we will do this from now on.
 
@@ -46,14 +46,13 @@ print(CameraModule.io())
 ┌┴─────────────┐
 │ CameraModule │
 └┬─────────────┘
- ├─ [93mcolor_image[0m: [92mImage[0m
- ├─ [93mcamera_info[0m: [92mCameraInfo[0m
+ ├─ color_image: Image
+ ├─ camera_info: CameraInfo
  │
- ├─ RPC [94mset_transport[0m(stream_name: [92mstr[0m, transport: [92mTransport[0m) -> [92mbool[0m
- ├─ RPC [94mstart[0m() -> [92mstr[0m
- ├─ RPC [94mstop[0m() -> [92mNone[0m
+ ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
+ ├─ RPC start()
  │
- ├─ Skill [96mvideo_stream[0m (stream=passive, reducer=latest_reducer, output=image)
+ ├─ Skill video_stream (stream=passive, reducer=latest_reducer, output=image)
 ```
 
 We can see that camera module outputs two streams:
@@ -77,23 +76,28 @@ camera.start()
 print(camera.color_image)
 
 camera.color_image.subscribe(print)
-time.sleep(1)
+time.sleep(0.5)
 camera.stop()
 ```
 
 <!--Result:-->
 ```
-Out [94mcolor_image[Image][0m @ [92mCameraModule[0m
-<function Out.subscribe.<locals>.<lambda> at 0x7feb06af2fc0>
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:51)
-[2m2025-12-29T06:54:51.555218Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:51)
-[2m2025-12-29T06:54:51.760800Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:51)
-[2m2025-12-29T06:54:51.965721Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-29 14:54:52)
-[2m2025-12-29T06:54:52.170731Z[0m [[33m[1mwarning  [0m] [1mTrying to publish on Out Out [94mcolor_image[Image][0m @ [92mCameraModule[0m without a transport[0m [[0m[1m[34mdimos/core/stream.py[0m][0m
+Out color_image[Image] @ CameraModule
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
 ```
+
 
 ## Connecting modules
 
@@ -106,19 +110,19 @@ print(Detection2DModule.io())
 
 <!--Result:-->
 ```
- ├─ [93mimage[0m: [92mImage[0m
+ ├─ image: Image
 ┌┴──────────────────┐
 │ Detection2DModule │
 └┬──────────────────┘
- ├─ [93mdetections[0m: [92mDetection2DArray[0m
- ├─ [93mannotations[0m: [92mImageAnnotations[0m
- ├─ [93mdetected_image_0[0m: [92mImage[0m
- ├─ [93mdetected_image_1[0m: [92mImage[0m
- ├─ [93mdetected_image_2[0m: [92mImage[0m
+ ├─ detections: Detection2DArray
+ ├─ annotations: ImageAnnotations
+ ├─ detected_image_0: Image
+ ├─ detected_image_1: Image
+ ├─ detected_image_2: Image
  │
- ├─ RPC [94mset_transport[0m(stream_name: [92mstr[0m, transport: [92mTransport[0m) -> [92mbool[0m
- ├─ RPC [94mstart[0m() -> [92mNone[0m
- ├─ RPC [94mstop[0m() -> [92mNone[0m
+ ├─ RPC set_transport(stream_name: str, transport: Transport) -> bool
+ ├─ RPC start() -> None
+ ├─ RPC stop() -> None
 ```
 
 TODO: add easy way to print config
@@ -128,7 +132,7 @@ looks like detector just needs an image input, outputs some sort of detection an
 ```pythonx ansi=false
 import time
 from dimos.perception.detection.module2D import Detection2DModule, Config
-from dimos.hardware.camera.module import CameraModule
+from dimos.hardware.sensors.camera.module import CameraModule
 
 camera = CameraModule()
 detector = Detection2DModule()
@@ -172,3 +176,6 @@ from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, agentic
 
 dot2.render_svg(agentic, "assets/go2_agentic.svg")
 ```
+
+<!--Result:-->
+![output](assets/go2_agentic.svg)
