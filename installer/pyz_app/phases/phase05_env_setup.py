@@ -22,4 +22,4 @@ def phase5():
     setup_direnv(envrc_path)
     print()
     print()
-    print("Setup Complete!")
+    print("Setup complete!")
