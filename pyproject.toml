@@ -12,9 +12,10 @@ exclude = ["dimos.web.websocket_vis.node_modules*"]
 
 [tool.setuptools.package-data]
 "dimos" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+"dimos.utils.cli" = ["*.tcss"]
 "dimos.robot.unitree_webrtc.params" = ["*.yaml", "*.yml"]
-"dimos.web.dimos_interface" = ["**/*.html", "**/*.css", "**/*.js"]
 "dimos.web.templates" = ["*"]
+"dimos.rxpy_backpressure" = ["*.txt"]
 
 [project]
 name = "dimos"
@@ -24,6 +25,7 @@ authors = [
 version = "0.0.4"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
+readme = "README.md"
 
 dependencies = [
     # Core requirements
