@@ -13,6 +13,8 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+import queue
+import threading
 import time
 
 import numpy as np
@@ -29,7 +31,10 @@ from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.decorators import simple_mcache
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.reactive import backpressure
+
+logger = setup_logger()
 
 
 @dataclass
@@ -76,19 +81,43 @@ class VoxelGridMapper(Module):
         self._latest_frame_ts: float = 0.0
         # Monotonic timestamp of last received frame (for accurate latency in replay)
         self._latest_frame_rx_monotonic: float | None = None
+        
+        # Background Rerun logging (decouples viz from data pipeline)
+        self._rerun_queue: queue.Queue[PointCloud2 | None] = queue.Queue(maxsize=2)
+        self._rerun_thread: threading.Thread | None = None
+
+    def _rerun_worker(self) -> None:
+        """Background thread: pull from queue and log to Rerun (non-blocking)."""
+        while True:
+            try:
+                pc = self._rerun_queue.get(timeout=1.0)
+                if pc is None:  # Shutdown signal
+                    break
+                    
+                # Log to Rerun (blocks in background, doesn't affect data pipeline)
+                try:
+                    rr.log(
+                        "world/map",
+                        pc.to_rerun(
+                            mode="boxes",
+                            size=self.config.voxel_size,
+                            colormap="turbo",
+                        ),
+                    )
+                except Exception as e:
+                    logger.warning(f"Rerun logging error: {e}")
+            except queue.Empty:
+                continue
 
     @rpc
     def start(self) -> None:
         super().start()
         connect_rerun()
 
-        # Auto-log global_map to Rerun as voxel boxes
-        self.global_map.to_rerun(
-            "world/map",
-            mode="boxes",
-            size=self.config.voxel_size,
-            colormap="turbo",
-        )
+        # Start background Rerun logging thread (decouples viz from data pipeline)
+        self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
+        self._rerun_thread.start()
+        logger.info("VoxelGridMapper: started async Rerun logging thread")
 
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()
@@ -111,6 +140,11 @@ class VoxelGridMapper(Module):
 
     @rpc
     def stop(self) -> None:
+        # Shutdown background Rerun thread
+        if self._rerun_thread and self._rerun_thread.is_alive():
+            self._rerun_queue.put(None)  # Shutdown signal
+            self._rerun_thread.join(timeout=2.0)
+        
         super().stop()
 
     def _on_frame(self, frame: LidarMessage) -> None:
@@ -124,13 +158,30 @@ class VoxelGridMapper(Module):
         # Snapshot monotonic timestamp once (won't be overwritten during slow publish)
         rx_monotonic = self._latest_frame_rx_monotonic
         
-        start = time.perf_counter()
+        start_total = time.perf_counter()
+        
+        # 1. Extract pointcloud from GPU hashmap
+        t1 = time.perf_counter()
         pc = self.get_global_pointcloud2()
-        self.global_map.publish(pc)  # Auto-logs to Rerun via to_rerun() in start()
+        extract_ms = (time.perf_counter() - t1) * 1000
+        
+        # 2. Publish to downstream (NO auto-logging - fast!)
+        t2 = time.perf_counter()
+        self.global_map.publish(pc)
+        publish_ms = (time.perf_counter() - t2) * 1000
+        
+        # 3. Queue for async Rerun logging (non-blocking, drops if queue full)
+        try:
+            self._rerun_queue.put_nowait(pc)
+        except queue.Full:
+            pass  # Drop viz frame, data pipeline continues
 
-        # Log timing metrics to Rerun
-        elapsed_ms = (time.perf_counter() - start) * 1000
-        rr.log("metrics/voxel_map/publish_ms", rr.Scalars(elapsed_ms))
+        # Log detailed timing breakdown to Rerun
+        total_ms = (time.perf_counter() - start_total) * 1000
+        rr.log("metrics/voxel_map/publish_ms", rr.Scalars(total_ms))
+        rr.log("metrics/voxel_map/extract_ms", rr.Scalars(extract_ms))
+        rr.log("metrics/voxel_map/transport_ms", rr.Scalars(publish_ms))
+        rr.log("metrics/voxel_map/voxel_count", rr.Scalars(float(len(pc))))
 
         # Log pipeline latency (time from frame receipt to publish complete)
         if rx_monotonic is not None:

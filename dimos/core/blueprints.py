@@ -294,8 +294,8 @@ class ModuleBlueprintSet:
         self._check_requirements()
         self._verify_no_name_conflicts()
 
-        # Initialize Rerun server before deploying modules (if enabled)
-        if global_config.rerun_enabled:
+        # Initialize Rerun server before deploying modules (if enabled and selected)
+        if global_config.rerun_enabled and global_config.viewer_backend == "RERUN":
             try:
                 from dimos.dashboard.rerun_init import init_rerun_server
 

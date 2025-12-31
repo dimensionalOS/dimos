@@ -260,15 +260,22 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
                         name="Camera",
                         origin="world/robot/camera/rgb",
                     ),
-                    rrb.Horizontal(
+                    rrb.Vertical(
                         rrb.TimeSeriesView(
-                            name="Timing (ms)",
-                            origin="/metrics",
+                            name="Voxel Pipeline (ms)",
+                            origin="/metrics/voxel_map",
                             contents=[
+                                "+ /metrics/voxel_map/extract_ms",
+                                "+ /metrics/voxel_map/transport_ms",
                                 "+ /metrics/voxel_map/publish_ms",
-                                "+ /metrics/costmap/calc_ms",
                             ],
-                            axis_y=rrb.ScalarAxis(range=(0, 100)),
+                        ),
+                        rrb.TimeSeriesView(
+                            name="Voxel Count",
+                            origin="/metrics/voxel_map",
+                            contents=[
+                                "+ /metrics/voxel_map/voxel_count",
+                            ],
                         ),
                         rrb.TimeSeriesView(
                             name="Latency (ms)",
@@ -277,7 +284,13 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
                                 "+ /metrics/voxel_map/latency_ms",
                                 "+ /metrics/costmap/latency_ms",
                             ],
-                            axis_y=rrb.ScalarAxis(range=(0, 500)),
+                        ),
+                        rrb.TimeSeriesView(
+                            name="Costmap (ms)",
+                            origin="/metrics/costmap",
+                            contents=[
+                                "+ /metrics/costmap/calc_ms",
+                            ],
                         ),
                     ),
                     row_shares=[2, 1],
