@@ -76,3 +76,10 @@ repos:
         pass_filenames: false
         entry: bin/lfs_check
         language: script
+
+      - id: doclinks
+        name: Resolve doc links
+        entry: python -m dimos.utils.docs.doclinks docs/
+        language: system
+        files: ^docs/.*\.md$
+        pass_filenames: false
