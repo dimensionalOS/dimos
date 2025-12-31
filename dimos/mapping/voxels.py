@@ -134,12 +134,17 @@ class VoxelGridMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        connect_rerun()
-
-        # Start background Rerun logging thread (decouples viz from data pipeline)
-        self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
-        self._rerun_thread.start()
-        logger.info("VoxelGridMapper: started async Rerun logging thread")
+        
+        # Only start Rerun logging if Rerun backend is selected
+        import os
+        viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
+        if viewer_backend.startswith("rerun"):
+            connect_rerun()
+            
+            # Start background Rerun logging thread (decouples viz from data pipeline)
+            self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
+            self._rerun_thread.start()
+            logger.info("VoxelGridMapper: started async Rerun logging thread")
 
         # Subject to trigger publishing, with backpressure to drop if busy
         self._publish_trigger: Subject[None] = Subject()

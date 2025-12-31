@@ -30,6 +30,12 @@ from PIL import Image
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
 
+# Optional Rerun visualization support
+try:
+    import rerun as rr
+except ImportError:
+    rr = None  # type: ignore[assignment]
+
 
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
@@ -454,8 +460,6 @@ class OccupancyGrid(Timestamped):
         - Unknown space (value -1): gray/transparent
         - Occupied space (value > 0): black/red with gradient
         """
-        import rerun as rr
-
         if self.grid.size == 0:
             if mode == "image":
                 return rr.Image(np.zeros((1, 1), dtype=np.uint8), color_model="L")
@@ -473,8 +477,6 @@ class OccupancyGrid(Timestamped):
 
     def _to_rerun_image(self, colormap: str | None = None):  # type: ignore[no-untyped-def]
         """Convert to 2D image visualization."""
-        import rerun as rr
-
         # Use existing cached visualization functions for supported palettes
         if colormap in ("turbo", "rainbow"):
             from dimos.mapping.occupancy.visualizations import rainbow_image, turbo_image
@@ -545,8 +547,6 @@ class OccupancyGrid(Timestamped):
 
     def _to_rerun_points(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
         """Convert to 3D points for occupied cells."""
-        import rerun as rr
-
         # Find occupied cells (cost > 0)
         occupied_mask = self.grid > 0
         if not np.any(occupied_mask):
@@ -591,8 +591,6 @@ class OccupancyGrid(Timestamped):
         Uses per-vertex colors for proper alpha blending.
         Fully vectorized for performance (~100x faster than loop version).
         """
-        import rerun as rr
-
         # Only render known cells (not unknown = -1)
         known_mask = self.grid != -1
         if not np.any(known_mask):
