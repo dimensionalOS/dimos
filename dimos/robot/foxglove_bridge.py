@@ -15,6 +15,7 @@
 import asyncio
 import logging
 import threading
+from typing import TYPE_CHECKING
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
 from dimos_lcm.foxglove_bridge import (  # type: ignore[import-untyped]
@@ -22,23 +23,36 @@ from dimos_lcm.foxglove_bridge import (  # type: ignore[import-untyped]
 )
 
 from dimos.core import DimosCluster, Module, rpc
+from dimos.utils.logging_config import setup_logger
+
+if TYPE_CHECKING:
+    from dimos.core.global_config import GlobalConfig
 
 logging.getLogger("lcm_foxglove_bridge").setLevel(logging.ERROR)
 logging.getLogger("FoxgloveServer").setLevel(logging.ERROR)
+
+logger = setup_logger()
 
 
 class FoxgloveBridge(Module):
     _thread: threading.Thread
     _loop: asyncio.AbstractEventLoop
+    _global_config: "GlobalConfig | None" = None
 
-    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, global_config=None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
         self.jpeg_shm_channels = jpeg_shm_channels or []
+        self._global_config = global_config
 
     @rpc
     def start(self) -> None:
         super().start()
+        
+        # Skip if Rerun is the selected viewer backend
+        if self._global_config and self._global_config.viewer_backend == "RERUN":
+            logger.info("Foxglove bridge skipped (viewer_backend=RERUN)")
+            return
 
         def run_bridge() -> None:
             self._loop = asyncio.new_event_loop()

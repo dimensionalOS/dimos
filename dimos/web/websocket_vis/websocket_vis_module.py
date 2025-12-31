@@ -22,6 +22,7 @@ The frontend is served from a separate HTML file.
 """
 
 import asyncio
+import os
 from pathlib import Path
 import threading
 import time
@@ -31,7 +32,7 @@ from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
-from starlette.responses import FileResponse, Response
+from starlette.responses import FileResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 import uvicorn
@@ -196,7 +197,11 @@ class WebsocketVisModule(Module):
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
-            """Serve the dashboard HTML from external file."""
+            """Serve appropriate HTML based on viewer mode."""
+            # If running native Rerun, redirect to standalone command center
+            if os.environ.get("RERUN_VIEWER", "web").lower() == "native":
+                return RedirectResponse(url="/command-center")
+            # Otherwise serve full dashboard with Rerun iframe
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
         async def serve_command_center(request):  # type: ignore[no-untyped-def]
