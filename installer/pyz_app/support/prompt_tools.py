@@ -35,6 +35,12 @@ def _color_help(text, style):
     # there is a smarter way to do this, but this works for now
     return text.replace(RESET,RESET+style)
 
+def red(text: str) -> str:
+    return f"{FG_RED}{_color_help(text,FG_RED)}{RESET}"
+
+def cyan(text: str) -> str:
+    return f"{FG_CYAN}{_color_help(text,FG_CYAN)}{RESET}"
+
 def clear_screen() -> None:
     print("\x1b[2J")
 

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import sys
 
+print("- importing install phases")
 from .phases.phase00_logo_and_basic_checks import phase0
 from .phases.phase01_all_system_dependencies import phase1
 from .phases.phase02_check_absolutely_necessary_tools import phase2

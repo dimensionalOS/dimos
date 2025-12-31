@@ -22,11 +22,10 @@ from ..support.dimos_banner import RenderLogo
 from ..support.get_tool_check_results import get_tool_check_results
 from ..support.misc import get_project_toml
 
-
 def phase0():
     logo = RenderLogo(
-        glitchyness=0.11,
-        stickyness=100,
+        glitchyness=0.09, # relative quantity of visual artifacting
+        stickyness=100, # how many frames to keep an artifact
         fps=30,
         color_wave_amplitude=10, # bigger = wider range of colors
         wave_speed=0.01, # bigger = faster
@@ -34,21 +33,29 @@ def phase0():
         scrollable=True,
     )
 
-    print("- checking system")
+    logo.log("- checking system")
     system_analysis = get_tool_check_results()
+    # # visually we want cuda to be listed last and os to be first
     timeout = 0.5
-    # timeout = 0.2
-
-    for key, result in system_analysis.items():
-        time.sleep(timeout)
+    cuda = system_analysis["cuda"]
+    del system_analysis["cuda"]
+    ordered_analysis = {
+        "os": system_analysis["os"],
+        **system_analysis,
+        "cuda": cuda,
+    }
+    ordered_analysis["cuda"] = cuda
+    
+    for key, result in (ordered_analysis.items()):
         name = result.get("name") or key
         exists = result.get("exists", False)
         version = result.get("version", "") or ""
         note = result.get("note", "") or ""
         if not exists:
-            logo.log(f"- ❌ {name} {note}".strip())
+            logo.log(f"- {p.red("✘")} {name} {note}".strip())
         else:
-            logo.log(f"- ✅ {name}: {version} {note}".strip())
+            logo.log(f"- {p.cyan("✓")} {name}: {version} {note}".strip())
+        time.sleep(timeout)
     toml_data = get_project_toml()
     logo.stop()
 
