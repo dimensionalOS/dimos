@@ -138,6 +138,9 @@ class WebsocketVisModule(Module):
 
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
+        
+        # Show control center link in terminal
+        logger.info(f"Command Center: http://localhost:{self.port}/command-center")
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)

@@ -654,14 +654,14 @@ class OccupancyGrid(Timestamped):
             # Alpha: 180 for free, 220 for occupied
             alpha = np.where(cell_values == 0, 180, 220).astype(np.uint8)
         else:
-            # Default coloring: light blue for free, red gradient for cost
+            # Default coloring: dark grey for free, black for occupied
             rgb = np.zeros((n_cells, 3), dtype=np.uint8)
             is_free = cell_values == 0
-            rgb[is_free] = [200, 200, 255]
-            intensity = (255 * (1 - cell_values / 100)).astype(np.uint8)
-            rgb[~is_free, 0] = 255
-            rgb[~is_free, 1] = intensity[~is_free]
-            rgb[~is_free, 2] = intensity[~is_free]
+            # Free space: dark grey
+            rgb[is_free] = [40, 40, 40]
+            # Occupied: black to dark grey gradient (darker = more occupied)
+            intensity = (40 * (1 - cell_values / 100)).astype(np.uint8)
+            rgb[~is_free] = np.column_stack([intensity[~is_free]] * 3)
             alpha = np.where(is_free, 150, 200).astype(np.uint8)
 
         # Combine RGB and alpha into RGBA
