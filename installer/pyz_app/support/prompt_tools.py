@@ -68,8 +68,8 @@ def highlight(text: str) -> str:
     return f"{FG_CYAN}{_color_help(text,FG_CYAN)}{RESET}"
 
 
-def confirm(text: str) -> bool:
-    return bool(inquirer.confirm(message=text, default=True).execute())
+def confirm(text: str) -> None:
+    input(f"{FG_YELLOW}{text}{RESET}")
 
 
 def prompt(text: str) -> str:
@@ -77,7 +77,7 @@ def prompt(text: str) -> str:
 
 
 def ask_yes_no(question: str) -> bool:
-    return confirm(question)
+    return bool(inquirer.confirm(message=question, default=True).execute())
 
 
 def _normalize_options(

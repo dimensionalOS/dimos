@@ -29,6 +29,7 @@ from __future__ import annotations
 import atexit
 from collections.abc import Iterable
 from dataclasses import dataclass
+import colorsys
 import json
 import math
 import random
@@ -71,6 +72,74 @@ MINI_BANNER = [
 
 def _ansi_fg256(n: int) -> str:
     return f"\x1b[38;5;{n}m"
+
+
+def _build_palette() -> list[tuple[int, int, int]]:
+    # 0-15: standard ANSI colors
+    ansi16 = [
+        (0, 0, 0),
+        (128, 0, 0),
+        (0, 128, 0),
+        (128, 128, 0),
+        (0, 0, 128),
+        (128, 0, 128),
+        (0, 128, 128),
+        (192, 192, 192),
+        (128, 128, 128),
+        (255, 0, 0),
+        (0, 255, 0),
+        (255, 255, 0),
+        (0, 0, 255),
+        (255, 0, 255),
+        (0, 255, 255),
+        (255, 255, 255),
+    ]
+    palette: list[tuple[int, int, int]] = ansi16[:]
+
+    # 16-231: 6x6x6 color cube
+    levels = [0, 95, 135, 175, 215, 255]
+    for r in levels:
+        for g in levels:
+            for b in levels:
+                palette.append((r, g, b))
+
+    # 232-255: grayscale ramp
+    for i in range(24):
+        v = 8 + i * 10
+        palette.append((v, v, v))
+
+    return palette
+
+
+_PALETTE_RGB = _build_palette()
+
+
+def _rgb_to_idx(rgb: tuple[int, int, int]) -> int:
+    # Find nearest palette entry (Euclidean)
+    r, g, b = rgb
+    best_idx = 0
+    best_dist = float("inf")
+    for idx, (pr, pg, pb) in enumerate(_PALETTE_RGB):
+        dr = pr - r
+        dg = pg - g
+        db = pb - b
+        dist = dr * dr + dg * dg + db * db
+        if dist < best_dist:
+            best_dist = dist
+            best_idx = idx
+    return best_idx
+
+
+def _ansi_fg256_hue_shift(color_idx: int, shift_pct: float) -> str:
+    """Return ANSI fg code with hue shifted by shift_pct (0-100)."""
+    color_idx = max(0, min(255, int(color_idx)))
+    shift_pct = max(0.0, min(100.0, float(shift_pct)))
+    r, g, b = _PALETTE_RGB[color_idx]
+    h, s, v = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+    h = (h + (shift_pct / 100.0)) % 1.0
+    nr, ng, nb = colorsys.hsv_to_rgb(h, s, v)
+    new_idx = _rgb_to_idx((int(nr * 255), int(ng * 255), int(nb * 255)))
+    return new_idx
 
 
 ANSI_RESET = "\x1b[0m"
@@ -342,16 +411,17 @@ class RenderLogo:
     def _color_for(self, x: int, y: int, t: int, *, is_glitched: bool) -> int:
         row_phase = ((y * 1103515245 + 12345) % 1000) / 1000.0
 
-        blue_base = 27
+        blue_base = 28
         blue_span = max(1, self.wave_strength)
         # Keep wave mostly high to stay in blue; range ~0.15–1.0
         # w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.85
-        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.85
+        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.75
         c = blue_base + round(w * blue_span)
 
         if is_glitched:
             return 51
-        return max(16, min(231, int(c)))
+        normal_output = max(16, min(231, int(c)))
+        return _ansi_fg256_hue_shift(normal_output, 5)
 
     # -----------------------
     # Wrapping + utils

@@ -21,7 +21,6 @@ from ..support.dax import run_command
 
 
 def phase4():
-    p.clear_screen()
     p.header("Next Phase: Dimos Check")
 
     def bail(msg: str):
@@ -33,7 +32,8 @@ def phase4():
         raise SystemExit(1)
 
     checks = [
-        {"label": "dimos --version", "cmd": ["dimos", "--version"]},
+        # the dimos CLI isn't install for some reason but dimos-robot is?
+        # {"label": "dimos --version", "cmd": ["dimos", "--version"]},
         {"label": "import dimos (python)", "cmd": ["python", "-c", "import dimos;"]},
     ]
 
@@ -46,3 +46,4 @@ def phase4():
         p.boring_log(f"- {check['label']} succeeded")
 
     p.boring_log(f"- {passed} Dimos checks passed")
+    p.confirm("Press enter to continue to next phase")

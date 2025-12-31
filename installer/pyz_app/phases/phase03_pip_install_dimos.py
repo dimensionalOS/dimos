@@ -21,7 +21,6 @@ from ..support.dax import run_command
 
 
 def phase3(_system_analysis, selected_features):
-    p.clear_screen()
     p.header("Next Phase: Pip Installing Dimos")
     # some setup.py's (contact_graspnet_pytorch) require numpy (so pip itself will fail while trying to install them)
     # so we preinstall numpy
@@ -39,3 +38,5 @@ def phase3(_system_analysis, selected_features):
             f"Failed to pip install dimos 😕\nPlease message us in our discord and we'll help you get it installed!:\n    {p.highlight(discord_url)}"
         )
         raise SystemExit(1)
+    
+    p.confirm("Press enter to continue to next phase")

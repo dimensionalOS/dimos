@@ -27,7 +27,6 @@ from ..support.misc import (
 
 
 def phase1(system_analysis, selected_features):
-    p.clear_screen()
     p.header("Next Phase: System Dependency Install")
     if system_analysis is None:
         system_analysis = get_tool_check_results()
@@ -41,7 +40,7 @@ def phase1(system_analysis, selected_features):
     os_info = system_analysis.get("os", {})
     if os_info.get("name") == "debian_based":
         p.boring_log("Detected Debian-based OS")
-        install_deps = p.confirm(
+        install_deps = p.ask_yes_no(
             "Install these system dependencies for you via apt-get? (NOTE: sudo may prompt for a password)"
         )
         if install_deps:
@@ -67,7 +66,7 @@ def phase1(system_analysis, selected_features):
                 "The xcode cli tools are absolutely needed, please install them then rerun this script"
             )
             exit(1)
-        if p.confirm("Install these system dependencies for you via Homebrew?"):
+        if p.ask_yes_no("Install these system dependencies for you via Homebrew?"):
             try:
                 dependencies = deps["brew_deps"]
                 brew_install(deps["brew_deps"])

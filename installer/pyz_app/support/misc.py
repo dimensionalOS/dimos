@@ -115,15 +115,17 @@ def detect_python_command() -> str | None:
 
 
 def ensure_git_and_lfs() -> None:
+    p.boring_log("- checking git")
     if not command_exists("git"):
         raise RuntimeError("- ❌ git is required. Please install git and rerun.")
+    p.boring_log("- checking git-lfs")
     git_lfs_res = run_command(["git", "lfs", "version"])  # intentionally not part of dry_run
     if git_lfs_res.code != 0:
         raise RuntimeError("- ❌ git-lfs is required. Please install git-lfs and rerun.")
 
 
 def ensure_port_audio() -> None:
-    p.boring_log("Checking if portaudio is available")
+    p.boring_log("- checking if portaudio is available")
     port_audio_res = run_command(  # intentionally not part of dry_run
         ["pkg-config", "--modversion", "portaudio-2.0"], print_command=True, capture_output=True
     )
@@ -132,6 +134,7 @@ def ensure_port_audio() -> None:
 
 
 def ensure_python() -> str:
+    p.boring_log("- checking python version")
     python_cmd = detect_python_command()
     if not python_cmd:
         raise RuntimeError("- ❌ Python 3.10+ is required but was not found.")
@@ -190,13 +193,13 @@ def apt_install(package_names: list[str]) -> None:
 
 
 def ensure_xcode_cli_tools() -> None:
+    p.boring_log("- checking Xcode Command Line Tools")
     try:
         run_command(
             ["xcode-select", "-p"], check=True, capture_output=True
         )  # intentionally not part of dry_run
     except Exception:
-        p.boring_log("Xcode Command Line Tools not detected.")
-        if p.confirm("Install Xcode Command Line Tools now?"):
+        if p.ask_yes_no("Install Xcode Command Line Tools now?"):
             res = run_command(["xcode-select", "--install"], check=True, dry_run=dry_run)
             if res.code != 0:
                 raise RuntimeError("Failed to trigger Xcode Command Line Tools installation.")
@@ -204,11 +207,11 @@ def ensure_xcode_cli_tools() -> None:
 
 def ensure_homebrew() -> None:
     if command_exists("brew"):
-        p.boring_log("Found homebrew")
+        p.boring_log("- homebrew found")
         return
     ensure_xcode_cli_tools()
-    p.boring_log("Homebrew not detected.")
-    if not p.confirm("Install Homebrew now? (will run the official install script)"):
+    p.boring_log("- homebrew not found")
+    if not p.ask_yes_no("Install Homebrew now? (will run the official install script)"):
         raise RuntimeError("Homebrew is required for automatic dependency install.")
     cmd = [
         "bash",

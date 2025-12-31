@@ -33,7 +33,6 @@ from ..support.venv import activate_venv, get_venv_dirs_at
 
 
 def phase2(system_analysis, selected_features):
-    p.clear_screen()
     p.header("Next Phase: Check Install of Vital System Dependencies")
     try:
         has_ifconfig = command_exists("ifconfig")
@@ -51,12 +50,13 @@ def phase2(system_analysis, selected_features):
             raise SystemExit(1)
 
         if selected_features and "cuda" in selected_features:
-            if not system_analysis.get("cuda", {}).get("exists"):
+            if not system_analysis.get("cuda", {}).get("exists", False):
                 p.error("you selected the CUDA feature but I don't see CUDA support in your system")
 
         ensure_venv_active(python_cmd)
+        
     except Exception as error:
-        raise
+        raise error
         print("")
         print("")
         p.error("One of the vital dependencies was missing or had versioning issues")
@@ -66,12 +66,16 @@ def phase2(system_analysis, selected_features):
             "It is recommended to STOP here because of the error. Should I stop here? [y=stop,n=continue]"
         ):
             raise SystemExit(1)
+    
+    print(f'''✅ passed all checks for vital system dependencies''')
+    p.confirm("Press enter to continue to next phase")
 
 
 DEFAULT_VENV_NAME = "venv"
 
 
 def ensure_venv_active(python_cmd: str):
+    p.boring_log(f"- checking if in python virtual environment")
     active_venv = os.environ.get("VIRTUAL_ENV")
     if active_venv:
         p.boring_log(f"- detected active virtual environment: {active_venv}")
@@ -90,7 +94,7 @@ def ensure_venv_active(python_cmd: str):
         activate_venv(chosen)
     else:
         print("- Dimos needs to be installed to a python virtual environment")
-        if not p.confirm("Can I setup a Python virtual environment for you?"):
+        if not p.ask_yes_no("Can I setup a Python virtual environment for you?"):
             raise RuntimeError(
                 "- ❌ A virtual environment is required to install dimos. Please set one up then rerun this command."
             )
