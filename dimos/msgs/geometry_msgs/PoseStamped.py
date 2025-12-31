@@ -25,6 +25,7 @@ try:
     )
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
+import rerun as rr
 
 from plum import dispatch
 
@@ -92,8 +93,6 @@ class PoseStamped(Pose, Timestamped):
         Returns a Transform3D that can be logged to Rerun to position
         child entities in the transform hierarchy.
         """
-        import rerun as rr
-
         return rr.Transform3D(
             translation=[self.x, self.y, self.z],
             rotation=rr.Quaternion(
@@ -108,8 +107,6 @@ class PoseStamped(Pose, Timestamped):
 
     def to_rerun_arrow(self, length: float = 0.5):  # type: ignore[no-untyped-def]
         """Convert to rerun Arrows3D format for visualization."""
-        import rerun as rr
-
         origin = [[self.x, self.y, self.z]]
         forward = self.orientation.rotate_vector(Vector3(length, 0, 0))
         vector = [[forward.x, forward.y, forward.z]]

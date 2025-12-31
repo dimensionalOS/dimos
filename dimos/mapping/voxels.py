@@ -24,8 +24,10 @@ from reactivex import interval, operators as ops
 from reactivex.disposable import Disposable
 from reactivex.subject import Subject
 import rerun as rr
+import rerun.blueprint as rrb
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.msgs.sensor_msgs import PointCloud2
@@ -58,8 +60,6 @@ class VoxelGridMapper(Module):
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
         """Return Rerun view blueprints for voxel map visualization."""
-        import rerun.blueprint as rrb
-
         return [
             rrb.TimeSeriesView(
                 name="Voxel Pipeline (ms)",
@@ -77,8 +77,10 @@ class VoxelGridMapper(Module):
             ),
         ]
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, global_config: GlobalConfig | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._global_config = global_config or GlobalConfig()
+        
         dev = (
             o3c.Device(self.config.device)
             if (self.config.device.startswith("CUDA") and o3c.cuda.is_available())
@@ -136,9 +138,7 @@ class VoxelGridMapper(Module):
         super().start()
         
         # Only start Rerun logging if Rerun backend is selected
-        import os
-        viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
-        if viewer_backend.startswith("rerun"):
+        if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun()
             
             # Start background Rerun logging thread (decouples viz from data pipeline)

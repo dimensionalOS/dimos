@@ -20,6 +20,7 @@ import time
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
 import numpy as np
+import rerun as rr
 
 # Import ROS types
 try:
@@ -381,8 +382,6 @@ class CameraInfo(Timestamped):
         Returns:
             rr.Pinhole archetype for logging to Rerun
         """
-        import rerun as rr
-
         # Extract intrinsics from K matrix
         # K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
         fx, fy = self.K[0], self.K[4]

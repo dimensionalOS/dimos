@@ -14,11 +14,14 @@
 
 from functools import cached_property
 import re
+from typing import Literal, TypeAlias
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from dimos.mapping.occupancy.path_map import NavigationStrategy
 from dimos.navigation.global_planner.types import AStarAlgorithm
+
+ViewerBackend: TypeAlias = Literal["rerun-web", "rerun-native", "foxglove"]
 
 
 def _get_all_numbers(s: str) -> list[float]:
@@ -31,7 +34,7 @@ class GlobalConfig(BaseSettings):
     replay: bool = False
     rerun_enabled: bool = True
     rerun_server_addr: str | None = None
-    viewer_backend: str = "rerun-native"  # "rerun-web", "rerun-native", or "foxglove"
+    viewer_backend: ViewerBackend = "rerun-native"
     n_dask_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None

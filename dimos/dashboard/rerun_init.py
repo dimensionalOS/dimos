@@ -46,6 +46,7 @@ Usage:
 
 import atexit
 import os
+import threading
 
 import rerun as rr
 
@@ -60,6 +61,7 @@ RERUN_GRPC_ADDR = f"rerun+http://127.0.0.1:{RERUN_GRPC_PORT}/proxy"
 # Track initialization state
 _server_started = False
 _connected = False
+_rerun_init_lock = threading.Lock()
 
 
 def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
@@ -88,18 +90,19 @@ def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
     if viewer_mode == "rerun-native":
         # Spawn native viewer (requires display)
         rr.spawn(port=RERUN_GRPC_PORT, connect=True)
-        logger.info(f"Rerun: spawned native viewer on port {RERUN_GRPC_PORT}")
+        logger.info("Rerun: spawned native viewer", port=RERUN_GRPC_PORT)
     elif viewer_mode == "rerun-web":
         # Start gRPC + web viewer (headless friendly)
         server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
         rr.serve_web_viewer(web_port=RERUN_WEB_PORT, open_browser=False, connect_to=server_uri)
-        logger.info(f"Rerun: web viewer on http://localhost:{RERUN_WEB_PORT}")
+        logger.info("Rerun: web viewer started", web_port=RERUN_WEB_PORT, url=f"http://localhost:{RERUN_WEB_PORT}")
     else:
         # Just gRPC server, no viewer (connect externally)
         rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
         logger.info(
-            f"Rerun: gRPC only on port {RERUN_GRPC_PORT}, "
-            f"connect with: rerun --connect {RERUN_GRPC_ADDR}"
+            "Rerun: gRPC server only",
+            port=RERUN_GRPC_PORT,
+            connect_command=f"rerun --connect {RERUN_GRPC_ADDR}"
         )
 
     _server_started = True
@@ -120,23 +123,24 @@ def connect_rerun(server_addr: str | None = None) -> None:
     """
     global _connected
 
-    if _connected:
-        logger.debug("Already connected to Rerun server")
-        return
-    
-    # Check if Rerun backend is selected (via env var fallback)
-    viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
-    if not viewer_backend.startswith("rerun"):
-        logger.debug(f"Rerun connection skipped (viewer_backend={viewer_backend})")
-        return
+    with _rerun_init_lock:
+        if _connected:
+            logger.debug("Already connected to Rerun server")
+            return
+        
+        # Check if Rerun backend is selected (via env var fallback)
+        viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
+        if not viewer_backend.startswith("rerun"):
+            logger.debug("Rerun connection skipped", viewer_backend=viewer_backend)
+            return
 
-    addr = server_addr or RERUN_GRPC_ADDR
+        addr = server_addr or RERUN_GRPC_ADDR
 
-    rr.init("dimos")
-    rr.connect_grpc(addr)
-    logger.info(f"Rerun: connected to server at {addr}")
+        rr.init("dimos")
+        rr.connect_grpc(addr)
+        logger.info("Rerun: connected to server", addr=addr)
 
-    _connected = True
+        _connected = True
 
 
 def shutdown_rerun() -> None:
@@ -148,7 +152,7 @@ def shutdown_rerun() -> None:
             rr.disconnect()
             logger.info("Rerun: disconnected")
         except Exception as e:
-            logger.warning(f"Rerun: error during disconnect: {e}")
-
-            _server_started = False
-            _connected = False
+            logger.warning("Rerun: error during disconnect", error=str(e))
+        
+        _server_started = False
+        _connected = False

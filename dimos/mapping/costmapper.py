@@ -20,8 +20,10 @@ import time
 
 from reactivex import operators as ops
 import rerun as rr
+import rerun.blueprint as rrb
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import ModuleConfig
 from dimos.dashboard.rerun_init import connect_rerun
 from dimos.mapping.pointclouds.occupancy import (
@@ -57,8 +59,6 @@ class CostMapper(Module):
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
         """Return Rerun view blueprints for costmap visualization."""
-        import rerun.blueprint as rrb
-
         return [
             rrb.TimeSeriesView(
                 name="Costmap (ms)",
@@ -67,8 +67,9 @@ class CostMapper(Module):
             ),
         ]
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, global_config: GlobalConfig | None = None, **kwargs: object) -> None:
         super().__init__(**kwargs)
+        self._global_config = global_config or GlobalConfig()
         self._rerun_queue = queue.Queue(maxsize=2)
 
     def _rerun_worker(self) -> None:
@@ -115,8 +116,7 @@ class CostMapper(Module):
         super().start()
         
         # Only start Rerun logging if Rerun backend is selected
-        viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
-        if viewer_backend.startswith("rerun"):
+        if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun()
             
             # Start background Rerun logging thread

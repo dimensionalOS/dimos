@@ -24,24 +24,18 @@ from dimos_lcm.nav_msgs import (  # type: ignore[import-untyped]
     OccupancyGrid as LCMOccupancyGrid,
 )
 from dimos_lcm.std_msgs import Time as LCMTime  # type: ignore[import-untyped]
+import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Pose, Vector3, VectorLike
 from dimos.types.timestamped import Timestamped
-
-# Optional Rerun visualization support
-try:
-    import rerun as rr
-except ImportError:
-    rr = None  # type: ignore[assignment]
 
 
 @lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
-    import matplotlib.pyplot as plt
-
     return plt.get_cmap(name)
 
 
