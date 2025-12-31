@@ -27,6 +27,7 @@ export const dependenciesNixNames = [
     "pkgs.python312Packages.pip",
     "pkgs.python312Packages.setuptools",
     "pkgs.python312Packages.virtualenv",
+    "pkgs.python312Packages.gst-python",
     "pkgs.pre-commit",
     "pkgs.portaudio",
     "pkgs.ffmpeg_6",
@@ -44,7 +45,6 @@ export const dependenciesNixNames = [
     "pkgs.gst_all_1.gst-plugins-good",
     "pkgs.gst_all_1.gst-plugins-bad",
     "pkgs.gst_all_1.gst-plugins-ugly",
-    "pkgs.python312Packages.gst-python",
     "pkgs.eigen",
     "pkgs.ninja",
     "pkgs.jsoncpp",
@@ -82,6 +82,12 @@ export const dependencyListHumanNames = [
     "opencv",
     "rust",
     "ffmpeg",
+    "zlib",
+    "libpng",
+    "libjpeg",
+    "portmidi",
+    "eigen",
+    "jsoncpp",
     "libsndfile",
     "opus",
     "libvpx",
@@ -93,7 +99,6 @@ export const dependencyListHumanNames = [
     "sdl2_image",
     "sdl2_mixer",
     "sdl2_ttf",
-    "portmidi",
 ]
 
 export const dependencyListAptPackages = [

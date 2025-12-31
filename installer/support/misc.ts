@@ -1,5 +1,4 @@
 import { $, $$ } from "./dax.ts"
-import { dependencyListHumanNames } from "./constants.ts"
 import * as p from "./prompt_tools.ts"
 import * as Toml from 'https://esm.sh/smol-toml@1.6.0'
 
@@ -76,13 +75,6 @@ export async function getSystemDeps(feature: string | null) {
         brewDeps: [...brewDeps].sort(),
         pipDeps: [...pipDeps].sort(),
         missing,
-    }
-}
-
-export function mentionSystemDependencies() {
-    console.log("- we will need the following system dependencies:")
-    for (const dep of dependencyListHumanNames) {
-        console.log(`  • ${p.highlight(dep)}`)
     }
 }
 

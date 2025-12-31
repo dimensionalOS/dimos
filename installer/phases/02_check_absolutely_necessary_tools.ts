@@ -1,11 +1,9 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
 import { $, $$ } from "../support/dax.ts"
 
-import { RenderLogo } from "../support/dimos_banner.ts"
-import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
 import { activateVenv, getVenvDirsAt } from "../support/venv.ts"
-import { dependencyListHumanNames, dependencyListAptPackages, discordUrl} from "../support/constants.ts"
-import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
+import { discordUrl } from "../support/constants.ts"
+import { ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.ts"
 
 // NOTE: this part always gets run regardless of nix/docker/manual install
@@ -13,9 +11,19 @@ export async function phase2() {
     p.clearScreen()
     p.header("Next Phase: Check Install of Vital System Dependencies")
     try {
-        await ensureGitAndLfs()
-        await ensurePortAudio()
-        const pythonCmd = await ensurePython()
+        const [hasIfconfig, hasRoute, hasSysctl, pythonCmd, ...rest] = await Promise.all([
+            $.commandExists("ifconfig"),
+            $.commandExists("route"),
+            $.commandExists("sysctl"),
+            ensurePython(),
+            ensureGitAndLfs(),
+            ensurePortAudio(),
+        ])
+        if (!hasIfconfig || !hasRoute || !hasSysctl) {
+            console.log("- ifconfig, route, and sysctl are required for the installer to function")
+            console.log("- Please install these system dependencies and re-run this command from the terminal")
+            Deno.exit(1)
+        }
         await ensureVenvActive(pythonCmd)
     } catch (error) {
         console.log(``)

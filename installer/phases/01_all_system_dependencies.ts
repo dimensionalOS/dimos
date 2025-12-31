@@ -1,12 +1,9 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../support/dax.ts"
-
-import { RenderLogo } from "../support/dimos_banner.ts"
 import { getToolCheckResults, type ToolResult } from "../support/get_tool_check_results.ts"
-import { activateVenv } from "../support/venv.ts"
-import { dependencyListHumanNames, dependencyListAptPackages } from "../support/constants.ts"
-import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall } from "../support/misc.ts"
+import { dependencyListHumanNames, dependencyListAptPackages, dependenciesNixNames } from "../support/constants.ts"
+import { getSystemDeps, aptInstall } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.ts"
+import { $ } from "../support/dax.ts";
 
 // NOTE: skip this phase if system dependencies already exist (e.g. docker, or nix environment)
 export async function phase1(systemAnalysis: Record<string, ToolResult> | null) {
@@ -15,7 +12,7 @@ export async function phase1(systemAnalysis: Record<string, ToolResult> | null) 
     if (!systemAnalysis) {
         systemAnalysis = await getToolCheckResults()
     }
-
+    const deps = await getSystemDeps(null) // null = core deps (as opposed to a feature name)
     mentionSystemDependencies()
 
     let toolsWereAutoInstalled = false
@@ -28,7 +25,7 @@ export async function phase1(systemAnalysis: Record<string, ToolResult> | null) 
             p.boringLog("- this may take a few minutes...")
             // this will throw if some packages fail to install
             try {
-                await aptInstall(dependencyListAptPackages)
+                await aptInstall(deps.aptDeps)
                 toolsWereAutoInstalled = true
             } catch (error) {
                 p.error(error.message)
@@ -45,5 +42,16 @@ export async function phase1(systemAnalysis: Record<string, ToolResult> | null) 
 
     if (!toolsWereAutoInstalled) {
         p.confirm("I can't confirm that all those tools are installed\nPress enter to continue anyway, or CTRL+C to cancel and install them yourself")
+    }
+}
+
+
+function mentionSystemDependencies() {
+    console.log("- we will need the following system dependencies:")
+    // TODO: clean up this filter, many (probably most) of the deps are not cli commands. This intentionally fails on python because we need a specific version of python
+    // later all of these should have versions
+    const missingDeps = dependencyListHumanNames.filter(each=>!$.commandExists(each))
+    for (const dep of missingDeps) {
+        console.log(`  • ${p.highlight(dep)}`)
     }
 }
