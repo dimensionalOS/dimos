@@ -3,16 +3,15 @@
 
 # Dimos Modules
 
-Module is a subsystem on a robot that operates autonomously and communicates to other subsystems using standardized messages
+Modules are subsystems on a robot that operate autonomously and communicate to other subsystems using standardized messages.
 
-Some examples of are:
+Some examples of modules are:
 
 - Webcam (outputs image)
 - Navigation (inputs a map and a target, outputs a path)
-- Detection (takes an image and a vision model like yolo, outputs a stream of detections)
+- Detection (takes an image and a vision model like YOLO, outputs a stream of detections)
 
-A common module structure for controling a robot looks something like this, black blocks are modules, colored lines are connections and message types, it's ok if this doesn't make sense now,
-it will by the end of this document.
+Below is an example of a structure for controlling a robot. Black blocks represent modules and colored lines are connections and message types. It's okay if this doesn't make sense now, it will by the end of this document.
 
 ```python output=assets/go2_basic.svg
 from dimos.core.introspection.blueprint import dot2
@@ -66,7 +65,7 @@ Offers two RPC calls, `start()` and `stop()`
 
 As well as an agentic [Skill][skills.md] called `video_stream` (more about this later, in [Skills Tutorial][skills.md])
 
-We can start this module and explore the output of it's streams in real time (this will use your webcam)
+We can start this module and explore the output of its streams in real time (this will use your webcam).
 
 ```python session=camera_module_demo ansi=false
 import time
