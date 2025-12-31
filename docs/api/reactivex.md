@@ -160,7 +160,7 @@ throttle_first() got: [0, 3, 6, 9]
 # throttle_first: takes FIRST value then blocks
 
 # With fast emissions (0,1,2,3,4,5,6,7,8,9) every 50ms:
-# sample(0.2s)        -> gets value at 200ms, 400ms marks -> [3, 7]
+# sample(0.2s)        -> gets value at 200ms, 400ms marks -> [2, 6, 9]
 # throttle_first(0.15s) -> gets 0, blocks, then 3, blocks, then 6... -> [0,3,6,9]
 print("sample: latest value at each tick")
 print("throttle_first: first value, then block")
