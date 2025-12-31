@@ -23,6 +23,9 @@ from ..support.dax import run_command
 def phase3(_system_analysis, selected_features):
     p.clear_screen()
     p.header("Next Phase: Pip Installing Dimos")
+    # some setup.py's (contact_graspnet_pytorch) require numpy (so pip itself will fail while trying to install them)
+    # so we preinstall numpy
+    res = run_command(["pip", "install", "numpy"], print_command=True)
     selected_features_string = ""
     if selected_features:
         selected_features_string = f"[{','.join(selected_features)}]"
