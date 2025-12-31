@@ -47,7 +47,6 @@ _UNITREE_COMMANDS = {
 class UnitreeSkillContainer(SkillModule):
     """Container for Unitree Go2 robot skills using the new framework."""
 
-    _move: RpcCall | None = None
     _publish_request: RpcCall | None = None
 
     rpc_calls: list[str] = [
@@ -119,7 +118,11 @@ class UnitreeSkillContainer(SkillModule):
 
         time.sleep(1.0)
 
+        start_time = time.monotonic()
+        timeout = 100.0
         while get_state_rpc() == NavigationState.FOLLOWING_PATH:
+            if time.monotonic() - start_time > timeout:
+                return "Navigation timed out"
             time.sleep(0.1)
 
         time.sleep(1.0)
