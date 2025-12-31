@@ -17,7 +17,7 @@ class Config():
 class MyClass(Configurable):
     default_config = Config
     config: Config
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
 myclass1 = MyClass()
@@ -63,7 +63,7 @@ class MyModule(Module):
     default_config = Config
     config: Config
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
         print(self.config)
 
