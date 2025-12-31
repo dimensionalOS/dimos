@@ -13,6 +13,9 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
+import os
+import queue
+import threading
 import time
 
 from reactivex import operators as ops
@@ -28,7 +31,10 @@ from dimos.mapping.pointclouds.occupancy import (
 )
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
+from dimos.utils.logging_config import setup_logger
 from dimos.utils.metrics import timed
+
+logger = setup_logger()
 
 
 @dataclass
@@ -43,6 +49,10 @@ class CostMapper(Module):
 
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
+    
+    # Background Rerun logging (decouples viz from data pipeline)
+    _rerun_queue: queue.Queue[tuple[OccupancyGrid, float, float] | None]
+    _rerun_thread: threading.Thread | None = None
 
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
@@ -57,41 +67,75 @@ class CostMapper(Module):
             ),
         ]
 
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._rerun_queue = queue.Queue(maxsize=2)
+
+    def _rerun_worker(self) -> None:
+        """Background thread: pull from queue and log to Rerun (non-blocking)."""
+        while True:
+            try:
+                item = self._rerun_queue.get(timeout=1.0)
+                if item is None:  # Shutdown signal
+                    break
+                
+                grid, calc_time_ms, rx_monotonic = item
+                
+                # Generate mesh + log to Rerun (blocks in background, not on data path)
+                try:
+                    # 2D image panel
+                    rr.log(
+                        "world/nav/costmap/image",
+                        grid.to_rerun(
+                            mode="image",
+                            colormap="RdBu_r",
+                        ),
+                    )
+                    # 3D floor overlay (expensive mesh generation)
+                    rr.log(
+                        "world/nav/costmap/floor",
+                        grid.to_rerun(
+                            mode="mesh",
+                            colormap="RdBu_r",
+                            z_offset=0.02,
+                        ),
+                    )
+                    
+                    # Log timing metrics
+                    rr.log("metrics/costmap/calc_ms", rr.Scalars(calc_time_ms))
+                    latency_ms = (time.monotonic() - rx_monotonic) * 1000
+                    rr.log("metrics/costmap/latency_ms", rr.Scalars(latency_ms))
+                except Exception as e:
+                    logger.warning(f"Rerun logging error: {e}")
+            except queue.Empty:
+                continue
+
     @rpc
     def start(self) -> None:
         super().start()
-        connect_rerun()
+        
+        # Only start Rerun logging if Rerun backend is selected
+        viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
+        if viewer_backend.startswith("rerun"):
+            connect_rerun()
+            
+            # Start background Rerun logging thread
+            self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
+            self._rerun_thread.start()
+            logger.info("CostMapper: started async Rerun logging thread")
 
         def _publish_costmap(
             grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float
         ) -> None:
+            # Publish to downstream FIRST (fast, not blocked by Rerun)
             self.global_costmap.publish(grid)
-
-            # Log BOTH 2D image panel AND 3D floor overlay to Rerun
-            # 2D image panel (for costmap visualization)
-            rr.log(
-                "world/nav/costmap/image",
-                grid.to_rerun(
-                    mode="image",
-                    colormap="RdBu_r",
-                ),
-            )
-            # 3D floor overlay (textured mesh, slightly above floor)
-            rr.log(
-                "world/nav/costmap/floor",
-                grid.to_rerun(
-                    mode="mesh",
-                    colormap="RdBu_r",
-                    z_offset=0.02,
-                ),
-            )
-
-            # Log timing metrics to Rerun
-            rr.log("metrics/costmap/calc_ms", rr.Scalars(calc_time_ms))
-
-            # Log pipeline latency (time from message receipt to publish complete)
-            latency_ms = (time.monotonic() - rx_monotonic) * 1000
-            rr.log("metrics/costmap/latency_ms", rr.Scalars(latency_ms))
+            
+            # Queue for async Rerun logging (non-blocking, drops if queue full)
+            if self._rerun_thread and self._rerun_thread.is_alive():
+                try:
+                    self._rerun_queue.put_nowait((grid, calc_time_ms, rx_monotonic))
+                except queue.Full:
+                    pass  # Drop viz frame, data pipeline continues
 
         def _calculate_and_time(
             msg: PointCloud2,
@@ -110,6 +154,11 @@ class CostMapper(Module):
 
     @rpc
     def stop(self) -> None:
+        # Shutdown background Rerun thread
+        if self._rerun_thread and self._rerun_thread.is_alive():
+            self._rerun_queue.put(None)  # Shutdown signal
+            self._rerun_thread.join(timeout=2.0)
+        
         super().stop()
 
     # @timed()  # TODO: fix thread leak in timed decorator
