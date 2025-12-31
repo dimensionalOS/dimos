@@ -41,7 +41,9 @@ RUN apt-get install -y \
     qtchooser \
     qt5-qmake \
     qtbase5-dev-tools \
-    supervisor
+    supervisor \
+    libopus-dev \
+    libvpx-dev
 
 # Install specific numpy version first
 RUN pip install 'numpy<2.0.0'
