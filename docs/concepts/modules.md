@@ -3,7 +3,7 @@
 
 # Dimos Modules
 
-Module is a subsystem on a robot that operates autonomously and communicates to other subsystems using standardized messages
+Modules are subsystems on a robot that operate autonomously and communicate to other subsystems using standardized messages.
 
 Some examples of are:
 
