@@ -1,16 +1,33 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
-from typing import Iterable
+from typing import TYPE_CHECKING, List, Tuple, Union
 
+from InquirerPy import inquirer
 from rich.console import Console
-from rich.prompt import Confirm, Prompt
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 console = Console()
 
 
 def clear_screen() -> None:
-    console.print("\x1B[2J", end="")
+    print("\x1b[2J")
 
 
 def header(text: str) -> None:
@@ -38,76 +55,55 @@ def highlight(text: str) -> str:
 
 
 def confirm(text: str) -> bool:
-    return Confirm.ask(text, default=True)
+    return bool(inquirer.confirm(message=text, default=True).execute())
 
 
 def prompt(text: str) -> str:
-    return Prompt.ask(text)
+    return inquirer.text(message=text).execute()
 
 
 def ask_yes_no(question: str) -> bool:
-    while True:
-        answer = Prompt.ask(question + " (y/n)").strip().lower()
-        if answer in {"y", "yes"}:
-            return True
-        if answer in {"n", "no"}:
-            return False
-        console.print("[yellow][ please respond with y/n, yes/no, or use CTRL+C to cancel ][/]")
+    return confirm(question)
 
 
-def pick_one(message: str, *, options: Iterable[str] | dict[str, str]):
+def _normalize_options(
+    options: Union[Iterable[str], dict[str, str]],
+) -> tuple[list[str], list[str]]:
     if isinstance(options, dict):
         keys = list(options.keys())
         values = [options[k] for k in keys]
     else:
         values = list(options)
         keys = values
-
-    console.print(message)
-    for idx, label in enumerate(values, start=1):
-        console.print(f"  {idx}. {label}")
-
-    while True:
-        choice = Prompt.ask("Enter number", default="1").strip()
-        if not choice.isdigit():
-            console.print("[yellow]Please enter a valid number.[/]")
-            continue
-        idx = int(choice)
-        if 1 <= idx <= len(keys):
-            return keys[idx - 1]
-        console.print("[yellow]Choice out of range; try again.[/]")
+    return keys, values
 
 
-def pick_many(message: str, *, options: Iterable[str]) -> list[str]:
-    values = list(options)
-    console.print(message)
-    for idx, label in enumerate(values, start=1):
-        console.print(f"  {idx}. {label}")
+def pick_one(message: str, *, options: Iterable[str] | dict[str, str]):
+    keys, values = _normalize_options(options)
+    choice = inquirer.select(
+        message=message,
+        choices=values,
+        cycle=True,
+        pointer="❯",
+        multiselect=False,
+        border=True,
+        qmark="?",
+    ).execute()
+    # Map back to key (handles dict or list case)
+    return keys[values.index(choice)]
 
-    console.print("[dim]Enter numbers separated by commas (blank = none).[/]")
-    while True:
-        resp = Prompt.ask("Selection", default="").strip()
-        if resp == "":
-            return []
-        parts = [p.strip() for p in resp.split(",") if p.strip()]
-        if all(part.isdigit() for part in parts):
-            chosen: list[str] = []
-            for part in parts:
-                idx = int(part)
-                if 1 <= idx <= len(values):
-                    chosen.append(values[idx - 1])
-                else:
-                    console.print(f"[yellow]{part} is out of range.[/]")
-                    break
-            else:
-                seen = set()
-                deduped: list[str] = []
-                for c in chosen:
-                    if c not in seen:
-                        deduped.append(c)
-                        seen.add(c)
-                return deduped
-        console.print("[yellow]Please enter comma-separated numbers from the list.[/]")
+
+def pick_many(message: str, *, options: Iterable[str] | dict[str, str]) -> list[str]:
+    keys, values = _normalize_options(options)
+    selected = inquirer.checkbox(
+        message=message,
+        choices=values,
+        cycle=True,
+        border=True,
+        pointer="❯",
+        instruction="Space to toggle, Enter to confirm",
+    ).execute()
+    return [keys[values.index(v)] for v in selected]
 
 
 __all__ = [
@@ -118,8 +114,8 @@ __all__ = [
     "error",
     "header",
     "highlight",
-    "pick_one",
     "pick_many",
+    "pick_one",
     "prompt",
     "sub_header",
     "warning",

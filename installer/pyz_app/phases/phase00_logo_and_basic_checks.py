@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import time
 
+from ..support import prompt_tools as p
 from ..support.dimos_banner import RenderLogo
 from ..support.get_tool_check_results import get_tool_check_results
 from ..support.misc import get_project_toml
-from ..support import prompt_tools as p
 
 
 def phase0():
@@ -20,9 +34,10 @@ def phase0():
         scrollable=True,
     )
 
-    logo.log("- checking system")
+    print("- checking system")
     system_analysis = get_tool_check_results()
-    timeout = 0.5
+    # timeout = 0.5
+    timeout = 0.2
 
     for key, result in system_analysis.items():
         time.sleep(timeout)
@@ -34,18 +49,15 @@ def phase0():
             logo.log(f"- ❌ {name} {note}".strip())
         else:
             logo.log(f"- ✅ {name}: {version} {note}".strip())
-
-    time.sleep(timeout)
     toml_data = get_project_toml()
-    time.sleep(timeout)
     logo.stop()
-    p.clear_screen()
 
     optional = toml_data["project"].get("optional-dependencies", {})
     features = [f for f in optional.keys() if f not in ["cpu"]]
     selected_features = p.pick_many("Which features do you want?", options=features)
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
+    print(f"""selected_features = {selected_features}""")
     exit(0)
     return system_analysis, selected_features
 

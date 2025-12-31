@@ -1,15 +1,28 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
+from functools import cache, lru_cache
 import os
-import re
-import urllib.request
-from functools import lru_cache
 from pathlib import Path
+import re
 from typing import Any
+import urllib.request
 
-from . import prompt_tools as p
-from . import pip_dependency_database as dep_db
+from . import pip_dependency_database as dep_db, prompt_tools as p
 from .dax import command_exists, run_command
 
 try:
@@ -21,11 +34,11 @@ _project_directory: Path | None = None
 _already_called_apt_get_update = False
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_project_toml(branch: str = "main") -> dict[str, Any]:
     # FIXME: switch to main once code is public
     # url = "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/pyproject.toml"
-    url = "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/pyproject.toml?token=GHSAT0AAAAAADJ4QAIOIUHMTP3WT2Z32AEI2KURXLQ"
+    url = "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/pyproject.toml?token=GHSAT0AAAAAADJ4QAIO7J4VRO3MIPKQ3L6U2KVJRSQ"
     try:
         with urllib.request.urlopen(url) as resp:  # nosec: trusted host, same as TS helper
             toml_text = resp.read().decode("utf-8")
@@ -232,9 +245,7 @@ def add_git_ignore_patterns(
     if needs_newline:
         new_lines.append("")
 
-    ends_with_blank_line = (
-        len(existing_lines) > 0 and existing_lines[-1].strip() == ""
-    )
+    ends_with_blank_line = len(existing_lines) > 0 and existing_lines[-1].strip() == ""
     if has_trailing_newline and not ends_with_blank_line:
         new_lines.append("")
 

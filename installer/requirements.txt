@@ -1,1 +1,3 @@
 rich==13.7.1
+simple-term-menu==1.6.4
+inquirerpy==0.3.4
