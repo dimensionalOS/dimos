@@ -57,8 +57,7 @@ def phase0():
     selected_features = p.pick_many("Which features do you want?", options=features)
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
-    print(f"""selected_features = {selected_features}""")
-    exit(0)
+    
     return system_analysis, selected_features
 
 
