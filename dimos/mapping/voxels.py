@@ -74,6 +74,8 @@ class VoxelGridMapper(Module):
         self._voxel_hashmap = self.vbg.hashmap()
         self._key_dtype = self._voxel_hashmap.key_tensor().dtype
         self._latest_frame_ts: float = 0.0
+        # Monotonic timestamp of last received frame (for accurate latency in replay)
+        self._latest_frame_rx_monotonic: float | None = None
 
     @rpc
     def start(self) -> None:
@@ -112,11 +114,16 @@ class VoxelGridMapper(Module):
         super().stop()
 
     def _on_frame(self, frame: LidarMessage) -> None:
+        # Track receipt time with monotonic clock (works correctly in replay)
+        self._latest_frame_rx_monotonic = time.monotonic()
         self.add_frame(frame)
         if self.config.publish_interval == 0:
             self._publish_trigger.on_next(None)
 
     def publish_global_map(self) -> None:
+        # Snapshot monotonic timestamp once (won't be overwritten during slow publish)
+        rx_monotonic = self._latest_frame_rx_monotonic
+        
         start = time.perf_counter()
         pc = self.get_global_pointcloud2()
         self.global_map.publish(pc)  # Auto-logs to Rerun via to_rerun() in start()
@@ -125,9 +132,9 @@ class VoxelGridMapper(Module):
         elapsed_ms = (time.perf_counter() - start) * 1000
         rr.log("metrics/voxel_map/publish_ms", rr.Scalars(elapsed_ms))
 
-        # Log message latency (time from frame capture to now)
-        if pc.ts:
-            latency_ms = (time.time() - pc.ts) * 1000
+        # Log pipeline latency (time from frame receipt to publish complete)
+        if rx_monotonic is not None:
+            latency_ms = (time.monotonic() - rx_monotonic) * 1000
             rr.log("metrics/voxel_map/latency_ms", rr.Scalars(latency_ms))
 
     def size(self) -> int:
