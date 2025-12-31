@@ -191,8 +191,11 @@ class GlobalPlanner(Resource):
             if not current_goal or not current_odom:
                 continue
 
-            if current_goal.position.distance(current_odom.position) < self._goal_tolerance and abs(
-                angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+            if (
+                current_goal.position.distance(current_odom.position) < self._goal_tolerance
+                and abs(
+                    angle_diff(current_goal.orientation.euler[2], current_odom.orientation.euler[2])
+                )
                 < self._rotation_tolerance
             ):
                 logger.info("Close enough to goal. Accepting as arrived.")
@@ -299,16 +302,7 @@ class GlobalPlanner(Resource):
             )
             return
 
-        print("-" * 100)
-        print("current odom", current_odom)
-        print("current goal", current_goal)
-        print("safe goal", safe_goal)
-        print("last pose")
-        print(path.poses[-1])
-
         resampled_path = smooth_resample_path(path, current_goal, 0.1)
-        print(resampled_path.poses[-1])
-        print("-" * 100)
 
         self.path.on_next(resampled_path)
 
