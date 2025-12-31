@@ -1,5 +1,6 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
 import $ from "https://esm.sh/@jsr/david__dax@0.43.2/mod.ts"
+import { FileSystem, glob } from "https://deno.land/x/quickr@0.8.13/main/file_system.js"
 const $$ = (...args)=>$(...args).noThrow()
 
 /**
@@ -57,9 +58,10 @@ export async function executeClaudeNamedPrompts(prompts, {maxConcurrentPrompts=5
     return await promiseAllWithConcurrency(
         Object.entries(prompts).map(([name, prompt])=>async ()=>{
             startFinishLog && console.log(`starting: ${name}`)
-            let output = await $$`claude --allowedTools "Edit,Write,Read,Bash" -p ${prompt} > ${logDir}/${name}.log`
+            await FileSystem.write({path:`${logDir}/${name}.log`, data: "", overwrite: true})
+            let output = await $$`claude --allowedTools "Edit,Write,Read,Bash" -p ${prompt} > ${$.path(`${logDir}/${name}.log`,)}`
             startFinishLog && console.log(`finished: ${name}`)
             return output
-        })
+        }), maxConcurrentPrompts
     )
 }

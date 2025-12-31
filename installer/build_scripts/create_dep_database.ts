@@ -36,10 +36,11 @@ const projectDir = await $`git rev-parse --show-toplevel`.text();
 // FIXME: add a filter for already existing ones
 const depLists = [
     "apt_dependencies",
-    // "brew_dependencies",
-    // "nix_dependencies"
-];
-const requiredKeys = ["package", ...depLists];
+    "brew_dependencies",
+    "nix_dependencies"
+]
+const requiredKeys = ["package", ...depLists]
+const missing = []
 const namesAndPrompts = dependencies
     .map((requirement) => {
         const name = requirement.replace(/[=>,;].+/, "").toLowerCase();
@@ -52,14 +53,14 @@ const namesAndPrompts = dependencies
                 FileSystem.sync.read(
                     `${projectDir}/installer/dep_database/${name}.json`
                 )
-            );
+            )
         } catch (error) {
-            console.log(`parse error: ${name}: ${error}`)
+            missing.push(name)
             return true
         }
         const overlap = [
             ...intersection(new Set(Object.keys(obj)), new Set(requiredKeys)),
-        ];
+        ]
         if (overlap.length == requiredKeys.length) {
             if (depLists.every((each) => obj[each] instanceof Array)) {
                 // if all the keys/values are correct, then don't make a prompt for it
@@ -78,8 +79,21 @@ const namesAndPrompts = dependencies
                 .join(
                     " "
                 )}) should be list of strings. Store that resulting json inside ./installer/dep_database/${name}.json`,
-        ];
-    });
+        ]
+    })
 
-// console.log(`namesAndPrompts is:`, namesAndPrompts);
-// await executeClaudeNamedPrompts(Object.fromEntries(namesAndPrompts))
+if (Deno.args.length > 0 || Deno.args.includes("--dry-run")) {
+    for (const each of namesAndPrompts.map(each=>each[0])) {
+        if (missing.includes(each)) {
+            console.log(`missing           : ${each}.json`)
+        } else {
+            console.log(`needs modification: ${each}.json`)
+        }
+    }
+    const total = namesAndPrompts.length
+    console.log("total:",total)
+    console.debug(`missing:`,missing.length)
+    console.debug(`need modification:`,total-missing.length)
+} else {
+    await executeClaudeNamedPrompts(Object.fromEntries(namesAndPrompts))
+}
