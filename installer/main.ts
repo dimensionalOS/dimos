@@ -8,10 +8,10 @@ import { phase5 } from "./phases/05_env_setup.ts"
 
 if (import.meta.main) {
     const [systemAnalysis, selectedFeatures] = await phase0() // logo and initial check
-    await phase1(systemAnalysis)                              // try to install the full suite of system dependencies (or tell user what is needed)
-    await phase2()                                            // ensure that critical tools are available (python is correct version, venv is active, git lfs, etc)
-    await phase3()                                            // pip install dimos
-    await phase4()                                            // test dimos was installed correctly
-    await phase5()                                            // use dimos/python to setup everything else (networking, .env, .envrc, etc)
+    await phase1(systemAnalysis, selectedFeatures)            // try to install the full suite of system dependencies (or tell user what is needed)
+    await phase2(systemAnalysis, selectedFeatures)            // ensure that critical tools are available (python is correct version, venv is active, git lfs, etc)
+    await phase3(systemAnalysis, selectedFeatures)            // pip install dimos
+    await phase4(systemAnalysis, selectedFeatures)            // test dimos was installed correctly
+    await phase5(systemAnalysis, selectedFeatures)            // use dimos/python to setup everything else (networking, .env, .envrc, etc)
     // FIXME: phase 6 - ask about extras (sim, cuda, etc)
 }

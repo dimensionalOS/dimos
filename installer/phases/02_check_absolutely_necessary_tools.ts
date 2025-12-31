@@ -7,7 +7,7 @@ import { ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectD
 import * as p from "../support/prompt_tools.ts"
 
 // NOTE: this part always gets run regardless of nix/docker/manual install
-export async function phase2() {
+export async function phase2(systemAnalysis, selectedFeatures) {
     p.clearScreen()
     p.header("Next Phase: Check Install of Vital System Dependencies")
     try {

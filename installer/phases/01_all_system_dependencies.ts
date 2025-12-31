@@ -6,13 +6,13 @@ import * as p from "../support/prompt_tools.ts"
 import { $ } from "../support/dax.ts";
 
 // NOTE: skip this phase if system dependencies already exist (e.g. docker, or nix environment)
-export async function phase1(systemAnalysis: Record<string, ToolResult> | null) {
+export async function phase1(systemAnalysis: Record<string, ToolResult> | null, selectedFeatures) {
     p.clearScreen()
     p.header("Next Phase: System Dependency Install")
     if (!systemAnalysis) {
         systemAnalysis = await getToolCheckResults()
     }
-    const deps = await getSystemDeps(null) // null = core deps (as opposed to a feature name)
+    const deps = await getSystemDeps(selectedFeatures) // null = core deps (as opposed to a feature name)
     mentionSystemDependencies()
 
     let toolsWereAutoInstalled = false

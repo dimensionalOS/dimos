@@ -41,6 +41,9 @@ export async function phase0() {
     console.log(`tomlData.project is:`,tomlData.project)
     const features = Object.keys(tomlData.project["optional-dependencies"]).filter(each=>!["cpu"].includes(each))
     const selectedFeatures = await p.pickMany("Which features do you want?", { options: features })
+    if (selectedFeatures.includes("sim") && !selectedFeatures.includes("cuda")) {
+        selectedFeatures.push("cpu")
+    }
     return [systemAnalysis, selectedFeatures]
 }
 

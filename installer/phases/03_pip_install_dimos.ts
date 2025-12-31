@@ -8,7 +8,7 @@ import { dependencyListHumanNames, dependencyListAptPackages, discordUrl } from 
 import { mentionSystemDependencies, parseVersion, isVersionAtLeast, detectPythonCommand, ensureGitAndLfs, ensurePortAudio, ensurePython, aptInstall, getProjectDirectory, addGitIgnorePatterns } from "../support/misc.ts"
 import * as p from "../support/prompt_tools.ts"
 
-export async function phase3() {
+export async function phase3(systemAnalysis, selectedFeatures) {
     p.clearScreen()
     p.header("Next Phase: Pip Installing Dimos")
     const res = await $$`pip install 'dimos @ git+https://github.com/dimensionalOS/dimos.git'`.printCommand()

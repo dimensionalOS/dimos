@@ -27,17 +27,15 @@ export async function getProjectToml({branch="main"}={}) {
     return cachedTomls[branch]
 }
 
-export async function getSystemDeps(feature: string | null) {
+export async function getSystemDeps(features: string[]) {
     const depDatabase = (await depPromise).default
     const tomlData = await getProjectToml()
     const aptDeps = new Set()
     const nixDeps = new Set()
     const brewDeps = new Set()
-    let pipDeps
-    if (feature==null) {
-        pipDeps = tomlData.project.dependencies
-    } else {
-        pipDeps = tomlData.project["optional-dependencies"][feature] || []
+    let pipDeps = [...tomlData.project.dependencies]
+    for (const feature of features) {
+        pipDeps.push(...tomlData.project["optional-dependencies"][feature])
     }
     pipDeps = pipDeps.map(each=>each.replace(/[<=>,;].+/,""))
     let missing = []
