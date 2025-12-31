@@ -19,6 +19,7 @@ jobs:
 
     - uses: actions/checkout@v3
     - uses: actions/setup-python@v3
+    - uses: astral-sh/setup-uv@v4
     - name: Run pre-commit
       id: pre-commit-first
       uses: pre-commit/action@v3.0.1
