@@ -47,7 +47,25 @@ DEFAULT_BANNER = [
     "██████╔╝██║██║ ╚═╝ ██║███████╗██║ ╚████║███████║██║╚██████╔╝██║ ╚████║██║  ██║███████╗     ╚██████╔╝███████║",
     "╚═════╝ ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═══╝╚══════╝╚═╝ ╚═════╝ ╚═╝  ╚═══╝╚═╝  ╚═╝╚══════╝      ╚═════╝ ╚══════╝",
     "",
-    "                                       D I M E N S I O N A L   O S                                ",
+    "                                         D I M E N S I O N A L   O S                                         ",
+]
+
+ASCII_BANNER_80 = [
+    "█████╗ █╗██╗   ██╗████╗██╗   █╗████╗█╗ ████╗ ██╗   █╗ ███╗ ██╗       ████╗ ████╗",
+    "█╔══██╗█║███╗ ███║█╔══╝███╗  █║█╔══╝█║██╔═██╗███╗  █║█╔═██╗██║      ██╔═██╗█╔══╝",
+    "█║  ██║█║█╔████╔█║███  █╔██╗ █║████╗█║██║ ██║█╔██╗ █║█████║██║      ██║ ██║████╗",
+    "█║  ██║█║█║╚██╔╝█║█╔═  █║╚██╗█║╚══█║█║██║ ██║█║╚██╗█║█╔═██║██║      ██║ ██║╚══█║",
+    "█████╔╝█║█║ ╚═╝ █║████╗█║ ╚███║████║█║╚████╔╝█║ ╚███║█║ ██║█████╗   ╚████╔╝████║",
+    "╚════╝ ╚╝═╝     ╚╝╚═══╝╚╝  ╚══╝╚═══╝╚╝ ╚═══╝ ╚╝  ╚══╝╚╝ ╚═╝╚════╝    ╚═══╝ ╚═══╝",
+    "",
+    "                          D I M E N S I O N A L   O S                           ",
+]
+
+
+MINI_BANNER = [
+    "                                 ",
+    "   D I M E N S I O N A L   O S   ",
+    "                                 ",
 ]
 
 
@@ -203,6 +221,20 @@ class RenderLogo:
 
     def render(self, t: int) -> str:
         cols, rows = self._term_size()
+
+        # Pick the largest banner that fits.
+        banners = [
+            DEFAULT_BANNER,
+            ASCII_BANNER_80,
+            MINI_BANNER,
+        ]
+        chosen = MINI_BANNER
+        for candidate in banners:
+            width = max((len(l) for l in candidate), default=0)
+            if width <= cols:
+                chosen = candidate
+                break
+        self.banner = chosen
 
         max_len = max((len(l) for l in self.banner), default=0)
         left_pad = max(0, (cols - max_len) // 2)
