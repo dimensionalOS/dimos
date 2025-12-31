@@ -8,6 +8,9 @@ BUILD="$ROOT/.build_pyz"
 rm -rf "$BUILD"
 mkdir -p "$BUILD/app"
 
+# Rebuild embedded dependency database and project toml snapshot
+python3 "$ROOT/build_scripts/build_pip_dependency_database.py"
+
 # Copy your code in
 rsync -a "$ROOT/pyz_app/" "$BUILD/app/pyz_app/"
 
