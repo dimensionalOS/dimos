@@ -25,12 +25,12 @@ from ..support.misc import get_project_toml
 
 def phase0():
     logo = RenderLogo(
-        glitchyness=0.15,
-        stickyness=50,
+        glitchyness=0.11,
+        stickyness=100,
         fps=30,
-        wave_strength=12,
-        wave_speed=0.02,
-        wave_freq=0.01,
+        color_wave_amplitude=10, # bigger = wider range of colors
+        wave_speed=0.01, # bigger = faster
+        wave_freq=0.01, # smaller = longer streaks of color
         scrollable=True,
     )
 

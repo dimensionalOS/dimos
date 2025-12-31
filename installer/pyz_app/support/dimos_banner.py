@@ -141,6 +141,59 @@ def _ansi_fg256_hue_shift(color_idx: int, shift_pct: float) -> str:
     new_idx = _rgb_to_idx((int(nr * 255), int(ng * 255), int(nb * 255)))
     return new_idx
 
+green_blue_array = [
+    [{"value":23, "x":1, "y":1}, {"value":24, "x":1, "y":2}, {"value":25, "x":1, "y":3}, {"value":26, "x":1, "y":4}, {"value":27, "x":1, "y":5},],
+    [{"value":29, "x":2, "y":1}, {"value":30, "x":2, "y":2}, {"value":31, "x":2, "y":3}, {"value":32, "x":2, "y":4}, {"value":33, "x":2, "y":5},],
+    [{"value":35, "x":3, "y":1}, {"value":36, "x":3, "y":2}, {"value":37, "x":3, "y":3}, {"value":38, "x":3, "y":4}, {"value":39, "x":3, "y":5},],
+    [{"value":41, "x":4, "y":1}, {"value":42, "x":4, "y":2}, {"value":43, "x":4, "y":3}, {"value":44, "x":4, "y":4}, {"value":45, "x":4, "y":5},],
+    [{"value":47, "x":5, "y":1}, {"value":48, "x":5, "y":2}, {"value":49, "x":5, "y":3}, {"value":50, "x":5, "y":4}, {"value":51, "x":5, "y":5},],
+]
+flatten = lambda *m: (i for n in m for i in (flatten(*n) if isinstance(n, (tuple, list)) else (n,)))
+# note: returns a generator, not a list
+green_blue_dict = {}
+for each in flatten(green_blue_array):
+    green_blue_dict[each["value"]] = each
+
+ALLOWED_COLORS = [
+    # 25,
+    # 26,
+    # 27,
+    31,
+    32,
+    33,
+    
+    37,
+    38,
+    39,
+    
+    # 42,
+    43,
+    44,
+    45,
+    
+    # 48,
+    # 49,
+    50,
+    51,
+]
+
+def adjust_color(color_idx: int) -> int:
+    """Return the nearest allowed ANSI 256 color index to color_idx."""
+    if color_idx < 27:
+        return 75 # purplish blue
+        return 32 # Very blue
+    try:
+        color_idx = int(color_idx)
+    except Exception:
+        color_idx = 0
+    best = ALLOWED_COLORS[0]
+    best_dist = abs(best - color_idx)
+    for c in ALLOWED_COLORS[1:]:
+        d = abs(c - color_idx)
+        if d < best_dist:
+            best = c
+            best_dist = d
+    return best
 
 ANSI_RESET = "\x1b[0m"
 ANSI_DIM = "\x1b[2m"
@@ -167,7 +220,7 @@ class RenderLogo:
         glitchyness: float = 10,
         stickyness: int = 14,
         fps: int = 30,
-        wave_strength: int = 10,
+        color_wave_amplitude: int = 10,
         wave_speed: float = 0.1,
         wave_freq: float = 0.08,
         glitch_mutate_chance: float = 0.08,
@@ -176,13 +229,14 @@ class RenderLogo:
         separator_char: str = "─",
         wrap_long_words: bool = True,
         is_centered: bool = False,
+        hue_range: float = 0.2,
     ) -> None:
         self._enabled = sys.stdout.isatty()
         self.banner = banner
         self.glitchyness = glitchyness
         self.stickyness = stickyness
         self.fps = max(1, int(fps))
-        self.wave_strength = wave_strength
+        self.color_wave_amplitude = color_wave_amplitude
         self.wave_speed = wave_speed
         self.wave_freq = wave_freq
         self.glitch_mutate_chance = glitch_mutate_chance
@@ -192,6 +246,7 @@ class RenderLogo:
         self.separator_char = separator_char
         self.wrap_long_words = wrap_long_words
         self.is_centered = is_centered
+        self.hue_range = max(0.0, min(1.0, float(hue_range)))  # 0..1 (0 ~ single hue, 1 = full spectrum)
 
         self.frame_s = max(0.001, 1.0 / self.fps)
 
@@ -411,17 +466,18 @@ class RenderLogo:
     def _color_for(self, x: int, y: int, t: int, *, is_glitched: bool) -> int:
         row_phase = ((y * 1103515245 + 12345) % 1000) / 1000.0
 
-        blue_base = 28
-        blue_span = max(1, self.wave_strength)
+        blue_base = 30
+        blue_span = max(1, self.color_wave_amplitude)
         # Keep wave mostly high to stay in blue; range ~0.15–1.0
         # w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.85
-        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.75
+        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 1.35
         c = blue_base + round(w * blue_span)
 
         if is_glitched:
             return 51
-        normal_output = max(16, min(231, int(c)))
-        return _ansi_fg256_hue_shift(normal_output, 5)
+        base_output = max(16, min(231, int(c)))
+        normal_output = _ansi_fg256_hue_shift(base_output, 10)
+        return adjust_color(normal_output)
 
     # -----------------------
     # Wrapping + utils
