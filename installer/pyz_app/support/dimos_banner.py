@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """
 RenderLogo: animated terminal logo w/ wave colors + glitch chars + scrollable log area.
 
@@ -13,6 +27,8 @@ Notes:
 from __future__ import annotations
 
 import atexit
+from collections.abc import Iterable
+from dataclasses import dataclass
 import json
 import math
 import random
@@ -21,13 +37,7 @@ import shutil
 import sys
 import threading
 import time
-from dataclasses import dataclass
-from typing import Any, Iterable
-
-from rich.console import Console, Group
-from rich.live import Live
-from rich.text import Text
-
+from typing import Any
 
 DEFAULT_BANNER = [
     "██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗           ██████╗ ███████╗",
@@ -43,6 +53,13 @@ DEFAULT_BANNER = [
 
 def _ansi_fg256(n: int) -> str:
     return f"\x1b[38;5;{n}m"
+
+
+ANSI_RESET = "\x1b[0m"
+ANSI_DIM = "\x1b[2m"
+ANSI_CURSOR_HIDE = "\x1b[?25l"
+ANSI_CURSOR_SHOW = "\x1b[?25h"
+ANSI_CLEAR_SCREEN = "\x1b[2J\x1b[H"  # clear + home
 
 
 @dataclass
@@ -104,15 +121,6 @@ class RenderLogo:
         # Ensure we restore the terminal even if user forgets.
         atexit.register(self.stop)
 
-        self._console = Console()
-        self._live = Live(
-            console=self._console,
-            refresh_per_second=self.fps,
-            screen=True,  # alternate screen to avoid scrollback spam
-            auto_refresh=False,
-        )
-        self._live.start()
-
         self._thread.start()
 
     # -----------------------
@@ -149,13 +157,10 @@ class RenderLogo:
         except Exception:
             pass
 
-        # Restore terminal
+        # Clear animation artifacts and restore cursor.
         try:
-            self._live.stop()
-        except Exception:
-            pass
-        try:
-            self._console.show_cursor(True)
+            sys.stdout.write(ANSI_CURSOR_SHOW + ANSI_RESET + "\n")
+            sys.stdout.flush()
         except Exception:
             pass
 
@@ -164,6 +169,10 @@ class RenderLogo:
     # -----------------------
 
     def _run(self) -> None:
+        # Hide cursor while running.
+        sys.stdout.write(ANSI_CURSOR_HIDE)
+        sys.stdout.flush()
+
         while not self._stop_evt.is_set():
             start = time.monotonic()
             self._spawn_glitches()
@@ -172,18 +181,15 @@ class RenderLogo:
             frame = self.render(self._t)
             self._t += 1
 
-            try:
-                self._live.update(frame, refresh=True)
-            except Exception:
-                # If Live cannot render for some reason, fall back to no-op to avoid crash.
-                pass
+            sys.stdout.write(frame)
+            sys.stdout.flush()
 
             elapsed = time.monotonic() - start
             sleep_for = self.frame_s - elapsed
             if sleep_for > 0:
                 self._stop_evt.wait(sleep_for)
 
-    def render(self, t: int):
+    def render(self, t: int) -> str:
         cols, rows = self._term_size()
 
         max_len = max((len(l) for l in self.banner), default=0)
@@ -201,27 +207,28 @@ class RenderLogo:
         top_pad = unused_rows // 2  # simple centering of the whole block
         bottom_pad = unused_rows - top_pad
 
-        renderables = []
+        out_lines: list[str] = []
+        out_lines.append(ANSI_CLEAR_SCREEN)
 
-        # Top padding
+        # Optional top padding to avoid hugging the top of the terminal.
         for _ in range(top_pad):
-            renderables.append(Text(""))
+            out_lines.append("")
 
         # Logo
         for y, line in enumerate(self.banner):
-            row = Text(" " * left_pad)
+            out = " " * left_pad
             for x, orig_ch in enumerate(line):
                 key = f"{y},{x}"
                 g = self._glitches.get(key)
                 ch = g.ch if g else orig_ch
                 color = self._color_for(x, y, t, is_glitched=bool(g))
-                row.append(ch, style=f"color({color})")
-            renderables.append(row)
+                out += _ansi_fg256(color) + ch + ANSI_RESET
+            out_lines.append(out)
 
         # Separator + blank
-        renderables.append(Text(""))
+        out_lines.append("")
         sep = self.separator_char * min(max_len, content_width)
-        renderables.append(Text(" " * left_pad + sep, style="dim"))
+        out_lines.append((" " * left_pad) + ANSI_DIM + sep + ANSI_RESET)
 
         if self.scrollable:
             for l in visible:
@@ -230,18 +237,14 @@ class RenderLogo:
                     trimmed = l[: max(0, content_width - 1)] + "…"
                 else:
                     trimmed = l
-                renderables.append(Text(" " * left_pad + trimmed))
+                out_lines.append((" " * left_pad) + trimmed)
 
-        # Bottom padding to fill remaining space (and avoid scrolling).
-        while len(renderables) < rows - bottom_pad:
-            renderables.append(Text(" " * left_pad))
-        for _ in range(bottom_pad):
-            renderables.append(Text(" " * left_pad))
+            # pad to keep stable frame height (bottom padding after logs)
+            pad_needed = max(0, rows - len(out_lines) - bottom_pad)
+            for _ in range(bottom_pad + pad_needed):
+                out_lines.append(" " * left_pad)
 
-        # Trim to exactly the terminal height to prevent scrollback growth.
-        renderables = renderables[: rows]
-
-        return Group(*renderables)
+        return "\n".join(out_lines)
 
     # -----------------------
     # Glitches + colors
@@ -385,7 +388,9 @@ if __name__ == "__main__":
 
     try:
         for i in range(1, 51):
-            logo.log(f"[{i:02d}] hello from RenderLogo — a moderately long line to demonstrate wrapping behavior.")
+            logo.log(
+                f"[{i:02d}] hello from RenderLogo — a moderately long line to demonstrate wrapping behavior."
+            )
             time.sleep(0.05)
 
         logo.log("Press Ctrl+C to stop.")
