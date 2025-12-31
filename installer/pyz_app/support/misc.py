@@ -34,13 +34,23 @@ _project_directory: Path | None = None
 _already_called_apt_get_update = False
 _already_called_brew_update = False
 
-dry_run = True
+dry_run = True  # FIXME: change before release
+dev = True  # FIXME: change before release
+
 
 @cache
 def get_project_toml(branch: str = "main") -> dict[str, Any]:
-    # FIXME: switch to main once code is public
-    # url = "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/pyproject.toml"
-    url = "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/pyproject.toml?token=GHSAT0AAAAAADJ4QAIO7J4VRO3MIPKQ3L6U2KVJRSQ"
+    if dev:
+        project_dir = run_command(
+            ["git", "rev-parse", "--show-toplevel"], capture_output=True
+        ).stdout.strip()
+        with open(f"{project_dir}/pyproject.toml") as f:
+            toml_text = f.read()
+            return tomllib.loads(toml_text)
+
+    url = (
+        f"https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/{branch}/pyproject.toml"
+    )
     try:
         with urllib.request.urlopen(url) as resp:  # nosec: trusted host, same as TS helper
             toml_text = resp.read().decode("utf-8")
@@ -83,10 +93,10 @@ def get_system_deps(feature: str | None):
                 brew_deps.update(value)
 
     return {
-        "aptDeps": sorted(apt_deps),
-        "nixDeps": sorted(nix_deps),
-        "brewDeps": sorted(brew_deps),
-        "pipDeps": sorted(pip_deps),
+        "apt_deps": sorted(apt_deps),
+        "nix_deps": sorted(nix_deps),
+        "brew_deps": sorted(brew_deps),
+        "pip_deps": sorted(pip_deps),
         "missing": missing,
     }
 
@@ -121,14 +131,14 @@ def detect_python_command() -> str | None:
 def ensure_git_and_lfs() -> None:
     if not command_exists("git"):
         raise RuntimeError("- ❌ git is required. Please install git and rerun.")
-    git_lfs_res = run_command(["git", "lfs", "version"]) # intentionally not part of dry_run
+    git_lfs_res = run_command(["git", "lfs", "version"])  # intentionally not part of dry_run
     if git_lfs_res.code != 0:
         raise RuntimeError("- ❌ git-lfs is required. Please install git-lfs and rerun.")
 
 
 def ensure_port_audio() -> None:
     p.boring_log("Checking if portaudio is available")
-    port_audio_res = run_command( # intentionally not part of dry_run
+    port_audio_res = run_command(  # intentionally not part of dry_run
         ["pkg-config", "--modversion", "portaudio-2.0"], print_command=True
     )
     if port_audio_res.code != 0:
@@ -139,7 +149,7 @@ def ensure_python() -> str:
     python_cmd = detect_python_command()
     if not python_cmd:
         raise RuntimeError("- ❌ Python 3.10+ is required but was not found.")
-    version_res = run_command([python_cmd, "--version"]) # intentionally not part of dry_run
+    version_res = run_command([python_cmd, "--version"])  # intentionally not part of dry_run
     version_text = (version_res.stdout or version_res.stderr or "").strip()
     parsed = parse_version(version_text)
     if not parsed or not is_version_at_least(parsed, "3.10.0"):
@@ -195,9 +205,11 @@ def apt_install(package_names: list[str]) -> None:
 
 def ensure_xcode_cli_tools() -> None:
     try:
-        run_command(["xcode-select", "-p"], check=True, capture_output=True) # intentionally not part of dry_run
+        run_command(
+            ["xcode-select", "-p"], check=True, capture_output=True
+        )  # intentionally not part of dry_run
     except Exception:
-        p.warning("Xcode Command Line Tools not detected.")
+        p.boring_log("Xcode Command Line Tools not detected.")
         if p.confirm("Install Xcode Command Line Tools now?"):
             res = run_command(["xcode-select", "--install"], check=True, dry_run=dry_run)
             if res.code != 0:
@@ -206,11 +218,17 @@ def ensure_xcode_cli_tools() -> None:
 
 def ensure_homebrew() -> None:
     if command_exists("brew"):
+        p.boring_log("Found homebrew")
         return
-    p.warning("Homebrew not detected.")
+    ensure_xcode_cli_tools()
+    p.boring_log("Homebrew not detected.")
     if not p.confirm("Install Homebrew now? (will run the official install script)"):
         raise RuntimeError("Homebrew is required for automatic dependency install.")
-    cmd = ["bash", "-c", 'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash']
+    cmd = [
+        "bash",
+        "-c",
+        "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash",
+    ]
     res = run_command(cmd, check=True, print_command=True, dry_run=dry_run)
     if res.code != 0:
         raise RuntimeError("Homebrew installation failed.")
@@ -223,6 +241,7 @@ def brew_install(package_names: list[str]) -> None:
 
     ensure_homebrew()
     if not _already_called_brew_update:
+        p.boring_log("Running brew update")
         res = run_command(["brew", "update"], print_command=True, dry_run=dry_run)
         if res.code != 0:
             raise RuntimeError(f"brew update failed: {res.code}")
@@ -324,15 +343,15 @@ __all__ = [
     "apt_install",
     "brew_install",
     "detect_python_command",
+    "dry_run",
     "ensure_git_and_lfs",
     "ensure_homebrew",
     "ensure_port_audio",
-    "ensure_xcode_cli_tools",
     "ensure_python",
+    "ensure_xcode_cli_tools",
     "get_project_directory",
     "get_project_toml",
     "get_system_deps",
     "is_version_at_least",
     "parse_version",
-    "dry_run",
 ]

@@ -1,20 +1,34 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-from ..support.constants import discordUrl
+from ..support import prompt_tools as p
+from ..support.constants import discord_url
 from ..support.dax import command_exists, run_command
 from ..support.misc import (
     add_git_ignore_patterns,
+    dry_run,
     ensure_git_and_lfs,
     ensure_port_audio,
     ensure_python,
     get_project_directory,
-    dry_run,
 )
-from ..support import prompt_tools as p
 from ..support.venv import activate_venv, get_venv_dirs_at
 
 
@@ -31,7 +45,9 @@ def phase2(system_analysis, selected_features):
 
         if not (has_ifconfig and has_route and has_sysctl):
             print("- ifconfig, route, and sysctl are required for the installer to function")
-            print("- Please install these system dependencies and re-run this command from the terminal")
+            print(
+                "- Please install these system dependencies and re-run this command from the terminal"
+            )
             raise SystemExit(1)
 
         if selected_features and "cuda" in selected_features:
@@ -44,8 +60,10 @@ def phase2(system_analysis, selected_features):
         print("")
         p.error("One of the vital dependencies was missing or had versioning issues")
         p.error(f"    error: {getattr(error, 'message', None) or error}")
-        p.error(f"Message us in the discord if you're having trouble: {p.highlight(discordUrl)}")
-        if p.ask_yes_no("It is NOT recommended to continue. Would you like to stop the setup? [y=exit, n=continue]"):
+        p.error(f"Message us in the discord if you're having trouble: {p.highlight(discord_url)}")
+        if p.ask_yes_no(
+            "It is recommended to STOP here because of the error. Should I stop here? [y=stop,n=continue]"
+        ):
             raise SystemExit(1)
 
 
@@ -72,13 +90,19 @@ def ensure_venv_active(python_cmd: str):
     else:
         print("- Dimos needs to be installed to a python virtual environment")
         if not p.confirm("Can I setup a Python virtual environment for you?"):
-            raise RuntimeError("- ❌ A virtual environment is required to install dimos. Please set one up then rerun this command.")
+            raise RuntimeError(
+                "- ❌ A virtual environment is required to install dimos. Please set one up then rerun this command."
+            )
         venv_dir = Path(project_directory) / DEFAULT_VENV_NAME
         p.boring_log(f"- creating virtual environment at {venv_dir}")
         venv_res = run_command([python_cmd, "-m", "venv", str(venv_dir)], dry_run=dry_run)
         if venv_res.code != 0:
-            raise RuntimeError("- ❌ Failed to create virtual environment. Please create one manually and rerun this command.")
-        add_git_ignore_patterns(project_directory, [f"/{DEFAULT_VENV_NAME}"], {"comment": "Added by dimos setup"})
+            raise RuntimeError(
+                "- ❌ Failed to create virtual environment. Please create one manually and rerun this command."
+            )
+        add_git_ignore_patterns(
+            project_directory, [f"/{DEFAULT_VENV_NAME}"], {"comment": "Added by dimos setup"}
+        )
         activate_venv(venv_dir)
         p.boring_log("- ✅ virtual environment activated")
         return str(venv_dir)

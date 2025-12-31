@@ -25,19 +25,19 @@ from ..support.misc import get_project_toml
 
 def phase0():
     logo = RenderLogo(
-        glitchyness=0.35,
-        stickyness=18,
+        glitchyness=0.25,
+        stickyness=50,
         fps=30,
         wave_strength=12,
-        wave_speed=0.12,
-        wave_freq=0.07,
+        wave_speed=0.01,
+        wave_freq=0.005,
         scrollable=True,
     )
 
     print("- checking system")
     system_analysis = get_tool_check_results()
-    # timeout = 0.5
-    timeout = 0.2
+    timeout = 0.5
+    # timeout = 0.2
 
     for key, result in system_analysis.items():
         time.sleep(timeout)
@@ -54,7 +54,9 @@ def phase0():
 
     optional = toml_data["project"].get("optional-dependencies", {})
     features = [f for f in optional.keys() if f not in ["cpu"]]
-    selected_features = p.pick_many("Which features do you want?", options=features)
+    selected_features = p.pick_many(
+        "Which features do you want? (Selecting none is okay)", options=features
+    )
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
 

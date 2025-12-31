@@ -29,8 +29,25 @@ if TYPE_CHECKING:
 @dataclass
 class CommandResult:
     code: int
-    stdout: str
-    stderr: str
+    _stdout: str | None
+    _stderr: str | None
+    _captured: bool = True
+
+    @property
+    def stdout(self) -> str:
+        if not self._captured:
+            raise RuntimeError(
+                "stdout not captured; run_command was invoked with capture_output=False"
+            )
+        return self._stdout or ""
+
+    @property
+    def stderr(self) -> str:
+        if not self._captured:
+            raise RuntimeError(
+                "stderr not captured; run_command was invoked with capture_output=False"
+            )
+        return self._stderr or ""
 
 
 def _normalize_cmd(cmd: str | Sequence[str] | Iterable[str]) -> list[str]:
@@ -81,8 +98,9 @@ def run_command(
     )
     return CommandResult(
         code=completed.returncode,
-        stdout=completed.stdout or "",
-        stderr=completed.stderr or "",
+        _stdout=completed.stdout if capture_output else None,
+        _stderr=completed.stderr if capture_output else None,
+        _captured=capture_output,
     )
 
 

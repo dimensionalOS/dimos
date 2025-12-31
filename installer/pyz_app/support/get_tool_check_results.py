@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
+from pathlib import Path
 import platform
 import re
-from pathlib import Path
 from typing import Dict, Literal, TypedDict
 
 from .dax import command_exists, run_quiet
@@ -17,15 +31,17 @@ class ToolResult(TypedDict, total=False):
     note: str
 
 
-OSName = Literal["macos", "windows", "debianBased", "archBased", "fedora", "unknownLinux", "unknown"]
+OSName = Literal[
+    "macos", "windows", "debian_based", "arch_based", "fedora", "unknown_linux", "unknown"
+]
 
 OS_NAMES: tuple[OSName, ...] = (
     "macos",
     "windows",
-    "debianBased",
-    "archBased",
+    "debian_based",
+    "arch_based",
     "fedora",
-    "unknownLinux",
+    "unknown_linux",
     "unknown",
 )
 
@@ -55,11 +71,21 @@ def _get_version_from_command(
 ) -> tuple[str, ToolResult]:
     code, line, combined = _run_first_line(cmd)
     if code != 0 and not line:
-        return name, {"name": name, "exists": True, "note": "Command exists but version query failed."}
+        return name, {
+            "name": name,
+            "exists": True,
+            "note": "Command exists but version query failed.",
+        }
 
     ver = _extract_digits_dots(line) or _extract_digits_dots(combined)
     if ver:
-        return name, {"name": name, "exists": True, "version": ver, "raw": line, "note": note or None}
+        return name, {
+            "name": name,
+            "exists": True,
+            "version": ver,
+            "raw": line,
+            "note": note or None,
+        }
 
     return (
         name,
@@ -67,9 +93,7 @@ def _get_version_from_command(
             "name": name,
             "exists": True,
             "raw": line or (combined.splitlines()[0].strip() if combined else ""),
-            "note": note
-            if allow_raw_if_no_digits
-            else "No digit-dot version found.",
+            "note": note if allow_raw_if_no_digits else "No digit-dot version found.",
         },
     )
 
@@ -85,12 +109,12 @@ def _detect_os_name() -> OSName:
         has_pacman = command_exists("pacman")
         has_dnf = command_exists("dnf")
         if has_apt:
-            return "debianBased"
+            return "debian_based"
         if has_pacman:
-            return "archBased"
+            return "arch_based"
         if has_dnf:
             return "fedora"
-        return "unknownLinux"
+        return "unknown_linux"
     return "unknown"
 
 
@@ -101,7 +125,7 @@ def _detect_os_details(os_name: OSName) -> dict[str, str]:
     if os_name == "windows":
         code, line, _ = _run_first_line(["cmd", "/c", "ver"])
         return {"version": _extract_digits_dots(line) or "", "raw": line}
-    if os_name in {"debianBased", "archBased", "fedora", "unknownLinux"}:
+    if os_name in {"debian_based", "arch_based", "fedora", "unknown_linux"}:
         try:
             text = Path("/etc/os-release").read_text()
             version_match = re.search(r"^VERSION_ID=(.*)$", text, re.MULTILINE)
@@ -120,33 +144,58 @@ def _detect_os_details(os_name: OSName) -> dict[str, str]:
     return {}
 
 
-def get_tool_check_results() -> Dict[str, ToolResult]:
-    results: Dict[str, ToolResult] = {}
+def get_tool_check_results() -> dict[str, ToolResult]:
+    results: dict[str, ToolResult] = {}
 
-    existence = {cmd: command_exists(cmd) for cmd in ["git", "nix", "docker", "python3", "python", "pip3", "pip", "nvcc", "nvidia-smi"]}
+    existence = {
+        cmd: command_exists(cmd)
+        for cmd in [
+            "git",
+            "nix",
+            "docker",
+            "python3",
+            "python",
+            "pip3",
+            "pip",
+            "nvcc",
+            "nvidia-smi",
+        ]
+    }
 
     tasks: list[tuple[str, ToolResult]] = []
 
     if existence["git"]:
-        tasks.append(_get_version_from_command("git", ["git", "--version"], allow_raw_if_no_digits=True))
+        tasks.append(
+            _get_version_from_command("git", ["git", "--version"], allow_raw_if_no_digits=True)
+        )
     else:
         results["git"] = {"name": "git", "exists": False}
 
     if existence["nix"]:
-        tasks.append(_get_version_from_command("nix", ["nix", "--version"], allow_raw_if_no_digits=True))
+        tasks.append(
+            _get_version_from_command("nix", ["nix", "--version"], allow_raw_if_no_digits=True)
+        )
     else:
         results["nix"] = {"name": "nix", "exists": False}
 
     if existence["docker"]:
-        tasks.append(_get_version_from_command("docker", ["docker", "--version"], allow_raw_if_no_digits=True))
+        tasks.append(
+            _get_version_from_command(
+                "docker", ["docker", "--version"], allow_raw_if_no_digits=True
+            )
+        )
     else:
         results["docker"] = {"name": "docker", "exists": False}
 
     if existence["git"]:
-        name, val = _get_version_from_command("git_lfs", ["git", "lfs", "version"], allow_raw_if_no_digits=True)
+        name, val = _get_version_from_command(
+            "git_lfs", ["git", "lfs", "version"], allow_raw_if_no_digits=True
+        )
         if val.get("exists") and not val.get("version"):
             note = val.get("note", "")
-            val["note"] = (note + " " if note else "") + "If this says 'git: lfs is not a git command', Git LFS isn't installed."
+            val["note"] = (
+                note + " " if note else ""
+            ) + "If this says 'git: lfs is not a git command', Git LFS isn't installed."
         tasks.append((name, val))
     else:
         results["git_lfs"] = {
@@ -184,9 +233,17 @@ def get_tool_check_results() -> Dict[str, ToolResult]:
             }
         tasks.append((name, val))
     elif existence["pip3"]:
-        tasks.append(_get_version_from_command("pip", ["pip3", "--version"], allow_raw_if_no_digits=True, note="From pip3"))
+        tasks.append(
+            _get_version_from_command(
+                "pip", ["pip3", "--version"], allow_raw_if_no_digits=True, note="From pip3"
+            )
+        )
     elif existence["pip"]:
-        tasks.append(_get_version_from_command("pip", ["pip", "--version"], allow_raw_if_no_digits=True, note="From pip"))
+        tasks.append(
+            _get_version_from_command(
+                "pip", ["pip", "--version"], allow_raw_if_no_digits=True, note="From pip"
+            )
+        )
     else:
         results["pip"] = {"name": "pip", "exists": False}
 
@@ -202,7 +259,13 @@ def get_tool_check_results() -> Dict[str, ToolResult]:
         tasks.append(
             (
                 "cuda",
-                {"name": "cuda", "exists": True, "version": version, "raw": first_line, "note": "From nvcc"},
+                {
+                    "name": "cuda",
+                    "exists": True,
+                    "version": version,
+                    "raw": first_line,
+                    "note": "From nvcc",
+                },
             )
         )
     elif existence["nvidia-smi"]:
@@ -224,7 +287,11 @@ def get_tool_check_results() -> Dict[str, ToolResult]:
             )
         )
     else:
-        results["cuda"] = {"name": "cuda", "exists": False, "note": "Neither nvcc nor nvidia-smi found."}
+        results["cuda"] = {
+            "name": "cuda",
+            "exists": False,
+            "note": "Neither nvcc nor nvidia-smi found.",
+        }
 
     os_name = _detect_os_name()
     details = _detect_os_details(os_name)
@@ -236,4 +303,4 @@ def get_tool_check_results() -> Dict[str, ToolResult]:
     return results
 
 
-__all__ = ["ToolResult", "OS_NAMES", "OSName", "get_tool_check_results"]
+__all__ = ["OS_NAMES", "OSName", "ToolResult", "get_tool_check_results"]

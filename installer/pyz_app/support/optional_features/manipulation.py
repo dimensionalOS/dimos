@@ -1,10 +1,24 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
-from ..constants import dependencyListAptPackages
+from .. import prompt_tools as p
+from ..constants import dependency_list_apt_packages
 from ..dax import command_exists, run_command
 from ..misc import apt_install
-from .. import prompt_tools as p
 
 APT_PACKAGES = [
     "build-essential",
@@ -33,7 +47,7 @@ APT_PACKAGES = [
     "libeigen3-dev",
 ]
 
-EXTRA_PACKAGES = [pkg for pkg in APT_PACKAGES if pkg not in dependencyListAptPackages]
+EXTRA_PACKAGES = [pkg for pkg in APT_PACKAGES if pkg not in dependency_list_apt_packages]
 
 
 def _maybe_install_apt_deps(packages: list[str]) -> bool:
@@ -60,7 +74,9 @@ def setup_manipulation_feature(*, assume_sys_deps_installed: bool = False) -> No
     p.header("Optional Feature: Manipulation")
 
     if not assume_sys_deps_installed:
-        print("- Likely system dependencies needed for manipulation (contact-graspnet, visualization, FCL, HDF5):")
+        print(
+            "- Likely system dependencies needed for manipulation (contact-graspnet, visualization, FCL, HDF5):"
+        )
         for pkg in EXTRA_PACKAGES:
             print(f"  • {pkg}")
         if EXTRA_PACKAGES:
@@ -69,15 +85,21 @@ def setup_manipulation_feature(*, assume_sys_deps_installed: bool = False) -> No
                 "Proceed to pip installation (continue even if some system deps may be missing)?"
             )
             if not proceed:
-                p.error("Please install the listed system dependencies, then rerun this feature installer.")
+                p.error(
+                    "Please install the listed system dependencies, then rerun this feature installer."
+                )
                 return
         else:
             p.boring_log("- No additional system dependencies beyond the core set.")
 
     res = run_command(["pip", "install", "dimos[manipulation]"])
     if res.code != 0:
-        p.error("pip install dimos[manipulation] failed. Please ensure system deps are installed and try again.")
-        p.error("If issues persist, reinstall system deps or install the wheel from source with verbose logs.")
+        p.error(
+            "pip install dimos[manipulation] failed. Please ensure system deps are installed and try again."
+        )
+        p.error(
+            "If issues persist, reinstall system deps or install the wheel from source with verbose logs."
+        )
         return
     p.boring_log("- dimos[manipulation] installed successfully")
 

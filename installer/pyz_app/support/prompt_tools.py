@@ -18,6 +18,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from InquirerPy import inquirer
+
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -36,6 +37,7 @@ def clear_screen() -> None:
 
 
 def header(text: str) -> None:
+    print("\n" * 100)
     clear_screen()
     print(f"{BOLD}{FG_GREEN}#{RESET}")
     print(f"{BOLD}{FG_GREEN}# {text}{RESET}")

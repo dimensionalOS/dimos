@@ -1,12 +1,26 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 
-from ..constants import dimosEnvVars
-from ..misc import add_git_ignore_patterns
 from .. import prompt_tools as p
+from ..constants import dimos_env_vars
+from ..misc import add_git_ignore_patterns
 
 
 def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
@@ -22,7 +36,7 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
         )
         if not p.ask_yes_no(f"I don't see a {p.highlight('.env')} file, can I create one for you?"):
             print("- Okay, I'll assume you will manage env vars yourself:")
-            for name, value in dimosEnvVars.items():
+            for name, value in dimos_env_vars.items():
                 print(f"  {name}={value}")
             return False
         env_path.write_text("")
@@ -39,7 +53,9 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
         if (match := re.match(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=", line.strip()))
     }
 
-    missing_env_vars = [f"{name}={value}" for name, value in dimosEnvVars.items() if name not in existing_vars]
+    missing_env_vars = [
+        f"{name}={value}" for name, value in dimos_env_vars.items() if name not in existing_vars
+    ]
 
     if missing_env_vars:
         needs_trailing_newline = len(env_text) > 0 and not env_text.endswith("\n")

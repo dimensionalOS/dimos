@@ -1,9 +1,23 @@
 #!/usr/bin/env python3
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
-discordUrl = "https://discord.gg/S6E9MHsu"
+discord_url = "https://discord.gg/S6E9MHsu"
 
-dimosEnvVars = {
+dimos_env_vars = {
     "OPENAI_API_KEY": "",
     "HUGGINGFACE_ACCESS_TOKEN": "",
     "ALIBABA_API_KEY": "",
@@ -17,7 +31,7 @@ dimosEnvVars = {
     "DISPLAY": ":0",
 }
 
-dependenciesNixNames = [
+dependencies_nix_names = [
     "pkgs.git",
     "pkgs.git-lfs",
     "pkgs.cmake",
@@ -75,7 +89,7 @@ dependenciesNixNames = [
     "pkgs.libpng",
 ]
 
-dependencyListHumanNames = [
+dependency_list_human_names = [
     "git",
     "git-lfs",
     "portaudio",
@@ -105,7 +119,7 @@ dependencyListHumanNames = [
     "sdl2_ttf",
 ]
 
-dependencyListAptPackages = [
+dependency_list_apt_packages = [
     "git",
     "git-lfs",
     "build-essential",
@@ -167,9 +181,9 @@ dependencyListAptPackages = [
 
 
 __all__ = [
-    "discordUrl",
-    "dimosEnvVars",
-    "dependenciesNixNames",
-    "dependencyListHumanNames",
-    "dependencyListAptPackages",
+    "dependencies_nix_names",
+    "dependency_list_apt_packages",
+    "dependency_list_human_names",
+    "dimos_env_vars",
+    "discord_url",
 ]
