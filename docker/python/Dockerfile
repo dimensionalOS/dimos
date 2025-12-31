@@ -32,7 +32,9 @@ RUN apt-get install -y \
     qtbase5-dev-tools \
     supervisor \
     iproute2 # for LCM networking system config \
-    liblcm-dev
+    liblcm-dev \
+    libopus-dev \
+    libvpx-dev
 
 # Fix distutils-installed packages that block pip upgrades
 RUN apt-get purge -y python3-blinker python3-sympy python3-oauthlib || true
