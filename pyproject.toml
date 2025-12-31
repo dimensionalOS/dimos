@@ -3,14 +3,19 @@ requires = ["setuptools>=70", "wheel", "pybind11>=2.12"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-include-package-data = true
+include-package-data = false
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["dimos*"]
+exclude = ["dimos.web.websocket_vis.node_modules*"]
 
 [tool.setuptools.package-data]
-"*" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+"dimos" = ["*.html", "*.css", "*.js", "*.json", "*.txt", "*.yaml", "*.yml"]
+"dimos.utils.cli" = ["*.tcss"]
+"dimos.robot.unitree_webrtc.params" = ["*.yaml", "*.yml"]
+"dimos.web.templates" = ["*"]
+"dimos.rxpy_backpressure" = ["*.txt"]
 
 [project]
 name = "dimos"
@@ -20,10 +25,13 @@ authors = [
 version = "0.0.4"
 description = "Powering agentive generalist robotics"
 requires-python = ">=3.10"
+readme = "README.md"
 
 dependencies = [
     # Core requirements
     "opencv-python",
+    "numba>=0.60.0",      # Python 3.12 support
+    "llvmlite>=0.42.0",   # Required by numba 0.60+
     "python-dotenv",
     "openai",
     "anthropic>=0.19.0",
@@ -43,9 +51,8 @@ dependencies = [
     "Flask>=2.2",
     "python-multipart==0.0.20",
     "reactivex",
-    "rxpy-backpressure",
     "asyncio==3.4.3",
-    "unitree-webrtc-connect",
+    "unitree-webrtc-connect-leshy>=2.0.7",
     "tensorzero==2025.7.5",
     "structlog>=25.5.0,<26",
 
@@ -72,7 +79,6 @@ dependencies = [
     "ipykernel",
 
     # Unitree webrtc streaming
-    "aiortc==1.9.0",
     "pycryptodome",
     "sounddevice",
     "pyaudio",
@@ -129,6 +135,8 @@ dependencies = [
 
     # Teleop
     "pygame>=2.6.1",
+    # Hardware SDKs
+    "xarm-python-sdk>=1.17.0",
 
     "numba>=0.60.0",    # First version supporting Python 3.12
     "llvmlite>=0.42.0", # Required by numba 0.59+
@@ -286,7 +294,7 @@ python_version = "3.12"
 incremental = true
 strict = true
 warn_unused_ignores = false
-exclude = "^dimos/models/Detic(/|$)|.*/test_.|.*/conftest.py*"
+exclude = "^dimos/models/Detic(/|$)|^dimos/rxpy_backpressure(/|$)|.*/test_.|.*/conftest.py*"
 
 [[tool.mypy.overrides]]
 module = [
@@ -299,8 +307,51 @@ module = [
     "mujoco",
     "mujoco_playground.*",
     "etils",
+    "xarm.*",
+    "dimos_lcm.*",
+    "piper_sdk.*",
+    "plum.*",
+    "pycuda.*",
+    "pycuda",
+    "plotext",
+    "torchreid",
+    "open_clip",
+    "pyzed.*",
+    "pyzed",
+    "unitree_webrtc_connect.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = [
+    "dimos.msgs",
+    "dimos.msgs.*",
+    "dimos.msgs.geometry_msgs.*",
+    "dimos.msgs.sensor_msgs.*",
+    "dimos.msgs.trajectory_msgs.*",
+    "dimos.utils.cli.human.*",
+    "dimos.utils.cli.plot",
+    "dimos.utils.gpu_utils",
+    "dimos.hardware.sensors.camera.module",
+    "dimos.hardware.sensors.camera.zed.*",
+    "dimos.hardware.manipulators",
+    "dimos.hardware.manipulators.*",
+    "dimos.manipulation",
+    "dimos.manipulation.*",
+    "dimos.manipulation.control.*",
+    "dimos.manipulation.control.servo_control.*",
+    "dimos.manipulation.control.trajectory_controller.*",
+    "dimos.robot.unitree_webrtc.unitree_g1_blueprints",
+    "dimos.perception.segmentation.sam_2d_seg",
+    "dimos.models.embedding.treid",
+    "dimos.models.embedding.mobileclip",
+    "dimos.mapping.pointclouds.occupancy",
+]
+ignore_errors = true
 
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
@@ -331,10 +382,6 @@ extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = 
 default-groups = []
 
 [tool.uv.sources]
-rxpy-backpressure = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git" }
-# we are waiting for Legion to merge our PR https://github.com/legion1581/unitree_webrtc_connect/pull/46
-unitree-webrtc-connect = { git = "https://github.com/leshy/unitree_webrtc_connect.git", rev = "2cbb6ce657383c788f4a48d9d87ecf4b9b7dba1d" }
 clip = { git = "https://github.com/openai/CLIP.git" }
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
 detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }

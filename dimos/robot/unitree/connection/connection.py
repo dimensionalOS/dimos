@@ -19,7 +19,6 @@ import threading
 import time
 from typing import TypeAlias
 
-from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
 import numpy as np
 from numpy.typing import NDArray
 from reactivex import operators as ops
@@ -321,6 +320,8 @@ class UnitreeWebRTCConnection(Resource):
     def raw_video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
+
+        from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
 
         async def accept_track(track: MediaStreamTrack) -> None:
             while True:
