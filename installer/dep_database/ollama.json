@@ -1,10 +1,23 @@
 {
-  "package": "ollama",
+  "package": "ollama>=0.6.0",
   "apt_dependencies": [
-    "python3",
-    "python3-pip",
-    "curl"
+    "python3-dev",
+    "build-essential",
+    "libssl-dev",
+    "libffi-dev",
+    "ca-certificates"
   ],
-  "description": "System dependencies required for ollama>=0.6.0 pip package on Ubuntu/Debian systems",
-  "notes": "The ollama Python package is a pure Python client library with minimal system dependencies. It only requires Python and pip to install. The 'curl' package is included as it's commonly used to install and interact with the Ollama server itself (which is separate from the Python package). Note: The ollama pip package is just a client - to actually use it, you need the Ollama server running separately, which can be installed via: curl -fsSL https://ollama.com/install.sh | sh"
+  "brew_dependencies": [
+    "python3",
+    "openssl",
+    "libffi"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "openssl",
+    "libffi",
+    "stdenv.cc.cc.lib"
+  ],
+  "description": "System dependencies required for ollama>=0.6.0 pip package",
+  "notes": "The ollama package is the official Python client for Ollama. It's a pure Python HTTP client library that depends on httpx and pydantic. System dependencies are needed for: SSL/TLS support (libssl-dev/openssl) for secure HTTPS communication with Ollama API endpoints, FFI support (libffi-dev/libffi) for potential ctypes usage, and build tools (build-essential/gcc) for compiling C extensions in dependencies like pydantic-core and jiter (fast JSON parser). The ca-certificates package ensures proper SSL certificate validation. For runtime-only usage with pre-built wheels (the most common case), only python3, openssl/libssl, and ca-certificates are strictly required. Note: This package is just the Python client library - it does NOT include the Ollama server itself. To run local models, you need to separately install the Ollama application (via 'brew install ollama' on macOS or from ollama.ai on other platforms)."
 }

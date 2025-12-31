@@ -1,11 +1,15 @@
 {
   "package": "rtree",
   "apt_dependencies": [
-    "python3",
-    "python3-pip",
     "libspatialindex-dev",
     "libspatialindex6"
   ],
-  "description": "System dependencies required for rtree>=0.9.0 pip package on Ubuntu/Debian systems",
-  "notes": "Rtree is a Python wrapper for libspatialindex, a C++ library for spatial indexing of points and rectangles. libspatialindex-dev provides the development headers and static libraries needed to build the rtree Python bindings. libspatialindex6 (or libspatialindex-c6 on some systems) provides the runtime shared library. The rtree package uses ctypes to interface with libspatialindex at runtime, so both the development and runtime libraries are beneficial. For pre-built wheels on common architectures, only python3 and python3-pip may be sufficient, but the libspatialindex packages ensure full functionality and enable building from source when needed."
+  "brew_dependencies": [
+    "spatialindex"
+  ],
+  "nix_dependencies": [
+    "spatialindex"
+  ],
+  "description": "System dependencies required for rtree pip package",
+  "notes": "rtree is a ctypes Python wrapper for libspatialindex that provides advanced spatial indexing features for spatial data structures. The package requires the libspatialindex C library to be installed on the system. On Debian/Ubuntu systems, both the development package (libspatialindex-dev) and runtime library (libspatialindex6) are needed. On macOS via Homebrew and NixOS, the spatialindex package provides the necessary library. The rtree package uses ctypes to dynamically load the spatialindex shared library at runtime."
 }

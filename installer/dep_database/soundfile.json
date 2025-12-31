@@ -4,6 +4,12 @@
     "libsndfile1",
     "libsndfile1-dev"
   ],
-  "description": "System dependencies required for soundfile pip package on Ubuntu/Debian systems",
-  "notes": "soundfile is a Python wrapper for libsndfile, a C library for reading and writing audio files in various formats (WAV, FLAC, OGG, etc.). libsndfile1 provides the runtime library required for the package to function. libsndfile1-dev contains the development headers needed for building the Python bindings during pip installation."
+  "brew_dependencies": [
+    "libsndfile"
+  ],
+  "nix_dependencies": [
+    "libsndfile"
+  ],
+  "description": "System dependencies required for soundfile pip package",
+  "notes": "SoundFile is a Python library for reading and writing sound files, providing a wrapper around libsndfile. The libsndfile library supports reading/writing files in various formats including WAV, FLAC, OGG, and others. On Debian/Ubuntu systems, libsndfile1 provides the runtime library and libsndfile1-dev provides the development headers (though the pip package uses CFFI and may primarily need the runtime library). On macOS via Homebrew and NixOS, the libsndfile package provides all necessary components. These dependencies must be installed for soundfile to function properly."
 }

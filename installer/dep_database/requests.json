@@ -1,12 +1,18 @@
 {
   "package": "requests",
   "apt_dependencies": [
-    "python3",
-    "python3-pip",
     "ca-certificates",
-    "libssl3",
-    "openssl"
+    "openssl",
+    "libssl-dev"
   ],
-  "description": "System dependencies required for requests pip package on Ubuntu/Debian systems",
-  "notes": "The requests library is primarily pure Python, but requires SSL/TLS support for HTTPS connections. ca-certificates provides trusted certificate authorities for SSL verification. libssl3 and openssl provide the SSL/TLS implementation. For most modern Python installations with pip, requests can be installed with just python3 and python3-pip, but the SSL libraries are essential for secure HTTPS communications which is the primary use case for requests."
+  "brew_dependencies": [
+    "openssl",
+    "ca-certificates"
+  ],
+  "nix_dependencies": [
+    "openssl",
+    "cacert"
+  ],
+  "description": "System dependencies required for requests pip package",
+  "notes": "requests is a pure Python HTTP library that relies on urllib3 and other Python packages. While it doesn't require compilation, it needs system SSL/TLS libraries for secure HTTPS connections. Key dependencies include: ca-certificates/cacert for SSL certificate validation (essential for verifying HTTPS connections), openssl/libssl-dev for SSL/TLS protocol support. The requests package uses the system's OpenSSL library (via Python's ssl module) to establish secure connections. Most modern systems have these pre-installed, but they're required for requests to handle HTTPS URLs properly. Without proper CA certificates, requests will fail to verify SSL certificates and raise SSLError exceptions."
 }

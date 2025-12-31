@@ -1,10 +1,18 @@
 {
-  "package": "pyyaml",
+  "package": "pyyaml>=6.0",
   "apt_dependencies": [
     "python3-dev",
-    "python3-pip",
+    "build-essential",
     "libyaml-dev"
   ],
-  "description": "System dependencies required for pyyaml>=6.0 pip package on Ubuntu/Debian systems",
-  "notes": "PyYAML is a YAML parser and emitter for Python. While PyYAML can work with a pure Python implementation, it uses libyaml (via the LibYAML C library) for significantly better performance when available. libyaml-dev is the development package that provides the C library and headers needed for building PyYAML with C extensions. python3-dev is required for compiling the C extension module. For pre-built wheels (available on most platforms), only python3 and python3-pip are strictly required at runtime, but libyaml-dev ensures optimal performance and is necessary when building from source."
+  "brew_dependencies": [
+    "python3",
+    "libyaml"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "libyaml"
+  ],
+  "description": "System dependencies required for pyyaml>=6.0 pip package",
+  "notes": "PyYAML is a YAML parser and emitter for Python. While PyYAML can work with a pure Python implementation, it uses libyaml (via the LibYAML C library) for significantly better performance when available. The system dependencies include: libyaml-dev/libyaml for the C library and headers needed for building PyYAML with C extensions, python3-dev/python3 for Python headers required for compiling the C extension module, and build-essential (on Debian/Ubuntu) for the C compiler toolchain. For pre-built wheels (available on most platforms), these dependencies may not be strictly required at runtime, but libyaml ensures optimal performance and is necessary when building from source. PyYAML 6.0+ includes security improvements and better Unicode support, making the C extension particularly important for performance with large YAML files."
 }

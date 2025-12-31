@@ -1,5 +1,5 @@
 {
-  "package": "langchain-chroma",
+  "package": "langchain-chroma>=1,<2",
   "apt_dependencies": [
     "python3",
     "python3-pip",
@@ -11,8 +11,30 @@
     "libopenblas-dev",
     "liblapack-dev",
     "pkg-config",
+    "curl",
+    "libstdc++6",
+    "libgomp1",
+    "ca-certificates"
+  ],
+  "brew_dependencies": [
+    "python3",
+    "gcc",
+    "cmake",
+    "openblas",
+    "lapack",
+    "pkg-config",
     "curl"
   ],
-  "description": "System dependencies required for langchain-chroma>=1,<2 pip package on Ubuntu/Debian systems",
-  "notes": "langchain-chroma depends on chromadb which requires several native dependencies. The main requirements are: (1) build-essential, gcc, g++, and cmake for compiling native extensions including chroma-hnswlib (HNSW library for vector similarity search) and potentially onnxruntime components; (2) python3-dev for Python C extension headers; (3) libopenblas-dev and liblapack-dev for numpy numerical operations (inherited from numpy>=1.26.0 dependency); (4) pkg-config for build configuration; (5) curl for potential runtime operations. For pre-built wheels on common architectures (x86_64, aarch64), only python3, python3-pip, and runtime libraries may be strictly required, but build dependencies are included to support source compilation on systems without wheel support or for custom builds."
+  "nix_dependencies": [
+    "python3",
+    "gcc",
+    "cmake",
+    "openblas",
+    "lapack",
+    "pkg-config",
+    "curl",
+    "stdenv.cc.cc.lib"
+  ],
+  "description": "System dependencies required for langchain-chroma>=1,<2 pip package",
+  "notes": "langchain-chroma is a LangChain integration for ChromaDB, a vector database for AI applications. The main dependency is chromadb (>=1.3.5,<2.0.0), which uses onnxruntime for embedding models, grpcio for client-server communication, bcrypt for authentication, and numpy for numerical operations. Key requirements include: (1) build-essential/gcc/g++/cmake for compiling native extensions including chroma-hnswlib (HNSW library for vector similarity search) and onnxruntime components; (2) python3-dev for Python C extension headers; (3) libopenblas-dev/openblas and liblapack-dev/lapack for numpy numerical operations (inherited from numpy>=1.26.0 dependency); (4) pkg-config for build configuration; (5) curl for runtime operations; (6) libstdc++6/stdenv.cc.cc.lib for C++ runtime (required by onnxruntime); (7) libgomp1 for OpenMP parallel processing (used by onnxruntime); (8) ca-certificates for HTTPS connections to embedding model APIs. Pre-built wheels are available for common platforms (x86_64, aarch64 on Linux/macOS/Windows with Python 3.10+). Most users will get pre-built wheels and only need runtime libraries, but build dependencies support source compilation on systems without wheel support or for custom builds. ChromaDB can run in embedded mode (no server) or client-server mode."
 }

@@ -1,9 +1,8 @@
 {
-  "package": "plotly",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for plotly>=5.9.0 pip package on Ubuntu/Debian systems",
-  "notes": "Plotly is a pure Python graphing library that creates interactive HTML/JavaScript visualizations. It does not require compilation or system libraries beyond the Python interpreter. Pre-built wheels are available for all platforms. The package works entirely at the Python level and generates JSON data structures that are rendered using the Plotly.js JavaScript library in the browser. Optional features like static image export (orca, kaleido) have their own separate dependencies, but core plotly functionality only requires Python 3.8+."
+  "package": "plotly>=5.9.0",
+  "apt_dependencies": [],
+  "brew_dependencies": [],
+  "nix_dependencies": [],
+  "description": "System dependencies required for plotly>=5.9.0 pip package",
+  "notes": "Plotly is a pure Python interactive visualization library that generates web-based plots using plotly.js (JavaScript). Unlike traditional plotting libraries like matplotlib, plotly has no system-level dependencies because it produces HTML/JavaScript outputs that render in web browsers or Jupyter notebooks. The library is distributed as a pure Python wheel and only requires Python itself. All visualization rendering happens client-side in the browser using the bundled plotly.js library. For static image export functionality (orca, kaleido), users would need to install separate packages (plotly-orca or kaleido) which have their own dependencies, but the base plotly>=5.9.0 package has no system requirements beyond Python. This makes plotly highly portable across different platforms and environments."
 }

@@ -7,6 +7,17 @@
     "libffi-dev",
     "ca-certificates"
   ],
-  "description": "System dependencies required for openai pip package on Ubuntu/Debian systems",
-  "notes": "The openai package is primarily pure Python with HTTP/HTTPS capabilities. Core dependencies include SSL/TLS support for secure API communication and build tools for compiling optional native extensions in dependencies like pydantic and jiter. Additional packages may be needed for optional extras: libasound2-dev and libportaudio2 for voice-helpers (sounddevice), python3-numpy for datalib/voice features."
+  "brew_dependencies": [
+    "python3",
+    "openssl",
+    "libffi"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "openssl",
+    "libffi",
+    "stdenv.cc.cc.lib"
+  ],
+  "description": "System dependencies required for openai pip package",
+  "notes": "The openai package is primarily pure Python with HTTP/HTTPS capabilities. Core dependencies include SSL/TLS support for secure API communication and build tools for compiling optional native extensions in dependencies like pydantic and jiter. On apt systems: python3-dev and build-essential provide build tools, libssl-dev and libffi-dev enable cryptographic operations, ca-certificates ensures HTTPS validation. On brew/nix: python3, openssl, and libffi provide equivalent functionality. Additional packages may be needed for optional extras: portaudio for voice-helpers (sounddevice), numpy for datalib/voice features."
 }

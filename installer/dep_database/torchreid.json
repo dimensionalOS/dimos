@@ -1,5 +1,5 @@
 {
-  "package": "torchreid",
+  "package": "torchreid==0.2.5",
   "apt_dependencies": [
     "python3",
     "python3-pip",
@@ -22,8 +22,41 @@
     "libxvidcore-dev",
     "libx264-dev",
     "libatlas-base-dev",
-    "gfortran"
+    "gfortran",
+    "git"
   ],
-  "description": "System dependencies required for torchreid==0.2.5 pip package on Ubuntu/Debian systems",
-  "notes": "Torchreid (Torch Re-Identification) is a PyTorch-based deep learning library for person re-identification in computer vision. It depends on PyTorch, torchvision, and various image processing libraries. The OpenGL libraries (libgl1-mesa-glx, libglib2.0-0, libsm6, libxext6, libxrender-dev) are required for GUI and visualization features. Image codec libraries (libjpeg-dev, libpng-dev, libtiff-dev) support various image formats. Video codec libraries (libavcodec-dev, libavformat-dev, libswscale-dev, libv4l-dev, libxvidcore-dev, libx264-dev) enable video processing capabilities. Math libraries (libatlas-base-dev, gfortran, libgfortran5, libgomp1) provide optimized numerical operations for PyTorch. Build tools (build-essential, python3-dev) are needed for compiling extensions and dependencies."
+  "brew_dependencies": [
+    "python3",
+    "gcc",
+    "glib",
+    "jpeg",
+    "libpng",
+    "libtiff",
+    "ffmpeg",
+    "opencv",
+    "openblas",
+    "lapack",
+    "pkg-config",
+    "git"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "gfortran",
+    "glib",
+    "xorg.libSM",
+    "xorg.libXext",
+    "xorg.libXrender",
+    "libjpeg",
+    "libpng",
+    "libtiff",
+    "ffmpeg",
+    "opencv4",
+    "openblas",
+    "lapack",
+    "pkg-config",
+    "stdenv.cc.cc.lib",
+    "git"
+  ],
+  "description": "System dependencies required for torchreid==0.2.5 pip package",
+  "notes": "Torchreid (Torch Re-Identification) is a PyTorch-based deep learning library for person re-identification in computer vision. It depends on PyTorch, torchvision, and various image processing libraries. The OpenGL libraries (libgl1-mesa-glx, libglib2.0-0, libsm6, libxext6, libxrender-dev) are required for GUI and visualization features. Image codec libraries (libjpeg-dev/jpeg, libpng-dev/libpng, libtiff-dev/libtiff) support various image formats. Video codec libraries (libavcodec-dev, libavformat-dev, libswscale-dev, libv4l-dev, libxvidcore-dev, libx264-dev via ffmpeg on macOS/Nix) enable video processing capabilities. Math libraries (libatlas-base-dev/openblas, gfortran, libgfortran5, libgomp1/gcc) provide optimized numerical operations for PyTorch. Build tools (build-essential/gcc, python3-dev/python3) are needed for compiling extensions and dependencies. Git is required for downloading pre-trained models and datasets from repositories."
 }

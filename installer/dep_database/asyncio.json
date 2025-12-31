@@ -1,9 +1,8 @@
 {
   "package": "asyncio==3.4.3",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for asyncio==3.4.3 pip package on Ubuntu/Debian systems",
-  "notes": "The asyncio==3.4.3 package is a backport of Python's asyncio library for Python 3.3. Starting from Python 3.4+, asyncio is included in the standard library and this pip package is not needed. This is a pure Python package with no C extensions or additional system-level dependencies beyond Python itself and pip. For modern Python versions (3.4+), asyncio is available as a built-in module without requiring pip installation."
+  "apt_dependencies": [],
+  "brew_dependencies": [],
+  "nix_dependencies": [],
+  "description": "System dependencies required for asyncio==3.4.3 pip package",
+  "notes": "asyncio==3.4.3 is a backport of the asyncio library for Python 3.3. Since Python 3.4+, asyncio is included in Python's standard library. This is a pure Python package with no native extensions or system-level dependencies - it only requires Python itself. The package provides asynchronous I/O, event loop, coroutines, and tasks functionality. Modern Python versions (3.4+) should use the built-in asyncio module instead of installing this package. This backport package has no apt, brew, or nix dependencies beyond the base Python installation."
 }

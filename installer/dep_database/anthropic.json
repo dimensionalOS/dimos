@@ -3,8 +3,22 @@
   "apt_dependencies": [
     "python3",
     "python3-pip",
-    "build-essential"
+    "build-essential",
+    "libssl-dev",
+    "libffi-dev",
+    "ca-certificates"
   ],
-  "description": "System dependencies required for anthropic>=0.19.0 pip package on Ubuntu/Debian systems",
-  "notes": "The anthropic package is primarily pure Python with minimal system dependencies. The build-essential package is included to handle potential compilation of dependencies like jiter (JSON parser) which may have C extensions. For runtime-only usage without building from source, only python3 and python3-pip are strictly required."
+  "brew_dependencies": [
+    "python3",
+    "openssl",
+    "libffi"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "openssl",
+    "libffi",
+    "gcc"
+  ],
+  "description": "System dependencies required for anthropic>=0.19.0 pip package",
+  "notes": "The anthropic package is primarily pure Python with minimal system dependencies. It's an HTTP client for the Anthropic API that depends on httpx, pydantic, and other pure Python packages. System dependencies are needed for: SSL/TLS support (libssl-dev/openssl) for secure HTTPS API communication, FFI support (libffi-dev/libffi) for potential ctypes usage, and build tools (build-essential/gcc) for compiling C extensions in dependencies like jiter (fast JSON parser) and pydantic-core. The ca-certificates package ensures proper SSL certificate validation. For runtime-only usage with pre-built wheels (the most common case), only python3, openssl/libssl, and ca-certificates are strictly required."
 }

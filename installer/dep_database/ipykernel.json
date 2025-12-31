@@ -3,9 +3,20 @@
   "apt_dependencies": [
     "python3",
     "python3-pip",
-    "libzmq3-dev",
-    "build-essential"
+    "build-essential",
+    "libzmq5-dev",
+    "libffi-dev"
   ],
-  "description": "System dependencies required for ipykernel>=7.1.0 pip package on Ubuntu/Debian systems",
-  "notes": "ipykernel is the IPython kernel for Jupyter. The main system dependency is libzmq3-dev for the pyzmq package (ZeroMQ messaging library). Most other dependencies (debugpy, psutil, tornado, ipython, jupyter-client, etc.) are pure Python packages. build-essential is included for compiling native extensions during installation. For pre-built wheels (most common), only python3, python3-pip, and libzmq3-dev runtime libraries are strictly required."
+  "brew_dependencies": [
+    "python3",
+    "zeromq"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "zeromq",
+    "libffi",
+    "gcc"
+  ],
+  "description": "System dependencies required for ipykernel pip package",
+  "notes": "ipykernel is the IPython kernel for Jupyter notebooks and provides the execution backend for interactive Python environments. It's primarily pure Python but has system dependencies for: (1) ZeroMQ (libzmq5-dev/zeromq) which is the messaging library used for communication between the kernel and Jupyter clients - this is the most critical dependency as the kernel uses pyzmq for all inter-process communication, (2) FFI support (libffi-dev/libffi) for potential ctypes usage and for dependencies that use CFFI, and (3) build tools (build-essential/gcc) for compiling C extensions in dependencies like pyzmq, debugpy, and psutil. While pre-built wheels are available for common platforms, the ZeroMQ library is still needed at runtime for the messaging protocol. The package also depends on IPython, traitlets, jupyter-client, and other Jupyter ecosystem packages which are pure Python."
 }
