@@ -19,23 +19,7 @@ Renderers:
     - dot2: Hub-style DOT format (type nodes as intermediate hubs)
 """
 
-from dimos.core.introspection.blueprint import dot, dot2
-from dimos.core.introspection.blueprint.dot2 import LayoutAlgo
+from dimos.core.introspection.blueprint import dot
+from dimos.core.introspection.blueprint.dot import LayoutAlgo, render_svg
 
-__all__ = ["LayoutAlgo", "dot", "dot2", "to_dot", "to_svg"]
-
-
-def to_dot(blueprint_set: "ModuleBlueprintSet") -> str:
-    """Generate DOT graph from a blueprint set.
-
-    Convenience function that uses the dot renderer.
-    """
-    return dot.render(blueprint_set)
-
-
-def to_svg(blueprint_set: "ModuleBlueprintSet", output_path: str) -> None:
-    """Generate SVG file from a blueprint set.
-
-    Convenience function that uses the dot renderer.
-    """
-    dot.render_svg(blueprint_set, output_path)
+__all__ = ["LayoutAlgo", "dot", "render_svg"]

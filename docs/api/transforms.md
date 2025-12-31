@@ -361,7 +361,7 @@ Transform tree:
 ```
 
 
-You can also run `foxglove-bridge` in the next terminal (binary provided by dimos and should be in your py env) and `foxglove-studio` to view these transforms in 3D
+You can also run `foxglove-studio-bridge` in the next terminal (binary provided by dimos and should be in your py env) and `foxglove-studio` to view these transforms in 3D (TODO we need to update this for rerun)
 
 ![transforms](assets/transforms.png)
 

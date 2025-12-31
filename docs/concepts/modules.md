@@ -14,9 +14,9 @@ Some examples of modules are:
 Below is an example of a structure for controlling a robot. Black blocks represent modules and colored lines are connections and message types. It's okay if this doesn't make sense now, it will by the end of this document.
 
 ```python output=assets/go2_basic.svg
-from dimos.core.introspection.blueprint import dot2
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic
-dot2.render_svg(basic, "assets/go2_basic.svg")
+from dimos.core.introspection.blueprint import render_svg
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import nav
+render_svg(nav, "assets/go2_nav.svg")
 ```
 
 <!--Result:-->
@@ -83,19 +83,16 @@ camera.stop()
 <!--Result:-->
 ```
 Out color_image[Image] @ CameraModule
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 14:02:30)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
 ```
 
 
@@ -171,10 +168,10 @@ Blueprint is a pre-defined structure of interconnected modules. You can include 
 Basic unitree go2 blueprint looks like what we saw before,
 
 ```python  session=blueprints output=assets/go2_agentic.svg
-from dimos.core.introspection.blueprint import dot2, LayoutAlgo
-from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic, agentic
+from dimos.core.introspection.blueprint import render_svg
+from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 
-dot2.render_svg(agentic, "assets/go2_agentic.svg")
+render_svg(agentic, "assets/go2_agentic.svg")
 ```
 
 <!--Result:-->

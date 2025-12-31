@@ -142,6 +142,7 @@ dependencies = [
 [project.scripts]
 lcmspy = "dimos.utils.cli.lcmspy.run_lcmspy:main"
 foxglove-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
+foxglove-studio-bridge = "dimos.utils.cli.foxglove_bridge.run_foxglove_bridge:main"
 skillspy = "dimos.utils.cli.skillspy.skillspy:main"
 agentspy = "dimos.utils.cli.agentspy.agentspy:main"
 humancli = "dimos.utils.cli.human.humanclianim:main"
@@ -213,6 +214,7 @@ dev = [
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
     "watchdog>=4.0.0",
+    "md-babel-py>=1.0.6",
 
     # Types
     "lxml-stubs>=0.5.1,<1",

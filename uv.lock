@@ -1556,6 +1556,7 @@ cuda = [
 dev = [
     { name = "coverage" },
     { name = "lxml-stubs" },
+    { name = "md-babel-py" },
     { name = "mypy" },
     { name = "pandas-stubs" },
     { name = "pre-commit" },
@@ -1655,6 +1656,7 @@ requires-dist = [
     { name = "lvis", marker = "extra == 'cuda'" },
     { name = "lxml-stubs", marker = "extra == 'dev'", specifier = ">=0.5.1,<1" },
     { name = "matplotlib", marker = "extra == 'manipulation'", specifier = ">=3.7.1" },
+    { name = "md-babel-py", marker = "extra == 'dev'", specifier = ">=1.0.6" },
     { name = "mmcv", marker = "extra == 'cuda'", specifier = ">=2.1.0" },
     { name = "mmengine", marker = "extra == 'cuda'", specifier = ">=0.10.3" },
     { name = "moondream" },
@@ -4244,6 +4246,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c7/74/97e72a36efd4ae2bccb3463284300f8953f199b5ffbc04cbbb0ec78f74b1/matplotlib_inline-0.2.1.tar.gz", hash = "sha256:e1ee949c340d771fc39e241ea75683deb94762c8fa5f2927ec57c83c4dffa9fe", size = 8110, upload-time = "2025-10-23T09:00:22.126Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/af/33/ee4519fa02ed11a94aef9559552f3b17bb863f2ecfe1a35dc7f548cde231/matplotlib_inline-0.2.1-py3-none-any.whl", hash = "sha256:d56ce5156ba6085e00a9d54fead6ed29a9c47e215cd1bba2e976ef39f5710a76", size = 9516, upload-time = "2025-10-23T09:00:20.675Z" },
+]
+
+[[package]]
+name = "md-babel-py"
+version = "1.0.6"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/bc/ba/a1b640054eab71b8bd546f488c6f00749778bee352ee78d548bf16b40ea5/md_babel_py-1.0.6.tar.gz", hash = "sha256:1f36abfde8bb64eda9e3f270b2c20eed8dc2ea305fdce2e4aa504ca4cceb98f7", size = 25915, upload-time = "2025-12-31T06:11:01.676Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/12/76aa2ec059aa34d3bfda307075826456658d4e5adb96383ec24fc42e8558/md_babel_py-1.0.6-py3-none-any.whl", hash = "sha256:070a73e4e7ea1707187d6ee7a24a7103553bf39e770fc62fff61c7b4e8c2d402", size = 22471, upload-time = "2025-12-31T06:11:00.095Z" },
 ]
 
 [[package]]

@@ -48,7 +48,7 @@ class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
-    frequency: float = 30.0  # target fps, selects sharpest frame per window. 0 = passthrough
+    frequency: float = 0.0  # target fps, selects sharpest frame per window. 0 = passthrough
 
 
 class CameraModule(Module[CameraModuleConfig], spec.Camera):
