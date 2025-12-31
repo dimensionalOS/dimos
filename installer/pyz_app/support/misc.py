@@ -20,7 +20,6 @@ import os
 from pathlib import Path
 import re
 from typing import Any
-import urllib.request
 
 from . import pip_dependency_database as dep_db, prompt_tools as p
 from .dax import command_exists, run_command
@@ -41,24 +40,7 @@ dev = True  # FIXME: change before release
 
 @cache
 def get_project_toml(branch: str = "main") -> dict[str, Any]:
-    if dev:
-        project_dir = run_command(
-            ["git", "rev-parse", "--show-toplevel"], capture_output=True
-        ).stdout.strip()
-        with open(f"{project_dir}/pyproject.toml") as f:
-            toml_text = f.read()
-            return tomllib.loads(toml_text)
-
-    url = (
-        f"https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/{branch}/pyproject.toml"
-    )
-    try:
-        with urllib.request.urlopen(url) as resp:  # nosec: trusted host, same as TS helper
-            toml_text = resp.read().decode("utf-8")
-        return tomllib.loads(toml_text)
-    except Exception as exc:  # pragma: no cover - network dependent
-        raise RuntimeError(f"Unable to download/parse pyproject.toml for dimos: {exc}") from exc
-
+    return tomllib.loads(dep_db.PROJECT_TOML)
 
 def get_system_deps(feature: str | None):
     toml_data = get_project_toml()
