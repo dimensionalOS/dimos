@@ -106,6 +106,7 @@ class RenderLogo:
         max_stored_lines: int = 50_000,
         separator_char: str = "─",
         wrap_long_words: bool = True,
+        is_centered: bool = False,
     ) -> None:
         self._enabled = sys.stdout.isatty()
         self.banner = banner
@@ -121,6 +122,7 @@ class RenderLogo:
         self.max_stored_lines = max_stored_lines
         self.separator_char = separator_char
         self.wrap_long_words = wrap_long_words
+        self.is_centered = is_centered
 
         self.frame_s = max(0.001, 1.0 / self.fps)
 
@@ -237,7 +239,10 @@ class RenderLogo:
         self.banner = chosen
 
         max_len = max((len(l) for l in self.banner), default=0)
-        left_pad = max(0, (cols - max_len) // 2)
+        if self.is_centered:
+            left_pad = max(0, (cols - max_len) // 2)
+        else:
+            left_pad = 0
         content_width = max(1, cols - left_pad)
 
         # Compute how many rows we can use for logs and how much slack is left.
@@ -246,10 +251,9 @@ class RenderLogo:
         start_idx = max(0, len(self._log_lines) - max_log_rows)
         visible = self._log_lines[start_idx:]
 
-        # If logs don't fill the available space, use some of the slack to push the banner down.
-        unused_rows = max(0, rows - static_height - len(visible))
-        top_pad = unused_rows // 2  # simple centering of the whole block
-        bottom_pad = unused_rows - top_pad
+        # Keep banner near top; no extra top padding, bottom fills rest.
+        top_pad = 0
+        bottom_pad = max(0, rows - (static_height + len(visible)))
 
         out_lines: list[str] = []
         # mimic log-update behavior: move to home and erase down, then draw
@@ -339,9 +343,11 @@ class RenderLogo:
         # Similar "rowPhase" trick to JS; Python doesn't have >>>, so keep it simple+stable.
         row_phase = ((y * 1103515245 + 12345) % 1000) / 1000.0
 
-        base = 38
-        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.5 + 0.5
-        c = base + round(w * self.wave_strength)
+        # Bias toward blues (roughly 33–75 range in 256 palette), with a small green component.
+        blue_base = 33  # near blue start in 256 palette
+        blue_span = max(1, self.wave_strength)  # wave_strength still controls spread
+        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.75
+        c = blue_base + round(w * blue_span)
 
         if is_glitched:
             return 51

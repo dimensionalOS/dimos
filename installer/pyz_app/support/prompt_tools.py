@@ -31,38 +31,41 @@ FG_GREEN = "\x1b[32m"
 FG_YELLOW = "\x1b[33m"
 FG_CYAN = "\x1b[36m"
 
+def _color_help(text, style):
+    # there is a smarter way to do this, but this works for now
+    return text.replace(RESET,RESET+style)
 
 def clear_screen() -> None:
     print("\x1b[2J")
 
 
 def header(text: str) -> None:
-    print("\n" * 100)
-    clear_screen()
+    print("\n" * 10)
+    # clear_screen()
     print(f"{BOLD}{FG_GREEN}#{RESET}")
-    print(f"{BOLD}{FG_GREEN}# {text}{RESET}")
+    print(f"{BOLD}{FG_GREEN}# {_color_help(text,BOLD+FG_GREEN)}{RESET}")
     print(f"{BOLD}{FG_GREEN}#{RESET}")
     print()
 
 
 def sub_header(text: str) -> None:
-    print(f"{BOLD}{FG_YELLOW}{text}{RESET}")
+    print(f"{BOLD}{FG_YELLOW}{_color_help(text,BOLD+FG_YELLOW)}{RESET}")
 
 
 def boring_log(text: str) -> None:
-    print(f"{DIM}{text}{RESET}")
+    print(f"{DIM}{_color_help(text,DIM)}{RESET}")
 
 
 def error(text: str) -> None:
-    print(f"{FG_RED}{text}{RESET}")
+    print(f"{FG_RED}{_color_help(text,FG_RED)}{RESET}")
 
 
 def warning(text: str) -> None:
-    print(f"{FG_YELLOW}Warning: {RESET}{text}")
+    print(f"{FG_YELLOW}Warning: {RESET}{_color_help(text,FG_YELLOW)}{RESET}")
 
 
 def highlight(text: str) -> str:
-    return f"{FG_CYAN}{text}{RESET}"
+    return f"{FG_CYAN}{_color_help(text,FG_CYAN)}{RESET}"
 
 
 def confirm(text: str) -> bool:

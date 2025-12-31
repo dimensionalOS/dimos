@@ -164,7 +164,7 @@ def ensure_python() -> str:
 def get_project_directory() -> Path:
     global _project_directory
     if _project_directory is None:
-        p.console.print("Dimos needs to be installed to a project (not just a global install)")
+        print("Dimos needs to be installed to a project (not just a global install)")
         if p.ask_yes_no("Are you currently in a project directory?"):
             _project_directory = Path.cwd()
         else:
@@ -189,10 +189,10 @@ def apt_install(package_names: list[str]) -> None:
     for each_pkg in package_names:
         res = run_command(["dpkg", "-s", each_pkg], dry_run=dry_run)
         if res.code == 0:
-            p.console.print(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
+            p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
             continue
 
-        p.sub_header(f"- installing {p.highlight(each_pkg)}")
+        p.sub_header(f"- installing {p.highlight(each_pkg)}\n")
         install_res = run_command(
             ["sudo", "apt-get", "install", "-y", each_pkg], print_command=True, dry_run=dry_run
         )
@@ -253,9 +253,9 @@ def brew_install(package_names: list[str]) -> None:
 
     failed: list[str] = []
     for pkg in package_names:
-        res = run_command(["brew", "list", pkg], dry_run=dry_run)
+        res = run_command(["brew", "list", pkg], capture_output=True) # intentionally not dry_run
         if res.code == 0:
-            p.console.print(f"- ✅ looks like {p.highlight(pkg)} is already installed")
+            p.sub_header(f"- ✅ looks like {p.highlight(pkg)} is already installed")
             continue
         p.sub_header(f"- installing {p.highlight(pkg)}")
         install_res = run_command(["brew", "install", pkg], print_command=True, dry_run=dry_run)

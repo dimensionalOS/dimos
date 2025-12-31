@@ -21,6 +21,7 @@ import shlex
 import shutil
 import subprocess
 from typing import TYPE_CHECKING
+import sys
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -74,18 +75,70 @@ def run_command(
     env: dict[str, str] | None = None,
     print_command: bool = False,
     dry_run: bool = False,
+    output_preview: bool = False,
 ) -> CommandResult:
     cmd_list = _normalize_cmd(cmd)
 
     if dry_run:
         if print_command:
-            print(f"$ {' '.join(cmd_list)}")
+            print(f"DRY: $ {' '.join(cmd_list)}")
         else:
-            print(f"> {' '.join(cmd_list)}")
-        return CommandResult(code=0, stdout="", stderr="")
+            print(f"DRY: > {' '.join(cmd_list)}")
+        return CommandResult(
+            code=0,
+            _stdout="" if capture_output else None,
+            _stderr="" if capture_output else None,
+            _captured=capture_output,
+        )
 
     if print_command:
         print(f"$ {' '.join(cmd_list)}")
+
+    if output_preview and capture_output:
+        # stream line-by-line with \r, while capturing
+        process = subprocess.Popen(
+            cmd_list,
+            cwd=str(cwd) if cwd is not None else None,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        combined_chunks: list[str] = []
+        term_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+
+        def _emit(line: str):
+            clipped = (line.rstrip("\n")).replace("\r", "")
+            if len(clipped) > term_width - 1:
+                clipped = clipped[: term_width - 1]
+            sys.stdout.write("\r" + clipped + " " * max(0, term_width - len(clipped) - 1))
+            sys.stdout.flush()
+            combined_chunks.append(line)
+
+        # read stdout/stderr interleaved-ish
+        while True:
+            out_line = process.stdout.readline() if process.stdout else ""
+            err_line = process.stderr.readline() if process.stderr else ""
+            if not out_line and not err_line and process.poll() is not None:
+                break
+            if out_line:
+                _emit(out_line)
+            if err_line:
+                _emit(err_line)
+
+        code = process.wait()
+        sys.stdout.write("\n")
+        stdout_combined = "".join(combined_chunks)
+        if code != 0:
+            print("---- command output ----")
+            print(stdout_combined)
+            print("------------------------")
+        return CommandResult(
+            code=code,
+            _stdout=stdout_combined,
+            _stderr="",
+            _captured=True,
+        )
 
     completed = subprocess.run(
         cmd_list,

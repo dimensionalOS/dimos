@@ -68,25 +68,28 @@ def phase1(system_analysis, selected_features):
             )
             exit(1)
         if p.confirm("Install these system dependencies for you via Homebrew?"):
-            dependencies = deps["brew_deps"]
-            print(f"""dependencies = {dependencies}""")
-            brew_install(deps["brew_deps"])
-            tools_were_auto_installed = True
-            # try:
-            # except Exception as err:
-            #     p.error(str(err))
+            try:
+                dependencies = deps["brew_deps"]
+                brew_install(deps["brew_deps"])
+                tools_were_auto_installed = True
+            except Exception as err:
+                p.error(str(err))
         else:
             proceed = p.confirm("Proceed to the next step without installing system dependencies?")
             if not proceed:
                 print("- ❌ Please install the listed dependencies and rerun.")
                 raise SystemExit(1)
-
+    
+    print()
+    print()
+    print()
     if not tools_were_auto_installed:
         p.confirm(
             "I can't confirm that all those tools are installed\nPress enter to continue anyway, or CTRL+C to cancel and install them yourself"
         )
-
-    p.confirm("Press enter to continue to next phase")
+    else:
+        p.boring_log("- all system dependencies appear to be installed")
+        p.confirm("Press enter to continue to next phase")
 
 
 def mention_system_dependencies(human_names_deps):
