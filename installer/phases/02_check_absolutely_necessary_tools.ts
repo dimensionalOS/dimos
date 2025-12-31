@@ -24,6 +24,11 @@ export async function phase2(systemAnalysis, selectedFeatures) {
             console.log("- Please install these system dependencies and re-run this command from the terminal")
             Deno.exit(1)
         }
+        if (selectedFeatures.includes("cuda")) {
+            if (!systemAnalysis.cuda.exists) {
+                p.error("you selected the CUDA feature but I don't see CUDA support in your system")
+            }
+        }
         await ensureVenvActive(pythonCmd)
     } catch (error) {
         console.log(``)
