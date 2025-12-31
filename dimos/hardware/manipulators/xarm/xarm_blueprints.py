@@ -22,19 +22,21 @@ Usage:
     # Run via CLI:
     dimos run xarm-servo           # Driver only
     dimos run xarm-cartesian       # Driver + Cartesian motion controller
+    dimos run xarm-trajectory      # Driver + Joint trajectory controller
 
     # Or programmatically:
-    from dimos.hardware.manipulators.xarm.xarm_blueprints import xarm_cartesian
-    coordinator = xarm_cartesian.build()
+    from dimos.hardware.manipulators.xarm.xarm_blueprints import xarm_trajectory
+    coordinator = xarm_trajectory.build()
     coordinator.loop()
 """
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
 from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver
-from dimos.manipulation.control import cartesian_motion_controller
+from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+from dimos.msgs.trajectory_msgs import JointTrajectory
 
 # =============================================================================
 # xArm Servo Control Blueprint
@@ -150,4 +152,35 @@ xarm_cartesian = autoconnect(
     }
 )
 
-__all__ = ["xarm5_servo", "xarm7_servo", "xarm_cartesian", "xarm_servo"]
+# =============================================================================
+# xArm Trajectory Control Blueprint (Driver + Trajectory Controller)
+# =============================================================================
+# Combines XArmDriver with JointTrajectoryController for trajectory execution.
+# The controller receives JointTrajectory messages and executes them at 100Hz.
+# =============================================================================
+
+xarm_trajectory = autoconnect(
+    xarm_driver(
+        ip_address="192.168.1.210",
+        xarm_type="xarm6",
+        report_type="dev",
+        enable_on_start=True,
+        control_frequency=100.0,
+    ),
+    joint_trajectory_controller(
+        control_frequency=100.0,
+    ),
+).transports(
+    {
+        # Shared topics between driver and controller
+        ("joint_state", JointState): LCMTransport("/xarm/joint_states", JointState),
+        ("robot_state", RobotState): LCMTransport("/xarm/robot_state", RobotState),
+        ("joint_position_command", JointCommand): LCMTransport(
+            "/xarm/joint_position_command", JointCommand
+        ),
+        # Trajectory input topic
+        ("trajectory", JointTrajectory): LCMTransport("/trajectory", JointTrajectory),
+    }
+)
+
+__all__ = ["xarm5_servo", "xarm7_servo", "xarm_cartesian", "xarm_servo", "xarm_trajectory"]
