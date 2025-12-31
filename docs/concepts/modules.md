@@ -9,7 +9,7 @@ Some examples of are:
 
 - Webcam (outputs image)
 - Navigation (inputs a map and a target, outputs a path)
-- Detection (takes an image and a vision model like yolo, outputs a stream of detections)
+- Detection (takes an image and a vision model like YOLO, outputs a stream of detections)
 
 Below is an example of a structure for controlling a robot. Black blocks represent modules and colored lines are connections and message types. It's okay if this doesn't make sense now, it will by the end of this document.
 
