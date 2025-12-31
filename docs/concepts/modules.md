@@ -11,8 +11,7 @@ Some examples of are:
 - Navigation (inputs a map and a target, outputs a path)
 - Detection (takes an image and a vision model like yolo, outputs a stream of detections)
 
-A common module structure for controling a robot looks something like this, black blocks are modules, colored lines are connections and message types, it's ok if this doesn't make sense now,
-it will by the end of this document.
+Below is an example of a structure for controlling a robot. Black blocks represent modules and colored lines are connections and message types. It's okay if this doesn't make sense now, it will by the end of this document.
 
 ```python output=assets/go2_basic.svg
 from dimos.core.introspection.blueprint import dot2
