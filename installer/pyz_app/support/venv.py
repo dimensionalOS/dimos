@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import os
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator, List
+
+
+def _remove_from_path(path_to_remove: Path) -> None:
+    path_to_remove = path_to_remove.resolve()
+    parts = [Path(p) for p in os.environ.get("PATH", "").split(os.pathsep) if p]
+    filtered = [str(p) for p in parts if p.resolve() != path_to_remove]
+    os.environ["PATH"] = os.pathsep.join(filtered)
+
+
+def deactivate_external() -> None:
+    old_virtual_path = os.environ.pop("_OLD_VIRTUAL_PATH", "")
+    if old_virtual_path:
+        env_path = os.environ.get("VIRTUAL_ENV")
+        if env_path:
+            _remove_from_path(Path(env_path) / "bin")
+        else:
+            os.environ["PATH"] = old_virtual_path
+    os.environ.pop("_OLD_VIRTUAL_PYTHONHOME", None)
+    os.environ.pop("_OLD_VIRTUAL_PS1", None)
+    os.environ.pop("VIRTUAL_ENV", None)
+    os.environ.pop("VIRTUAL_ENV_PROMPT", None)
+
+
+def activate_venv(project_directory: str | Path):
+    project_directory = Path(project_directory).resolve()
+    bin_dir = project_directory / ("Scripts" if os.name == "nt" else "bin")
+
+    old_env = dict(os.environ)
+    deactivate_external()
+
+    os.environ["VIRTUAL_ENV"] = str(project_directory)
+    os.environ["_OLD_VIRTUAL_PATH"] = old_env.get("PATH", "")
+    os.environ["PATH"] = os.pathsep.join([str(bin_dir)] + [old_env.get("PATH", "")])
+    if "PYTHONHOME" in os.environ:
+        os.environ["_OLD_VIRTUAL_PYTHONHOME"] = os.environ["PYTHONHOME"]
+        os.environ.pop("PYTHONHOME", None)
+
+    def deactivate():
+        os.environ.clear()
+        os.environ.update(old_env)
+
+    return deactivate
+
+
+def get_venv_dirs_at(path: str | Path) -> List[str]:
+    path = Path(path)
+    valid_activate_paths: list[str] = []
+    for activate_file in path.glob("*/bin/activate"):
+        python_cmd = activate_file.parent / "python"
+        if python_cmd.is_file():
+            valid_activate_paths.append(str(activate_file.parent.parent))
+    return valid_activate_paths
+
+
+@contextmanager
+def activated_venv(project_directory: str | Path) -> Iterator[None]:
+    deactivate = activate_venv(project_directory)
+    try:
+        yield
+    finally:
+        deactivate()
+
+
+__all__ = ["activate_venv", "activated_venv", "deactivate_external", "get_venv_dirs_at"]
