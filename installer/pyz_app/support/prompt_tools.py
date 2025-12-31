@@ -18,12 +18,17 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, List, Tuple, Union
 
 from InquirerPy import inquirer
-from rich.console import Console
-
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-console = Console()
+# Manual ANSI helpers (basic 8-color + bold/dim)
+RESET = "\x1b[0m"
+BOLD = "\x1b[1m"
+DIM = "\x1b[2m"
+FG_RED = "\x1b[31m"
+FG_GREEN = "\x1b[32m"
+FG_YELLOW = "\x1b[33m"
+FG_CYAN = "\x1b[36m"
 
 
 def clear_screen() -> None:
@@ -31,27 +36,31 @@ def clear_screen() -> None:
 
 
 def header(text: str) -> None:
-    console.print(f"[bold green]{text}[/]")
+    clear_screen()
+    print(f"{BOLD}{FG_GREEN}#{RESET}")
+    print(f"{BOLD}{FG_GREEN}# {text}{RESET}")
+    print(f"{BOLD}{FG_GREEN}#{RESET}")
+    print()
 
 
 def sub_header(text: str) -> None:
-    console.print(f"[bold yellow]{text}[/]")
+    print(f"{BOLD}{FG_YELLOW}{text}{RESET}")
 
 
 def boring_log(text: str) -> None:
-    console.print(f"[dim]{text}[/]")
+    print(f"{DIM}{text}{RESET}")
 
 
 def error(text: str) -> None:
-    console.print(f"[red]{text}[/]")
+    print(f"{FG_RED}{text}{RESET}")
 
 
 def warning(text: str) -> None:
-    console.print(f"[yellow]{text}[/]")
+    print(f"{FG_YELLOW}Warning: {RESET}{text}")
 
 
 def highlight(text: str) -> str:
-    return f"[cyan]{text}[/]"
+    return f"{FG_CYAN}{text}{RESET}"
 
 
 def confirm(text: str) -> bool:
