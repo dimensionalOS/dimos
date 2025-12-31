@@ -48,9 +48,6 @@ def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
 
 
-dry_run = False
-
-
 def run_command(
     cmd: str | Sequence[str] | Iterable[str],
     *,
@@ -59,20 +56,17 @@ def run_command(
     cwd: str | Path | None = None,
     env: dict[str, str] | None = None,
     print_command: bool = False,
+    dry_run: bool = False,
 ) -> CommandResult:
+    cmd_list = _normalize_cmd(cmd)
+
     if dry_run:
         if print_command:
             print(f"$ {' '.join(cmd_list)}")
         else:
             print(f"> {' '.join(cmd_list)}")
+        return CommandResult(code=0, stdout="", stderr="")
 
-        return CommandResult(
-            code=0,
-            stdout="",
-            stderr="",
-        )
-
-    cmd_list = _normalize_cmd(cmd)
     if print_command:
         print(f"$ {' '.join(cmd_list)}")
 

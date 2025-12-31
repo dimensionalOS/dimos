@@ -32,7 +32,9 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older interpreter
 
 _project_directory: Path | None = None
 _already_called_apt_get_update = False
+_already_called_brew_update = False
 
+dry_run = True
 
 @cache
 def get_project_toml(branch: str = "main") -> dict[str, Any]:
@@ -119,14 +121,14 @@ def detect_python_command() -> str | None:
 def ensure_git_and_lfs() -> None:
     if not command_exists("git"):
         raise RuntimeError("- ❌ git is required. Please install git and rerun.")
-    git_lfs_res = run_command(["git", "lfs", "version"])
+    git_lfs_res = run_command(["git", "lfs", "version"]) # intentionally not part of dry_run
     if git_lfs_res.code != 0:
         raise RuntimeError("- ❌ git-lfs is required. Please install git-lfs and rerun.")
 
 
 def ensure_port_audio() -> None:
     p.boring_log("Checking if portaudio is available")
-    port_audio_res = run_command(
+    port_audio_res = run_command( # intentionally not part of dry_run
         ["pkg-config", "--modversion", "portaudio-2.0"], print_command=True
     )
     if port_audio_res.code != 0:
@@ -137,7 +139,7 @@ def ensure_python() -> str:
     python_cmd = detect_python_command()
     if not python_cmd:
         raise RuntimeError("- ❌ Python 3.10+ is required but was not found.")
-    version_res = run_command([python_cmd, "--version"])
+    version_res = run_command([python_cmd, "--version"]) # intentionally not part of dry_run
     version_text = (version_res.stdout or version_res.stderr or "").strip()
     parsed = parse_version(version_text)
     if not parsed or not is_version_at_least(parsed, "3.10.0"):
@@ -164,21 +166,21 @@ def apt_install(package_names: list[str]) -> None:
         return
 
     if not _already_called_apt_get_update:
-        update_res = run_command(["sudo", "apt-get", "update"], print_command=True)
+        update_res = run_command(["sudo", "apt-get", "update"], print_command=True, dry_run=dry_run)
         if update_res.code != 0:
             raise RuntimeError(f"sudo apt-get update failed: {update_res.code}")
         _already_called_apt_get_update = True
 
     failed_packages: list[str] = []
     for each_pkg in package_names:
-        res = run_command(["dpkg", "-s", each_pkg])
+        res = run_command(["dpkg", "-s", each_pkg], dry_run=dry_run)
         if res.code == 0:
             p.console.print(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
             continue
 
         p.sub_header(f"- installing {p.highlight(each_pkg)}")
         install_res = run_command(
-            ["sudo", "apt-get", "install", "-y", each_pkg], print_command=True
+            ["sudo", "apt-get", "install", "-y", each_pkg], print_command=True, dry_run=dry_run
         )
         if install_res.code != 0:
             failed_packages.append(each_pkg)
@@ -189,6 +191,56 @@ def apt_install(package_names: list[str]) -> None:
             f"apt-get install failed for: {' '.join(failed_packages)}\n"
             f"Try to install them yourself with\n{cmds}"
         )
+
+
+def ensure_xcode_cli_tools() -> None:
+    try:
+        run_command(["xcode-select", "-p"], check=True, capture_output=True) # intentionally not part of dry_run
+    except Exception:
+        p.warning("Xcode Command Line Tools not detected.")
+        if p.confirm("Install Xcode Command Line Tools now?"):
+            res = run_command(["xcode-select", "--install"], check=True, dry_run=dry_run)
+            if res.code != 0:
+                raise RuntimeError("Failed to trigger Xcode Command Line Tools installation.")
+
+
+def ensure_homebrew() -> None:
+    if command_exists("brew"):
+        return
+    p.warning("Homebrew not detected.")
+    if not p.confirm("Install Homebrew now? (will run the official install script)"):
+        raise RuntimeError("Homebrew is required for automatic dependency install.")
+    cmd = ["bash", "-c", 'curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash']
+    res = run_command(cmd, check=True, print_command=True, dry_run=dry_run)
+    if res.code != 0:
+        raise RuntimeError("Homebrew installation failed.")
+
+
+def brew_install(package_names: list[str]) -> None:
+    global _already_called_brew_update
+    if not package_names:
+        return
+
+    ensure_homebrew()
+    if not _already_called_brew_update:
+        res = run_command(["brew", "update"], print_command=True, dry_run=dry_run)
+        if res.code != 0:
+            raise RuntimeError(f"brew update failed: {res.code}")
+        _already_called_brew_update = True
+
+    failed: list[str] = []
+    for pkg in package_names:
+        res = run_command(["brew", "list", pkg], dry_run=dry_run)
+        if res.code == 0:
+            p.console.print(f"- ✅ looks like {p.highlight(pkg)} is already installed")
+            continue
+        p.sub_header(f"- installing {p.highlight(pkg)}")
+        install_res = run_command(["brew", "install", pkg], print_command=True, dry_run=dry_run)
+        if install_res.code != 0:
+            failed.append(pkg)
+
+    if failed:
+        raise RuntimeError(f"brew install failed for: {' '.join(failed)}")
 
 
 def add_git_ignore_patterns(
@@ -204,15 +256,15 @@ def add_git_ignore_patterns(
         return {
             "updated": False,
             "added": [],
-            "alreadyPresent": [],
-            "ignoreDidNotExist": True,
+            "already_present": [],
+            "ignore_did_not_exist": True,
         }
     if not gitignore_path.exists():
         return {
             "updated": False,
             "added": [],
-            "alreadyPresent": list(patterns),
-            "ignoreDidNotExist": False,
+            "already_present": list(patterns),
+            "ignore_did_not_exist": False,
         }
 
     original = gitignore_path.read_text()
@@ -236,8 +288,8 @@ def add_git_ignore_patterns(
         return {
             "updated": False,
             "added": [],
-            "alreadyPresent": already_present,
-            "ignoreDidNotExist": False,
+            "already_present": already_present,
+            "ignore_did_not_exist": False,
         }
 
     new_lines: list[str] = []
@@ -262,21 +314,25 @@ def add_git_ignore_patterns(
     return {
         "updated": True,
         "added": added,
-        "alreadyPresent": already_present,
-        "ignoreDidNotExist": False,
+        "already_present": already_present,
+        "ignore_did_not_exist": False,
     }
 
 
 __all__ = [
     "add_git_ignore_patterns",
     "apt_install",
+    "brew_install",
     "detect_python_command",
     "ensure_git_and_lfs",
+    "ensure_homebrew",
     "ensure_port_audio",
+    "ensure_xcode_cli_tools",
     "ensure_python",
     "get_project_directory",
     "get_project_toml",
     "get_system_deps",
     "is_version_at_least",
     "parse_version",
+    "dry_run",
 ]

@@ -4,7 +4,7 @@ from __future__ import annotations
 from ..support.constants import dependencyListHumanNames
 from ..support.dax import command_exists
 from ..support.get_tool_check_results import get_tool_check_results
-from ..support.misc import apt_install, get_system_deps
+from ..support.misc import apt_install, brew_install, ensure_homebrew, ensure_xcode_cli_tools, get_system_deps
 from ..support import prompt_tools as p
 
 
@@ -37,6 +37,23 @@ def phase1(system_analysis, selected_features):
             if not proceed:
                 print("- ❌ Please install the listed dependencies and rerun.")
                 raise SystemExit(1)
+    elif os_info.get("name") == "macos":
+        p.boring_log("Detected macOS")
+        try:
+            ensure_xcode_cli_tools()
+        except Exception as err:
+            p.error(str(err))
+        if p.confirm("Install these system dependencies for you via Homebrew?"):
+            try:
+                brew_install(deps["brewDeps"])
+                tools_were_auto_installed = True
+            except Exception as err:
+                p.error(str(err))
+        else:
+            proceed = p.confirm("Proceed to the next step without installing system dependencies?")
+            if not proceed:
+                print("- ❌ Please install the listed dependencies and rerun.")
+                raise SystemExit(1)
 
     if not tools_were_auto_installed:
         p.confirm(
@@ -45,7 +62,7 @@ def phase1(system_analysis, selected_features):
 
 
 def mention_system_dependencies():
-    print("- we will need the following system dependencies:")
+    print("- Dimos will likely need the following system dependencies:")
     missing_deps = [dep for dep in dependencyListHumanNames if not command_exists(dep)]
     for dep in missing_deps:
         print(f"  • {p.highlight(dep)}")

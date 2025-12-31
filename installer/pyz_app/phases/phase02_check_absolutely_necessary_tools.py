@@ -12,6 +12,7 @@ from ..support.misc import (
     ensure_port_audio,
     ensure_python,
     get_project_directory,
+    dry_run,
 )
 from ..support import prompt_tools as p
 from ..support.venv import activate_venv, get_venv_dirs_at
@@ -74,7 +75,7 @@ def ensure_venv_active(python_cmd: str):
             raise RuntimeError("- ❌ A virtual environment is required to install dimos. Please set one up then rerun this command.")
         venv_dir = Path(project_directory) / DEFAULT_VENV_NAME
         p.boring_log(f"- creating virtual environment at {venv_dir}")
-        venv_res = run_command([python_cmd, "-m", "venv", str(venv_dir)])
+        venv_res = run_command([python_cmd, "-m", "venv", str(venv_dir)], dry_run=dry_run)
         if venv_res.code != 0:
             raise RuntimeError("- ❌ Failed to create virtual environment. Please create one manually and rerun this command.")
         add_git_ignore_patterns(project_directory, [f"/{DEFAULT_VENV_NAME}"], {"comment": "Added by dimos setup"})
