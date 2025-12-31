@@ -160,14 +160,16 @@ coordinator = blueprint.build()
 module_coordinator.stop()  # Clean up when finished
 ```
 
-## How the blueprint system works, in more detail
+## How the blueprint system works, in more detail (Advanced)
 
 Now that we've seen what blueprints are, at a high level, and how to build and run them,
 we are in a position to dive into details that are helpful for building more complicated systems, such as
 
-- how the blueprint system matches compatible streams
-- what happens if the same module is supplied more than once to `autoconnect`
+- how the blueprint system matches compatible streams, and what to do when stream names don't match
 - how to override the default configuration
+
+> [!TIP]
+> Feel free to skip this section on first read -- you can always come back when you need the details.
 
 ### How the blueprint system matches compatible streams
 
@@ -196,16 +198,35 @@ blueprint = autoconnect(
 
 Matching on not just the name but also the *type* prevents mistakes: an `Out[Temperature]` won't connect to `In[Pressure]` even if both are named `data`.
 
-### Last-wins duplicate elimination
+### Order and override behavior
 
-If you include the same module multiple times, the last one wins:
+For stream wiring, the order of the Module arguments to `autoconnect()` doesn't matter -- connections match by name and type regardless.
+
+However, order *does* matter for blueprint composition. This lets you extend a base blueprint while overriding specific modules or configuration.
+
+In particular, when the same module class appears multiple times, **later occurrences override earlier ones**:
 <!-- Citation: blueprints.py:507-515 - _eliminate_duplicates processes in reverse so newer blueprints override older -->
 
 ```python
-basic = autoconnect(camera(), basic_planner())
-advanced = autoconnect(basic, advanced_planner())
-# Result: camera + advanced_planner (basic_planner replaced)
+# Base configuration
+base = autoconnect(
+    mapper(voxel_size=0.5),
+    planner(algorithm="basic"),
+).global_config(n_dask_workers=4)
+
+# Override planner params and worker count
+advanced = autoconnect(
+    base,
+    planner(algorithm="advanced", lookahead=10),  # Replaces earlier planner
+).global_config(n_dask_workers=8)
+
+# Result: mapper(0.5) + planner(advanced, lookahead=10), 8 workers
 ```
+
+This makes it easy to build configurations in layers, or create environment-specific variants (e.g. sim vs real), without repeating yourself.
+
+> [!NOTE]
+> The same last-wins rule applies to `.transports()`, `.global_config()`, and `.remappings()`: later specifications override earlier ones.
 
 ### Topic
 
@@ -284,7 +305,7 @@ But, as noted earlier, you aren't confined to the defaults -- you can choose wha
 ```python
 blueprint = autoconnect(...)
 expanded_blueprint = autoconnect(blueprint, ...)
-blueprint = blueprint.transports({
+final_blueprint = expanded_blueprint.transports({
     ("image", Image): pSHMTransport(
         "/go2/color_image", default_capacity=DEFAULT_CAPACITY_COLOR_IMAGE
     ),
