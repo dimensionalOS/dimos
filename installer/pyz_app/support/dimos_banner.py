@@ -59,7 +59,8 @@ ANSI_RESET = "\x1b[0m"
 ANSI_DIM = "\x1b[2m"
 ANSI_CURSOR_HIDE = "\x1b[?25l"
 ANSI_CURSOR_SHOW = "\x1b[?25h"
-ANSI_CLEAR_SCREEN = "\x1b[2J\x1b[H"  # clear + home
+ANSI_HOME = "\x1b[H"
+ANSI_ERASE_DOWN = "\x1b[J"
 
 
 @dataclass
@@ -88,6 +89,7 @@ class RenderLogo:
         separator_char: str = "─",
         wrap_long_words: bool = True,
     ) -> None:
+        self._enabled = sys.stdout.isatty()
         self.banner = banner
         self.glitchyness = glitchyness
         self.stickyness = stickyness
@@ -116,18 +118,26 @@ class RenderLogo:
 
         self._t = 0
         self._stop_evt = threading.Event()
-        self._thread = threading.Thread(target=self._run, name="RenderLogo", daemon=True)
+        self._thread: threading.Thread | None = None
 
         # Ensure we restore the terminal even if user forgets.
         atexit.register(self.stop)
 
-        self._thread.start()
+        if self._enabled:
+            self._thread = threading.Thread(target=self._run, name="RenderLogo", daemon=True)
+            self._thread.start()
 
     # -----------------------
     # Public API
     # -----------------------
 
     def log(self, *args: Any) -> None:
+        if not self._enabled:
+            msg = " ".join(self._stringify(a) for a in args)
+            # match log-update fallback: just print a line without animation churn
+            print(msg)
+            return
+
         msg = " ".join(self._stringify(a) for a in args)
 
         cols, _rows = self._term_size()
@@ -152,17 +162,19 @@ class RenderLogo:
             return
         self._stop_evt.set()
         # Best-effort join without risking hangs in weird envs.
-        try:
-            self._thread.join(timeout=0.2)
-        except Exception:
-            pass
+        if self._thread:
+            try:
+                self._thread.join(timeout=0.2)
+            except Exception:
+                pass
 
         # Clear animation artifacts and restore cursor.
-        try:
-            sys.stdout.write(ANSI_CURSOR_SHOW + ANSI_RESET + "\n")
-            sys.stdout.flush()
-        except Exception:
-            pass
+        if self._enabled:
+            try:
+                sys.stdout.write(ANSI_CURSOR_SHOW + ANSI_RESET + "\n")
+                sys.stdout.flush()
+            except Exception:
+                pass
 
     # -----------------------
     # Loop + rendering
@@ -208,7 +220,8 @@ class RenderLogo:
         bottom_pad = unused_rows - top_pad
 
         out_lines: list[str] = []
-        out_lines.append(ANSI_CLEAR_SCREEN)
+        # mimic log-update behavior: move to home and erase down, then draw
+        out_lines.append(ANSI_HOME + ANSI_ERASE_DOWN)
 
         # Optional top padding to avoid hugging the top of the terminal.
         for _ in range(top_pad):
