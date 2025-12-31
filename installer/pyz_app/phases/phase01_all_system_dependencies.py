@@ -16,13 +16,11 @@
 from __future__ import annotations
 
 from ..support import prompt_tools as p
-from ..support.constants import dependency_list_human_names
 from ..support.dax import command_exists
 from ..support.get_tool_check_results import get_tool_check_results
 from ..support.misc import (
     apt_install,
     brew_install,
-    ensure_homebrew,
     ensure_xcode_cli_tools,
     get_system_deps,
 )
@@ -35,7 +33,7 @@ def phase1(system_analysis, selected_features):
         system_analysis = get_tool_check_results()
 
     deps = get_system_deps(selected_features or None)
-    mention_system_dependencies()
+    mention_system_dependencies(deps["human_names"])
     print()
     print()
 
@@ -91,8 +89,8 @@ def phase1(system_analysis, selected_features):
     p.confirm("Press enter to continue to next phase")
 
 
-def mention_system_dependencies():
+def mention_system_dependencies(human_names_deps):
     print("- Dimos will likely need the following system dependencies:")
-    missing_deps = [dep for dep in dependency_list_human_names if not command_exists(dep)]
+    missing_deps = [dep for dep in human_names_deps if not command_exists(dep)]
     for dep in missing_deps:
         print(f"  • {p.highlight(dep)}")

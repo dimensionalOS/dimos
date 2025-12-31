@@ -24,6 +24,7 @@ import urllib.request
 
 from . import pip_dependency_database as dep_db, prompt_tools as p
 from .dax import command_exists, run_command
+from .constants import dependency_list_human_names
 
 try:
     import tomllib
@@ -78,6 +79,8 @@ def get_system_deps(feature: str | None):
     missing: list[str] = []
 
     for pip_dep in pip_deps:
+        pip_dep = pip_dep.lower()
+        
         pip_dep_no_feature = re.sub(r"\[.+", "", pip_dep)
         system_dep_info = dep_db.DATA.get(pip_dep) or dep_db.DATA.get(pip_dep_no_feature)
         if not system_dep_info:
@@ -97,6 +100,7 @@ def get_system_deps(feature: str | None):
         "nix_deps": sorted(nix_deps),
         "brew_deps": sorted(brew_deps),
         "pip_deps": sorted(pip_deps),
+        "human_names": sorted(dependency_list_human_names), # this one is not yet derived from pip modules
         "missing": missing,
     }
 

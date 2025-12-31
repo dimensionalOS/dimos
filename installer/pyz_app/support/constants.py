@@ -31,6 +31,45 @@ dimos_env_vars = {
     "DISPLAY": ":0",
 }
 
+# NOTE: instead of these haradcoded lists, ideally there would be a 
+#       pip module name => system dependencies mapping
+#       THEN based on the features that a user picked, we find all the
+#       pip packages that are needed for those features
+#       then calculate the system dependencies needed for that set of packages
+#       This is actually already being done for apt-get and brew, 
+#       but not human-readable names (yet) which is the most important one
+#       as a fallback we have a hardcoded list here
+dependency_list_human_names = [
+    "git",
+    "git-lfs",
+    "portaudio",
+    "pkg-config",
+    "cmake",
+    "ninja",
+    "python (version 3.12 or higher)",
+    "opencv",
+    "rust",
+    "ffmpeg",
+    # "zlib", # the tools above are almost certainly going to download this anyways
+    # "libpng", # opencv is almost certainly going to download this anyways
+    # "libjpeg",# opencv is almost certainly going to download this anyways
+    # "portmidi",
+    # "eigen",
+    # "jsoncpp",
+    # "libsndfile",
+    # "opus",
+    # "libvpx",
+    # "jpeg-turbo",
+    # "openblas",
+    # "lapack",
+    # "protobuf",
+    # "sdl2",
+    # "sdl2_image",
+    # "sdl2_mixer",
+    # "sdl2_ttf",
+]
+
+
 dependencies_nix_names = [
     "pkgs.git",
     "pkgs.git-lfs",
@@ -89,35 +128,6 @@ dependencies_nix_names = [
     "pkgs.libpng",
 ]
 
-dependency_list_human_names = [
-    "git",
-    "git-lfs",
-    "portaudio",
-    "pkg-config",
-    "cmake",
-    "ninja",
-    "python (version 3.12 or higher)",
-    "opencv",
-    "rust",
-    "ffmpeg",
-    "zlib",
-    "libpng",
-    "libjpeg",
-    "portmidi",
-    "eigen",
-    "jsoncpp",
-    "libsndfile",
-    "opus",
-    "libvpx",
-    "jpeg-turbo",
-    "openblas",
-    "lapack",
-    "protobuf",
-    "sdl2",
-    "sdl2_image",
-    "sdl2_mixer",
-    "sdl2_ttf",
-]
 
 dependency_list_apt_packages = [
     "git",
