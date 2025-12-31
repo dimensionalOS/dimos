@@ -49,7 +49,7 @@ dependencies = [
     "python-multipart==0.0.20",
     "reactivex",
     "asyncio==3.4.3",
-    "unitree-webrtc-connect-leshy>=2.0.4",
+    "unitree-webrtc-connect-leshy>=2.0.7",
     "tensorzero==2025.7.5",
     "structlog>=25.5.0,<26",
 
@@ -76,7 +76,6 @@ dependencies = [
     "ipykernel",
 
     # Unitree webrtc streaming
-    "aiortc==1.9.0",
     "pycryptodome",
     "sounddevice",
     "pyaudio",
@@ -381,6 +380,5 @@ default-groups = []
 
 [tool.uv.sources]
 clip = { git = "https://github.com/openai/CLIP.git" }
-dimos-lcm = { git = "https://github.com/dimensionalOS/dimos-lcm.git", rev = "3aeb724863144a8ba6cf72c9f42761d1007deda4" }
 contact-graspnet-pytorch = { git = "https://github.com/dimensionalOS/contact_graspnet_pytorch.git" }
 detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag = "v0.6" }
