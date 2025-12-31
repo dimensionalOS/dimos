@@ -49,7 +49,9 @@ class CostMapper(Module):
         super().start()
         connect_rerun()
 
-        def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float) -> None:
+        def _publish_costmap(
+            grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float
+        ) -> None:
             self.global_costmap.publish(grid)
 
             # Log BOTH 2D image panel AND 3D floor overlay to Rerun
@@ -74,21 +76,23 @@ class CostMapper(Module):
             # Log timing metrics to Rerun
             rr.log("metrics/costmap/calc_ms", rr.Scalars(calc_time_ms))
 
-            # Log message latency (time from pointcloud capture to now)
-            if grid.ts:
-                latency_ms = (time.time() - grid.ts) * 1000
-                rr.log("metrics/costmap/latency_ms", rr.Scalars(latency_ms))
+            # Log pipeline latency (time from message receipt to publish complete)
+            latency_ms = (time.monotonic() - rx_monotonic) * 1000
+            rr.log("metrics/costmap/latency_ms", rr.Scalars(latency_ms))
 
-        def _calculate_and_time(msg: PointCloud2) -> tuple[OccupancyGrid, float]:
+        def _calculate_and_time(
+            msg: PointCloud2,
+        ) -> tuple[OccupancyGrid, float, float]:
+            rx_monotonic = time.monotonic()  # Capture receipt time
             start = time.perf_counter()
             grid = self._calculate_costmap(msg)
             elapsed_ms = (time.perf_counter() - start) * 1000
-            return grid, elapsed_ms
+            return grid, elapsed_ms, rx_monotonic
 
         self._disposables.add(
             self.global_map.observable()  # type: ignore[no-untyped-call]
             .pipe(ops.map(_calculate_and_time))
-            .subscribe(lambda result: _publish_costmap(result[0], result[1]))
+            .subscribe(lambda result: _publish_costmap(result[0], result[1], result[2]))
         )
 
     @rpc
