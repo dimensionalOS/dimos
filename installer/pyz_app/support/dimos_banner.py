@@ -24,6 +24,10 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from rich.console import Console, Group
+from rich.live import Live
+from rich.text import Text
+
 
 DEFAULT_BANNER = [
     "██████╗ ██╗███╗   ███╗███████╗███╗   ██╗███████╗██╗ ██████╗ ███╗   ██╗ █████╗ ██╗           ██████╗ ███████╗",
@@ -39,13 +43,6 @@ DEFAULT_BANNER = [
 
 def _ansi_fg256(n: int) -> str:
     return f"\x1b[38;5;{n}m"
-
-
-ANSI_RESET = "\x1b[0m"
-ANSI_DIM = "\x1b[2m"
-ANSI_CURSOR_HIDE = "\x1b[?25l"
-ANSI_CURSOR_SHOW = "\x1b[?25h"
-ANSI_CLEAR_SCREEN = "\x1b[2J\x1b[H"  # clear + home
 
 
 @dataclass
@@ -107,6 +104,15 @@ class RenderLogo:
         # Ensure we restore the terminal even if user forgets.
         atexit.register(self.stop)
 
+        self._console = Console()
+        self._live = Live(
+            console=self._console,
+            refresh_per_second=self.fps,
+            screen=True,  # alternate screen to avoid scrollback spam
+            auto_refresh=False,
+        )
+        self._live.start()
+
         self._thread.start()
 
     # -----------------------
@@ -143,10 +149,13 @@ class RenderLogo:
         except Exception:
             pass
 
-        # Clear animation artifacts and restore cursor.
+        # Restore terminal
         try:
-            sys.stdout.write(ANSI_CURSOR_SHOW + ANSI_RESET + "\n")
-            sys.stdout.flush()
+            self._live.stop()
+        except Exception:
+            pass
+        try:
+            self._console.show_cursor(True)
         except Exception:
             pass
 
@@ -155,10 +164,6 @@ class RenderLogo:
     # -----------------------
 
     def _run(self) -> None:
-        # Hide cursor while running.
-        sys.stdout.write(ANSI_CURSOR_HIDE)
-        sys.stdout.flush()
-
         while not self._stop_evt.is_set():
             start = time.monotonic()
             self._spawn_glitches()
@@ -167,15 +172,18 @@ class RenderLogo:
             frame = self.render(self._t)
             self._t += 1
 
-            sys.stdout.write(frame)
-            sys.stdout.flush()
+            try:
+                self._live.update(frame, refresh=True)
+            except Exception:
+                # If Live cannot render for some reason, fall back to no-op to avoid crash.
+                pass
 
             elapsed = time.monotonic() - start
             sleep_for = self.frame_s - elapsed
             if sleep_for > 0:
                 self._stop_evt.wait(sleep_for)
 
-    def render(self, t: int) -> str:
+    def render(self, t: int):
         cols, rows = self._term_size()
 
         max_len = max((len(l) for l in self.banner), default=0)
@@ -193,28 +201,27 @@ class RenderLogo:
         top_pad = unused_rows // 2  # simple centering of the whole block
         bottom_pad = unused_rows - top_pad
 
-        out_lines: list[str] = []
-        out_lines.append(ANSI_CLEAR_SCREEN)
+        renderables = []
 
-        # Optional top padding to avoid hugging the top of the terminal.
+        # Top padding
         for _ in range(top_pad):
-            out_lines.append("")
+            renderables.append(Text(""))
 
         # Logo
         for y, line in enumerate(self.banner):
-            out = " " * left_pad
+            row = Text(" " * left_pad)
             for x, orig_ch in enumerate(line):
                 key = f"{y},{x}"
                 g = self._glitches.get(key)
                 ch = g.ch if g else orig_ch
                 color = self._color_for(x, y, t, is_glitched=bool(g))
-                out += _ansi_fg256(color) + ch + ANSI_RESET
-            out_lines.append(out)
+                row.append(ch, style=f"color({color})")
+            renderables.append(row)
 
         # Separator + blank
-        out_lines.append("")
+        renderables.append(Text(""))
         sep = self.separator_char * min(max_len, content_width)
-        out_lines.append((" " * left_pad) + ANSI_DIM + sep + ANSI_RESET)
+        renderables.append(Text(" " * left_pad + sep, style="dim"))
 
         if self.scrollable:
             for l in visible:
@@ -223,14 +230,18 @@ class RenderLogo:
                     trimmed = l[: max(0, content_width - 1)] + "…"
                 else:
                     trimmed = l
-                out_lines.append((" " * left_pad) + trimmed)
+                renderables.append(Text(" " * left_pad + trimmed))
 
-            # pad to keep stable frame height (bottom padding after logs)
-            pad_needed = max(0, rows - len(out_lines) - bottom_pad)
-            for _ in range(bottom_pad + pad_needed):
-                out_lines.append(" " * left_pad)
+        # Bottom padding to fill remaining space (and avoid scrolling).
+        while len(renderables) < rows - bottom_pad:
+            renderables.append(Text(" " * left_pad))
+        for _ in range(bottom_pad):
+            renderables.append(Text(" " * left_pad))
 
-        return "\n".join(out_lines)
+        # Trim to exactly the terminal height to prevent scrollback growth.
+        renderables = renderables[: rows]
+
+        return Group(*renderables)
 
     # -----------------------
     # Glitches + colors
