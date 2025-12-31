@@ -21,6 +21,7 @@ from typing import Any, Protocol
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 import rerun as rr
+import rerun.blueprint as rrb
 
 from dimos import spec
 from dimos.core import DimosCluster, In, LCMTransport, Module, Out, pSHMTransport, rpc
@@ -146,8 +147,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     @classmethod
     def rerun_views(cls):  # type: ignore[no-untyped-def]
         """Return Rerun view blueprints for GO2 camera visualization."""
-        import rerun.blueprint as rrb
-
         return [
             rrb.Spatial2DView(
                 name="Camera",
@@ -205,11 +204,8 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             self.color_image.publish(image)
             rr.log("world/robot/camera/rgb", image.to_rerun())
 
-        def onodom(odom: PoseStamped) -> None:
-            self._publish_tf(odom)
-
         self._disposables.add(self.connection.lidar_stream().subscribe(self.lidar.publish))
-        self._disposables.add(self.connection.odom_stream().subscribe(onodom))
+        self._disposables.add(self.connection.odom_stream().subscribe(self._publish_tf))
         self._disposables.add(self.connection.video_stream().subscribe(onimage))
         self._disposables.add(Disposable(self.cmd_vel.subscribe(self.move)))
 

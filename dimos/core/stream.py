@@ -26,6 +26,7 @@ from dask.distributed import Actor
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
+import rerun as rr
 
 import dimos.core.colors as colors
 from dimos.core.resource import Resource
@@ -192,15 +193,15 @@ class Out(Stream[T], ObservableMixin[T]):
         """
         return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
 
-    def to_rerun(
+    def autolog_to_rerun(
         self,
         entity_path: str,
         rate_limit: float | None = None,
         **rerun_kwargs,  # type: ignore[no-untyped-def]
     ) -> None:
-        """Configure this output to auto-log to Rerun.
+        """Configure this output to auto-log to Rerun (fire-and-forget).
 
-        Call once in start() - messages logged directly when published.
+        Call once in start() - messages auto-logged when published.
 
         Args:
             entity_path: Rerun entity path (e.g., "world/map")
@@ -212,7 +213,7 @@ class Out(Stream[T], ObservableMixin[T]):
             def start(self):
                 super().start()
                 # Just declare it - fire and forget!
-                self.global_map.to_rerun("world/map", rate_limit=5.0, radii=0.02)
+                self.global_map.autolog_to_rerun("world/map", rate_limit=5.0, radii=0.02)
         """
         self._rerun_config = {
             "entity_path": entity_path,
@@ -227,8 +228,6 @@ class Out(Stream[T], ObservableMixin[T]):
             return
 
         import time
-
-        import rerun as rr
 
         config = self._rerun_config
 

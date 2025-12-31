@@ -34,6 +34,7 @@ except ImportError:
     ROSTransform = None  # type: ignore[assignment, misc]
     ROSVector3 = None  # type: ignore[assignment, misc]
     ROSQuaternion = None  # type: ignore[assignment, misc]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -366,8 +367,6 @@ class Transform(Timestamped):
         Returns:
             rr.Transform3D archetype for logging to rerun with parent/child frames
         """
-        import rerun as rr
-
         return rr.Transform3D(
             translation=[self.translation.x, self.translation.y, self.translation.z],
             rotation=rr.Quaternion(

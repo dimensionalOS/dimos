@@ -22,6 +22,8 @@ import operator
 import sys
 from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin, get_type_hints
+import rerun as rr
+import rerun.blueprint as rrb
 
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
@@ -285,9 +287,6 @@ class ModuleBlueprintSet:
         
         Collects rerun_views() from all modules and composes them into a unified layout.
         """
-        import rerun as rr
-        import rerun.blueprint as rrb
-
         # Collect view contributions from all modules
         side_panels = []
         for blueprint in self.blueprints:

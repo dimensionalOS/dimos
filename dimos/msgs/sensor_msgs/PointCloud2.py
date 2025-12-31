@@ -23,9 +23,11 @@ from dimos_lcm.sensor_msgs.PointCloud2 import (  # type: ignore[import-untyped]
 )
 from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
 from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Vector3
 
@@ -47,8 +49,6 @@ from dimos.types.timestamped import Timestamped
 @functools.lru_cache(maxsize=16)
 def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
     """Get a matplotlib colormap by name (cached for performance)."""
-    import matplotlib.pyplot as plt
-
     return plt.get_cmap(name)
 
 
@@ -442,8 +442,6 @@ class PointCloud2(Timestamped):
         Returns:
             rr.Points3D or rr.Boxes3D archetype for logging to Rerun
         """
-        import rerun as rr
-
         points = self.as_numpy()
         if len(points) == 0:
             return rr.Points3D([]) if mode == "points" else rr.Boxes3D(centers=[])

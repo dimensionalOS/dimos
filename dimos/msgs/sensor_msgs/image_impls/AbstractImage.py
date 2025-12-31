@@ -22,6 +22,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+import rerun as rr
 
 try:
     import cupy as cp  # type: ignore
@@ -118,8 +119,6 @@ def format_to_rerun(data, fmt: ImageFormat):  # type: ignore[no-untyped-def]
     Returns:
         Rerun archetype (rr.Image or rr.DepthImage)
     """
-    import rerun as rr
-
     match fmt:
         case ImageFormat.RGB:
             return rr.Image(data, color_model="RGB")
