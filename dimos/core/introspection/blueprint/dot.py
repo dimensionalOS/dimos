@@ -23,10 +23,14 @@ when one output fans out to multiple consumers:
 
 from collections import defaultdict
 from enum import Enum, auto
-import hashlib
-import re
 
 from dimos.core.blueprints import ModuleBlueprintSet
+from dimos.core.introspection.utils import (
+    GROUP_COLORS,
+    TYPE_COLORS,
+    color_for_string,
+    sanitize_id,
+)
 from dimos.core.module import Module
 from dimos.utils.cli import theme
 
@@ -38,70 +42,6 @@ class LayoutAlgo(Enum):
     STACK_NODES = auto()  # Stack nodes within clusters vertically
     FDP = auto()  # Use fdp (force-directed) layout engine instead of dot
 
-
-def _color_for_string(colors: list[str], s: str) -> str:
-    """Get a consistent color for a string based on its hash."""
-    h = int(hashlib.md5(s.encode()).hexdigest(), 16)
-    return colors[h % len(colors)]
-
-
-def _sanitize_id(s: str) -> str:
-    """Sanitize a string to be a valid graphviz node ID."""
-    return re.sub(r"[^a-zA-Z0-9_]", "_", s)
-
-
-# Colors for group borders (bright, distinct, good on dark backgrounds)
-GROUP_COLORS = [
-    "#5C9FF0",  # blue
-    "#FFB74D",  # orange
-    "#81C784",  # green
-    "#BA68C8",  # purple
-    "#4ECDC4",  # teal
-    "#FF6B6B",  # coral
-    "#FFE66D",  # yellow
-    "#7986CB",  # indigo
-    "#F06292",  # pink
-    "#4DB6AC",  # teal green
-    "#9575CD",  # deep purple
-    "#AED581",  # lime
-    "#64B5F6",  # light blue
-    "#FF8A65",  # deep orange
-    "#AA96DA",  # lavender
-]
-
-# Colors for type nodes and edges (bright, distinct, good on dark backgrounds)
-TYPE_COLORS = [
-    "#FF6B6B",  # coral red
-    "#4ECDC4",  # teal
-    "#FFE66D",  # yellow
-    "#95E1D3",  # mint
-    "#F38181",  # salmon
-    "#AA96DA",  # lavender
-    "#81C784",  # green
-    "#64B5F6",  # light blue
-    "#FFB74D",  # orange
-    "#BA68C8",  # purple
-    "#4DD0E1",  # cyan
-    "#AED581",  # lime
-    "#FF8A65",  # deep orange
-    "#7986CB",  # indigo
-    "#F06292",  # pink
-    "#A1887F",  # brown
-    "#90A4AE",  # blue grey
-    "#DCE775",  # lime yellow
-    "#4DB6AC",  # teal green
-    "#9575CD",  # deep purple
-    "#E57373",  # light red
-    "#81D4FA",  # sky blue
-    "#C5E1A5",  # light green
-    "#FFCC80",  # light orange
-    "#B39DDB",  # light purple
-    "#80DEEA",  # light cyan
-    "#FFAB91",  # peach
-    "#CE93D8",  # light violet
-    "#80CBC4",  # light teal
-    "#FFF59D",  # light yellow
-]
 
 # Connections to ignore (too noisy/common)
 DEFAULT_IGNORED_CONNECTIONS = {("odom", "PoseStamped")}
@@ -175,7 +115,7 @@ def render(
         if not valid_producers or not valid_consumers:
             continue
         label = f"{name}:{type_name}"
-        active_channels[key] = _color_for_string(TYPE_COLORS, label)
+        active_channels[key] = color_for_string(TYPE_COLORS, label)
 
     # Group modules by package
     def get_group(mod_class: type[Module]) -> str:
@@ -209,7 +149,7 @@ def render(
     sorted_groups = sorted(by_group.keys())
     for group in sorted_groups:
         mods = sorted(by_group[group])
-        color = _color_for_string(GROUP_COLORS, group)
+        color = color_for_string(GROUP_COLORS, group)
         lines.append(f"    subgraph cluster_{group} {{")
         lines.append(f'        label="{group}";')
         lines.append("         labeljust=r;")
@@ -248,7 +188,7 @@ def render(
     ):
         name, type_ = key
         type_name = type_.__name__
-        node_id = _sanitize_id(f"chan_{name}_{type_name}")
+        node_id = sanitize_id(f"chan_{name}_{type_name}")
         label = f"{name}:{type_name}"
         lines.append(
             f'    {node_id} [label="{label}", shape=note, style=filled, '
@@ -265,7 +205,7 @@ def render(
     ):
         name, type_ = key
         type_name = type_.__name__
-        node_id = _sanitize_id(f"chan_{name}_{type_name}")
+        node_id = sanitize_id(f"chan_{name}_{type_name}")
 
         # Edges from producers to type node (no arrow, kept close)
         for producer in producers[key]:

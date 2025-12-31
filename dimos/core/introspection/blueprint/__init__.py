@@ -15,8 +15,7 @@
 """Blueprint introspection and rendering.
 
 Renderers:
-    - dot: Graphviz DOT format (direct edges between modules)
-    - dot2: Hub-style DOT format (type nodes as intermediate hubs)
+    - dot: Graphviz DOT format (hub-style with type nodes as intermediate hubs)
 """
 
 from dimos.core.introspection.blueprint import dot

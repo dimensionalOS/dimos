@@ -1,6 +1,4 @@
 
-
-
 # Dimos Modules
 
 Modules are subsystems on a robot that operate autonomously and communicate to other subsystems using standardized messages.
@@ -13,14 +11,14 @@ Some examples of modules are:
 
 Below is an example of a structure for controlling a robot. Black blocks represent modules and colored lines are connections and message types. It's okay if this doesn't make sense now, it will by the end of this document.
 
-```python output=assets/go2_basic.svg
-from dimos.core.introspection.blueprint import render_svg
+```python output=assets/go2_nav.svg
+from dimos.core.introspection import to_svg
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import nav
-render_svg(nav, "assets/go2_nav.svg")
+to_svg(nav, "assets/go2_nav.svg")
 ```
 
 <!--Result:-->
-![output](assets/go2_basic.svg)
+![output](assets/go2_nav.svg)
 
 ## Camera Module
 
@@ -28,8 +26,8 @@ Let's learn how to build stuff like the above, starting with a simple camera mod
 
 ```python session=camera_module_demo output=assets/camera_module.svg
 from dimos.hardware.sensors.camera.module import CameraModule
-from dimos.core.introspection.module import dot
-dot.render_svg(CameraModule.module_info(), "assets/camera_module.svg")
+from dimos.core.introspection import to_svg
+to_svg(CameraModule.module_info(), "assets/camera_module.svg")
 ```
 
 <!--Result:-->
@@ -83,16 +81,16 @@ camera.stop()
 <!--Result:-->
 ```
 Out color_image[Image] @ CameraModule
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:16:34)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:16)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-31 15:54:17)
 ```
 
 
@@ -168,10 +166,10 @@ Blueprint is a pre-defined structure of interconnected modules. You can include 
 Basic unitree go2 blueprint looks like what we saw before,
 
 ```python  session=blueprints output=assets/go2_agentic.svg
-from dimos.core.introspection.blueprint import render_svg
+from dimos.core.introspection import to_svg
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import agentic
 
-render_svg(agentic, "assets/go2_agentic.svg")
+to_svg(agentic, "assets/go2_agentic.svg")
 ```
 
 <!--Result:-->

@@ -14,46 +14,15 @@
 
 """Graphviz DOT renderer for module IO diagrams."""
 
-import hashlib
-import re
-
-from dimos.core.introspection.module.info import ModuleInfo  # type: ignore[import-untyped]
+from dimos.core.introspection.module.info import ModuleInfo
+from dimos.core.introspection.utils import (
+    RPC_COLOR,
+    SKILL_COLOR,
+    TYPE_COLORS,
+    color_for_string,
+    sanitize_id,
+)
 from dimos.utils.cli import theme
-
-
-def _color_for_string(colors: list[str], s: str) -> str:
-    """Get a consistent color for a string based on its hash."""
-    h = int(hashlib.md5(s.encode()).hexdigest(), 16)
-    return colors[h % len(colors)]
-
-
-def _sanitize_id(s: str) -> str:
-    """Sanitize a string to be a valid graphviz node ID."""
-    return re.sub(r"[^a-zA-Z0-9_]", "_", s)
-
-
-# Colors for type nodes (same as dot2 for consistency)
-TYPE_COLORS = [
-    "#FF6B6B",  # coral red
-    "#4ECDC4",  # teal
-    "#FFE66D",  # yellow
-    "#95E1D3",  # mint
-    "#F38181",  # salmon
-    "#AA96DA",  # lavender
-    "#81C784",  # green
-    "#64B5F6",  # light blue
-    "#FFB74D",  # orange
-    "#BA68C8",  # purple
-    "#4DD0E1",  # cyan
-    "#AED581",  # lime
-    "#FF8A65",  # deep orange
-    "#7986CB",  # indigo
-    "#F06292",  # pink
-]
-
-# Colors for RPCs/Skills
-RPC_COLOR = "#7986CB"  # indigo
-SKILL_COLOR = "#4ECDC4"  # teal
 
 
 def render(info: ModuleInfo) -> str:
@@ -80,7 +49,7 @@ def render(info: ModuleInfo) -> str:
     ]
 
     # Module node (central, larger)
-    module_id = _sanitize_id(info.name)
+    module_id = sanitize_id(info.name)
     lines.append(f'    {module_id} [label="{info.name}", width=2, height=0.8];')
     lines.append("")
 
@@ -93,8 +62,8 @@ def render(info: ModuleInfo) -> str:
         lines.append('        rank="same";')
         for stream in info.inputs:
             label = f"{stream.name}:{stream.type_name}"
-            color = _color_for_string(TYPE_COLORS, label)
-            node_id = _sanitize_id(f"in_{stream.name}")
+            color = color_for_string(TYPE_COLORS, label)
+            node_id = sanitize_id(f"in_{stream.name}")
             lines.append(
                 f'        {node_id} [label="{label}", shape=note, style=filled, '
                 f'fillcolor="{color}35", color="{color}", '
@@ -112,8 +81,8 @@ def render(info: ModuleInfo) -> str:
         lines.append('        rank="same";')
         for stream in info.outputs:
             label = f"{stream.name}:{stream.type_name}"
-            color = _color_for_string(TYPE_COLORS, label)
-            node_id = _sanitize_id(f"out_{stream.name}")
+            color = color_for_string(TYPE_COLORS, label)
+            node_id = sanitize_id(f"out_{stream.name}")
             lines.append(
                 f'        {node_id} [label="{label}", shape=note, style=filled, '
                 f'fillcolor="{color}35", color="{color}", '
@@ -141,7 +110,7 @@ def render(info: ModuleInfo) -> str:
             )
             ret = f" -> {rpc.return_type}" if rpc.return_type else ""
             label = f"{rpc.name}({params}){ret}"
-            node_id = _sanitize_id(f"rpc_{rpc.name}")
+            node_id = sanitize_id(f"rpc_{rpc.name}")
             lines.append(
                 f'        {node_id} [label="{label}", shape=cds, style=filled, '
                 f'fillcolor="{RPC_COLOR}35", color="{RPC_COLOR}", '
@@ -170,7 +139,7 @@ def render(info: ModuleInfo) -> str:
             if skill.reducer:
                 parts.append(f"reducer={skill.reducer}")
             label = " ".join(parts)
-            node_id = _sanitize_id(f"skill_{skill.name}")
+            node_id = sanitize_id(f"skill_{skill.name}")
             lines.append(
                 f'        {node_id} [label="{label}", shape=cds, style=filled, '
                 f'fillcolor="{SKILL_COLOR}35", color="{SKILL_COLOR}", '
@@ -183,20 +152,20 @@ def render(info: ModuleInfo) -> str:
     lines.append("    // Edges")
     for stream in info.inputs:
         label = f"{stream.name}:{stream.type_name}"
-        color = _color_for_string(TYPE_COLORS, label)
-        node_id = _sanitize_id(f"in_{stream.name}")
+        color = color_for_string(TYPE_COLORS, label)
+        node_id = sanitize_id(f"in_{stream.name}")
         lines.append(f'    {node_id} -> {module_id} [color="{color}"];')
 
     # Edges: module -> outputs
     for stream in info.outputs:
         label = f"{stream.name}:{stream.type_name}"
-        color = _color_for_string(TYPE_COLORS, label)
-        node_id = _sanitize_id(f"out_{stream.name}")
+        color = color_for_string(TYPE_COLORS, label)
+        node_id = sanitize_id(f"out_{stream.name}")
         lines.append(f'    {module_id} -> {node_id} [color="{color}"];')
 
     # Edge: module -> RPCs cluster (dashed, no arrow)
     if info.rpcs:
-        first_rpc_id = _sanitize_id(f"rpc_{info.rpcs[0].name}")
+        first_rpc_id = sanitize_id(f"rpc_{info.rpcs[0].name}")
         lines.append(
             f"    {module_id} -> {first_rpc_id} [lhead=cluster_rpcs, style=filled, weight=3"
             f'color="{RPC_COLOR}", arrowhead=none];'
@@ -204,7 +173,7 @@ def render(info: ModuleInfo) -> str:
 
     # Edge: module -> Skills cluster (dashed, no arrow)
     if info.skills:
-        first_skill_id = _sanitize_id(f"skill_{info.skills[0].name}")
+        first_skill_id = sanitize_id(f"skill_{info.skills[0].name}")
         lines.append(
             f"    {module_id} -> {first_skill_id} [lhead=cluster_skills, style=filled, weight=3"
             f'color="{SKILL_COLOR}", arrowhead=none];'
