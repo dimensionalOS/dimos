@@ -143,6 +143,18 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
     _global_config: GlobalConfig
     _camera_info_thread: Thread | None = None
 
+    @classmethod
+    def rerun_views(cls):  # type: ignore[no-untyped-def]
+        """Return Rerun view blueprints for GO2 camera visualization."""
+        import rerun.blueprint as rrb
+
+        return [
+            rrb.Spatial2DView(
+                name="Camera",
+                origin="world/robot/camera/rgb",
+            ),
+        ]
+
     def __init__(  # type: ignore[no-untyped-def]
         self,
         ip: str | None = None,
@@ -185,8 +197,9 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         self.connection.start()
 
-        # Initialize Rerun and load URDF
-        self._init_rerun()
+        # Initialize Rerun world frame and load URDF (only if Rerun backend)
+        if self._global_config.viewer_backend.startswith("rerun"):
+            self._init_rerun_world()
 
         def onimage(image: Image) -> None:
             self.color_image.publish(image)
@@ -209,10 +222,11 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         self.standup()
         # self.record("go2_bigoffice")
 
-    def _init_rerun(self) -> None:
-        """Set up Rerun visualization (world frame, URDF, camera)."""
-        import rerun.blueprint as rrb
-
+    def _init_rerun_world(self) -> None:
+        """Set up Rerun world frame, load URDF, and static assets.
+        
+        Does NOT compose blueprint - that's handled by ModuleBlueprintSet.build().
+        """
         connect_rerun()
 
         # Set up world coordinate system AND register it as a named frame
@@ -246,62 +260,6 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
         # Log static camera pinhole (for frustum)
         rr.log("world/robot/camera", _camera_info_static().to_rerun(), static=True)
-
-        # Send blueprint with proper panel layout
-        blueprint = rrb.Blueprint(
-            rrb.Horizontal(
-                rrb.Spatial3DView(
-                    name="3D View",
-                    origin="world",
-                    background=[0, 0, 0],
-                ),
-                rrb.Vertical(
-                    rrb.Spatial2DView(
-                        name="Camera",
-                        origin="world/robot/camera/rgb",
-                    ),
-                    rrb.Vertical(
-                        rrb.TimeSeriesView(
-                            name="Voxel Pipeline (ms)",
-                            origin="/metrics/voxel_map",
-                            contents=[
-                                "+ /metrics/voxel_map/extract_ms",
-                                "+ /metrics/voxel_map/transport_ms",
-                                "+ /metrics/voxel_map/publish_ms",
-                            ],
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Voxel Count",
-                            origin="/metrics/voxel_map",
-                            contents=[
-                                "+ /metrics/voxel_map/voxel_count",
-                            ],
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Latency (ms)",
-                            origin="/metrics",
-                            contents=[
-                                "+ /metrics/voxel_map/latency_ms",
-                                "+ /metrics/costmap/latency_ms",
-                            ],
-                        ),
-                        rrb.TimeSeriesView(
-                            name="Costmap (ms)",
-                            origin="/metrics/costmap",
-                            contents=[
-                                "+ /metrics/costmap/calc_ms",
-                            ],
-                        ),
-                    ),
-                    row_shares=[2, 1],
-                ),
-                column_shares=[3, 1],
-            ),
-            rrb.TimePanel(state="collapsed"),
-            rrb.SelectionPanel(state="collapsed"),
-            rrb.BlueprintPanel(state="collapsed"),
-        )
-        rr.send_blueprint(blueprint)
 
     @rpc
     def stop(self) -> None:

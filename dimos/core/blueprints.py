@@ -280,6 +280,53 @@ class ModuleBlueprintSet:
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
+    def _init_rerun_blueprint(self, module_coordinator: ModuleCoordinator) -> None:
+        """Compose and send Rerun blueprint from module contributions.
+        
+        Collects rerun_views() from all modules and composes them into a unified layout.
+        """
+        import rerun as rr
+        import rerun.blueprint as rrb
+
+        # Collect view contributions from all modules
+        side_panels = []
+        for blueprint in self.blueprints:
+            if hasattr(blueprint.module, "rerun_views"):
+                views = blueprint.module.rerun_views()
+                if views:
+                    side_panels.extend(views)
+
+        # Always include latency panel if we have any panels
+        if side_panels:
+            side_panels.append(
+                rrb.TimeSeriesView(
+                    name="Latency (ms)",
+                    origin="/metrics",
+                    contents=[
+                        "+ /metrics/voxel_map/latency_ms",
+                        "+ /metrics/costmap/latency_ms",
+                    ],
+                )
+            )
+
+        # Compose final layout
+        if side_panels:
+            composed_blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial3DView(
+                        name="3D View",
+                        origin="world",
+                        background=[0, 0, 0],
+                    ),
+                    rrb.Vertical(*side_panels, row_shares=[2] + [1] * (len(side_panels) - 1)),
+                    column_shares=[3, 1],
+                ),
+                rrb.TimePanel(state="collapsed"),
+                rrb.SelectionPanel(state="collapsed"),
+                rrb.BlueprintPanel(state="collapsed"),
+            )
+            rr.send_blueprint(composed_blueprint)
+
     def build(
         self,
         global_config: GlobalConfig | None = None,
@@ -313,6 +360,10 @@ class ModuleBlueprintSet:
         self._connect_rpc_methods(module_coordinator)
 
         module_coordinator.start_all_modules()
+
+        # Compose and send Rerun blueprint from module contributions
+        if global_config.viewer_backend.startswith("rerun"):
+            self._init_rerun_blueprint(module_coordinator)
 
         return module_coordinator
 
