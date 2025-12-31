@@ -192,7 +192,7 @@ def apt_install(package_names: list[str]) -> None:
             p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
             continue
 
-        p.sub_header(f"- installing {p.highlight(each_pkg)}\n")
+        p.sub_header(f"\n- installing {p.highlight(each_pkg)}")
         install_res = run_command(
             ["sudo", "apt-get", "install", "-y", each_pkg], print_command=True, dry_run=dry_run
         )
@@ -257,7 +257,7 @@ def brew_install(package_names: list[str]) -> None:
         if res.code == 0:
             p.sub_header(f"- ✅ looks like {p.highlight(pkg)} is already installed")
             continue
-        p.sub_header(f"- installing {p.highlight(pkg)}")
+        p.sub_header(f"\n- installing {p.highlight(pkg)}")
         install_res = run_command(["brew", "install", pkg], print_command=True, dry_run=dry_run)
         if install_res.code != 0:
             failed.append(pkg)

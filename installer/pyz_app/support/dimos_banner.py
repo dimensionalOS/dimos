@@ -343,9 +343,10 @@ class RenderLogo:
         # Similar "rowPhase" trick to JS; Python doesn't have >>>, so keep it simple+stable.
         row_phase = ((y * 1103515245 + 12345) % 1000) / 1000.0
 
-        # Bias toward blues (roughly 33–75 range in 256 palette), with a small green component.
-        blue_base = 33  # near blue start in 256 palette
-        blue_span = max(1, self.wave_strength)  # wave_strength still controls spread
+        blue_base = 26
+        blue_span = max(1, self.wave_strength)
+        # Keep wave mostly high to stay in blue; range ~0.15–1.0
+        # w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.85
         w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.75
         c = blue_base + round(w * blue_span)
 
