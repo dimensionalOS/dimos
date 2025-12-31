@@ -31,9 +31,9 @@ from dimos.agents.skills.navigation import navigation_skill
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
-from dimos.hardware.camera import zed
-from dimos.hardware.camera.module import camera_module
-from dimos.hardware.camera.webcam import Webcam
+from dimos.hardware.sensors.camera import zed
+from dimos.hardware.sensors.camera.module import camera_module
+from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
