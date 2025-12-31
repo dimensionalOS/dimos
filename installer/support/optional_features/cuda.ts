@@ -1,7 +1,8 @@
 #!/usr/bin/env -S deno run --allow-all --no-lock
-import { $, $$ } from "../dax.ts"
-import * as p from "../prompt_tools.ts"
+import { $, $$ } from "../dax.js"
+import * as p from "../prompt_tools.js"
 import { aptInstall } from "../misc.ts"
+import { dependencyListAptPackages } from "../constants.ts"
 
 const aptPackages = [
     "build-essential",
@@ -19,6 +20,8 @@ const aptPackages = [
     "libeigen3-dev",
 ]
 
+const extraPackages = aptPackages.filter((pkg) => !dependencyListAptPackages.includes(pkg))
+
 const cudaReminder = [
     "- This feature expects NVIDIA drivers + CUDA 12.x toolkit to already be installed.",
     "- Install the official NVIDIA packages for your distro (not the older `nvidia-cuda-toolkit`).",
@@ -26,6 +29,7 @@ const cudaReminder = [
 ]
 
 async function maybeInstallAptDeps(packages: string[]) {
+    if (packages.length === 0) return false
     if (!await $.commandExists("apt-get")) {
         p.boringLog("- apt-get not available; please install these system dependencies manually")
         return false
@@ -52,12 +56,16 @@ export async function setupCudaFeature({ assumeSysDepsInstalled = false }: { ass
 
     if (!assumeSysDepsInstalled) {
         console.log("- Likely system dependencies needed for CUDA builds (xformers, mmcv, detectron2, etc.):")
-        for (const pkg of aptPackages) console.log(`  • ${pkg}`)
-        const installed = await maybeInstallAptDeps(aptPackages)
-        const proceed = installed || p.confirm("Proceed to pip installation (continue even if some system deps may be missing)?")
-        if (!proceed) {
-            p.error("Please install the listed system dependencies (and CUDA toolkit), then rerun this feature installer.")
-            return
+        for (const pkg of extraPackages) console.log(`  • ${pkg}`)
+        if (extraPackages.length > 0) {
+            const installed = await maybeInstallAptDeps(extraPackages)
+            const proceed = installed || p.confirm("Proceed to pip installation (continue even if some system deps may be missing)?")
+            if (!proceed) {
+                p.error("Please install the listed system dependencies (and CUDA toolkit), then rerun this feature installer.")
+                return
+            }
+        } else {
+            p.boringLog("- No additional system dependencies beyond the core set.")
         }
     }
 
