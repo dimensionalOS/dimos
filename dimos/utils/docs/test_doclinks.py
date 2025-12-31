@@ -22,6 +22,7 @@ from doclinks import (
     extract_other_backticks,
     find_symbol_line,
     process_markdown,
+    split_by_ignore_regions,
 )
 import pytest
 
@@ -402,6 +403,121 @@ class TestDocLinking:
         )
 
         assert new_content == content  # Unchanged
+
+
+class TestIgnoreRegions:
+    def test_split_no_ignore(self):
+        """Content without ignore markers should be fully processed."""
+        content = "Hello world"
+        regions = split_by_ignore_regions(content)
+        assert len(regions) == 1
+        assert regions[0] == ("Hello world", True)
+
+    def test_split_single_ignore(self):
+        """Should correctly split around a single ignore region."""
+        content = "before<!-- doclinks-ignore-start -->ignored<!-- doclinks-ignore-end -->after"
+        regions = split_by_ignore_regions(content)
+
+        # Should have: before (process), marker (no), ignored+end (no), after (process)
+        assert len(regions) == 4
+        assert regions[0] == ("before", True)
+        assert regions[1][1] is False  # Start marker
+        assert regions[2][1] is False  # Ignored content + end marker
+        assert regions[3] == ("after", True)
+
+    def test_split_multiple_ignores(self):
+        """Should handle multiple ignore regions."""
+        content = (
+            "a<!-- doclinks-ignore-start -->x<!-- doclinks-ignore-end -->"
+            "b<!-- doclinks-ignore-start -->y<!-- doclinks-ignore-end -->c"
+        )
+        regions = split_by_ignore_regions(content)
+
+        # Check that processable regions are correctly identified
+        processable = [r[0] for r in regions if r[1]]
+        assert "a" in processable
+        assert "b" in processable
+        assert "c" in processable
+
+    def test_split_case_insensitive(self):
+        """Should handle different case in markers."""
+        content = "before<!-- DOCLINKS-IGNORE-START -->ignored<!-- DOCLINKS-IGNORE-END -->after"
+        regions = split_by_ignore_regions(content)
+
+        processable = [r[0] for r in regions if r[1]]
+        assert "before" in processable
+        assert "after" in processable
+        assert "ignored" not in processable
+
+    def test_split_unclosed_ignore(self):
+        """Unclosed ignore region should ignore rest of content."""
+        content = "before<!-- doclinks-ignore-start -->rest of file"
+        regions = split_by_ignore_regions(content)
+
+        processable = [r[0] for r in regions if r[1]]
+        assert "before" in processable
+        assert "rest of file" not in processable
+
+    def test_ignores_links_in_region(self, file_index):
+        """Links inside ignore region should not be processed."""
+        content = (
+            "Process [`service/spec.py`]() here\n"
+            "<!-- doclinks-ignore-start -->\n"
+            "Skip [`service/spec.py`]() here\n"
+            "<!-- doclinks-ignore-end -->\n"
+            "Process [`service/spec.py`]() again"
+        )
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="absolute",
+            github_url=None,
+            github_ref="main",
+        )
+
+        assert len(errors) == 0
+        # Should have 2 changes (before and after ignore region)
+        assert len(changes) == 2
+
+        # Verify the ignored region is untouched
+        assert "Skip [`service/spec.py`]() here" in new_content
+
+        # Verify the processed regions have resolved links
+        lines = new_content.split("\n")
+        assert "/dimos/protocol/service/spec.py" in lines[0]
+        assert "/dimos/protocol/service/spec.py" in lines[-1]
+
+    def test_ignores_doc_links_in_region(self, file_index, doc_index):
+        """Doc links inside ignore region should not be processed."""
+        content = (
+            "[Configuration](.md)\n"
+            "<!-- doclinks-ignore-start -->\n"
+            "[Configuration](.md) example\n"
+            "<!-- doclinks-ignore-end -->\n"
+            "[Configuration](.md)"
+        )
+        doc_path = REPO_ROOT / "docs/test.md"
+
+        new_content, changes, errors = process_markdown(
+            content,
+            REPO_ROOT,
+            doc_path,
+            file_index,
+            link_mode="absolute",
+            github_url=None,
+            github_ref="main",
+            doc_index=doc_index,
+        )
+
+        assert len(errors) == 0
+        assert len(changes) == 2  # Only 2 links processed
+
+        # Verify the ignored region still has .md placeholder
+        assert "[Configuration](.md) example" in new_content
 
 
 if __name__ == "__main__":

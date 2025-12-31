@@ -215,6 +215,52 @@ def generate_link(
         raise ValueError(f"Unknown link mode: {link_mode}")
 
 
+def split_by_ignore_regions(content: str) -> list[tuple[str, bool]]:
+    """
+    Split content into regions, marking which should be processed.
+
+    Returns list of (text, should_process) tuples.
+    Regions between <!-- doclinks-ignore-start --> and <!-- doclinks-ignore-end --> are skipped.
+    """
+    ignore_start = re.compile(r"<!--\s*doclinks-ignore-start\s*-->", re.IGNORECASE)
+    ignore_end = re.compile(r"<!--\s*doclinks-ignore-end\s*-->", re.IGNORECASE)
+
+    regions = []
+    pos = 0
+    in_ignore = False
+
+    while pos < len(content):
+        if not in_ignore:
+            # Look for start of ignore region
+            match = ignore_start.search(content, pos)
+            if match:
+                # Add content before ignore marker (to be processed)
+                if match.start() > pos:
+                    regions.append((content[pos : match.start()], True))
+                # Add the marker itself (not processed)
+                regions.append((content[match.start() : match.end()], False))
+                pos = match.end()
+                in_ignore = True
+            else:
+                # No more ignore regions, add rest of content
+                regions.append((content[pos:], True))
+                break
+        else:
+            # Look for end of ignore region
+            match = ignore_end.search(content, pos)
+            if match:
+                # Add ignored content including end marker
+                regions.append((content[pos : match.end()], False))
+                pos = match.end()
+                in_ignore = False
+            else:
+                # Unclosed ignore region, add rest as ignored
+                regions.append((content[pos:], False))
+                break
+
+    return regions
+
+
 def process_markdown(
     content: str,
     root: Path,
@@ -227,6 +273,9 @@ def process_markdown(
 ) -> tuple[str, list[str], list[str]]:
     """
     Process markdown content, replacing file and doc links.
+
+    Regions between <!-- doclinks-ignore-start --> and <!-- doclinks-ignore-end -->
+    are skipped.
 
     Returns (new_content, changes, errors).
     """
@@ -326,9 +375,20 @@ def process_markdown(
 
         return new_match
 
-    # Process code links first, then doc links
-    new_content = re.sub(code_pattern, replace_code_match, content)
-    new_content = re.sub(doc_pattern, replace_doc_match, new_content)
+    # Split by ignore regions and only process non-ignored parts
+    regions = split_by_ignore_regions(content)
+    result_parts = []
+
+    for region_content, should_process in regions:
+        if should_process:
+            # Process code links first, then doc links
+            processed = re.sub(code_pattern, replace_code_match, region_content)
+            processed = re.sub(doc_pattern, replace_doc_match, processed)
+            result_parts.append(processed)
+        else:
+            result_parts.append(region_content)
+
+    new_content = "".join(result_parts)
     return new_content, changes, errors
 
 
