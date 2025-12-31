@@ -5,7 +5,7 @@
 
 Modules are subsystems on a robot that operate autonomously and communicate to other subsystems using standardized messages.
 
-Some examples of are:
+Some examples of modules are:
 
 - Webcam (outputs image)
 - Navigation (inputs a map and a target, outputs a path)
