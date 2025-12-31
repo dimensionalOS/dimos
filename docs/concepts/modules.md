@@ -65,7 +65,7 @@ Offers two RPC calls, `start()` and `stop()`
 
 As well as an agentic [Skill][skills.md] called `video_stream` (more about this later, in [Skills Tutorial][skills.md])
 
-We can start this module and explore the output of it's streams in real time (this will use your webcam)
+We can start this module and explore the output of its streams in real time (this will use your webcam).
 
 ```python session=camera_module_demo ansi=false
 import time
