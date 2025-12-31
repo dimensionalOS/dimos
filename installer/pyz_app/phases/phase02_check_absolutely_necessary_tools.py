@@ -56,6 +56,7 @@ def phase2(system_analysis, selected_features):
 
         ensure_venv_active(python_cmd)
     except Exception as error:
+        raise
         print("")
         print("")
         p.error("One of the vital dependencies was missing or had versioning issues")

@@ -143,7 +143,7 @@ def ensure_git_and_lfs() -> None:
 def ensure_port_audio() -> None:
     p.boring_log("Checking if portaudio is available")
     port_audio_res = run_command(  # intentionally not part of dry_run
-        ["pkg-config", "--modversion", "portaudio-2.0"], print_command=True
+        ["pkg-config", "--modversion", "portaudio-2.0"], print_command=True, capture_output=True
     )
     if port_audio_res.code != 0:
         raise RuntimeError("- ❌ portaudio is required. Please install portaudio and rerun.")
@@ -153,7 +153,7 @@ def ensure_python() -> str:
     python_cmd = detect_python_command()
     if not python_cmd:
         raise RuntimeError("- ❌ Python 3.10+ is required but was not found.")
-    version_res = run_command([python_cmd, "--version"])  # intentionally not part of dry_run
+    version_res = run_command([python_cmd, "--version"], capture_output=True)  # intentionally not part of dry_run
     version_text = (version_res.stdout or version_res.stderr or "").strip()
     parsed = parse_version(version_text)
     if not parsed or not is_version_at_least(parsed, "3.10.0"):

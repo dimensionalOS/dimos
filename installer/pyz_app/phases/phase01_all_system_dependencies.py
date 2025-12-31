@@ -51,12 +51,12 @@ def phase1(system_analysis, selected_features):
                 tools_were_auto_installed = True
             except Exception as error:
                 p.error(getattr(error, "message", None) or str(error))
-        else:
-            print("- skipping automatic installation.")
-            proceed = p.confirm("Proceed to the next step without installing system dependencies?")
-            if not proceed:
-                print("- ❌ Please install the listed dependencies and rerun.")
-                raise SystemExit(1)
+        # else:
+        #     print("- skipping automatic installation.")
+        #     proceed = p.confirm("Proceed to the next step without installing system dependencies?")
+        #     if not proceed:
+        #         print("- ❌ Please install the listed dependencies and rerun.")
+        #         raise SystemExit(1)
     elif os_info.get("name") == "macos":
         p.boring_log("Detected macOS")
         try:
@@ -74,11 +74,11 @@ def phase1(system_analysis, selected_features):
                 tools_were_auto_installed = True
             except Exception as err:
                 p.error(str(err))
-        else:
-            proceed = p.confirm("Proceed to the next step without installing system dependencies?")
-            if not proceed:
-                print("- ❌ Please install the listed dependencies and rerun.")
-                raise SystemExit(1)
+        # else:
+        #     proceed = p.confirm("Proceed to the next step without installing system dependencies?")
+        #     if not proceed:
+        #         print("- ❌ Please install the listed dependencies and rerun.")
+        #         raise SystemExit(1)
     
     print()
     print()

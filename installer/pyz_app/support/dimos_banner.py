@@ -340,14 +340,13 @@ class RenderLogo:
             self._glitches.pop(key, None)
 
     def _color_for(self, x: int, y: int, t: int, *, is_glitched: bool) -> int:
-        # Similar "rowPhase" trick to JS; Python doesn't have >>>, so keep it simple+stable.
         row_phase = ((y * 1103515245 + 12345) % 1000) / 1000.0
 
-        blue_base = 26
+        blue_base = 27
         blue_span = max(1, self.wave_strength)
         # Keep wave mostly high to stay in blue; range ~0.15–1.0
         # w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.85
-        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.75
+        w = math.sin(t * self.wave_speed + x * self.wave_freq + row_phase * math.tau) * 0.25 + 0.85
         c = blue_base + round(w * blue_span)
 
         if is_glitched:
