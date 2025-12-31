@@ -31,7 +31,7 @@ class GlobalConfig(BaseSettings):
     replay: bool = False
     rerun_enabled: bool = True
     rerun_server_addr: str | None = None
-    viewer_backend: str = "rerun-web"  # "rerun-web", "rerun-native", or "foxglove"
+    viewer_backend: str = "rerun-native"  # "rerun-web", "rerun-native", or "foxglove"
     n_dask_workers: int = 2
     memory_limit: str = "auto"
     mujoco_camera_position: str | None = None

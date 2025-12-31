@@ -96,7 +96,7 @@ class CostMapper(Module):
                         "world/nav/costmap/floor",
                         grid.to_rerun(
                             mode="mesh",
-                            colormap="RdBu_r",
+                            colormap=None,  # Grayscale: free=white, occupied=black
                             z_offset=0.02,
                         ),
                     )
