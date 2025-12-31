@@ -10,7 +10,7 @@ export async function getProjectToml({branch="main"}={}) {
         // FIXME: switch to main once code is public
         // NOTE: its a temp token so if you're reading this its no good anymore (I'm just testing)
         // const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/${branch}/pyproject.toml`)
-        const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/pyproject.toml?token=GHSAT0AAAAAADJ4QAIP3VI2QL6IDRXIWXDA2KUNPRQ`)
+        const pyprojectToml = await fetch(`https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/dev/pyproject.toml?token=GHSAT0AAAAAADJ4QAIO2IYNQQLNTCEUWOTU2KUQTDQ`)
         let err
         if (pyprojectToml.ok) {
             const tomlText = await pyprojectToml.text()

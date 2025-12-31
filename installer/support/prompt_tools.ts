@@ -1,5 +1,6 @@
 import { red, yellow, green, cyan, bold, dim } from "https://deno.land/std@0.224.0/fmt/colors.ts"
 import { Select } from "https://deno.land/x/cliffy@v1.0.0-rc.4/prompt/mod.ts"
+import { Checkbox } from "https://deno.land/x/cliffy@v1.0.0-rc.4/prompt/mod.ts";
 
 export function clearScreen() {
     console.log('\x1B[2J')
@@ -76,6 +77,21 @@ export async function pickOne(message, {options}) {
         obj = options
     }
     return await Select.prompt({
+        message,
+        options: Object.entries(obj).map(([key, value]) => ({ name: value, value: key })),
+    })
+}
+
+export async function pickMany(message, {options}) {
+    let obj = {}
+    if (options instanceof Array) {
+        for (let eachString of options) {
+            obj[eachString] = eachString
+        }
+    } else {
+        obj = options
+    }
+    const selections = await Checkbox.prompt({
         message,
         options: Object.entries(obj).map(([key, value]) => ({ name: value, value: key })),
     })
