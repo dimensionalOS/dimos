@@ -24,7 +24,7 @@ from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-un
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.navigation.base import NavigationState
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
@@ -102,8 +102,6 @@ class UnitreeSkillContainer(SkillModule):
         if tf is None:
             return "Failed to get the position of the robot."
 
-        current_pose = tf.to_pose()
-
         try:
             set_goal_rpc, get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
                 "NavigationInterface.set_goal",
@@ -114,29 +112,15 @@ class UnitreeSkillContainer(SkillModule):
             logger.error("Navigation module not connected properly")
             return "Failed to connect to navigation module."
 
-        # Create local offset (forward is x, left is y in robot frame)
-        local_offset = Vector3(forward, left, 0)
+        # TODO: Improve this. This is not a nice way to do it. I should
+        # subscribe to arrival/cancellation events instead.
 
-        # Rotate the offset by the robot's current orientation to get it in the map frame
-        global_offset = current_pose.orientation.rotate_vector(local_offset)
-
-        # Calculate goal position
-        goal_position = current_pose.position + global_offset
-
-        # Calculate goal orientation by adding the rotation to the current yaw
-        current_euler = current_pose.orientation.to_euler()
-        goal_yaw = current_euler.yaw + math.radians(degrees)
-        goal_euler = Vector3(current_euler.roll, current_euler.pitch, goal_yaw)
-        goal_orientation = Quaternion.from_euler(goal_euler)
-
-        goal_pose = PoseStamped(position=goal_position, orientation=goal_orientation)
-
-        set_goal_rpc(goal_pose)
+        set_goal_rpc(self._generate_new_goal(tf.to_pose(), forward, left, degrees))
 
         time.sleep(1.0)
 
         while get_state_rpc() == NavigationState.FOLLOWING_PATH:
-            time.sleep(0.25)
+            time.sleep(0.1)
 
         time.sleep(1.0)
 
@@ -144,6 +128,20 @@ class UnitreeSkillContainer(SkillModule):
             return "Navigation was cancelled or failed"
         else:
             return "Navigation goal reached"
+
+    def _generate_new_goal(
+        self, current_pose: PoseStamped, forward: float, left: float, degrees: float
+    ) -> PoseStamped:
+        local_offset = Vector3(forward, left, 0)
+        global_offset = current_pose.orientation.rotate_vector(local_offset)
+        goal_position = current_pose.position + global_offset
+
+        current_euler = current_pose.orientation.to_euler()
+        goal_yaw = current_euler.yaw + math.radians(degrees)
+        goal_euler = Vector3(current_euler.roll, current_euler.pitch, goal_yaw)
+        goal_orientation = Quaternion.from_euler(goal_euler)
+
+        return PoseStamped(position=goal_position, orientation=goal_orientation)
 
     @skill()
     def wait(self, seconds: float) -> str:
