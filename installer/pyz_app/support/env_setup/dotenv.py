@@ -28,6 +28,8 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
     project_path = Path(project_path)
     env_path = Path(env_path)
     template_repo = bool(installer_status.get("template_repo"))
+    # add an env var to keep track of what features were enabled (so the docker template works right out of the box)
+    dimos_env_vars["DIMOS_ENABLED_FEATURES"] = ",".join(installer_status.get("features", ""))
 
     env_exists = env_path.is_file()
 

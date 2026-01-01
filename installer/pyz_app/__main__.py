@@ -130,6 +130,7 @@ def main():
             print(f"  - {feat}")
         return
 
+    installer_status["features"] = list(selected_features)
     if not args.no_system_install:
         phase1(system_analysis, selected_features)
     if args.just_system_install:

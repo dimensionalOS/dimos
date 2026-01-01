@@ -28,13 +28,13 @@ ENV PATH="/root/.local/bin:$PATH"
 
 # Run your installer (now "python"/"pip" point at the venv by default because of PATH)
 # RUN bash -lc 'sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/refs/heads/master/install") --non-interactive --no-env-setup'
-ARG DIMOS_FEATURES_FOR_DOCKER=""
+ARG DIMOS_ENABLED_FEATURES=""
 ENV DIMOS_REF_FOR_DOCKER="refs/heads/master"
-RUN bash -lc 'sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/$DIMOS_REF_FOR_DOCKER/install") --just-system-install --non-interactive --features "$DIMOS_FEATURES_FOR_DOCKER"'
+RUN bash -lc 'sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/$DIMOS_REF_FOR_DOCKER/install") --just-system-install --non-interactive --features "$DIMOS_ENABLED_FEATURES"'
 
 RUN echo '# Dimos auto-setup'                                                                                                                                                                                                >> "$HOME/.bashrc" && \
     echo 'if [ ! -d "$PWD/.dimos" ]; then'                                                                                                                                                                                   >> "$HOME/.bashrc" && \
-    echo '    sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/$DIMOS_REF_FOR_DOCKER/install") --no-system-install --non-interactive --features "$DIMOS_FEATURES_FOR_DOCKER"' >> "$HOME/.bashrc" && \
+    echo '    sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/$DIMOS_REF_FOR_DOCKER/install") --no-system-install --non-interactive --features "$DIMOS_ENABLED_FEATURES"' >> "$HOME/.bashrc" && \
     echo '    touch "$PWD/.dimos"'                                                                                                                                                                                           >> "$HOME/.bashrc" && \
     echo 'fi'                                                                                                                                                                                                                >> "$HOME/.bashrc" && \
     echo ''                                                                                                                                                                                                                  >> "$HOME/.bashrc" && \
@@ -66,11 +66,11 @@ def _maybe_write(path: Path, content: str) -> bool:
 
 def _env_block(features: Iterable[str]) -> str:
     feature_str = ",".join(features)
-    return f"DIMOS_FEATURES_FOR_DOCKER=\"{feature_str}\"\n"
+    return f"DIMOS_ENABLED_FEATURES=\"{feature_str}\"\n"
 
 
 def _script_export_env() -> str:
-    return 'if [ -f ".env" ]; then export $(grep -v "^#" .env | xargs); fi\nexport DIMOS_FEATURES_FOR_DOCKER="${DIMOS_FEATURES_FOR_DOCKER:-}"\n'
+    return 'if [ -f ".env" ]; then export $(grep -v "^#" .env | xargs); fi\nexport DIMOS_ENABLED_FEATURES="${DIMOS_ENABLED_FEATURES:-}"\n'
 
 
 def _build_script() -> str:
@@ -78,7 +78,7 @@ def _build_script() -> str:
         "#!/usr/bin/env bash\n"
         "set -e\n"
         + _script_export_env()
-        + 'docker build --build-arg DIMOS_FEATURES_FOR_DOCKER="$DIMOS_FEATURES_FOR_DOCKER" -t dimos-dev .\n'
+        + 'docker build --build-arg DIMOS_ENABLED_FEATURES="$DIMOS_ENABLED_FEATURES" -t dimos-dev .\n'
     )
 
 
