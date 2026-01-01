@@ -72,6 +72,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Skip phase5 (environment setup).",
     )
     parser.add_argument(
+        "--just-system-install",
+        action="store_true",
+        help="Only run system dependency installation (phase1) and exit.",
+    )
+    parser.add_argument(
         "--features",
         type=str,
         help="Comma-separated list of features to enable (skips interactive selection).",
@@ -91,7 +96,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main():
     args = parse_args()
-    non_interactive = args.non_interactive or not sys.stdin.isatty()
+    non_interactive = args.non_interactive or args.just_system_install or not sys.stdin.isatty()
     installer_status["non_interactive"] = non_interactive
     installer_status["dry_run"] = bool(args.dry_run)
 
@@ -118,6 +123,8 @@ def main():
 
     if not args.no_system_install:
         phase1(system_analysis, selected_features)
+    if args.just_system_install:
+        return
     phase2(system_analysis, selected_features)
     phase3(system_analysis, selected_features)
     if not args.no_check:
