@@ -144,7 +144,7 @@ def _detect_os_details(os_name: OSName) -> dict[str, str]:
     return {}
 
 
-def get_tool_check_results() -> dict[str, ToolResult]:
+def get_system_analysis() -> dict[str, ToolResult]:
     results: dict[str, ToolResult] = {}
 
     existence = {
@@ -303,4 +303,4 @@ def get_tool_check_results() -> dict[str, ToolResult]:
     return results
 
 
-__all__ = ["OS_NAMES", "OSName", "ToolResult", "get_tool_check_results"]
+__all__ = ["OS_NAMES", "OSName", "ToolResult", "get_system_analysis"]

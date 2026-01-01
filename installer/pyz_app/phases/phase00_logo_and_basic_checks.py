@@ -19,7 +19,7 @@ import time
 
 from ..support import prompt_tools as p
 from ..support.dimos_banner import RenderLogo
-from ..support.get_tool_check_results import get_tool_check_results
+from ..support.get_system_analysis import get_system_analysis
 from ..support.misc import get_project_toml
 
 def phase0():
@@ -34,7 +34,7 @@ def phase0():
     )
 
     logo.log("- checking system")
-    system_analysis = get_tool_check_results()
+    system_analysis = get_system_analysis()
     # # visually we want cuda to be listed last and os to be first
     timeout = 0.5
     cuda = system_analysis["cuda"]

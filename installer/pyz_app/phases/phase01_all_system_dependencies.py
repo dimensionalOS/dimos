@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from ..support import prompt_tools as p
 from ..support.shell_tooling import command_exists
-from ..support.get_tool_check_results import get_tool_check_results
+from ..support.get_system_analysis import get_system_analysis
 from ..support.misc import (
     apt_install,
     brew_install,
@@ -29,7 +29,7 @@ from ..support.misc import (
 def phase1(system_analysis, selected_features):
     p.header("Next Phase: System Dependency Install")
     if system_analysis is None:
-        system_analysis = get_tool_check_results()
+        system_analysis = get_system_analysis()
 
     deps = get_system_deps(selected_features or None)
     mention_system_dependencies(deps["human_names"])
