@@ -129,6 +129,7 @@ def ensure_git_and_lfs() -> None:
 
 
 def ensure_port_audio() -> None:
+    # TODO: only run this check if pyaudio is in the pip dependency list. Its in the pyprojct.toml core right now but it might not be forever
     p.boring_log("- checking if portaudio is available")
     port_audio_res = run_command(  # intentionally not part of dry_run
         ["pkg-config", "--modversion", "portaudio-2.0"], print_command=True, capture_output=True
