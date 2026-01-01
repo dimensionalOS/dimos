@@ -66,8 +66,10 @@ def phase0():
     features = [f for f in optional.keys() if f not in ["cpu"]]
     p.header("First Phase: Feature Selection")
     selected_features = p.pick_many(
-        "Which features do you want? (Selecting none is okay)", options=features
+        "Which features do you want? (Pick any number of features)", options=["basics"]+features
     )
+    # basics is just a dummy entry to make it more user friendly
+    selected_features = [ each for each in selected_features if each != "basics" ]
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
 

@@ -23,6 +23,7 @@ import re
 import shutil
 import sys
 from typing import Any, Callable, Deque, Iterable, List
+import requests
 
 from . import pip_dependency_database as dep_db, prompt_tools as p
 from .shell_tooling import command_exists, run_command
@@ -342,12 +343,22 @@ def ensure_homebrew() -> None:
     p.boring_log("- homebrew not found")
     if not p.ask_yes_no("Install Homebrew now? (will run the official install script)"):
         raise RuntimeError("Homebrew is required for automatic dependency install.")
-    cmd = [
-        "bash",
-        "-c",
-        "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash",
-    ]
-    res = run_command(cmd, check=True, print_command=True, dry_run=installer_status["dry_run"])
+
+    url = "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh"
+    dest = Path("/tmp/brew_install.sh")
+    p.boring_log(f"- downloading Homebrew installer to {dest}")
+    resp = requests.get(url, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Failed to download Homebrew installer: HTTP {resp.status_code}")
+    dest.write_bytes(resp.content)
+    dest.chmod(0o755)
+
+    res = run_command(
+        ["/bin/bash", str(dest)],
+        check=True,
+        print_command=True,
+        dry_run=installer_status["dry_run"],
+    )
     if res.code != 0:
         raise RuntimeError("Homebrew installation failed.")
 

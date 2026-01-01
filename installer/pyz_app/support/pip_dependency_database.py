@@ -468,18 +468,12 @@ RAW_DATA = r"""{
     "apt_dependencies": [
       "python3",
       "python3-pip",
-      "python3-dev",
-      "build-essential",
       "liblcm-dev",
-      "lcm-tools",
-      "default-jdk",
-      "default-jre",
       "git"
     ],
     "brew_dependencies": [
       "python3",
       "lcm",
-      "openjdk",
       "pkg-config",
       "git"
     ],
@@ -492,7 +486,7 @@ RAW_DATA = r"""{
       "stdenv.cc.cc.lib",
       "git"
     ],
-    "notes": "dimos-lcm is a LCM-Foxglove bridge and message utilities package that requires the LCM (Lightweight Communications and Marshalling) library. Key dependencies include: LCM development libraries (liblcm-dev) for the core C/C++ libraries, LCM tools (lcm-tools) which provide lcm-gen for code generation and lcm-spy for message inspection, Java Development Kit (default-jdk) and Java Runtime Environment (default-jre) for building and running Java bindings including lcm-spy, Python development headers (python3-dev) for building Python bindings, and build-essential for general compilation tools. The package also depends on numpy, foxglove-websocket, and lcm Python packages which are installed via pip. Git is required as the package is typically installed from a GitHub repository. On macOS via Homebrew, the 'lcm' package provides both the library and tools, and 'openjdk' provides Java support. On NixOS, equivalent packages provide the same functionality with stdenv.cc.cc.lib for C standard library support.",
+    "notes": "dimos-lcm is a LCM-Foxglove bridge and message utilities package that requires the LCM (Lightweight Communications and Marshalling) library. Key dependencies include: LCM development libraries (liblcm-dev) for the core C/C++ libraries, LCM tools which provide lcm-gen for code generation and lcm-spy for message inspection, Java Development Kit (default-jdk) and Java Runtime Environment (default-jre) for building and running Java bindings including lcm-spy, Python development headers (python3-dev) for building Python bindings, and build-essential for general compilation tools. The package also depends on numpy, foxglove-websocket, and lcm Python packages which are installed via pip. Git is required as the package is typically installed from a GitHub repository. On macOS via Homebrew, the 'lcm' package provides both the library and tools, and 'openjdk' provides Java support. On NixOS, equivalent packages provide the same functionality with stdenv.cc.cc.lib for C standard library support.",
     "package": "dimos-lcm",
     "version": "0.1.0"
   },
@@ -3679,6 +3673,7 @@ MANUAL_HUMAN_NAME_OVERRIDES = {
     "iproute2": "iproute2",
     "jpeg-turbo": "lib jpeg turbo",
     "jpeg": "lib jpeg",
+    "libjpeg-turbo8-dev": "lib jpeg turbo",
     "lapack": "lapack",
     "lcm": "lcm",
     "lcms2": "lcms",

@@ -1,2 +1,3 @@
 inquirerpy==0.3.4
 tomli==2.3.0
+requests==2.32.5

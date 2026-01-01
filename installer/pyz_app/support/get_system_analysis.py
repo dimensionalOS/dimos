@@ -195,7 +195,7 @@ def get_system_analysis() -> dict[str, ToolResult]:
             note = val.get("note", "")
             val["note"] = (
                 note + " " if note else ""
-            ) + "If this says 'git: lfs is not a git command', Git LFS isn't installed."
+            )
         tasks.append((name, val))
     else:
         results["git_lfs"] = {
