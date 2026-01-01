@@ -18,7 +18,7 @@ from __future__ import annotations
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
 from ..support.shell_tooling import run_command
-from ..support.misc import dev
+from ..support.installer_status import installer_status
 
 
 def phase3(_system_analysis, selected_features):
@@ -33,7 +33,7 @@ def phase3(_system_analysis, selected_features):
         f"dimos{selected_features_string} @ git+https://github.com/dimensionalOS/dimos.git"
     )
     extra_args = []
-    if dev:
+    if installer_status.get("dev"):
         extra_args.append("--no-cache-dir")
     
     res = run_command(["pip", "install", *extra_args, package_name], print_command=True)

@@ -24,6 +24,7 @@ from typing import Any
 from . import pip_dependency_database as dep_db, prompt_tools as p
 from .shell_tooling import command_exists, run_command
 from .constants import dependency_human_names_set, dependency_apt_packages_set_minimal, dependency_nix_packages_set_minimal, dependency_brew_set_minimal
+from .installer_status import installer_status
 
 try:
     import tomllib
@@ -33,9 +34,6 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older interpreter
 _project_directory: Path | None = None
 _already_called_apt_get_update = False
 _already_called_brew_update = False
-
-dry_run = True  # FIXME: change before release
-dev = True  # FIXME: change before release
 
 
 @cache
@@ -171,21 +169,27 @@ def apt_install(package_names: list[str]) -> None:
         return
 
     if not _already_called_apt_get_update:
-        update_res = run_command(["sudo", "apt-get", "update"], print_command=True, dry_run=dry_run)
+        update_res = run_command(
+            ["sudo", "apt-get", "update"],
+            print_command=True,
+            dry_run=installer_status["dry_run"],
+        )
         if update_res.code != 0:
             raise RuntimeError(f"sudo apt-get update failed: {update_res.code}")
         _already_called_apt_get_update = True
 
     failed_packages: list[str] = []
     for each_pkg in package_names:
-        res = run_command(["dpkg", "-s", each_pkg], dry_run=dry_run)
+        res = run_command(["dpkg", "-s", each_pkg], dry_run=installer_status["dry_run"])
         if res.code == 0:
             p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
             continue
 
         p.sub_header(f"\n- installing {p.highlight(each_pkg)}")
         install_res = run_command(
-            ["sudo", "apt-get", "install", "-y", each_pkg], print_command=True, dry_run=dry_run
+            ["sudo", "apt-get", "install", "-y", each_pkg],
+            print_command=True,
+            dry_run=installer_status["dry_run"],
         )
         if install_res.code != 0:
             failed_packages.append(each_pkg)
@@ -206,7 +210,9 @@ def ensure_xcode_cli_tools() -> None:
         )  # intentionally not part of dry_run
     except Exception:
         if p.ask_yes_no("Install Xcode Command Line Tools now?"):
-            res = run_command(["xcode-select", "--install"], check=True, dry_run=dry_run)
+            res = run_command(
+                ["xcode-select", "--install"], check=True, dry_run=installer_status["dry_run"]
+            )
             if res.code != 0:
                 raise RuntimeError("Failed to trigger Xcode Command Line Tools installation.")
 
@@ -224,7 +230,7 @@ def ensure_homebrew() -> None:
         "-c",
         "curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh | /bin/bash",
     ]
-    res = run_command(cmd, check=True, print_command=True, dry_run=dry_run)
+    res = run_command(cmd, check=True, print_command=True, dry_run=installer_status["dry_run"])
     if res.code != 0:
         raise RuntimeError("Homebrew installation failed.")
 
@@ -237,7 +243,7 @@ def brew_install(package_names: list[str]) -> None:
     ensure_homebrew()
     if not _already_called_brew_update:
         p.boring_log("Running brew update")
-        res = run_command(["brew", "update"], print_command=True, dry_run=dry_run)
+        res = run_command(["brew", "update"], print_command=True, dry_run=installer_status["dry_run"])
         if res.code != 0:
             raise RuntimeError(f"brew update failed: {res.code}")
         _already_called_brew_update = True
@@ -249,7 +255,9 @@ def brew_install(package_names: list[str]) -> None:
             p.sub_header(f"- ✅ looks like {p.highlight(pkg)} is already installed")
             continue
         p.sub_header(f"\n- installing {p.highlight(pkg)}")
-        install_res = run_command(["brew", "install", pkg], print_command=True, dry_run=dry_run)
+        install_res = run_command(
+            ["brew", "install", pkg], print_command=True, dry_run=installer_status["dry_run"]
+        )
         if install_res.code != 0:
             failed.append(pkg)
 
@@ -338,7 +346,6 @@ __all__ = [
     "apt_install",
     "brew_install",
     "detect_python_command",
-    "dry_run",
     "ensure_git_and_lfs",
     "ensure_homebrew",
     "ensure_port_audio",

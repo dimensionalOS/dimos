@@ -22,6 +22,8 @@ from InquirerPy import inquirer
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
+from .installer_status import installer_status
+
 # Manual ANSI helpers (basic 8-color + bold/dim)
 RESET = "\x1b[0m"
 BOLD = "\x1b[1m"
@@ -46,7 +48,7 @@ def clear_screen() -> None:
 
 
 def header(text: str) -> None:
-    print("\n" * 10)
+    print("\n" * 3)
     # clear_screen()
     print(f"{BOLD}{FG_GREEN}#{RESET}")
     print(f"{BOLD}{FG_GREEN}# {_color_help(text,BOLD+FG_GREEN)}{RESET}")
@@ -75,6 +77,8 @@ def highlight(text: str) -> str:
 
 
 def confirm(text: str) -> None:
+    if installer_status.get("non_interactive"):
+        return
     input(f"{FG_YELLOW}{text}{RESET}")
 
 
@@ -83,6 +87,8 @@ def prompt(text: str) -> str:
 
 
 def ask_yes_no(question: str) -> bool:
+    if installer_status.get("non_interactive"):
+        return True
     return bool(inquirer.confirm(message=question, default=True).execute())
 
 

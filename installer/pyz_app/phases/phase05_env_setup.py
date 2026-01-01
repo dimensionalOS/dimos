@@ -8,7 +8,6 @@ from ..support import prompt_tools as p
 
 
 def phase5():
-    p.clear_screen()
     p.header("Next Phase: Environment configuration")
 
     project_path = get_project_directory()

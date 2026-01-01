@@ -23,12 +23,12 @@ from ..support.constants import discord_url
 from ..support.shell_tooling import command_exists, run_command
 from ..support.misc import (
     add_git_ignore_patterns,
-    dry_run,
     ensure_git_and_lfs,
     ensure_port_audio,
     ensure_python,
     get_project_directory,
 )
+from ..support.installer_status import settings as installer_status
 from ..support.venv import activate_venv, get_venv_dirs_at
 
 
@@ -81,7 +81,6 @@ def ensure_venv_active(python_cmd: str):
         p.boring_log(f"- detected active virtual environment: {active_venv}")
         return active_venv
 
-    p.clear_screen()
     project_directory = get_project_directory()
     possible_venv_dirs = get_venv_dirs_at(project_directory)
 
@@ -100,7 +99,9 @@ def ensure_venv_active(python_cmd: str):
             )
         venv_dir = Path(project_directory) / DEFAULT_VENV_NAME
         p.boring_log(f"- creating virtual environment at {venv_dir}")
-        venv_res = run_command([python_cmd, "-m", "venv", str(venv_dir)], dry_run=dry_run)
+        venv_res = run_command(
+            [python_cmd, "-m", "venv", str(venv_dir)], dry_run=installer_status["dry_run"]
+        )
         if venv_res.code != 0:
             raise RuntimeError(
                 "- ❌ Failed to create virtual environment. Please create one manually and rerun this command."

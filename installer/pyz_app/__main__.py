@@ -26,6 +26,7 @@ from .phases.phase03_pip_install_dimos import phase3
 from .phases.phase04_dimos_check import phase4
 from .phases.phase05_env_setup import phase5
 from .support.get_system_analysis import get_system_analysis
+from .support.installer_status import installer_status
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -61,6 +62,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 def main():
     args = parse_args()
     non_interactive = args.non_interactive or not sys.stdin.isatty()
+    installer_status["non_interactive"] = non_interactive
 
     cli_features = []
     if args.features:
