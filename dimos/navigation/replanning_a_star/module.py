@@ -14,7 +14,7 @@
 
 import os
 
-from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc

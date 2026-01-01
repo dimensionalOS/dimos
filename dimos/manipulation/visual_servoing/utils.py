@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import cv2
-from dimos_lcm.vision_msgs import Detection2D, Detection3D  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import Detection2D, Detection3D
 import numpy as np
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3

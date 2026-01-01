@@ -16,7 +16,7 @@ import math
 from threading import Event, RLock, Thread, current_thread
 import time
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
 

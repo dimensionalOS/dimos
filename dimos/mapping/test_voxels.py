@@ -136,7 +136,7 @@ def test_carving(
 
 def test_injest_a_few(mapper: VoxelGridMapper) -> None:
     data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]
+    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")
 
     for i in [1, 4, 8]:
         frame = lidar_store.find_closest_seek(i)
@@ -182,7 +182,7 @@ def test_roundtrip(moment1: Go2MapperMoment, voxel_size: float, expected_points:
 def test_roundtrip_range_preserved(mapper: VoxelGridMapper) -> None:
     """Test that input coordinate ranges are preserved in output."""
     data_dir = get_data("unitree_go2_office_walk2")
-    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")  # type: ignore[var-annotated]
+    lidar_store = TimedSensorReplay(f"{data_dir}/lidar")
 
     frame = lidar_store.find_closest_seek(1.0)
     assert frame is not None

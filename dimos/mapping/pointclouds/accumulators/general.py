@@ -16,7 +16,7 @@ import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 from open3d.io import read_point_cloud  # type: ignore[import-untyped]
 
-from dimos.core.global_config import GlobalConfig  # type: ignore[import-untyped]
+from dimos.core.global_config import GlobalConfig
 
 
 class GeneralPointCloudAccumulator:

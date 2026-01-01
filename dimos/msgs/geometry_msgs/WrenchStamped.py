@@ -33,7 +33,7 @@ class WrenchStamped(Timestamped):
     msg_name = "geometry_msgs.WrenchStamped"
     ts: float = 0.0
     frame_id: str = ""
-    wrench: Wrench = None
+    wrench: Wrench = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.ts == 0.0:
@@ -42,8 +42,8 @@ class WrenchStamped(Timestamped):
             self.wrench = Wrench()
 
     @classmethod
-    def from_force_torque_array(
-        cls, ft_data: list, frame_id: str = "ft_sensor", ts: float | None = None
+    def from_force_torque_array(  # type: ignore[no-untyped-def]
+        cls, ft_data: list, frame_id: str = "ft_sensor", ts: float | None = None  # type: ignore[type-arg]
     ):
         """
         Create WrenchStamped from a 6-element force/torque array.

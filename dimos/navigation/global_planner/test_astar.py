@@ -15,7 +15,7 @@
 import time
 
 import numpy as np
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+from open3d.geometry import PointCloud
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient

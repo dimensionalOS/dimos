@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from functools import cached_property
 from typing import Any
 
-import open_clip  # type: ignore[import-untyped]
+import open_clip
 from PIL import Image as PILImage
 import torch
 import torch.nn.functional as F

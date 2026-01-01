@@ -17,7 +17,7 @@ from functools import cached_property
 
 import torch
 import torch.nn.functional as F
-from torchreid import utils as torchreid_utils  # type: ignore[import-untyped]
+from torchreid import utils as torchreid_utils
 
 from dimos.models.base import LocalModel
 from dimos.models.embedding.base import Embedding, EmbeddingModel, EmbeddingModelConfig

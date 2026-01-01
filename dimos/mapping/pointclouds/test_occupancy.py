@@ -15,7 +15,7 @@
 
 import cv2
 import numpy as np
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+from open3d.geometry import PointCloud
 import pytest
 
 from dimos.core import LCMTransport

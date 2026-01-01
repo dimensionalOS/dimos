@@ -14,7 +14,7 @@
 
 import argparse
 
-from ultralytics import YOLO, FastSAM  # type: ignore[attr-defined]
+from ultralytics import YOLO, FastSAM  # type: ignore[attr-defined, import-not-found]
 
 
 def parse_args():  # type: ignore[no-untyped-def]

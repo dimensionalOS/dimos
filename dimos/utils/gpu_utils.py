@@ -15,7 +15,7 @@
 
 def is_cuda_available():  # type: ignore[no-untyped-def]
     try:
-        import pycuda.driver as cuda  # type: ignore[import-not-found]
+        import pycuda.driver as cuda
 
         cuda.init()
         return cuda.Device.count() > 0

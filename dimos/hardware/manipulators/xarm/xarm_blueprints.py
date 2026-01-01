@@ -37,7 +37,7 @@ from dimos.core.transport import LCMTransport
 from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver as xarm_driver_blueprint
 from dimos.manipulation.control import cartesian_motion_controller, joint_trajectory_controller
 from dimos.msgs.geometry_msgs import PoseStamped
-from dimos.msgs.sensor_msgs import (  # type: ignore[attr-defined]
+from dimos.msgs.sensor_msgs import (
     JointCommand,
     JointState,
     RobotState,

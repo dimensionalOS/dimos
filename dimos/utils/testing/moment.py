@@ -75,7 +75,7 @@ class Moment(Resource):
         for attr_name in dir(self):
             attr_value = getattr(self, attr_name)
             if isinstance(attr_value, classes):
-                moments.append(attr_value)  # type: ignore[arg-type]
+                moments.append(attr_value)
         return moments
 
     def seekable_moments(self) -> list[SensorMoment[Any]]:

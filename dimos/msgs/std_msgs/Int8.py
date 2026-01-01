@@ -19,10 +19,10 @@
 
 from typing import ClassVar
 
-from dimos_lcm.std_msgs import Int8 as LCMInt8  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Int8 as LCMInt8
 
 try:
-    from std_msgs.msg import Int8 as ROSInt8  # type: ignore[attr-defined, import-untyped]
+    from std_msgs.msg import Int8 as ROSInt8  # type: ignore[attr-defined]
 except ImportError:
     ROSInt8 = None  # type: ignore[assignment, misc]
 

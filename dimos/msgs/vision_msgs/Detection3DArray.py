@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.vision_msgs.Detection3DArray import (  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs.Detection3DArray import (
     Detection3DArray as LCMDetection3DArray,
 )
 

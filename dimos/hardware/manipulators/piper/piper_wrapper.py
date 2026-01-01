@@ -52,7 +52,7 @@ class PiperSDKWrapper(BaseManipulatorSDK):
             True if connection successful
         """
         try:
-            from piper_sdk import C_PiperInterface_V2  # type: ignore[import-not-found]
+            from piper_sdk import C_PiperInterface_V2
 
             can_port = config.get("can_port", "can0")
             self.logger.info(f"Connecting to Piper via CAN port {can_port}...")

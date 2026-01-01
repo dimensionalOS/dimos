@@ -22,7 +22,7 @@ from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 from reactivex.scheduler import ThreadPoolScheduler
 
-from dimos.rxpy_backpressure import BackPressure  # type: ignore[import-untyped]
+from dimos.rxpy_backpressure import BackPressure
 from dimos.utils.threadpool import get_scheduler
 
 T = TypeVar("T")

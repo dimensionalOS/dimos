@@ -17,7 +17,7 @@ import functools
 import time
 from typing import Any, TypeVar, cast
 
-from dimos_lcm.std_msgs import Float32  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Float32
 
 from dimos.core import LCMTransport, Transport
 

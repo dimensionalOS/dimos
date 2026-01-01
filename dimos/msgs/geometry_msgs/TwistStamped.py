@@ -17,12 +17,12 @@ from __future__ import annotations
 import time
 from typing import BinaryIO, TypeAlias
 
-from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import TwistStamped as LCMTwistStamped
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[import-untyped]
-        TwistStamped as ROSTwistStamped,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TwistStamped as ROSTwistStamped,
     )
 except ImportError:
     ROSTwistStamped = None  # type: ignore[assignment, misc]

@@ -20,7 +20,7 @@ import math
 import time
 from typing import TYPE_CHECKING
 
-from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
+from unitree_webrtc_connect.constants import RTC_TOPIC
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule

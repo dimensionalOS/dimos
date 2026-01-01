@@ -24,12 +24,12 @@ from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
-from unitree_webrtc_connect.constants import (  # type: ignore[import-untyped]
+from unitree_webrtc_connect.constants import (
     RTC_TOPIC,
     SPORT_CMD,
     VUI_COLOR,
 )
-from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )

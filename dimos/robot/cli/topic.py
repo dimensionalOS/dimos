@@ -98,5 +98,5 @@ def topic_send(topic: str, message_expr: str) -> None:
         pLCMTransport(topic) if use_pickled else LCMTransport(topic, msg_type)
     )
 
-    transport.broadcast(None, message)  # type: ignore[arg-type]
+    transport.broadcast(None, message)
     typer.echo(f"Sent to {topic}: {message}")

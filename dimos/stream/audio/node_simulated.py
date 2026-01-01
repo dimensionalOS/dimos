@@ -18,7 +18,7 @@ import time
 import numpy as np
 from reactivex import Observable, create, disposable
 
-from dimos.stream.audio.abstract import (  # type: ignore[import-untyped]
+from dimos.stream.audio.abstract import (  # type: ignore[import-not-found, import-untyped]
     AbstractAudioEmitter,
     AudioEvent,
 )

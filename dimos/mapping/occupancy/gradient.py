@@ -53,7 +53,7 @@ def gradient(
     distance_cells = ndimage.distance_transform_edt(1 - obstacle_map)
 
     # Convert to meters and clip to max distance
-    distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)  # type: ignore[operator]
+    distance_meters = np.clip(distance_cells * occupancy_grid.resolution, 0, max_distance)
 
     # Invert and scale to 0-100 range
     # Far from obstacles (max_distance) -> 0

@@ -22,7 +22,7 @@ import os
 import queue
 import warnings
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable

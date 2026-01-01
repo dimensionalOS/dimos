@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-import genesis as gs  # type: ignore
+import genesis as gs  # type: ignore[import-not-found]
 
 from ..base.simulator_base import SimulatorBase
 

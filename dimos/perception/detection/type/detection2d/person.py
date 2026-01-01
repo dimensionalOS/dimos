@@ -17,11 +17,11 @@ from dataclasses import dataclass
 # Import for type checking only to avoid circular imports
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
     TextAnnotation,
 )
-from dimos_lcm.foxglove_msgs.Point2 import Point2  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.Point2 import Point2
 import numpy as np
 
 from dimos.msgs.foxglove_msgs.Color import Color
@@ -31,7 +31,7 @@ from dimos.types.timestamped import to_ros_stamp
 from dimos.utils.decorators.decorators import simple_mcache
 
 if TYPE_CHECKING:
-    from ultralytics.engine.results import Results
+    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
 
 
 @dataclass

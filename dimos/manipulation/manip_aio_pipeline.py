@@ -28,7 +28,7 @@ import reactivex.operators as ops
 import websockets
 
 from dimos.perception.common.utils import colorize_depth
-from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-untyped]
+from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-not-found, import-untyped]
     Detic2DDetector,
 )
 from dimos.perception.grasp_generation.utils import draw_grasps_on_image

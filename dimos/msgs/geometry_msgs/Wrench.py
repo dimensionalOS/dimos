@@ -27,8 +27,8 @@ class Wrench:
     This is equivalent to ROS geometry_msgs/Wrench.
     """
 
-    force: Vector3 = None  # Force vector (N)
-    torque: Vector3 = None  # Torque vector (Nm)
+    force: Vector3 = None  # type: ignore[assignment]  # Force vector (N)
+    torque: Vector3 = None  # type: ignore[assignment]  # Torque vector (Nm)
 
     def __post_init__(self) -> None:
         if self.force is None:

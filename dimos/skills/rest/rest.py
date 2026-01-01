@@ -15,7 +15,7 @@
 import logging
 
 from pydantic import Field
-import requests
+import requests  # type: ignore[import-untyped]
 
 from dimos.skills.skills import AbstractSkill
 
@@ -87,7 +87,7 @@ class GenericRestSkill(AbstractSkill):
             logger.debug(
                 f"Request successful. Status: {response.status_code}, Response: {response.text[:100]}..."
             )
-            return response.text  # Return text content directly
+            return response.text  # type: ignore[no-any-return]  # Return text content directly
         except requests.exceptions.HTTPError as http_err:
             logger.error(
                 f"HTTP error occurred: {http_err} - Status Code: {http_err.response.status_code}"

@@ -14,7 +14,7 @@
 
 import time
 
-import rclpy  # type: ignore[import-untyped]
+import rclpy
 
 from dimos import core
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3

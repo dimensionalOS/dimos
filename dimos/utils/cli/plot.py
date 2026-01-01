@@ -19,7 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-import plotext as plt  # type: ignore[import-untyped]
+import plotext as plt
 
 if TYPE_CHECKING:
     from collections.abc import Sequence

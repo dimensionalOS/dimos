@@ -18,9 +18,9 @@
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
-from etils import epath  # type: ignore[import-untyped]
-import mujoco  # type: ignore[import-untyped]
-from mujoco_playground._src import mjx_env  # type: ignore[import-untyped]
+from etils import epath
+import mujoco
+from mujoco_playground._src import mjx_env
 import numpy as np
 
 from dimos.core.global_config import GlobalConfig

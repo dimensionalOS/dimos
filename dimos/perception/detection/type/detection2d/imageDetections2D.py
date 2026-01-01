@@ -23,8 +23,8 @@ from dimos.perception.detection.type.detection2d.bbox import Detection2DBBox
 from dimos.perception.detection.type.imageDetections import ImageDetections
 
 if TYPE_CHECKING:
-    from dimos_lcm.vision_msgs import Detection2DArray  # type: ignore[import-untyped]
-    from ultralytics.engine.results import Results
+    from dimos_lcm.vision_msgs import Detection2DArray
+    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
 
     from dimos.msgs.sensor_msgs import Image
 

@@ -15,7 +15,7 @@
 from threading import Event, Thread
 import time
 
-import pytest
+import pytest  # type: ignore[import-not-found]
 
 from dimos.core import In, Module, Out, rpc, start
 from dimos.msgs.geometry_msgs import Vector3

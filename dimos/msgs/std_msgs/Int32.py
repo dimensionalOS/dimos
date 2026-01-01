@@ -19,7 +19,7 @@
 
 from typing import ClassVar
 
-from dimos_lcm.std_msgs import Int32 as LCMInt32  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Int32 as LCMInt32
 
 
 class Int32(LCMInt32):  # type: ignore[misc]

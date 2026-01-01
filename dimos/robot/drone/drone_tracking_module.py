@@ -21,7 +21,7 @@ import time
 from typing import Any
 
 import cv2
-from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import String
 import numpy as np
 
 from dimos.core import In, Module, Out, rpc

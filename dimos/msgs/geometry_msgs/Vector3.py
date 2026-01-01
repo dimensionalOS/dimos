@@ -17,7 +17,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import TypeAlias
 
-from dimos_lcm.geometry_msgs import Vector3 as LCMVector3  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import Vector3 as LCMVector3
 import numpy as np
 from plum import dispatch
 

@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import String
 from reactivex.disposable import CompositeDisposable, Disposable
 
 from dimos.core import In, Module, Out, rpc

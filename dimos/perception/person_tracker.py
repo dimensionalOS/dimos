@@ -22,7 +22,7 @@ from dimos.core import In, Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image
 from dimos.perception.common.ibvs import PersonDistanceEstimator
 from dimos.perception.detection2d.utils import filter_detections
-from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector  # type: ignore[import-untyped]
+from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector  # type: ignore[import-not-found, import-untyped]
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()

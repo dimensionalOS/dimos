@@ -262,7 +262,7 @@ class SkillStateDict(dict[str, SkillState]):
 # It aggregates skills from static and dynamic containers, manages skill states,
 # and decides when to notify the agent about updates.
 class SkillCoordinator(Module):
-    default_config = SkillCoordinatorConfig  # type: ignore[assignment]
+    default_config = SkillCoordinatorConfig
     empty: bool = True
 
     _static_containers: list[SkillContainer]

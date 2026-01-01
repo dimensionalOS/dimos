@@ -14,7 +14,7 @@
 
 import pickle
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.msgs.sensor_msgs import Image
 from dimos.msgs.std_msgs import Header
@@ -108,7 +108,7 @@ def broadcast(  # type: ignore[no-untyped-def]
     detections,
     annotations,
 ) -> None:
-    from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    from dimos_lcm.foxglove_msgs.ImageAnnotations import (
         ImageAnnotations,
     )
 
