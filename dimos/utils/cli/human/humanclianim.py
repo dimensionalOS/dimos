@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -92,15 +92,25 @@ def run_banner_animation() -> None:
     from terminaltexteffects.effects.effect_burn import Burn  # type: ignore[import-not-found]
     from terminaltexteffects.effects.effect_decrypt import Decrypt  # type: ignore[import-not-found]
     from terminaltexteffects.effects.effect_expand import Expand  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_highlight import Highlight  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_highlight import (
+        Highlight,  # type: ignore[import-not-found]
+    )
     from terminaltexteffects.effects.effect_matrix import Matrix  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_middleout import MiddleOut  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_overflow import Overflow  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_middleout import (
+        MiddleOut,  # type: ignore[import-not-found]
+    )
+    from terminaltexteffects.effects.effect_overflow import (
+        Overflow,  # type: ignore[import-not-found]
+    )
     from terminaltexteffects.effects.effect_pour import Pour  # type: ignore[import-not-found]
     from terminaltexteffects.effects.effect_print import Print  # type: ignore[import-not-found]
     from terminaltexteffects.effects.effect_rain import Rain  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_random_sequence import RandomSequence  # type: ignore[import-not-found]
-    from terminaltexteffects.effects.effect_scattered import Scattered  # type: ignore[import-not-found]
+    from terminaltexteffects.effects.effect_random_sequence import (
+        RandomSequence,  # type: ignore[import-not-found]
+    )
+    from terminaltexteffects.effects.effect_scattered import (
+        Scattered,  # type: ignore[import-not-found]
+    )
     from terminaltexteffects.effects.effect_slide import Slide  # type: ignore[import-not-found]
     from terminaltexteffects.effects.effect_sweep import Sweep  # type: ignore[import-not-found]
 

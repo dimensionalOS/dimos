@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -487,9 +487,7 @@ def colorize_depth(
         center_y, center_x = h // 2, w // 2
         center_region = _to_numpy(  # type: ignore[no-untyped-call]
             depth
-        )[
-            max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)
-        ]
+        )[max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)]
         center_mask = np.isfinite(center_region) & (center_region > 0)
         if center_mask.any():
             center_depth = float(np.median(center_region[center_mask]))

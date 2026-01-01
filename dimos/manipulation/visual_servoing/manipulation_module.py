@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -29,7 +29,9 @@ import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
-from dimos.hardware.manipulators.piper.piper_arm import PiperArm  # type: ignore[import-not-found, import-untyped]
+from dimos.hardware.manipulators.piper.piper_arm import (
+    PiperArm,  # type: ignore[import-not-found, import-untyped]
+)
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.manipulation.visual_servoing.utils import (
