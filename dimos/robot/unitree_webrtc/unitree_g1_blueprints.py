@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -19,11 +19,11 @@ This module provides pre-configured blueprints for various G1 robot setups,
 from basic teleoperation to full autonomous agent configurations.
 """
 
-from dimos_lcm.foxglove_msgs import SceneUpdate  # type: ignore[import-untyped]
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs import SceneUpdate
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
@@ -32,7 +32,7 @@ from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.sensors.camera import zed
-from dimos.hardware.sensors.camera.module import camera_module
+from dimos.hardware.sensors.camera.module import camera_module  # type: ignore[attr-defined]
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import (
     PoseStamped,

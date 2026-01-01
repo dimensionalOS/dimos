@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -84,7 +84,7 @@ class GripperControlComponent:
         Returns:
             Tuple of (success, message)
         """
-        result: tuple[bool, str] = self.set_gripper(gripper_angle=1000, gripper_effort=effort)  # type: ignore[no-any-return]
+        result: tuple[bool, str] = self.set_gripper(gripper_angle=1000, gripper_effort=effort)
         return result
 
     @rpc
@@ -98,7 +98,7 @@ class GripperControlComponent:
         Returns:
             Tuple of (success, message)
         """
-        result: tuple[bool, str] = self.set_gripper(gripper_angle=0, gripper_effort=effort)  # type: ignore[no-any-return]
+        result: tuple[bool, str] = self.set_gripper(gripper_angle=0, gripper_effort=effort)
         return result
 
     @rpc

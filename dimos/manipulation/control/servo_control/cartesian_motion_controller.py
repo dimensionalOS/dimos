@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -196,13 +196,13 @@ class CartesianMotionController(Module):
         try:
             result: tuple[int, list[float] | None] = self.get_rpc_calls(
                 "XArmDriver.get_forward_kinematics"
-            )(joint_positions)  # type: ignore[no-any-return]
+            )(joint_positions)
             return result
         except (ValueError, KeyError):
             if self._arm_driver_legacy:
                 result_fk: tuple[int, list[float] | None] = (
-                    self._arm_driver_legacy.get_forward_kinematics(joint_positions)
-                )  # type: ignore[attr-defined, no-any-return]
+                    self._arm_driver_legacy.get_forward_kinematics(joint_positions)  # type: ignore[attr-defined]
+                )
                 return result_fk
             raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
 
@@ -211,13 +211,13 @@ class CartesianMotionController(Module):
         try:
             result: tuple[int, list[float] | None] = self.get_rpc_calls(
                 "XArmDriver.get_inverse_kinematics"
-            )(pose)  # type: ignore[no-any-return]
+            )(pose)
             return result
         except (ValueError, KeyError):
             if self._arm_driver_legacy:
                 result_ik: tuple[int, list[float] | None] = (
-                    self._arm_driver_legacy.get_inverse_kinematics(pose)
-                )  # type: ignore[attr-defined, no-any-return]
+                    self._arm_driver_legacy.get_inverse_kinematics(pose)  # type: ignore[attr-defined]
+                )
                 return result_ik
             raise RuntimeError("No arm driver available - use blueprint or pass arm_driver param")
 
@@ -655,9 +655,9 @@ class CartesianMotionController(Module):
         error_z = target_pose.z - current_pose.z
 
         # Compute linear velocities via PID
-        vel_x = self._pid_x.update(error_x, dt)
-        vel_y = self._pid_y.update(error_y, dt)
-        vel_z = self._pid_z.update(error_z, dt)
+        vel_x = self._pid_x.update(error_x, dt)  # type: ignore[no-untyped-call]
+        vel_y = self._pid_y.update(error_y, dt)  # type: ignore[no-untyped-call]
+        vel_z = self._pid_z.update(error_z, dt)  # type: ignore[no-untyped-call]
 
         # Orientation error (convert to euler for simpler PID)
         # This is an approximation; axis-angle would be more accurate
@@ -666,9 +666,9 @@ class CartesianMotionController(Module):
         error_yaw = self._normalize_angle(target_pose.yaw - current_pose.yaw)
 
         # Compute angular velocities via PID
-        omega_x = self._pid_roll.update(error_roll, dt)
-        omega_y = self._pid_pitch.update(error_pitch, dt)
-        omega_z = self._pid_yaw.update(error_yaw, dt)
+        omega_x = self._pid_roll.update(error_roll, dt)  # type: ignore[no-untyped-call]
+        omega_y = self._pid_pitch.update(error_pitch, dt)  # type: ignore[no-untyped-call]
+        omega_z = self._pid_yaw.update(error_yaw, dt)  # type: ignore[no-untyped-call]
 
         return Twist(
             linear=Vector3(vel_x, vel_y, vel_z), angular=Vector3(omega_x, omega_y, omega_z)

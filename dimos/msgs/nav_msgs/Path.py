@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,17 +17,17 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, BinaryIO
 
-from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (
     Point as LCMPoint,
     Pose as LCMPose,
     PoseStamped as LCMPoseStamped,
     Quaternion as LCMQuaternion,
 )
-from dimos_lcm.nav_msgs import Path as LCMPath  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime  # type: ignore[import-untyped]
+from dimos_lcm.nav_msgs import Path as LCMPath
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 
 try:
-    from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined, import-untyped]
+    from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
 except ImportError:
     ROSPath = None  # type: ignore[assignment, misc]
 

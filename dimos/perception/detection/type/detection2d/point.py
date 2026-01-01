@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     CircleAnnotation,
     TextAnnotation,
 )
-from dimos_lcm.foxglove_msgs.Point2 import Point2  # type: ignore[import-untyped]
-from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.Point2 import Point2
+from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
     ObjectHypothesis,

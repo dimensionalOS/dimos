@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,12 +24,14 @@ import time
 from typing import Any
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
-from dimos.hardware.manipulators.piper.piper_arm import PiperArm
+from dimos.hardware.manipulators.piper.piper_arm import (  # type: ignore[import-not-found, import-untyped]
+    PiperArm,
+)
 from dimos.manipulation.visual_servoing.detection3d import Detection3DProcessor
 from dimos.manipulation.visual_servoing.pbvs import PBVS
 from dimos.manipulation.visual_servoing.utils import (
@@ -642,7 +644,7 @@ class ManipulationModule(Module):
             self.reset_to_idle()
             return
 
-        ee_pose = self.arm.get_ee_pose()  # type: ignore[no-untyped-call]
+        ee_pose = self.arm.get_ee_pose()
         dynamic_pitch = self.calculate_dynamic_grasp_pitch(self.pbvs.current_target.bbox.center)  # type: ignore[attr-defined]
 
         _, _, _, has_target, target_pose = self.pbvs.compute_control(  # type: ignore[attr-defined]
@@ -877,7 +879,7 @@ class ManipulationModule(Module):
             stage_handlers[self.grasp_stage]()
 
         target_tracked = self.pbvs.get_current_target() is not None if self.pbvs else False
-        ee_pose = self.arm.get_ee_pose()  # type: ignore[no-untyped-call]
+        ee_pose = self.arm.get_ee_pose()
         feedback = Feedback(
             grasp_stage=self.grasp_stage,
             target_tracked=target_tracked,

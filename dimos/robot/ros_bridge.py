@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,10 +18,10 @@ import threading
 from typing import Any
 
 try:
-    import rclpy  # type: ignore[import-untyped]
-    from rclpy.executors import SingleThreadedExecutor  # type: ignore[import-untyped]
-    from rclpy.node import Node  # type: ignore[import-untyped]
-    from rclpy.qos import (  # type: ignore[import-untyped]
+    import rclpy
+    from rclpy.executors import SingleThreadedExecutor
+    from rclpy.node import Node
+    from rclpy.qos import (
         QoSDurabilityPolicy,
         QoSHistoryPolicy,
         QoSProfile,

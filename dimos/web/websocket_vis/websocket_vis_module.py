@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -23,7 +23,7 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
@@ -194,7 +194,7 @@ class WebsocketVisModule(Module):
         self.app = socketio.ASGIApp(self.sio, starlette_app)
 
         # Register SocketIO event handlers
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def connect(sid, environ) -> None:  # type: ignore[no-untyped-def]
             with self.state_lock:
                 current_state = dict(self.vis_state)
@@ -211,7 +211,7 @@ class WebsocketVisModule(Module):
                 f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points"
             )
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def click(sid, position) -> None:  # type: ignore[no-untyped-def]
             goal = PoseStamped(
                 position=(position[0], position[1], 0),
@@ -223,7 +223,7 @@ class WebsocketVisModule(Module):
                 "Click goal published", x=round(goal.position.x, 3), y=round(goal.position.y, 3)
             )
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def gps_goal(sid: str, goal: dict[str, float]) -> None:
             logger.info(f"Received GPS goal: {goal}")
 
@@ -241,17 +241,17 @@ class WebsocketVisModule(Module):
                 f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
             )
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def start_explore(sid: str) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def stop_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def clear_gps_goals(sid: str) -> None:
             logger.info("Clearing all GPS goal points")
             self.gps_goal_points.clear()
@@ -259,7 +259,7 @@ class WebsocketVisModule(Module):
                 await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
             logger.info("GPS goal points cleared and updated clients")
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:

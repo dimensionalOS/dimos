@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,9 +39,9 @@ class DroneVisualServoingController:
             y_pid_params: (kp, ki, kd, output_limits, integral_limit, deadband) for left/right
             z_pid_params: Optional params for altitude control
         """
-        self.x_pid = PIDController(*x_pid_params)  # type: ignore[no-untyped-call]
-        self.y_pid = PIDController(*y_pid_params)  # type: ignore[no-untyped-call]
-        self.z_pid = PIDController(*z_pid_params) if z_pid_params else None  # type: ignore[no-untyped-call]
+        self.x_pid = PIDController(*x_pid_params)
+        self.y_pid = PIDController(*y_pid_params)
+        self.z_pid = PIDController(*z_pid_params) if z_pid_params else None
 
     def compute_velocity_control(
         self,

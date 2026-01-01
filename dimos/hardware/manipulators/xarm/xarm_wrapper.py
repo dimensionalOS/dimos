@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -47,7 +47,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if connection successful
         """
         try:
-            from xarm import XArmAPI  # type: ignore[import-untyped]
+            from xarm import XArmAPI
 
             ip = config.get("ip", "192.168.1.100")
             self.dof = config.get("dof", 7)

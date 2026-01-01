@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ from __future__ import annotations
 from datetime import datetime
 import time
 
-from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Header as LCMHeader, Time as LCMTime
 from plum import dispatch
 
 # Import the actual LCM header type that's returned from decoding

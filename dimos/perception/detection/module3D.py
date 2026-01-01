@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
@@ -116,7 +116,7 @@ class Detection3DModule(Detection2DModule):
         image = self.image.get_next()
         return model.query(image, question)
 
-    # @skill  # type: ignore[arg-type]
+    # @skill
     @rpc
     def nav_vlm(self, question: str) -> str:
         """
