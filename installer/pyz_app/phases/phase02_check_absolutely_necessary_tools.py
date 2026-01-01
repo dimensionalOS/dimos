@@ -35,9 +35,22 @@ from ..support.venv import activate_venv, get_venv_dirs_at
 def phase2(system_analysis, selected_features):
     p.header("Next Phase: Check Install of Vital System Dependencies")
     try:
-        has_ifconfig = command_exists("ifconfig")
-        has_route = command_exists("route")
-        has_sysctl = command_exists("sysctl")
+        
+        if has_ifconfig:= command_exists("ifconfig"):
+            p.boring_log("- ifconfig found")
+        else:
+            p.error("- ifconfig not found")
+        
+        if has_route:= command_exists("route"):
+            p.boring_log("- route found")
+        else:
+            p.error("- route not found")
+        
+        if has_sysctl:= command_exists("sysctl"):
+            p.boring_log("- sysctl found")
+        else:
+            p.error("- sysctl not found")
+        
         python_cmd = ensure_python()
         ensure_git_and_lfs()
         ensure_port_audio()

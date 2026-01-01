@@ -164,6 +164,7 @@ dependency_apt_packages_set_minimal = set((
     "git-lfs",
     "ffmpeg",
     "iproute2",
+    "net-tools",
     "curl",
     # "cmake",
     # "pkg-config",

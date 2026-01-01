@@ -257,6 +257,8 @@ class RenderLogo:
                 if ch not in (" ", "\t"):
                     self._mutable.append((y, x))
 
+        # Cache to keep a stable glitch character per coordinate.
+        self._glitch_char_cache: dict[str, str] = {}
         self._glitches: dict[str, _Glitch] = {}  # "y,x" -> _Glitch
         self._log_lines: list[str] = []
 
@@ -441,11 +443,7 @@ class RenderLogo:
                 existing.ttl = max(existing.ttl, self.stickyness)
                 continue
 
-            ch = orig
-            for _tries in range(6):
-                ch = random.choice(self.GLITCH_CHARS)
-                if ch != orig:
-                    break
+            ch = self._stable_glitch_char(key, orig)
 
             self._glitches[key] = _Glitch(orig=orig, ch=ch, ttl=self.stickyness)
 
@@ -455,8 +453,6 @@ class RenderLogo:
             g.ttl -= 1
             if g.ttl <= 0:
                 dead.append(key)
-            elif random.random() < self.glitch_mutate_chance:
-                g.ch = random.choice(self.GLITCH_CHARS)
 
         for key in dead:
             self._glitches.pop(key, None)
@@ -553,6 +549,17 @@ class RenderLogo:
             return json.dumps(a)
         except Exception:
             return str(a)
+
+    def _stable_glitch_char(self, key: str, orig: str) -> str:
+        cached = self._glitch_char_cache.get(key)
+        if cached:
+            return cached
+
+        rng = random.Random(key)
+        choices = [c for c in self.GLITCH_CHARS if c != orig] or [orig]
+        ch = rng.choice(choices)
+        self._glitch_char_cache[key] = ch
+        return ch
 
 
 # -----------------------

@@ -23,10 +23,11 @@ from ..support.get_system_analysis import get_system_analysis
 from ..support.misc import get_project_toml
 
 def phase0():
+    fps = 14
     logo = RenderLogo(
-        glitchyness=0.09, # relative quantity of visual artifacting
-        stickyness=100, # how many frames to keep an artifact
-        fps=14, # at 30fps it flickers a lot in the MacOS stock terminal. Ironically its fine at 30fps in the VS Code terminal
+        glitchyness=0.45, # relative quantity of visual artifacting
+        stickyness=fps * 0.75, # how many frames to keep an artifact
+        fps=fps, # at 30fps it flickers a lot in the MacOS stock terminal. Ironically its fine at 30fps in the VS Code terminal
         color_wave_amplitude=10, # bigger = wider range of colors
         wave_speed=0.01, # bigger = faster
         wave_freq=0.01, # smaller = longer streaks of color

@@ -16,10 +16,13 @@
 from __future__ import annotations
 
 from functools import cache, lru_cache
+from collections import deque
 import os
 from pathlib import Path
 import re
-from typing import Any
+import shutil
+import sys
+from typing import Any, Callable, Deque, Iterable, List
 
 from . import pip_dependency_database as dep_db, prompt_tools as p
 from .shell_tooling import command_exists, run_command
@@ -34,6 +37,94 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for older interpreter
 _project_directory: Path | None = None
 _already_called_apt_get_update = False
 _already_called_brew_update = False
+
+
+class ProgressRenderer:
+    """Minimal multi-line progress display with rolling output buffer."""
+
+    def __init__(self, total: int, *, buffer_lines: int = 5) -> None:
+        # Temporarily disable interactive progress rendering due to display issues.
+        self.total = max(total, 1)
+        self.buffer: Deque[str] = deque(maxlen=buffer_lines)
+        self.current_index = 0
+        self.current_name = ""
+        self.rendered_lines = 0
+        self.enabled = False
+        self.term_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+        self.color_bar = "\x1b[32m"  # green
+        self.color_label = "\x1b[36m"  # cyan
+        self.reset = "\x1b[0m"
+
+    def set_current(self, index: int, name: str) -> None:
+        self.current_index = index
+        self.current_name = name
+        self.render()
+
+    def add_output(self, line: str) -> None:
+        if not self.enabled:
+            return
+        # strip ANSI escape sequences to avoid breaking layout
+        cleaned = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line)
+        cleaned = cleaned.rstrip("\n").rstrip("\r")
+        self.buffer.append(cleaned)
+        self.render()
+
+    def render(self) -> None:
+        if not self.enabled:
+            return
+
+        self.term_width = shutil.get_terminal_size(fallback=(80, 24)).columns
+        bar_width = max(10, min(40, self.term_width - 30))
+        completed = max(0, self.current_index - 1)
+        fill = int(bar_width * (completed / self.total))
+        bar_body = f"{'━' * fill}{' ' * (bar_width - fill)}"
+        bar = f"{self.color_bar}┏{bar_body}┓{self.reset}"
+        label = f"{self.color_label}{self.current_name}{self.reset}"
+        progress_line = f"{bar} ({self.current_index}/{self.total}) installing {label}"
+
+        def _visible_len(text: str) -> int:
+            # crude ANSI stripper for length calculations
+            return len(re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text))
+
+        def clip(text: str) -> str:
+            if _visible_len(text) <= self.term_width:
+                return text + " " * max(0, self.term_width - _visible_len(text))
+            trimmed = text
+            while _visible_len(trimmed) > self.term_width:
+                trimmed = trimmed[:-1]
+            return trimmed + " " * max(0, self.term_width - _visible_len(trimmed))
+
+        max_lines = 1 + self.buffer.maxlen
+        lines: List[str] = [clip(progress_line)]
+        lines.extend(clip(l) for l in list(self.buffer)[-self.buffer.maxlen :])
+        lines = lines[:max_lines]
+
+        # Move cursor up to the start of the previous block
+        if self.rendered_lines:
+            sys.stdout.write(f"\x1b[{self.rendered_lines}F")
+
+        sys.stdout.write("\x1b[?25l")  # hide cursor
+        total_lines = len(lines)
+        for idx, line in enumerate(lines):
+            sys.stdout.write("\r")
+            sys.stdout.write(line.ljust(self.term_width))
+            sys.stdout.write("\x1b[K")
+            if idx != total_lines - 1:
+                sys.stdout.write("\n")
+        # Clear any leftover lines from previous render
+        if self.rendered_lines > total_lines:
+            for _ in range(self.rendered_lines - total_lines):
+                sys.stdout.write("\n")
+                sys.stdout.write(" " * self.term_width)
+        sys.stdout.flush()
+        self.rendered_lines = total_lines
+
+    def finish(self) -> None:
+        if not self.enabled:
+            return
+        # Ensure cursor lands after the rendered block and becomes visible
+        sys.stdout.write("\x1b[?25h\n")
+        sys.stdout.flush()
 
 
 @cache
@@ -169,6 +260,8 @@ def apt_install(package_names: list[str]) -> None:
     if not package_names:
         return
 
+    progress = ProgressRenderer(len(package_names)) if len(package_names) > 1 else None
+
     if not _already_called_apt_get_update:
         update_res = run_command(
             ["sudo", "apt-get", "update"],
@@ -180,20 +273,43 @@ def apt_install(package_names: list[str]) -> None:
         _already_called_apt_get_update = True
 
     failed_packages: list[str] = []
-    for each_pkg in package_names:
+    for idx, each_pkg in enumerate(package_names, start=1):
+        if progress and progress.enabled:
+            progress.set_current(idx, each_pkg)
         res = run_command(["dpkg", "-s", each_pkg], dry_run=installer_status["dry_run"])
         if res.code == 0:
             p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
             continue
 
         p.sub_header(f"\n- installing {p.highlight(each_pkg)}")
-        install_res = run_command(
-            ["sudo", "apt-get", "install", "-y", each_pkg],
-            print_command=True,
-            dry_run=installer_status["dry_run"],
-        )
+        if progress and progress.enabled:
+            output_lines: list[str] = []
+
+            def _on_line(line: str) -> None:
+                output_lines.append(line.rstrip("\n"))
+                progress.add_output(line)
+
+            install_res = run_command(
+                ["sudo", "apt-get", "install", "-y", each_pkg],
+                print_command=True,
+                dry_run=installer_status["dry_run"],
+                stream_callback=_on_line,
+            )
+            if install_res.code != 0:
+                progress.finish()
+                if output_lines:
+                    print("\n".join(output_lines))
+        else:
+            install_res = run_command(
+                ["sudo", "apt-get", "install", "-y", each_pkg],
+                print_command=True,
+                dry_run=installer_status["dry_run"],
+            )
         if install_res.code != 0:
             failed_packages.append(each_pkg)
+
+    if progress and progress.enabled:
+        progress.finish()
 
     if failed_packages:
         cmds = "\n".join(f"    sudo apt-get install -y {pkg}" for pkg in failed_packages)
@@ -241,6 +357,8 @@ def brew_install(package_names: list[str]) -> None:
     if not package_names:
         return
 
+    progress = ProgressRenderer(len(package_names)) if len(package_names) > 1 else None
+
     ensure_homebrew()
     if not _already_called_brew_update:
         p.boring_log("Running brew update")
@@ -250,17 +368,40 @@ def brew_install(package_names: list[str]) -> None:
         _already_called_brew_update = True
 
     failed: list[str] = []
-    for pkg in package_names:
+    for idx, pkg in enumerate(package_names, start=1):
+        if progress and progress.enabled:
+            progress.set_current(idx, pkg)
         res = run_command(["brew", "list", pkg], capture_output=True) # intentionally not dry_run
         if res.code == 0:
             p.sub_header(f"- ✅ looks like {p.highlight(pkg)} is already installed")
             continue
         p.sub_header(f"\n- installing {p.highlight(pkg)}")
-        install_res = run_command(
-            ["brew", "install", pkg], print_command=True, dry_run=installer_status["dry_run"]
-        )
+        if progress and progress.enabled:
+            output_lines: list[str] = []
+
+            def _on_line(line: str) -> None:
+                output_lines.append(line.rstrip("\n"))
+                progress.add_output(line)
+
+            install_res = run_command(
+                ["brew", "install", pkg],
+                print_command=True,
+                dry_run=installer_status["dry_run"],
+                stream_callback=_on_line,
+            )
+            if install_res.code != 0:
+                progress.finish()
+                if output_lines:
+                    print("\n".join(output_lines))
+        else:
+            install_res = run_command(
+                ["brew", "install", pkg], print_command=True, dry_run=installer_status["dry_run"]
+            )
         if install_res.code != 0:
             failed.append(pkg)
+
+    if progress and progress.enabled:
+        progress.finish()
 
     if failed:
         raise RuntimeError(f"brew install failed for: {' '.join(failed)}")
@@ -340,6 +481,19 @@ def add_git_ignore_patterns(
         "already_present": already_present,
         "ignore_did_not_exist": False,
     }
+
+
+if __name__ == "__main__":
+    # Self-test: exercise ProgressRenderer with dummy commands.
+    pkgs = ["alpha", "beta", "gamma"]
+    progress = ProgressRenderer(len(pkgs))
+    for idx, name in enumerate(pkgs, start=1):
+        progress.set_current(idx, name)
+        # Simulate streaming output
+        for line in [f"{name}: step 1", f"{name}: step 2", f"{name}: done"]:
+            progress.add_output(line)
+    progress.finish()
+    print("ProgressRenderer self-test completed")
 
 
 __all__ = [

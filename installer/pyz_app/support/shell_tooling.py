@@ -20,7 +20,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable, Iterable as TypingIterable, Sequence as TypingSequence, Optional
 import sys
 
 if TYPE_CHECKING:
@@ -76,6 +76,8 @@ def run_command(
     print_command: bool = False,
     dry_run: bool = False,
     output_preview: bool = False,
+    stream_callback: Optional[Callable[[str], None]] = None,
+    combine_streams: bool = True,
 ) -> CommandResult:
     cmd_list = _normalize_cmd(cmd)
 
@@ -104,6 +106,39 @@ def run_command(
 
     if print_command:
         print(f"$ {' '.join(cmd_list)}")
+
+    if stream_callback and output_preview:
+        raise ValueError("stream_callback and output_preview cannot be used together")
+
+    if stream_callback:
+        process = subprocess.Popen(
+            cmd_list,
+            cwd=str(cwd) if cwd is not None else None,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT if combine_streams else subprocess.PIPE,
+            text=True,
+        )
+        collected: list[str] = []
+
+        while True:
+            line = process.stdout.readline() if process.stdout else ""
+            if not line and process.poll() is not None:
+                break
+            if line:
+                stream_callback(line)
+                if capture_output:
+                    collected.append(line)
+
+        code = process.wait()
+        if check and code != 0:
+            raise subprocess.CalledProcessError(code, cmd_list)
+        return CommandResult(
+            code=code,
+            _stdout="".join(collected) if capture_output else None,
+            _stderr=None,
+            _captured=capture_output,
+        )
 
     if output_preview and capture_output:
         # stream line-by-line with \r, while capturing

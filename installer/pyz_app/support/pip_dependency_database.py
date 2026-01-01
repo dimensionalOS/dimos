@@ -76,19 +76,14 @@ RAW_DATA = r"""{
       "build-essential",
       "gcc",
       "g++",
-      "make",
-      "nvidia-cuda-toolkit",
-      "libcudnn8",
-      "libcudnn8-dev"
+      "make"
     ],
     "brew_dependencies": [],
     "description": "System dependencies required for bitsandbytes>=0.48.2,<1.0 pip package",
     "nix_dependencies": [
       "python3",
       "gcc",
-      "gnumake",
-      "cudatoolkit",
-      "cudnn"
+      "gnumake"
     ],
     "notes": "bitsandbytes is a library for 8-bit optimizers and quantization routines for PyTorch. The package has a platform restriction (sys_platform == 'linux'), meaning it only installs on Linux systems. Key dependencies include: python3-dev for Python headers, build-essential/gcc/g++/make for compiling CUDA kernels and C++ extensions, nvidia-cuda-toolkit/cudatoolkit for CUDA GPU acceleration (required for core functionality), and libcudnn8/cudnn for optimized deep learning primitives. Homebrew dependencies are empty because bitsandbytes is Linux-only and does not officially support macOS. For NixOS, the equivalent CUDA packages are available but may require additional configuration for GPU access. Important: Ensure your CUDA toolkit version (typically 11.x or 12.x) matches your PyTorch installation's CUDA version. The package provides pre-built binaries for common CUDA versions but may need compilation for specific configurations.",
     "package": "bitsandbytes>=0.48.2,<1.0; sys_platform == 'linux'"
@@ -1943,7 +1938,7 @@ RAW_DATA = r"""{
       "python3-pip",
       "build-essential",
       "libjpeg-dev",
-      "libjpeg62-turbo-dev",
+      "libjpeg-turbo",
       "zlib1g-dev",
       "libpng-dev",
       "libtiff-dev",

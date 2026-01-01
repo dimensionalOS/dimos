@@ -83,12 +83,9 @@ def highlight(text: str) -> str:
 
 def confirm(text: str) -> None:
     if installer_status.get("non_interactive"):
+        print(f'''- continuing past '{text}\'''')
         return
     input(f"{FG_YELLOW}{text}{RESET}")
-
-
-def prompt(text: str) -> str:
-    return inquirer.text(message=text).execute()
 
 
 def ask_yes_no(question: str) -> bool:
