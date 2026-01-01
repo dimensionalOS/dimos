@@ -139,7 +139,7 @@ class VoxelGridMapper(Module):
         
         # Only start Rerun logging if Rerun backend is selected
         if self._global_config.viewer_backend.startswith("rerun"):
-            connect_rerun()
+            connect_rerun(global_config=self._global_config)
             
             # Start background Rerun logging thread (decouples viz from data pipeline)
             self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
