@@ -228,11 +228,11 @@ def patchdask(dask_client: Client, local_cluster: LocalCluster) -> DimosCluster:
     return dask_client
 
 
-def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
+def start(n_workers: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     """Start a Dask LocalCluster with specified workers and memory limits.
 
     Args:
-        n: Number of workers (defaults to CPU count)
+        n_workers: Number of workers (defaults to CPU count)
         memory_limit: Memory limit per worker (e.g., '4GB', '2GiB', or 'auto' for Dask's default)
 
     Returns:
@@ -240,13 +240,13 @@ def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
     """
 
     console = Console()
-    if not n:
-        n = mp.cpu_count()
+    if not n_workers:
+        n_workers = mp.cpu_count()
     with console.status(
-        f"[green]Initializing dimos local cluster with [bright_blue]{n} workers", spinner="arc"
+        f"[green]Initializing dimos local cluster with [bright_blue]{n_workers} workers", spinner="arc"
     ):
         cluster = LocalCluster(  # type: ignore[no-untyped-call]
-            n_workers=n,
+            n_workers=n_workers,
             threads_per_worker=4,
             memory_limit=memory_limit,
             plugins=[CudaCleanupPlugin()],  # Register CUDA cleanup plugin
@@ -254,7 +254,7 @@ def start(n: int | None = None, memory_limit: str = "auto") -> DimosCluster:
         client = Client(cluster)  # type: ignore[no-untyped-call]
 
     console.print(
-        f"[green]Initialized dimos local cluster with [bright_blue]{n} workers, memory limit: {memory_limit}"
+        f"[green]Initialized dimos local cluster with [bright_blue]{n_workers} workers, memory limit: {memory_limit}"
     )
 
     patched_client = patchdask(client, cluster)
