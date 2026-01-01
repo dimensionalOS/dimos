@@ -79,6 +79,17 @@ def run_command(
 ) -> CommandResult:
     cmd_list = _normalize_cmd(cmd)
 
+    # If running as root, strip leading sudo to avoid nested privilege escalation issues (e.g., inside Docker).
+    if cmd_list and cmd_list[0] == "sudo":
+        try:
+            import os
+
+            if os.geteuid() == 0:
+                cmd_list = cmd_list[1:]
+        except Exception:
+            # If we can't determine UID, fall through and run as-is.
+            pass
+
     if dry_run:
         if print_command:
             print(f"DRY: $ {' '.join(cmd_list)}")
