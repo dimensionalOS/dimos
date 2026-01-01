@@ -23,7 +23,7 @@ The frontend is served from a separate HTML file.
 
 import asyncio
 import os
-from pathlib import Path
+from pathlib import Path as FilePath
 import threading
 import time
 from typing import Any
@@ -38,9 +38,9 @@ from starlette.staticfiles import StaticFiles
 import uvicorn
 
 # Path to the frontend HTML templates and command-center build
-_TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
+_TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
 _DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
-_COMMAND_CENTER_DIR = Path(__file__).parent.parent / "command-center-extension" / "dist-standalone"
+_COMMAND_CENTER_DIR = FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.occupancy.gradient import gradient
@@ -228,7 +228,7 @@ class WebsocketVisModule(Module):
         # Add static file serving for command-center assets if build exists
         if _COMMAND_CENTER_DIR.exists():
             routes.append(
-                Mount(
+                Mount(  # type: ignore[list-item]
                     "/assets",
                     app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"),
                     name="assets",

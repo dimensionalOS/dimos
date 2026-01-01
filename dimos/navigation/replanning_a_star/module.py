@@ -50,7 +50,7 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
-        connect_rerun()
+        connect_rerun(global_config=self._global_config)
 
         # Auto-log path to Rerun
         self.path.autolog_to_rerun("world/nav/path")

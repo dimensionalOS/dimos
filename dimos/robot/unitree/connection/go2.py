@@ -223,14 +223,14 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         
         Does NOT compose blueprint - that's handled by ModuleBlueprintSet.build().
         """
-        connect_rerun()
+        connect_rerun(global_config=self._global_config)
 
         # Set up world coordinate system AND register it as a named frame
         # This is KEY - it connects entity paths to the named frame system
         rr.log(
             "world",
             rr.ViewCoordinates.RIGHT_HAND_Z_UP,
-            rr.CoordinateFrame("world"),
+            rr.CoordinateFrame("world"),  # type: ignore[attr-defined]
             static=True,
         )
 
@@ -239,8 +239,8 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
         rr.log(
             "world",
             rr.Transform3D(
-                parent_frame="world",
-                child_frame="tf#/world",
+                parent_frame="world",  # type: ignore[call-arg]
+                child_frame="tf#/world",  # type: ignore[call-arg]
             ),
             static=True,
         )
@@ -333,7 +333,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             ),
         )
         # Log axes as a child entity for visualization
-        rr.log("world/robot/axes", rr.TransformAxes3D(0.5))
+        rr.log("world/robot/axes", rr.TransformAxes3D(0.5))  # type: ignore[attr-defined]
 
         # Log camera transform (compose base_link -> camera_link -> camera_optical)
         # transforms[1] is camera_link, transforms[2] is camera_optical

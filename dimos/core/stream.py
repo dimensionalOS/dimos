@@ -197,7 +197,7 @@ class Out(Stream[T], ObservableMixin[T]):
         self,
         entity_path: str,
         rate_limit: float | None = None,
-        **rerun_kwargs,  # type: ignore[no-untyped-def]
+        **rerun_kwargs: Any,
     ) -> None:
         """Configure this output to auto-log to Rerun (fire-and-forget).
 
@@ -225,6 +225,9 @@ class Out(Stream[T], ObservableMixin[T]):
     def _log_to_rerun(self, msg: T) -> None:
         """Log message to Rerun with rate limiting."""
         if not hasattr(msg, "to_rerun"):
+            return
+        
+        if self._rerun_config is None:
             return
 
         import time
