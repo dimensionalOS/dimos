@@ -43,7 +43,6 @@ testdata: list[tuple[Callable[[], Any], str]] = []
 @contextmanager
 def lcm_rpc_context():
     """Context manager for LCMRPC implementation."""
-    from dimos.protocol.rpc.pubsubrpc import LCMRPC
     from dimos.protocol.service.lcmservice import autoconf
 
     autoconf()
@@ -128,7 +127,7 @@ def slow_function(delay: float) -> str:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_basic_sync_call(rpc_context, impl_name) -> None:
+def test_basic_sync_call(rpc_context, impl_name: str) -> None:
     """Test basic synchronous RPC calls."""
     with rpc_context() as (server, client):
         # Serve the function
@@ -152,7 +151,7 @@ def test_basic_sync_call(rpc_context, impl_name) -> None:
 @pytest.mark.skip(
     reason="Async RPC calls have a deadlock issue when run in the full test suite (works in isolation)"
 )
-async def test_async_call(rpc_context, impl_name) -> None:
+async def test_async_call(rpc_context, impl_name: str) -> None:
     """Test asynchronous RPC calls."""
     with rpc_context() as (server, client):
         # Serve the function
@@ -176,7 +175,7 @@ async def test_async_call(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_callback_call(rpc_context, impl_name) -> None:
+def test_callback_call(rpc_context, impl_name: str) -> None:
     """Test callback-based RPC calls."""
     with rpc_context() as (server, client):
         # Serve the function
@@ -187,7 +186,7 @@ def test_callback_call(rpc_context, impl_name) -> None:
             event = threading.Event()
             received_value = None
 
-            def callback(val):
+            def callback(val) -> None:
                 nonlocal received_value
                 received_value = val
                 event.set()
@@ -201,7 +200,7 @@ def test_callback_call(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_exception_handling_sync(rpc_context, impl_name) -> None:
+def test_exception_handling_sync(rpc_context, impl_name: str) -> None:
     """Test that exceptions are properly passed through sync RPC calls."""
     with rpc_context() as (server, client):
         # Serve the function that can raise exceptions
@@ -233,7 +232,7 @@ def test_exception_handling_sync(rpc_context, impl_name) -> None:
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
 @pytest.mark.asyncio
-async def test_exception_handling_async(rpc_context, impl_name) -> None:
+async def test_exception_handling_async(rpc_context, impl_name: str) -> None:
     """Test that exceptions are properly passed through async RPC calls."""
     with rpc_context() as (server, client):
         # Serve the function that can raise exceptions
@@ -261,7 +260,7 @@ async def test_exception_handling_async(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_exception_handling_callback(rpc_context, impl_name) -> None:
+def test_exception_handling_callback(rpc_context, impl_name: str) -> None:
     """Test that exceptions are properly passed through callback-based RPC calls."""
     with rpc_context() as (server, client):
         # Serve the function that can raise exceptions
@@ -272,7 +271,7 @@ def test_exception_handling_callback(rpc_context, impl_name) -> None:
             event = threading.Event()
             received_value = None
 
-            def callback(val):
+            def callback(val) -> None:
                 nonlocal received_value
                 received_value = val
                 event.set()
@@ -295,7 +294,7 @@ def test_exception_handling_callback(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_timeout(rpc_context, impl_name) -> None:
+def test_timeout(rpc_context, impl_name: str) -> None:
     """Test that RPC calls properly timeout."""
     with rpc_context() as (server, client):
         # Serve a slow function
@@ -317,9 +316,9 @@ def test_timeout(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_nonexistent_service(rpc_context, impl_name) -> None:
+def test_nonexistent_service(rpc_context, impl_name: str) -> None:
     """Test calling a service that doesn't exist."""
-    with rpc_context() as (server, client):
+    with rpc_context() as (_server, client):
         # Don't serve any function, just try to call
         with pytest.raises(TimeoutError) as exc_info:
             client.call_sync("nonexistent", ([1, 2], {}), rpc_timeout=0.1)
@@ -328,7 +327,7 @@ def test_nonexistent_service(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_multiple_services(rpc_context, impl_name) -> None:
+def test_multiple_services(rpc_context, impl_name: str) -> None:
     """Test serving multiple RPC functions simultaneously."""
     with rpc_context() as (server, client):
         # Serve multiple functions
@@ -354,7 +353,7 @@ def test_multiple_services(rpc_context, impl_name) -> None:
 
 
 @pytest.mark.parametrize("rpc_context, impl_name", testdata)
-def test_concurrent_calls(rpc_context, impl_name) -> None:
+def test_concurrent_calls(rpc_context, impl_name: str) -> None:
     """Test making multiple concurrent RPC calls."""
     # Skip for SharedMemory - double-buffered architecture can't handle concurrent bursts
     # The channel only holds 2 frames, so 1000 rapid concurrent responses overwrite each other
@@ -370,7 +369,7 @@ def test_concurrent_calls(rpc_context, impl_name) -> None:
             results = []
             threads = []
 
-            def make_call(a, b):
+            def make_call(a, b) -> None:
                 result, _ = client.call_sync("concurrent_add", ([a, b], {}), rpc_timeout=2.0)
                 results.append(result)
 

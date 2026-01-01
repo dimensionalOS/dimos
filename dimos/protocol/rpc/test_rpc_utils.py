@@ -14,8 +14,6 @@
 
 """Tests for RPC exception serialization utilities."""
 
-import pytest
-
 from dimos.protocol.rpc.rpc_utils import (
     RemoteError,
     deserialize_exception,

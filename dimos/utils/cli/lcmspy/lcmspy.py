@@ -18,8 +18,6 @@ from enum import Enum
 import threading
 import time
 
-import lcm
-
 from dimos.protocol.service.lcmservice import LCMConfig, LCMService
 
 

@@ -19,7 +19,6 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import time
-import traceback
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -63,7 +62,7 @@ class RPCRes(TypedDict, total=False):
 
 
 class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         # Thread pool for RPC handler execution (prevents deadlock in nested calls)
         self._call_thread_pool: ThreadPoolExecutor | None = None
@@ -200,7 +199,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
         self.publish(topic_req, self._encodeRPCReq(req))
 
         # Return unsubscribe function that removes this callback from the dict
-        def unsubscribe_callback():
+        def unsubscribe_callback() -> None:
             with self._response_subs_lock:
                 if topic_res_key in self._response_subs:
                     _, callbacks_dict = self._response_subs[topic_res_key]
@@ -256,7 +255,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
 
 
 class LCMRPC(PubSubRPCMixin, PickleLCM):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         # Need to ensure PickleLCM gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleLCM.__init__(self, **kwargs)
@@ -272,7 +271,7 @@ class LCMRPC(PubSubRPCMixin, PickleLCM):
 
 
 class ShmRPC(PubSubRPCMixin, PickleSharedMemory):
-    def __init__(self, prefer: str = "cpu", **kwargs):
+    def __init__(self, prefer: str = "cpu", **kwargs) -> None:
         # Need to ensure SharedMemory gets initialized properly
         # This is due to the diamond inheritance pattern with multiple base classes
         PickleSharedMemory.__init__(self, prefer=prefer, **kwargs)
