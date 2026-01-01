@@ -20,7 +20,9 @@ import time
 from ..support import prompt_tools as p
 from ..support.dimos_banner import RenderLogo
 from ..support.get_system_analysis import get_system_analysis
-from ..support.misc import get_project_toml
+from ..support.misc import get_project_toml, get_project_directory
+from ..support.setup_docker_env import setup_docker_env
+from ..support.shell_tooling import run_command
 
 def phase0():
     fps = 14
@@ -72,6 +74,41 @@ def phase0():
     selected_features = [ each for each in selected_features if each != "basics" ]
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
+
+    # Install method selection
+    while True:
+        choice = p.pick_one(
+            "Choose install method",
+            options={
+                "system": "Typical system install",
+                "docker": "Docker container setup",
+            },
+        )
+        if choice == "system":
+            break
+        if choice == "docker":
+            if not system_analysis.get("docker", {}).get("exists"):
+                p.error("Docker is not installed or not detected.")
+                print("Download Docker: https://www.docker.com/products/docker-desktop/")
+                next_step = p.pick_one(
+                    "Docker is required for this option.",
+                    options={"back": "Choose a different install method", "exit": "Exit installer"},
+                )
+                if next_step == "exit":
+                    raise SystemExit(1)
+                continue
+            project_dir = get_project_directory()
+            paths = setup_docker_env(project_dir, selected_features)
+            p.sub_header("Docker assets created/updated:")
+            for key, path in paths.items():
+                print(f" - {key}: {path}")
+            print(f"Use {p.highlight("run/docker_build")} to build the image, and {p.highlight("run/docker_exec")} to start a shell in the container.")
+            if p.ask_yes_no("Would you like me to build the image now?"):
+                run_command([str(paths["build_script"])], check=False)
+            if p.ask_yes_no("Would you like me to start a container shell now?"):
+                run_command([str(paths["exec_script"])], check=False)
+            p.sub_header("Docker setup complete. Exiting installer.")
+            raise SystemExit(0)
 
     return system_analysis, selected_features
 
