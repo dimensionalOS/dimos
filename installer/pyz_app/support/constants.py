@@ -31,6 +31,8 @@ dimos_env_vars = {
     "DISPLAY": ":0",
 }
 
+PLACEHOLDERS = ("YOUR_DIMOS_PROJECT_NAME", "YOUR_DIMOS_PROJECT_DESCRIPTION")
+
 # NOTE: these hardcoded lists are added to pip-package-derived dependencies
 #       there is a pip module name => system dependencies mapping
 #       THEN based on the features that a user picked, we find all the

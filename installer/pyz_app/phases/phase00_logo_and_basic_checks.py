@@ -18,12 +18,19 @@ from __future__ import annotations
 import time
 
 from ..support import prompt_tools as p
+from ..support.constants import PLACEHOLDERS
 from ..support.dimos_banner import RenderLogo
 from ..support.get_system_analysis import get_system_analysis
-from ..support.misc import get_project_toml, get_project_directory
+from ..support.misc import (
+    get_project_directory,
+    get_project_toml,
+    replace_strings_in_directory,
+)
 from ..support.setup_docker_env import setup_docker_env
 from ..support.setup_nix import setup_nix_flake
 from ..support.shell_tooling import run_command
+from ..support.installer_status import installer_status
+
 
 def phase0():
     fps = 14
@@ -64,7 +71,13 @@ def phase0():
         time.sleep(timeout)
     toml_data = get_project_toml()
     logo.stop()
-
+    
+    if installer_status.get("template_repo"):
+        project_dir = get_project_directory()
+        project_name = project_dir.name
+        # fill out the directory
+        replace_strings_in_directory(project_dir, PLACEHOLDERS, project_name)
+    
     optional = toml_data["project"].get("optional-dependencies", {})
     features = [f for f in optional.keys() if f not in ["cpu"]]
     p.header("First Phase: Feature Selection")

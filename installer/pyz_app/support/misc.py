@@ -22,6 +22,7 @@ from pathlib import Path
 import re
 import shutil
 import sys
+import threading
 from typing import Any, Callable, Deque, Iterable, List
 import requests
 
@@ -257,6 +258,35 @@ def get_project_directory() -> Path:
                     "- ❌ Please create a project directory and rerun this command from there."
                 )
     return _project_directory
+
+
+def replace_strings_in_directory(root: Path, needles: Iterable[str], replacement: str) -> None:
+    root = Path(root)
+    needle_list = [n for n in needles if n]
+    if not needle_list:
+        return
+
+    def _worker() -> None:
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            try:
+                text = path.read_text()
+            except (UnicodeDecodeError, OSError):
+                continue
+
+            new_text = text
+            for needle in needle_list:
+                if needle in new_text:
+                    new_text = new_text.replace(needle, replacement)
+
+            if new_text != text:
+                try:
+                    path.write_text(new_text)
+                except OSError:
+                    pass
+
+    threading.Thread(target=_worker, name="ReplaceStringsInDirectory", daemon=True).start()
 
 
 def apt_install(package_names: list[str]) -> None:
@@ -525,4 +555,5 @@ __all__ = [
     "get_system_deps",
     "is_version_at_least",
     "parse_version",
+    "replace_strings_in_directory",
 ]
