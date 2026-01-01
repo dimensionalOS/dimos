@@ -51,7 +51,7 @@ class CostMapper(Module):
 
     global_map: In[PointCloud2]
     global_costmap: Out[OccupancyGrid]
-    
+
     # Background Rerun logging (decouples viz from data pipeline)
     _rerun_queue: queue.Queue[tuple[OccupancyGrid, float, float] | None]
     _rerun_thread: threading.Thread | None = None
@@ -79,9 +79,9 @@ class CostMapper(Module):
                 item = self._rerun_queue.get(timeout=1.0)
                 if item is None:  # Shutdown signal
                     break
-                
+
                 grid, calc_time_ms, rx_monotonic = item
-                
+
                 # Generate mesh + log to Rerun (blocks in background, not on data path)
                 try:
                     # 2D image panel
@@ -101,7 +101,7 @@ class CostMapper(Module):
                             z_offset=0.02,
                         ),
                     )
-                    
+
                     # Log timing metrics
                     rr.log("metrics/costmap/calc_ms", rr.Scalars(calc_time_ms))
                     latency_ms = (time.monotonic() - rx_monotonic) * 1000
@@ -114,22 +114,20 @@ class CostMapper(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        
+
         # Only start Rerun logging if Rerun backend is selected
         if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun(global_config=self._global_config)
-            
+
             # Start background Rerun logging thread
             self._rerun_thread = threading.Thread(target=self._rerun_worker, daemon=True)
             self._rerun_thread.start()
             logger.info("CostMapper: started async Rerun logging thread")
 
-        def _publish_costmap(
-            grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float
-        ) -> None:
+        def _publish_costmap(grid: OccupancyGrid, calc_time_ms: float, rx_monotonic: float) -> None:
             # Publish to downstream FIRST (fast, not blocked by Rerun)
             self.global_costmap.publish(grid)
-            
+
             # Queue for async Rerun logging (non-blocking, drops if queue full)
             if self._rerun_thread and self._rerun_thread.is_alive():
                 try:
@@ -158,7 +156,7 @@ class CostMapper(Module):
         if self._rerun_thread and self._rerun_thread.is_alive():
             self._rerun_queue.put(None)  # Shutdown signal
             self._rerun_thread.join(timeout=2.0)
-        
+
         super().stop()
 
     # @timed()  # TODO: fix thread leak in timed decorator

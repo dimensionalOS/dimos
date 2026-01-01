@@ -226,7 +226,7 @@ class Out(Stream[T], ObservableMixin[T]):
         """Log message to Rerun with rate limiting."""
         if not hasattr(msg, "to_rerun"):
             return
-        
+
         if self._rerun_config is None:
             return
 

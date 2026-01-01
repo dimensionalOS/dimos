@@ -40,7 +40,9 @@ import uvicorn
 # Path to the frontend HTML templates and command-center build
 _TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
 _DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
-_COMMAND_CENTER_DIR = FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
+_COMMAND_CENTER_DIR = (
+    FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
+)
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.occupancy.gradient import gradient
@@ -138,7 +140,7 @@ class WebsocketVisModule(Module):
 
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
-        
+
         # Show control center link in terminal
         logger.info(f"Command Center: http://localhost:{self.port}/command-center")
 

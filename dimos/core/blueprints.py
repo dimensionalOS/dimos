@@ -22,6 +22,7 @@ import operator
 import sys
 from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin, get_type_hints
+
 import rerun as rr
 import rerun.blueprint as rrb
 
@@ -284,7 +285,7 @@ class ModuleBlueprintSet:
 
     def _init_rerun_blueprint(self, module_coordinator: ModuleCoordinator) -> None:
         """Compose and send Rerun blueprint from module contributions.
-        
+
         Collects rerun_views() from all modules and composes them into a unified layout.
         """
         # Collect view contributions from all modules
