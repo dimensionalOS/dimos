@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 print("- importing install phases")
@@ -24,16 +25,63 @@ from .phases.phase02_check_absolutely_necessary_tools import phase2
 from .phases.phase03_pip_install_dimos import phase3
 from .phases.phase04_dimos_check import phase4
 from .phases.phase05_env_setup import phase5
-from .support import prompt_tools as p
+from .support.get_system_analysis import get_system_analysis
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Dimos installer")
+    parser.add_argument(
+        "--non-interactive",
+        action="store_true",
+        help="Run without prompts; skip phase0 and auto-detect system info.",
+    )
+    parser.add_argument(
+        "--no-system-install",
+        action="store_true",
+        help="Skip phase1 (system dependency installation).",
+    )
+    parser.add_argument(
+        "--no-check",
+        action="store_true",
+        help="Skip phase4 (dimos check).",
+    )
+    parser.add_argument(
+        "--no-env-setup",
+        action="store_true",
+        help="Skip phase5 (environment setup).",
+    )
+    parser.add_argument(
+        "--features",
+        type=str,
+        help="Comma-separated list of features to enable (skips interactive selection).",
+    )
+    return parser.parse_args(argv)
 
 
 def main():
-    system_analysis, selected_features = phase0()
-    phase1(system_analysis, selected_features)
+    args = parse_args()
+    non_interactive = args.non_interactive or not sys.stdin.isatty()
+
+    cli_features = []
+    if args.features:
+        cli_features = [f.strip() for f in args.features.split(",") if f.strip()]
+
+    if non_interactive:
+        system_analysis = get_system_analysis()
+        selected_features = cli_features
+    else:
+        system_analysis, selected_features = phase0()
+        if cli_features:
+            selected_features = cli_features
+
+    if not args.no_system_install:
+        phase1(system_analysis, selected_features)
     phase2(system_analysis, selected_features)
     phase3(system_analysis, selected_features)
-    phase4()
-    phase5()
+    if not args.no_check:
+        phase4()
+    if not args.no_env_setup:
+        phase5()
 
 
 if __name__ == "__main__":
