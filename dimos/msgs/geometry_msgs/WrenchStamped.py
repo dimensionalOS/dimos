@@ -44,9 +44,9 @@ class WrenchStamped(Timestamped):
     @classmethod
     def from_force_torque_array(  # type: ignore[no-untyped-def]
         cls,
-        ft_data: list,
+        ft_data: list,  # type: ignore[type-arg]
         frame_id: str = "ft_sensor",
-        ts: float | None = None,  # type: ignore[type-arg]
+        ts: float | None = None,
     ):
         """
         Create WrenchStamped from a 6-element force/torque array.
