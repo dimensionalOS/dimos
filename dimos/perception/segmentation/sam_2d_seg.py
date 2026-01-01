@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ import time
 import cv2
 import onnxruntime  # type: ignore[import-untyped]
 import torch
-from ultralytics import FastSAM  # type: ignore[attr-defined]
+from ultralytics import FastSAM  # type: ignore[attr-defined, import-not-found]
 
 from dimos.perception.common.detection2d_tracker import get_tracked_results, target2dTracker
 from dimos.perception.segmentation.image_analyzer import ImageAnalyzer

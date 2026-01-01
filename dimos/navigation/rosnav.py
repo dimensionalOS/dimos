@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,25 +24,25 @@ import logging
 import threading
 import time
 
-from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+from geometry_msgs.msg import (  # type: ignore[attr-defined]
     PointStamped as ROSPointStamped,
     PoseStamped as ROSPoseStamped,
     TwistStamped as ROSTwistStamped,
 )
-from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined, import-untyped]
-import rclpy  # type: ignore[import-untyped]
-from rclpy.node import Node  # type: ignore[import-untyped]
+from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
+import rclpy
+from rclpy.node import Node
 from reactivex import operators as ops
 from reactivex.subject import Subject
-from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+from sensor_msgs.msg import (  # type: ignore[attr-defined]
     Joy as ROSJoy,
     PointCloud2 as ROSPointCloud2,
 )
-from std_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+from std_msgs.msg import (  # type: ignore[attr-defined]
     Bool as ROSBool,
     Int8 as ROSInt8,
 )
-from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
+from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 
 from dimos import spec
 from dimos.agents import Reducer, Stream, skill  # type: ignore[attr-defined]

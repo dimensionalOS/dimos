@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ import cv2
 import numpy as np
 
 try:
-    import cupy as cp  # type: ignore
+    import cupy as cp  # type: ignore[import-not-found]
 
     HAS_CUDA = True
 except Exception:  # pragma: no cover - optional dependency
@@ -36,7 +36,7 @@ USE_NVIMGCODEC = os.environ.get("USE_NVIMGCODEC", "0") == "1"
 NVIMGCODEC_LAST_USED = False
 try:  # pragma: no cover - optional dependency
     if HAS_CUDA and USE_NVIMGCODEC:
-        from nvidia import nvimgcodec  # type: ignore
+        from nvidia import nvimgcodec  # type: ignore[import-untyped]
 
         try:
             _enc_probe = nvimgcodec.Encoder()
@@ -170,9 +170,9 @@ class AbstractImage(ABC):
         ...
 
     def copy(self) -> AbstractImage:
-        return self.__class__(
+        return self.__class__(  # type: ignore[call-arg]
             data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts
-        )  # type: ignore
+        )
 
     def save(self, filepath: str) -> bool:
         global NVIMGCODEC_LAST_USED

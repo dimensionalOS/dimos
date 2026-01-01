@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -222,7 +222,7 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport and self.connection:
-            self._transport = self.connection.transport  # type: ignore[union-attr]
+            self._transport = self.connection.transport
         return self._transport
 
     @transport.setter
@@ -257,7 +257,7 @@ class RemoteIn(RemoteStream[T]):
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         self.transport.broadcast(self, msg)  # type: ignore[arg-type]
 
-    @transport.setter  # type: ignore[attr-defined, misc, no-redef, untyped-decorator]
+    @transport.setter  # type: ignore[attr-defined, no-redef, untyped-decorator]
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value

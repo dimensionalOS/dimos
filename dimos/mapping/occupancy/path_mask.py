@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -93,6 +93,6 @@ def make_path_mask(
 
     # Some of the points on the edge of the path may be occupied due to
     # rounding. Remove them.
-    bool_mask = bool_mask & ~occupied_mask
+    bool_mask = bool_mask & ~occupied_mask  # type: ignore[assignment]
 
     return bool_mask

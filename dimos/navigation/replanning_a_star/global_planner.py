@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,7 +16,7 @@ import math
 from threading import Event, RLock, Thread, current_thread
 import time
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 from reactivex import Subject
 from reactivex.disposable import CompositeDisposable
 

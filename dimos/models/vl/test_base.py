@@ -36,7 +36,7 @@ def test_query_detections_mocked() -> None:
 
     # Create model and mock the query method
     model = QwenVlModel()
-    model.query = MagicMock(return_value=MOCK_QWEN_RESPONSE)  # type: ignore[method-assign]
+    model.query = MagicMock(return_value=MOCK_QWEN_RESPONSE)
 
     # Query for humans in the image
     query = "humans"
