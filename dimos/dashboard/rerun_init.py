@@ -45,11 +45,11 @@ Usage:
 """
 
 import atexit
-import os
 import threading
 
 import rerun as rr
 
+from dimos.core.global_config import GlobalConfig
 from dimos.utils.logging_config import setup_logger
 
 logger = setup_logger()
@@ -113,12 +113,16 @@ def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
     return RERUN_GRPC_ADDR
 
 
-def connect_rerun(server_addr: str | None = None) -> None:
+def connect_rerun(
+    global_config: GlobalConfig | None = None,
+    server_addr: str | None = None,
+) -> None:
     """Connect to Rerun server from a worker process.
     
-    No-op if Rerun is not enabled (e.g., when using Foxglove backend).
+    Modules should check global_config.viewer_backend before calling this.
 
     Args:
+        global_config: Global configuration (checks viewer_backend)
         server_addr: Server address to connect to. Defaults to RERUN_GRPC_ADDR.
     """
     global _connected
@@ -128,10 +132,9 @@ def connect_rerun(server_addr: str | None = None) -> None:
             logger.debug("Already connected to Rerun server")
             return
         
-        # Check if Rerun backend is selected (via env var fallback)
-        viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
-        if not viewer_backend.startswith("rerun"):
-            logger.debug("Rerun connection skipped", viewer_backend=viewer_backend)
+        # Skip if foxglove backend selected
+        if global_config and not global_config.viewer_backend.startswith("rerun"):
+            logger.debug("Rerun connection skipped", viewer_backend=global_config.viewer_backend)
             return
 
         addr = server_addr or RERUN_GRPC_ADDR

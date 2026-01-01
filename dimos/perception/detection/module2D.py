@@ -166,7 +166,7 @@ def deploy(  # type: ignore[no-untyped-def]
     from dimos.core import LCMTransport
 
     detector = Detection2DModule(**kwargs)
-    detector.image.connect(camera.color_image)
+    detector.color_image.connect(camera.color_image)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)

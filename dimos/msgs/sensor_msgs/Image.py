@@ -319,7 +319,7 @@ class Image(Timestamped):
     def to_grayscale(self) -> Image:
         return Image(self._impl.to_grayscale())
 
-    def to_rerun(self):  # type: ignore[no-untyped-def]
+    def to_rerun(self) -> Any:
         """Convert to rerun Image format."""
         return self._impl.to_rerun()
 
