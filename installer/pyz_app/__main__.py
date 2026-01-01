@@ -46,7 +46,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
           {FG_CYAN}dimos_installer --no-system-install --no-check --no-env-setup{RESET}
           {FG_CYAN}dimos_installer --just-system-install{RESET}
         
-        v0.1.12
         """
     )
     parser = argparse.ArgumentParser(
