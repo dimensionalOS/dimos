@@ -1,5 +1,8 @@
 name: code-cleanup
-on: push
+on:
+  push:
+    paths-ignore:
+      - '**.md'
 
 permissions:
   contents: write
