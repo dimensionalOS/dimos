@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from .. import prompt_tools as p
 from ..constants import dependency_list_apt_packages
-from ..dax import command_exists, run_command
+from ..shell_tooling import command_exists, run_command
 from ..misc import apt_install
 
 APT_PACKAGES = [

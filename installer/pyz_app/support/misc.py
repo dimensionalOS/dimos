@@ -22,7 +22,7 @@ import re
 from typing import Any
 
 from . import pip_dependency_database as dep_db, prompt_tools as p
-from .dax import command_exists, run_command
+from .shell_tooling import command_exists, run_command
 from .constants import dependency_list_human_names
 
 try:

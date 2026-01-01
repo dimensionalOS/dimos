@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
-from ..support.dax import run_command
+from ..support.shell_tooling import run_command
 
 
 def phase3(_system_analysis, selected_features):

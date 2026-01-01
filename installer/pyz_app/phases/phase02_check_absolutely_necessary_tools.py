@@ -20,7 +20,7 @@ from pathlib import Path
 
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
-from ..support.dax import command_exists, run_command
+from ..support.shell_tooling import command_exists, run_command
 from ..support.misc import (
     add_git_ignore_patterns,
     dry_run,

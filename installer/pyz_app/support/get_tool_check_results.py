@@ -20,7 +20,7 @@ import platform
 import re
 from typing import Dict, Literal, TypedDict
 
-from .dax import command_exists, run_quiet
+from .shell_tooling import command_exists, run_quiet
 
 
 class ToolResult(TypedDict, total=False):

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from ..dax import command_exists
+from ..shell_tooling import command_exists
 from .. import prompt_tools as p
 
 

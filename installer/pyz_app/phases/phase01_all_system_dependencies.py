@@ -16,7 +16,7 @@
 from __future__ import annotations
 
 from ..support import prompt_tools as p
-from ..support.dax import command_exists
+from ..support.shell_tooling import command_exists
 from ..support.get_tool_check_results import get_tool_check_results
 from ..support.misc import (
     apt_install,
