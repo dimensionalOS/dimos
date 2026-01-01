@@ -5,7 +5,7 @@
     "python3-pip",
     "build-essential",
     "libjpeg-dev",
-    "libjpeg-turbo",
+    "libjpeg-turbo8-dev",
     "zlib1g-dev",
     "libpng-dev",
     "libtiff-dev",

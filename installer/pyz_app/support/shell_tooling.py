@@ -126,7 +126,8 @@ def run_command(
             if not line and process.poll() is not None:
                 break
             if line:
-                stream_callback(line)
+                for each_line in line.rstrip("\n").split("\n"):
+                    stream_callback(line)
                 if capture_output:
                     collected.append(line)
 
