@@ -94,6 +94,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print commands without executing installer side-effects (best-effort).",
     )
+    parser.add_argument(
+        "--from-dimos-template",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
     return parser.parse_args(argv)
 
 
@@ -102,6 +107,7 @@ def main():
     non_interactive = args.non_interactive or args.just_system_install or not sys.stdin.isatty()
     installer_status["non_interactive"] = non_interactive
     installer_status["dry_run"] = bool(args.dry_run)
+    installer_status["template_repo"] = bool(getattr(args, "from_dimos_template", False))
 
     cli_features = []
     if args.features:

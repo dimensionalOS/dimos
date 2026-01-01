@@ -20,12 +20,14 @@ import re
 
 from .. import prompt_tools as p
 from ..constants import dimos_env_vars
+from ..installer_status import installer_status
 from ..misc import add_git_ignore_patterns
 
 
 def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
     project_path = Path(project_path)
     env_path = Path(env_path)
+    template_repo = bool(installer_status.get("template_repo"))
 
     env_exists = env_path.is_file()
 
@@ -34,7 +36,11 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
         print(f"We highly recommend having these in a git-ignored {p.highlight('.env')} file.")
         print(f'''I don't see a {p.highlight('.env')} file''')
         print()
-        if not p.ask_yes_no(f"Can I create one for you?"):
+        if template_repo or installer_status.get("non_interactive"):
+            create_env = True
+        else:
+            create_env = p.ask_yes_no("Can I create one for you?")
+        if not create_env:
             print("- Okay, I'll assume you will manage env vars yourself:")
             for name, value in dimos_env_vars.items():
                 print(f"  {name}={value}")

@@ -246,13 +246,16 @@ def ensure_python() -> str:
 def get_project_directory() -> Path:
     global _project_directory
     if _project_directory is None:
-        print("Dimos needs to be installed to a project (not just a global install)")
-        if p.ask_yes_no("Are you currently in a project directory?"):
+        if installer_status.get("template_repo"):
             _project_directory = Path.cwd()
         else:
-            raise RuntimeError(
-                "- ❌ Please create a project directory and rerun this command from there."
-            )
+            print("Dimos needs to be installed to a project (not just a global install)")
+            if p.ask_yes_no("Are you currently in a project directory?"):
+                _project_directory = Path.cwd()
+            else:
+                raise RuntimeError(
+                    "- ❌ Please create a project directory and rerun this command from there."
+                )
     return _project_directory
 
 
