@@ -102,7 +102,7 @@ def phase0():
             p.sub_header("Docker assets created/updated:")
             for key, path in paths.items():
                 print(f" - {key}: {path}")
-            print(f"Use {p.highlight("run/docker_build")} to build the image, and {p.highlight("run/docker_exec")} to start a shell in the container.")
+            print(f"Use {p.highlight('run/docker_build')} to build the image, and {p.highlight('run/docker_exec')} to start a shell in the container.")
             if p.ask_yes_no("Would you like me to build the image now?"):
                 run_command([str(paths["build_script"])], check=False)
             if p.ask_yes_no("Would you like me to start a container shell now?"):
