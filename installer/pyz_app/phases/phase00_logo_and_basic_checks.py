@@ -26,7 +26,7 @@ def phase0():
     logo = RenderLogo(
         glitchyness=0.09, # relative quantity of visual artifacting
         stickyness=100, # how many frames to keep an artifact
-        fps=30,
+        fps=14, # at 30fps it flickers a lot in the MacOS stock terminal. Ironically its fine at 30fps in the VS Code terminal
         color_wave_amplitude=10, # bigger = wider range of colors
         wave_speed=0.01, # bigger = faster
         wave_freq=0.01, # smaller = longer streaks of color
@@ -63,6 +63,7 @@ def phase0():
 
     optional = toml_data["project"].get("optional-dependencies", {})
     features = [f for f in optional.keys() if f not in ["cpu"]]
+    p.header("First Phase: Feature Selection")
     selected_features = p.pick_many(
         "Which features do you want? (Selecting none is okay)", options=features
     )

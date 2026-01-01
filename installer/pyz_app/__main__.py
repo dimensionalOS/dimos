@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import textwrap
 
 print("- importing install phases")
 from .phases.phase00_logo_and_basic_checks import phase0
@@ -27,10 +28,29 @@ from .phases.phase04_dimos_check import phase4
 from .phases.phase05_env_setup import phase5
 from .support.get_system_analysis import get_system_analysis
 from .support.installer_status import installer_status
+from .support.misc import get_project_toml
+
+# Simple ANSI helpers for help text
+RESET = "\x1b[0m"
+BOLD = "\x1b[1m"
+FG_CYAN = "\x1b[36m"
+FG_GREEN = "\x1b[32m"
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Dimos installer")
+    epilog = textwrap.dedent(
+        f"""
+        {FG_GREEN}Examples:{RESET}
+          {FG_CYAN}dimos_installer --non-interactive --features sim,cuda{RESET}
+          {FG_CYAN}dimos_installer --no-system-install --no-check{RESET}
+          {FG_CYAN}dimos_installer --no-env-setup{RESET}
+        """
+    )
+    parser = argparse.ArgumentParser(
+        description="Dimos installer",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=epilog,
+    )
     parser.add_argument(
         "--non-interactive",
         action="store_true",
@@ -56,6 +76,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=str,
         help="Comma-separated list of features to enable (skips interactive selection).",
     )
+    parser.add_argument(
+        "--list-features",
+        action="store_true",
+        help="List available features and exit.",
+    )
     return parser.parse_args(argv)
 
 
@@ -75,6 +100,15 @@ def main():
         system_analysis, selected_features = phase0()
         if cli_features:
             selected_features = cli_features
+
+    if args.list_features:
+        toml_data = get_project_toml()
+        optional = toml_data["project"].get("optional-dependencies", {})
+        available = [f for f in optional.keys() if f != "cpu"]
+        print("Available features:")
+        for feat in available:
+            print(f"  - {feat}")
+        return
 
     if not args.no_system_install:
         phase1(system_analysis, selected_features)
