@@ -59,3 +59,5 @@ yolo11n.pt
 /logs
 
 *.so
+
+/.mypy_cache*

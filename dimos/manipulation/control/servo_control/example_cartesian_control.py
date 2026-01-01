@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,14 +43,14 @@ from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 shutdown_requested = False
 
 
-def signal_handler(sig, frame):
+def signal_handler(sig, frame):  # type: ignore[no-untyped-def]
     """Handle Ctrl+C for graceful shutdown."""
     global shutdown_requested
     print("\n\nShutdown requested...")
     shutdown_requested = True
 
 
-def main():
+def main():  # type: ignore[no-untyped-def]
     """
     Deploy and run topic-based Cartesian motion control system.
 
@@ -76,7 +76,7 @@ def main():
         # Step 2: Deploy xArm driver
         # =========================================================================
         print("\nDeploying xArm driver...")
-        arm_driver = dimos.deploy(
+        arm_driver = dimos.deploy(  # type: ignore[attr-defined]
             XArmDriver,
             ip_address="192.168.1.210",
             xarm_type="xarm6",
@@ -101,7 +101,7 @@ def main():
         # Step 3: Deploy Cartesian motion controller
         # =========================================================================
         print("\nDeploying Cartesian motion controller...")
-        controller = dimos.deploy(
+        controller = dimos.deploy(  # type: ignore[attr-defined]
             CartesianMotionController,
             arm_driver=arm_driver,
             control_frequency=20.0,
@@ -160,7 +160,7 @@ def main():
     finally:
         # Always stop dimos cluster
         print("Stopping dimos cluster...")
-        dimos.stop()
+        dimos.stop()  # type: ignore[attr-defined]
 
 
 if __name__ == "__main__":
@@ -184,7 +184,7 @@ if __name__ == "__main__":
         - Proper network configuration
     """
     try:
-        main()
+        main()  # type: ignore[no-untyped-call]
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
     except Exception as e:

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ from collections.abc import Callable
 import threading
 import time
 
-from dimos_lcm.std_msgs import Bool, String  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc

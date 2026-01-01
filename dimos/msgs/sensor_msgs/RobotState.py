@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -52,7 +52,7 @@ class RobotState:
 
     __dimensions__ = [None, None, None, None, None, None, None, None, None, None]
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         state: int = 0,
         mode: int = 0,
@@ -86,17 +86,17 @@ class RobotState:
         # LCM Type: float[] - Joint positions (variable length based on robot DOF)
         self.joints = joints if joints is not None else []
 
-    def lcm_encode(self):
+    def lcm_encode(self):  # type: ignore[no-untyped-def]
         """Encode for LCM transport (dimos uses lcm_encode method name)."""
-        return self.encode()
+        return self.encode()  # type: ignore[no-untyped-call]
 
-    def encode(self):
+    def encode(self):  # type: ignore[no-untyped-def]
         buf = BytesIO()
-        buf.write(RobotState._get_packed_fingerprint())
+        buf.write(RobotState._get_packed_fingerprint())  # type: ignore[no-untyped-call]
         self._encode_one(buf)
         return buf.getvalue()
 
-    def _encode_one(self, buf) -> None:
+    def _encode_one(self, buf) -> None:  # type: ignore[no-untyped-def]
         buf.write(
             struct.pack(
                 ">iiiiiii",
@@ -123,22 +123,22 @@ class RobotState:
             buf.write(struct.pack(">f", val))
 
     @classmethod
-    def lcm_decode(cls, data: bytes):
+    def lcm_decode(cls, data: bytes):  # type: ignore[no-untyped-def]
         """Decode from LCM transport (dimos uses lcm_decode method name)."""
         return cls.decode(data)
 
     @classmethod
-    def decode(cls, data: bytes):
+    def decode(cls, data: bytes):  # type: ignore[no-untyped-def]
         if hasattr(data, "read"):
             buf = data
         else:
-            buf = BytesIO(data)
-        if buf.read(8) != cls._get_packed_fingerprint():
+            buf = BytesIO(data)  # type: ignore[assignment]
+        if buf.read(8) != cls._get_packed_fingerprint():  # type: ignore[no-untyped-call]
             raise ValueError("Decode error")
-        return cls._decode_one(buf)
+        return cls._decode_one(buf)  # type: ignore[no-untyped-call]
 
     @classmethod
-    def _decode_one(cls, buf):
+    def _decode_one(cls, buf):  # type: ignore[no-untyped-def]
         self = RobotState()
         (
             self.state,
@@ -167,7 +167,7 @@ class RobotState:
         return self
 
     @classmethod
-    def _get_hash_recursive(cls, parents):
+    def _get_hash_recursive(cls, parents):  # type: ignore[no-untyped-def]
         if cls in parents:
             return 0
         # Updated hash to reflect new fields: tcp_pose, tcp_offset, joints
@@ -178,11 +178,11 @@ class RobotState:
     _packed_fingerprint = None
 
     @classmethod
-    def _get_packed_fingerprint(cls):
+    def _get_packed_fingerprint(cls):  # type: ignore[no-untyped-def]
         if cls._packed_fingerprint is None:
-            cls._packed_fingerprint = struct.pack(">Q", cls._get_hash_recursive([]))
+            cls._packed_fingerprint = struct.pack(">Q", cls._get_hash_recursive([]))  # type: ignore[no-untyped-call]
         return cls._packed_fingerprint
 
-    def get_hash(self):
+    def get_hash(self):  # type: ignore[no-untyped-def]
         """Get the LCM hash of the struct"""
-        return struct.unpack(">Q", RobotState._get_packed_fingerprint())[0]
+        return struct.unpack(">Q", RobotState._get_packed_fingerprint())[0]  # type: ignore[no-untyped-call]
