@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+docker build -t mystery .
+docker run -it --rm mystery
