@@ -81,6 +81,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="List available features and exit.",
     )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print commands without executing installer side-effects (best-effort).",
+    )
     return parser.parse_args(argv)
 
 
@@ -88,6 +93,7 @@ def main():
     args = parse_args()
     non_interactive = args.non_interactive or not sys.stdin.isatty()
     installer_status["non_interactive"] = non_interactive
+    installer_status["dry_run"] = bool(args.dry_run)
 
     cli_features = []
     if args.features:
