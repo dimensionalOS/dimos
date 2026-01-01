@@ -22,6 +22,7 @@ from ..support.dimos_banner import RenderLogo
 from ..support.get_system_analysis import get_system_analysis
 from ..support.misc import get_project_toml, get_project_directory
 from ..support.setup_docker_env import setup_docker_env
+from ..support.setup_nix import setup_nix_flake
 from ..support.shell_tooling import run_command
 
 def phase0():
@@ -82,6 +83,7 @@ def phase0():
             options={
                 "system": "Typical system install",
                 "docker": "Docker container setup",
+                "nix": "Nix flake setup",
             },
         )
         if choice == "system":
@@ -108,6 +110,15 @@ def phase0():
             if p.ask_yes_no("Would you like me to start a container shell now?"):
                 run_command([str(paths["exec_script"])], check=False)
             p.sub_header("Docker setup complete. Exiting installer.")
+            raise SystemExit(0)
+        if choice == "nix":
+            project_dir = get_project_directory()
+            example_path = setup_nix_flake(project_dir)
+            p.sub_header("Nix example flake created:")
+            print(f" - {example_path}")
+            print("You can rename flake.example.nix to flake.nix or use it as a reference.")
+            feat_str ="[" + (",".join(selected_features)) + "]" if selected_features else ""
+            print(f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}`.")
             raise SystemExit(0)
 
     return system_analysis, selected_features
