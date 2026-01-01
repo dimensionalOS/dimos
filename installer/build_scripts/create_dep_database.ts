@@ -47,6 +47,13 @@ const namesAndPrompts = dependencies
         return [name, requirement];
     })
     .filter(([name, requirement]) => {
+        // don't waste a bunch of tokens on stuff that is 99% a pure python package
+        if (name.startsWith("types-") ||  name.endsWith("-stubs") || name.startsWith("pytest-")) {
+            return false
+        }
+        return true
+    })
+    .filter(([name, requirement]) => {
         let obj
         try {
             obj = JSON.parse(
@@ -82,18 +89,21 @@ const namesAndPrompts = dependencies
         ]
     })
 
+const filteredNamesAndPrompts = namesAndPrompts
+// .filter(each=>(["mujoco","playground", "pymavlink", "xformers","mmcv","mmengine","mss","lvis"].includes(each[0])))
+// console.log(`filteredNamesAndPrompts.map(each=>each[0]) is:`,filteredNamesAndPrompts.map(each=>each[0]))
 if (Deno.args.length > 0 || Deno.args.includes("--dry-run")) {
-    for (const each of namesAndPrompts.map(each=>each[0])) {
+    for (const each of filteredNamesAndPrompts.map(each=>each[0])) {
         if (missing.includes(each)) {
             console.log(`missing           : ${each}.json`)
         } else {
             console.log(`needs modification: ${each}.json`)
         }
     }
-    const total = namesAndPrompts.length
+    const total = filteredNamesAndPrompts.length
     console.log("total:",total)
     console.debug(`missing:`,missing.length)
     console.debug(`need modification:`,total-missing.length)
 } else {
-    await executeClaudeNamedPrompts(Object.fromEntries(namesAndPrompts))
+    await executeClaudeNamedPrompts(Object.fromEntries(filteredNamesAndPrompts))
 }
