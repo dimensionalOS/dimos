@@ -28,7 +28,7 @@ from ..support.misc import (
     ensure_python,
     get_project_directory,
 )
-from ..support.installer_status import settings as installer_status
+from ..support.installer_status import installer_status
 from ..support.venv import activate_venv, get_venv_dirs_at
 
 

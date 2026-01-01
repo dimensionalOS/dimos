@@ -97,7 +97,7 @@ def phase1(system_analysis, selected_features):
     print()
     if not tools_were_auto_installed:
         p.confirm(
-            "I can't confirm that all those tools are installed\nPress enter to continue anyway, or CTRL+C to cancel and install them yourself"
+            "I can't always confirm that all those tools are installed\nPress enter if you've think you've got most of them\nor CTRL+C to cancel and install them yourself"
         )
     else:
         p.boring_log("- all system dependencies appear to be installed")
