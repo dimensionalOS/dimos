@@ -379,13 +379,11 @@ class RenderLogo:
         top_pad = 0
         bottom_pad = max(0, rows - (static_height + len(visible)))
 
-        out_lines: list[str] = []
-        # mimic log-update behavior: move to home and erase down, then draw
-        out_lines.append(ANSI_HOME + ANSI_ERASE_DOWN)
+        body_lines: list[str] = []
 
         # Optional top padding to avoid hugging the top of the terminal.
         for _ in range(top_pad):
-            out_lines.append("")
+            body_lines.append("")
 
         # Logo
         for y, line in enumerate(self.banner):
@@ -396,12 +394,12 @@ class RenderLogo:
                 ch = g.ch if g else orig_ch
                 color = self._color_for(x, y, t, is_glitched=bool(g))
                 out += _ansi_fg256(color) + ch + ANSI_RESET
-            out_lines.append(out)
+            body_lines.append(out)
 
         # Separator + blank
-        out_lines.append("")
+        body_lines.append("")
         sep = self.separator_char * min(max_len, content_width)
-        out_lines.append((" " * left_pad) + ANSI_DIM + sep + ANSI_RESET)
+        body_lines.append((" " * left_pad) + ANSI_DIM + sep + ANSI_RESET)
 
         if self.scrollable:
             for l in visible:
@@ -410,14 +408,14 @@ class RenderLogo:
                     trimmed = l[: max(0, content_width - 1)] + "…"
                 else:
                     trimmed = l
-                out_lines.append((" " * left_pad) + trimmed)
+                body_lines.append((" " * left_pad) + trimmed)
 
             # pad to keep stable frame height (bottom padding after logs)
-            pad_needed = max(0, rows - len(out_lines) - bottom_pad)
+            pad_needed = max(0, rows - len(body_lines) - bottom_pad)
             for _ in range(bottom_pad + pad_needed):
-                out_lines.append(" " * left_pad)
+                body_lines.append(" " * left_pad)
 
-        return "\n".join(out_lines)
+        return ANSI_HOME + ANSI_ERASE_DOWN + "\n".join(body_lines)
 
     # -----------------------
     # Glitches + colors

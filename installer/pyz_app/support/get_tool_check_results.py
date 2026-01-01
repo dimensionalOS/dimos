@@ -229,7 +229,7 @@ def get_tool_check_results() -> dict[str, ToolResult]:
                 "name": "pip",
                 "exists": False,
                 "raw": val.get("raw", ""),
-                "note": "Python found, but pip module not installed.",
+                "note": "while python was found, the pip module is not available.",
             }
         tasks.append((name, val))
     elif existence["pip3"]:

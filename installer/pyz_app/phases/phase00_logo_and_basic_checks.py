@@ -51,10 +51,12 @@ def phase0():
         exists = result.get("exists", False)
         version = result.get("version", "") or ""
         note = result.get("note", "") or ""
+        cross = "\u2718"
+        check = "\u2714"
         if not exists:
-            logo.log(f"- {p.red("✘")} {name} {note}".strip())
+            logo.log(f"- {p.red(cross)} {name} {note}".strip())
         else:
-            logo.log(f"- {p.cyan("✓")} {name}: {version} {note}".strip())
+            logo.log(f"- {p.cyan(check)} {name}: {version} {note}".strip())
         time.sleep(timeout)
     toml_data = get_project_toml()
     logo.stop()
