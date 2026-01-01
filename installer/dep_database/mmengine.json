@@ -7,6 +7,14 @@
     "build-essential",
     "libyaml-dev"
   ],
-  "description": "System dependencies required for mmengine>=0.10.3 pip package on Ubuntu/Debian systems",
-  "notes": "MMEngine is OpenMMLab's foundational library for training deep learning models. It's primarily a pure Python package with minimal system dependencies. python3-dev and build-essential may be needed for compiling C extensions from dependencies like PyYAML. libyaml-dev provides faster YAML parsing. For most use cases with pre-built wheels, only python3 and python3-pip are strictly required at runtime."
+  "brew_dependencies": [
+    "python3",
+    "libyaml"
+  ],
+  "nix_dependencies": [
+    "python3",
+    "libyaml"
+  ],
+  "description": "System dependencies required for mmengine>=0.10.3 pip package",
+  "notes": "MMEngine is OpenMMLab's foundational library for training deep learning models. It's primarily a pure Python package with minimal system dependencies. The main system dependency is libyaml for faster YAML parsing (used by PyYAML, one of mmengine's core dependencies). On Ubuntu/Debian, python3-dev and build-essential are needed for compiling C extensions from dependencies. On macOS with Homebrew and NixOS, libyaml is the primary requirement for optimal YAML performance. For most use cases with pre-built wheels, only python3 is strictly required at runtime, but libyaml significantly improves configuration file parsing performance which is important for deep learning workflows."
 }

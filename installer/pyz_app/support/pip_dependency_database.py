@@ -1078,8 +1078,62 @@ RAW_DATA = r"""{
       "libavformat58",
       "libswscale5"
     ],
-    "description": "System dependencies required for lvis (LVIS Dataset API) pip package on Ubuntu/Debian systems",
-    "notes": "LVIS (pronounced 'el-vis') is the Python API for the Large Vocabulary Instance Segmentation dataset. The package requires Cython for building native extensions, NumPy for numerical operations (requiring BLAS/LAPACK via libopenblas-dev), matplotlib for visualization (requiring FreeType, PNG, JPEG support and X11/GTK3 libraries for interactive backends), and opencv-python for computer vision operations (requiring OpenCV libraries, GStreamer for video I/O, and ffmpeg libraries). The cython3 package provides the Cython compiler needed during installation. While pre-built wheels may be available for common platforms, these dependencies ensure the package can be built from source and all features function correctly. Version compatibility note: libavcodec58, libavformat58, and libswscale5 are for Ubuntu 20.04/Debian 11; newer versions may use libavcodec59/60, libavformat59/60, and libswscale6/7.",
+    "brew_dependencies": [
+      "python3",
+      "pkg-config",
+      "gcc",
+      "openblas",
+      "lapack",
+      "freetype",
+      "libpng",
+      "jpeg",
+      "zlib",
+      "qhull",
+      "fontconfig",
+      "libxft",
+      "tcl-tk",
+      "gtk+3",
+      "cairo",
+      "gobject-introspection",
+      "opencv",
+      "glib",
+      "libsm",
+      "libxext",
+      "libxrender",
+      "gstreamer",
+      "gst-plugins-base",
+      "ffmpeg"
+    ],
+    "description": "System dependencies required for lvis (LVIS Dataset API) pip package",
+    "nix_dependencies": [
+      "python3",
+      "pkg-config",
+      "gcc",
+      "openblas",
+      "lapack",
+      "freetype",
+      "libpng",
+      "libjpeg",
+      "zlib",
+      "qhull",
+      "fontconfig",
+      "libXft",
+      "tcl",
+      "tk",
+      "gtk3",
+      "cairo",
+      "gobject-introspection",
+      "opencv4",
+      "glib",
+      "xorg.libSM",
+      "xorg.libXext",
+      "xorg.libXrender",
+      "xorg.libX11",
+      "gstreamer",
+      "gst-plugins-base",
+      "ffmpeg"
+    ],
+    "notes": "LVIS (pronounced 'el-vis') is the Python API for the Large Vocabulary Instance Segmentation dataset. The package requires Cython for building native extensions, NumPy for numerical operations (requiring BLAS/LAPACK via openblas), matplotlib for visualization (requiring FreeType, PNG, JPEG support and X11/GTK3 libraries for interactive backends), and opencv-python for computer vision operations (requiring OpenCV libraries, GStreamer for video I/O, and ffmpeg libraries). While pre-built wheels may be available for common platforms, these dependencies ensure the package can be built from source and all features function correctly. Version compatibility note for apt: libavcodec58, libavformat58, and libswscale5 are for Ubuntu 20.04/Debian 11; newer versions may use libavcodec59/60, libavformat59/60, and libswscale6/7.",
     "package": "lvis"
   },
   "lxml-stubs": {
@@ -1180,8 +1234,49 @@ RAW_DATA = r"""{
       "libhdf5-dev",
       "pkg-config"
     ],
-    "description": "System dependencies required for mmcv>=2.1.0 pip package on Ubuntu/Debian systems",
-    "notes": "MMCV (MMDetection Computer Vision) is a foundational library for OpenMMLab's computer vision projects. Building from source requires: C++ compiler and build tools (build-essential, ninja-build, pkg-config), Python development headers (python3-dev), OpenCV development libraries (libopencv-dev) for core CV operations, GUI and windowing support (libgl1-mesa-glx, libglib2.0-0, libsm6, libxext6, libxrender-dev), parallel processing (libgomp1), GStreamer for video I/O (libgstreamer1.0-0, libgstreamer-plugins-base1.0-0), image format codecs (libjpeg-dev, libjpeg8-dev, libpng-dev, libtiff-dev), video codec support (libavcodec-dev, libavformat-dev, libswscale-dev), camera access (libv4l-dev), optimized linear algebra (libatlas-base-dev, gfortran), and HDF5 for data storage (libhdf5-dev). MMCV 2.x requires PyTorch and CUDA for GPU support. Pre-built wheels are available for common configurations via 'pip install mmcv -f https://download.openmmlab.com/mmcv/dist/{cu_version}/{torch_version}/index.html', but building from source provides optimal performance and compatibility.",
+    "brew_dependencies": [
+      "python3",
+      "ninja",
+      "opencv",
+      "glib",
+      "libsm",
+      "libxext",
+      "libxrender",
+      "libomp",
+      "gstreamer",
+      "gst-plugins-base",
+      "jpeg-turbo",
+      "libpng",
+      "libtiff",
+      "ffmpeg",
+      "openblas",
+      "gcc",
+      "hdf5",
+      "pkg-config"
+    ],
+    "description": "System dependencies required for mmcv>=2.1.0 pip package",
+    "nix_dependencies": [
+      "python3",
+      "ninja",
+      "opencv4",
+      "glib",
+      "xorg.libSM",
+      "xorg.libXext",
+      "xorg.libXrender",
+      "llvmPackages.openmp",
+      "gstreamer",
+      "gst-plugins-base",
+      "libjpeg",
+      "libpng",
+      "libtiff",
+      "ffmpeg",
+      "libv4l",
+      "openblas",
+      "gfortran",
+      "hdf5",
+      "pkg-config"
+    ],
+    "notes": "MMCV (MMDetection Computer Vision) is a foundational library for OpenMMLab's computer vision projects. Building from source requires: C++ compiler and build tools (build-essential, ninja-build, pkg-config), Python development headers (python3-dev), OpenCV development libraries (libopencv-dev) for core CV operations, GUI and windowing support (libgl1-mesa-glx, libglib2.0-0, libsm6, libxext6, libxrender-dev), parallel processing (libgomp1/libomp/openmp), GStreamer for video I/O (libgstreamer1.0-0, libgstreamer-plugins-base1.0-0), image format codecs (libjpeg-dev, libjpeg8-dev, libpng-dev, libtiff-dev), video codec support (libavcodec-dev, libavformat-dev, libswscale-dev via ffmpeg), camera access (libv4l-dev), optimized linear algebra (libatlas-base-dev/openblas, gfortran/gcc), and HDF5 for data storage (libhdf5-dev). MMCV 2.x requires PyTorch and CUDA for GPU support. Pre-built wheels are available for common configurations via 'pip install mmcv -f https://download.openmmlab.com/mmcv/dist/{cu_version}/{torch_version}/index.html', but building from source provides optimal performance and compatibility. On macOS, some X11 libraries (libsm, libxext, libxrender) may need XQuartz installed separately. On NixOS, X11 libraries are namespaced under xorg and OpenMP is provided via llvmPackages.",
     "package": "mmcv",
     "version": ">=2.1.0"
   },
@@ -1193,8 +1288,16 @@ RAW_DATA = r"""{
       "build-essential",
       "libyaml-dev"
     ],
-    "description": "System dependencies required for mmengine>=0.10.3 pip package on Ubuntu/Debian systems",
-    "notes": "MMEngine is OpenMMLab's foundational library for training deep learning models. It's primarily a pure Python package with minimal system dependencies. python3-dev and build-essential may be needed for compiling C extensions from dependencies like PyYAML. libyaml-dev provides faster YAML parsing. For most use cases with pre-built wheels, only python3 and python3-pip are strictly required at runtime.",
+    "brew_dependencies": [
+      "python3",
+      "libyaml"
+    ],
+    "description": "System dependencies required for mmengine>=0.10.3 pip package",
+    "nix_dependencies": [
+      "python3",
+      "libyaml"
+    ],
+    "notes": "MMEngine is OpenMMLab's foundational library for training deep learning models. It's primarily a pure Python package with minimal system dependencies. The main system dependency is libyaml for faster YAML parsing (used by PyYAML, one of mmengine's core dependencies). On Ubuntu/Debian, python3-dev and build-essential are needed for compiling C extensions from dependencies. On macOS with Homebrew and NixOS, libyaml is the primary requirement for optimal YAML performance. For most use cases with pre-built wheels, only python3 is strictly required at runtime, but libyaml significantly improves configuration file parsing performance which is important for deep learning workflows.",
     "package": "mmengine>=0.10.3"
   },
   "moondream": {
@@ -1252,9 +1355,42 @@ RAW_DATA = r"""{
       "libxinerama1",
       "libxfixes3"
     ],
-    "description": "System dependencies required for mss (Multiple Screen Shots) pip package on Ubuntu/Debian systems",
-    "notes": "mss is a pure Python library for cross-platform screenshot capture. On Linux, it uses the X11 protocol to capture screens. The X11 libraries (libx11-6, libxext6, libxrandr2, libxinerama1, libxfixes3) provide the necessary system-level screen capture capabilities. For Wayland systems, additional dependencies may be required. The package works with pre-built wheels on most systems, but these dependencies ensure proper runtime functionality for screen capture operations.",
+    "brew_dependencies": [],
+    "description": "System dependencies required for mss (Multiple Screen Shots) pip package",
+    "nix_dependencies": [
+      "xorg.libX11",
+      "xorg.libXext",
+      "xorg.libXrandr",
+      "xorg.libXinerama",
+      "xorg.libXfixes"
+    ],
+    "notes": "mss is a pure Python library for cross-platform screenshot capture. On Linux, it uses the X11 protocol to capture screens, requiring X11 libraries (libx11-6, libxext6, libxrandr2, libxinerama1, libxfixes3) for system-level screen capture capabilities. On macOS, mss uses native Core Graphics framework (part of the OS) so no additional Homebrew dependencies are needed. On NixOS, the X11 libraries from xorg packages are required for Linux systems. For Wayland systems, additional dependencies may be required. The package works with pre-built wheels on most systems, but these dependencies ensure proper runtime functionality for screen capture operations.",
     "package": "mss"
+  },
+  "mujoco": {
+    "apt_dependencies": [
+      "libgl1-mesa-dev",
+      "libgl1-mesa-glx",
+      "libglew-dev",
+      "libosmesa6-dev",
+      "libglfw3",
+      "libglfw3-dev",
+      "patchelf"
+    ],
+    "brew_dependencies": [
+      "glew",
+      "glfw"
+    ],
+    "description": "System dependencies required for mujoco>=3.3.4 pip package",
+    "nix_dependencies": [
+      "libGL",
+      "libGLU",
+      "glew",
+      "glfw3",
+      "mesa"
+    ],
+    "notes": "MuJoCo (Multi-Joint dynamics with Contact) is a physics engine for robotics, biomechanics, graphics and animation, and other applications requiring fast and accurate simulation. The Python bindings require OpenGL libraries for rendering: libgl1-mesa-dev and libgl1-mesa-glx provide OpenGL support, libglew-dev/glew provides OpenGL Extension Wrangler Library for managing OpenGL extensions, libosmesa6-dev provides off-screen rendering capabilities (useful for headless servers), libglfw3 and libglfw3-dev/glfw/glfw3 provide windowing and input handling. patchelf is required on Linux for post-installation binary patching. On macOS with Homebrew, OpenGL is provided by the system, so only GLEW and GLFW are needed. On NixOS, libGL, libGLU, and mesa provide OpenGL support along with glew and glfw3. MuJoCo 3.x ships with pre-compiled binaries for most platforms, but these system libraries are required for the OpenGL rendering backend. For headless rendering (e.g., in Docker or CI environments), OSMesa (off-screen Mesa) is particularly important. The package includes native binaries for Linux (x86_64, aarch64) and macOS (universal2), with pre-built wheels available on PyPI.",
+    "package": "mujoco>=3.3.4"
   },
   "mypy": {
     "apt_dependencies": [
@@ -2013,6 +2149,30 @@ RAW_DATA = r"""{
     ],
     "notes": "Pygame 2.6.1+ is built on SDL2 (Simple DirectMedia Layer 2). The -dev packages (libsdl2-dev, libsdl2-image-dev, libsdl2-mixer-dev, libsdl2-ttf-dev) provide headers and development files needed for building pygame from source via pip. The runtime libraries (libsdl2-2.0-0, etc.) are required for pygame to function. libfreetype6-dev provides font rendering support, libportmidi-dev enables MIDI support, libjpeg-dev adds JPEG image format support, and python3-dev provides Python development headers. While pygame provides pre-built wheels for many platforms, these dependencies ensure full feature support and are required when building from source. On macOS via Homebrew, the packages use underscores (sdl2_image) instead of hyphens. On NixOS, SDL packages use uppercase naming (SDL2, SDL2_image, etc.).",
     "package": "pygame>=2.6.1"
+  },
+  "pymavlink": {
+    "apt_dependencies": [
+      "python3-dev",
+      "build-essential",
+      "libxml2-dev",
+      "libxslt-dev",
+      "pkg-config"
+    ],
+    "brew_dependencies": [
+      "python3",
+      "libxml2",
+      "libxslt",
+      "pkg-config"
+    ],
+    "description": "System dependencies required for pymavlink pip package",
+    "nix_dependencies": [
+      "python3",
+      "libxml2",
+      "libxslt",
+      "pkg-config"
+    ],
+    "notes": "PyMAVLink is a Python implementation of the MAVLink protocol used for communication with drones and autopilot systems. The package requires lxml (>=3.6.0) and fastcrc as Python dependencies. Building pymavlink from source requires: Python development headers (python3-dev), C compiler and build tools (build-essential), XML processing libraries (libxml2-dev, libxslt-dev) for lxml dependency, and pkg-config for locating library dependencies. PyMAVLink uses Cython to build an optional fast indexer module for improved performance (disabled by default on macOS and Windows, can be enabled with PYMAVLINK_FAST_INDEX=1). The package includes a code generator (mavgen.py) that processes MAVLink XML message definitions to generate protocol implementations. Pre-built wheels are typically available on PyPI for common platforms, reducing the need for compilation. On Debian/Ubuntu systems, libxml2-dev and libxslt-dev are essential for building the lxml dependency. On macOS with Homebrew, libxml2 and libxslt provide the necessary XML libraries. On NixOS, these libraries are available as libxml2 and libxslt packages. For developers, the MDEF environment variable can specify custom message definition paths during installation.",
+    "package": "pymavlink"
   },
   "pyquaternion": {
     "apt_dependencies": [],
@@ -2969,6 +3129,7 @@ RAW_DATA = r"""{
     "apt_dependencies": [
       "python3",
       "python3-pip",
+      "python3-dev",
       "build-essential",
       "gcc",
       "g++",
@@ -2980,9 +3141,25 @@ RAW_DATA = r"""{
       "libcudnn8-dev",
       "git"
     ],
-    "description": "System dependencies required for xformers>=0.0.20 pip package on Ubuntu/Debian systems",
-    "notes": "xformers is a PyTorch extension library for memory-efficient attention mechanisms. It requires CUDA toolkit (nvidia-cuda-toolkit) for GPU support and cuDNN (libcudnn8) for optimized deep learning operations. Build tools (gcc, g++, make, cmake, ninja-build) are essential for compiling the C++/CUDA extensions that xformers provides. The package requires PyTorch to be installed first with matching CUDA version. For CUDA 11.x systems, use nvidia-cuda-toolkit; for CUDA 12.x, package names may vary (e.g., nvidia-cuda-toolkit-12-x). git is required for potential source builds. Note: Pre-built wheels are available for common platforms (Linux x86_64 with CUDA 11.8/12.1), but compilation dependencies are needed for other configurations or building from source.",
-    "package": "xformers"
+    "brew_dependencies": [
+      "python3",
+      "cmake",
+      "ninja",
+      "gcc",
+      "git"
+    ],
+    "description": "System dependencies required for xformers>=0.0.20 pip package",
+    "nix_dependencies": [
+      "python3",
+      "cmake",
+      "ninja",
+      "gcc",
+      "git",
+      "cudaPackages.cudatoolkit",
+      "cudaPackages.cudnn"
+    ],
+    "notes": "xformers is a PyTorch extension library for memory-efficient attention mechanisms. It requires CUDA toolkit (nvidia-cuda-toolkit) for GPU support and cuDNN (libcudnn8) for optimized deep learning operations on Linux. Build tools (gcc, g++, make, cmake, ninja-build) are essential for compiling the C++/CUDA extensions that xformers provides. The package requires PyTorch to be installed first with matching CUDA version. For CUDA 11.x systems, use nvidia-cuda-toolkit; for CUDA 12.x, package names may vary (e.g., nvidia-cuda-toolkit-12-x). git is required for potential source builds. Note: Pre-built wheels are available for common platforms (Linux x86_64 with CUDA 11.8/12.1), but compilation dependencies are needed for other configurations or building from source. On macOS (Homebrew), CUDA is not typically available, so xformers may have limited functionality or require CPU-only builds. On NixOS, CUDA support is available through cudaPackages. The brew dependencies focus on build tools since CUDA support on macOS is limited.",
+    "package": "xformers>=0.0.20"
   },
   "yapf": {
     "apt_dependencies": [
@@ -3381,4 +3558,20 @@ detectron2 = { git = "https://github.com/facebookresearch/detectron2.git", tag =
 DATA = json.loads(RAW_DATA)
 PROJECT_TOML = RAW_PROJECT_TOML
 
-__all__ = ["DATA", "PROJECT_TOML"]
+APT_DEPENDENCIES = sorted(
+    {dep for entry in DATA.values() for dep in entry.get("apt_dependencies", [])}
+)
+BREW_DEPENDENCIES = sorted(
+    {dep for entry in DATA.values() for dep in entry.get("brew_dependencies", [])}
+)
+NIX_DEPENDENCIES = sorted(
+    {dep for entry in DATA.values() for dep in entry.get("nix_dependencies", [])}
+)
+
+__all__ = [
+    "DATA",
+    "PROJECT_TOML",
+    "APT_DEPENDENCIES",
+    "BREW_DEPENDENCIES",
+    "NIX_DEPENDENCIES",
+]
