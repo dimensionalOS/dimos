@@ -13,9 +13,9 @@
 # limitations under the License.
 
 from threading import Thread
+from typing import TYPE_CHECKING
 
 import reactivex as rx
-from reactivex.disposable import Disposable
 import reactivex.operators as ops
 
 from dimos.core import Module, rpc
@@ -25,13 +25,16 @@ from dimos.stream.audio.stt.node_whisper import WhisperNode
 from dimos.utils.logging_config import setup_logger
 from dimos.web.robot_web_interface import RobotWebInterface
 
+if TYPE_CHECKING:
+    from dimos.stream.audio.base import AudioEvent
+
 logger = setup_logger(__name__)
 
 
 class WebInput(Module):
-    _web_interface: RobotWebInterface = None
-    _thread: Thread = None
-    _human_transport: pLCMTransport | None = None
+    _web_interface: RobotWebInterface | None = None
+    _thread: Thread | None = None
+    _human_transport: pLCMTransport[str] | None = None
 
     @rpc
     def start(self) -> None:
@@ -39,7 +42,7 @@ class WebInput(Module):
 
         self._human_transport = pLCMTransport("/human_input")
 
-        audio_subject = rx.subject.Subject()
+        audio_subject: rx.subject.Subject[AudioEvent] = rx.subject.Subject()
 
         self._web_interface = RobotWebInterface(
             port=5555,
@@ -57,11 +60,11 @@ class WebInput(Module):
         # Subscribe to both text input sources
         # 1. Direct text from web interface
         unsub = self._web_interface.query_stream.subscribe(self._human_transport.publish)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(unsub)
 
         # 2. Transcribed text from STT
         unsub = stt_node.emit_text().subscribe(self._human_transport.publish)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(unsub)
 
         self._thread = Thread(target=self._web_interface.run, daemon=True)
         self._thread.start()
@@ -70,12 +73,10 @@ class WebInput(Module):
 
     @rpc
     def stop(self) -> None:
-        if self._web_interface:
-            self._web_interface.stop()
         if self._thread:
             self._thread.join(timeout=1.0)
         if self._human_transport:
-            self._human_transport.close()
+            self._human_transport.lcm.stop()
         super().stop()
 
 

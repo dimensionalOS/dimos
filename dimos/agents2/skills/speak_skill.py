@@ -66,16 +66,19 @@ class SpeakSkill(SkillModule):
 
         # Use lock to prevent simultaneous speech
         with self._audio_lock:
-            text_subject = Subject()
+            text_subject: Subject[str] = Subject()
             audio_complete = threading.Event()
             self._tts_node.consume_text(text_subject)
 
-            def set_as_complete(t: str):
+            def set_as_complete(_t: str) -> None:
+                audio_complete.set()
+
+            def set_as_complete_e(_e: Exception) -> None:
                 audio_complete.set()
 
             subscription = self._tts_node.emit_text().subscribe(
                 on_next=set_as_complete,
-                on_error=set_as_complete,
+                on_error=set_as_complete_e,
             )
 
             text_subject.on_next(text)
