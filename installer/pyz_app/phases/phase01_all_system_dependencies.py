@@ -27,6 +27,7 @@ from ..support.misc import (
     ensure_xcode_cli_tools,
     get_system_deps,
 )
+from ..support.dependency_minimizer import minimize_deps_based_on_prerequisites
 
 
 def phase1(system_analysis, selected_features):
@@ -105,6 +106,7 @@ def phase1(system_analysis, selected_features):
 
 def mention_system_dependencies(human_names_deps):
     print("- Dimos will likely need the following system dependencies:")
-    missing_deps = [dep for dep in human_names_deps if not command_exists(dep)]
+    minimized_deps = minimize_deps_based_on_prerequisites(human_names_deps)
+    missing_deps = [dep for dep in minimized_deps if not command_exists(dep)]
     for dep in missing_deps:
         print(f"  • {p.highlight(dep)}")

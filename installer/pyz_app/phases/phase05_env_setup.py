@@ -22,4 +22,5 @@ def phase5():
     setup_direnv(envrc_path)
     print()
     print()
-    print("Setup complete!")
+    print("🎉 Setup complete! 🎉")
+    print("Now you can start following the dimos examples")

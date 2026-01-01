@@ -18,6 +18,7 @@ from __future__ import annotations
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
 from ..support.shell_tooling import run_command
+from ..support.misc import dev
 
 
 def phase3(_system_analysis, selected_features):
@@ -31,7 +32,11 @@ def phase3(_system_analysis, selected_features):
     package_name = (
         f"dimos{selected_features_string} @ git+https://github.com/dimensionalOS/dimos.git"
     )
-    res = run_command(["pip", "install", package_name], print_command=True)
+    extra_args = []
+    if dev:
+        extra_args.append("--no-cache-dir")
+    
+    res = run_command(["pip", "install", *extra_args, package_name], print_command=True)
     if res.code != 0:
         print("")
         p.error(
@@ -39,4 +44,5 @@ def phase3(_system_analysis, selected_features):
         )
         raise SystemExit(1)
     
-    p.confirm("Press enter to continue to next phase")
+    p.sub_header("🎉 Successfully installed dimos pip package!")
+    p.confirm("Press enter to do a quick sanity check that it actually works")

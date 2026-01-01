@@ -46,4 +46,6 @@ def phase4():
         p.boring_log(f"- {check['label']} succeeded")
 
     p.boring_log(f"- {passed} Dimos checks passed")
-    p.confirm("Press enter to continue to next phase")
+    print()
+    p.sub_header("🎉 passed all checks!")
+    p.confirm("Press enter to do one last peice of project setup")

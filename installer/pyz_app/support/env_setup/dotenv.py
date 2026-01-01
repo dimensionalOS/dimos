@@ -30,11 +30,11 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
     env_exists = env_path.is_file()
 
     if not env_exists:
-        print(
-            "Dimos involves setting several project specific environment variables.\n"
-            f"We highly recommend having these in a git-ignored {p.highlight('.env')} file.\n"
-        )
-        if not p.ask_yes_no(f"I don't see a {p.highlight('.env')} file, can I create one for you?"):
+        print("Dimos involves setting several project specific environment variables.")
+        print(f"We highly recommend having these in a git-ignored {p.highlight('.env')} file.")
+        print(f'''I don't see a {p.highlight('.env')} file''')
+        print()
+        if not p.ask_yes_no(f"Can I create one for you?"):
             print("- Okay, I'll assume you will manage env vars yourself:")
             for name, value in dimos_env_vars.items():
                 print(f"  {name}={value}")
@@ -64,7 +64,7 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
         p.boring_log(f"- appended {len(missing_env_vars)} env var(s) to .env")
     else:
         p.boring_log("- all required env vars already exist in .env")
-
+    
     return True
 
 
