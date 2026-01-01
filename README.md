@@ -67,7 +67,9 @@ FIXME: add a list of features based on what we've actually documented
 - **MacOS**: MacOS support is currently alpha. You can install the same as Linux, but know that you WILL get flakey behavior while running dimos.
 - **Linux**: 
   1. Get a quick start with the [dimos-template](https://github.com/dimensionalOS/dimos-template) and follow the instructions in the README.
-  2. If you have an existing python project, cd to it then run this to add dimos: `sh <(curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/bin/install")`
+  2. If you have an existing python project, cd to it then run this: `sh <(curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/bin/install")`
+
+DimOS supports Docker, Nix, and normal Python Venv installations.
 
 ### Usage
 
