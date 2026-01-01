@@ -15,6 +15,9 @@
 
 from __future__ import annotations
 
+import sys
+import os
+
 from ..support import prompt_tools as p
 from ..support.shell_tooling import command_exists
 from ..support.get_system_analysis import get_system_analysis
@@ -32,7 +35,16 @@ def phase1(system_analysis, selected_features):
         system_analysis = get_system_analysis()
 
     deps = get_system_deps(selected_features or None)
-    mention_system_dependencies(deps["human_names"])
+    
+    is_nixos = os.path.exists('/etc/NIXOS')
+    if sys.platform == "darwin":
+        mention_system_dependencies(deps["human_names_from_brew"])
+    else:
+        if is_nixos:
+            mention_system_dependencies(deps["human_names_from_nix"])
+        else:
+            mention_system_dependencies(deps["human_names_from_apt"])
+    
     print()
     print()
 

@@ -23,7 +23,7 @@ from typing import Any
 
 from . import pip_dependency_database as dep_db, prompt_tools as p
 from .shell_tooling import command_exists, run_command
-from .constants import dependency_list_human_names
+from .constants import dependency_human_names_set, dependency_apt_packages_set_minimal, dependency_nix_packages_set_minimal, dependency_brew_set_minimal
 
 try:
     import tomllib
@@ -76,13 +76,19 @@ def get_system_deps(feature: str | None):
                 nix_deps.update(value)
             elif key == "brew_dependencies":
                 brew_deps.update(value)
-
+    apt_deps = apt_deps | dependency_apt_packages_set_minimal
+    nix_deps = nix_deps | dependency_nix_packages_set_minimal
+    brew_deps = brew_deps | dependency_brew_set_minimal
+    combined_deps = set(apt_deps) | set(nix_deps) | set(brew_deps)
     return {
         "apt_deps": sorted(apt_deps),
         "nix_deps": sorted(nix_deps),
         "brew_deps": sorted(brew_deps),
         "pip_deps": sorted(pip_deps),
-        "human_names": sorted(dependency_list_human_names), # this one is not yet derived from pip modules
+        "human_names_all": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in combined_deps }),
+        "human_names_from_apt": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in apt_deps }),
+        "human_names_from_brew": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in brew_deps }),
+        "human_names_from_nix": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in nix_deps }),
         "missing": missing,
     }
 
