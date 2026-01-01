@@ -1,5 +1,27 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-docker build -t mystery .
-docker run -it --rm mystery
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+DOCKERFILE="$REPO_ROOT/installer/Dockerfile"
+HASH_FILE="$SCRIPT_DIR/.dockerfile.hash"
+IMAGE_NAME="mystery"
+
+current_hash="$(sha256sum "$DOCKERFILE" | awk '{print $1}')"
+needs_build="true"
+if [[ -f "$HASH_FILE" ]]; then
+    prev_hash="$(cat "$HASH_FILE")"
+    if [[ "$prev_hash" == "$current_hash" ]]; then
+        needs_build="false"
+    fi
+fi
+
+if [[ "$needs_build" == "true" ]]; then
+    echo "Building image $IMAGE_NAME..."
+    docker build -t "$IMAGE_NAME" -f "$DOCKERFILE" "$REPO_ROOT"
+    echo "$current_hash" > "$HASH_FILE"
+else
+    echo "Dockerfile unchanged; skipping build for $IMAGE_NAME."
+fi
+
+docker run -it --rm -v "$REPO_ROOT":/app -w /app "$IMAGE_NAME"
