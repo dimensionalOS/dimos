@@ -84,6 +84,7 @@ def phase0():
                 "system": "Typical system install",
                 "docker": "Docker container setup",
                 "nix": "Nix flake setup",
+                # "nix_venv": "Fast venv setup (nix shell)",
             },
         )
         if choice == "system":
@@ -120,6 +121,10 @@ def phase0():
             feat_str ="[" + (",".join(selected_features)) + "]" if selected_features else ""
             print(f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}`.")
             raise SystemExit(0)
+        # if choice == "nix_venv":
+        #     # this will create the venv and install dimos, but trying to use the venv outside of nix will probably cause lots of problems
+        #     run_command(["bash", "-c", "echo 'python -m venv venv;. ./venv/bin/activate;pip install numpy; pip install dimos;exit' | nix develop --no-write-lock-file 'github:jeff-hykin/mystery_test_1#isolated'"])
+        #     raise SystemExit(0)
 
     return system_analysis, selected_features
 
