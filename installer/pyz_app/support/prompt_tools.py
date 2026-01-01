@@ -48,11 +48,16 @@ def clear_screen() -> None:
 
 
 def header(text: str) -> None:
-    print("\n" * 3)
-    # clear_screen()
-    print(f"{BOLD}{FG_GREEN}#{RESET}")
-    print(f"{BOLD}{FG_GREEN}# {_color_help(text,BOLD+FG_GREEN)}{RESET}")
-    print(f"{BOLD}{FG_GREEN}#{RESET}")
+    padding = 2
+    content = f"{text}"
+    width = len(content) + padding * 2
+    top = f"{BOLD}{FG_GREEN}┌{'─' * width}┐{RESET}"
+    mid = f"{BOLD}{FG_GREEN}│{RESET}{' ' * padding}{_color_help(content,BOLD+FG_GREEN)}{' ' * padding}{BOLD}{FG_GREEN}│{RESET}"
+    bottom = f"{BOLD}{FG_GREEN}└{'─' * width}┘{RESET}"
+    print("\n" * 2)
+    print(top)
+    print(mid)
+    print(bottom)
     print()
 
 
