@@ -1,8 +1,8 @@
 # Modules
 
-## What is a Module?
+## What is a `Module`?
 
-A Module is a **distributed, communicating unit of functionality** - the fundamental building block for robot applications in DimOS. Modules are self-contained actors that encapsulate specific behaviors (camera processing, navigation, AI reasoning) and communicate through well-defined interfaces.
+A `Module` is a *distributed, communicating unit of functionality* -- the fundamental building block for robot applications in DimOS. Modules are self-contained actors that encapsulate specific behaviors (camera processing, navigation, AI reasoning) and communicate through well-defined interfaces.
 
 <!-- Citation: module.py:77-352 - ModuleBase and DaskModule implementation -->
 
@@ -22,39 +22,26 @@ class SpatialMemory(Module):
 
 <!-- Citation: perception/spatial_perception.py:53-64 - Real SpatialMemory module with color_image: In[Image] declaration -->
 
-Every major component is a Module: hardware drivers, perception algorithms, navigation planners, AI agents. This unified abstraction enables composing complex systems from independent pieces that communicate through typed streams and RPC calls.
+Every major component is a Module: hardware drivers, perception algorithms, navigation planners, AI agents. This unified abstraction solves three critical challenges:
 
-## Purpose
-
-The Module abstraction solves three critical challenges:
-
-**Composability** - Modules connect in flexible topologies without enforced hierarchies. A camera module can feed multiple perception modules; an agent can coordinate several navigation modules. The peer-to-peer architecture provides complete flexibility.
+**Composability** - Modules connect in flexible topologies without enforced hierarchies. A camera module can feed multiple perception modules; an agent can coordinate several navigation modules.
 
 <!-- Citation: blueprints.py:41-45 - ModuleBlueprint has no hierarchical constraints, just module class + connections -->
 
-**Safety through independence and isolation** - Because modules are mapped onto separate processes, every module has its own address space. And so, even if one module fails catastrophically (e.g. a segfault), that won't necessarily bring down the other modules.
+**Safety through isolation** - Because modules are mapped onto separate processes, every module has its own address space. Even if one module fails catastrophically (e.g. a segfault), it won't bring down the others.
 
 <!-- Citation: module.py:113-126 - _close_module() shows independent resource management (loop, rpc, tf, disposables) -->
-<!-- Citation: stream.py:87-99 - Stream class validates type parameter at initialization -->
 
 **Distributed execution** - Modules run as Dask actors across a cluster. Deploy computationally intensive perception on GPU workers while running navigation on CPU workers. The system handles network communication, serialization, and RPC automatically.
 
 <!-- Citation: module.py:313-317 - set_ref() stores Dask actor reference and worker name -->
 <!-- Citation: module.py:133-153 - __getstate__/__setstate__ enable serialization for Dask distribution -->
 
-## Core Concepts
+## Modules and other DimOS concepts
 
-### Distributed Actors
+### Streams
 
-Modules deploy as Dask actors, each with its own event loop for async operations, automatic serialization for cross-worker communication, and transparent RPC handling. You work with module references as local objects while Dask routes calls to appropriate workers.
-
-<!-- Citation: module.py:91 - get_loop() creates dedicated event loop for each module -->
-<!-- Citation: module.py:133-153 - Serialization implementation excludes unpicklable runtime attributes -->
-<!-- Citation: module.py:283 - DaskModule stores self.ref = None (Actor reference) -->
-
-### Declare what sorts of data a module consumes and produces with *streams*
-
-When you define a Module, you can declare what sorts of data it consumes and what sorts of data it produces:
+When you define a Module, you can declare what sorts of data it consumes and produces:
 
 ```python
 class ModuleA(Module):
@@ -64,7 +51,7 @@ class ModuleA(Module):
 
 In particular, these declarations are done with *streams*: `In[T]` for input and `Out[T]` for output, where `T` is the type variable for the type of data the stream carries.
 
-Streams provide reactive, push-based data flow between modules, built on ReactiveX. Type validation ensures connected streams have compatible types.
+Streams provide reactive, push-based data flow between modules, built on ReactiveX. The [blueprint system](./blueprints.md) validates that connected streams have compatible types at build time.
 
 <!-- Citation: module.py:295-310 - DaskModule.__init__ uses get_type_hints() to introspect In/Out type annotations and create stream instances -->
 <!-- Citation: stream.py:26 - import reactivex as rx -->
@@ -108,13 +95,26 @@ class RobotCapabilities(Module):
 <!-- Citation: module.py:268-275 - get_rpc_calls() retrieves from _bound_rpc_calls dictionary -->
 <!-- Citation: module.py:104-105 - @rpc decorator on start() method shows usage pattern -->
 
-### Skills for LLM Interaction
+### Modules are containers for skills
 
-Any module can expose skills that AI agents discover and invoke, in virtue of inheriting from `SkillContainer`. Skills bridge natural language commands and robot actions, maintaining clear boundaries between AI reasoning and robot control.
+Suppose your robot has certain capabilities; e.g. it can move in certain ways. *Skills* are how you'd let AI agents control and monitor such capabilities. As is explained in more detail [in the concept guide](./skills.md), skills are methods on a `Module` that are decorated with `@skill` that get turned into *tools* that AI agents can call. (See also the [Skill tutorials](../tutorials/index.md) for end-to-end examples.)
 
-(See [the Skills concept](./skills.md) for more discussion and the [Skill tutorials](../tutorials/index.md) for end-to-end examples.)
+And crucially, any `Module` can expose skills that AI agents discover and invoke, in virtue of inheriting from `SkillContainer`.
 
 <!-- Citation: module.py:77 - class ModuleBase(Configurable[ModuleConfig], SkillContainer, Resource) -->
+
+## How Modules run (Advanced)
+
+> [!TIP]
+> Feel free to skip this section on first read.
+
+### Distributed actors
+
+Modules deploy as Dask actors, each with its own event loop for async operations, automatic serialization for cross-worker communication, and transparent RPC handling. Modules communicate exclusively through Dask Actor references rather than direct Python object references, which enables transparent distributed deployment—you work with module references as local objects while Dask routes calls to appropriate workers.
+
+<!-- Citation: module.py:91 - get_loop() creates dedicated event loop for each module -->
+<!-- Citation: module.py:133-153 - Serialization implementation excludes unpicklable runtime attributes -->
+<!-- Citation: module.py:283 - DaskModule stores self.ref = None (Actor reference) -->
 
 ### Lifecycle
 
@@ -125,61 +125,17 @@ Modules follow a defined lifecycle: initialize with configuration, deploy to Das
 <!-- Citation: module.py:108-111 - stop() calls _close_module() then super().stop() -->
 <!-- Citation: module.py:113-126 - _close_module() handles cleanup of all resources -->
 
-## Design Principles
+## Common module types
 
-**Peer-to-Peer Architecture** - Modules are peers that connect in any topology, not layers or hierarchies. The architecture imposes no structural constraints.
+**Hardware modules** - Interface with sensors and actuators (`ConnectionModule`, `CameraModule`)
 
-<!-- Citation: blueprints.py:41-45 - ModuleBlueprint has no hierarchical structure, only connections -->
-
-**Communication Boundaries** - Modules communicate only through defined interfaces: streams for reactive data flow, RPC for request-response, skills for agent-invocable actions. Modules never hold direct references to other instances, enforcing loose coupling and enabling distributed deployment.
-
-<!-- Citation: module.py:283 - DaskModule only stores Actor reference (self.ref), not module instances -->
-
-**Independence** - Each module is self-contained (own event loop, state, lifecycle), independently testable (runs in isolation with mock streams), and reusable (same module class works across robot platforms).
-
-<!-- Citation: module.py:91 - Each module gets own event loop via get_loop() -->
-<!-- Citation: module.py:89-102 - Isolated initialization with independent resources -->
-
-**Validation** - Stream connections validate at runtime. Connecting mismatched types fails with clear errors, catching integration issues early.
-
-<!-- Citation: stream.py:87-99 - Stream class stores and validates type parameter -->
-
-## Relationship to Other Concepts
-
-**Module + Stream** - Modules declare `In[T]` and `Out[T]` as class attributes. Type hints are introspected during initialization to create stream instances for reactive data flow.
-
-<!-- Citation: module.py:295-310 - Type hint introspection creates In/Out stream instances -->
-<!-- Citation: module.py:172-185 - inputs/outputs properties filter __dict__ for In/Out instances -->
-
-**Module + Blueprint** - Blueprints provide declarative composition. `ModuleBlueprint` specifies module class, initialization args, and connections. `autoconnect()` matches streams by (name, type) to wire up graphs automatically.
-
-<!-- Citation: blueprints.py:41-45 - ModuleBlueprint dataclass with module, connections, args, kwargs -->
-
-**Module + Dask** - `DaskModule` manages actor references and worker assignments. Serialization enables sending instances across the network.
-
-<!-- Citation: module.py:278-352 - DaskModule class implementation -->
-<!-- Citation: module.py:313-317 - set_ref() stores actor reference and worker name -->
-
-**Module + RPC** - The `rpc_calls` list declares dependencies, bound to callable RPC clients during initialization. RPC builds on Dask's actor communication.
-
-<!-- Citation: module.py:85 - rpc_calls list declaration -->
-<!-- Citation: module.py:268-275 - get_rpc_calls() binds to RPC clients -->
-
-## Common Module Types
-
-**Hardware Modules** - Interface with sensors and actuators (`ConnectionModule`, `CameraModule`)
-
-**Perception Modules** - Process sensor data (`SpatialMemory`, `ObjectDetector`, `ObjectTracker`)
+**Perception modules** - Process sensor data (`SpatialMemory`, `ObjectDetector`, `ObjectTracker`)
 
 <!-- Citation: perception/spatial_perception.py:53-64 - SpatialMemory module implementation -->
 
-**Navigation Modules** - Path planning and control (`NavigationInterface`, `BehaviorTreeNavigator`, `AstarPlanner`)
+**Navigation modules** - Path planning and control (`NavigationInterface`, `BehaviorTreeNavigator`, `AstarPlanner`)
 
-**Agent Modules** - AI reasoning and coordination (`BaseAgentModule`, `SkillCoordinator`)
-
----
-
-Understanding how modules communicate through streams and RPC, deploy with Dask, and expose skills enables building sophisticated robot applications from composable pieces.
+**Agent modules** - AI reasoning and coordination (`BaseAgentModule`, `SkillCoordinator`)
 
 ## See also
 
