@@ -325,33 +325,6 @@ ignore_missing_imports = true
 module = ["dimos.rxpy_backpressure", "dimos.rxpy_backpressure.*"]
 follow_imports = "skip"
 
-[[tool.mypy.overrides]]
-module = [
-    "dimos.msgs",
-    "dimos.msgs.*",
-    "dimos.msgs.geometry_msgs.*",
-    "dimos.msgs.sensor_msgs.*",
-    "dimos.msgs.trajectory_msgs.*",
-    "dimos.utils.cli.human.*",
-    "dimos.utils.cli.plot",
-    "dimos.utils.gpu_utils",
-    "dimos.hardware.sensors.camera.module",
-    "dimos.hardware.sensors.camera.zed.*",
-    "dimos.hardware.manipulators",
-    "dimos.hardware.manipulators.*",
-    "dimos.manipulation",
-    "dimos.manipulation.*",
-    "dimos.manipulation.control.*",
-    "dimos.manipulation.control.servo_control.*",
-    "dimos.manipulation.control.trajectory_controller.*",
-    "dimos.robot.unitree_webrtc.unitree_g1_blueprints",
-    "dimos.perception.segmentation.sam_2d_seg",
-    "dimos.models.embedding.treid",
-    "dimos.models.embedding.mobileclip",
-    "dimos.mapping.pointclouds.occupancy",
-]
-ignore_errors = true
-
 [tool.pytest.ini_options]
 testpaths = ["dimos"]
 markers = [
