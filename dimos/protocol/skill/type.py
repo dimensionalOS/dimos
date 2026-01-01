@@ -360,9 +360,21 @@ def accumulate_string(
     accumulator: SkillMsg[Literal[MsgType.reduced_stream]] | None,
     msg: SkillMsg[Literal[MsgType.stream]],
 ) -> SkillMsg[Literal[MsgType.reduced_stream]]:
-    """String concatenation reducer: joins values with newlines."""
-    acc_value = accumulator.content if accumulator else ""
-    return _make_skill_msg(msg, acc_value + "\n" + msg.content)  # type: ignore[operator]
+    """String concatenation reducer: joins values with newlines.
+
+    Examples:
+        >>> m = lambda s: SkillMsg('id', 'x', s, MsgType.stream)
+        >>> accumulate_string(None, m('A')).content  # no leading newline
+        'A'
+        >>> accumulate_string(accumulate_string(None, m('A')), m('B')).content
+        'A\\nB'
+        >>> # Edge case: empty string as first yield doesn't cause leading newline
+        >>> accumulate_string(accumulate_string(None, m('')), m('X')).content
+        'X'
+    """
+    prefix = f"{accumulator.content}\n" if accumulator and accumulator.content else ""
+    new_value = prefix + msg.content
+    return _make_skill_msg(msg, new_value)
 
 
 class Reducer:
