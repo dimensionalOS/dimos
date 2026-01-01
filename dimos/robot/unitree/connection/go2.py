@@ -220,7 +220,7 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
 
     def _init_rerun_world(self) -> None:
         """Set up Rerun world frame, load URDF, and static assets.
-        
+
         Does NOT compose blueprint - that's handled by ModuleBlueprintSet.build().
         """
         connect_rerun(global_config=self._global_config)

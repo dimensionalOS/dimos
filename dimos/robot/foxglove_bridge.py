@@ -39,7 +39,9 @@ class FoxgloveBridge(Module):
     _loop: asyncio.AbstractEventLoop
     _global_config: "GlobalConfig | None" = None
 
-    def __init__(self, *args, shm_channels=None, jpeg_shm_channels=None, global_config=None, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self, *args, shm_channels=None, jpeg_shm_channels=None, global_config=None, **kwargs
+    ) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
         self.jpeg_shm_channels = jpeg_shm_channels or []
@@ -48,10 +50,12 @@ class FoxgloveBridge(Module):
     @rpc
     def start(self) -> None:
         super().start()
-        
+
         # Skip if Rerun is the selected viewer backend
         if self._global_config and self._global_config.viewer_backend.startswith("rerun"):
-            logger.info("Foxglove bridge skipped", viewer_backend=self._global_config.viewer_backend)
+            logger.info(
+                "Foxglove bridge skipped", viewer_backend=self._global_config.viewer_backend
+            )
             return
 
         def run_bridge() -> None:
