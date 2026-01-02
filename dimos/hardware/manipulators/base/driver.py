@@ -1,0 +1,564 @@
+# Copyright 2025 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Base manipulator driver with threading and component management."""
+
+from abc import ABC
+from dataclasses import dataclass
+import logging
+from queue import Empty, Queue
+from threading import Event, Thread
+import time
+from typing import Any, Optional
+
+from dimos.core import In, Module, Out, rpc
+from dimos.msgs.geometry_msgs import WrenchStamped
+from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
+
+from .sdk_interface import BaseManipulatorSDK, ManipulatorInfo
+from .spec import ManipulatorCapabilities
+from .utils import SharedState
+
+
+@dataclass
+class Command:
+    """Command to be sent to the manipulator."""
+
+    type: str  # 'position', 'velocity', 'effort', 'cartesian', etc.
+    data: Any
+    timestamp: float = 0.0
+
+
+class BaseManipulatorDriver(Module):
+    """Base driver providing threading and component management.
+
+    This class handles:
+    - Thread management (state reader, command sender, state publisher)
+    - Component registration and lifecycle
+    - RPC method registration
+    - Shared state management
+    - Error handling and recovery
+    - Pub/Sub with LCM transport for real-time control
+    """
+
+    # Input topics (commands from controllers)
+    joint_position_command: In[JointCommand] = None  # Target joint positions (radians)
+    joint_velocity_command: In[JointCommand] = None  # Target joint velocities (rad/s)
+
+    # Output topics (state publishing)
+    joint_state: Out[JointState] = None  # Joint state (position, velocity, effort)
+    robot_state: Out[RobotState] = None  # Robot state (mode, errors, etc.)
+    ft_sensor: Out[WrenchStamped] = None  # Force/torque sensor data (optional)
+
+    def __init__(
+        self,
+        sdk: BaseManipulatorSDK,
+        components: list,
+        config: dict,
+        name: str | None = None,
+        *args,
+        **kwargs,
+    ):
+        """Initialize the base manipulator driver.
+
+        Args:
+            sdk: SDK wrapper instance
+            components: List of component instances
+            config: Configuration dictionary
+            name: Optional driver name for logging
+            *args, **kwargs: Additional arguments for Module
+        """
+        # Initialize Module parent class
+        super().__init__(*args, **kwargs)
+
+        self.sdk = sdk
+        self.components = components
+        self.config = config
+        self.name = name or self.__class__.__name__
+
+        # Logging
+        self.logger = logging.getLogger(self.name)
+
+        # Shared state
+        self.shared_state = SharedState()
+
+        # Threading
+        self.stop_event = Event()
+        self.threads = []
+        self.command_queue = Queue(maxsize=100)
+
+        # RPC registry
+        self.rpc_methods = {}
+
+        # Capabilities
+        self.capabilities = self._get_capabilities()
+
+        # Rate control
+        self.state_reader_rate = config.get("state_reader_rate", 100)  # Hz
+        self.command_sender_rate = config.get("command_sender_rate", 100)  # Hz
+        self.state_publisher_rate = config.get("state_publisher_rate", 50)  # Hz
+
+        # Initialize components with shared resources
+        self._initialize_components()
+
+        # Register RPC methods from components
+        self._register_component_rpc_methods()
+
+        # Connect to hardware
+        self._connect()
+
+    def _get_capabilities(self) -> ManipulatorCapabilities:
+        """Get manipulator capabilities from config or SDK.
+
+        Returns:
+            ManipulatorCapabilities instance
+        """
+        # Try to get from SDK info
+        info = self.sdk.get_info()
+
+        # Get joint limits
+        lower_limits, upper_limits = self.sdk.get_joint_limits()
+        velocity_limits = self.sdk.get_velocity_limits()
+        acceleration_limits = self.sdk.get_acceleration_limits()
+
+        return ManipulatorCapabilities(
+            dof=info.dof,
+            has_gripper=self.config.get("has_gripper", False),
+            has_force_torque=self.config.get("has_force_torque", False),
+            has_impedance_control=self.config.get("has_impedance_control", False),
+            has_cartesian_control=self.config.get("has_cartesian_control", False),
+            max_joint_velocity=velocity_limits,
+            max_joint_acceleration=acceleration_limits,
+            joint_limits_lower=lower_limits,
+            joint_limits_upper=upper_limits,
+            payload_mass=self.config.get("payload_mass", 0.0),
+            reach=self.config.get("reach", 0.0),
+        )
+
+    def _initialize_components(self):
+        """Initialize components with shared resources."""
+        for component in self.components:
+            # Provide access to shared state
+            if hasattr(component, "set_shared_state"):
+                component.set_shared_state(self.shared_state)
+
+            # Provide access to SDK
+            if hasattr(component, "set_sdk"):
+                component.set_sdk(self.sdk)
+
+            # Provide access to command queue
+            if hasattr(component, "set_command_queue"):
+                component.set_command_queue(self.command_queue)
+
+            # Provide access to capabilities
+            if hasattr(component, "set_capabilities"):
+                component.set_capabilities(self.capabilities)
+
+            # Initialize component
+            if hasattr(component, "initialize"):
+                component.initialize()
+
+    def _register_component_rpc_methods(self):
+        """Register RPC methods from all components."""
+        for component in self.components:
+            # Find all methods starting with 'rpc_'
+            for method_name in dir(component):
+                if method_name.startswith("rpc_"):
+                    method = getattr(component, method_name)
+                    if callable(method):
+                        self.rpc_methods[method_name] = method
+                        self.logger.debug(f"Registered RPC method: {method_name}")
+
+    def _connect(self):
+        """Connect to the manipulator hardware."""
+        self.logger.info(f"Connecting to {self.name}...")
+
+        # Connect via SDK
+        if not self.sdk.connect(self.config):
+            raise RuntimeError(f"Failed to connect to {self.name}")
+
+        self.shared_state.is_connected = True
+        self.logger.info(f"Successfully connected to {self.name}")
+
+        # Get initial state
+        self._update_state()
+
+    def _update_state(self):
+        """Update shared state from hardware."""
+        try:
+            # Get joint state
+            positions = self.sdk.get_joint_positions()
+            velocities = self.sdk.get_joint_velocities()
+            efforts = self.sdk.get_joint_efforts()
+
+            self.shared_state.update_joint_state(
+                positions=positions, velocities=velocities, efforts=efforts
+            )
+
+            # Get robot state
+            robot_state = self.sdk.get_robot_state()
+            self.shared_state.update_robot_state(
+                state=robot_state.get("state", 0),
+                mode=robot_state.get("mode", 0),
+                error_code=robot_state.get("error_code", 0),
+                error_message=self.sdk.get_error_message(),
+            )
+
+            # Update status flags
+            self.shared_state.is_moving = robot_state.get("is_moving", False)
+            self.shared_state.is_enabled = self.sdk.are_servos_enabled()
+
+            # Get optional states
+            if self.capabilities.has_cartesian_control:
+                cart_pos = self.sdk.get_cartesian_position()
+                if cart_pos:
+                    self.shared_state.cartesian_position = cart_pos
+
+            if self.capabilities.has_force_torque:
+                ft = self.sdk.get_force_torque()
+                if ft:
+                    self.shared_state.force_torque = ft
+
+            if self.capabilities.has_gripper:
+                gripper_pos = self.sdk.get_gripper_position()
+                if gripper_pos is not None:
+                    self.shared_state.gripper_position = gripper_pos
+
+        except Exception as e:
+            self.logger.error(f"Error updating state: {e}")
+            self.shared_state.update_robot_state(error_code=999, error_message=str(e))
+
+    # ============= Threading =============
+
+    @rpc
+    def start(self):
+        """Start all driver threads and subscribe to input topics."""
+        super().start()
+        self.logger.info(f"Starting {self.name} driver threads...")
+
+        # Subscribe to input topics if they have transports
+        try:
+            if self.joint_position_command and hasattr(self.joint_position_command, "subscribe"):
+                self.joint_position_command.subscribe(self._on_joint_position_command)
+                self.logger.debug("Subscribed to joint_position_command")
+        except (AttributeError, ValueError) as e:
+            self.logger.debug(f"joint_position_command transport not configured: {e}")
+
+        try:
+            if self.joint_velocity_command and hasattr(self.joint_velocity_command, "subscribe"):
+                self.joint_velocity_command.subscribe(self._on_joint_velocity_command)
+                self.logger.debug("Subscribed to joint_velocity_command")
+        except (AttributeError, ValueError) as e:
+            self.logger.debug(f"joint_velocity_command transport not configured: {e}")
+
+        self.threads = [
+            Thread(target=self._state_reader_thread, name=f"{self.name}-StateReader", daemon=True),
+            Thread(
+                target=self._command_sender_thread, name=f"{self.name}-CommandSender", daemon=True
+            ),
+            Thread(
+                target=self._state_publisher_thread, name=f"{self.name}-StatePublisher", daemon=True
+            ),
+        ]
+
+        for thread in self.threads:
+            thread.start()
+            self.logger.debug(f"Started thread: {thread.name}")
+
+        self.logger.info(f"{self.name} driver started successfully")
+
+    def _state_reader_thread(self):
+        """Continuously read state from hardware."""
+        self.logger.debug("State reader thread started")
+        period = 1.0 / self.state_reader_rate
+
+        while not self.stop_event.is_set():
+            start_time = time.time()
+
+            try:
+                self._update_state()
+            except Exception as e:
+                self.logger.error(f"State reader error: {e}")
+
+            # Rate control
+            elapsed = time.time() - start_time
+            if elapsed < period:
+                time.sleep(period - elapsed)
+
+        self.logger.debug("State reader thread stopped")
+
+    def _command_sender_thread(self):
+        """Send commands from queue to hardware."""
+        self.logger.debug("Command sender thread started")
+        period = 1.0 / self.command_sender_rate
+
+        while not self.stop_event.is_set():
+            start_time = time.time()
+
+            try:
+                # Get command from queue (non-blocking)
+                command = self.command_queue.get(timeout=0.001)
+
+                # Process command based on type
+                self._process_command(command)
+
+            except Empty:
+                # No commands to process
+                pass
+            except Exception as e:
+                self.logger.error(f"Command sender error: {e}")
+
+            # Rate control
+            elapsed = time.time() - start_time
+            if elapsed < period:
+                time.sleep(period - elapsed)
+
+        self.logger.debug("Command sender thread stopped")
+
+    def _process_command(self, command: Command):
+        """Process a command from the queue.
+
+        Args:
+            command: Command to process
+        """
+        try:
+            if command.type == "position":
+                success = self.sdk.set_joint_positions(
+                    command.data["positions"],
+                    command.data.get("velocity", 1.0),
+                    command.data.get("acceleration", 1.0),
+                    command.data.get("wait", False),
+                )
+                if success:
+                    self.shared_state.target_positions = command.data["positions"]
+
+            elif command.type == "velocity":
+                success = self.sdk.set_joint_velocities(command.data["velocities"])
+                if success:
+                    self.shared_state.target_velocities = command.data["velocities"]
+
+            elif command.type == "effort":
+                success = self.sdk.set_joint_efforts(command.data["efforts"])
+                if success:
+                    self.shared_state.target_efforts = command.data["efforts"]
+
+            elif command.type == "cartesian":
+                success = self.sdk.set_cartesian_position(
+                    command.data["pose"],
+                    command.data.get("velocity", 1.0),
+                    command.data.get("acceleration", 1.0),
+                    command.data.get("wait", False),
+                )
+                if success:
+                    self.shared_state.target_cartesian_position = command.data["pose"]
+
+            elif command.type == "stop":
+                self.sdk.stop_motion()
+
+            else:
+                self.logger.warning(f"Unknown command type: {command.type}")
+
+        except Exception as e:
+            self.logger.error(f"Error processing command {command.type}: {e}")
+
+    def _state_publisher_thread(self):
+        """Publish state to output topics."""
+        self.logger.debug("State publisher thread started")
+        period = 1.0 / self.state_publisher_rate
+
+        while not self.stop_event.is_set():
+            start_time = time.time()
+
+            try:
+                # Publish joint state
+                if self.joint_state and hasattr(self.joint_state, "publish"):
+                    joint_state_msg = JointState(
+                        ts=time.time(),
+                        frame_id="joint-state",
+                        name=[f"joint{i + 1}" for i in range(self.capabilities.dof)],
+                        position=self.shared_state.joint_positions or [0.0] * self.capabilities.dof,
+                        velocity=self.shared_state.joint_velocities
+                        or [0.0] * self.capabilities.dof,
+                        effort=self.shared_state.joint_efforts or [0.0] * self.capabilities.dof,
+                    )
+                    self.joint_state.publish(joint_state_msg)
+
+                # Publish robot state
+                if self.robot_state and hasattr(self.robot_state, "publish"):
+                    robot_state_msg = RobotState(
+                        state=self.shared_state.robot_state,
+                        mode=self.shared_state.control_mode,  # Fixed: was robot_mode
+                        error_code=self.shared_state.error_code,
+                        warn_code=0,
+                    )
+                    self.robot_state.publish(robot_state_msg)
+
+                # Publish force/torque if available
+                if (
+                    self.ft_sensor
+                    and hasattr(self.ft_sensor, "publish")
+                    and self.capabilities.has_force_torque
+                ):
+                    if self.shared_state.force_torque:
+                        ft_msg = WrenchStamped.from_force_torque_array(
+                            ft_data=self.shared_state.force_torque,
+                            frame_id="ft_sensor",
+                            ts=time.time(),
+                        )
+                        self.ft_sensor.publish(ft_msg)
+
+                # Publish to components that need state updates
+                for component in self.components:
+                    if hasattr(component, "publish_state"):
+                        component.publish_state()
+
+            except Exception as e:
+                self.logger.error(f"State publisher error: {e}")
+
+            # Rate control
+            elapsed = time.time() - start_time
+            if elapsed < period:
+                time.sleep(period - elapsed)
+
+        self.logger.debug("State publisher thread stopped")
+
+    # ============= Input Callbacks =============
+
+    def _on_joint_position_command(self, cmd_msg: JointCommand) -> None:
+        """Callback when joint position command is received.
+
+        Args:
+            cmd_msg: JointCommand message containing positions
+        """
+        command = Command(
+            type="position", data={"positions": list(cmd_msg.positions)}, timestamp=time.time()
+        )
+        try:
+            self.command_queue.put_nowait(command)
+        except:
+            self.logger.warning("Command queue full, dropping position command")
+
+    def _on_joint_velocity_command(self, cmd_msg: JointCommand) -> None:
+        """Callback when joint velocity command is received.
+
+        Args:
+            cmd_msg: JointCommand message containing velocities
+        """
+        command = Command(
+            type="velocity",
+            data={"velocities": list(cmd_msg.positions)},  # JointCommand uses 'positions' field
+            timestamp=time.time(),
+        )
+        try:
+            self.command_queue.put_nowait(command)
+        except:
+            self.logger.warning("Command queue full, dropping velocity command")
+
+    # ============= Lifecycle Management =============
+
+    @rpc
+    def stop(self):
+        """Stop all threads and disconnect from hardware."""
+        self.logger.info(f"Stopping {self.name} driver...")
+
+        # Signal threads to stop
+        self.stop_event.set()
+
+        # Stop any ongoing motion
+        try:
+            self.sdk.stop_motion()
+        except:
+            pass
+
+        # Wait for threads to stop
+        for thread in self.threads:
+            thread.join(timeout=2.0)
+            if thread.is_alive():
+                self.logger.warning(f"Thread {thread.name} did not stop cleanly")
+
+        # Disconnect from hardware
+        try:
+            self.sdk.disconnect()
+        except:
+            pass
+
+        self.shared_state.is_connected = False
+        self.logger.info(f"{self.name} driver stopped")
+
+        # Call Module's stop
+        super().stop()
+
+    def __del__(self):
+        """Cleanup on deletion."""
+        if self.shared_state.is_connected:
+            self.stop()
+
+    # ============= RPC Method Access =============
+
+    def get_rpc_method(self, method_name: str):
+        """Get an RPC method by name.
+
+        Args:
+            method_name: Name of the RPC method
+
+        Returns:
+            The method if found, None otherwise
+        """
+        return self.rpc_methods.get(method_name)
+
+    def list_rpc_methods(self) -> list[str]:
+        """List all available RPC methods.
+
+        Returns:
+            List of RPC method names
+        """
+        return list(self.rpc_methods.keys())
+
+    # ============= Component Access =============
+
+    def get_component(self, component_type: type):
+        """Get a component by type.
+
+        Args:
+            component_type: Type of component to find
+
+        Returns:
+            The component if found, None otherwise
+        """
+        for component in self.components:
+            if isinstance(component, component_type):
+                return component
+        return None
+
+    def add_component(self, component):
+        """Add a component at runtime.
+
+        Args:
+            component: Component instance to add
+        """
+        self.components.append(component)
+        self._initialize_components()
+        self._register_component_rpc_methods()
+
+    def remove_component(self, component):
+        """Remove a component at runtime.
+
+        Args:
+            component: Component instance to remove
+        """
+        if component in self.components:
+            self.components.remove(component)
+            # Re-register RPC methods
+            self.rpc_methods = {}
+            self._register_component_rpc_methods()
