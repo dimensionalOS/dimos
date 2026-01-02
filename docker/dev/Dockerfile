@@ -24,13 +24,9 @@ RUN git config --global --add safe.directory '*'
 
 WORKDIR /app
 
-# Install UV for fast Python package management
-ENV UV_SYSTEM_PYTHON=1
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
-
-# Install dependencies with UV
-RUN uv pip install .[dev]
+# Install dev dependencies (UV already installed in parent image)
+# Parent has cpu,sim,drone extras; add dev extras here
+RUN uv sync --frozen --extra cpu --extra sim --extra drone --extra dev
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd

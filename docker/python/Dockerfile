@@ -44,13 +44,15 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Copy ONLY dependency specification first (this layer is cached if pyproject.toml unchanged)
-COPY pyproject.toml /app/
+# Copy dependency files first (lockfile enables faster, deterministic installs)
+COPY pyproject.toml uv.lock /app/
 
-# Install dependencies with UV (10-100x faster than pip)
-# This expensive step is cached as long as pyproject.toml doesn't change
-RUN uv pip install --upgrade 'pip>=24' 'setuptools>=70' 'wheel' 'packaging>=24' && \
-    uv pip install '.[cpu,sim,drone]'
+# Install EXTERNAL dependencies only (cached unless pyproject.toml/uv.lock change)
+# --no-install-project skips building the local package (which needs C++ sources)
+RUN uv sync --frozen --no-install-project --extra cpu --extra sim --extra drone
 
-# Copy the rest of the project (frequent changes here don't invalidate the dep layer above)
+# Copy the rest of the project
 COPY . /app/
+
+# Install the local package (builds C++ extension, but deps already cached)
+RUN uv sync --frozen --extra cpu --extra sim --extra drone
