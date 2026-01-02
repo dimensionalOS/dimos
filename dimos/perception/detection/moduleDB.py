@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,7 +17,7 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
@@ -36,8 +36,8 @@ from dimos.perception.detection.type.detection3d import Detection3DPC
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3DPC):
     best_detection: Detection3DPC | None = None
-    center: Vector3 | None = None  # type: ignore
-    track_id: str | None = None  # type: ignore
+    center: Vector3 | None = None  # type: ignore[assignment]
+    track_id: str | None = None  # type: ignore[assignment]
     detections: int = 0
 
     def to_repr_dict(self) -> dict[str, Any]:
@@ -238,7 +238,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return "\n".join(ret)
 
     # @rpc
-    # def vlm_query(self, description: str) -> Object3D | None:  # type: ignore[override]
+    # def vlm_query(self, description: str) -> Object3D | None:
     #     imageDetections2D = super().ask_vlm(description)
     #     print("VLM query found", imageDetections2D, "detections")
     #     time.sleep(3)

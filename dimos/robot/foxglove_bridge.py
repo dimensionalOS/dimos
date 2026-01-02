@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,7 +18,7 @@ import threading
 from typing import TYPE_CHECKING
 
 # this is missing, I'm just trying to import lcm_foxglove_bridge.py from dimos_lcm
-from dimos_lcm.foxglove_bridge import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_bridge import (
     FoxgloveBridge as LCMFoxgloveBridge,
 )
 

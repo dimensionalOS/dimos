@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from dimos_lcm.geometry_msgs import Twist as LCMTwist  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
         Twist as ROSTwist,
         Vector3 as ROSVector3,
     )

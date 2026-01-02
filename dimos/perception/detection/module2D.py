@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from reactivex import operators as ops
@@ -41,7 +41,7 @@ class Config(ModuleConfig):
     max_freq: float = 10
     detector: Callable[[Any], Detector] | None = Yolo2DDetector
     publish_detection_images: bool = True
-    camera_info: CameraInfo = None  # type: ignore
+    camera_info: CameraInfo = None  # type: ignore[assignment]
     filter: list[Filter2D] | Filter2D | None = None
 
     def __post_init__(self) -> None:
@@ -112,7 +112,7 @@ class Detection2DModule(Module):
                 # Active detection - compute real position
                 detection = detections.detections[index]
                 position_3d = self.pixel_to_3d(  # type: ignore[attr-defined]
-                    detection.center_bbox,  # type: ignore[attr-defined]
+                    detection.center_bbox,
                     self.config.camera_info,
                     assumed_depth=1.0,
                 )

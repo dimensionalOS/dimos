@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -45,7 +45,7 @@ from dimos.perception.detection.type.detection3d.pointcloud_filters import (
 from dimos.types.timestamped import to_ros_stamp
 
 if TYPE_CHECKING:
-    from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+    from dimos_lcm.sensor_msgs import CameraInfo
 
     from dimos.perception.detection.type.detection2d import Detection2DBBox
 

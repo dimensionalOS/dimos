@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 
 """Main Drone robot class for DimOS."""
 
@@ -23,8 +23,8 @@ import os
 import time
 from typing import Any
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs import String  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.std_msgs import String
 from reactivex import Observable
 
 from dimos import core
@@ -453,7 +453,7 @@ def main() -> None:
 
     from dimos.agents import Agent  # type: ignore[attr-defined]
     from dimos.agents.cli.human import HumanInput
-    from dimos.agents.spec import Model, Provider  # type: ignore[attr-defined]
+    from dimos.agents.spec import Model, Provider
 
     assert drone.dimos is not None
     human_input = drone.dimos.deploy(HumanInput)  # type: ignore[attr-defined]
@@ -473,7 +473,7 @@ def main() -> None:
         454 Natoma (Office): 37.780967465525244, -122.40688342010769
         5th and mission intersection: 37.782598539339695, -122.40649441875473
         6th and mission intersection: 37.781007204789354, -122.40868447123661""",
-        model=Model.GPT_4O,  # type: ignore[attr-defined]
+        model=Model.GPT_4O,
         provider=Provider.OPENAI,  # type: ignore[attr-defined]
     )
 

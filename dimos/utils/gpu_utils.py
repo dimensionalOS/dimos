@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 
 def is_cuda_available():  # type: ignore[no-untyped-def]
     try:
-        import pycuda.driver as cuda  # type: ignore[import-not-found]
+        import pycuda.driver as cuda
 
         cuda.init()
         return cuda.Device.count() > 0

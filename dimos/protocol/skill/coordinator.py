@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -262,7 +262,7 @@ class SkillStateDict(dict[str, SkillState]):
 # It aggregates skills from static and dynamic containers, manages skill states,
 # and decides when to notify the agent about updates.
 class SkillCoordinator(Module):
-    default_config = SkillCoordinatorConfig  # type: ignore[assignment]
+    default_config = SkillCoordinatorConfig
     empty: bool = True
 
     _static_containers: list[SkillContainer]

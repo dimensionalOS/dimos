@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -84,8 +84,8 @@ class PersonTracker(Module):
                 buffer_size=2.0,
             ).pipe(
                 ops.map(
-                    lambda pair: ImageDetections2D.from_ros_detection2d_array(
-                        *pair  # type: ignore[misc]
+                    lambda pair: ImageDetections2D.from_ros_detection2d_array(  # type: ignore[misc]
+                        *pair
                     )
                 )
             )
@@ -103,8 +103,8 @@ class PersonTracker(Module):
         if len(detections2D) == 0:
             return
 
-        target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())  # type: ignore[attr-defined]
-        vector = self.center_to_3d(target.center_bbox, self.camera_info, 2.0)  # type: ignore[attr-defined]
+        target = max(detections2D.detections, key=lambda det: det.bbox_2d_volume())
+        vector = self.center_to_3d(target.center_bbox, self.camera_info, 2.0)
 
         pose_in_camera = PoseStamped(
             ts=detections2D.ts,

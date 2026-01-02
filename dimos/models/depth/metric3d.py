@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -78,7 +78,7 @@ class Metric3D(LocalModel):
         try:
             if isinstance(img, str):
                 print(f"Image type string: {type(img)}")
-                self.rgb_origin = cv2.imread(img)[:, :, ::-1]  # type: ignore[assignment]
+                self.rgb_origin = cv2.imread(img)[:, :, ::-1]
             else:
                 # print(f"Image type not string: {type(img)}, cv2 conversion assumed to be handled. If not, this will throw an error")
                 self.rgb_origin = img
@@ -114,7 +114,7 @@ class Metric3D(LocalModel):
             rgb_origin, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_LINEAR
         )
         # remember to scale intrinsic, hold depth
-        self.intrinsic_scaled = [  # type: ignore[assignment]
+        self.intrinsic_scaled = [
             self.intrinsic[0] * scale,
             self.intrinsic[1] * scale,
             self.intrinsic[2] * scale,
@@ -136,7 +136,7 @@ class Metric3D(LocalModel):
             cv2.BORDER_CONSTANT,
             value=padding,
         )
-        self.pad_info = [pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half]  # type: ignore[assignment]
+        self.pad_info = [pad_h_half, pad_h - pad_h_half, pad_w_half, pad_w - pad_w_half]
 
         #### normalize
         mean = torch.tensor([123.675, 116.28, 103.53]).float()[:, None, None]
@@ -158,7 +158,7 @@ class Metric3D(LocalModel):
         pred_depth = torch.nn.functional.interpolate(
             pred_depth[None, None, :, :],
             self.rgb_origin.shape[:2],
-            mode="bilinear",  # type: ignore[attr-defined]
+            mode="bilinear",
         ).squeeze()
         ###################### canonical camera space ######################
 
@@ -173,7 +173,7 @@ class Metric3D(LocalModel):
     def eval_predicted_depth(self, depth_file, pred_depth) -> None:  # type: ignore[no-untyped-def]
         if depth_file is not None:
             gt_depth = cv2.imread(depth_file, -1)
-            gt_depth = gt_depth / self.gt_depth_scale
+            gt_depth = gt_depth / self.gt_depth_scale  # type: ignore[assignment]
             gt_depth = torch.from_numpy(gt_depth).float().to(self.device)  # type: ignore[assignment]
             assert gt_depth.shape == pred_depth.shape
 
