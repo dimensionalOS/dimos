@@ -26,8 +26,8 @@ try:
     )
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
-
 from plum import dispatch
+import rerun as rr
 
 from dimos.msgs.geometry_msgs.Pose import Pose
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion, QuaternionConvertable
@@ -86,6 +86,31 @@ class PoseStamped(Pose, Timestamped):
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
             f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Transform3D format.
+
+        Returns a Transform3D that can be logged to Rerun to position
+        child entities in the transform hierarchy.
+        """
+        return rr.Transform3D(
+            translation=[self.x, self.y, self.z],
+            rotation=rr.Quaternion(
+                xyzw=[
+                    self.orientation.x,
+                    self.orientation.y,
+                    self.orientation.z,
+                    self.orientation.w,
+                ]
+            ),
+        )
+
+    def to_rerun_arrow(self, length: float = 0.5):  # type: ignore[no-untyped-def]
+        """Convert to rerun Arrows3D format for visualization."""
+        origin = [[self.x, self.y, self.z]]
+        forward = self.orientation.rotate_vector(Vector3(length, 0, 0))
+        vector = [[forward.x, forward.y, forward.z]]
+        return rr.Arrows3D(origins=origin, vectors=vector)
 
     def new_transform_to(self, name: str) -> Transform:
         return self.find_transform(

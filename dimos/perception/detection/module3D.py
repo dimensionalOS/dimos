@@ -37,7 +37,7 @@ from dimos.utils.reactive import backpressure
 
 
 class Detection3DModule(Detection2DModule):
-    image: In[Image]
+    color_image: In[Image]
     pointcloud: In[PointCloud2]
 
     detections: Out[Detection2DArray]
@@ -113,7 +113,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.image.get_next()
+        image = self.color_image.get_next()
         return model.query(image, question)
 
     # @skill
@@ -130,7 +130,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.image.get_next()
+        image = self.color_image.get_next()
         result = model.query_detections(image, question)
 
         print("VLM result:", result, "for", image, "and question", question)

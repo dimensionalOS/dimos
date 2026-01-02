@@ -16,9 +16,14 @@
 
 """
 WebSocket Visualization Module for Dimos navigation and mapping.
+
+This module provides a WebSocket data server for real-time visualization.
+The frontend is served from a separate HTML file.
 """
 
 import asyncio
+import os
+from pathlib import Path as FilePath
 import threading
 import time
 from typing import Any
@@ -27,9 +32,17 @@ from dimos_lcm.std_msgs import Bool
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse
-from starlette.routing import Route
+from starlette.responses import FileResponse, RedirectResponse, Response
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 import uvicorn
+
+# Path to the frontend HTML templates and command-center build
+_TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
+_DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
+_COMMAND_CENTER_DIR = (
+    FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
+)
 
 from dimos.core import In, Module, Out, rpc
 from dimos.mapping.occupancy.gradient import gradient
@@ -128,6 +141,9 @@ class WebsocketVisModule(Module):
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
 
+        # Show control center link in terminal
+        logger.info(f"Command Center: http://localhost:{self.port}/command-center")
+
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
             self._disposables.add(Disposable(unsub))
@@ -186,9 +202,40 @@ class WebsocketVisModule(Module):
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
-            return HTMLResponse("<html><body>Use the extension.</body></html>")
+            """Serve appropriate HTML based on viewer mode."""
+            # If running native Rerun, redirect to standalone command center
+            viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
+            if viewer_backend == "rerun-native":
+                return RedirectResponse(url="/command-center")
+            # Otherwise serve full dashboard with Rerun iframe
+            return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
-        routes = [Route("/", serve_index)]
+        async def serve_command_center(request):  # type: ignore[no-untyped-def]
+            """Serve the command center 2D visualization (built React app)."""
+            index_file = _COMMAND_CENTER_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file, media_type="text/html")
+            else:
+                return Response(
+                    content="Command center not built. Run: cd dimos/web/command-center-extension && npm install && npm run build:standalone",
+                    status_code=503,
+                    media_type="text/plain",
+                )
+
+        routes = [
+            Route("/", serve_index),
+            Route("/command-center", serve_command_center),
+        ]
+
+        # Add static file serving for command-center assets if build exists
+        if _COMMAND_CENTER_DIR.exists():
+            routes.append(
+                Mount(  # type: ignore[arg-type]
+                    "/assets",
+                    app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"),
+                    name="assets",
+                )
+            )
         starlette_app = Starlette(routes=routes)
 
         self.app = socketio.ASGIApp(self.sio, starlette_app)

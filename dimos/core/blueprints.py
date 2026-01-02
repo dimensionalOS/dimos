@@ -23,6 +23,9 @@ import sys
 from types import MappingProxyType
 from typing import Any, Literal, get_args, get_origin, get_type_hints
 
+import rerun as rr
+import rerun.blueprint as rrb
+
 from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
@@ -280,6 +283,50 @@ class ModuleBlueprintSet:
                     requested_method_name, rpc_methods_dot[requested_method_name]
                 )
 
+    def _init_rerun_blueprint(self, module_coordinator: ModuleCoordinator) -> None:
+        """Compose and send Rerun blueprint from module contributions.
+
+        Collects rerun_views() from all modules and composes them into a unified layout.
+        """
+        # Collect view contributions from all modules
+        side_panels = []
+        for blueprint in self.blueprints:
+            if hasattr(blueprint.module, "rerun_views"):
+                views = blueprint.module.rerun_views()
+                if views:
+                    side_panels.extend(views)
+
+        # Always include latency panel if we have any panels
+        if side_panels:
+            side_panels.append(
+                rrb.TimeSeriesView(
+                    name="Latency (ms)",
+                    origin="/metrics",
+                    contents=[
+                        "+ /metrics/voxel_map/latency_ms",
+                        "+ /metrics/costmap/latency_ms",
+                    ],
+                )
+            )
+
+        # Compose final layout
+        if side_panels:
+            composed_blueprint = rrb.Blueprint(
+                rrb.Horizontal(
+                    rrb.Spatial3DView(
+                        name="3D View",
+                        origin="world",
+                        background=[0, 0, 0],
+                    ),
+                    rrb.Vertical(*side_panels, row_shares=[2] + [1] * (len(side_panels) - 1)),
+                    column_shares=[3, 1],
+                ),
+                rrb.TimePanel(state="collapsed"),
+                rrb.SelectionPanel(state="collapsed"),
+                rrb.BlueprintPanel(state="collapsed"),
+            )
+            rr.send_blueprint(composed_blueprint)
+
     def build(
         self,
         global_config: GlobalConfig | None = None,
@@ -294,6 +341,17 @@ class ModuleBlueprintSet:
         self._check_requirements()
         self._verify_no_name_conflicts()
 
+        # Initialize Rerun server before deploying modules (if backend is Rerun)
+        if global_config.rerun_enabled and global_config.viewer_backend.startswith("rerun"):
+            try:
+                from dimos.dashboard.rerun_init import init_rerun_server
+
+                server_addr = init_rerun_server(viewer_mode=global_config.viewer_backend)
+                global_config = global_config.model_copy(update={"rerun_server_addr": server_addr})
+                logger.info("Rerun server initialized", addr=server_addr)
+            except Exception as e:
+                logger.warning(f"Failed to initialize Rerun server: {e}")
+
         module_coordinator = ModuleCoordinator(global_config=global_config)
         module_coordinator.start()
 
@@ -302,6 +360,10 @@ class ModuleBlueprintSet:
         self._connect_rpc_methods(module_coordinator)
 
         module_coordinator.start_all_modules()
+
+        # Compose and send Rerun blueprint from module contributions
+        if global_config.viewer_backend.startswith("rerun"):
+            self._init_rerun_blueprint(module_coordinator)
 
         return module_coordinator
 
