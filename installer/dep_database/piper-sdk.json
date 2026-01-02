@@ -6,8 +6,6 @@
     "iproute2"
   ],
   "brew_dependencies": [
-    "can-utils",
-    "ethtool"
   ],
   "nix_dependencies": [
     "can-utils",
@@ -15,5 +13,5 @@
     "iproute2"
   ],
   "description": "System dependencies required for piper-sdk pip package",
-  "notes": "piper-sdk is a Python SDK for controlling Agilex Piper robotic arms via CAN bus communication using the python-can library (>=3.3.4). The package requires CAN bus interface tools and network management utilities for setup and operation. Key dependencies include: can-utils (provides candump, cansend, and other CAN utilities for interfacing with SocketCAN), ethtool (used to retrieve USB bus information for CAN adapters), and iproute2 (provides the 'ip' command for configuring CAN network interfaces, setting bitrates, and bringing interfaces up/down). The SDK uses SocketCAN on Linux and requires proper CAN interface configuration via the provided shell scripts. The package is designed for Linux platforms (Ubuntu 18.04, 20.04, 22.04 tested) and requires Python >=3.6. On macOS, can-utils and ethtool are available via Homebrew but functionality may be limited as SocketCAN is Linux-specific. On NixOS, all three packages are available in the standard package repository."
+  "notes": "This is probably MISSING deps for MacOS. In fact this library might not work for MacOS. piper-sdk is a Python SDK for controlling Agilex Piper robotic arms via CAN bus communication using the python-can library (>=3.3.4). The package requires CAN bus interface tools and network management utilities for setup and operation. Key dependencies include: can-utils (provides candump, cansend, and other CAN utilities for interfacing with SocketCAN), ethtool (used to retrieve USB bus information for CAN adapters), and iproute2 (provides the 'ip' command for configuring CAN network interfaces, setting bitrates, and bringing interfaces up/down). The SDK uses SocketCAN on Linux and requires proper CAN interface configuration via the provided shell scripts. The package is designed for Linux platforms (Ubuntu 18.04, 20.04, 22.04 tested) and requires Python >=3.6. On macOS, can-utils and ethtool are available via Homebrew but functionality may be limited as SocketCAN is Linux-specific. On NixOS, all three packages are available in the standard package repository."
 }
