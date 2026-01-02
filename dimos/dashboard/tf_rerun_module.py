@@ -92,7 +92,7 @@ class TFRerunModule(Module):
             msg: TFMessage containing transforms to visualize
             topic: The LCM topic (unused but required by callback signature)
         """
-        for entity_path, transform in msg.to_rerun():
+        for entity_path, transform in msg.to_rerun():  # type: ignore[no-untyped-call]
             rr.log(entity_path, transform)
 
     @rpc

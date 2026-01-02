@@ -57,22 +57,14 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
             # Manual Rerun logging for path
             def _log_path_to_rerun(path: Path) -> None:
-                rr.log("world/nav/path", path.to_rerun())
+                rr.log("world/nav/path", path.to_rerun())  # type: ignore[no-untyped-call]
 
-            unsub = self._planner.path.subscribe(_log_path_to_rerun)
-            self._disposables.add(Disposable(unsub))
+            self._disposables.add(self._planner.path.subscribe(_log_path_to_rerun))
 
-        unsub = self.odom.subscribe(self._planner.handle_odom)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.global_costmap.subscribe(self._planner.handle_global_costmap)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.goal_request.subscribe(self._planner.handle_goal_request)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.target.subscribe(self._planner.handle_goal_request)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(self.odom.subscribe(self._planner.handle_odom))
+        self._disposables.add(self.global_costmap.subscribe(self._planner.handle_global_costmap))
+        self._disposables.add(self.goal_request.subscribe(self._planner.handle_goal_request))
+        self._disposables.add(self.target.subscribe(self._planner.handle_goal_request))
 
         self._disposables.add(self._planner.path.subscribe(self.path.publish))
 

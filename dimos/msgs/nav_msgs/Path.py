@@ -233,12 +233,12 @@ class Path(Timestamped):
 
         return ros_msg
 
-    def to_rerun(
+    def to_rerun(  # type: ignore[no-untyped-def]
         self,
         color: tuple[int, int, int] = (0, 255, 128),
         z_offset: float = 0.2,
         radii: float = 0.05,
-    ):  # type: ignore[no-untyped-def]
+    ):
         """Convert to rerun LineStrips3D format.
 
         Args:
