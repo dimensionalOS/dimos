@@ -173,10 +173,6 @@ class Out(Stream[T], ObservableMixin[T]):
             ),
         )
 
-    def subscribe(self, cb) -> Callable[[], None]:
-        self._local_subscribers.append(cb)
-        return lambda: self.local_subscribers.remove(cb)
-
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         if self._local_subscribers:
             for cb in self._local_subscribers:
