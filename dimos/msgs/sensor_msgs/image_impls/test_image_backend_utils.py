@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,10 +37,10 @@ from dimos.perception.common.utils import (
 
 def _has_cupy() -> bool:
     try:
-        import cupy as cp  # type: ignore
+        import cupy as cp
 
         try:
-            ndev = cp.cuda.runtime.getDeviceCount()  # type: ignore[attr-defined]
+            ndev = cp.cuda.runtime.getDeviceCount()
             if ndev <= 0:
                 return False
             x = cp.array([1, 2, 3])
@@ -78,7 +78,7 @@ def test_rectify_image_cpu(shape, fmt) -> None:
     "shape,fmt", [((32, 32, 3), ImageFormat.BGR), ((32, 32), ImageFormat.GRAY)]
 )
 def test_rectify_image_gpu_parity(shape, fmt) -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     arr_np = (np.random.rand(*shape) * (255 if fmt != ImageFormat.GRAY else 65535)).astype(
         np.uint8 if fmt != ImageFormat.GRAY else np.uint16
@@ -101,7 +101,7 @@ def test_rectify_image_gpu_parity(shape, fmt) -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_rectify_image_gpu_nonzero_dist_close() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     H, W = 64, 96
     # Structured pattern to make interpolation deterministic enough
@@ -148,7 +148,7 @@ def test_project_roundtrip_cpu() -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_project_parity_gpu_cpu() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     pts3d_np = np.array([[0.1, 0.2, 1.0], [0.0, 0.0, 2.0], [0.5, -0.3, 3.0]], dtype=np.float32)
     fx, fy, cx, cy = 200.0, 220.0, 64.0, 48.0
@@ -167,7 +167,7 @@ def test_project_parity_gpu_cpu() -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_project_parity_gpu_cpu_random() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     rng = np.random.RandomState(0)
     N = 1000
@@ -205,7 +205,7 @@ def test_colorize_depth_cpu() -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_colorize_depth_gpu_parity() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     depth_np = np.zeros((16, 20), dtype=np.float32)
     depth_np[4:8, 5:15] = 2.0
@@ -224,7 +224,7 @@ def test_draw_bounding_box_cpu() -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_draw_bounding_box_gpu_parity() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     img_np = np.zeros((20, 30, 3), dtype=np.uint8)
     out_cpu = draw_bounding_box(img_np.copy(), [2, 3, 10, 12], color=(0, 255, 0), thickness=2)
@@ -243,7 +243,7 @@ def test_draw_segmentation_mask_cpu() -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_draw_segmentation_mask_gpu_parity() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     img_np = np.zeros((20, 30, 3), dtype=np.uint8)
     mask_np = np.zeros((20, 30), dtype=np.uint8)
@@ -271,7 +271,7 @@ def test_draw_object_detection_visualization_cpu() -> None:
 
 @pytest.mark.skipif(not _has_cupy(), reason="CuPy/CUDA not available")
 def test_draw_object_detection_visualization_gpu_parity() -> None:
-    import cupy as cp  # type: ignore
+    import cupy as cp
 
     img_np = np.zeros((30, 40, 3), dtype=np.uint8)
     objects = [

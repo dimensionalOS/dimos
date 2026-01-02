@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,7 +20,7 @@ from dimos.msgs.sensor_msgs.CameraInfo import CalibrationProvider
 
 # Check if ZED SDK is available
 try:
-    import pyzed.sl as sl  # type: ignore[import-not-found]
+    import pyzed.sl as sl
 
     HAS_ZED_SDK = True
 except ImportError:

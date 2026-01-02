@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 import asyncio
 
 # Import LCM message types
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos import core
 from dimos.hardware.sensors.camera.zed import ZEDModule

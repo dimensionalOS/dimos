@@ -237,7 +237,7 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
             pass
 
     # requery once if JSON parsing fails
-    @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[misc, untyped-decorator]
+    @retry(max_retries=2, on_exception=json.JSONDecodeError, delay=0.0)  # type: ignore[untyped-decorator]
     def query_json(self, image: Image, query: str) -> dict:  # type: ignore[type-arg]
         response = self.query(image, query)
         return extract_json(response)  # type: ignore[return-value]

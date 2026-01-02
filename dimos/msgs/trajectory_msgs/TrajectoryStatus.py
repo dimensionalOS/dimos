@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -131,7 +131,7 @@ class TrajectoryStatus:
         buf = BytesIO(data) if not hasattr(data, "read") else data
         if buf.read(8) != cls._get_packed_fingerprint():
             raise ValueError("Decode error: fingerprint mismatch")
-        return cls._decode_one(buf)
+        return cls._decode_one(buf)  # type: ignore[arg-type]
 
     @classmethod
     def _decode_one(cls, buf: BytesIO) -> "TrajectoryStatus":
@@ -148,7 +148,7 @@ class TrajectoryStatus:
     _packed_fingerprint = None
 
     @classmethod
-    def _get_hash_recursive(cls, parents):
+    def _get_hash_recursive(cls, parents):  # type: ignore[no-untyped-def]
         if cls in parents:
             return 0
         return 0x3C4D5E6F708192A3 & 0xFFFFFFFFFFFFFFFF
@@ -156,7 +156,7 @@ class TrajectoryStatus:
     @classmethod
     def _get_packed_fingerprint(cls) -> bytes:
         if cls._packed_fingerprint is None:
-            cls._packed_fingerprint = struct.pack(">Q", cls._get_hash_recursive([]))
+            cls._packed_fingerprint = struct.pack(">Q", cls._get_hash_recursive([]))  # type: ignore[no-untyped-call]
         return cls._packed_fingerprint
 
     def __str__(self) -> str:

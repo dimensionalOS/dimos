@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 import time
 
 import numpy as np
-from open3d.geometry import PointCloud  # type: ignore[import-untyped]
+from open3d.geometry import PointCloud
 import pytest
 
 from dimos.mapping.occupancy.gradient import gradient, voronoi_gradient

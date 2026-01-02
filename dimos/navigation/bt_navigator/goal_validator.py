@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -322,7 +322,7 @@ def _find_safe_goal_voronoi(
 
     # Filter skeleton points by minimum clearance
     clearance_cells = int(np.ceil(min_clearance / costmap.resolution))
-    valid_skeleton = skeleton & (distance_field >= clearance_cells)  # type: ignore[operator]
+    valid_skeleton = skeleton & (distance_field >= clearance_cells)
 
     if not np.any(valid_skeleton):
         # Fall back to BFS if no valid skeleton points
