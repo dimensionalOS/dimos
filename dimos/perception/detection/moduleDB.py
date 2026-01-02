@@ -23,8 +23,7 @@ from dimos_lcm.foxglove_msgs.ImageAnnotations import (
 from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex.observable import Observable
 
-from dimos import spec
-from dimos.core import DimosCluster, In, Out, rpc
+from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray

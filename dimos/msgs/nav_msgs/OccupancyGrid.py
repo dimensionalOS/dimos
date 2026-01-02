@@ -521,23 +521,23 @@ class OccupancyGrid(Timestamped):
             return rr.Image(np.flipud(vis), color_model="RGBA")
 
         # Grayscale visualization (no colormap)
-        vis = np.zeros((self.height, self.width), dtype=np.uint8)
+        vis_gray = np.zeros((self.height, self.width), dtype=np.uint8)
 
         # Free space = white
-        vis[self.grid == 0] = 255
+        vis_gray[self.grid == 0] = 255
 
         # Unknown = gray
-        vis[self.grid == -1] = 128
+        vis_gray[self.grid == -1] = 128
 
         # Occupied (100) = black, costs (1-99) = gradient
         occupied_mask = self.grid > 0
         if np.any(occupied_mask):
             # Map 1-100 to 127-0 (darker = more occupied)
             costs = self.grid[occupied_mask].astype(np.float32)
-            vis[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
+            vis_gray[occupied_mask] = (127 * (1 - costs / 100)).astype(np.uint8)
 
         # Flip vertically to match world coordinates (y=0 at bottom)
-        return rr.Image(np.flipud(vis), color_model="L")
+        return rr.Image(np.flipud(vis_gray), color_model="L")
 
     def _to_rerun_points(self, colormap: str | None = None, z_offset: float = 0.01):  # type: ignore[no-untyped-def]
         """Convert to 3D points for occupied cells."""
@@ -619,7 +619,7 @@ class OccupancyGrid(Timestamped):
         vertices[:, 3, 1] = wy + r
         vertices[:, 3, 2] = z_offset
         # Flatten to (n_cells*4, 3)
-        vertices = vertices.reshape(-1, 3)
+        flat_vertices = vertices.reshape(-1, 3)
 
         # === VECTORIZED INDEX GENERATION ===
         # Base vertex indices for each cell: [0, 4, 8, 12, ...]
@@ -633,7 +633,7 @@ class OccupancyGrid(Timestamped):
         indices[:, 1, 1] = base_v + 2
         indices[:, 1, 2] = base_v + 3
         # Flatten to (n_cells*2, 3)
-        indices = indices.reshape(-1, 3)
+        flat_indices = indices.reshape(-1, 3)
 
         # === VECTORIZED COLOR GENERATION ===
         cell_values = self.grid[gy, gx]  # Get all cell values at once
@@ -664,7 +664,7 @@ class OccupancyGrid(Timestamped):
         colors = np.repeat(colors_per_cell, 4, axis=0)  # (n_cells*4, 4)
 
         return rr.Mesh3D(
-            vertex_positions=vertices,
-            triangle_indices=indices,
+            vertex_positions=flat_vertices,
+            triangle_indices=flat_indices,
             vertex_colors=colors,
         )
