@@ -56,7 +56,7 @@ all_blueprints = {
 
 
 all_modules = {
-    "astar_planner": "dimos.navigation.global_planner.planner",
+    "replanning_a_star_planner": "dimos.navigation.replanning_a_star.module",
     "camera_module": "dimos.hardware.camera.module",
     "depth_module": "dimos.robot.unitree_webrtc.depth_module",
     "detection_2d": "dimos.perception.detection2d.module2D",
