@@ -126,6 +126,12 @@ class NumpyImage(AbstractImage):
             )
         raise ValueError(f"Unsupported format: {self.format}")
 
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format."""
+        from dimos.msgs.sensor_msgs.image_impls.AbstractImage import format_to_rerun
+
+        return format_to_rerun(self.data, self.format)
+
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> NumpyImage:
         return NumpyImage(
             cv2.resize(self.data, (width, height), interpolation=interpolation),

@@ -21,11 +21,13 @@ import struct
 from dimos_lcm.sensor_msgs.PointCloud2 import (
     PointCloud2 as LCMPointCloud2,
 )
-from dimos_lcm.sensor_msgs.PointField import PointField
-from dimos_lcm.std_msgs.Header import Header
+from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+import matplotlib.pyplot as plt
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs import Vector3
 
@@ -42,6 +44,12 @@ except ImportError:
     ROS_AVAILABLE = False
 
 from dimos.types.timestamped import Timestamped
+
+
+@functools.lru_cache(maxsize=16)
+def _get_matplotlib_cmap(name: str):  # type: ignore[no-untyped-def]
+    """Get a matplotlib colormap by name (cached for performance)."""
+    return plt.get_cmap(name)
 
 
 # TODO: encode/decode need to be updated to work with full spectrum of pointcloud2 fields
@@ -409,6 +417,62 @@ class PointCloud2(Timestamped):
         if "positions" not in self._pcd_tensor.point:
             return 0
         return int(self._pcd_tensor.point["positions"].shape[0])
+
+    def to_rerun(  # type: ignore[no-untyped-def]
+        self,
+        radii: float = 0.02,
+        colormap: str | None = None,
+        colors: list[int] | None = None,
+        mode: str = "boxes",
+        size: float | None = None,
+        fill_mode: str = "solid",
+        **kwargs,  # type: ignore[no-untyped-def]
+    ):  # type: ignore[no-untyped-def]
+        """Convert to Rerun Points3D or Boxes3D archetype.
+
+        Args:
+            radii: Point radius for visualization (only for mode="points")
+            colormap: Optional colormap name (e.g., "turbo", "viridis") to color by height
+            colors: Optional RGB color [r, g, b] for all points (0-255)
+            mode: Visualization mode - "points" for spheres, "boxes" for cubes (default)
+            size: Box size for mode="boxes" (e.g., voxel_size). Defaults to radii*2.
+            fill_mode: Fill mode for boxes - "solid", "majorwireframe", or "densewireframe"
+            **kwargs: Additional args (ignored for compatibility)
+
+        Returns:
+            rr.Points3D or rr.Boxes3D archetype for logging to Rerun
+        """
+        points = self.as_numpy()
+        if len(points) == 0:
+            return rr.Points3D([]) if mode == "points" else rr.Boxes3D(centers=[])
+
+        # Determine colors
+        point_colors = None
+        if colormap is not None:
+            # Color by height (z-coordinate)
+            z = points[:, 2]
+            z_norm = (z - z.min()) / (z.max() - z.min() + 1e-8)
+            cmap = _get_matplotlib_cmap(colormap)
+            point_colors = (cmap(z_norm)[:, :3] * 255).astype(np.uint8)
+        elif colors is not None:
+            point_colors = colors
+
+        if mode == "boxes":
+            # Use boxes for voxel visualization
+            box_size = size if size is not None else radii * 2
+            half = box_size / 2
+            return rr.Boxes3D(
+                centers=points,
+                half_sizes=[half, half, half],
+                colors=point_colors,
+                fill_mode=fill_mode,  # type: ignore[arg-type]
+            )
+        else:
+            return rr.Points3D(
+                positions=points,
+                radii=radii,
+                colors=point_colors,
+            )
 
     def filter_by_height(
         self,

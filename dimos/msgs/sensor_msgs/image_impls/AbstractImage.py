@@ -22,6 +22,7 @@ from typing import Any
 
 import cv2
 import numpy as np
+import rerun as rr
 
 try:
     import cupy as cp  # type: ignore[import-not-found]
@@ -108,6 +109,37 @@ def _encode_nvimgcodec_cuda(bgr_cu, quality: int = 80) -> bytes:  # type: ignore
     return bytes(bs0)
 
 
+def format_to_rerun(data, fmt: ImageFormat):  # type: ignore[no-untyped-def]
+    """Convert image data to Rerun archetype based on format.
+
+    Args:
+        data: Image data (numpy array or cupy array on CPU)
+        fmt: ImageFormat enum value
+
+    Returns:
+        Rerun archetype (rr.Image or rr.DepthImage)
+    """
+    match fmt:
+        case ImageFormat.RGB:
+            return rr.Image(data, color_model="RGB")
+        case ImageFormat.RGBA:
+            return rr.Image(data, color_model="RGBA")
+        case ImageFormat.BGR:
+            return rr.Image(data, color_model="BGR")
+        case ImageFormat.BGRA:
+            return rr.Image(data, color_model="BGRA")
+        case ImageFormat.GRAY:
+            return rr.Image(data, color_model="L")
+        case ImageFormat.GRAY16:
+            return rr.Image(data, color_model="L")
+        case ImageFormat.DEPTH:
+            return rr.DepthImage(data)
+        case ImageFormat.DEPTH16:
+            return rr.DepthImage(data)
+        case _:
+            raise ValueError(f"Unsupported format for Rerun: {fmt}")
+
+
 class AbstractImage(ABC):
     data: Any
     format: ImageFormat
@@ -163,6 +195,10 @@ class AbstractImage(ABC):
     def resize(
         self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR
     ) -> AbstractImage:  # pragma: no cover - abstract
+        ...
+
+    @abstractmethod
+    def to_rerun(self) -> Any:  # pragma: no cover - abstract
         ...
 
     @abstractmethod

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dimos Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body { width: 100%; height: 100%; overflow: hidden; }
+        body { background: #0a0a0f; font-family: -apple-system, system-ui, sans-serif; }
+        .container { display: flex; width: 100%; height: 100%; }
+        .rerun { flex: 1; border: none; }
+        .command-center { width: 400px; border: none; border-left: 1px solid #333; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <iframe class="rerun" src="http://localhost:9090/?url=rerun%2Bhttp%3A%2F%2Flocalhost%3A9876%2Fproxy"></iframe>
+        <iframe class="command-center" src="http://localhost:7779/command-center"></iframe>
+    </div>
+</body>
+</html>

@@ -647,6 +647,20 @@ class CudaImage(AbstractImage):
             _resize_bilinear_hwc_cuda(self.data, height, width), self.format, self.frame_id, self.ts
         )
 
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format.
+
+        Transfers data from GPU to CPU and converts to appropriate format.
+
+        Returns:
+            rr.Image or rr.DepthImage archetype for logging to rerun
+        """
+        from dimos.msgs.sensor_msgs.image_impls.AbstractImage import format_to_rerun
+
+        # Transfer to CPU
+        cpu_data = cp.asnumpy(self.data)
+        return format_to_rerun(cpu_data, self.format)
+
     def crop(self, x: int, y: int, width: int, height: int) -> CudaImage:
         """Crop the image to the specified region.
 
