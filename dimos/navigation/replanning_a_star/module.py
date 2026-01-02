@@ -61,10 +61,10 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
 
             self._disposables.add(self._planner.path.subscribe(_log_path_to_rerun))
 
-        self._disposables.add(self.odom.subscribe(self._planner.handle_odom))
-        self._disposables.add(self.global_costmap.subscribe(self._planner.handle_global_costmap))
-        self._disposables.add(self.goal_request.subscribe(self._planner.handle_goal_request))
-        self._disposables.add(self.target.subscribe(self._planner.handle_goal_request))
+        self._disposables.add(Disposable(self.odom.subscribe(self._planner.handle_odom)))
+        self._disposables.add(Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap)))
+        self._disposables.add(Disposable(self.goal_request.subscribe(self._planner.handle_goal_request)))
+        self._disposables.add(Disposable(self.target.subscribe(self._planner.handle_goal_request)))
 
         self._disposables.add(self._planner.path.subscribe(self.path.publish))
 
