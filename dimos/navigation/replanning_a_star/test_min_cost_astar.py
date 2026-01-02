@@ -64,14 +64,14 @@ def test_astar_python_and_cpp(costmap) -> None:
     goal = Vector3(6.15, 10.0)
 
     start_time = time.perf_counter()
-    path_python = min_cost_astar("min_cost", costmap, goal, start, use_cpp=False)
+    path_python = min_cost_astar(costmap, goal, start, use_cpp=False)
     elapsed_time_python = time.perf_counter() - start_time
     print(f"\nastar Python took {elapsed_time_python:.6f} seconds")
     assert path_python is not None
     assert len(path_python.poses) > 0
 
     start_time = time.perf_counter()
-    path_cpp = min_cost_astar("min_cost", costmap, goal, start, use_cpp=True)
+    path_cpp = min_cost_astar(costmap, goal, start, use_cpp=True)
     elapsed_time_cpp = time.perf_counter() - start_time
     print(f"astar C++ took {elapsed_time_cpp:.6f} seconds")
     assert path_cpp is not None
