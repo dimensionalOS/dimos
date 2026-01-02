@@ -19,7 +19,6 @@ import platform
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
     ImageAnnotations,
 )
-from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
@@ -41,7 +40,6 @@ from dimos.navigation.frontier_exploration import (
 from dimos.navigation.replanning_a_star.module import (
     replanning_a_star_planner,
 )
-from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
 from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge

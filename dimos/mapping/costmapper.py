@@ -13,7 +13,6 @@
 # limitations under the License.
 
 from dataclasses import asdict, dataclass, field
-import os
 import queue
 import threading
 import time
@@ -34,7 +33,6 @@ from dimos.mapping.pointclouds.occupancy import (
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.utils.logging_config import setup_logger
-from dimos.utils.metrics import timed
 
 logger = setup_logger()
 
