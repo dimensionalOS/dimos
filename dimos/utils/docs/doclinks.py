@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -288,28 +288,28 @@ def process_markdown(
     # Pattern 2: [Text](.md) - doc file links
     doc_pattern = r"\[([^\]]+)\]\(\.md\)"
 
-    def replace_code_match(match: re.Match) -> str:
+    def replace_code_match(match: re.Match[str]) -> str:
         file_ref = match.group(1)
         current_link = match.group(2)
         full_match = match.group(0)
 
         # Skip anchor-only links (e.g., [`Symbol`](#section))
         if current_link.startswith("#"):
-            return full_match
+            return str(full_match)
 
         # Skip if the reference doesn't look like a file path (no extension or path separator)
         if "." not in file_ref and "/" not in file_ref:
-            return full_match
+            return str(full_match)
 
         # Look up in index
         candidates = file_index.get(file_ref, [])
 
         if len(candidates) == 0:
             errors.append(f"No file matching '{file_ref}' found in codebase")
-            return full_match
+            return str(full_match)
         elif len(candidates) > 1:
             errors.append(f"'{file_ref}' matches multiple files: {[str(c) for c in candidates]}")
-            return full_match
+            return str(full_match)
 
         resolved_path = candidates[0]
 
@@ -347,10 +347,10 @@ def process_markdown(
 
         return new_match
 
-    def replace_doc_match(match: re.Match) -> str:
+    def replace_doc_match(match: re.Match[str]) -> str:
         """Replace [Text](.md) with resolved doc path."""
         if doc_index is None:
-            return match.group(0)
+            return str(match.group(0))
 
         link_text = match.group(1)
         full_match = match.group(0)
@@ -361,10 +361,10 @@ def process_markdown(
 
         if len(candidates) == 0:
             errors.append(f"No doc matching '{link_text}' found")
-            return full_match
+            return str(full_match)
         elif len(candidates) > 1:
             errors.append(f"'{link_text}' matches multiple docs: {[str(c) for c in candidates]}")
-            return full_match
+            return str(full_match)
 
         resolved_path = candidates[0]
         new_link = generate_link(resolved_path, root, doc_path, link_mode, github_url, github_ref)
@@ -394,7 +394,7 @@ def process_markdown(
 
 def collect_markdown_files(paths: list[str]) -> list[Path]:
     """Collect markdown files from paths, expanding directories recursively."""
-    result = []
+    result: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
@@ -447,7 +447,7 @@ Options:
 """
 
 
-def main():
+def main() -> None:
     if len(sys.argv) == 1:
         print(USAGE)
         sys.exit(0)
@@ -564,13 +564,15 @@ def main():
         watch_paths = args.paths if args.paths else [str(root / "docs")]
 
         class MarkdownHandler(FileSystemEventHandler):
-            def on_modified(self, event):
-                if not event.is_directory and event.src_path.endswith(".md"):
-                    process_file(Path(event.src_path))
+            def on_modified(self, event: FileModifiedEvent) -> None:  # type: ignore[override]
+                src_path = str(event.src_path)
+                if not event.is_directory and src_path.endswith(".md"):
+                    process_file(Path(src_path))
 
-            def on_created(self, event):
-                if not event.is_directory and event.src_path.endswith(".md"):
-                    process_file(Path(event.src_path))
+            def on_created(self, event: FileCreatedEvent) -> None:  # type: ignore[override]
+                src_path = str(event.src_path)
+                if not event.is_directory and src_path.endswith(".md"):
+                    process_file(Path(src_path))
 
         observer = Observer()
         handler = MarkdownHandler()

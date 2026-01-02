@@ -16,10 +16,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 import queue
 import time
+from typing import Any
 
 from dimos_lcm.sensor_msgs import CameraInfo
 import reactivex as rx
 from reactivex import operators as ops
+from reactivex.abc import DisposableBase
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -47,7 +49,7 @@ def default_transform():  # type: ignore[no-untyped-def]
 class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = field(default_factory=default_transform)
-    hardware: Callable[[], CameraHardware] | CameraHardware = Webcam
+    hardware: Callable[[], CameraHardware[Any]] | CameraHardware[Any] = Webcam
     frequency: float = 0.0  # target fps, selects sharpest frame per window. 0 = passthrough
 
 
@@ -55,16 +57,16 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    hardware: CameraHardware = None  # type: ignore[assignment, type-arg]
-    _module_subscription: Disposable | None = None
-    _camera_info_subscription: Disposable | None = None
+    hardware: CameraHardware[Any]
+    _module_subscription: DisposableBase | None = None
+    _camera_info_subscription: DisposableBase | None = None
     _skill_stream: Observable[Image] | None = None
 
     config: CameraModuleConfig
     default_config = CameraModuleConfig
 
-    def __init__(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**kwargs)
 
     @property
     def hardware_camera_info(self) -> CameraInfo:
