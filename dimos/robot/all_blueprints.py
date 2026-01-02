@@ -73,7 +73,6 @@ all_modules = {
     "navigation_skill": "dimos.agents.skills.navigation",
     "object_tracking": "dimos.perception.object_tracker",
     "osm_skill": "dimos.agents.skills.osm",
-    "replanning_a_star_planner": "dimos.navigation.replanning_a_star.module",
     "ros_nav": "dimos.navigation.rosnav",
     "spatial_memory": "dimos.perception.spatial_perception",
     "speak_skill": "dimos.agents.skills.speak_skill",
