@@ -418,7 +418,7 @@ class PointCloud2(Timestamped):
             return 0
         return int(self._pcd_tensor.point["positions"].shape[0])
 
-    def to_rerun(
+    def to_rerun(  # type: ignore[no-untyped-def]
         self,
         radii: float = 0.02,
         colormap: str | None = None,
@@ -465,7 +465,7 @@ class PointCloud2(Timestamped):
                 centers=points,
                 half_sizes=[half, half, half],
                 colors=point_colors,
-                fill_mode=fill_mode,
+                fill_mode=fill_mode,  # type: ignore[arg-type]
             )
         else:
             return rr.Points3D(

@@ -372,6 +372,6 @@ class Transform(Timestamped):
             rotation=rr.Quaternion(
                 xyzw=[self.rotation.x, self.rotation.y, self.rotation.z, self.rotation.w]
             ),
-            parent_frame=self.frame_id,
-            child_frame=self.child_frame_id,
+            parent_frame=self.frame_id,  # type: ignore[call-arg]
+            child_frame=self.child_frame_id,  # type: ignore[call-arg]
         )
