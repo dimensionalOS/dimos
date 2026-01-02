@@ -40,8 +40,13 @@ class FoxgloveBridge(Module):
     _global_config: "GlobalConfig | None" = None
 
     def __init__(
-        self, *args, shm_channels=None, jpeg_shm_channels=None, global_config=None, **kwargs
-    ) -> None:  # type: ignore[no-untyped-def]
+        self,
+        *args: Any,
+        shm_channels: list[str] | None = None,
+        jpeg_shm_channels: list[str] | None = None,
+        global_config: "GlobalConfig | None" = None,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(*args, **kwargs)
         self.shm_channels = shm_channels or []
         self.jpeg_shm_channels = jpeg_shm_channels or []
