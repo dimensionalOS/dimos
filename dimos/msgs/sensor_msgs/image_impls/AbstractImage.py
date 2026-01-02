@@ -198,6 +198,10 @@ class AbstractImage(ABC):
         ...
 
     @abstractmethod
+    def to_rerun(self) -> Any:  # pragma: no cover - abstract
+        ...
+
+    @abstractmethod
     def sharpness(self) -> float:  # pragma: no cover - abstract
         ...
 

@@ -17,7 +17,7 @@ from __future__ import annotations
 from enum import IntEnum
 from functools import lru_cache
 import time
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 from dimos_lcm.nav_msgs import (
     MapMetaData,
