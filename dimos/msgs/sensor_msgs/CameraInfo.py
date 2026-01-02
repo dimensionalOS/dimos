@@ -20,6 +20,7 @@ import time
 from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
 from dimos_lcm.std_msgs.Header import Header
 import numpy as np
+import rerun as rr
 
 # Import ROS types
 try:
@@ -370,6 +371,28 @@ class CameraInfo(Timestamped):
             and self.binning_x == other.binning_x
             and self.binning_y == other.binning_y
             and self.frame_id == other.frame_id
+        )
+
+    def to_rerun(self, image_plane_distance: float = 0.5):  # type: ignore[no-untyped-def]
+        """Convert to Rerun Pinhole archetype for camera frustum visualization.
+
+        Args:
+            image_plane_distance: Distance to draw the image plane in the frustum
+
+        Returns:
+            rr.Pinhole archetype for logging to Rerun
+        """
+        # Extract intrinsics from K matrix
+        # K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
+        fx, fy = self.K[0], self.K[4]
+        cx, cy = self.K[2], self.K[5]
+
+        return rr.Pinhole(
+            focal_length=[fx, fy],
+            principal_point=[cx, cy],
+            width=self.width,
+            height=self.height,
+            image_plane_distance=image_plane_distance,
         )
 
 

@@ -159,3 +159,22 @@ class TFMessage:
             ros_msg.transforms.append(transform.to_ros_transform_stamped())
 
         return ros_msg
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to a list of rerun Transform3D archetypes.
+
+        Returns a list of tuples (entity_path, Transform3D) for each transform
+        in the message. The entity_path is derived from the child_frame_id.
+
+        Returns:
+            List of (entity_path, rr.Transform3D) tuples
+
+        Example:
+            for path, transform in tf_msg.to_rerun():
+                rr.log(path, transform)
+        """
+        results = []
+        for transform in self.transforms:
+            entity_path = f"world/{transform.child_frame_id}"
+            results.append((entity_path, transform.to_rerun()))  # type: ignore[no-untyped-call]
+        return results

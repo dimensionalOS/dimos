@@ -31,7 +31,7 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
         detector=YoloPersonDetector,
     )
 
-    detector3d = moduleDB.deploy(
+    detector3d = moduleDB.deploy(  # type: ignore[attr-defined]
         dimos,
         camera=camera,
         lidar=nav,

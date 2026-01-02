@@ -56,7 +56,7 @@ class Detection2DModule(Module):
     config: Config
     detector: Detector
 
-    image: In[Image]
+    color_image: In[Image]
 
     detections: Out[Detection2DArray]
     annotations: Out[ImageAnnotations]
@@ -82,7 +82,7 @@ class Detection2DModule(Module):
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
         return backpressure(
-            self.image.pure_observable().pipe(
+            self.color_image.pure_observable().pipe(
                 sharpness_barrier(self.config.max_freq),
             )
         )
@@ -166,7 +166,7 @@ def deploy(  # type: ignore[no-untyped-def]
     from dimos.core import LCMTransport
 
     detector = Detection2DModule(**kwargs)
-    detector.image.connect(camera.color_image)
+    detector.color_image.connect(camera.color_image)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)

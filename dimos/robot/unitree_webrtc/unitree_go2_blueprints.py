@@ -16,6 +16,10 @@
 
 import platform
 
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+    ImageAnnotations,
+)
+
 from dimos.agents.agent import llm_agent
 from dimos.agents.cli.human import human_input
 from dimos.agents.cli.web import web_input
@@ -25,19 +29,21 @@ from dimos.agents.skills.speak_skill import speak_skill
 from dimos.agents.spec import Provider
 from dimos.constants import DEFAULT_CAPACITY_COLOR_IMAGE
 from dimos.core.blueprints import autoconnect
-from dimos.core.transport import JpegLcmTransport, JpegShmTransport, pSHMTransport
+from dimos.core.transport import JpegLcmTransport, JpegShmTransport, LCMTransport, pSHMTransport
 from dimos.mapping.costmapper import cost_mapper
 from dimos.mapping.voxels import voxel_mapper
-from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.vision_msgs import Detection2DArray
 from dimos.navigation.frontier_exploration import (
     wavefront_frontier_explorer,
 )
 from dimos.navigation.replanning_a_star.module import (
     replanning_a_star_planner,
 )
+from dimos.perception.detection.moduleDB import ObjectDBModule, detectionDB_module
 from dimos.perception.spatial_perception import spatial_memory
 from dimos.robot.foxglove_bridge import foxglove_bridge
-from dimos.robot.unitree.connection.go2 import go2_connection
+from dimos.robot.unitree.connection.go2 import GO2Connection, go2_connection
 from dimos.robot.unitree_webrtc.unitree_skill_container import unitree_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
@@ -71,11 +77,52 @@ basic = autoconnect(
 
 nav = autoconnect(
     basic,
-    voxel_mapper(voxel_size=0.05),
+    voxel_mapper(voxel_size=0.1),
     cost_mapper(),
     replanning_a_star_planner(),
     wavefront_frontier_explorer(),
 ).global_config(n_dask_workers=6, robot_model="unitree_go2")
+
+detection = (
+    autoconnect(
+        nav,
+        detectionDB_module(
+            camera_info=GO2Connection.camera_info_static,
+        ),
+    )
+    .remappings(
+        [
+            (ObjectDBModule, "pointcloud", "global_map"),
+        ]
+    )
+    .transports(
+        {
+            # Detection 3D module outputs
+            ("detections", ObjectDBModule): LCMTransport(
+                "/detector3d/detections", Detection2DArray
+            ),
+            ("annotations", ObjectDBModule): LCMTransport(
+                "/detector3d/annotations", ImageAnnotations
+            ),
+            #            ("scene_update", ObjectDBModule): LCMTransport(
+            #                "/detector3d/scene_update", SceneUpdate
+            #            ),
+            ("detected_pointcloud_0", ObjectDBModule): LCMTransport(
+                "/detector3d/pointcloud/0", PointCloud2
+            ),
+            ("detected_pointcloud_1", ObjectDBModule): LCMTransport(
+                "/detector3d/pointcloud/1", PointCloud2
+            ),
+            ("detected_pointcloud_2", ObjectDBModule): LCMTransport(
+                "/detector3d/pointcloud/2", PointCloud2
+            ),
+            ("detected_image_0", ObjectDBModule): LCMTransport("/detector3d/image/0", Image),
+            ("detected_image_1", ObjectDBModule): LCMTransport("/detector3d/image/1", Image),
+            ("detected_image_2", ObjectDBModule): LCMTransport("/detector3d/image/2", Image),
+        }
+    )
+)
+
 
 spatial = autoconnect(
     nav,

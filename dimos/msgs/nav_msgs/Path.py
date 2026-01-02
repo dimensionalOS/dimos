@@ -30,6 +30,7 @@ try:
     from nav_msgs.msg import Path as ROSPath  # type: ignore[attr-defined]
 except ImportError:
     ROSPath = None  # type: ignore[assignment, misc]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs.PoseStamped import PoseStamped
 from dimos.types.timestamped import Timestamped
@@ -231,3 +232,18 @@ class Path(Timestamped):
             ros_msg.poses.append(pose.to_ros_msg())
 
         return ros_msg
+
+    def to_rerun(self, color: tuple[int, int, int] = (0, 255, 128)):  # type: ignore[no-untyped-def]
+        """Convert to rerun LineStrips3D format.
+
+        Args:
+            color: RGB color tuple for the path line
+
+        Returns:
+            rr.LineStrips3D archetype for logging to rerun
+        """
+        if not self.poses:
+            return rr.LineStrips3D([])
+
+        points = [[p.x, p.y, p.z] for p in self.poses]
+        return rr.LineStrips3D([points], colors=[color])
