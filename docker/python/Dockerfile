@@ -44,15 +44,26 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Copy dependency files first (lockfile enables faster, deterministic installs)
-COPY pyproject.toml uv.lock /app/
+# Copy dependency specification first
+COPY pyproject.toml /app/
 
-# Install EXTERNAL dependencies only (cached unless pyproject.toml/uv.lock change)
-# --no-install-project skips building the local package (which needs C++ sources)
-RUN uv sync --frozen --no-install-project --extra cpu --extra sim --extra drone
+# Install EXTERNAL dependencies only (cached unless pyproject.toml changes)
+# Parse pyproject.toml to extract deps without building local package
+RUN uv pip install --upgrade 'pip>=24' 'setuptools>=70' 'wheel' 'packaging>=24' pybind11 && \
+    python3 -c "
+import tomllib
+with open('pyproject.toml', 'rb') as f:
+    data = tomllib.load(f)
+deps = list(data['project']['dependencies'])
+extras = data['project'].get('optional-dependencies', {})
+for extra in ['cpu', 'sim', 'drone']:
+    deps.extend(extras.get(extra, []))
+print('\n'.join(deps))
+" > /tmp/requirements.txt && \
+    uv pip install -r /tmp/requirements.txt
 
 # Copy the rest of the project
 COPY . /app/
 
-# Install the local package (builds C++ extension, but deps already cached)
-RUN uv sync --frozen --extra cpu --extra sim --extra drone
+# Install the local package (builds C++ extension, deps already cached)
+RUN uv pip install --no-deps -e .

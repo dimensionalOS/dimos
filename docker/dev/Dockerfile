@@ -24,9 +24,8 @@ RUN git config --global --add safe.directory '*'
 
 WORKDIR /app
 
-# Install dev dependencies (UV already installed in parent image)
-# Parent has cpu,sim,drone extras; add dev extras here
-RUN uv sync --frozen --extra cpu --extra sim --extra drone --extra dev
+# Install dev dependencies (UV and base package already in parent image)
+RUN uv pip install .[dev]
 
 # Copy files and add version to motd
 COPY /assets/dimensionalascii.txt /etc/motd
