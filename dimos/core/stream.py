@@ -15,6 +15,9 @@
 from __future__ import annotations
 
 import enum
+import queue
+import threading
+import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -145,6 +148,10 @@ class Out(Stream[T], ObservableMixin[T]):
         super().__init__(*argv, **kwargs)
         self._rerun_config: dict | None = None  # type: ignore[type-arg]
         self._rerun_last_log: float = 0.0
+        # Async logging state
+        self._rerun_queue: queue.Queue | None = None  # type: ignore[type-arg]
+        self._rerun_thread: threading.Thread | None = None
+        self._rerun_async: bool = False
 
     @property
     def transport(self) -> Transport[T]:
@@ -176,9 +183,16 @@ class Out(Stream[T], ObservableMixin[T]):
             logger.warning(f"Trying to publish on Out {self} without a transport")
             return
 
-        # Log to Rerun directly if configured
+        # Log to Rerun (async or sync depending on config)
         if self._rerun_config is not None:
-            self._log_to_rerun(msg)
+            if self._rerun_async and self._rerun_queue is not None:
+                # Queue for async logging (non-blocking, drops if full)
+                try:
+                    self._rerun_queue.put_nowait(msg)
+                except queue.Full:
+                    pass  # Drop frame, data pipeline continues
+            else:
+                self._log_to_rerun(msg)
 
         self._transport.broadcast(self, msg)
 
@@ -222,15 +236,91 @@ class Out(Stream[T], ObservableMixin[T]):
         }
         self._rerun_last_log = 0.0
 
+    def autolog_to_rerun_async(
+        self,
+        entity_path: str,
+        rate_limit: float | None = None,
+        **rerun_kwargs: Any,
+    ) -> None:
+        """Configure async Rerun logging with background thread (non-blocking).
+
+        Creates a queue and worker thread. Messages are queued and logged
+        in the background, preventing Rerun from blocking the data pipeline.
+
+        Best for expensive visualizations (meshes, large point clouds) where
+        blocking the main thread would cause latency.
+
+        Args:
+            entity_path: Rerun entity path (e.g., "world/map")
+            rate_limit: Max Hz to log (None = unlimited)
+            **rerun_kwargs: Passed to msg.to_rerun() for rendering config
+
+        Example:
+            def start(self):
+                super().start()
+                # Non-blocking logging with background thread
+                self.global_map.autolog_to_rerun_async(
+                    "world/map",
+                    rate_limit=10.0,
+                    mode="boxes",
+                    colormap="turbo",
+                )
+        """
+        self._rerun_config = {
+            "entity_path": entity_path,
+            "rate_limit": rate_limit,
+            "rerun_kwargs": rerun_kwargs,
+        }
+        self._rerun_last_log = 0.0
+        self._rerun_async = True
+        self._rerun_queue = queue.Queue(maxsize=2)
+
+        def _worker() -> None:
+            """Background thread: pull from queue and log to Rerun."""
+            last_log_time = 0.0
+            while True:
+                try:
+                    msg = self._rerun_queue.get(timeout=1.0)  # type: ignore[union-attr]
+                    if msg is None:  # Shutdown signal
+                        break
+
+                    if not hasattr(msg, "to_rerun"):
+                        continue
+
+                    # Rate limiting
+                    if rate_limit is not None:
+                        now = time.monotonic()
+                        min_interval = 1.0 / rate_limit
+                        if now - last_log_time < min_interval:
+                            continue  # Skip - too soon
+                        last_log_time = now
+
+                    rerun_data = msg.to_rerun(**rerun_kwargs)
+                    rr.log(entity_path, rerun_data)
+                except queue.Empty:
+                    continue
+                except Exception as e:
+                    logger.warning(f"Rerun async logging error: {e}")
+
+        self._rerun_thread = threading.Thread(target=_worker, daemon=True)
+        self._rerun_thread.start()
+        logger.debug(f"Started async Rerun logging thread for {entity_path}")
+
+    def stop_rerun_async(self) -> None:
+        """Stop the async Rerun logging thread."""
+        if self._rerun_queue is not None and self._rerun_thread is not None:
+            self._rerun_queue.put(None)  # Shutdown signal
+            self._rerun_thread.join(timeout=2.0)
+            self._rerun_thread = None
+            self._rerun_queue = None
+
     def _log_to_rerun(self, msg: T) -> None:
-        """Log message to Rerun with rate limiting."""
+        """Log message to Rerun with rate limiting (synchronous)."""
         if not hasattr(msg, "to_rerun"):
             return
 
         if self._rerun_config is None:
             return
-
-        import time
 
         config = self._rerun_config
 
