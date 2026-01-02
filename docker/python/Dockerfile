@@ -44,9 +44,13 @@ ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /app
 
-# Copy entire project first to ensure proper package installation
-COPY . /app/
+# Copy ONLY dependency specification first (this layer is cached if pyproject.toml unchanged)
+COPY pyproject.toml /app/
 
 # Install dependencies with UV (10-100x faster than pip)
+# This expensive step is cached as long as pyproject.toml doesn't change
 RUN uv pip install --upgrade 'pip>=24' 'setuptools>=70' 'wheel' 'packaging>=24' && \
     uv pip install '.[cpu,sim,drone]'
+
+# Copy the rest of the project (frequent changes here don't invalidate the dep layer above)
+COPY . /app/
