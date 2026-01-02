@@ -17,7 +17,7 @@ import pytest
 
 from dimos.msgs.geometry_msgs import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
-from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
+from dimos.navigation.replanning_a_star.goal_validator import find_safe_goal
 from dimos.utils.data import get_data
 
 

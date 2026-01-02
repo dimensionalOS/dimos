@@ -22,7 +22,7 @@ from dimos.mapping.occupancy.visualizations import visualize_occupancy_grid
 from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.sensor_msgs import Image
-from dimos.navigation.global_planner.astar import astar
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 
@@ -37,7 +37,7 @@ def test_make_path_mask(occupancy_gradient, pose_index, max_length, expected_ima
     start = Vector3(4.0, 2.0, 0)
     goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
     expected = Image.from_file(get_data(expected_image))
-    path = astar("min_cost", occupancy_gradient, goal_pose.position, start, use_cpp=False)
+    path = min_cost_astar(occupancy_gradient, goal_pose.position, start, use_cpp=False)
     path = smooth_resample_path(path, goal_pose, 0.1)
     robot_width = 0.4
     path_mask = make_path_mask(occupancy_gradient, path, robot_width, pose_index, max_length)

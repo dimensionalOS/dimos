@@ -57,7 +57,6 @@ all_blueprints = {
 
 all_modules = {
     "astar_planner": "dimos.navigation.global_planner.planner",
-    "behavior_tree_navigator": "dimos.navigation.bt_navigator.navigator",
     "camera_module": "dimos.hardware.camera.module",
     "depth_module": "dimos.robot.unitree_webrtc.depth_module",
     "detection_2d": "dimos.perception.detection2d.module2D",
@@ -67,7 +66,6 @@ all_modules = {
     "g1_skills": "dimos.robot.unitree_webrtc.unitree_g1_skill_container",
     "google_maps_skill": "dimos.agents.skills.google_maps_skill_container",
     "gps_nav_skill": "dimos.agents.skills.gps_nav_skill",
-    "holonomic_local_planner": "dimos.navigation.local_planner.holonomic_local_planner",
     "human_input": "dimos.agents.cli.human",
     "keyboard_teleop": "dimos.robot.unitree_webrtc.keyboard_teleop",
     "llm_agent": "dimos.agents.agent",
