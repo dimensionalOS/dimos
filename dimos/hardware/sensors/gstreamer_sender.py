@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,11 +24,11 @@ import time
 if "/usr/lib/python3/dist-packages" not in sys.path:
     sys.path.insert(0, "/usr/lib/python3/dist-packages")
 
-import gi  # type: ignore[import-untyped,import-not-found]
+import gi  # type: ignore[import-not-found, import-untyped]
 
 gi.require_version("Gst", "1.0")
 gi.require_version("GstVideo", "1.0")
-from gi.repository import GLib, Gst  # type: ignore[import-untyped,import-not-found]
+from gi.repository import GLib, Gst  # type: ignore[import-not-found, import-untyped]
 
 # Initialize GStreamer
 Gst.init(None)

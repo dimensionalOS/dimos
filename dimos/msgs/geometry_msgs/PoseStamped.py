@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,14 +14,15 @@
 
 from __future__ import annotations
 
+import math
 import time
 from typing import BinaryIO, TypeAlias
 
-from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import PoseStamped as LCMPoseStamped
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[import-untyped]
-        PoseStamped as ROSPoseStamped,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        PoseStamped as ROSPoseStamped,
     )
 except ImportError:
     ROSPoseStamped = None  # type: ignore[assignment, misc]
@@ -83,7 +84,7 @@ class PoseStamped(Pose, Timestamped):
     def __str__(self) -> str:
         return (
             f"PoseStamped(pos=[{self.x:.3f}, {self.y:.3f}, {self.z:.3f}], "
-            f"euler=[{self.roll:.3f}, {self.pitch:.3f}, {self.yaw:.3f}])"
+            f"euler=[{math.degrees(self.roll):.1f}, {math.degrees(self.pitch):.1f}, {math.degrees(self.yaw):.1f}])"
         )
 
     def new_transform_to(self, name: str) -> Transform:

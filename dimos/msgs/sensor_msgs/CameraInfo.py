@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,17 +17,17 @@ from __future__ import annotations
 import time
 
 # Import LCM types
-from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo as LCMCameraInfo
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from sensor_msgs.msg import (  # type: ignore[attr-defined]
         CameraInfo as ROSCameraInfo,
         RegionOfInterest as ROSRegionOfInterest,
     )
-    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined, import-untyped]
+    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -108,7 +108,7 @@ class CameraInfo(Timestamped):
         Returns:
             CameraInfo instance with loaded calibration data
         """
-        import yaml
+        import yaml  # type: ignore[import-untyped]
 
         with open(yaml_file) as f:
             data = yaml.safe_load(f)

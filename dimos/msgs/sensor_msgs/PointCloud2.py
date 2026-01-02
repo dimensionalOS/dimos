@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -18,11 +18,11 @@ import functools
 import struct
 
 # Import LCM types
-from dimos_lcm.sensor_msgs.PointCloud2 import (  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs.PointCloud2 import (
     PointCloud2 as LCMPointCloud2,
 )
-from dimos_lcm.sensor_msgs.PointField import PointField  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs.PointField import PointField
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 import open3d.core as o3c  # type: ignore[import-untyped]
@@ -31,11 +31,11 @@ from dimos.msgs.geometry_msgs import Vector3
 
 # Import ROS types
 try:
-    from sensor_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from sensor_msgs.msg import (  # type: ignore[attr-defined]
         PointCloud2 as ROSPointCloud2,
         PointField as ROSPointField,
     )
-    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined, import-untyped]
+    from std_msgs.msg import Header as ROSHeader  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True
 except ImportError:
@@ -104,8 +104,8 @@ class PointCloud2(Timestamped):
         points_obj = state.pop("_pcd_numpy", None)
         points: np.ndarray[tuple[int, int], np.dtype[np.float32]] = (
             points_obj if isinstance(points_obj, np.ndarray) else np.zeros((0, 3), dtype=np.float32)
-        )  # type: ignore[assignment]
-        self.__dict__.update(state)  # type: ignore[arg-type]
+        )
+        self.__dict__.update(state)
         # Recreate tensor from numpy
         self._pcd_tensor = o3d.t.geometry.PointCloud()
         if len(points) > 0:
@@ -583,7 +583,7 @@ class PointCloud2(Timestamped):
         # Filter out NaN and Inf values if not dense
         if not ros_msg.is_dense:
             mask = np.isfinite(points).all(axis=1)
-            points = points[mask]
+            points = points[mask]  # type: ignore[assignment]
 
         # Create Open3D point cloud
         pc = o3d.geometry.PointCloud()

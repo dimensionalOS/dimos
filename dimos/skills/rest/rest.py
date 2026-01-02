@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,7 +15,7 @@
 import logging
 
 from pydantic import Field
-import requests
+import requests  # type: ignore[import-untyped]
 
 from dimos.skills.skills import AbstractSkill
 
@@ -87,7 +87,7 @@ class GenericRestSkill(AbstractSkill):
             logger.debug(
                 f"Request successful. Status: {response.status_code}, Response: {response.text[:100]}..."
             )
-            return response.text  # Return text content directly
+            return response.text  # type: ignore[no-any-return]  # Return text content directly
         except requests.exceptions.HTTPError as http_err:
             logger.error(
                 f"HTTP error occurred: {http_err} - Status Code: {http_err.response.status_code}"

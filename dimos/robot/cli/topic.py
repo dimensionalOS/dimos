@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -98,5 +98,5 @@ def topic_send(topic: str, message_expr: str) -> None:
         pLCMTransport(topic) if use_pickled else LCMTransport(topic, msg_type)
     )
 
-    transport.broadcast(None, message)  # type: ignore[arg-type]
+    transport.broadcast(None, message)
     typer.echo(f"Sent to {topic}: {message}")

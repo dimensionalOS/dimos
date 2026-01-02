@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@ from __future__ import annotations
 import time
 from typing import TypeAlias
 
-from dimos_lcm.sensor_msgs import Joy as LCMJoy  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import Joy as LCMJoy
 
 try:
-    from sensor_msgs.msg import Joy as ROSJoy  # type: ignore[attr-defined, import-untyped]
+    from sensor_msgs.msg import Joy as ROSJoy  # type: ignore[attr-defined]
 except ImportError:
     ROSJoy = None  # type: ignore[assignment, misc]
 

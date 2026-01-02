@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,13 +17,13 @@ from __future__ import annotations
 import time
 from typing import BinaryIO
 
-from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (
     Transform as LCMTransform,
     TransformStamped as LCMTransformStamped,
 )
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
         Quaternion as ROSQuaternion,
         Transform as ROSTransform,
         TransformStamped as ROSTransformStamped,
@@ -327,7 +327,7 @@ class Transform(Timestamped):
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> Transform:
         """Decode from LCM TFMessage bytes."""
-        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
+        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
         lcm_msg = LCMTFMessage.lcm_decode(data)
 

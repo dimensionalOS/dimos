@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,7 +26,7 @@ import cv2
 import numpy as np
 import open3d as o3d  # type: ignore[import-untyped]
 from scipy.spatial import cKDTree  # type: ignore[import-untyped]
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from dimos.perception.common.utils import project_3d_points_to_2d
 

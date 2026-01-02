@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -17,12 +17,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, TypeAlias
 
-from dimos_lcm.nav_msgs import Odometry as LCMOdometry  # type: ignore[import-untyped]
+from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 import numpy as np
 from plum import dispatch
 
 try:
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined, import-untyped]
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
 except ImportError:
     ROSOdometry = None  # type: ignore[assignment, misc]
 

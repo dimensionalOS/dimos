@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -251,8 +251,8 @@ class Agent(AgentSpec):
             logger.info(f"executing skill call {tool_call}")
             self.coordinator.call_skill(
                 tool_call.get("id"),  # type: ignore[arg-type]
-                tool_call.get("name"),  # type: ignore[arg-type]
-                tool_call.get("args"),  # type: ignore[arg-type]
+                tool_call.get("name"),
+                tool_call.get("args"),
             )
 
     # used to inject skill calls into the agent loop without agent asking for it
@@ -280,7 +280,7 @@ class Agent(AgentSpec):
         def _get_state() -> str:
             # TODO: FIX THIS EXTREME HACK
             update = self.coordinator.generate_snapshot(clear=False)
-            snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)  # type: ignore[attr-defined]
+            snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
             return json.dumps(snapshot_msgs, sort_keys=True, default=lambda o: repr(o))
 
         try:
@@ -315,8 +315,8 @@ class Agent(AgentSpec):
 
                 state = _get_state()
 
-                if msg.tool_calls:  # type: ignore[attr-defined]
-                    self.execute_tool_calls(msg.tool_calls)  # type: ignore[attr-defined]
+                if msg.tool_calls:
+                    self.execute_tool_calls(msg.tool_calls)
 
                 # print(self)
                 # print(self.coordinator)
@@ -340,7 +340,7 @@ class Agent(AgentSpec):
                 # generate tool_msgs and general state update message,
                 # depending on a skill having associated tool call from previous interaction
                 # we will return a tool message, and not a general state message
-                snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)  # type: ignore[attr-defined]
+                snapshot_msgs = snapshot_to_messages(update, msg.tool_calls)
 
                 self.state_messages = snapshot_msgs.get("state_msgs", [])  # type: ignore[attr-defined]
                 self.append_history(
