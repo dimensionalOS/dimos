@@ -43,9 +43,8 @@ build/
 .env.local
 .env.*.local
 
-# Large data files
-data/*
-!data/.lfs/
+# Large data files (including LFS pointer files)
+data/
 
 # Model files (can be downloaded at runtime)
 *.pt
