@@ -1,4 +1,4 @@
-# Copyright 2025-2026 Dimensional Inc.
+# Copyright 2025 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,9 +15,6 @@
 from __future__ import annotations
 
 import enum
-import queue
-import threading
-import time
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -29,7 +26,6 @@ from dask.distributed import Actor
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
-import rerun as rr
 
 import dimos.core.colors as colors
 from dimos.core.resource import Resource
@@ -141,17 +137,11 @@ class Stream(Generic[T]):
         )
 
 
-class Out(Stream[T], ObservableMixin[T]):
+class Out(Stream[T]):
     _transport: Transport  # type: ignore[type-arg]
 
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*argv, **kwargs)
-        self._rerun_config: dict | None = None  # type: ignore[type-arg]
-        self._rerun_last_log: float = 0.0
-        # Async logging state
-        self._rerun_queue: queue.Queue | None = None  # type: ignore[type-arg]
-        self._rerun_thread: threading.Thread | None = None
-        self._rerun_async: bool = False
 
     @property
     def transport(self) -> Transport[T]:
@@ -159,7 +149,8 @@ class Out(Stream[T], ObservableMixin[T]):
 
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
-        self._transport = value
+        # just for type checking
+        ...
 
     @property
     def state(self) -> State:
@@ -182,158 +173,7 @@ class Out(Stream[T], ObservableMixin[T]):
         if not hasattr(self, "_transport") or self._transport is None:
             logger.warning(f"Trying to publish on Out {self} without a transport")
             return
-
-        # Log to Rerun (async or sync depending on config)
-        if self._rerun_config is not None:
-            if self._rerun_async and self._rerun_queue is not None:
-                # Queue for async logging (non-blocking, drops if full)
-                try:
-                    self._rerun_queue.put_nowait(msg)
-                except queue.Full:
-                    pass  # Drop frame, data pipeline continues
-            else:
-                self._log_to_rerun(msg)
-
         self._transport.broadcast(self, msg)
-
-    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
-        """Subscribe to this output stream.
-
-        Args:
-            cb: Callback function to receive messages
-
-        Returns:
-            Unsubscribe function
-        """
-        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
-
-    def autolog_to_rerun(
-        self,
-        entity_path: str,
-        rate_limit: float | None = None,
-        **rerun_kwargs: Any,
-    ) -> None:
-        """Configure this output to auto-log to Rerun (fire-and-forget).
-
-        Call once in start() - messages auto-logged when published.
-
-        Args:
-            entity_path: Rerun entity path (e.g., "world/map")
-            rate_limit: Max Hz to log (None = unlimited)
-            **rerun_kwargs: Passed to msg.to_rerun() for rendering config
-                           (e.g., radii=0.02, colormap="turbo", colors=[255,0,0])
-
-        Example:
-            def start(self):
-                super().start()
-                # Just declare it - fire and forget!
-                self.global_map.autolog_to_rerun("world/map", rate_limit=5.0, radii=0.02)
-        """
-        self._rerun_config = {
-            "entity_path": entity_path,
-            "rate_limit": rate_limit,
-            "rerun_kwargs": rerun_kwargs,
-        }
-        self._rerun_last_log = 0.0
-
-    def autolog_to_rerun_async(
-        self,
-        entity_path: str,
-        rate_limit: float | None = None,
-        **rerun_kwargs: Any,
-    ) -> None:
-        """Configure async Rerun logging with background thread (non-blocking).
-
-        Creates a queue and worker thread. Messages are queued and logged
-        in the background, preventing Rerun from blocking the data pipeline.
-
-        Best for expensive visualizations (meshes, large point clouds) where
-        blocking the main thread would cause latency.
-
-        Args:
-            entity_path: Rerun entity path (e.g., "world/map")
-            rate_limit: Max Hz to log (None = unlimited)
-            **rerun_kwargs: Passed to msg.to_rerun() for rendering config
-
-        Example:
-            def start(self):
-                super().start()
-                # Non-blocking logging with background thread
-                self.global_map.autolog_to_rerun_async(
-                    "world/map",
-                    rate_limit=10.0,
-                    mode="boxes",
-                    colormap="turbo",
-                )
-        """
-        self._rerun_config = {
-            "entity_path": entity_path,
-            "rate_limit": rate_limit,
-            "rerun_kwargs": rerun_kwargs,
-        }
-        self._rerun_last_log = 0.0
-        self._rerun_async = True
-        self._rerun_queue = queue.Queue(maxsize=2)
-
-        def _worker() -> None:
-            """Background thread: pull from queue and log to Rerun."""
-            last_log_time = 0.0
-            while True:
-                try:
-                    msg = self._rerun_queue.get(timeout=1.0)  # type: ignore[union-attr]
-                    if msg is None:  # Shutdown signal
-                        break
-
-                    if not hasattr(msg, "to_rerun"):
-                        continue
-
-                    # Rate limiting
-                    if rate_limit is not None:
-                        now = time.monotonic()
-                        min_interval = 1.0 / rate_limit
-                        if now - last_log_time < min_interval:
-                            continue  # Skip - too soon
-                        last_log_time = now
-
-                    rerun_data = msg.to_rerun(**rerun_kwargs)
-                    rr.log(entity_path, rerun_data)
-                except queue.Empty:
-                    continue
-                except Exception as e:
-                    logger.warning(f"Rerun async logging error: {e}")
-
-        self._rerun_thread = threading.Thread(target=_worker, daemon=True)
-        self._rerun_thread.start()
-        logger.debug(f"Started async Rerun logging thread for {entity_path}")
-
-    def stop_rerun_async(self) -> None:
-        """Stop the async Rerun logging thread."""
-        if self._rerun_queue is not None and self._rerun_thread is not None:
-            self._rerun_queue.put(None)  # Shutdown signal
-            self._rerun_thread.join(timeout=2.0)
-            self._rerun_thread = None
-            self._rerun_queue = None
-
-    def _log_to_rerun(self, msg: T) -> None:
-        """Log message to Rerun with rate limiting (synchronous)."""
-        if not hasattr(msg, "to_rerun"):
-            return
-
-        if self._rerun_config is None:
-            return
-
-        config = self._rerun_config
-
-        # Rate limiting
-        if config["rate_limit"] is not None:
-            now = time.monotonic()
-            min_interval = 1.0 / config["rate_limit"]
-            if now - self._rerun_last_log < min_interval:
-                return  # Skip - too soon
-            self._rerun_last_log = now
-
-        rerun_data = msg.to_rerun(**config["rerun_kwargs"])
-        rr.log(config["entity_path"], rerun_data)
 
 
 class RemoteStream(Stream[T]):
@@ -382,7 +222,7 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport and self.connection:
-            self._transport = self.connection.transport
+            self._transport = self.connection.transport  # type: ignore[union-attr]
         return self._transport
 
     @transport.setter
@@ -417,7 +257,7 @@ class RemoteIn(RemoteStream[T]):
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         self.transport.broadcast(self, msg)  # type: ignore[arg-type]
 
-    @transport.setter  # type: ignore[attr-defined, no-redef, untyped-decorator]
+    @transport.setter  # type: ignore[attr-defined, misc, no-redef, untyped-decorator]
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value

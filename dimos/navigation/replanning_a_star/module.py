@@ -50,10 +50,17 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
-        connect_rerun(global_config=self._global_config)
-
-        # Auto-log path to Rerun
-        self.path.autolog_to_rerun("world/nav/path")
+        
+        if self._global_config.viewer_backend.startswith("rerun"):
+            connect_rerun(global_config=self._global_config)
+            
+            # Manual Rerun logging for path
+            def _log_path_to_rerun(path: Path) -> None:
+                import rerun as rr
+                rr.log("world/nav/path", path.to_rerun())
+            
+            unsub = self.path.subscribe(_log_path_to_rerun)
+            self._disposables.add(Disposable(unsub))
 
         unsub = self.odom.subscribe(self._planner.handle_odom)
         self._disposables.add(Disposable(unsub))
