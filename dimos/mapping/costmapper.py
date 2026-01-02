@@ -87,7 +87,7 @@ class CostMapper(Module):
                         "world/nav/costmap/floor",
                         grid.to_rerun(
                             mode="mesh",
-                            colormap="turbo",  # Matches Foxglove colormap (blue-purple gradient)
+                            colormap=None,  # Uses Foxglove-style colors (blue-purple free, black occupied)
                             z_offset=0.05,  # 5cm above floor to avoid z-fighting
                         ),
                     )
