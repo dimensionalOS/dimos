@@ -230,7 +230,7 @@ class WebsocketVisModule(Module):
         # Add static file serving for command-center assets if build exists
         if _COMMAND_CENTER_DIR.exists():
             routes.append(
-                Mount(  # type: ignore[list-item]
+                Mount(  # type: ignore[arg-type]
                     "/assets",
                     app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"),
                     name="assets",
