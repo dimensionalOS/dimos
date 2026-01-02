@@ -30,9 +30,9 @@ from dimos.msgs.nav_msgs.OccupancyGrid import CostValues, OccupancyGrid
 from dimos.msgs.nav_msgs.Path import Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationState
-from dimos.navigation.bt_navigator.goal_validator import find_safe_goal
-from dimos.navigation.global_planner.astar import astar
+from dimos.navigation.replanning_a_star.goal_validator import find_safe_goal
 from dimos.navigation.replanning_a_star.local_planner import LocalPlanner, StopMessage
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.navigation.replanning_a_star.navigation_map import NavigationMap
 from dimos.navigation.replanning_a_star.position_tracker import PositionTracker
 from dimos.navigation.replanning_a_star.replan_limiter import ReplanLimiter
@@ -314,7 +314,7 @@ class GlobalPlanner(Resource):
 
         for size in sizes_to_try:
             costmap = self._navigation_map.make_gradient_costmap(size)
-            path = astar(self._global_config.astar_algorithm, costmap, goal, robot_pos)
+            path = min_cost_astar(costmap, goal, robot_pos)
             if path and path.poses:
                 logger.info(f"Found path {size}x robot width.")
                 return path

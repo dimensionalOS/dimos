@@ -20,8 +20,8 @@ from setuptools import find_packages, setup
 # C++ extensions
 ext_modules = [
     Pybind11Extension(
-        "dimos.navigation.global_planner.min_cost_astar_ext",
-        [os.path.join("dimos", "navigation", "global_planner", "min_cost_astar_cpp.cpp")],
+        "dimos.navigation.replanning_a_star.min_cost_astar_ext",
+        [os.path.join("dimos", "navigation", "replanning_a_star", "min_cost_astar_cpp.cpp")],
         extra_compile_args=[
             "-O3",  # Maximum optimization
             "-march=native",  # Optimize for current CPU

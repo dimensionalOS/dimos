@@ -22,7 +22,7 @@ from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
 from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs.Image import Image
-from dimos.navigation.global_planner.astar import astar
+from dimos.navigation.replanning_a_star.min_cost_astar import min_cost_astar
 from dimos.utils.data import get_data
 
 
@@ -36,7 +36,7 @@ def test_resample_path(costmap, method) -> None:
     start = Vector3(4.0, 2.0, 0)
     goal_pose = Pose(6.15, 10.0, 0, 0, 0, 0, 1)
     expected = Image.from_file(get_data(f"resample_path_{method}.png"))
-    path = astar("min_cost", costmap, goal_pose.position, start, use_cpp=False)
+    path = min_cost_astar(costmap, goal_pose.position, start, use_cpp=False)
 
     match method:
         case "simple":
