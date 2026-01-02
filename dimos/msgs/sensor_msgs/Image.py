@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import TYPE_CHECKING, Any, Literal, TypedDict
+from typing import TYPE_CHECKING, Literal, TypedDict
 
 import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
@@ -318,10 +318,6 @@ class Image(Timestamped):
 
     def to_grayscale(self) -> Image:
         return Image(self._impl.to_grayscale())
-
-    def to_rerun(self) -> Any:
-        """Convert to rerun Image format."""
-        return self._impl.to_rerun()
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
         return Image(self._impl.resize(width, height, interpolation))
