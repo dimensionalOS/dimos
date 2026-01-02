@@ -16,6 +16,7 @@ import os
 
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -25,7 +26,6 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
-import rerun as rr
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
@@ -51,14 +51,14 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
-        
+
         if self._global_config.viewer_backend.startswith("rerun"):
             connect_rerun(global_config=self._global_config)
-            
+
             # Manual Rerun logging for path
             def _log_path_to_rerun(path: Path) -> None:
                 rr.log("world/nav/path", path.to_rerun())
-            
+
             unsub = self._planner.path.subscribe(_log_path_to_rerun)
             self._disposables.add(Disposable(unsub))
 

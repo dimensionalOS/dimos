@@ -27,7 +27,7 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
