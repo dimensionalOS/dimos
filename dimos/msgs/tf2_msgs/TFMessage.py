@@ -176,5 +176,5 @@ class TFMessage:
         results = []
         for transform in self.transforms:
             entity_path = f"world/{transform.child_frame_id}"
-            results.append((entity_path, transform.to_rerun()))
+            results.append((entity_path, transform.to_rerun()))  # type: ignore[no-untyped-call]
         return results

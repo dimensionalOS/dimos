@@ -427,12 +427,12 @@ class OccupancyGrid(Timestamped):
 
         return int(self.grid[y, x])
 
-    def to_rerun(
+    def to_rerun(  # type: ignore[no-untyped-def]
         self,
         colormap: str | None = None,
         mode: str = "image",
         z_offset: float = 0.01,
-        **kwargs,  # type: ignore[no-untyped-def]
+        **kwargs: Any,
     ):  # type: ignore[no-untyped-def]
         """Convert to Rerun visualization format.
 
