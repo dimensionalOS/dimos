@@ -25,6 +25,7 @@ from dimos.msgs.nav_msgs import OccupancyGrid, Path
 from dimos.msgs.sensor_msgs import Image
 from dimos.navigation.base import NavigationInterface, NavigationState
 from dimos.navigation.replanning_a_star.global_planner import GlobalPlanner
+import rerun as rr
 
 
 class ReplanningAStarPlanner(Module, NavigationInterface):
@@ -56,10 +57,9 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
             
             # Manual Rerun logging for path
             def _log_path_to_rerun(path: Path) -> None:
-                import rerun as rr
                 rr.log("world/nav/path", path.to_rerun())
             
-            unsub = self.path.subscribe(_log_path_to_rerun)
+            unsub = self._planner.path.subscribe(_log_path_to_rerun)
             self._disposables.add(Disposable(unsub))
 
         unsub = self.odom.subscribe(self._planner.handle_odom)
