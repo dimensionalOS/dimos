@@ -52,9 +52,6 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
         super().start()
         connect_rerun(global_config=self._global_config)
 
-        # Auto-log path to Rerun
-        self.path.autolog_to_rerun("world/nav/path")
-
         unsub = self.odom.subscribe(self._planner.handle_odom)
         self._disposables.add(Disposable(unsub))
 
