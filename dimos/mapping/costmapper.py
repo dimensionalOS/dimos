@@ -82,21 +82,13 @@ class CostMapper(Module):
 
                 # Generate mesh + log to Rerun (blocks in background, not on data path)
                 try:
-                    # 2D image panel
-                    rr.log(
-                        "world/nav/costmap/image",
-                        grid.to_rerun(
-                            mode="image",
-                            colormap="RdBu_r",
-                        ),
-                    )
                     # 3D floor overlay (expensive mesh generation)
                     rr.log(
                         "world/nav/costmap/floor",
                         grid.to_rerun(
                             mode="mesh",
-                            colormap=None,  # Grayscale: free=white, occupied=black
-                            z_offset=0.02,
+                            colormap=None,  # Uses Foxglove-style colors (blue-purple free, black occupied)
+                            z_offset=0.05,  # 5cm above floor to avoid z-fighting
                         ),
                     )
 

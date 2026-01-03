@@ -16,6 +16,7 @@ import os
 
 from dimos_lcm.std_msgs import Bool, String
 from reactivex.disposable import Disposable
+import rerun as rr
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.global_config import GlobalConfig
@@ -50,22 +51,24 @@ class ReplanningAStarPlanner(Module, NavigationInterface):
     @rpc
     def start(self) -> None:
         super().start()
-        connect_rerun(global_config=self._global_config)
 
-        # Auto-log path to Rerun
-        self.path.autolog_to_rerun("world/nav/path")
+        if self._global_config.viewer_backend.startswith("rerun"):
+            connect_rerun(global_config=self._global_config)
 
-        unsub = self.odom.subscribe(self._planner.handle_odom)
-        self._disposables.add(Disposable(unsub))
+            # Manual Rerun logging for path
+            def _log_path_to_rerun(path: Path) -> None:
+                rr.log("world/nav/path", path.to_rerun())  # type: ignore[no-untyped-call]
 
-        unsub = self.global_costmap.subscribe(self._planner.handle_global_costmap)
-        self._disposables.add(Disposable(unsub))
+            self._disposables.add(self._planner.path.subscribe(_log_path_to_rerun))
 
-        unsub = self.goal_request.subscribe(self._planner.handle_goal_request)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.target.subscribe(self._planner.handle_goal_request)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(Disposable(self.odom.subscribe(self._planner.handle_odom)))
+        self._disposables.add(
+            Disposable(self.global_costmap.subscribe(self._planner.handle_global_costmap))
+        )
+        self._disposables.add(
+            Disposable(self.goal_request.subscribe(self._planner.handle_goal_request))
+        )
+        self._disposables.add(Disposable(self.target.subscribe(self._planner.handle_goal_request)))
 
         self._disposables.add(self._planner.path.subscribe(self.path.publish))
 

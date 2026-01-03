@@ -648,15 +648,27 @@ class OccupancyGrid(Timestamped):
             # Alpha: 180 for free, 220 for occupied
             alpha = np.where(cell_values == 0, 180, 220).astype(np.uint8)
         else:
-            # Default coloring: dark grey for free, black for occupied
+            # Foxglove-style coloring: blue-purple for free, black for occupied
+            # Free (0): #484981 = RGB(72, 73, 129)
+            # Occupied (100): #000000 = RGB(0, 0, 0)
             rgb = np.zeros((n_cells, 3), dtype=np.uint8)
             is_free = cell_values == 0
-            # Free space: dark grey
-            rgb[is_free] = [40, 40, 40]
-            # Occupied: black to dark grey gradient (darker = more occupied)
-            intensity = (40 * (1 - cell_values / 100)).astype(np.uint8)
-            rgb[~is_free] = np.column_stack([intensity[~is_free]] * 3)
-            alpha = np.where(is_free, 150, 200).astype(np.uint8)
+            is_occupied = ~is_free
+
+            # Free space: blue-purple #484981
+            rgb[is_free] = [72, 73, 129]
+
+            # Occupied: gradient from blue-purple to black based on cost
+            # cost 1 -> mostly blue-purple, cost 100 -> black
+            if np.any(is_occupied):
+                costs = cell_values[is_occupied].astype(np.float32)
+                # Linear interpolation: (1 - cost/100) * blue-purple
+                factor = (1 - costs / 100).clip(0, 1)
+                rgb[is_occupied, 0] = (72 * factor).astype(np.uint8)
+                rgb[is_occupied, 1] = (73 * factor).astype(np.uint8)
+                rgb[is_occupied, 2] = (129 * factor).astype(np.uint8)
+
+            alpha = np.where(is_free, 180, 220).astype(np.uint8)
 
         # Combine RGB and alpha into RGBA
         colors_per_cell = np.column_stack([rgb, alpha])  # (n_cells, 4)
