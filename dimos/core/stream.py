@@ -242,8 +242,7 @@ class In(Stream[T], ObservableMixin[T]):
         ...
 
     def connect(self, value: Out[T]) -> None:
-        # just for type checking
-        ...
+        value.subscribe(self.transport.publish)  # type: ignore[arg-type]
 
     @property
     def state(self) -> State:

@@ -15,3 +15,4 @@
 *.mov filter=lfs diff=lfs merge=lfs -text binary
 *.gif filter=lfs diff=lfs merge=lfs -text binary
 *.foxe filter=lfs diff=lfs merge=lfs -text binary
+docs/**/*.png filter=lfs diff=lfs merge=lfs -text

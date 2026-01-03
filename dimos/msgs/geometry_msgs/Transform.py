@@ -79,7 +79,7 @@ class Transform(Timestamped):
         return f"Transform(translation={self.translation!r}, rotation={self.rotation!r})"
 
     def __str__(self) -> str:
-        return f"Transform:\n {self.frame_id} -> {self.child_frame_id} Translation: {self.translation}\n  Rotation: {self.rotation}"
+        return f"{self.frame_id} -> {self.child_frame_id}\n  Translation: {self.translation}\n  Rotation: {self.rotation}"
 
     def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two transforms are equal."""

@@ -9,9 +9,10 @@
     xome.url         = "github:jeff-hykin/xome";
     xome.inputs.nixpkgs.follows    = "nixpkgs";
     xome.inputs.flake-utils.follows = "flake-utils";
+    diagon.url       = "github:petertrotman/nixpkgs/Diagon";
   };
 
-  outputs = { self, nixpkgs, flake-utils, lib, xome, ... }:
+  outputs = { self, nixpkgs, flake-utils, lib, xome, diagon, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
@@ -127,6 +128,12 @@
           { vals.pkg=pkgs.libjpeg;       flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.libjpeg_turbo; flags.ldLibraryGroup=true; }
           { vals.pkg=pkgs.libpng;        flags={}; }
+
+          ### Docs generators
+          { vals.pkg=pkgs.pikchr;        flags={}; }
+          { vals.pkg=pkgs.graphviz;      flags={}; }
+          { vals.pkg=pkgs.imagemagick;   flags={}; }
+          { vals.pkg=diagon.legacyPackages.${system}.diagon;   flags={}; }
 
           ### LCM (Lightweight Communications and Marshalling)
           { vals.pkg=pkgs.lcm; flags.ldLibraryGroup=true; onlyIf=pkgs.stdenv.isLinux; }

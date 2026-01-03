@@ -287,28 +287,10 @@ class GO2Connection(Module, spec.Camera, spec.Pointcloud):
             ts=odom.ts,
         )
 
-        sensor = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="world",
-            child_frame_id="sensor",
-            ts=odom.ts,
-        )
-
-        map_to_world = Transform(
-            translation=Vector3(0.0, 0.0, 0.0),
-            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
-            frame_id="map",
-            child_frame_id="world",
-            ts=time.time(),
-        )
-
         return [
             Transform.from_pose("base_link", odom),
             camera_link,
             camera_optical,
-            sensor,
-            map_to_world,
         ]
 
     def _publish_tf(self, msg: PoseStamped) -> None:

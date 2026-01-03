@@ -1,0 +1,22 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 770.907 156.528">
+<path d="M9.66,121.104L126.069,121.104A7.5 7.5 0 0 0 133.569 113.604L133.569,42.924A7.5 7.5 0 0 0 126.069 35.424L9.66,35.424A7.5 7.5 0 0 0 2.16 42.924L2.16,113.604A7.5 7.5 0 0 0 9.66 121.104Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="67.8643" y="68.184" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Camera</text>
+<text x="67.8643" y="88.344" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">60 fps</text>
+<polygon points="176.769,78.264 165.249,82.584 165.249,73.944" style="fill:rgb(255,255,255)"/>
+<path d="M133.569,78.264L171.009,78.264"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M184.269,121.104L344.741,121.104A7.5 7.5 0 0 0 352.241 113.604L352.241,42.924A7.5 7.5 0 0 0 344.741 35.424L184.269,35.424A7.5 7.5 0 0 0 176.769 42.924L176.769,113.604A7.5 7.5 0 0 0 184.269 121.104Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="264.505" y="68.184" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">replay(1)</text>
+<text x="264.505" y="88.344" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">ref_count()</text>
+<polygon points="438.641,27.864 427.121,32.184 427.121,23.544" style="fill:rgb(255,255,255)"/>
+<path d="M352.241,78.264L395.441,78.264L395.441,27.864L432.881,27.864"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M446.141,53.568L576.259,53.568A7.5 7.5 0 0 0 583.759 46.068L583.759,9.66A7.5 7.5 0 0 0 576.259 2.16L446.141,2.16A7.5 7.5 0 0 0 438.641 9.66L438.641,46.068A7.5 7.5 0 0 0 446.141 53.568Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="511.2" y="27.864" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Fast Sub</text>
+<polygon points="438.641,128.664 427.121,132.984 427.121,124.344" style="fill:rgb(255,255,255)"/>
+<path d="M352.241,78.264L395.441,78.264L395.441,128.664L432.881,128.664"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M446.141,154.368L566.467,154.368A7.5 7.5 0 0 0 573.967 146.868L573.967,110.46A7.5 7.5 0 0 0 566.467 102.96L446.141,102.96A7.5 7.5 0 0 0 438.641 110.46L438.641,146.868A7.5 7.5 0 0 0 446.141 154.368Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="506.304" y="128.664" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">LATEST</text>
+<polygon points="617.167,128.664 605.647,132.984 605.647,124.344" style="fill:rgb(255,255,255)"/>
+<path d="M573.967,128.664L611.407,128.664"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M624.667,154.368L761.247,154.368A7.5 7.5 0 0 0 768.747 146.868L768.747,110.46A7.5 7.5 0 0 0 761.247 102.96L624.667,102.96A7.5 7.5 0 0 0 617.167 110.46L617.167,146.868A7.5 7.5 0 0 0 624.667 154.368Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="692.957" y="128.664" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Slow Sub</text>
+</svg>
