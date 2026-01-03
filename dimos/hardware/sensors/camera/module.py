@@ -29,6 +29,7 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.spec import perception
+from dimos.utils.reactive import iter_observable
 
 
 def default_transform() -> Transform:
@@ -100,11 +101,11 @@ class CameraModule(Module[CameraModuleConfig], perception.Camera):
 
         self.tf.publish(camera_link, camera_optical)
 
+    # actually skills should support on_demand passive skills so we don't emit this periodically
+    # but just provide the latest frame on demand
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)  # type: ignore[arg-type]
-    def video_stream(self) -> Generator[Observable[Image], None, None]:
-        while True:
-            yield self.hardware.image_stream().pipe(ops.first())
-            time.sleep(1)
+    def video_stream(self) -> Generator[Image, None, None]:
+        yield from iter_observable(self.hardware.image_stream().pipe(ops.sample(1.0)))
 
     def stop(self) -> None:
         if self.hardware and hasattr(self.hardware, "stop"):
