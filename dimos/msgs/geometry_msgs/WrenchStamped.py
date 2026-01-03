@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,7 +33,7 @@ class WrenchStamped(Timestamped):
     msg_name = "geometry_msgs.WrenchStamped"
     ts: float = 0.0
     frame_id: str = ""
-    wrench: Wrench = None
+    wrench: Wrench = None  # type: ignore[assignment]
 
     def __post_init__(self) -> None:
         if self.ts == 0.0:
@@ -42,8 +42,11 @@ class WrenchStamped(Timestamped):
             self.wrench = Wrench()
 
     @classmethod
-    def from_force_torque_array(
-        cls, ft_data: list, frame_id: str = "ft_sensor", ts: float | None = None
+    def from_force_torque_array(  # type: ignore[no-untyped-def]
+        cls,
+        ft_data: list,  # type: ignore[type-arg]
+        frame_id: str = "ft_sensor",
+        ts: float | None = None,
     ):
         """
         Create WrenchStamped from a 6-element force/torque array.

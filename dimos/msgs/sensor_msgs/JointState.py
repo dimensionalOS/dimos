@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -20,9 +20,9 @@ from typing import TypeAlias
 from dimos_lcm.sensor_msgs import JointState as LCMJointState
 
 try:
-    from sensor_msgs.msg import JointState as ROSJointState
+    from sensor_msgs.msg import JointState as ROSJointState  # type: ignore[attr-defined]
 except ImportError:
-    ROSJointState = None
+    ROSJointState = None  # type: ignore[assignment, misc]
 
 from plum import dispatch
 
@@ -32,7 +32,7 @@ from dimos.types.timestamped import Timestamped
 JointStateConvertable: TypeAlias = dict[str, list[str] | list[float]] | LCMJointState
 
 
-def sec_nsec(ts):
+def sec_nsec(ts):  # type: ignore[no-untyped-def]
     s = int(ts)
     return [s, int((ts - s) * 1_000_000_000)]
 
@@ -73,7 +73,7 @@ class JointState(Timestamped):
         self.velocity = velocity if velocity is not None else []
         self.effort = effort if effort is not None else []
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, joint_dict: dict[str, list[str] | list[float]]) -> None:
         """Initialize from a dictionary."""
         self.ts = joint_dict.get("ts", time.time())
@@ -83,7 +83,7 @@ class JointState(Timestamped):
         self.velocity = list(joint_dict.get("velocity", []))
         self.effort = list(joint_dict.get("effort", []))
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, joint: JointState) -> None:
         """Initialize from another JointState (copy constructor)."""
         self.ts = joint.ts
@@ -93,7 +93,7 @@ class JointState(Timestamped):
         self.velocity = list(joint.velocity)
         self.effort = list(joint.effort)
 
-    @dispatch
+    @dispatch  # type: ignore[no-redef]
     def __init__(self, lcm_joint: LCMJointState) -> None:
         """Initialize from an LCM JointState message."""
         self.ts = lcm_joint.header.stamp.sec + (lcm_joint.header.stamp.nsec / 1_000_000_000)
@@ -105,7 +105,7 @@ class JointState(Timestamped):
 
     def lcm_encode(self) -> bytes:
         lcm_msg = LCMJointState()
-        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)
+        [lcm_msg.header.stamp.sec, lcm_msg.header.stamp.nsec] = sec_nsec(self.ts)  # type: ignore[no-untyped-call]
         lcm_msg.header.frame_id = self.frame_id
         lcm_msg.name_length = len(self.name)
         lcm_msg.name = self.name
@@ -115,7 +115,7 @@ class JointState(Timestamped):
         lcm_msg.velocity = self.velocity
         lcm_msg.effort_length = len(self.effort)
         lcm_msg.effort = self.effort
-        return lcm_msg.lcm_encode()
+        return lcm_msg.lcm_encode()  # type: ignore[no-any-return]
 
     @classmethod
     def lcm_decode(cls, data: bytes) -> JointState:
@@ -139,7 +139,7 @@ class JointState(Timestamped):
             f"velocity={self.velocity}, effort={self.effort})"
         )
 
-    def __eq__(self, other) -> bool:
+    def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two JointState messages are equal."""
         if not isinstance(other, JointState):
             return False
@@ -179,7 +179,7 @@ class JointState(Timestamped):
         Returns:
             ROS JointState message
         """
-        ros_msg = ROSJointState()
+        ros_msg = ROSJointState()  # type: ignore[no-untyped-call]
 
         # Set header
         ros_msg.header.frame_id = self.frame_id

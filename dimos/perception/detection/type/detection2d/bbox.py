@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -21,16 +21,16 @@ from typing import TYPE_CHECKING, Any
 from typing_extensions import Self
 
 if TYPE_CHECKING:
-    from ultralytics.engine.results import Results
+    from ultralytics.engine.results import Results  # type: ignore[import-not-found]
 
     from dimos.msgs.sensor_msgs import Image
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     PointsAnnotation,
     TextAnnotation,
 )
-from dimos_lcm.foxglove_msgs.Point2 import Point2  # type: ignore[import-untyped]
-from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.Point2 import Point2
+from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D as ROSDetection2D,
     ObjectHypothesis,

@@ -1,4 +1,4 @@
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,15 +15,15 @@
 from typing import Union
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
-from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
+from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
     Detection3D,
 )
 import numpy as np
 import torch
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Vector3
 from dimos.msgs.sensor_msgs import Image
@@ -36,7 +36,7 @@ logger = setup_logger()
 
 # Optional CuPy support
 try:  # pragma: no cover - optional dependency
-    import cupy as cp  # type: ignore
+    import cupy as cp  # type: ignore[import-not-found]
 
     _HAS_CUDA = True
 except Exception:  # pragma: no cover - optional dependency
@@ -485,11 +485,9 @@ def colorize_depth(
         max_depth_actual = float(np.max(valid_depths))
         h, w = depth_rgb_np.shape[:2]
         center_y, center_x = h // 2, w // 2
-        center_region = _to_numpy(
+        center_region = _to_numpy(  # type: ignore[no-untyped-call]
             depth
-        )[  # type: ignore[no-untyped-call]
-            max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)
-        ]
+        )[max(0, center_y - 2) : min(h, center_y + 3), max(0, center_x - 2) : min(w, center_x + 3)]
         center_mask = np.isfinite(center_region) & (center_region > 0)
         if center_mask.any():
             center_depth = float(np.median(center_region[center_mask]))

@@ -2,7 +2,7 @@ import time
 from typing import TYPE_CHECKING
 
 from dimos_lcm.foxglove_msgs.ImageAnnotations import (
-    ImageAnnotations,  # type: ignore[import-untyped]
+    ImageAnnotations,
 )
 import pytest
 
@@ -218,7 +218,7 @@ def test_vlm_query_batch(model_class: "type[VlModel]", model_name: str) -> None:
 
     # Load 5 frames at 1-second intervals using TimedSensorReplay
     replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
-    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]  # type: ignore[union-attr]
+    images = [replay.find_closest_seek(i).to_rgb() for i in range(0, 10, 2)]
 
     print(f"\nTesting {model_name} query_batch with {len(images)} images")
 
@@ -273,7 +273,7 @@ def test_vlm_resize(
     from dimos.utils.testing import TimedSensorReplay
 
     replay = TimedSensorReplay[Image]("unitree_go2_office_walk2/video")
-    image = replay.find_closest_seek(0).to_rgb()  # type: ignore[union-attr]
+    image = replay.find_closest_seek(0).to_rgb()
 
     labels: list[str] = []
     avg_times: list[float] = []

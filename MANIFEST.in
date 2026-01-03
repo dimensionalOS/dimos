@@ -2,12 +2,12 @@ global-exclude *.pyc
 global-exclude __pycache__
 global-exclude .DS_Store
 
-# Exclude test directories
-prune tests
-
 # Exclude web development directories
 recursive-exclude dimos/web/command-center-extension *
 recursive-exclude dimos/web/websocket_vis/node_modules *
+recursive-exclude dimos/agents/fixtures *
+recursive-exclude dimos/mapping/google_maps/fixtures *
+recursive-exclude dimos/web/dimos_interface *
 
 # Exclude development files
 exclude .gitignore
@@ -18,3 +18,4 @@ prune .mypy_cache
 prune .pytest_cache
 prune .ruff_cache
 prune .vscode
+prune dimos/web/command-center-extension

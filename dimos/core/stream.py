@@ -151,8 +151,7 @@ class Out(Stream[T], ObservableMixin[T]):
 
     @transport.setter
     def transport(self, value: Transport[T]) -> None:
-        # just for type checking
-        ...
+        self._transport = value
 
     @property
     def state(self) -> State:
@@ -184,6 +183,17 @@ class Out(Stream[T], ObservableMixin[T]):
             logger.warning(f"Trying to publish on Out {self} without a transport")
             return
         self._transport.broadcast(self, msg)
+
+    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
+        """Subscribe to this output stream.
+
+        Args:
+            cb: Callback function to receive messages
+
+        Returns:
+            Unsubscribe function
+        """
+        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
 
 
 class RemoteStream(Stream[T]):
@@ -232,7 +242,7 @@ class In(Stream[T], ObservableMixin[T]):
     @property
     def transport(self) -> Transport[T]:
         if not self._transport and self.connection:
-            self._transport = self.connection.transport  # type: ignore[union-attr]
+            self._transport = self.connection.transport
         return self._transport
 
     @transport.setter
@@ -266,7 +276,7 @@ class RemoteIn(RemoteStream[T]):
     def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
         self.transport.broadcast(self, msg)  # type: ignore[arg-type]
 
-    @transport.setter  # type: ignore[attr-defined, misc, no-redef, untyped-decorator]
+    @transport.setter  # type: ignore[attr-defined, no-redef, untyped-decorator]
     def transport(self, value: Transport[T]) -> None:
         self.owner.set_transport(self.name, value).result()  # type: ignore[union-attr]
         self._transport = value
