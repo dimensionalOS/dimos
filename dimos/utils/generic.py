@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections.abc import Callable
 import hashlib
 import json
 import os
 import string
-from typing import Any
+from typing import Any, Generic, TypeVar, overload
 import uuid
+
+_T = TypeVar("_T")
 
 
 def truncate_display_string(arg: Any, max: int | None = None) -> str:
@@ -73,6 +76,13 @@ def short_id(from_string: str | None = None) -> str:
     return "".join(reversed(chars))[:min_chars]
 
 
-class classproperty(property):
-    def __get__(self, obj, cls):  # type: ignore[no-untyped-def, override]
-        return self.fget(cls)  # type: ignore[misc]
+class classproperty(Generic[_T]):
+    def __init__(self, fget: Callable[..., _T]) -> None:
+        self.fget = fget
+
+    @overload
+    def __get__(self, obj: None, cls: type) -> _T: ...
+    @overload
+    def __get__(self, obj: object, cls: type) -> _T: ...
+    def __get__(self, obj: object | None, cls: type) -> _T:
+        return self.fget(cls)

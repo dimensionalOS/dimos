@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "diagon": {
+      "locked": {
+        "lastModified": 1763299369,
+        "narHash": "sha256-z/q22EqZfF79vZQh6K/yCmt8iqDvUSkIVTH+Omhv1VE=",
+        "owner": "petertrotman",
+        "repo": "nixpkgs",
+        "rev": "dff059e25eee7aa958c606aeb6b5879ae1c674f0",
+        "type": "github"
+      },
+      "original": {
+        "owner": "petertrotman",
+        "ref": "Diagon",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "flake-utils": {
       "inputs": {
         "systems": "systems"
@@ -108,6 +124,7 @@
     },
     "root": {
       "inputs": {
+        "diagon": "diagon",
         "flake-utils": "flake-utils",
         "lib": "lib",
         "nixpkgs": "nixpkgs",

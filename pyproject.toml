@@ -127,7 +127,7 @@ dependencies = [
     "dask[complete]==2025.5.1",
 
     # LCM / DimOS utilities
-    "dimos-lcm",
+    "dimos-lcm==0.1.0",
 
     # CLI
     "pydantic-settings>=2.11.0,<3",
@@ -215,6 +215,7 @@ dev = [
     "textual==3.7.1",
     "requests-mock==1.12.1",
     "terminaltexteffects==0.12.2",
+    "watchdog>=3.0.0",
 
     # Types
     "lxml-stubs>=0.5.1,<1",

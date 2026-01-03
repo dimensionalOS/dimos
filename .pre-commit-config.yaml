@@ -76,3 +76,11 @@ repos:
         pass_filenames: false
         entry: bin/lfs_check
         language: script
+
+      - id: doclinks
+        name: Doclinks
+        always_run: true
+        pass_filenames: false
+        entry: python -m dimos.utils.docs.doclinks docs/
+        language: system
+        files: ^docs/.*\.md$
