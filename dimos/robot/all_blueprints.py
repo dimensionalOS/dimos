@@ -52,6 +52,8 @@ all_blueprints = {
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
+    # Zenoh transport demos
+    "demo-zenoh-image": "dimos.test_zenoh.demo_zenoh_image_transport:demo_zenoh_image_transport",
 }
 
 

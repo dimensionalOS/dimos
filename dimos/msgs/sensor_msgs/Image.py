@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import base64
+import struct
 import time
 from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
@@ -24,7 +25,19 @@ from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
+import lz4.frame
 from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
+
+# Module-level TurboJPEG instance for reuse (thread-safe)
+_TURBOJPEG: TurboJPEG | None = None
+
+
+def _get_turbojpeg() -> TurboJPEG:
+    """Get or create shared TurboJPEG instance."""
+    global _TURBOJPEG
+    if _TURBOJPEG is None:
+        _TURBOJPEG = TurboJPEG()
+    return _TURBOJPEG
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     HAS_CUDA,
@@ -400,6 +413,174 @@ class Image(Timestamped):
                 "image_url": {"url": f"data:image/jpeg;base64,{self.to_base64()}"},
             }
         ]
+
+    # Zenoh encode/decode - optimized binary format for Zenoh transport
+    # Format constants
+    _ZENOH_HEADER_SIZE = 14  # 2xuint32 + 2xuint8 + 2xuint16
+    _ZENOH_TS_SIZE = 8  # float64
+
+    # Compression types
+    _ZENOH_COMPRESS_RAW = 0
+    _ZENOH_COMPRESS_JPEG = 1
+    _ZENOH_COMPRESS_LZ4 = 2
+
+    _ZENOH_FORMAT_MAP = {
+        ImageFormat.BGR: 0, ImageFormat.RGB: 1, ImageFormat.RGBA: 2, ImageFormat.BGRA: 3,
+        ImageFormat.GRAY: 4, ImageFormat.GRAY16: 5, ImageFormat.DEPTH: 6, ImageFormat.DEPTH16: 7,
+    }
+    _ZENOH_FORMAT_UNMAP = {v: k for k, v in _ZENOH_FORMAT_MAP.items()}
+
+    _ZENOH_DTYPE_MAP = {
+        np.dtype("uint8"): 0, np.dtype("uint16"): 1, np.dtype("int16"): 2,
+        np.dtype("float32"): 3, np.dtype("float64"): 4,
+    }
+    _ZENOH_DTYPE_UNMAP = {0: np.uint8, 1: np.uint16, 2: np.int16, 3: np.float32, 4: np.float64}
+
+    _ZENOH_CHANNELS = {
+        ImageFormat.BGR: 3, ImageFormat.RGB: 3, ImageFormat.RGBA: 4, ImageFormat.BGRA: 4,
+        ImageFormat.GRAY: 1, ImageFormat.GRAY16: 1, ImageFormat.DEPTH: 1, ImageFormat.DEPTH16: 1,
+    }
+
+    # Formats that use JPEG compression (lossy, for color)
+    _ZENOH_JPEG_FORMATS = {ImageFormat.BGR, ImageFormat.RGB, ImageFormat.RGBA, ImageFormat.BGRA}
+
+    # Formats that use LZ4 compression (lossless, for 16-bit depth)
+    _ZENOH_LZ4_FORMATS = {ImageFormat.DEPTH16, ImageFormat.GRAY16}
+
+    def zenoh_encode(self, quality: int = 75) -> bytearray:
+        """Encode image to compact binary format for Zenoh transport.
+
+        Automatically selects compression based on image format:
+        - Color images (BGR, RGB, RGBA, BGRA): JPEG compression (lossy)
+        - 16-bit depth (DEPTH16, GRAY16): LZ4 compression (lossless, ~100x for clean depth)
+        - Other formats (GRAY, DEPTH float32): Raw (no compression)
+
+        Args:
+            quality: JPEG quality (0-100, default 75). Only used for color images.
+
+        Format (little-endian):
+            [0:4]   height: uint32
+            [4:8]   width: uint32
+            [8:9]   format: uint8
+            [9:10]  dtype: uint8
+            [10:12] frame_id_len: uint16
+            [12:13] compression: uint8 (0=raw, 1=jpeg, 2=rvl)
+            [13:14] quality: uint8 (JPEG quality, 0-100)
+            [14:22] timestamp: float64
+            [22:22+N] frame_id: utf-8 bytes
+            [22+N:] data: compressed or raw bytes
+        """
+        # Get raw data, ensuring contiguous C array on CPU
+        arr = self.data
+        if hasattr(arr, "get"):  # CuPy array -> CPU
+            arr = arr.get()
+        if not arr.flags["C_CONTIGUOUS"]:
+            arr = np.ascontiguousarray(arr)
+
+        frame_id_bytes = self.frame_id.encode("utf-8")
+
+        # Determine compression type and encode data
+        if self.format in self._ZENOH_JPEG_FORMATS:
+            # JPEG compression for color images
+            compression = self._ZENOH_COMPRESS_JPEG
+            jpeg = _get_turbojpeg()
+            # TurboJPEG expects BGR
+            if self.format == ImageFormat.RGB:
+                bgr_arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
+            elif self.format == ImageFormat.RGBA:
+                bgr_arr = cv2.cvtColor(arr, cv2.COLOR_RGBA2BGR)
+            elif self.format == ImageFormat.BGRA:
+                bgr_arr = cv2.cvtColor(arr, cv2.COLOR_BGRA2BGR)
+            else:
+                bgr_arr = arr
+            encoded_data = jpeg.encode(bgr_arr, quality=quality)
+        elif self.format in self._ZENOH_LZ4_FORMATS:
+            # LZ4 compression for 16-bit depth images (lossless, very fast)
+            compression = self._ZENOH_COMPRESS_LZ4
+            encoded_data = lz4.frame.compress(arr.tobytes())
+        else:
+            # Raw for other formats (GRAY uint8, DEPTH float32)
+            compression = self._ZENOH_COMPRESS_RAW
+            encoded_data = memoryview(arr).cast("B")
+
+        # Pre-allocate single buffer
+        total_size = self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE + len(frame_id_bytes) + len(encoded_data)
+        buffer = bytearray(total_size)
+
+        # Pack header + timestamp in-place
+        # Changed last HH to BB for compression + quality
+        struct.pack_into(
+            "<IIBBHBB",
+            buffer, 0,
+            self.height, self.width,
+            self._ZENOH_FORMAT_MAP.get(self.format, 1),
+            self._ZENOH_DTYPE_MAP.get(arr.dtype, 0),
+            len(frame_id_bytes),
+            compression,
+            quality,
+        )
+        struct.pack_into("<d", buffer, self._ZENOH_HEADER_SIZE, self.ts)
+
+        # Copy frame_id + encoded data
+        offset = self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE
+        buffer[offset : offset + len(frame_id_bytes)] = frame_id_bytes
+        buffer[offset + len(frame_id_bytes) :] = encoded_data
+
+        return buffer
+
+    @classmethod
+    def zenoh_decode(cls, data: bytes | bytearray) -> Image:
+        """Decode image from compact binary format.
+
+        Automatically handles decompression based on compression type in header:
+        - JPEG: Decoded via TurboJPEG
+        - LZ4: Decoded via lz4.frame (lossless)
+        - Raw: Zero-copy via np.frombuffer
+        """
+        mv = memoryview(data)
+
+        # Unpack header + timestamp
+        height, width, fmt_code, dtype_code, frame_id_len, compression, _quality = struct.unpack(
+            "<IIBBHBB", mv[: cls._ZENOH_HEADER_SIZE]
+        )
+        ts = struct.unpack("<d", mv[cls._ZENOH_HEADER_SIZE : cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE])[0]
+
+        # Decode frame_id
+        fid_start = cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE
+        frame_id = bytes(mv[fid_start : fid_start + frame_id_len]).decode("utf-8")
+
+        # Decode format and dtype
+        fmt = cls._ZENOH_FORMAT_UNMAP.get(fmt_code, ImageFormat.RGB)
+        dtype = cls._ZENOH_DTYPE_UNMAP.get(dtype_code, np.uint8)
+        channels = cls._ZENOH_CHANNELS.get(fmt, 3)
+
+        # Extract and decompress image data based on compression type
+        data_start = fid_start + frame_id_len
+
+        if compression == cls._ZENOH_COMPRESS_JPEG:
+            # JPEG decompression
+            jpeg = _get_turbojpeg()
+            jpeg_bytes = bytes(mv[data_start:])
+            img_data = jpeg.decode(jpeg_bytes)  # Returns BGR
+            # Convert back to original format if needed
+            if fmt == ImageFormat.RGB:
+                img_data = cv2.cvtColor(img_data, cv2.COLOR_BGR2RGB)
+            elif fmt == ImageFormat.RGBA:
+                img_data = cv2.cvtColor(img_data, cv2.COLOR_BGR2RGBA)
+            elif fmt == ImageFormat.BGRA:
+                img_data = cv2.cvtColor(img_data, cv2.COLOR_BGR2BGRA)
+            # else: already BGR
+        elif compression == cls._ZENOH_COMPRESS_LZ4:
+            # LZ4 decompression for 16-bit depth
+            lz4_bytes = bytes(mv[data_start:])
+            decompressed = lz4.frame.decompress(lz4_bytes)
+            img_data = np.frombuffer(decompressed, dtype=dtype).reshape((height, width))
+        else:
+            # Raw data (zero-copy)
+            img_data = np.frombuffer(mv[data_start:], dtype=dtype)
+            img_data = img_data.reshape((height, width) if channels == 1 else (height, width, channels))
+
+        return cls(data=img_data, format=fmt, frame_id=frame_id, ts=ts)
 
     # LCM encode/decode
     def lcm_encode(self, frame_id: str | None = None) -> bytes:
