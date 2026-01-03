@@ -27,9 +27,6 @@ from dimos.core import Module, Out, rpc
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.utils.logging_config import setup_logger
 
-if TYPE_CHECKING:
-    pass
-
 logger = setup_logger()
 
 

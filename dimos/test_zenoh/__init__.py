@@ -19,9 +19,9 @@ from dimos.test_zenoh.demo_zenoh_image_transport import demo_zenoh_image_transpo
 from dimos.test_zenoh.webcam_publisher import WebcamPublisher, webcam_publisher
 
 __all__ = [
-    "WebcamPublisher",
-    "webcam_publisher",
     "CannySubscriber",
+    "WebcamPublisher",
     "canny_subscriber",
     "demo_zenoh_image_transport",
+    "webcam_publisher",
 ]

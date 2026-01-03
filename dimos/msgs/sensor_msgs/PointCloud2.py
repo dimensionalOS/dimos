@@ -250,7 +250,7 @@ class PointCloud2(Timestamped):
     _ZENOH_HEADER_SIZE = 6  # uint32 + uint16
     _ZENOH_TS_SIZE = 8  # float64
 
-    def zenoh_encode(self, quality: int = 75) -> bytearray:  # noqa: ARG002
+    def zenoh_encode(self, quality: int = 75) -> bytearray:
         """Encode point cloud to compact binary format for Zenoh transport.
 
         Uses single-allocation buffer and struct.pack_into for efficiency.
@@ -277,12 +277,16 @@ class PointCloud2(Timestamped):
         frame_id_bytes = self.frame_id.encode("utf-8")
 
         # Pre-allocate single buffer
-        total_size = self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE + len(frame_id_bytes) + points.nbytes
+        total_size = (
+            self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE + len(frame_id_bytes) + points.nbytes
+        )
         buffer = bytearray(total_size)
 
         # Pack header + timestamp in-place
         struct.pack_into("<IH", buffer, 0, len(points), len(frame_id_bytes))
-        struct.pack_into("<d", buffer, self._ZENOH_HEADER_SIZE, self.ts if self.ts is not None else 0.0)
+        struct.pack_into(
+            "<d", buffer, self._ZENOH_HEADER_SIZE, self.ts if self.ts is not None else 0.0
+        )
 
         # Copy frame_id + point data
         offset = self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE
@@ -301,7 +305,9 @@ class PointCloud2(Timestamped):
 
         # Unpack header + timestamp (zero-copy via memoryview)
         num_points, frame_id_len = struct.unpack("<IH", mv[: cls._ZENOH_HEADER_SIZE])
-        ts = struct.unpack("<d", mv[cls._ZENOH_HEADER_SIZE : cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE])[0]
+        ts = struct.unpack(
+            "<d", mv[cls._ZENOH_HEADER_SIZE : cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE]
+        )[0]
 
         # Decode frame_id
         fid_start = cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE
@@ -309,7 +315,11 @@ class PointCloud2(Timestamped):
 
         # Extract point data (zero-copy)
         data_start = fid_start + frame_id_len
-        points = np.frombuffer(mv[data_start:], dtype=np.float32).reshape(-1, 3) if num_points > 0 else np.zeros((0, 3), dtype=np.float32)
+        points = (
+            np.frombuffer(mv[data_start:], dtype=np.float32).reshape(-1, 3)
+            if num_points > 0
+            else np.zeros((0, 3), dtype=np.float32)
+        )
 
         return cls.from_numpy(points=points, frame_id=frame_id, timestamp=ts if ts > 0 else None)
 

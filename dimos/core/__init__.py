@@ -34,12 +34,13 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 __all__ = [
+    "LCMRPC",
+    "LCMTF",
+    "TF",
     "CongestionControl",
     "DimosCluster",
     "In",
     "LCMTransport",
-    "LCMRPC",
-    "LCMTF",
     "Module",
     "ModuleBase",
     "ModuleConfig",
@@ -52,7 +53,6 @@ __all__ = [
     "RemoteIn",
     "RemoteOut",
     "SHMTransport",
-    "TF",
     "TFConfig",
     "TFSpec",
     "Transport",

@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING, Any, Literal, TypedDict
 import cv2
 from dimos_lcm.sensor_msgs.Image import Image as LCMImage
 from dimos_lcm.std_msgs.Header import Header
+import lz4.frame
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
-import lz4.frame
 from turbojpeg import TurboJPEG  # type: ignore[import-untyped]
 
 # Module-level TurboJPEG instance for reuse (thread-safe)
@@ -38,6 +38,7 @@ def _get_turbojpeg() -> TurboJPEG:
     if _TURBOJPEG is None:
         _TURBOJPEG = TurboJPEG()
     return _TURBOJPEG
+
 
 from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
     HAS_CUDA,
@@ -425,20 +426,35 @@ class Image(Timestamped):
     _ZENOH_COMPRESS_LZ4 = 2
 
     _ZENOH_FORMAT_MAP = {
-        ImageFormat.BGR: 0, ImageFormat.RGB: 1, ImageFormat.RGBA: 2, ImageFormat.BGRA: 3,
-        ImageFormat.GRAY: 4, ImageFormat.GRAY16: 5, ImageFormat.DEPTH: 6, ImageFormat.DEPTH16: 7,
+        ImageFormat.BGR: 0,
+        ImageFormat.RGB: 1,
+        ImageFormat.RGBA: 2,
+        ImageFormat.BGRA: 3,
+        ImageFormat.GRAY: 4,
+        ImageFormat.GRAY16: 5,
+        ImageFormat.DEPTH: 6,
+        ImageFormat.DEPTH16: 7,
     }
     _ZENOH_FORMAT_UNMAP = {v: k for k, v in _ZENOH_FORMAT_MAP.items()}
 
     _ZENOH_DTYPE_MAP = {
-        np.dtype("uint8"): 0, np.dtype("uint16"): 1, np.dtype("int16"): 2,
-        np.dtype("float32"): 3, np.dtype("float64"): 4,
+        np.dtype("uint8"): 0,
+        np.dtype("uint16"): 1,
+        np.dtype("int16"): 2,
+        np.dtype("float32"): 3,
+        np.dtype("float64"): 4,
     }
     _ZENOH_DTYPE_UNMAP = {0: np.uint8, 1: np.uint16, 2: np.int16, 3: np.float32, 4: np.float64}
 
     _ZENOH_CHANNELS = {
-        ImageFormat.BGR: 3, ImageFormat.RGB: 3, ImageFormat.RGBA: 4, ImageFormat.BGRA: 4,
-        ImageFormat.GRAY: 1, ImageFormat.GRAY16: 1, ImageFormat.DEPTH: 1, ImageFormat.DEPTH16: 1,
+        ImageFormat.BGR: 3,
+        ImageFormat.RGB: 3,
+        ImageFormat.RGBA: 4,
+        ImageFormat.BGRA: 4,
+        ImageFormat.GRAY: 1,
+        ImageFormat.GRAY16: 1,
+        ImageFormat.DEPTH: 1,
+        ImageFormat.DEPTH16: 1,
     }
 
     # Formats that use JPEG compression (lossy, for color)
@@ -504,15 +520,19 @@ class Image(Timestamped):
             encoded_data = memoryview(arr).cast("B")
 
         # Pre-allocate single buffer
-        total_size = self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE + len(frame_id_bytes) + len(encoded_data)
+        total_size = (
+            self._ZENOH_HEADER_SIZE + self._ZENOH_TS_SIZE + len(frame_id_bytes) + len(encoded_data)
+        )
         buffer = bytearray(total_size)
 
         # Pack header + timestamp in-place
         # Changed last HH to BB for compression + quality
         struct.pack_into(
             "<IIBBHBB",
-            buffer, 0,
-            self.height, self.width,
+            buffer,
+            0,
+            self.height,
+            self.width,
             self._ZENOH_FORMAT_MAP.get(self.format, 1),
             self._ZENOH_DTYPE_MAP.get(arr.dtype, 0),
             len(frame_id_bytes),
@@ -543,7 +563,9 @@ class Image(Timestamped):
         height, width, fmt_code, dtype_code, frame_id_len, compression, _quality = struct.unpack(
             "<IIBBHBB", mv[: cls._ZENOH_HEADER_SIZE]
         )
-        ts = struct.unpack("<d", mv[cls._ZENOH_HEADER_SIZE : cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE])[0]
+        ts = struct.unpack(
+            "<d", mv[cls._ZENOH_HEADER_SIZE : cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE]
+        )[0]
 
         # Decode frame_id
         fid_start = cls._ZENOH_HEADER_SIZE + cls._ZENOH_TS_SIZE
@@ -578,7 +600,9 @@ class Image(Timestamped):
         else:
             # Raw data (zero-copy)
             img_data = np.frombuffer(mv[data_start:], dtype=dtype)
-            img_data = img_data.reshape((height, width) if channels == 1 else (height, width, channels))
+            img_data = img_data.reshape(
+                (height, width) if channels == 1 else (height, width, channels)
+            )
 
         return cls(data=img_data, format=fmt, frame_id=frame_id, ts=ts)
 

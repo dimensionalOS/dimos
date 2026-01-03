@@ -233,9 +233,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
 
         # Listen endpoints
         if self.config.listen_endpoints:
-            endpoints_json = (
-                "[" + ",".join(f'"{e}"' for e in self.config.listen_endpoints) + "]"
-            )
+            endpoints_json = "[" + ",".join(f'"{e}"' for e in self.config.listen_endpoints) + "]"
             zconfig.insert_json5("listen/endpoints", endpoints_json)
 
         # Shared memory configuration
@@ -309,9 +307,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
     def _ensure_started(self) -> None:
         """Ensure session is started, raise if not."""
         if not self._started or self._session is None:
-            raise RuntimeError(
-                "Zenoh session not started. Call start() before publish/subscribe."
-            )
+            raise RuntimeError("Zenoh session not started. Call start() before publish/subscribe.")
 
     def _get_or_create_publisher(self, topic: str) -> zenoh.Publisher:
         """Get existing publisher or create a new one for the topic."""

@@ -22,11 +22,12 @@ import cv2
 import numpy as np
 
 from dimos.core import In, Module, rpc
-from dimos.msgs.sensor_msgs import Image
 from dimos.utils.logging_config import setup_logger
 
 if TYPE_CHECKING:
     import rerun as rr
+
+    from dimos.msgs.sensor_msgs import Image
 
 logger = setup_logger()
 
@@ -92,8 +93,7 @@ class CannySubscriber(Module):
             logger.info("Rerun initialized")
         except ImportError:
             logger.error(
-                "Rerun not installed. Install with: pip install rerun-sdk\n"
-                "Then run: rerun"
+                "Rerun not installed. Install with: pip install rerun-sdk\nThen run: rerun"
             )
             raise
 
@@ -102,9 +102,7 @@ class CannySubscriber(Module):
         # Subscribe to color images
         self.color_image.subscribe(self._on_image)
 
-        logger.info(
-            f"Canny subscriber started (thresholds: {self.canny_low}-{self.canny_high})"
-        )
+        logger.info(f"Canny subscriber started (thresholds: {self.canny_low}-{self.canny_high})")
 
     @rpc
     def stop(self) -> None:

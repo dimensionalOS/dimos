@@ -19,7 +19,7 @@ LCM uses **raw UDP with IP fragmentation** and lacks:
 - QoS or receiver awareness
 - Shared memory
 
-A single RGB-D frame (~1.5 MB) becomes ~1000 IP fragments.  
+A single RGB-D frame (~1.5 MB) becomes ~1000 IP fragments.
 **Any dropped fragment drops the entire frame**, causing throughput collapse.
 
 Result:
@@ -167,7 +167,7 @@ Given the constraints:
 
 **Architectural note**
 Regardless of transport:
-> Raw RGB-D over pub/sub is fundamentally expensive.  
+> Raw RGB-D over pub/sub is fundamentally expensive.
 > Shared memory (local) + compression (LAN) is the winning pattern.
 
 ---
