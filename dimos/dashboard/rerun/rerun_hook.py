@@ -29,18 +29,16 @@ def RerunHook(attrname, input_type, target_entity: str, *, topic = None, publish
     if rate_limit != None:
         publish_callback = rate_limiter(rate_limit)(publish_callback)
     
-    # FIXME: something really weird is stopping vars from being defined inside the In[input_type] scope  (global()[] is a workaround)
-    globals()["input_type"] = input_type
-    globals()["publish_callback"] = publish_callback
-    exec(f"""
-    class RerunHookModule(Module):
-        {attrname}: In[globals()["input_type"]] = None
-        
-        @rpc
-        def start(self) -> None:
-            self._disposables.add(Disposable(
-                self.{attrname}.subscribe(globals()["publish_callback"])
-            ))
-    globals()["RerunHookModule"] = RerunHookModule
-    """.replace('\n    ', '\n'))
-    return RerunHookModule
+    def start(self) -> None:
+        self._disposables.add(
+            Disposable(getattr(self, attrname).subscribe(publish_callback))
+        )
+
+    cls_dict = {
+        "__annotations__": {attrname: In[input_type]},
+        attrname: None,
+        "start": rpc(start),
+        "__module__": __name__,
+    }
+
+    return type("RerunHookModule", (Module,), cls_dict)
