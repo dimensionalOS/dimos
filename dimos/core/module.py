@@ -19,12 +19,16 @@ import inspect
 import sys
 import threading
 from typing import (
+    TYPE_CHECKING,
     Any,
     get_args,
     get_origin,
     get_type_hints,
     overload,
 )
+
+if TYPE_CHECKING:
+    from dimos.core.introspection.module import ModuleInfo
 
 from dask.distributed import Actor, get_worker
 from reactivex.disposable import CompositeDisposable
@@ -199,16 +203,15 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
             if isinstance(s, In) and not name.startswith("_")
         }
 
-    @classmethod  # type: ignore[misc]
-    @property
-    def rpcs(cls) -> dict[str, Callable]:  # type: ignore[type-arg]
+    @classproperty
+    def rpcs(self) -> dict[str, Callable[..., Any]]:
         return {
-            name: getattr(cls, name)
-            for name in dir(cls)
+            name: getattr(self, name)
+            for name in dir(self)
             if not name.startswith("_")
             and name != "rpcs"  # Exclude the rpcs property itself to prevent recursion
-            and callable(getattr(cls, name, None))
-            and hasattr(getattr(cls, name), "__rpc__")
+            and callable(getattr(self, name, None))
+            and hasattr(getattr(self, name), "__rpc__")
         }
 
     @rpc

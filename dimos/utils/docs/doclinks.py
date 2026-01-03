@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -30,6 +30,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import Any
 
 
 def find_git_root() -> Path | None:
@@ -288,7 +289,7 @@ def process_markdown(
     # Pattern 2: [Text](.md) - doc file links
     doc_pattern = r"\[([^\]]+)\]\(\.md\)"
 
-    def replace_code_match(match: re.Match) -> str:
+    def replace_code_match(match: re.Match[str]) -> str:
         file_ref = match.group(1)
         current_link = match.group(2)
         full_match = match.group(0)
@@ -347,7 +348,7 @@ def process_markdown(
 
         return new_match
 
-    def replace_doc_match(match: re.Match) -> str:
+    def replace_doc_match(match: re.Match[str]) -> str:
         """Replace [Text](.md) with resolved doc path."""
         if doc_index is None:
             return match.group(0)
@@ -394,7 +395,7 @@ def process_markdown(
 
 def collect_markdown_files(paths: list[str]) -> list[Path]:
     """Collect markdown files from paths, expanding directories recursively."""
-    result = []
+    result: list[Path] = []
     for p in paths:
         path = Path(p)
         if path.is_dir():
@@ -447,7 +448,7 @@ Options:
 """
 
 
-def main():
+def main() -> None:
     if len(sys.argv) == 1:
         print(USAGE)
         sys.exit(0)
@@ -564,11 +565,11 @@ def main():
         watch_paths = args.paths if args.paths else [str(root / "docs")]
 
         class MarkdownHandler(FileSystemEventHandler):
-            def on_modified(self, event):
+            def on_modified(self, event: Any) -> None:
                 if not event.is_directory and event.src_path.endswith(".md"):
                     process_file(Path(event.src_path))
 
-            def on_created(self, event):
+            def on_created(self, event: Any) -> None:
                 if not event.is_directory and event.src_path.endswith(".md"):
                     process_file(Path(event.src_path))
 
