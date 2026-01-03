@@ -34,6 +34,8 @@ from dimos.core.transport import LCMTransport, pSHMTransport
 from dimos.hardware.sensors.camera import zed
 from dimos.hardware.sensors.camera.module import camera_module  # type: ignore[attr-defined]
 from dimos.hardware.sensors.camera.webcam import Webcam
+from dimos.mapping.costmapper import cost_mapper
+from dimos.mapping.voxels import voxel_mapper
 from dimos.msgs.geometry_msgs import (
     PoseStamped,
     Quaternion,
@@ -45,16 +47,8 @@ from dimos.msgs.nav_msgs import Odometry, Path
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.std_msgs import Bool
 from dimos.msgs.vision_msgs import Detection2DArray
-from dimos.navigation.bt_navigator.navigator import (
-    behavior_tree_navigator,
-)
-from dimos.navigation.frontier_exploration import (
-    wavefront_frontier_explorer,
-)
-from dimos.navigation.global_planner.planner import astar_planner
-from dimos.navigation.local_planner.holonomic_local_planner import (
-    holonomic_local_planner,
-)
+from dimos.navigation.frontier_exploration import wavefront_frontier_explorer
+from dimos.navigation.replanning_a_star.module import replanning_a_star_planner
 from dimos.navigation.rosnav import ros_nav
 from dimos.perception.detection.detectors.person.yolo import YoloPersonDetector
 from dimos.perception.detection.module3D import Detection3DModule, detection3d_module
@@ -66,7 +60,6 @@ from dimos.robot.foxglove_bridge import foxglove_bridge
 from dimos.robot.unitree.connection.g1 import g1_connection
 from dimos.robot.unitree.connection.g1sim import g1_sim_connection
 from dimos.robot.unitree_webrtc.keyboard_teleop import keyboard_teleop
-from dimos.robot.unitree_webrtc.type.map import mapper
 from dimos.robot.unitree_webrtc.unitree_g1_skill_container import g1_skills
 from dimos.utils.monitoring import utilization
 from dimos.web.websocket_vis.websocket_vis_module import websocket_vis
@@ -87,11 +80,8 @@ _basic_no_nav = (
                 camera_info=zed.CameraInfo.SingleWebcam,
             ),
         ),
-        # SLAM and mapping
-        mapper(voxel_size=0.5, global_publish_interval=2.5),
-        # Navigation stack
-        astar_planner(),
-        holonomic_local_planner(),
+        voxel_mapper(voxel_size=0.1),
+        cost_mapper(),
         wavefront_frontier_explorer(),
         # Visualization
         websocket_vis(),
@@ -132,7 +122,7 @@ basic_ros = autoconnect(
 basic_sim = autoconnect(
     _basic_no_nav,
     g1_sim_connection(),
-    behavior_tree_navigator(),
+    replanning_a_star_planner(),
 )
 
 _perception_and_memory = autoconnect(

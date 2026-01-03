@@ -15,10 +15,10 @@
 from abc import ABC, abstractmethod, abstractproperty
 from typing import Generic, Protocol, TypeVar
 
-from dimos_lcm.sensor_msgs import CameraInfo
 from reactivex.observable import Observable
 
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.protocol.service import Configurable  # type: ignore[attr-defined]
 
 
