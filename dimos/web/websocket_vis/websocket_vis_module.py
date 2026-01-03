@@ -22,13 +22,12 @@ The frontend is served from a separate HTML file.
 """
 
 import asyncio
-import os
 from pathlib import Path as FilePath
 import threading
 import time
 from typing import Any
 
-from dimos_lcm.std_msgs import Bool
+from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
@@ -45,6 +44,7 @@ _COMMAND_CENTER_DIR = (
 )
 
 from dimos.core import In, Module, Out, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
@@ -90,13 +90,20 @@ class WebsocketVisModule(Module):
     cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
-    def __init__(self, port: int = 7779, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self,
+        port: int = 7779,
+        global_config: GlobalConfig | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the WebSocket visualization module.
 
         Args:
             port: Port to run the web server on
+            global_config: Optional global config for viewer backend settings
         """
         super().__init__(**kwargs)
+        self._global_config = global_config or GlobalConfig()
 
         self.port = port
         self._uvicorn_server_thread: threading.Thread | None = None
@@ -204,8 +211,7 @@ class WebsocketVisModule(Module):
         async def serve_index(request):  # type: ignore[no-untyped-def]
             """Serve appropriate HTML based on viewer mode."""
             # If running native Rerun, redirect to standalone command center
-            viewer_backend = os.environ.get("VIEWER_BACKEND", "rerun-web").lower()
-            if viewer_backend == "rerun-native":
+            if self._global_config.viewer_backend == "rerun-native":
                 return RedirectResponse(url="/command-center")
             # Otherwise serve full dashboard with Rerun iframe
             return FileResponse(_DASHBOARD_HTML, media_type="text/html")
