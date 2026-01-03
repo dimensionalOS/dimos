@@ -129,6 +129,10 @@ dependencies = [
     # LCM / DimOS utilities
     "dimos-lcm==0.1.0",
 
+    # Zenoh transport
+    "eclipse-zenoh",
+    "lz4>=4.3.0",
+
     # CLI
     "pydantic-settings>=2.11.0,<3",
     "typer>=0.19.2,<1",

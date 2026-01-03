@@ -80,6 +80,7 @@ testdata.append(
 
 
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory
+from dimos.protocol.pubsub.zenohpubsub import PickleZenoh
 
 
 @contextmanager
@@ -95,6 +96,24 @@ testdata.append(
         shared_memory_cpu_context,
         "/shared_mem_topic_cpu",
         [b"shared_mem_value1", b"shared_mem_value2", b"shared_mem_value3"],
+    )
+)
+
+
+@contextmanager
+def zenoh_context():
+    """Context manager for Zenoh PubSub implementation."""
+    zenoh_pubsub = PickleZenoh()
+    zenoh_pubsub.start()
+    yield zenoh_pubsub
+    zenoh_pubsub.stop()
+
+
+testdata.append(
+    (
+        zenoh_context,
+        "/zenoh_topic",
+        ["zenoh_value1", "zenoh_value2", "zenoh_value3"],
     )
 )
 
