@@ -71,7 +71,7 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
         stream = self.hardware.image_stream()
 
         if self.config.frequency > 0:
-            stream.pipe(sharpness_barrier(self.config.frequency))
+            stream = stream.pipe(sharpness_barrier(self.config.frequency))
 
         self._disposables.add(
             stream.subscribe(self.color_image.publish),
