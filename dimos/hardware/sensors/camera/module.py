@@ -78,10 +78,10 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
         )
 
         self._disposables.add(
-            rx.interval(1.0).subscribe(self.publish_metadata),
+            rx.interval(1.0).subscribe(lambda _: self.publish_metadata()),
         )
 
-    def publish_metadata(self, _=None) -> None:
+    def publish_metadata(self) -> None:
         camera_info = self.hardware.camera_info.with_ts(time.time())
         self.camera_info.publish(camera_info)
 
