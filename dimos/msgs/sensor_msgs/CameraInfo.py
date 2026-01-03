@@ -99,6 +99,29 @@ class CameraInfo(Timestamped):
         self.roi_width = 0
         self.roi_do_rectify = False
 
+    def with_ts(self, ts: float) -> CameraInfo:
+        """Return a copy of this CameraInfo with the given timestamp.
+
+        Args:
+            ts: New timestamp
+
+        Returns:
+            New CameraInfo instance with updated timestamp
+        """
+        return CameraInfo(
+            height=self.height,
+            width=self.width,
+            distortion_model=self.distortion_model,
+            D=self.D.copy(),
+            K=self.K.copy(),
+            R=self.R.copy(),
+            P=self.P.copy(),
+            binning_x=self.binning_x,
+            binning_y=self.binning_y,
+            frame_id=self.frame_id,
+            ts=ts,
+        )
+
     @classmethod
     def from_yaml(cls, yaml_file: str) -> CameraInfo:
         """Create CameraInfo from YAML file.
