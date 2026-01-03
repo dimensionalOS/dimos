@@ -21,14 +21,14 @@ import reactivex as rx
 from reactivex import operators as ops
 from reactivex.observable import Observable
 
-from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
-from dimos.spec import perception as spec  # type: ignore[no-redef]
+from dimos.spec import perception
 
 
 def default_transform() -> Transform:
@@ -48,12 +48,11 @@ class CameraModuleConfig(ModuleConfig):
     frequency: float = 0.0  # Hz, 0 means no limit
 
 
-class CameraModule(Module[CameraModuleConfig], spec.Camera):
+class CameraModule(Module[CameraModuleConfig], perception.Camera):
     color_image: Out[Image]
     camera_info: Out[CameraInfo]
 
-    hardware: CameraHardware = None  # type: ignore[assignment, type-arg]
-    _skill_stream: Observable[Image] | None = None
+    hardware: CameraHardware[Any]
 
     config: CameraModuleConfig
     default_config = CameraModuleConfig
