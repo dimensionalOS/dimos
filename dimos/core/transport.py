@@ -25,7 +25,7 @@ from typing import (
     TypeVar,
 )
 
-from dimos.core.stream import In, Transport
+from dimos.core.stream import In, Out, Stream, Transport
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
@@ -60,18 +60,20 @@ class pLCMTransport(PubSubTransport[T]):
     def __reduce__(self):  # type: ignore[no-untyped-def]
         return (pLCMTransport, (self.topic,))
 
-    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+    def broadcast(self, _: Out[T] | None, msg: T) -> None:
         if not self._started:
             self.lcm.start()
             self._started = True
 
         self.lcm.publish(self.topic, msg)
 
-    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] = None) -> None:  # type: ignore[assignment, override]
+    def subscribe(
+        self, callback: Callable[[T], Any], selfstream: Stream[T] | None = None
+    ) -> Callable[[], None]:
         if not self._started:
             self.lcm.start()
             self._started = True
-        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
+        return self.lcm.subscribe(self.topic, lambda msg, topic: callback(msg))
 
     def start(self) -> None: ...
 
