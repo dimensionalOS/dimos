@@ -18,6 +18,7 @@ import time
 from typing import Any, TypeVar, cast
 
 from dimos_lcm.std_msgs import Float32
+import rerun as rr
 
 from dimos.core import LCMTransport, Transport
 
@@ -50,3 +51,40 @@ def timed(
         return cast("F", wrapper)
 
     return timed_decorator
+
+
+def log_timing_to_rerun(entity_path: str) -> Callable[[F], F]:
+    """Decorator to log function execution time to Rerun.
+
+    Automatically measures the execution time of the decorated function
+    and logs it as a scalar value to the specified Rerun entity path.
+
+    Args:
+        entity_path: Rerun entity path for timing metrics
+                    (e.g., "metrics/costmap/calc_ms")
+
+    Returns:
+        Decorator function
+
+    Example:
+        @log_timing_to_rerun("metrics/costmap/calc_ms")
+        def _calculate_costmap(self, msg):
+            # ... expensive computation
+            return result
+
+        # Timing automatically logged to Rerun as a time series!
+    """
+
+    def decorator(func: F) -> F:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            start = time.perf_counter()
+            result = func(*args, **kwargs)
+            elapsed_ms = (time.perf_counter() - start) * 1000
+
+            rr.log(entity_path, rr.Scalars(elapsed_ms))
+            return result
+
+        return cast("F", wrapper)
+
+    return decorator
