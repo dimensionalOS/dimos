@@ -17,7 +17,6 @@ from dataclasses import dataclass, field
 import queue
 import time
 
-from dimos_lcm.sensor_msgs import CameraInfo
 import reactivex as rx
 from reactivex import operators as ops
 from reactivex.disposable import Disposable
@@ -30,6 +29,7 @@ from dimos.hardware.sensors.camera.spec import CameraHardware
 from dimos.hardware.sensors.camera.webcam import Webcam
 from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 from dimos.spec import perception as spec  # type: ignore[no-redef]
 
@@ -48,6 +48,7 @@ class CameraModuleConfig(ModuleConfig):
     frame_id: str = "camera_link"
     transform: Transform | None = field(default_factory=default_transform)
     hardware: Callable[[], CameraHardware] | CameraHardware = Webcam  # type: ignore[type-arg]
+    frequency: float = 5.0
 
 
 class CameraModule(Module[CameraModuleConfig], spec.Camera):
@@ -84,7 +85,7 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
 
         # camera_info_stream = self.camera_info_stream(frequency=5.0)
 
-        def publish_info(camera_info: CameraInfo):  # type: ignore[no-untyped-def]
+        def publish_info(camera_info: CameraInfo) -> None:
             self.camera_info.publish(camera_info)
 
             if self.config.transform is None:
@@ -103,7 +104,7 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
             self.tf.publish(camera_link, camera_optical)
 
         self._camera_info_subscription = self.camera_info_stream().subscribe(publish_info)  # type: ignore[assignment]
-        self._module_subscription = stream.subscribe(self.image.publish)  # type: ignore[attr-defined]
+        self._module_subscription = stream.subscribe(self.color_image.publish)  # type: ignore[attr-defined]
 
     @skill(stream=Stream.passive, output=Output.image, reducer=Reducer.latest)  # type: ignore[arg-type]
     def video_stream(self) -> Image:  # type: ignore[misc]
@@ -149,3 +150,8 @@ class CameraModule(Module[CameraModuleConfig], spec.Camera):
         if self.hardware and hasattr(self.hardware, "stop"):
             self.hardware.stop()
         super().stop()
+
+
+camera_module = CameraModule.blueprint
+
+__all__ = ["CameraModule", "camera_module"]
