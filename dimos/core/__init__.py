@@ -13,11 +13,17 @@ from dimos.core.module import Module, ModuleBase, ModuleConfig, ModuleConfigT
 from dimos.core.rpc_client import RPCClient
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
 from dimos.core.transport import (
+    CongestionControl,
     LCMTransport,
+    Priority,
+    Reliability,
     SHMTransport,
+    ZenohConfig,
+    ZenohQoS,
     ZenohTransport,
     pLCMTransport,
     pSHMTransport,
+    pZenohTransport,
 )
 from dimos.protocol.rpc import LCMRPC
 from dimos.protocol.rpc.spec import RPCSpec
@@ -28,28 +34,34 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 __all__ = [
-    "LCMRPC",
-    "LCMTF",
-    "TF",
+    "CongestionControl",
     "DimosCluster",
     "In",
     "LCMTransport",
+    "LCMRPC",
+    "LCMTF",
     "Module",
     "ModuleBase",
     "ModuleConfig",
     "ModuleConfigT",
     "Out",
+    "Priority",
     "PubSubTF",
     "RPCSpec",
+    "Reliability",
     "RemoteIn",
     "RemoteOut",
     "SHMTransport",
+    "TF",
     "TFConfig",
     "TFSpec",
     "Transport",
+    "ZenohConfig",
+    "ZenohQoS",
     "ZenohTransport",
     "pLCMTransport",
     "pSHMTransport",
+    "pZenohTransport",
     "rpc",
     "start",
 ]

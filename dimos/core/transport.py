@@ -29,6 +29,16 @@ from dimos.core.stream import In, Out, Stream, Transport
 from dimos.protocol.pubsub.jpeg_shm import JpegSharedMemory
 from dimos.protocol.pubsub.lcmpubsub import LCM, JpegLCM, PickleLCM, Topic as LCMTopic
 from dimos.protocol.pubsub.shmpubsub import PickleSharedMemory, SharedMemory
+from dimos.protocol.pubsub.zenohpubsub import (
+    CongestionControl,
+    PickleZenoh,
+    Priority,
+    Reliability,
+    Zenoh,
+    ZenohConfig,
+    ZenohQoS,
+    normalize_topic,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -212,4 +222,147 @@ class JpegShmTransport(PubSubTransport[T]):
     def stop(self) -> None: ...
 
 
-class ZenohTransport(PubSubTransport[T]): ...
+class ZenohTransport(PubSubTransport[T]):
+    """Zenoh-based transport with configurable QoS.
+
+    Drop-in replacement for LCMTransport with additional QoS options.
+    Uses pickle serialization by default for maximum compatibility.
+
+    Example:
+        # Basic usage (pickle serialization, reliable QoS)
+        transport = ZenohTransport("/cmd_vel")
+
+        # With QoS configuration
+        transport = ZenohTransport(
+            "/lidar",
+            qos=ZenohQoS(
+                reliability=Reliability.BEST_EFFORT,
+                congestion_control=CongestionControl.DROP,
+            ),
+        )
+
+        # With typed encoding (uses zenoh_encode/lcm_encode)
+        transport = ZenohTransport("/pose", msg_type=PoseStamped)
+    """
+
+    _started: bool = False
+
+    def __init__(
+        self,
+        topic: str,
+        msg_type: type[T] | None = None,
+        qos: ZenohQoS | None = None,
+        config: ZenohConfig | None = None,
+        **kwargs,  # type: ignore[no-untyped-def]
+    ) -> None:
+        super().__init__(topic)
+        self.qos = qos or ZenohQoS()
+        self.config = config or ZenohConfig()
+        self.msg_type = msg_type
+
+        # Use typed Zenoh if msg_type provided, else pickle
+        if msg_type is not None:
+            self.zenoh: Zenoh | PickleZenoh = Zenoh(
+                msg_type=msg_type,
+                config=self.config,
+                qos=self.qos,
+                **kwargs,
+            )
+        else:
+            self.zenoh = PickleZenoh(
+                config=self.config,
+                qos=self.qos,
+                **kwargs,
+            )
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (
+            ZenohTransport,
+            (self.topic, self.msg_type),
+            {"qos": self.qos, "config": self.config},
+        )
+
+    def __setstate__(self, state) -> None:  # type: ignore[no-untyped-def]
+        self.qos = state.get("qos", ZenohQoS())
+        self.config = state.get("config", ZenohConfig())
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.zenoh.start()
+            self._started = True
+
+        self.zenoh.publish(self.topic, msg)
+
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
+        if not self._started:
+            self.zenoh.start()
+            self._started = True
+
+        return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
+
+    def start(self) -> None:
+        if not self._started:
+            self.zenoh.start()
+            self._started = True
+
+    def stop(self) -> None:
+        if self._started:
+            self.zenoh.stop()
+            self._started = False
+
+
+class pZenohTransport(PubSubTransport[T]):
+    """Pickle-based Zenoh transport for arbitrary Python objects.
+
+    Convenience wrapper that always uses pickle serialization.
+    Equivalent to ZenohTransport without msg_type.
+
+    Example:
+        transport = pZenohTransport("/data")
+        transport.broadcast(None, {"any": "python", "object": 123})
+    """
+
+    _started: bool = False
+
+    def __init__(
+        self,
+        topic: str,
+        qos: ZenohQoS | None = None,
+        config: ZenohConfig | None = None,
+        **kwargs,  # type: ignore[no-untyped-def]
+    ) -> None:
+        super().__init__(topic)
+        self.qos = qos or ZenohQoS()
+        self.config = config or ZenohConfig()
+        self.zenoh = PickleZenoh(
+            config=self.config,
+            qos=self.qos,
+            **kwargs,
+        )
+
+    def __reduce__(self):  # type: ignore[no-untyped-def]
+        return (pZenohTransport, (self.topic,))
+
+    def broadcast(self, _, msg) -> None:  # type: ignore[no-untyped-def]
+        if not self._started:
+            self.zenoh.start()
+            self._started = True
+
+        self.zenoh.publish(self.topic, msg)
+
+    def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
+        if not self._started:
+            self.zenoh.start()
+            self._started = True
+
+        return self.zenoh.subscribe(self.topic, lambda msg, topic: callback(msg))  # type: ignore[return-value]
+
+    def start(self) -> None:
+        if not self._started:
+            self.zenoh.start()
+            self._started = True
+
+    def stop(self) -> None:
+        if self._started:
+            self.zenoh.stop()
+            self._started = False
