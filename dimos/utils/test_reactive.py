@@ -28,6 +28,7 @@ from dimos.utils.reactive import (
     callback_to_observable,
     getter_ondemand,
     getter_streaming,
+    iter_observable,
 )
 
 
@@ -283,3 +284,12 @@ def test_callback_to_observable() -> None:
     # Dispose subscription and check that stop was called
     subscription.dispose()
     assert stop_called, "Stop function should be called on dispose"
+
+
+def test_iter_observable() -> None:
+    source = dispose_spy(rx.of(1, 2, 3, 4, 5))
+
+    result = list(iter_observable(source))
+
+    assert result == [1, 2, 3, 4, 5]
+    assert source.is_disposed(), "Observable should be disposed after iteration"

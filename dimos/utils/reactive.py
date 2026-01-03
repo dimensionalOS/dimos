@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
+from collections.abc import Callable, Generator
+from queue import Queue
 import threading
 from typing import Any, Generic, TypeVar
 
@@ -228,3 +229,35 @@ def quality_barrier(quality_func: Callable[[T], float], target_frequency: float)
         )
 
     return _quality_barrier
+
+
+def iter_observable(observable: Observable[T]) -> Generator[T, None, None]:
+    """Convert an Observable to a blocking iterator.
+
+    Yields items as they arrive from the observable. Properly disposes
+    the subscription when the generator is closed.
+    """
+    q: Queue[T | None] = Queue()
+    done = threading.Event()
+
+    def on_next(value: T) -> None:
+        q.put(value)
+
+    def on_complete() -> None:
+        done.set()
+        q.put(None)
+
+    def on_error(e: Exception) -> None:
+        done.set()
+        q.put(None)
+
+    sub = observable.subscribe(on_next=on_next, on_completed=on_complete, on_error=on_error)
+
+    try:
+        while not done.is_set() or not q.empty():
+            item = q.get()
+            if item is None and done.is_set():
+                break
+            yield item  # type: ignore[misc]
+    finally:
+        sub.dispose()
