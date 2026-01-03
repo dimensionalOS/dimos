@@ -214,7 +214,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
 
         self._session: zenoh.Session | None = None
         self._publishers: dict[str, zenoh.Publisher] = {}
-        self._subscribers: dict[str, zenoh.Subscriber] = {}
+        self._subscribers: dict[str, zenoh.Subscriber[None]] = {}
         self._lock = threading.Lock()
         self._started = False
         self._stop_event = threading.Event()
@@ -280,7 +280,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
             # Clean up publishers
             for topic, pub in self._publishers.items():
                 try:
-                    pub.undeclare()
+                    pub.undeclare()  # type: ignore[no-untyped-call]
                 except Exception as e:
                     logger.warning(f"Error undeclaring publisher for {topic}: {e}")
             self._publishers.clear()
@@ -288,7 +288,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
             # Clean up subscribers
             for topic, sub in self._subscribers.items():
                 try:
-                    sub.undeclare()
+                    sub.undeclare()  # type: ignore[no-untyped-call]
                 except Exception as e:
                     logger.warning(f"Error undeclaring subscriber for {topic}: {e}")
             self._subscribers.clear()
@@ -296,7 +296,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
             # Close session
             if self._session is not None:
                 try:
-                    self._session.close()
+                    self._session.close()  # type: ignore[no-untyped-call]
                 except Exception as e:
                     logger.warning(f"Error closing Zenoh session: {e}")
                 self._session = None
@@ -401,7 +401,7 @@ class ZenohPubSubBase(PubSub[str, bytes]):
             with self._lock:
                 if key_expr in self._subscribers:
                     try:
-                        self._subscribers[key_expr].undeclare()
+                        self._subscribers[key_expr].undeclare()  # type: ignore[no-untyped-call]
                         del self._subscribers[key_expr]
                         logger.debug(f"Unsubscribed from key: {key_expr}")
                     except Exception as e:
@@ -439,7 +439,7 @@ class ZenohEncoderMixin(PubSubEncoderMixin[str, Any]):
                 f"Message type {type(msg).__name__} does not implement zenoh_encode(). "
                 f"Use PickleZenoh for arbitrary Python objects or implement ZenohSerializable protocol."
             )
-        return msg.zenoh_encode()
+        return msg.zenoh_encode()  # type: ignore[no-any-return]
 
     def decode(self, data: bytes, _topic: str) -> Any:
         """Decode bytes to message using zenoh_decode().

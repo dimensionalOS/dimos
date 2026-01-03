@@ -234,12 +234,12 @@ class pZenohTransport(PubSubTransport[T]):
 
     _started: bool = False
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         topic: str,
         qos: ZenohQoS | None = None,
         config: ZenohConfig | None = None,
-        **kwargs,  # type: ignore[no-untyped-def]
+        **kwargs: Any,
     ) -> None:
         super().__init__(topic)
         self.qos = qos or ZenohQoS()
@@ -289,14 +289,14 @@ class ZenohTransport(PubSubTransport[T]):
 
     _started: bool = False
 
-    def __init__(
+    def __init__(  # type: ignore[no-untyped-def]
         self,
         topic: str,
         msg_type: type[T],
         qos: ZenohQoS | None = None,
         config: ZenohConfig | None = None,
         quality: int = 75,
-        **kwargs,  # type: ignore[no-untyped-def]
+        **kwargs: Any,
     ) -> None:
         super().__init__(topic)
         self._msg_type = msg_type
@@ -312,7 +312,7 @@ class ZenohTransport(PubSubTransport[T]):
         if not self._started:
             self.zenoh.start()
             self._started = True
-        self.zenoh.publish(self.topic, msg.zenoh_encode(quality=self._quality))  # type: ignore[union-attr]
+        self.zenoh.publish(self.topic, msg.zenoh_encode(quality=self._quality))  # type: ignore[union-attr, attr-defined]
 
     def subscribe(self, callback: Callable[[T], None], selfstream: In[T] | None = None) -> None:  # type: ignore[override]
         if not self._started:
@@ -333,3 +333,21 @@ class ZenohTransport(PubSubTransport[T]):
         if self._started:
             self.zenoh.stop()
             self._started = False
+
+
+__all__ = [
+    "CongestionControl",
+    "JpegLcmTransport",
+    "JpegShmTransport",
+    "LCMTransport",
+    "Priority",
+    "PubSubTransport",
+    "Reliability",
+    "SHMTransport",
+    "ZenohConfig",
+    "ZenohQoS",
+    "ZenohTransport",
+    "pLCMTransport",
+    "pSHMTransport",
+    "pZenohTransport",
+]
