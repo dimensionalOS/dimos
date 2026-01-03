@@ -82,13 +82,15 @@ class State(enum.Enum):
 
 class Transport(Resource, ObservableMixin[T]):
     # used by local Output
-    def broadcast(self, selfstream: Out[T], value: T) -> None: ...
+    def broadcast(self, selfstream: Out[T], value: T) -> None:
+        raise NotImplementedError
+
+    # used by local Input
+    def subscribe(self, callback: Callable[[T], Any], selfstream: Stream[T]) -> Callable[[], None]:
+        raise NotImplementedError
 
     def publish(self, msg: T) -> None:
         self.broadcast(None, msg)  # type: ignore[arg-type]
-
-    # used by local Input
-    def subscribe(self, selfstream: In[T], callback: Callable[[T], any]) -> None: ...  # type: ignore[valid-type]
 
 
 class Stream(Generic[T]):
@@ -139,11 +141,11 @@ class Stream(Generic[T]):
 
 class Out(Stream[T], ObservableMixin[T]):
     _transport: Transport  # type: ignore[type-arg]
-    _local_subscribers: list[Callable[[T], None]]
+    _subscribers: list[Callable[[T], Any]]
 
     def __init__(self, *argv, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*argv, **kwargs)
-        self._local_subscribers = []
+        self._subscribers = []
 
     @property
     def transport(self) -> Transport[T]:
@@ -170,30 +172,19 @@ class Out(Stream[T], ObservableMixin[T]):
             ),
         )
 
-    def subscribe(self, cb) -> Callable[[], None]:
-        self._local_subscribers.append(cb)
-        return lambda: self.local_subscribers.remove(cb)
+    def publish(self, msg: T) -> None:
+        if hasattr(self, "_transport") and self._transport is not None:
+            self._transport.broadcast(self, msg)
+        for cb in self._subscribers:
+            cb(msg)
 
-    def publish(self, msg) -> None:  # type: ignore[no-untyped-def]
-        if self._local_subscribers:
-            for cb in self._local_subscribers:
-                cb(msg)
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        self._subscribers.append(cb)
 
-        if not hasattr(self, "_transport") or self._transport is None:
-            logger.warning(f"Trying to publish on Out {self} without a transport")
-            return
-        self._transport.broadcast(self, msg)
+        def unsubscribe() -> None:
+            self._subscribers.remove(cb)
 
-    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
-        """Subscribe to this output stream.
-
-        Args:
-            cb: Callback function to receive messages
-
-        Returns:
-            Unsubscribe function
-        """
-        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
+        return unsubscribe
 
 
 class RemoteStream(Stream[T]):
@@ -216,8 +207,8 @@ class RemoteOut(RemoteStream[T]):
     def connect(self, other: RemoteIn[T]):  # type: ignore[no-untyped-def]
         return other.connect(self)
 
-    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
-        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
 
 
 # representation of Input
@@ -258,8 +249,8 @@ class In(Stream[T], ObservableMixin[T]):
         return State.UNBOUND if self.owner is None else State.READY
 
     # returns unsubscribe function
-    def subscribe(self, cb) -> Callable[[], None]:  # type: ignore[no-untyped-def]
-        return self.transport.subscribe(cb, self)  # type: ignore[arg-type, func-returns-value, no-any-return]
+    def subscribe(self, cb: Callable[[T], Any]) -> Callable[[], None]:
+        return self.transport.subscribe(cb, self)
 
 
 # representation of input outside of module
