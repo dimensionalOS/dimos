@@ -69,7 +69,7 @@ Each sensor, joint, and reference point has its own frame.
 
 ## The Transform Class
 
-The `Transform` class at [`Transform.py`](/dimos/msgs/geometry_msgs/Transform.py#L21) represents a spatial transformation with:
+The `Transform` class at [`geometry_msgs/Transform.py`](/dimos/msgs/geometry_msgs/Transform.py#L21) represents a spatial transformation with:
 
 - `frame_id` - The parent frame name
 - `child_frame_id` - The child frame name

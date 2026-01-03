@@ -69,7 +69,11 @@ def should_ignore(path: Path, root: Path, patterns: list[str]) -> bool:
     name = path.name
 
     # Always ignore these
-    if name in {".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache"}:
+    if name in {".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache", "generated"}:
+        return True
+
+    # Skip directories that contain a .git subdir (submodules, nested repos)
+    if path.is_dir() and (path / ".git").exists():
         return True
 
     for pattern in patterns:
@@ -553,7 +557,7 @@ def main() -> None:
     # Watch mode
     if args.watch:
         try:
-            from watchdog.events import FileCreatedEvent, FileModifiedEvent, FileSystemEventHandler
+            from watchdog.events import FileSystemEventHandler
             from watchdog.observers import Observer
         except ImportError:
             print(
