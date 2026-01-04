@@ -36,7 +36,7 @@ def run_bridge_example() -> None:
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
-            bridge_instance = FoxgloveBridge(host="0.0.0.0", port=8765, debug=True, num_threads=4)
+            bridge_instance = FoxgloveBridge(host="0.0.0.0", port=8765, debug=False, num_threads=4)
 
             loop.run_until_complete(bridge_instance.run())
         except Exception as e:
