@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Build the installer zipapp and refresh bundled dependency data."""
 
 from __future__ import annotations
@@ -6,23 +20,26 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 import shutil
 import sys
-from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 # python is kinda verbose here's the TLDR of what's going on:
-    # rm -rf "$BUILD"
-    # mkdir -p "$BUILD/app"
-    # python3 "build_pip_dependency_database.py" # generates pip_dependency_database.json
-    # # Copy code in
-    # rsync -a "$ROOT/pyz_app/" "$BUILD/app/pyz_app/"
-    # # Install dependencies into the app directory
-    # python3 -m pip install -r "$ROOT/requirements.txt" -t "$BUILD/app" >/dev/null
-    # # Build the zipapp. main points to pyz_app.__main__:main
-    # python3 -m zipapp "$BUILD/app" \
-    #   -o "$OUT" \
-    #   -m "pyz_app.__main__:main"
+# rm -rf "$BUILD"
+# mkdir -p "$BUILD/app"
+# python3 "build_pip_dependency_database.py" # generates pip_dependency_database.json
+# # Copy code in
+# rsync -a "$ROOT/pyz_app/" "$BUILD/app/pyz_app/"
+# # Install dependencies into the app directory
+# python3 -m pip install -r "$ROOT/requirements.txt" -t "$BUILD/app" >/dev/null
+# # Build the zipapp. main points to pyz_app.__main__:main
+# python3 -m zipapp "$BUILD/app" \
+#   -o "$OUT" \
+#   -m "pyz_app.__main__:main"
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -73,7 +90,7 @@ def _aggregate_dep_database_files() -> None:
     """Aggregate dep_database JSON and hardlink pyproject into bundled_files."""
     aggregated = _read_dep_json(DEP_DIR)
     DEPENDENCY_OUT.parent.mkdir(parents=True, exist_ok=True)
-    DEPENDENCY_OUT.write_text(json.dumps(aggregated, indent=2, sort_keys=True)+"\n")
+    DEPENDENCY_OUT.write_text(json.dumps(aggregated, indent=2, sort_keys=True) + "\n")
 
     TOML_LINK.parent.mkdir(parents=True, exist_ok=True)
     try:
