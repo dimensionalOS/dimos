@@ -203,7 +203,7 @@ lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
 aligned_pairs = align_timestamped(
     video_stream,
     lidar_stream,
-    match_tolerance=0.025,  # 50ms tolerance
+    match_tolerance=0.025,  # 25ms tolerance
     buffer_size=5.0, # how long to wait for match
 ).pipe(ops.to_list()).run()
 
