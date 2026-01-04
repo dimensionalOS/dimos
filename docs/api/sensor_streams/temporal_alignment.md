@@ -67,11 +67,12 @@ lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
 
 ```
 
-(these would normally come from an actual robot into your module and [`detection/module3D.py`](/dimos/perception/detection/module3D.py) is a good example of this.)
 
 </details>
 
-Streams are ready, let's align them.
+Streams would normally come from an actual robot into your module via `IN` inputs, [`detection/module3D.py`](/dimos/perception/detection/module3D.py#L11) is a good example of this.
+
+Assume we have them, let's align them.
 
 ```python session=align
 # Align video (primary) with lidar (secondary)
