@@ -430,19 +430,17 @@ after dispose: True
 
 ## Reference
 
-| Operator              | Purpose                                   | Example                               |
-|-----------------------|-------------------------------------------|---------------------------------------|
-| `map(fn)`             | Transform each value                      | `ops.map(lambda x: x * 2)`            |
-| `filter(pred)`        | Keep values matching predicate            | `ops.filter(lambda x: x > 0)`         |
-| `take(n)`             | Take first n values                       | `ops.take(10)`                        |
-| `first()`             | Take first value only                     | `ops.first()`                         |
-| `sample(sec)`         | Emit latest every interval                | `ops.sample(0.5)`                     |
-| `throttle_first(sec)` | Emit first, block for interval            | `ops.throttle_first(0.5)`             |
-| `flat_map(fn)`        | Map + flatten nested observables          | `ops.flat_map(lambda x: rx.of(x, x))` |
-| `observe_on(sched)`   | Switch scheduler                          | `ops.observe_on(pool_scheduler)`      |
-| `replay(n)`           | Cache last n values for late subscribers  | `ops.replay(buffer_size=1)`           |
-| `ref_count()`         | Auto-connect/disconnect shared observable | `ops.ref_count()`                     |
-| `share()`             | Shorthand for `publish().ref_count()`     | `ops.share()`                         |
-| `timeout(sec)`        | Error if no value within timeout          | `ops.timeout(5.0)`                    |
+| Operator              | Purpose                                  | Example                               |
+|-----------------------|------------------------------------------|---------------------------------------|
+| `map(fn)`             | Transform each value                     | `ops.map(lambda x: x * 2)`            |
+| `filter(pred)`        | Keep values matching predicate           | `ops.filter(lambda x: x > 0)`         |
+| `take(n)`             | Take first n values                      | `ops.take(10)`                        |
+| `first()`             | Take first value only                    | `ops.first()`                         |
+| `sample(sec)`         | Emit latest every interval               | `ops.sample(0.5)`                     |
+| `throttle_first(sec)` | Emit first, block for interval           | `ops.throttle_first(0.5)`             |
+| `flat_map(fn)`        | Map + flatten nested observables         | `ops.flat_map(lambda x: rx.of(x, x))` |
+| `observe_on(sched)`   | Switch scheduler                         | `ops.observe_on(pool_scheduler)`      |
+| `replay(n)`           | Cache last n values for late subscribers | `ops.replay(buffer_size=1)`           |
+| `timeout(sec)`        | Error if no value within timeout         | `ops.timeout(5.0)`                    |
 
 See [RxPY documentation](https://rxpy.readthedocs.io/) for complete operator reference.
