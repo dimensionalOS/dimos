@@ -29,7 +29,7 @@ from ..support.misc import (
     get_project_directory,
 )
 from ..support.installer_status import installer_status
-from ..support.venv import activate_venv, get_venv_dirs_at
+from ..support.venv import activate_venv, get_venv_dirs_at, purge_broken_external_venv
 
 
 def phase2(system_analysis, selected_features):
@@ -96,7 +96,9 @@ def ensure_venv_active(python_cmd: str):
 
     project_directory = get_project_directory()
     possible_venv_dirs = get_venv_dirs_at(project_directory)
-
+    
+    purge_broken_external_venv()
+    
     if len(possible_venv_dirs) == 1:
         activate_venv(possible_venv_dirs[0])
     elif len(possible_venv_dirs) > 1:
@@ -113,7 +115,7 @@ def ensure_venv_active(python_cmd: str):
         venv_dir = Path(project_directory) / DEFAULT_VENV_NAME
         p.boring_log(f"- creating virtual environment at {venv_dir}")
         venv_res = run_command(
-            [python_cmd, "-m", "venv", str(venv_dir)], dry_run=installer_status["dry_run"]
+            [python_cmd, "-m", "venv", str(venv_dir)], dry_run=installer_status["dry_run"], print_command=True
         )
         if venv_res.code != 0:
             raise RuntimeError(

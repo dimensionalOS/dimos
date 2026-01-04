@@ -28,6 +28,20 @@ def deactivate_external() -> None:
     os.environ.pop("VIRTUAL_ENV_PROMPT", None)
 
 
+def purge_broken_external_venv() -> None:
+    """
+    Note: this is useful for docker inheriting a venv from the host
+    """
+    env_path = os.environ.get("VIRTUAL_ENV")
+    if env_path:
+        if not Path(env_path).exists():
+            _remove_from_path(Path(env_path) / "bin")
+            os.environ.pop("_OLD_VIRTUAL_PYTHONHOME", None)
+            os.environ.pop("_OLD_VIRTUAL_PS1", None)
+            os.environ.pop("VIRTUAL_ENV", None)
+            os.environ.pop("VIRTUAL_ENV_PROMPT", None)
+
+
 def activate_venv(project_directory: str | Path):
     project_directory = Path(project_directory).resolve()
     bin_dir = project_directory / ("Scripts" if os.name == "nt" else "bin")

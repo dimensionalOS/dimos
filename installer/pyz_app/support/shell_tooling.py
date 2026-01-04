@@ -191,8 +191,8 @@ def run_command(
         cmd_list,
         cwd=str(cwd) if cwd is not None else None,
         env=env,
-        stdout=subprocess.PIPE if capture_output else None,
-        stderr=subprocess.PIPE if capture_output else None,
+        stdout=subprocess.PIPE if capture_output else sys.stdout,
+        stderr=subprocess.PIPE if capture_output else sys.stderr,
         text=True,
         check=check,
     )
