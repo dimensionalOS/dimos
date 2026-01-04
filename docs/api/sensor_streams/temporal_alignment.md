@@ -25,6 +25,8 @@ Out: box "(image, pointcloud)" rad 5px fit wid 170% ht 170%
 <!--Result:-->
 ![output](assets/alignment_overview.svg)
 
+</details>
+
 ## Basic Usage
 
 ```python session=align
@@ -107,6 +109,8 @@ text "waiting..." at (Buffer.w.x - 0.4in, Buffer.w.y - 0.15in)
 
 <!--Result:-->
 ![output](assets/alignment_flow.svg)
+
+</details>
 
 ## Parameters
 
