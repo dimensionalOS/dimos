@@ -29,9 +29,14 @@ Out: box "(image, pointcloud)" rad 5px fit wid 170% ht 170%
 
 ## Basic Usage
 
-Let's load real camera and lidar data from the Unitree Go2 robot:
+Below we setup replay of real camera and lidar data from the Unitree Go2 robot, you can check if interested
 
-```python session=align
+<details>
+<summary>Stream Setup</summary>
+
+You can read more about [sensor storage here](storage_replay.md) and [LFS data store here](/docs/data.md)
+
+```python session=align no-result
 from reactivex import Subject
 from dimos.utils.testing import TimedSensorReplay
 from dimos.types.timestamped import Timestamped, align_timestamped
@@ -49,6 +54,9 @@ seek_ts = video_replay.first_timestamp() + 2
 video_frames = []
 lidar_scans = []
 
+# We are using from_timestamp=... and not seek=... because seek seeks through recording
+# timestamps, from_timestamp matches actual message timestamp.
+# It's possible for sensor data to come in late, but with correct capture time timestamps
 video_stream = video_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
     ops.do_action(lambda x: video_frames.append(x))
 )
@@ -57,6 +65,15 @@ lidar_stream = lidar_replay.stream(from_timestamp=seek_ts, duration=2.0).pipe(
     ops.do_action(lambda x: lidar_scans.append(x))
 )
 
+```
+
+(these would normally come from an actual robot into your module and [`detection/module3D.py`](/dimos/perception/detection/module3D.py) is a good example of this.)
+
+</details>
+
+Streams are ready, let's align them.
+
+```python session=align
 # Align video (primary) with lidar (secondary)
 # match_tolerance: max time difference for a match (seconds)
 # buffer_size: how long to keep messages waiting for matches (seconds)
@@ -237,6 +254,8 @@ When secondary messages arrive:
 <details>
 <summary>diagram source</summary>
 
+<details><summary>Pikchr</summary>
+
 ```pikchr fold output=assets/alignment_flow.svg
 color = white
 fill = none
@@ -259,6 +278,8 @@ text "waiting..." at (Buffer.w.x - 0.4in, Buffer.w.y - 0.15in)
 
 <!--Result:-->
 ![output](assets/alignment_flow.svg)
+
+</details>
 
 ## Parameters
 
