@@ -28,7 +28,7 @@ from .phases.phase04_dimos_check import phase4
 from .phases.phase05_env_setup import phase5
 from .support.get_system_analysis import get_system_analysis
 from .support.installer_status import installer_status
-from .support.misc import get_project_toml
+from .support.bundled_data import PROJECT_TOML
 
 # Simple ANSI helpers for help text
 RESET = "\x1b[0m"
@@ -122,8 +122,7 @@ def main():
             selected_features = cli_features
 
     if args.list_features:
-        toml_data = get_project_toml()
-        optional = toml_data["project"].get("optional-dependencies", {})
+        optional = PROJECT_TOML["project"].get("optional-dependencies", {})
         available = [f for f in optional.keys() if f != "cpu"]
         print("Available features:")
         for feat in available:

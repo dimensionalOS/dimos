@@ -23,13 +23,13 @@ from ..support.dimos_banner import RenderLogo
 from ..support.get_system_analysis import get_system_analysis
 from ..support.misc import (
     get_project_directory,
-    get_project_toml,
     replace_strings_in_directory,
 )
 from ..support.setup_docker_env import setup_docker_env
 from ..support.setup_nix import setup_nix_flake
 from ..support.shell_tooling import run_command
 from ..support.installer_status import installer_status
+from ..support.bundled_data import PROJECT_TOML
 
 
 def phase0():
@@ -69,7 +69,6 @@ def phase0():
         else:
             logo.log(f"- {p.cyan(check)} {name}: {version} {note}".strip())
         time.sleep(timeout)
-    toml_data = get_project_toml()
     logo.stop()
     
     if installer_status.get("template_repo"):
@@ -78,7 +77,7 @@ def phase0():
         # fill out the directory
         replace_strings_in_directory(project_dir, PLACEHOLDERS, project_name)
     
-    optional = toml_data["project"].get("optional-dependencies", {})
+    optional = PROJECT_TOML["project"].get("optional-dependencies", {})
     features = [f for f in optional.keys() if f not in ["cpu"]]
     p.header("First Phase: Feature Selection")
     selected_features = p.pick_many(

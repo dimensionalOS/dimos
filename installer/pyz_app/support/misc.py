@@ -26,15 +26,11 @@ import threading
 from typing import Any, Callable, Deque, Iterable, List
 import requests
 
-from . import pip_dependency_database as dep_db, prompt_tools as p
+from . import prompt_tools as p
 from .shell_tooling import command_exists, run_command
 from .constants import dependency_human_names_set, dependency_apt_packages_set_minimal, dependency_nix_packages_set_minimal, dependency_brew_set_minimal
 from .installer_status import installer_status
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover - fallback for older interpreters
-    import tomli as tomllib  # type: ignore
+from .bundled_data import DEP_2_HUMAN_NAME, PROJECT_TOML, PIP_DEP_DATABASE
 
 _project_directory: Path | None = None
 _already_called_apt_get_update = False
@@ -128,25 +124,19 @@ class ProgressRenderer:
         sys.stdout.write("\x1b[?25h\n")
         sys.stdout.flush()
 
-
-@cache
-def get_project_toml(branch: str = "main") -> dict[str, Any]:
-    return tomllib.loads(dep_db.PROJECT_TOML)
-
 def get_system_deps(feature: str | None):
-    toml_data = get_project_toml()
     apt_deps: set[str] = set()
     nix_deps: set[str] = set()
     brew_deps: set[str] = set()
 
     if feature is None:
-        pip_deps = list(toml_data["project"]["dependencies"])
+        pip_deps = list(PROJECT_TOML["project"]["dependencies"])
     elif isinstance(feature, (list, tuple, set)):
         pip_deps = []
         for feat in feature:
-            pip_deps.extend(toml_data["project"]["optional-dependencies"].get(feat, []))
+            pip_deps.extend(PROJECT_TOML["project"]["optional-dependencies"].get(feat, []))
     else:
-        pip_deps = list(toml_data["project"]["optional-dependencies"].get(feature, []))
+        pip_deps = list(PROJECT_TOML["project"]["optional-dependencies"].get(feature, []))
 
     pip_deps = [re.sub(r"[<=>,;].+", "", dep) for dep in pip_deps]
     missing: list[str] = []
@@ -155,7 +145,7 @@ def get_system_deps(feature: str | None):
         pip_dep = pip_dep.lower()
         
         pip_dep_no_feature = re.sub(r"\[.+", "", pip_dep)
-        system_dep_info = dep_db.DATA.get(pip_dep) or dep_db.DATA.get(pip_dep_no_feature)
+        system_dep_info = PIP_DEP_DATABASE.get(pip_dep) or PIP_DEP_DATABASE.get(pip_dep_no_feature)
         if not system_dep_info:
             missing.append(pip_dep)
             continue
@@ -176,10 +166,10 @@ def get_system_deps(feature: str | None):
         "nix_deps": sorted(nix_deps),
         "brew_deps": sorted(brew_deps),
         "pip_deps": sorted(pip_deps),
-        "human_names_all": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in combined_deps }),
-        "human_names_from_apt": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in apt_deps }),
-        "human_names_from_brew": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in brew_deps }),
-        "human_names_from_nix": sorted(dependency_human_names_set | { dep_db.DEP_2_HUMAN_NAME.get(dep, dep) for dep in nix_deps }),
+        "human_names_all": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in combined_deps }),
+        "human_names_from_apt": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in apt_deps }),
+        "human_names_from_brew": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in brew_deps }),
+        "human_names_from_nix": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in nix_deps }),
         "missing": missing,
     }
 
@@ -551,7 +541,6 @@ __all__ = [
     "ensure_python",
     "ensure_xcode_cli_tools",
     "get_project_directory",
-    "get_project_toml",
     "get_system_deps",
     "is_version_at_least",
     "parse_version",
