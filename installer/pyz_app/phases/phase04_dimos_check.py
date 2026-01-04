@@ -32,7 +32,8 @@ def phase4():
         raise SystemExit(1)
 
     checks = [
-        # the dimos CLI isn't install for some reason but dimos-robot is?
+        # TODO: talk to Ivan about what additional checks to run here
+        # also: the dimos CLI command isnt available after install but the dimos-robot command is?
         # {"label": "dimos --version", "cmd": ["dimos", "--version"]},
         {"label": "import dimos (python)", "cmd": ["python", "-c", "import dimos;"]},
     ]

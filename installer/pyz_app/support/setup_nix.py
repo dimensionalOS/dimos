@@ -26,6 +26,7 @@ def setup_nix_flake(project_dir: str | Path) -> Path:
 
 
 def ensure_nix_exists(min_version: str = minimum_nix_version) -> None:
+    """Ensure nix is installed and meets the minimum version, offering install/upgrade."""
     if not command_exists("nix"):
         p.sub_header("- nix not detected")
         if not p.ask_yes_no("Install nix now?"):
@@ -41,7 +42,6 @@ def ensure_nix_exists(min_version: str = minimum_nix_version) -> None:
         if res.code != 0:
             raise RuntimeError("Failed to install nix.")
 
-    # Check version
     ver_res = run_command(["nix", "--version"], capture_output=True)
     version_text = (ver_res.stdout or ver_res.stderr or "").strip()
     parsed = parse_version(version_text) or ""
@@ -68,11 +68,11 @@ def ensure_nix_exists(min_version: str = minimum_nix_version) -> None:
 
 
 def ensure_flakes_enabled() -> None:
-    # Simple check using config file contents.
+    """Ensure the user's nix.conf has flakes enabled."""
     config_path = Path.home() / ".config" / "nix" / "nix.conf"
     flakes_enabled = False
     if config_path.exists():
-        text = config_path.read_text()
+        text = config_path.read_text(encoding="utf-8")
         if "experimental-features" in text and "nix-command" in text and "flakes" in text:
             flakes_enabled = True
 
@@ -85,11 +85,12 @@ def ensure_flakes_enabled() -> None:
 
     config_path.parent.mkdir(parents=True, exist_ok=True)
     line = "experimental-features = nix-command flakes\n"
-    with config_path.open("a") as f:
+    with config_path.open("a", encoding="utf-8") as f:
         f.write(line)
 
 
 def nix_install(package_names: list[str]) -> None:
+    """Install packages via nix profile install with basic progress and reentrancy."""
     if not package_names:
         return
 

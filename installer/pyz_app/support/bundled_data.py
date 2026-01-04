@@ -18,10 +18,10 @@ def _read_text(name: str) -> str:
     return res.read_text()
 
 
-DOCKERFILE_TEMPLATE = _read_text("bundled_files/Dockerfile")
-PROJECT_TOML = tomllib.loads(_read_text("bundled_files/pyproject.toml"))
-PIP_DEP_DATABASE = json.loads(_read_text("bundled_files/pip_dependency_database.json") or "{}")
-FLAKE_TEMPLATE = _read_text("bundled_files/flake.nix")
+DOCKERFILE_TEMPLATE: str = _read_text("bundled_files/Dockerfile")
+PROJECT_TOML: dict[str, Any] = tomllib.loads(_read_text("bundled_files/pyproject.toml"))
+PIP_DEP_DATABASE: dict[str, Any] = json.loads(_read_text("bundled_files/pip_dependency_database.json") or "{}")
+FLAKE_TEMPLATE: str = _read_text("bundled_files/flake.nix")
 
 APT_DEPENDENCIES = sorted(
     {dep for entry in PIP_DEP_DATABASE.values() for dep in entry.get("apt_dependencies", [])}

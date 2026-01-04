@@ -135,7 +135,7 @@ def main():
     if args.just_system_install:
         return
     phase2(system_analysis, selected_features)
-    phase3(system_analysis, selected_features)
+    phase3(selected_features)
     if not args.no_check:
         phase4()
     if not args.no_env_setup:

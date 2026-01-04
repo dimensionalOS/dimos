@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
+import traceback
 
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
@@ -69,17 +70,16 @@ def phase2(system_analysis, selected_features):
 
         ensure_venv_active(python_cmd)
 
-    except Exception as error:
+    except Exception:
         print("")
         print("")
         p.error("One of the vital dependencies was missing or had versioning issues")
-        p.error(f"    error: {getattr(error, 'message', None) or error}")
+        traceback.print_exc()
         p.error(f"Message us in the discord if you're having trouble: {p.highlight(discord_url)}")
         if p.ask_yes_no(
             "It is recommended to STOP here because of the error. Should I stop here? [y=stop,n=continue]"
         ):
             raise SystemExit(1)
-        raise error
 
     print('''✅ passed all checks for vital system dependencies''')
     p.confirm("Press enter to continue to next phase")

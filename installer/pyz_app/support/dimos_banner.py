@@ -27,7 +27,6 @@ Notes:
 from __future__ import annotations
 
 import atexit
-from collections.abc import Iterable
 import colorsys
 from dataclasses import dataclass
 import json

@@ -13,8 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 discord_url = "https://discord.gg/S6E9MHsu"
 
 minimum_nix_version = "2.24.12"

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING
 
 from . import prompt_tools as p
 from .bundled_data import DOCKERFILE_TEMPLATE
-from .shell_tooling import run_command
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
