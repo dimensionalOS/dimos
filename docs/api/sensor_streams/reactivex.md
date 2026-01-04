@@ -213,7 +213,7 @@ When you subscribe, data flows through a pipeline:
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/observable_flow.svg
+```pikchr fold output=assets/observable_flow.svg
 color = white
 fill = none
 

@@ -120,7 +120,7 @@ SQLite's diagram language:
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/pikchr-demo.svg
+```pikchr fold output=assets/pikchr-demo.svg
 color = white
 fill = none
 linewid = 0.4in
