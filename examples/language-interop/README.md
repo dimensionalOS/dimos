@@ -13,6 +13,7 @@ Demonstrates controlling a dimos robot from non-Python languages.
 2. Run any language example:
    - [TypeScript](ts/)
    - [C++](cpp/)
+   - [Lua](lua/)
 
 3. (Optional) Monitor traffic with `lcmspy`
 
