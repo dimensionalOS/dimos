@@ -1,6 +1,8 @@
 #!/bin/bash
 # Setup script for LCM Lua bindings
 # Clones official LCM repo and builds Lua bindings
+#
+# Tested on: Arch Linux, Ubuntu, macOS (with Homebrew)
 
 set -e
 
@@ -8,6 +10,40 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LCM_DIR="$SCRIPT_DIR/lcm"
 
 echo "=== LCM Lua Setup ==="
+
+# Detect Lua version
+if command -v lua &>/dev/null; then
+    LUA_VERSION=$(lua -v 2>&1 | grep -oE '[0-9]+\.[0-9]+' | head -1)
+    echo "Detected Lua version: $LUA_VERSION"
+else
+    echo "Error: lua not found in PATH"
+    exit 1
+fi
+
+# Detect Lua paths using pkg-config if available
+if command -v pkg-config &>/dev/null && pkg-config --exists "lua$LUA_VERSION" 2>/dev/null; then
+    LUA_INCLUDE_DIR=$(pkg-config --variable=includedir "lua$LUA_VERSION")
+    LUA_LIBRARY=$(pkg-config --libs "lua$LUA_VERSION" | grep -oE '/[^ ]+\.so' | head -1 || echo "")
+elif command -v pkg-config &>/dev/null && pkg-config --exists lua 2>/dev/null; then
+    LUA_INCLUDE_DIR=$(pkg-config --variable=includedir lua)
+    LUA_LIBRARY=$(pkg-config --libs lua | grep -oE '/[^ ]+\.so' | head -1 || echo "")
+fi
+
+# Platform-specific defaults
+if [[ "$OSTYPE" == "darwin"* ]]; then
+    # macOS with Homebrew
+    LUA_INCLUDE_DIR="${LUA_INCLUDE_DIR:-$(brew --prefix lua 2>/dev/null)/include/lua}"
+    LUA_LIBRARY="${LUA_LIBRARY:-$(brew --prefix lua 2>/dev/null)/lib/liblua.dylib}"
+    LUA_CPATH_BASE="${LUA_CPATH_BASE:-/usr/local/lib/lua}"
+else
+    # Linux defaults
+    LUA_INCLUDE_DIR="${LUA_INCLUDE_DIR:-/usr/include}"
+    LUA_LIBRARY="${LUA_LIBRARY:-/usr/lib/liblua.so}"
+    LUA_CPATH_BASE="${LUA_CPATH_BASE:-/usr/local/lib/lua}"
+fi
+
+echo "Lua include: $LUA_INCLUDE_DIR"
+echo "Lua library: $LUA_LIBRARY"
 
 # Clone LCM if not present
 if [ ! -d "$LCM_DIR" ]; then
@@ -22,21 +58,21 @@ echo "Building LCM Lua bindings..."
 cd "$LCM_DIR"
 mkdir -p build && cd build
 
-# Configure with Lua support (using system compiler, not nix)
-CC=/usr/bin/gcc CXX=/usr/bin/g++ cmake .. \
+# Configure with Lua support
+cmake .. \
     -DLCM_ENABLE_LUA=ON \
     -DLCM_ENABLE_PYTHON=OFF \
     -DLCM_ENABLE_JAVA=OFF \
     -DLCM_ENABLE_TESTS=OFF \
     -DLCM_ENABLE_EXAMPLES=OFF \
-    -DLUA_INCLUDE_DIR=/usr/include \
-    -DLUA_LIBRARY=/usr/lib/liblua.so
+    -DLUA_INCLUDE_DIR="$LUA_INCLUDE_DIR" \
+    -DLUA_LIBRARY="$LUA_LIBRARY"
 
 # Build just the lua target
-make lcm-lua -j4
+make lcm-lua -j$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
 
 # Install the lua module
-LUA_CPATH_DIR="/usr/local/lib/lua/5.4"
+LUA_CPATH_DIR="$LUA_CPATH_BASE/$LUA_VERSION"
 echo "Installing lcm.so to $LUA_CPATH_DIR"
 sudo mkdir -p "$LUA_CPATH_DIR"
 sudo cp lcm-lua/lcm.so "$LUA_CPATH_DIR/"

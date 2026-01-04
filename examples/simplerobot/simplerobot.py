@@ -54,9 +54,10 @@ class SimpleRobot(Module[SimpleRobotConfig]):
         self.x = 0.0
         self.y = 0.0
         self.theta = 0.0
-        self.linear_vel = Vector3()
-        self.angular_vel = Vector3()
+        self._linear_vel = Vector3()
+        self._angular_vel = Vector3()
         self._last_cmd_time = 0.0
+        self._vel_lock = threading.Lock()
         self._running = False
         self._thread: threading.Thread | None = None
 
@@ -68,9 +69,10 @@ class SimpleRobot(Module[SimpleRobotConfig]):
         self._disposables.add(self.cmd_vel.observable().subscribe(self._on_twist))
 
     def _on_twist(self, twist: Twist) -> None:
-        self.linear_vel = twist.linear
-        self.angular_vel = twist.angular
-        self._last_cmd_time = time.time()
+        with self._vel_lock:
+            self._linear_vel = twist.linear
+            self._angular_vel = twist.angular
+            self._last_cmd_time = time.time()
 
     def _update(self) -> None:
         last = time.time()
@@ -80,15 +82,19 @@ class SimpleRobot(Module[SimpleRobotConfig]):
             dt = now - last
             last = now
 
-            # Check command timeout
-            if now - self._last_cmd_time > self.config.cmd_timeout:
-                self.linear_vel = Vector3()
-                self.angular_vel = Vector3()
+            # Get velocity with lock
+            with self._vel_lock:
+                # Check command timeout
+                if now - self._last_cmd_time > self.config.cmd_timeout:
+                    self._linear_vel = Vector3()
+                    self._angular_vel = Vector3()
+                linear_vel = self._linear_vel
+                angular_vel = self._angular_vel
 
             # Integrate velocity (unicycle model)
-            self.x += self.linear_vel.x * math.cos(self.theta) * dt
-            self.y += self.linear_vel.x * math.sin(self.theta) * dt
-            self.theta += self.angular_vel.z * dt
+            self.x += linear_vel.x * math.cos(self.theta) * dt
+            self.y += linear_vel.x * math.sin(self.theta) * dt
+            self.theta += angular_vel.z * dt
             self.theta = math.atan2(math.sin(self.theta), math.cos(self.theta))
 
             # Publish pose
@@ -107,9 +113,9 @@ class SimpleRobot(Module[SimpleRobotConfig]):
                     f"\033[36mPose: x={self.x:.2f} y={self.y:.2f} θ={math.degrees(self.theta):.1f}°\033[0m",
                     flush=True,
                 )
-                if self.linear_vel.x or self.angular_vel.z:
+                if linear_vel.x or angular_vel.z:
                     print(
-                        f"\033[32mTwist: v={self.linear_vel.x:.2f} ω={math.degrees(self.angular_vel.z):.1f}°/s\033[0m",
+                        f"\033[32mTwist: v={linear_vel.x:.2f} ω={math.degrees(angular_vel.z):.1f}°/s\033[0m",
                         flush=True,
                     )
                 last_print = now
