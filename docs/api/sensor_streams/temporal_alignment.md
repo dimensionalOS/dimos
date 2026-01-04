@@ -152,7 +152,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline.png)
 
-if we loosen up our match tolerance we might get mutliple pairs mathing the same lidar frame
+if we loosen up our match tolerance we might get multiple pairs matching the same lidar frame
 
 ```python session=align
 aligned_pairs = align_timestamped(
