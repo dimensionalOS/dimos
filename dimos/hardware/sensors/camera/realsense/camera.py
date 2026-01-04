@@ -20,6 +20,8 @@ import time
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+import reactivex as rx
+from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
 from dimos.core import Module, ModuleConfig, Out, rpc
@@ -29,6 +31,7 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.utils.reactive import backpressure
 
 from dimos.robot.foxglove_bridge import FoxgloveBridge
 
@@ -55,6 +58,8 @@ class RealSenseCameraConfig(ModuleConfig):
     serial_number: str | None = None
     align_depth_to_color: bool = True
     enable_depth: bool = True
+    enable_pointcloud: bool = False
+    pointcloud_fps: float = 5.0
 
 
 class RealSenseCamera(Module[RealSenseCameraConfig]):
@@ -78,6 +83,11 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         self._depth_camera_info: CameraInfo | None = None
         self._depth_scale: float = 0.001
         self._color_to_depth_extrinsics: rs.extrinsics | None = None
+        # Pointcloud generation state
+        self._latest_color_img: Image | None = None
+        self._latest_depth_img: Image | None = None
+        self._pointcloud_lock = threading.Lock()
+        self._pointcloud_disposable: Disposable | None = None
 
     @property
     def _camera_link(self) -> str:
@@ -144,6 +154,13 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         self._running = True
         self._thread = threading.Thread(target=self._capture_loop, daemon=True)
         self._thread.start()
+
+        if self.config.enable_pointcloud and self.config.enable_depth:
+            interval_sec = 1.0 / self.config.pointcloud_fps
+            self._pointcloud_disposable = backpressure(rx.interval(interval_sec)).subscribe(
+                on_next=lambda _: self._generate_pointcloud(),
+                on_error=lambda e: print(f"Pointcloud error: {e}"),
+            )
 
         return "started"
 
@@ -281,15 +298,11 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                     self._depth_camera_info.ts = ts
                     self.depth_camera_info.publish(self._depth_camera_info)
 
-            # Create and publish colored pointcloud
-            if color_img is not None and depth_img is not None and self._color_camera_info:
-                pcd = PointCloud2.from_rgbd(
-                    color_image=color_img,
-                    depth_image=depth_img,
-                    camera_info=self._color_camera_info,
-                    depth_scale=self._depth_scale,
-                )
-                self.pointcloud.publish(pcd)
+            # Store latest images for pointcloud generation
+            if self.config.enable_pointcloud and color_img is not None and depth_img is not None:
+                with self._pointcloud_lock:
+                    self._latest_color_img = color_img
+                    self._latest_depth_img = depth_img
 
             # Publish TF
             self._publish_tf(ts)
@@ -353,9 +366,34 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
 
         self.tf.publish(*transforms)
 
+    def _generate_pointcloud(self) -> None:
+        """Generate and publish pointcloud from latest images (called by rx.interval)."""
+        with self._pointcloud_lock:
+            color_img = self._latest_color_img
+            depth_img = self._latest_depth_img
+
+        if color_img is None or depth_img is None or self._color_camera_info is None:
+            return
+
+        try:
+            pcd = PointCloud2.from_rgbd(
+                color_image=color_img,
+                depth_image=depth_img,
+                camera_info=self._color_camera_info,
+                depth_scale=self._depth_scale,
+            )
+            self.pointcloud.publish(pcd)
+        except Exception as e:
+            print(f"Pointcloud generation error: {e}")
+
     @rpc
     def stop(self) -> None:
         self._running = False
+
+        # Stop pointcloud generation
+        if self._pointcloud_disposable:
+            self._pointcloud_disposable.dispose()
+            self._pointcloud_disposable = None
 
         # Stop pipeline first to unblock wait_for_frames()
         if self._pipeline:
@@ -375,6 +413,8 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         self._profile = None
         self._align = None
         self._color_to_depth_extrinsics = None
+        self._latest_color_img = None
+        self._latest_depth_img = None
         super().stop()
 
     @rpc
@@ -394,7 +434,7 @@ def main() -> None:
     dimos = ModuleCoordinator(n=2)
     dimos.start()
 
-    camera = dimos.deploy(RealSenseCamera)
+    camera = dimos.deploy(RealSenseCamera, enable_pointcloud=True, pointcloud_fps=5.0)
     foxglove_bridge = FoxgloveBridge()
     foxglove_bridge.start()
 

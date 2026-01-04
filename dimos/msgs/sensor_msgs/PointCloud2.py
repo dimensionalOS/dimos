@@ -171,7 +171,7 @@ class PointCloud2(Timestamped):
         depth_image: Image,
         camera_info: CameraInfo,
         depth_scale: float = 1.0,
-        depth_trunc: float = 20.0,
+        depth_trunc: float = 5.0,
     ) -> PointCloud2:
         """Create PointCloud2 from RGB and depth Image messages.
 
