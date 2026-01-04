@@ -8,8 +8,8 @@ In robotics, we deal with hardware that produces data at its own pace - a camera
 
 **The problem:** A fast producer can overwhelm a slow consumer, causing memory buildup or dropped frames. We might have multiple subscribers to the same hardware that operate at different speeds.
 
-<details>
-<summary>diagram source</summary>
+
+<details><summary>Pikchr</summary>
 
 ```pikchr fold output=assets/backpressure.svg
 color = white
@@ -24,10 +24,11 @@ Slow: box "ML Model" "2 fps" rad 5px fit wid 130% ht 130%
 text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 ```
 
+</details>
+
 <!--Result:-->
 ![output](assets/backpressure.svg)
 
-</details>
 
 **The solution:** The `backpressure()` wrapper handles this by:
 
@@ -74,8 +75,8 @@ slow got 7 items (skipped 13)
 
 ### How it works
 
-<details>
-<summary>diagram source</summary>
+
+<details><summary>Pikchr</summary>
 
 ```pikchr fold output=assets/backpressure_solution.svg
 color = white
@@ -93,10 +94,10 @@ arrow
 Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 ```
 
+</details>
+
 <!--Result:-->
 ![output](assets/backpressure_solution.svg)
-
-</details>
 
 The `LATEST` strategy means: when the slow subscriber finishes processing, it gets whatever the most recent value is, skipping any values that arrived while it was busy.
 
@@ -120,6 +121,9 @@ class MLModel(Module):
 
 
 ```
+
+
+
 
 
 
