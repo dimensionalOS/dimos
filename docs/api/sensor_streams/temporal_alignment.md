@@ -112,17 +112,17 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
 
     fig, ax = plt.subplots(figsize=(12, 2.5))
 
-    # Video markers above axis (y=0.3)
+    # Video markers above axis (y=0.3) - circles, cyan when matched
     for frame in video_frames:
         rel_ts = frame.ts - base_ts
         matched = frame.ts in matched_video_ts
-        ax.plot(rel_ts, 0.3, 'o', color='lime' if matched else '#555', markersize=8)
+        ax.plot(rel_ts, 0.3, 'o', color='cyan' if matched else '#688', markersize=8)
 
-    # Lidar markers below axis (y=-0.3)
+    # Lidar markers below axis (y=-0.3) - squares, orange when matched
     for scan in lidar_scans:
         rel_ts = scan.ts - base_ts
         matched = scan.ts in matched_lidar_ts
-        ax.plot(rel_ts, -0.3, 's', color='lime' if matched else '#555', markersize=8)
+        ax.plot(rel_ts, -0.3, 's', color='orange' if matched else '#a86', markersize=8)
 
     # Green lines connecting matched pairs
     for img, pc in aligned_pairs:
@@ -137,7 +137,7 @@ def plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, path):
     ax.set_xlabel('Time (s)')
     ax.set_yticks([0.3, -0.3])
     ax.set_yticklabels(['Video', 'Lidar'])
-    ax.set_title(f'{len(aligned_pairs)} matched pairs (green) from {len(video_frames)} frames + {len(lidar_scans)} scans')
+    ax.set_title(f'{len(aligned_pairs)} matched from {len(video_frames)} video + {len(lidar_scans)} lidar')
     plt.tight_layout()
     plt.savefig(path, transparent=True)
     plt.close()
