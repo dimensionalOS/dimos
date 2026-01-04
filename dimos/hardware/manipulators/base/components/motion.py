@@ -23,13 +23,15 @@ from ..driver import Command
 from ..sdk_interface import BaseManipulatorSDK
 from ..spec import ManipulatorCapabilities
 from ..utils import SharedState, scale_velocities, validate_joint_limits, validate_velocity_limits
+from . import component_api
 
 
 class StandardMotionComponent:
     """Motion control component that works with any SDK wrapper.
 
-    This component provides standard motion control RPC methods that work
-    consistently across all manipulator types. It handles:
+    This component provides standard motion control methods that work
+    consistently across all manipulator types. Methods decorated with @component_api
+    are automatically exposed as RPC methods on the driver. It handles:
     - Joint position control
     - Joint velocity control
     - Joint effort/torque control (if supported)
@@ -84,9 +86,10 @@ class StandardMotionComponent:
         """Initialize the component after all resources are set."""
         self.logger.debug("Motion component initialized")
 
-    # ============= RPC Methods =============
+    # ============= Component API Methods =============
 
-    def rpc_move_joint(
+    @component_api
+    def move_joint(
         self,
         positions: list[float],
         velocity: float = 1.0,
@@ -156,7 +159,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in move_joint: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_move_joint_velocity(
+    @component_api
+    def move_joint_velocity(
         self, velocities: list[float], acceleration: float = 1.0, validate: bool = True
     ) -> dict:
         """Set joint velocities.
@@ -210,7 +214,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in move_joint_velocity: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_move_joint_effort(self, efforts: list[float], validate: bool = True) -> dict:
+    @component_api
+    def move_joint_effort(self, efforts: list[float], validate: bool = True) -> dict:
         """Set joint efforts/torques.
 
         Args:
@@ -251,7 +256,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in move_joint_effort: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_stop_motion(self) -> dict:
+    @component_api
+    def stop_motion(self) -> dict:
         """Stop all ongoing motion immediately.
 
         Returns:
@@ -282,7 +288,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in stop_motion: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_joint_state(self) -> dict:
+    @component_api
+    def get_joint_state(self) -> dict:
         """Get current joint state.
 
         Returns:
@@ -310,7 +317,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in get_joint_state: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_joint_limits(self) -> dict:
+    @component_api
+    def get_joint_limits(self) -> dict:
         """Get joint position limits.
 
         Returns:
@@ -331,7 +339,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in get_joint_limits: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_velocity_limits(self) -> dict:
+    @component_api
+    def get_velocity_limits(self) -> dict:
         """Get joint velocity limits.
 
         Returns:
@@ -348,7 +357,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in get_velocity_limits: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_set_velocity_scale(self, scale: float) -> dict:
+    @component_api
+    def set_velocity_scale(self, scale: float) -> dict:
         """Set global velocity scaling factor.
 
         Args:
@@ -368,7 +378,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in set_velocity_scale: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_set_acceleration_scale(self, scale: float) -> dict:
+    @component_api
+    def set_acceleration_scale(self, scale: float) -> dict:
         """Set global acceleration scaling factor.
 
         Args:
@@ -390,7 +401,8 @@ class StandardMotionComponent:
 
     # ============= Cartesian Control (Optional) =============
 
-    def rpc_move_cartesian(
+    @component_api
+    def move_cartesian(
         self, pose: dict, velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
     ) -> dict:
         """Move end-effector to target pose.
@@ -440,7 +452,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in move_cartesian: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_cartesian_state(self) -> dict:
+    @component_api
+    def get_cartesian_state(self) -> dict:
         """Get current end-effector pose.
 
         Returns:
@@ -469,7 +482,8 @@ class StandardMotionComponent:
 
     # ============= Trajectory Execution (Optional) =============
 
-    def rpc_execute_trajectory(self, trajectory: list[dict], wait: bool = True) -> dict:
+    @component_api
+    def execute_trajectory(self, trajectory: list[dict], wait: bool = True) -> dict:
         """Execute a joint trajectory.
 
         Args:
@@ -510,7 +524,8 @@ class StandardMotionComponent:
             self.logger.error(f"Error in execute_trajectory: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_stop_trajectory(self) -> dict:
+    @component_api
+    def stop_trajectory(self) -> dict:
         """Stop any executing trajectory.
 
         Returns:

@@ -21,13 +21,15 @@ from typing import Optional
 from ..sdk_interface import BaseManipulatorSDK
 from ..spec import ManipulatorCapabilities
 from ..utils import SharedState
+from . import component_api
 
 
 class StandardServoComponent:
     """Servo control component that works with any SDK wrapper.
 
-    This component provides standard servo/motor control RPC methods that work
-    consistently across all manipulator types. It handles:
+    This component provides standard servo/motor control methods that work
+    consistently across all manipulator types. Methods decorated with @component_api
+    are automatically exposed as RPC methods on the driver. It handles:
     - Servo enable/disable
     - Control mode switching
     - Emergency stop
@@ -75,9 +77,10 @@ class StandardServoComponent:
         """Initialize the component after all resources are set."""
         self.logger.debug("Servo component initialized")
 
-    # ============= RPC Methods =============
+    # ============= Component API Methods =============
 
-    def rpc_enable_servo(self, check_errors: bool = True) -> dict:
+    @component_api
+    def enable_servo(self, check_errors: bool = True) -> dict:
         """Enable servo/motor control.
 
         Args:
@@ -118,7 +121,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in enable_servo: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_disable_servo(self, stop_motion: bool = True) -> dict:
+    @component_api
+    def disable_servo(self, stop_motion: bool = True) -> dict:
         """Disable servo/motor control.
 
         Args:
@@ -154,7 +158,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in disable_servo: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_toggle_servo(self) -> dict:
+    @component_api
+    def toggle_servo(self) -> dict:
         """Toggle servo enable/disable state.
 
         Returns:
@@ -164,9 +169,9 @@ class StandardServoComponent:
             current_state = self.sdk.are_servos_enabled()
 
             if current_state:
-                result = self.rpc_disable_servo()
+                result = self.disable_servo()
             else:
-                result = self.rpc_enable_servo()
+                result = self.enable_servo()
 
             if result["success"]:
                 result["enabled"] = not current_state
@@ -177,7 +182,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in toggle_servo: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_servo_state(self) -> dict:
+    @component_api
+    def get_servo_state(self) -> dict:
         """Get current servo state.
 
         Returns:
@@ -201,7 +207,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in get_servo_state: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_emergency_stop(self) -> dict:
+    @component_api
+    def emergency_stop(self) -> dict:
         """Execute emergency stop.
 
         Returns:
@@ -233,7 +240,8 @@ class StandardServoComponent:
                 pass
             return {"success": False, "error": str(e)}
 
-    def rpc_reset_emergency_stop(self) -> dict:
+    @component_api
+    def reset_emergency_stop(self) -> dict:
         """Reset from emergency stop state.
 
         Returns:
@@ -261,7 +269,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in reset_emergency_stop: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_set_control_mode(self, mode: str) -> dict:
+    @component_api
+    def set_control_mode(self, mode: str) -> dict:
         """Set control mode.
 
         Args:
@@ -301,7 +310,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in set_control_mode: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_control_mode(self) -> dict:
+    @component_api
+    def get_control_mode(self) -> dict:
         """Get current control mode.
 
         Returns:
@@ -327,7 +337,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in get_control_mode: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_clear_errors(self) -> dict:
+    @component_api
+    def clear_errors(self) -> dict:
         """Clear any error states.
 
         Returns:
@@ -352,7 +363,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in clear_errors: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_reset_fault(self) -> dict:
+    @component_api
+    def reset_fault(self) -> dict:
         """Reset from fault state.
 
         This typically involves:
@@ -399,7 +411,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in reset_fault: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_home_robot(self, position: list[float] | None = None) -> dict:
+    @component_api
+    def home_robot(self, position: list[float] | None = None) -> dict:
         """Move robot to home position.
 
         Args:
@@ -444,7 +457,8 @@ class StandardServoComponent:
             self.logger.error(f"Error in home_robot: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_brake_release(self) -> dict:
+    @component_api
+    def brake_release(self) -> dict:
         """Release motor brakes (if applicable).
 
         Returns:
@@ -452,13 +466,14 @@ class StandardServoComponent:
         """
         try:
             # This is typically the same as enabling servos
-            return self.rpc_enable_servo()
+            return self.enable_servo()
 
         except Exception as e:
             self.logger.error(f"Error in brake_release: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_brake_engage(self) -> dict:
+    @component_api
+    def brake_engage(self) -> dict:
         """Engage motor brakes (if applicable).
 
         Returns:
@@ -466,7 +481,7 @@ class StandardServoComponent:
         """
         try:
             # This is typically the same as disabling servos
-            return self.rpc_disable_servo()
+            return self.disable_servo()
 
         except Exception as e:
             self.logger.error(f"Error in brake_engage: {e}")

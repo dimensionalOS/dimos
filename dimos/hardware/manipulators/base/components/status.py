@@ -23,6 +23,7 @@ from typing import Optional
 from ..sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 from ..spec import ManipulatorCapabilities
 from ..utils import SharedState
+from . import component_api
 
 
 @dataclass
@@ -41,8 +42,9 @@ class HealthMetrics:
 class StandardStatusComponent:
     """Status monitoring component that works with any SDK wrapper.
 
-    This component provides standard status monitoring RPC methods that work
-    consistently across all manipulator types. It handles:
+    This component provides standard status monitoring methods that work
+    consistently across all manipulator types. Methods decorated with @component_api
+    are automatically exposed as RPC methods on the driver. It handles:
     - Robot state queries
     - Error monitoring
     - Health metrics
@@ -106,15 +108,18 @@ class StandardStatusComponent:
         self.update_timestamps.append(current_time)
         self._update_health_metrics()
 
-    # ============= RPC Methods =============
+    # ============= Component API Methods =============
 
-    def rpc_get_robot_state(self) -> dict:
+    @component_api
+    def get_robot_state(self) -> dict:
         """Get comprehensive robot state.
 
         Returns:
             Dict with complete state information
         """
         try:
+            current_time = time.time()
+
             # Get state from SDK
             robot_state = self.sdk.get_robot_state()
 
@@ -157,7 +162,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_robot_state: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_system_info(self) -> dict:
+    @component_api
+    def get_system_info(self) -> dict:
         """Get system information.
 
         Returns:
@@ -194,7 +200,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_system_info: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_capabilities(self) -> dict:
+    @component_api
+    def get_capabilities(self) -> dict:
         """Get manipulator capabilities.
 
         Returns:
@@ -223,7 +230,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_capabilities: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_error_state(self) -> dict:
+    @component_api
+    def get_error_state(self) -> dict:
         """Get detailed error state.
 
         Returns:
@@ -252,7 +260,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_error_state: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_health_metrics(self) -> dict:
+    @component_api
+    def get_health_metrics(self) -> dict:
         """Get health metrics.
 
         Returns:
@@ -278,7 +287,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_health_metrics: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_statistics(self) -> dict:
+    @component_api
+    def get_statistics(self) -> dict:
         """Get operation statistics.
 
         Returns:
@@ -306,7 +316,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_statistics: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_check_connection(self) -> dict:
+    @component_api
+    def check_connection(self) -> dict:
         """Check connection status.
 
         Returns:
@@ -335,7 +346,8 @@ class StandardStatusComponent:
 
     # ============= Force/Torque Monitoring (Optional) =============
 
-    def rpc_get_force_torque(self) -> dict:
+    @component_api
+    def get_force_torque(self) -> dict:
         """Get force/torque sensor data.
 
         Returns:
@@ -363,7 +375,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_force_torque: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_zero_force_torque(self) -> dict:
+    @component_api
+    def zero_force_torque(self) -> dict:
         """Zero the force/torque sensor.
 
         Returns:
@@ -383,7 +396,8 @@ class StandardStatusComponent:
 
     # ============= I/O Monitoring (Optional) =============
 
-    def rpc_get_digital_inputs(self) -> dict:
+    @component_api
+    def get_digital_inputs(self) -> dict:
         """Get digital input states.
 
         Returns:
@@ -401,7 +415,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in get_digital_inputs: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_set_digital_outputs(self, outputs: dict) -> dict:
+    @component_api
+    def set_digital_outputs(self, outputs: dict) -> dict:
         """Set digital output states.
 
         Args:
@@ -418,7 +433,8 @@ class StandardStatusComponent:
             self.logger.error(f"Error in set_digital_outputs: {e}")
             return {"success": False, "error": str(e)}
 
-    def rpc_get_analog_inputs(self) -> dict:
+    @component_api
+    def get_analog_inputs(self) -> dict:
         """Get analog input values.
 
         Returns:
@@ -438,7 +454,8 @@ class StandardStatusComponent:
 
     # ============= Gripper Status (Optional) =============
 
-    def rpc_get_gripper_state(self) -> dict:
+    @component_api
+    def get_gripper_state(self) -> dict:
         """Get gripper state.
 
         Returns:
