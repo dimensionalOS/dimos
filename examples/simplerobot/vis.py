@@ -65,14 +65,14 @@ def run_visualization(robot, window_size=(800, 800), meters_per_pixel=0.02):
         pygame.draw.circle(screen, ROBOT, (rx, ry), 20)
 
         # Draw direction arrow
-        ax = rx + int(30 * math.cos(robot.theta))
-        ay = ry - int(30 * math.sin(robot.theta))
+        ax = rx + int(45 * math.cos(robot.theta))
+        ay = ry - int(45 * math.sin(robot.theta))
         pygame.draw.line(screen, ARROW, (rx, ry), (ax, ay), 3)
 
         # Arrowhead
         for sign in [-1, 1]:
-            hx = ax - int(10 * math.cos(robot.theta + sign * 2.5))
-            hy = ay + int(10 * math.sin(robot.theta + sign * 2.5))
+            hx = ax - int(10 * math.cos(robot.theta + sign * 0.5))
+            hy = ay + int(10 * math.sin(robot.theta + sign * 0.5))
             pygame.draw.line(screen, ARROW, (ax, ay), (hx, hy), 3)
 
         # Info text
