@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
-DOCKERFILE="$REPO_ROOT/installer/Dockerfile"
+DOCKERFILE="$REPO_ROOT/installer/pyz_app/bundled_files/Dockerfile"
 HASH_FILE="$SCRIPT_DIR/.dockerfile.hash"
 IMAGE_NAME="mystery"
 
