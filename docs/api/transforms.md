@@ -16,7 +16,7 @@ This chain of conversions—(pixels + depth) → 3D point in camera frame → ro
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/transforms_tree.svg
+```pikchr fold output=assets/transforms_tree.svg
 color = white
 fill = none
 
@@ -377,7 +377,7 @@ The transform tree from the example above, showing which module publishes each t
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/transforms_modules.svg
+```pikchr fold output=assets/transforms_modules.svg
 color = white
 fill = none
 
