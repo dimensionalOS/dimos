@@ -27,6 +27,8 @@ text "items pile up!" at (Queue.x, Queue.y - 0.45in)
 <!--Result:-->
 ![output](assets/backpressure.svg)
 
+</details>
+
 **The solution:** The `backpressure()` wrapper handles this by:
 
 1. **Sharing the source** - Camera runs once, all subscribers share the stream
@@ -93,6 +95,8 @@ Slow: box "Slow Sub" rad 5px fit wid 170% ht 170%
 
 <!--Result:-->
 ![output](assets/backpressure_solution.svg)
+
+</details>
 
 The `LATEST` strategy means: when the slow subscriber finishes processing, it gets whatever the most recent value is, skipping any values that arrived while it was busy.
 

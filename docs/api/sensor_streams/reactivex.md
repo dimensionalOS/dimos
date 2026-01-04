@@ -229,6 +229,8 @@ Handler: box "callback" rad 5px fit wid 170% ht 170%
 <!--Result:-->
 ![output](assets/observable_flow.svg)
 
+</details>
+
 **Key property: Observables are lazy.** Nothing happens until you call `.subscribe()`. This means you can build up complex pipelines without any work being done, then start the flow when ready.
 
 Here's the full subscribe signature with all three callbacks:
