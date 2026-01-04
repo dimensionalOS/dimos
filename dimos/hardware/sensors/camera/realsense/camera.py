@@ -16,12 +16,12 @@ import atexit
 from dataclasses import dataclass, field
 import threading
 import time
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 import pyrealsense2 as rs
 import reactivex as rx
-from reactivex.disposable import Disposable
 from scipy.spatial.transform import Rotation
 
 from dimos.core import Module, ModuleConfig, Out, rpc
@@ -31,10 +31,11 @@ from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import CameraInfo
 from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.foxglove_bridge import FoxgloveBridge
 from dimos.utils.reactive import backpressure
 
-from dimos.robot.foxglove_bridge import FoxgloveBridge
-
+if TYPE_CHECKING:
+    from reactivex.disposable import Disposable
 
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
@@ -115,7 +116,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
 
     @rpc
     def start(self) -> str:
-
         self._pipeline = rs.pipeline()
         config = rs.config()
 
@@ -189,9 +189,7 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                     depth_intrinsics, self._depth_optical_frame
                 )
 
-    def _intrinsics_to_camera_info(
-        self, intrinsics: rs.intrinsics, frame_id: str
-    ) -> CameraInfo:
+    def _intrinsics_to_camera_info(self, intrinsics: rs.intrinsics, frame_id: str) -> CameraInfo:
         fx, fy = intrinsics.fx, intrinsics.fy
         cx, cy = intrinsics.ppx, intrinsics.ppy
 

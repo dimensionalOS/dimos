@@ -30,8 +30,6 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 import rerun as rr
 
 from dimos.msgs.geometry_msgs import Vector3
-from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
-from dimos.msgs.sensor_msgs.Image import Image
 
 # Import ROS types
 try:
@@ -45,7 +43,13 @@ try:
 except ImportError:
     ROS_AVAILABLE = False
 
+from typing import TYPE_CHECKING
+
 from dimos.types.timestamped import Timestamped
+
+if TYPE_CHECKING:
+    from dimos.msgs.sensor_msgs.CameraInfo import CameraInfo
+    from dimos.msgs.sensor_msgs.Image import Image
 
 
 @functools.lru_cache(maxsize=16)
@@ -392,9 +396,9 @@ class PointCloud2(Timestamped):
             # Pack RGB into float32 (ROS convention: bytes are [padding, r, g, b])
             rgb_packed = np.zeros(len(points), dtype=np.float32)
             rgb_uint32 = (
-                (colors[:, 0].astype(np.uint32) << 16) |
-                (colors[:, 1].astype(np.uint32) << 8) |
-                colors[:, 2].astype(np.uint32)
+                (colors[:, 0].astype(np.uint32) << 16)
+                | (colors[:, 1].astype(np.uint32) << 8)
+                | colors[:, 2].astype(np.uint32)
             )
             rgb_packed = rgb_uint32.view(np.float32)
 
@@ -408,10 +412,12 @@ class PointCloud2(Timestamped):
             msg.fields_length = 4
             msg.point_step = 16  # x, y, z, intensity
 
-            point_data = np.column_stack([
-                points,
-                np.zeros(len(points), dtype=np.float32),
-            ]).astype(np.float32)
+            point_data = np.column_stack(
+                [
+                    points,
+                    np.zeros(len(points), dtype=np.float32),
+                ]
+            ).astype(np.float32)
 
         msg.row_step = msg.point_step * msg.width
         data_bytes = point_data.tobytes()
@@ -470,9 +476,15 @@ class PointCloud2(Timestamped):
             points = np.zeros((num_points, 3), dtype=np.float32)
             for i in range(num_points):
                 base_offset = i * point_step
-                points[i, 0] = struct.unpack("<f", raw_data[base_offset + x_offset : base_offset + x_offset + 4])[0]
-                points[i, 1] = struct.unpack("<f", raw_data[base_offset + y_offset : base_offset + y_offset + 4])[0]
-                points[i, 2] = struct.unpack("<f", raw_data[base_offset + z_offset : base_offset + z_offset + 4])[0]
+                points[i, 0] = struct.unpack(
+                    "<f", raw_data[base_offset + x_offset : base_offset + x_offset + 4]
+                )[0]
+                points[i, 1] = struct.unpack(
+                    "<f", raw_data[base_offset + y_offset : base_offset + y_offset + 4]
+                )[0]
+                points[i, 2] = struct.unpack(
+                    "<f", raw_data[base_offset + z_offset : base_offset + z_offset + 4]
+                )[0]
 
         # Create tensor pointcloud
         pcd_t = o3d.t.geometry.PointCloud()
@@ -480,7 +492,13 @@ class PointCloud2(Timestamped):
 
         # Extract RGB colors if present
         if rgb_offset is not None:
-            dt = np.dtype([("_pre", f"V{rgb_offset}"), ("rgb", "<f4"), ("_post", f"V{point_step - rgb_offset - 4}")])
+            dt = np.dtype(
+                [
+                    ("_pre", f"V{rgb_offset}"),
+                    ("rgb", "<f4"),
+                    ("_post", f"V{point_step - rgb_offset - 4}"),
+                ]
+            )
             structured = np.frombuffer(raw_data, dtype=dt, count=num_points)
             rgb_packed = structured["rgb"].view(np.uint32)
             r = ((rgb_packed >> 16) & 0xFF).astype(np.float32) / 255.0
