@@ -68,6 +68,16 @@ class SimpleRobot(Module[SimpleRobotConfig]):
         self._thread.start()
         self._disposables.add(self.cmd_vel.observable().subscribe(self._on_twist))
 
+    @property
+    def linear_vel(self) -> Vector3:
+        with self._vel_lock:
+            return self._linear_vel
+
+    @property
+    def angular_vel(self) -> Vector3:
+        with self._vel_lock:
+            return self._angular_vel
+
     def _on_twist(self, twist: Twist) -> None:
         with self._vel_lock:
             self._linear_vel = twist.linear
