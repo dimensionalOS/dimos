@@ -517,32 +517,28 @@ def add_git_ignore_patterns(
     }
 
 
-if __name__ == "__main__":
-    # Self-test: exercise ProgressRenderer with dummy commands.
-    pkgs = ["alpha", "beta", "gamma"]
-    progress = ProgressRenderer(len(pkgs))
-    for idx, name in enumerate(pkgs, start=1):
-        progress.set_current(idx, name)
-        # Simulate streaming output
-        for line in [f"{name}: step 1", f"{name}: step 2", f"{name}: done"]:
-            progress.add_output(line)
-    progress.finish()
-    print("ProgressRenderer self-test completed")
+def traceback_to_string(traceback):
+    import traceback as traceback_module
+    from io import StringIO
+    string_stream = StringIO()
+    traceback_module.print_tb(traceback, limit=None, file=string_stream)
+    return string_stream.getvalue()
 
 
-__all__ = [
-    "add_git_ignore_patterns",
-    "apt_install",
-    "brew_install",
-    "detect_python_command",
-    "ensure_git_and_lfs",
-    "ensure_homebrew",
-    "ensure_port_audio",
-    "ensure_python",
-    "ensure_xcode_cli_tools",
-    "get_project_directory",
-    "get_system_deps",
-    "is_version_at_least",
-    "parse_version",
-    "replace_strings_in_directory",
-]
+def get_trace(level=0):
+    import sys
+    import types
+    try:
+        raise Exception(f'''''')
+    except:
+        traceback = sys.exc_info()[2]
+        back_frame = traceback.tb_frame
+        for each in range(level+1):
+            back_frame = back_frame.f_back
+    traceback = types.TracebackType(
+        tb_next=None,
+        tb_frame=back_frame,
+        tb_lasti=back_frame.f_lasti,
+        tb_lineno=back_frame.f_lineno
+    )
+    return traceback
