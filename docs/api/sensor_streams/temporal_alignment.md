@@ -7,7 +7,7 @@ Robots have multiple sensors emitting data at different rates and latencies. A c
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/alignment_overview.svg
+```pikchr fold output=assets/alignment_overview.svg
 color = white
 fill = none
 
@@ -89,7 +89,7 @@ When secondary messages arrive:
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/alignment_flow.svg
+```pikchr fold output=assets/alignment_flow.svg
 color = white
 fill = none
 linewid = 0.35in

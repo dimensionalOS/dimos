@@ -11,7 +11,7 @@ In robotics, we deal with hardware that produces data at its own pace - a camera
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/backpressure.svg
+```pikchr fold output=assets/backpressure.svg
 color = white
 fill = none
 
@@ -77,7 +77,7 @@ slow got 7 items (skipped 13)
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/backpressure_solution.svg
+```pikchr fold output=assets/backpressure_solution.svg
 color = white
 fill = none
 linewid = 0.3in
