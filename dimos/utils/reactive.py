@@ -125,6 +125,10 @@ def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> 
     return getter  # type: ignore[return-value]
 
 
+def getter_cold(source: Observable[T], timeout: float | None = 30.0) -> T:
+    return getter_ondemand(source, timeout)
+
+
 T = TypeVar("T")  # type: ignore[misc]
 
 
@@ -173,6 +177,12 @@ def getter_streaming(
 
     reader.dispose = _dispose  # type: ignore[attr-defined]
     return reader  # type: ignore[return-value]
+
+
+def getter_hot(
+    source: Observable[T], timeout: float | None = 30.0, *, nonblocking: bool = False
+) -> LatestReader[T]:
+    return getter_streaming(source, timeout, nonblocking=nonblocking)
 
 
 T = TypeVar("T")  # type: ignore[misc]
