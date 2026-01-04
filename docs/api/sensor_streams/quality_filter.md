@@ -113,6 +113,37 @@ Output: 3 frame(s) (selected sharpest per window)
   Frame 2: 0.360
 ```
 
+Visualizing which frames were selected:
+
+<details><summary>Python</summary>
+
+```python fold session=qb output=assets/sharpness_graph.svg
+import matplotlib
+matplotlib.use('svg')
+import matplotlib.pyplot as plt
+plt.style.use('dark_background')
+
+sharpness = [f.sharpness for f in input_frames]
+selected_idx = [i for i, f in enumerate(input_frames) if f in sharp_frames]
+
+plt.figure(figsize=(10, 3))
+plt.plot(sharpness, 'o-', label='All frames', alpha=0.7)
+for i, idx in enumerate(selected_idx):
+    plt.axvline(x=idx, color='crimson', alpha=0.7, linestyle='--',
+                label='Selected' if i == 0 else None)
+plt.xlabel('Frame')
+plt.ylabel('Sharpness')
+plt.xticks(range(len(sharpness)))
+plt.legend()
+plt.grid(alpha=0.3)
+plt.savefig('{output}', transparent=True)
+```
+
+</details>
+
+<!--Result:-->
+![output](assets/sharpness_graph.svg)
+
 ### Usage in Camera Module
 
 Here's how it's used in the actual camera module:
