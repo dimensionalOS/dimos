@@ -158,7 +158,7 @@ if we loosen up our match tolerance we might get mutliple pairs mathing the same
 aligned_pairs = align_timestamped(
     video_stream,
     lidar_stream,
-    match_tolerance=0.05,  # 100ms tolerance
+    match_tolerance=0.05,  # 50ms tolerance
     buffer_size=5.0, # how long to wait for match
 ).pipe(ops.to_list()).run()
 
