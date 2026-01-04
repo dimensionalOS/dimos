@@ -47,52 +47,35 @@ def find_git_root() -> Path | None:
         return None
 
 
-def load_gitignore_patterns(root: Path) -> list[str]:
-    """Load patterns from .gitignore file."""
-    gitignore = root / ".gitignore"
-    if not gitignore.exists():
+def get_git_tracked_files(root: Path) -> list[Path]:
+    """
+    Get list of tracked files from git ls-files.
+
+    Returns list of Path objects relative to root.
+    Only includes files tracked by git, respecting .gitignore.
+
+    Args:
+        root: Repository root directory
+
+    Returns:
+        List of Path objects relative to root, sorted.
+        Returns empty list if not in git repo or on error.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "--full-name", "--cached", "--others", "--exclude-standard"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=root,
+        )
+        if not result.stdout.strip():
+            return []
+
+        paths = [Path(line) for line in result.stdout.strip().split("\n") if line]
+        return sorted(paths)
+    except (subprocess.CalledProcessError, FileNotFoundError):
         return []
-
-    patterns = []
-    with open(gitignore) as f:
-        for line in f:
-            line = line.strip()
-            if line and not line.startswith("#"):
-                patterns.append(line)
-    return patterns
-
-
-def should_ignore(path: Path, root: Path, patterns: list[str]) -> bool:
-    """Check if path should be ignored based on gitignore patterns."""
-    rel_path = path.relative_to(root)
-    path_str = str(rel_path)
-    name = path.name
-
-    # Always ignore these
-    if name in {".git", ".venv", "venv", "node_modules", "__pycache__", ".mypy_cache", "generated"}:
-        return True
-
-    # Skip directories that contain a .git subdir (submodules, nested repos)
-    if path.is_dir() and (path / ".git").exists():
-        return True
-
-    for pattern in patterns:
-        # Handle directory patterns (ending with /)
-        if pattern.endswith("/"):
-            dir_pattern = pattern[:-1]
-            if name == dir_pattern or path_str.startswith(dir_pattern + "/"):
-                return True
-        # Handle glob patterns
-        elif "*" in pattern:
-            import fnmatch
-
-            if fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(path_str, pattern):
-                return True
-        # Simple name match
-        elif name == pattern or path_str == pattern or path_str.startswith(pattern + "/"):
-            return True
-
-    return False
 
 
 def build_file_index(root: Path) -> dict[str, list[Path]]:
@@ -106,26 +89,15 @@ def build_file_index(root: Path) -> dict[str, list[Path]]:
     - dimos/protocol/service/spec.py
     """
     index: dict[str, list[Path]] = defaultdict(list)
-    patterns = load_gitignore_patterns(root)
+    tracked_files = get_git_tracked_files(root)
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        current = Path(dirpath)
+    for rel_path in tracked_files:
+        parts = rel_path.parts
 
-        # Filter out ignored directories
-        dirnames[:] = [d for d in dirnames if not should_ignore(current / d, root, patterns)]
-
-        for filename in filenames:
-            filepath = current / filename
-            if should_ignore(filepath, root, patterns):
-                continue
-
-            rel_path = filepath.relative_to(root)
-            parts = rel_path.parts
-
-            # Add all suffix combinations
-            for i in range(len(parts)):
-                suffix = "/".join(parts[i:])
-                index[suffix].append(rel_path)
+        # Add all suffix combinations
+        for i in range(len(parts)):
+            suffix = "/".join(parts[i:])
+            index[suffix].append(rel_path)
 
     return index
 
@@ -141,32 +113,21 @@ def build_doc_index(root: Path) -> dict[str, list[Path]]:
     - "modules" -> [Path("docs/modules/index.md")] (if modules/index.md exists)
     """
     index: dict[str, list[Path]] = defaultdict(list)
-    patterns = load_gitignore_patterns(root)
+    tracked_files = get_git_tracked_files(root)
 
-    for dirpath, dirnames, filenames in os.walk(root):
-        current = Path(dirpath)
+    for rel_path in tracked_files:
+        if rel_path.suffix != ".md":
+            continue
 
-        # Filter out ignored directories
-        dirnames[:] = [d for d in dirnames if not should_ignore(current / d, root, patterns)]
+        stem = rel_path.stem.lower()
 
-        for filename in filenames:
-            if not filename.endswith(".md"):
-                continue
-
-            filepath = current / filename
-            if should_ignore(filepath, root, patterns):
-                continue
-
-            rel_path = filepath.relative_to(root)
-            stem = filepath.stem.lower()
-
-            # For index.md files, also index by parent directory name
-            if stem == "index":
-                parent_name = filepath.parent.name.lower()
-                if parent_name:
-                    index[parent_name].append(rel_path)
-            else:
-                index[stem].append(rel_path)
+        # For index.md files, also index by parent directory name
+        if stem == "index":
+            parent_name = rel_path.parent.name.lower()
+            if parent_name:
+                index[parent_name].append(rel_path)
+        else:
+            index[stem].append(rel_path)
 
     return index
 
