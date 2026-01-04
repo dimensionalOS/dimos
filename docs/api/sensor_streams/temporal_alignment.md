@@ -180,7 +180,7 @@ plot_alignment_timeline(video_frames, lidar_scans, aligned_pairs, '{output}')
 <!--Result:-->
 ![output](assets/alignment_timeline2.png)
 
-We can combine frame alignment with a quality filter
+## We can combine frame alignment with a quality filter
 
 more on [quality filtering here](quality_filter.md)
 
