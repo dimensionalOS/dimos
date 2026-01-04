@@ -18,20 +18,19 @@ Deno.serve({ port: PORT }, async (req) => {
     socket.onclose = () => { console.log("Client disconnected"); clients.delete(socket); };
     socket.onerror = () => clients.delete(socket);
 
-    // Handle twist commands from browser
+    // Forward binary LCM packets from browser directly to UDP
+    socket.binaryType = "arraybuffer";
     socket.onmessage = async (event) => {
-      try {
-        const cmd = JSON.parse(event.data);
-        if (cmd.type === "twist") {
-          const twist = new geometry_msgs.Twist({
-            linear: new geometry_msgs.Vector3({ x: cmd.linear, y: 0, z: 0 }),
-            angular: new geometry_msgs.Vector3({ x: 0, y: 0, z: cmd.angular }),
-          });
-          await lcm.publish("/cmd_vel", twist);
-          console.log(`[cmd] linear=${cmd.linear.toFixed(2)} angular=${cmd.angular.toFixed(2)}`);
+      if (event.data instanceof ArrayBuffer) {
+        const packet = new Uint8Array(event.data);
+        try {
+          // we don't need to decode, just showing we can
+          const { channel, data } = decodePacket(packet);
+          console.log(`[ws->lcm] ${channel}`, data);
+          await lcm.publishPacket(packet);
+        } catch (e) {
+          console.error("Forward error:", e);
         }
-      } catch (e) {
-        console.error("Command error:", e);
       }
     };
 
@@ -51,14 +50,14 @@ console.log(`Server: http://localhost:${PORT}`);
 const lcm = new LCM();
 await lcm.start();
 
-// Subscribe to pose and forward to WebSocket clients
+// Subscribe to pose and just log to show how server can decode messages for itself
 lcm.subscribe("/pose", geometry_msgs.PoseStamped, (msg) => {
   const pos = msg.data.pose.position;
   const ori = msg.data.pose.orientation;
   console.log(`[pose] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)}`);
 });
 
-// Forward all raw packets to browser
+// Forward all raw packets to browser (we are decoding LCM directly in the browser)
 lcm.subscribePacket((packet) => {
   for (const client of clients) {
     if (client.readyState === WebSocket.OPEN) {

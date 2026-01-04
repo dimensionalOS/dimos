@@ -1,4 +1,10 @@
 <!DOCTYPE html>
+<!--
+  Browser-based robot control using LCM over WebSocket.
+
+  The browser imports @dimos/msgs via esm.sh and encodes/decodes LCM packets directly.
+  Server (server.ts) is a thin bridge that forwards raw binary between WebSocket and UDP.
+-->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -118,7 +124,7 @@
   </div>
 
   <script type="module">
-    import { decodePacket } from "https://esm.sh/jsr/@dimos/msgs@0.1.3";
+    import { decodePacket, encodePacket, geometry_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.3";
 
     const statusEl = document.getElementById('status');
     const messagesEl = document.getElementById('messages');
@@ -137,7 +143,12 @@
 
     function sendTwist(linear, angular) {
       if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ type: 'twist', linear, angular }));
+        const twist = new geometry_msgs.Twist({
+          linear: new geometry_msgs.Vector3({ x: linear, y: 0, z: 0 }),
+          angular: new geometry_msgs.Vector3({ x: 0, y: 0, z: angular }),
+        });
+        const packet = encodePacket("/cmd_vel#geometry_msgs.Twist", twist);
+        ws.send(packet);
         log(`[cmd] linear=${linear.toFixed(2)} angular=${angular.toFixed(2)}`);
       }
     }
@@ -180,8 +191,9 @@
       ws.onmessage = (event) => {
         try {
           const { channel, data } = decodePacket(new Uint8Array(event.data));
+          console.log(`[${channel}]`, data);
 
-          if (channel === '/pose') {
+          if (channel === '/pose#geometry_msgs.PoseStamped') {
             const pos = data.pose.position;
             const ori = data.pose.orientation;
             document.getElementById('pose-x').textContent = pos.x.toFixed(2);

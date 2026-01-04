@@ -24,6 +24,8 @@ Features:
 - Arrow keys / WASD for control
 - Click buttons to send twist commands
 
+The browser imports `@dimos/msgs` via [esm.sh](https://esm.sh) and encodes/decodes LCM packets directly - the server just forwards raw binary between WebSocket and UDP multicast.
+
 ## Dependencies
 
 Main documentation for TS interop:

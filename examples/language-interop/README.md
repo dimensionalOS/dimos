@@ -11,7 +11,7 @@ Demonstrates controlling a dimos robot from non-Python languages.
    ```
 
 2. Run any language example:
-   - [TypeScript](ts/)
+   - [TypeScript](ts/) - CLI and browser-based web UI
    - [C++](cpp/)
    - [Lua](lua/)
 
