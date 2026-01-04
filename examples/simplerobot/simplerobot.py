@@ -141,7 +141,7 @@ if __name__ == "__main__":
 
     # Create robot and set up LCM transports
     robot = SimpleRobot()
-    robot.pose.transport = LCMTransport("/pose", PoseStamped)
+    robot.pose.transport = LCMTransport("/odom", PoseStamped)
     robot.cmd_vel.transport = LCMTransport("/cmd_vel", Twist)
     robot.start()
 

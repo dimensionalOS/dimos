@@ -1,6 +1,6 @@
 # Lua Robot Control Example
 
-Subscribes to robot pose and publishes twist commands using LCM.
+Subscribes to robot odometry and publishes twist commands using LCM.
 
 ## Prerequisites
 
@@ -28,7 +28,7 @@ lua main.lua
 
 ```
 Robot control started
-Subscribing to /pose, publishing to /cmd_vel
+Subscribing to /odom, publishing to /cmd_vel
 Press Ctrl+C to stop.
 
 [pose] x=15.29 y=9.62 z=0.00 | qw=0.57

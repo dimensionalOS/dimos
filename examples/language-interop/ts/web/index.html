@@ -193,7 +193,7 @@
           const { channel, data } = decodePacket(new Uint8Array(event.data));
           console.log(`[${channel}]`, data);
 
-          if (channel === '/pose#geometry_msgs.PoseStamped') {
+          if (channel === '/odom#geometry_msgs.PoseStamped') {
             const pos = data.pose.position;
             const ori = data.pose.orientation;
             document.getElementById('pose-x').textContent = pos.x.toFixed(2);

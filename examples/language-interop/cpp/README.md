@@ -1,6 +1,6 @@
 # C++ Robot Control Example
 
-Subscribes to `/pose` and publishes velocity commands to `/cmd_vel`.
+Subscribes to `/odom` and publishes velocity commands to `/cmd_vel`.
 
 ## Build
 

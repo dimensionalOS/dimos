@@ -24,10 +24,10 @@ public:
     }
 
     void run() {
-        lcm_.subscribe("/pose#geometry_msgs.PoseStamped", &RobotController::onPose, this);
+        lcm_.subscribe("/odom#geometry_msgs.PoseStamped", &RobotController::onPose, this);
 
         printf("Robot control started\n");
-        printf("Subscribing to /pose, publishing to /cmd_vel\n");
+        printf("Subscribing to /odom, publishing to /cmd_vel\n");
         printf("Press Ctrl+C to stop.\n\n");
 
         // Publisher thread

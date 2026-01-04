@@ -1,6 +1,6 @@
 # TypeScript Robot Control Examples
 
-Subscribes to `/pose` and publishes velocity commands to `/cmd_vel`.
+Subscribes to `/odom` and publishes velocity commands to `/cmd_vel`.
 
 ## CLI Example
 

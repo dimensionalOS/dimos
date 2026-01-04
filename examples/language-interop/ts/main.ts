@@ -10,11 +10,11 @@ const lcm = new LCM();
 await lcm.start();
 
 console.log("Robot control started");
-console.log("Subscribing to /pose, publishing to /cmd_vel");
+console.log("Subscribing to /odom, publishing to /cmd_vel");
 console.log("Press Ctrl+C to stop.\n");
 
 // Subscribe to pose - prints robot position
-lcm.subscribe("/pose", geometry_msgs.PoseStamped, (msg) => {
+lcm.subscribe("/odom", geometry_msgs.PoseStamped, (msg) => {
   const pos = msg.data.pose.position;
   const ori = msg.data.pose.orientation;
   console.log(

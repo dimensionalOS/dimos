@@ -16,11 +16,11 @@ local Vector3 = require("geometry_msgs.Vector3")
 local lc = lcm.lcm.new()
 
 print("Robot control started")
-print("Subscribing to /pose, publishing to /cmd_vel")
+print("Subscribing to /odom, publishing to /cmd_vel")
 print("Press Ctrl+C to stop.\n")
 
 -- Subscribe to pose
-lc:subscribe("/pose#geometry_msgs.PoseStamped", function(channel, msg)
+lc:subscribe("/odom#geometry_msgs.PoseStamped", function(channel, msg)
   msg = PoseStamped.decode(msg)
   local pos = msg.pose.position
   local ori = msg.pose.orientation

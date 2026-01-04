@@ -51,7 +51,7 @@ const lcm = new LCM();
 await lcm.start();
 
 // Subscribe to pose and just log to show how server can decode messages for itself
-lcm.subscribe("/pose", geometry_msgs.PoseStamped, (msg) => {
+lcm.subscribe("/odom", geometry_msgs.PoseStamped, (msg) => {
   const pos = msg.data.pose.position;
   const ori = msg.data.pose.orientation;
   console.log(`[pose] x=${pos.x.toFixed(2)} y=${pos.y.toFixed(2)} z=${pos.z.toFixed(2)}`);
