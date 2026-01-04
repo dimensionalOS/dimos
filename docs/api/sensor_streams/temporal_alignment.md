@@ -162,7 +162,7 @@ matched: (frame, scan, imu_reading)
 
 ## With Backpressure
 
-In practice, you often combine alignment with [`backpressure`](/docs/api/sensor_streams/reactivex.md) for slow processors:
+In practice, you often combine alignment with [`backpressure`](/docs/api/sensor_streams/advanced_streams.md) for slow processors:
 
 ```python session=align
 from dimos.utils.reactive import backpressure
