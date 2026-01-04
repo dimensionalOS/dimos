@@ -144,7 +144,7 @@ class MoondreamVlModel(HuggingFaceModel, VlModel):
         result = self._model.detect(pil_image, query, settings=settings)
 
         # Convert to ImageDetections2D
-        image_detections = ImageDetections2D(image)
+        image_detections: ImageDetections2D[Detection2DBBox] = ImageDetections2D(image)
 
         # Get image dimensions for converting normalized coords to pixels
         height, width = image.height, image.width

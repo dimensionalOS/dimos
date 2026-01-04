@@ -261,7 +261,7 @@ class VlModel(Captioner, Resource, Configurable[VlModelConfig]):
         Only respond with JSON, no other text.
         """
 
-        image_detections = ImageDetections2D(image)
+        image_detections: ImageDetections2D[Detection2DBBox] = ImageDetections2D(image)
 
         # Get scaled image and scale factor for coordinate rescaling
         scaled_image, scale = self._prepare_image(image)

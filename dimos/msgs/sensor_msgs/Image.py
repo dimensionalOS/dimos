@@ -252,6 +252,15 @@ class Image(Timestamped):
     def frame_id(self, value: str) -> None:
         self._impl.frame_id = str(value)
 
+    def from_ros_header(self, header) -> None:  # type: ignore[no-untyped-def]
+        """Set the image timestamp and frame_id from a ROS header.
+
+        Args:
+            header: ROS std_msgs/Header message with stamp and frame_id fields
+        """
+        self.ts = header.stamp.sec + (header.stamp.nanosec / 1_000_000_000)
+        self.frame_id = header.frame_id
+
     @property
     def ts(self) -> float:
         return self._impl.ts
@@ -310,6 +319,10 @@ class Image(Timestamped):
     def to_opencv(self) -> np.ndarray:  # type: ignore[type-arg]
         return self._impl.to_opencv()
 
+    def as_numpy(self) -> np.ndarray:  # type: ignore[type-arg]
+        """Get image data as numpy array in RGB format."""
+        return np.asarray(self.data)
+
     def to_rgb(self) -> Image:
         return Image(self._impl.to_rgb())
 
@@ -351,6 +364,20 @@ class Image(Timestamped):
     def sharpness(self) -> float:
         """Return sharpness score."""
         return self._impl.sharpness()
+
+    def to_depth_meters(self) -> Image:
+        """Return a depth image normalized to meters as float32."""
+        depth_cv = self.to_opencv()
+        fmt = self.format
+
+        if fmt == ImageFormat.DEPTH16:
+            depth_cv = depth_cv.astype(np.float32) / 1000.0
+            fmt = ImageFormat.DEPTH
+        elif depth_cv.dtype != np.float32:
+            depth_cv = depth_cv.astype(np.float32)
+            fmt = ImageFormat.DEPTH if fmt == ImageFormat.DEPTH else fmt
+
+        return Image.from_numpy(depth_cv, format=fmt, frame_id=self.frame_id, ts=self.ts)
 
     def save(self, filepath: str) -> bool:
         return self._impl.save(filepath)

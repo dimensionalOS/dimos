@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from ultralytics import YOLO  # type: ignore[attr-defined, import-not-found]
 
 from dimos.msgs.sensor_msgs import Image
@@ -47,7 +49,7 @@ class Yolo2DDetector(Detector):
             self.device = "cpu"
             logger.debug("Using CPU for YOLO 2d detector")
 
-    def process_image(self, image: Image) -> ImageDetections2D:
+    def process_image(self, image: Image) -> ImageDetections2D[Any]:
         """
         Process an image and return detection results.
 

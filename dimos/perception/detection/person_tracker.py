@@ -73,7 +73,7 @@ class PersonTracker(Module):
         # Transformation: x_link = z_optical, y_link = -x_optical, z_link = -y_optical
         return Vector3(z_optical, -x_optical, -y_optical)
 
-    def detections_stream(self) -> Observable[ImageDetections2D]:
+    def detections_stream(self) -> Observable[ImageDetections2D[Any]]:
         return backpressure(
             align_timestamped(
                 self.color_image.pure_observable(),
@@ -84,8 +84,9 @@ class PersonTracker(Module):
                 buffer_size=2.0,
             ).pipe(
                 ops.map(
-                    lambda pair: ImageDetections2D.from_ros_detection2d_array(  # type: ignore[misc]
-                        *pair
+                    lambda pair: ImageDetections2D.from_ros_detection2d_array(
+                        pair[0],
+                        pair[1],  # type: ignore[index, arg-type]
                     )
                 )
             )
@@ -99,7 +100,7 @@ class PersonTracker(Module):
     def stop(self) -> None:
         super().stop()
 
-    def track(self, detections2D: ImageDetections2D) -> None:
+    def track(self, detections2D: ImageDetections2D[Any]) -> None:
         if len(detections2D) == 0:
             return
 
