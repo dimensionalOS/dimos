@@ -210,26 +210,7 @@ That's it. You create or receive an Observable, then subscribe to start receivin
 
 When you subscribe, data flows through a pipeline:
 
-<details>
-<summary>diagram source</summary>
-
-```pikchr fold output=assets/observable_flow.svg
-color = white
-fill = none
-
-Obs: box "observable" rad 5px fit wid 170% ht 170%
-arrow right 0.3in
-Pipe: box ".pipe(ops)" rad 5px fit wid 170% ht 170%
-arrow right 0.3in
-Sub: box ".subscribe()" rad 5px fit wid 170% ht 170%
-arrow right 0.3in
-Handler: box "callback" rad 5px fit wid 170% ht 170%
-```
-
-<!--Result:-->
 ![output](assets/observable_flow.svg)
-
-</details>
 
 **Key property: Observables are lazy.** Nothing happens until you call `.subscribe()`. This means you can build up complex pipelines without any work being done, then start the flow when ready.
 
