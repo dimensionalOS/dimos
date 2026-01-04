@@ -166,15 +166,16 @@ sharpness = [f.sharpness for f in input_frames]
 selected_idx = [i for i, f in enumerate(input_frames) if f in sharp_frames]
 
 plt.figure(figsize=(10, 3))
-plt.plot(sharpness, 'o-', label='All frames', alpha=0.7)
+plt.plot(sharpness, 'o-', label='All frames', color='#b5e4f4', alpha=0.7)
 for i, idx in enumerate(selected_idx):
-    plt.axvline(x=idx, color='crimson', alpha=0.7, linestyle='--',
+    plt.axvline(x=idx, color='lime', linestyle='--',
                 label='Selected' if i == 0 else None)
 plt.xlabel('Frame')
 plt.ylabel('Sharpness')
 plt.xticks(range(len(sharpness)))
 plt.legend()
 plt.grid(alpha=0.3)
+plt.tight_layout()
 plt.savefig('{output}', transparent=True)
 ```
 
