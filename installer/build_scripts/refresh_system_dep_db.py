@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generate dependency prompts for system package discovery using Claude."""
+"""Generates a .json of system dependencies for every pip module in the project.toml file"""
 
 import argparse
 import asyncio
@@ -201,7 +201,7 @@ async def main(argv: list[str]) -> None:
         print("No prompts to run; dep database already complete.")
         return
 
-    await _run_claude_named_prompts(
+    await run_claude_named_prompts(
         prompts,
         max_concurrent=max(args.max_concurrent, 1),
         log_dir=Path(args.log_dir),
