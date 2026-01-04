@@ -8,9 +8,9 @@ from pathlib import Path
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-REPO_ROOT = SCRIPT_DIR.parent
-DOCKERFILE = REPO_ROOT / "installer" / "Dockerfile"
-HASH_FILE = SCRIPT_DIR / ".dockerfile.hash"
+INSTALLER_ROOT = SCRIPT_DIR.parent
+DOCKERFILE = INSTALLER_ROOT / "pyz_app" / "bundled_files" / "Dockerfile"
+HASH_FILE = SCRIPT_DIR / ".dockerfile.hash.ignore"
 IMAGE_NAME = "mystery"
 
 
@@ -48,7 +48,7 @@ async def main() -> None:
                 IMAGE_NAME,
                 "-f",
                 str(DOCKERFILE),
-                str(REPO_ROOT),
+                str(INSTALLER_ROOT),
             ],
             inherit_io=True,
         )
@@ -63,7 +63,7 @@ async def main() -> None:
             "-it",
             "--rm",
             "-v",
-            f"{REPO_ROOT}:/app",
+            f"{INSTALLER_ROOT}:/app",
             "-w",
             "/app",
             IMAGE_NAME,
