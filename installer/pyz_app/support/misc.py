@@ -515,30 +515,3 @@ def add_git_ignore_patterns(
         "already_present": already_present,
         "ignore_did_not_exist": False,
     }
-
-
-def traceback_to_string(traceback):
-    import traceback as traceback_module
-    from io import StringIO
-    string_stream = StringIO()
-    traceback_module.print_tb(traceback, limit=None, file=string_stream)
-    return string_stream.getvalue()
-
-
-def get_trace(level=0):
-    import sys
-    import types
-    try:
-        raise Exception(f'''''')
-    except:
-        traceback = sys.exc_info()[2]
-        back_frame = traceback.tb_frame
-        for each in range(level+1):
-            back_frame = back_frame.f_back
-    traceback = types.TracebackType(
-        tb_next=None,
-        tb_frame=back_frame,
-        tb_lasti=back_frame.f_lasti,
-        tb_lineno=back_frame.f_lineno
-    )
-    return traceback
