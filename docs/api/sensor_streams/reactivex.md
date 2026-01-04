@@ -63,7 +63,7 @@ rx.of(1, 2, 3).pipe(
 item_1
 item_2
 item_3
-<reactivex.disposable.disposable.Disposable object at 0x7f3c2c9448c0>
+<reactivex.disposable.disposable.Disposable object at 0x7fcedec40b90>
 ```
 
 ### Filter: `filter`
@@ -78,7 +78,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 ```
 2
 4
-<reactivex.disposable.disposable.Disposable object at 0x7f3c2c9447d0>
+<reactivex.disposable.disposable.Disposable object at 0x7fcedec40c50>
 ```
 
 ### Limit emissions: `take`
@@ -94,7 +94,7 @@ rx.of(1, 2, 3, 4, 5).pipe(
 1
 2
 3
-<reactivex.disposable.disposable.Disposable object at 0x7f3c2c944a10>
+<reactivex.disposable.disposable.Disposable object at 0x7fcedec40a40>
 ```
 
 ### Flatten nested observables: `flat_map`
@@ -114,7 +114,7 @@ rx.of(1, 2).pipe(
 2
 20
 200
-<reactivex.disposable.disposable.Disposable object at 0x7f3c2c945700>
+<reactivex.disposable.disposable.Disposable object at 0x7fcedec41a60>
 ```
 
 ## Rate Limiting
@@ -247,7 +247,7 @@ value: 1
 value: 2
 value: 3
 done
-<reactivex.disposable.disposable.Disposable object at 0x7f3c2c947680>
+<reactivex.disposable.disposable.Disposable object at 0x7fcedec42d20>
 ```
 
 ## Disposables: Cancelling Subscriptions
@@ -303,6 +303,7 @@ got 0
 got 1
 got 2
 got 3
+got 4
 ```
 
 ## Backpressure and parallel subscribers to hardware
@@ -419,6 +420,7 @@ class MLModel(Module):
 
 
 ```
+
 
 
 ## Getting Values Synchronously

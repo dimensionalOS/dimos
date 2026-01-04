@@ -125,7 +125,7 @@ def getter_ondemand(observable: Observable[T], timeout: float | None = 30.0) -> 
     return getter  # type: ignore[return-value]
 
 
-def getter_cold(source: Observable[T], timeout: float | None = 30.0) -> LatestReader[T]:
+def getter_cold(source: Observable[T], timeout: float | None = 30.0) -> T:
     return getter_ondemand(source, timeout)
 
 
