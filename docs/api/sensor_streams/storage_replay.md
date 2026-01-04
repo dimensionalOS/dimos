@@ -161,6 +161,9 @@ replay.stream(
 
 A common pattern is creating replay-based connection stubs for testing without hardware. From [`robot/unitree/connection/go2.py`](/dimos/robot/unitree/connection/go2.py#L83):
 
+This is a bit primitive, we'd like to write a higher order API for recording full module I/O for any module, but this is a work in progress atm.
+
+
 ```python skip
 class ReplayConnection(UnitreeWebRTCConnection):
     dir_name = "unitree_go2_bigoffice"
