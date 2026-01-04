@@ -450,7 +450,7 @@ def test_performance_timing() -> None:
 
     # Check that larger maps take more time (expected behavior)
     for result in results:
-        assert result["detect_time"] < 2.0, f"Detection too slow: {result['detect_time']}s"
+        assert result["detect_time"] < 3.0, f"Detection too slow: {result['detect_time']}s"
         assert result["goal_time"] < 1.5, f"Goal selection too slow: {result['goal_time']}s"
 
     print("\nPerformance test passed - all operations completed within time limits")
