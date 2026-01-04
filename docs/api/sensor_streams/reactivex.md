@@ -278,7 +278,7 @@ disposed
 - Without disposing, you leak memory and keep processing values forever
 - Disposing also cleans up any resources the Observable opened (connections, file handles, etc.)
 
-**Rule of thumb:** If you subscribe to something that doesn't naturally complete, save the disposable and call `.dispose()` when done.
+**Rule of thumb:** Whenever you subscribe, save the disposable because you have to unsubscribe at some point by calling `disposable.dispose()`.
 
 **In dimos modules:** Every `Module` has a `self._disposables` (a `CompositeDisposable`) that automatically disposes everything when the module closes:
 
