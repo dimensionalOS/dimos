@@ -181,7 +181,7 @@ def adjust_color(color_idx: int) -> int:
     """Return the nearest allowed ANSI 256 color index to color_idx."""
     if color_idx < 27:
         return 75 # purplish blue
-        return 32 # Very blue
+        # return 32 # Very blue
     try:
         color_idx = int(color_idx)
     except Exception:
