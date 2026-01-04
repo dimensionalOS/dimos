@@ -11,9 +11,10 @@ Some examples of are:
 - Navigation (inputs a map and a target, outputs a path)
 - Detection (takes an image and a vision model like yolo, outputs a stream of detections)
 
-A common module structure for controling a robot looks something like this:
+A common module structure for controling a robot looks something like this, black blocks are modules, colored lines are connections and message types, it's ok if this doesn't make sense now,
+it will by the end of this document.
 
-```python  session=blueprints output=go2_basic.svg
+```python output=go2_basic.svg
 from dimos.core.introspection.blueprint import dot2
 from dimos.robot.unitree_webrtc.unitree_go2_blueprints import basic
 dot2.render_svg(basic, "go2_basic.svg")
@@ -60,9 +61,9 @@ We can see that camera module outputs two streams:
 - `color_image` with [sensor_msgs.Image](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/Image.html) type
 - `camera_info` with [sensor_msgs.CameraInfo](https://docs.ros.org/en/melodic/api/sensor_msgs/html/msg/CameraInfo.html) type
 
-As well as offers two RPC calls, `start` and `stop`
+Offers two RPC calls, `start()` and `stop()`
 
-And provides an agentic Skill called `video_stream` (about this later)
+As well as an agentic [Skill][skills.md] called `video_stream` (more about this later, in [Skills Tutorial][skills.md])
 
 We can start this module and explore the output of it's streams in real time (this will use your webcam)
 
@@ -83,10 +84,10 @@ camera.stop()
 <!--Result:-->
 ```
 Out color_image[Image] @ CameraModule
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
-Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-12 17:27:17)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:39)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:39)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:39)
+Image(shape=(480, 640, 3), format=RGB, dtype=uint8, dev=cpu, ts=2025-12-13 00:17:40)
 ```
 
 ## Connecting modules
@@ -118,7 +119,7 @@ TODO: add easy way to print config
 
 looks like detector just needs an image input, outputs some sort of detection and annotation messages, let's connect it to a camera.
 
-```python ansi=false
+```pythonx ansi=false
 import time
 from dimos.perception.detection.module2D import Detection2DModule, Config
 from dimos.hardware.camera.module import CameraModule
@@ -145,12 +146,13 @@ Detection(Person(1))
 Detection(Person(1))
 ```
 
-## Multiprocessing
+## Distributed Execution
 
-As we build module structures, very quickly we want to utilize all cores on the machine and potentially distribute modules across machines or even internet
+As we build module structures, very quickly we'll want to utilize all cores on the machine (which python doesn't allow as a single process), and potentially distribute modules across machines or even internet.
+
 For this we use `dimos.core` and dimos transport protocols.
 
-We also want an ability to write moduels in faster languages
+Defining message exchange protocol and message types also gives us an ability to write models in faster languages.
 
 ## Blueprints
 
