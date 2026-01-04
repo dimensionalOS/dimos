@@ -113,9 +113,10 @@ Output: 3 frame(s) (selected sharpest per window)
   Frame 2: 0.360
 ```
 
-Visualization helpers:
+<details>
+<summary>Visualization helpers</summary>
 
-```python session=qb no-result
+```python session=qb fold no-result
 import matplotlib
 import matplotlib.pyplot as plt
 import math
@@ -157,6 +158,8 @@ def plot_sharpness(frames, selected, path):
     plt.savefig(path, transparent=True)
     plt.close()
 ```
+
+</details>
 
 Visualizing which frames were selected (green border = selected as sharpest in window):
 
