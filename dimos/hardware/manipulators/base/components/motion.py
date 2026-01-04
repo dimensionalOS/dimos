@@ -17,7 +17,7 @@
 import logging
 from queue import Queue
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from ..driver import Command
 from ..sdk_interface import BaseManipulatorSDK
@@ -96,7 +96,7 @@ class StandardMotionComponent:
         acceleration: float = 1.0,
         wait: bool = False,
         validate: bool = True,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Move joints to target positions.
 
         Args:
@@ -148,6 +148,8 @@ class StandardMotionComponent:
                 return {"success": True, "queued": True}
 
             # Execute directly (blocking or wait mode)
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             success = self.sdk.set_joint_positions(positions, velocity, acceleration, wait)
 
             if success and self.shared_state:
@@ -162,7 +164,7 @@ class StandardMotionComponent:
     @component_api
     def move_joint_velocity(
         self, velocities: list[float], acceleration: float = 1.0, validate: bool = True
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Set joint velocities.
 
         Args:
@@ -203,6 +205,8 @@ class StandardMotionComponent:
                 return {"success": True, "queued": True}
 
             # Execute directly
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             success = self.sdk.set_joint_velocities(velocities)
 
             if success and self.shared_state:
@@ -215,7 +219,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def move_joint_effort(self, efforts: list[float], validate: bool = True) -> dict:
+    def move_joint_effort(self, efforts: list[float], validate: bool = True) -> dict[str, Any]:
         """Set joint efforts/torques.
 
         Args:
@@ -227,6 +231,8 @@ class StandardMotionComponent:
         """
         try:
             # Check if effort control is supported
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             if not hasattr(self.sdk, "set_joint_efforts"):
                 return {"success": False, "error": "Effort control not supported"}
 
@@ -245,6 +251,8 @@ class StandardMotionComponent:
                 return {"success": True, "queued": True}
 
             # Execute directly
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             success = self.sdk.set_joint_efforts(efforts)
 
             if success and self.shared_state:
@@ -257,7 +265,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def stop_motion(self) -> dict:
+    def stop_motion(self) -> dict[str, Any]:
         """Stop all ongoing motion immediately.
 
         Returns:
@@ -276,6 +284,8 @@ class StandardMotionComponent:
                 self.command_queue.put(command)
 
             # Also execute directly for immediate stop
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             success = self.sdk.stop_motion()
 
             # Clear targets
@@ -289,7 +299,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_joint_state(self) -> dict:
+    def get_joint_state(self) -> dict[str, Any]:
         """Get current joint state.
 
         Returns:
@@ -301,6 +311,8 @@ class StandardMotionComponent:
                 positions, velocities, efforts = self.shared_state.get_joint_state()
             else:
                 # Get directly from SDK
+                if self.sdk is None:
+                    return {"success": False, "error": "SDK not configured"}
                 positions = self.sdk.get_joint_positions()
                 velocities = self.sdk.get_joint_velocities()
                 efforts = self.sdk.get_joint_efforts()
@@ -318,7 +330,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_joint_limits(self) -> dict:
+    def get_joint_limits(self) -> dict[str, Any]:
         """Get joint position limits.
 
         Returns:
@@ -332,6 +344,8 @@ class StandardMotionComponent:
                     "success": True,
                 }
             else:
+                if self.sdk is None:
+                    return {"success": False, "error": "SDK not configured"}
                 lower, upper = self.sdk.get_joint_limits()
                 return {"lower": lower, "upper": upper, "success": True}
 
@@ -340,7 +354,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_velocity_limits(self) -> dict:
+    def get_velocity_limits(self) -> dict[str, Any]:
         """Get joint velocity limits.
 
         Returns:
@@ -350,6 +364,8 @@ class StandardMotionComponent:
             if self.capabilities:
                 return {"limits": self.capabilities.max_joint_velocity, "success": True}
             else:
+                if self.sdk is None:
+                    return {"success": False, "error": "SDK not configured"}
                 limits = self.sdk.get_velocity_limits()
                 return {"limits": limits, "success": True}
 
@@ -358,7 +374,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def set_velocity_scale(self, scale: float) -> dict:
+    def set_velocity_scale(self, scale: float) -> dict[str, Any]:
         """Set global velocity scaling factor.
 
         Args:
@@ -379,7 +395,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def set_acceleration_scale(self, scale: float) -> dict:
+    def set_acceleration_scale(self, scale: float) -> dict[str, Any]:
         """Set global acceleration scaling factor.
 
         Args:
@@ -404,7 +420,7 @@ class StandardMotionComponent:
     @component_api
     def move_cartesian(
         self, pose: dict, velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Move end-effector to target pose.
 
         Args:
@@ -441,6 +457,8 @@ class StandardMotionComponent:
                 return {"success": True, "queued": True}
 
             # Execute directly
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             success = self.sdk.set_cartesian_position(pose, velocity, acceleration, wait)
 
             if success and self.shared_state:
@@ -453,7 +471,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def get_cartesian_state(self) -> dict:
+    def get_cartesian_state(self) -> dict[str, Any]:
         """Get current end-effector pose.
 
         Returns:
@@ -469,6 +487,8 @@ class StandardMotionComponent:
                 pose = self.shared_state.cartesian_position
             else:
                 # Get directly from SDK
+                if self.sdk is None:
+                    return {"success": False, "error": "SDK not configured"}
                 pose = self.sdk.get_cartesian_position()
 
             if pose:
@@ -483,7 +503,7 @@ class StandardMotionComponent:
     # ============= Trajectory Execution (Optional) =============
 
     @component_api
-    def execute_trajectory(self, trajectory: list[dict], wait: bool = True) -> dict:
+    def execute_trajectory(self, trajectory: list[dict], wait: bool = True) -> dict[str, Any]:
         """Execute a joint trajectory.
 
         Args:
@@ -498,6 +518,8 @@ class StandardMotionComponent:
         """
         try:
             # Check if trajectory execution is supported
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             if not hasattr(self.sdk, "execute_trajectory"):
                 return {"success": False, "error": "Trajectory execution not supported"}
 
@@ -505,17 +527,33 @@ class StandardMotionComponent:
             if self.capabilities:
                 from ..utils import validate_trajectory
 
-                valid, error = validate_trajectory(
-                    trajectory,
-                    self.capabilities.joint_limits_lower,
-                    self.capabilities.joint_limits_upper,
-                    self.capabilities.max_joint_velocity,
-                    self.capabilities.max_joint_acceleration,
-                )
-                if not valid:
-                    return {"success": False, "error": error}
+                # Only validate if all required capability fields are present
+                jl_lower = self.capabilities.joint_limits_lower
+                jl_upper = self.capabilities.joint_limits_upper
+                max_vel = self.capabilities.max_joint_velocity
+                max_acc = self.capabilities.max_joint_acceleration
+
+                if (
+                    jl_lower is not None
+                    and jl_upper is not None
+                    and max_vel is not None
+                    and max_acc is not None
+                ):
+                    valid, error = validate_trajectory(
+                        trajectory,
+                        jl_lower,
+                        jl_upper,
+                        max_vel,
+                        max_acc,
+                    )
+                    if not valid:
+                        return {"success": False, "error": error}
+                else:
+                    self.logger.debug("Skipping trajectory validation; capabilities incomplete")
 
             # Execute trajectory
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             success = self.sdk.execute_trajectory(trajectory, wait)
 
             return {"success": success}
@@ -525,7 +563,7 @@ class StandardMotionComponent:
             return {"success": False, "error": str(e)}
 
     @component_api
-    def stop_trajectory(self) -> dict:
+    def stop_trajectory(self) -> dict[str, Any]:
         """Stop any executing trajectory.
 
         Returns:
@@ -533,6 +571,8 @@ class StandardMotionComponent:
         """
         try:
             # Check if trajectory execution is supported
+            if self.sdk is None:
+                return {"success": False, "error": "SDK not configured"}
             if not hasattr(self.sdk, "stop_trajectory"):
                 return {"success": False, "error": "Trajectory execution not supported"}
 
