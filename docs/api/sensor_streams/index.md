@@ -27,7 +27,7 @@ lidar_stream = lidar.observable()
 # Pipeline: filter blurry frames -> align with lidar -> handle slow consumers
 processed = (
     camera_stream.pipe(
-        sharpness_barrier(10.0),  # Keep sharpest frame per 100ms window
+        sharpness_barrier(10.0),  # Keep sharpest frame per 100ms window (10Hz)
     )
 )
 
