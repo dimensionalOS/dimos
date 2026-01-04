@@ -60,7 +60,7 @@ from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
 
 # Use stream() with seek to skip blank frames, speed=10x to collect faster
-input_frames = video_replay.stream(seek=5.0, duration=1.5, speed=10.0).pipe(
+input_frames = video_replay.stream(seek=5.0, duration=1.4, speed=10.0).pipe(
     ops.to_list()
 ).run()
 
@@ -76,7 +76,7 @@ show_frames(input_frames)
 
 <!--Result:-->
 ```
-Loaded 21 frames from Go2 camera
+Loaded 20 frames from Go2 camera
 Frame resolution: 1280x720
 Sharpness scores:
   Frame 0: 0.351
@@ -114,6 +114,45 @@ Output: 3 frame(s) (selected sharpest per window)
 ```
 
 Visualizing which frames were selected:
+
+<details><summary>Python</summary>
+
+```python fold session=qb output=assets/frame_mosaic.jpg
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+
+cols, rows = 5, 4
+aspect = input_frames[0].width / input_frames[0].height
+fig_w = 12
+fig_h = fig_w * rows / (cols * aspect)
+
+fig, axes = plt.subplots(rows, cols, figsize=(fig_w, fig_h))
+fig.patch.set_facecolor('black')
+
+for i, ax in enumerate(axes.flat):
+    if i < len(input_frames):
+        frame = input_frames[i]
+        ax.imshow(frame.data)
+        is_selected = frame in sharp_frames
+        for spine in ax.spines.values():
+            spine.set_color('lime' if is_selected else 'black')
+            spine.set_linewidth(4 if is_selected else 0)
+        ax.set_xticks([])
+        ax.set_yticks([])
+    else:
+        ax.axis('off')
+
+plt.subplots_adjust(wspace=0.1, hspace=0.1, left=1, right=2, top=2, bottom=1)
+plt.savefig('{output}', facecolor='black', dpi=100, bbox_inches='tight', pad_inches=0)
+```
+
+</details>
+
+<!--Result:-->
+![output](assets/frame_mosaic.jpg)
+
+The green-bordered frames were selected by `sharpness_barrier` as the sharpest in their time windows.
 
 <details><summary>Python</summary>
 
