@@ -48,109 +48,104 @@ Qualities: [0.9]
 
 ## Image Sharpness Filtering
 
-For camera streams, we provide `sharpness_barrier` which uses the image's sharpness score:
+For camera streams, we provide `sharpness_barrier` which uses the image's sharpness score.
+
+Let's use real camera data from the Unitree Go2 robot to demonstrate. We use the [Sensor Replay](/docs/old/testing_stream_reply.md) toolkit which provides access to recorded robot data:
 
 ```python session=qb
-import numpy as np
+from dimos.utils.testing import TimedSensorReplay
 from dimos.msgs.sensor_msgs.Image import Image, sharpness_barrier
 
-# Create test images with different sharpness levels
-def make_image(sharpness_level: str) -> Image:
-    """Create a test image. Sharp = high contrast edges, blurry = smooth gradients."""
-    img = np.zeros((100, 100, 3), dtype=np.uint8)
-    if sharpness_level == "sharp":
-        # Sharp edges - high gradient
-        img[40:60, 40:60] = 255
-    elif sharpness_level == "medium":
-        # Softer edges
-        for i in range(20):
-            val = int(255 * i / 20)
-            img[40+i:41+i, 30:70] = val
-    else:
-        # Blurry - very low gradient
-        img[:, :] = 128
-    return Image(data=img)  # Note: use data= keyword
+# Load recorded Go2 camera frames
+video_replay = TimedSensorReplay("unitree_go2_bigoffice/video")
 
-sharp = make_image("sharp")
-medium = make_image("medium")
-blurry = make_image("blurry")
-
-print(f"Sharp image sharpness:  {sharp.sharpness:.3f}")
-print(f"Medium image sharpness: {medium.sharpness:.3f}")
-print(f"Blurry image sharpness: {blurry.sharpness:.3f}")
-```
-
-<!--Result:-->
-```
-Sharp image sharpness:  0.351
-Medium image sharpness: 0.372
-Blurry image sharpness: 0.000
-```
-
-Using `sharpness_barrier` in a stream:
-
-```python session=qb
-# Stream of images arriving over time
-images = rx.of(blurry, medium, sharp, blurry, medium)
-
-# Select sharpest image per window at 2Hz
-result = images.pipe(
-    sharpness_barrier(2.0),
-    ops.to_list(),
+# Use stream() with seek to skip blank frames, speed=10x to collect faster
+input_frames = video_replay.stream(seek=5.0, duration=1.5, speed=10.0).pipe(
+    ops.to_list()
 ).run()
 
-print(f"Selected {len(result)} image(s)")
-print(f"Selected sharpness: {[f'{img.sharpness:.3f}' for img in result]}")
+def show_frames(frames):
+   for i, frame in enumerate(frames[:10]):
+      print(f"  Frame {i}: {frame.sharpness:.3f}")
+
+print(f"Loaded {len(input_frames)} frames from Go2 camera")
+print(f"Frame resolution: {input_frames[0].width}x{input_frames[0].height}")
+print("Sharpness scores:")
+show_frames(input_frames)
 ```
 
 <!--Result:-->
 ```
-Selected 1 image(s)
-Selected sharpness: ['0.372']
+Loaded 21 frames from Go2 camera
+Frame resolution: 1280x720
+Sharpness scores:
+  Frame 0: 0.351
+  Frame 1: 0.227
+  Frame 2: 0.223
+  Frame 3: 0.267
+  Frame 4: 0.295
+  Frame 5: 0.307
+  Frame 6: 0.328
+  Frame 7: 0.348
+  Frame 8: 0.346
+  Frame 9: 0.322
+```
+
+Using `sharpness_barrier` to select the sharpest frames:
+
+```python session=qb
+# Create a stream from the recorded frames
+
+sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
+    sharpness_barrier(2.0),
+    ops.to_list()
+).run()
+
+print(f"Output: {len(sharp_frames)} frame(s) (selected sharpest per window)")
+show_frames(sharp_frames)
+```
+
+<!--Result:-->
+```
+Output: 3 frame(s) (selected sharpest per window)
+  Frame 0: 0.351
+  Frame 1: 0.352
+  Frame 2: 0.360
 ```
 
 ### Usage in Camera Module
 
 Here's how it's used in the actual camera module:
 
-```python session=qb
+```python skip
 from dimos.core.module import Module
 
 class CameraModule(Module):
     frequency: float = 2.0  # Target output frequency
+    @rpc
+    def start(self) -> None:
+        stream = self.hardware.image_stream()
 
-    def start(self):
-        # Simulated camera stream
-        stream = rx.of(blurry, sharp, medium, blurry, sharp)
+        if self.config.frequency > 0:
+            stream = stream.pipe(sharpness_barrier(self.config.frequency))
 
-        # Apply sharpness filter if frequency is set
-        if self.frequency > 0:
-            stream = stream.pipe(sharpness_barrier(self.frequency))
+        self._disposables.add(
+            stream.subscribe(self.color_image.publish),
+        )
 
-        # Collect results
-        results = []
-        stream.subscribe(lambda img: results.append(img.sharpness))
-        return results
-
-cam = CameraModule()
-sharpnesses = cam.start()
-print(f"Output sharpnesses: {[f'{s:.3f}' for s in sharpnesses]}")
-```
-
-<!--Result:-->
-```
-Output sharpnesses: ['0.372']
 ```
 
 ### How Sharpness is Calculated
 
 The sharpness score (0.0 to 1.0) is computed using Sobel edge detection:
 
+from [`NumpyImage.py`](/dimos/msgs/sensor_msgs/image_impls/NumpyImage.py)
+
 ```python session=qb
 import cv2
 
-# Get the sharp image and show the calculation
-img = sharp
+# Get a frame and show the calculation
+img = input_frames[10]
 gray = img.to_grayscale()
 
 # Sobel gradients - use .data to get the underlying numpy array
@@ -164,8 +159,8 @@ print(f"Normalized sharpness:    {img.sharpness:.3f}")
 
 <!--Result:-->
 ```
-Mean gradient magnitude: 250.79
-Normalized sharpness:    0.351
+Mean gradient magnitude: 230.00
+Normalized sharpness:    0.332
 ```
 
 ## Custom Quality Functions
