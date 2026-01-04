@@ -62,7 +62,7 @@ More information on this in [doclinks](/docs/agents/docs_agent/doclinks.md)
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/pikchr_basic.svg
+```pikchr fold output=assets/pikchr_basic.svg
 color = white
 fill = none
 
@@ -85,7 +85,7 @@ Use `fit` with percentage scaling to auto-size boxes with padding:
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/pikchr_sizing.svg
+```pikchr fold output=assets/pikchr_sizing.svg
 color = white
 fill = none
 
@@ -109,7 +109,7 @@ For explicit sizing (when you need consistent box sizes):
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/pikchr_explicit.svg
+```pikchr fold output=assets/pikchr_explicit.svg
 color = white
 fill = none
 
@@ -137,7 +137,7 @@ fill = none      # transparent box fill
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/pikchr_branch.svg
+```pikchr fold output=assets/pikchr_branch.svg
 color = white
 fill = none
 
@@ -166,7 +166,7 @@ D: box "Path B" rad 5px fit wid 170% ht 170%
 <details>
 <summary>diagram source</summary>
 
-```pikchr output=assets/pikchr_labels.svg
+```pikchr fold output=assets/pikchr_labels.svg
 color = white
 fill = none
 
