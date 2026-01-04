@@ -22,6 +22,7 @@ class GlobalConfig(BaseSettings):
     simulation: bool = False
     replay: bool = False
     n_dask_workers: int = 2
+    memory_limit: str = "auto"
     mujoco_room: str | None = None
     robot_model: str | None = None
 
