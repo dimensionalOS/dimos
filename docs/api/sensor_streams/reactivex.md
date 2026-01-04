@@ -379,7 +379,7 @@ cleaned up
 results: ['first', 'second', 'DONE']
 ```
 
-## CompositeDIsposable
+## CompositeDisposable
 
 As we know we can always dispose subscriptions when done to prevent leaks:
 
