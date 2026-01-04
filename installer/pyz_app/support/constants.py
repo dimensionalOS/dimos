@@ -17,6 +17,8 @@ from __future__ import annotations
 
 discord_url = "https://discord.gg/S6E9MHsu"
 
+minimum_nix_version = "2.24.12"
+
 dimos_env_vars = {
     "OPENAI_API_KEY": "",
     "HUGGINGFACE_ACCESS_TOKEN": "",
