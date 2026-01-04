@@ -20,11 +20,13 @@
 
 ## What is Dimensional?
 
-Dimensional is an open-source framework for building intelligent robots. DimOS allows off-the-shelf robots to call tools/functions and read sensor/state data directly. It is both a conceptual approach compatible with many programming languages and well as a high performance python-first library that works well with (and without) [ROS](https://www.ros.org/). The framework comes with a rich set of integrations including spatial reasoners, planners, simulators (mujoco, Isaac Sim, etc.), robot state/action primitives, and more.
+Dimensional is an open-source framework for building agentive generalist robots. DimOS allows off-the-shelf Agents to call tools/functions and read sensor/state data directly from ROS.
 
-The result: the best toolkit for creating symbolic action execution on platforms like the Unitree G1, Unitree Go2 and Boston Dynamics Spot.
+The framework enables neurosymbolic orchestration of Agents as generalized spatial reasoners/planners and Robot state/action primitives as functions.
 
-<!-- ## DIMOS x Unitree Go2 (OUT OF DATE)
+The result: cross-embodied *"Dimensional Applications"* exceptional at generalization and robust at symbolic action execution.
+
+## DIMOS x Unitree Go2 (OUT OF DATE)
 
 We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing for off-the-shelf Agents() to "call" Unitree ROS2 Nodes and WebRTC action primitives, including:
 
@@ -36,19 +38,12 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 - Lidar / PointCloud primitives
 - Any other generic Unitree ROS2 topics
 
--->
-
-<!--
-FIXME: add a list of features based on what we've actually documented
-
 ### Features
 
-- **DimOS Modules**
-    -
 - **DimOS Agents**
   - Agent() classes with planning, spatial reasoning, and Robot.Skill() function calling abilities.
   - Integrate with any off-the-shelf hosted or local model: OpenAIAgent, ClaudeAgent, GeminiAgent 🚧, DeepSeekAgent 🚧, HuggingFaceRemoteAgent, HuggingFaceLocalAgent, etc.
-  - Modular agent architecture for easy extensibility and chaining of Agent output -> Subagents input.
+  - Modular agent architecture for easy extensibility and chaining of Agent output --> Subagents input.
   - Agent spatial / language memory for location grounded reasoning and recall.
 
 - **DimOS Infrastructure**
@@ -58,20 +53,67 @@ FIXME: add a list of features based on what we've actually documented
 
 - **DimOS Interface / Development Tools**
   - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
--->
 
-## How can I start using DimOS?
+## MacOS Installation
 
-### Installation
+```sh
+# Install Nix
+curl --proto '=https' --tlsv1.2 -sSf -L https://install.determinate.systems/nix | sh -s -- install
+# make sure flakes are enabled
+mkdir -p "$HOME/.config/nix"; echo "experimental-features = nix-command flakes" >> "$HOME/.config/nix/nix.conf"
 
-- **MacOS**: MacOS support is currently alpha. You can install the same as Linux, but know that you WILL get flakey behavior while running dimos.
-- **Linux**:
-  1. Get a quick start with the [dimos-template](https://github.com/dimensionalOS/dimos-template) and follow the instructions in the README.
-  2. If you have an existing python project, cd to it then run this: `sh <(curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/bin/install")`
+# clone the repository
+git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
 
-DimOS supports Docker, Nix, and normal Python Venv installations.
+# setup the environment (follow the prompts after nix develop)
+cd dimos
+nix develop
 
-### Usage
+# You should be able to follow the instructions below as well for a more manual installation
+```
+
+---
+## Python Installation
+Tested on Ubuntu 22.04/24.04
+
+```bash
+sudo apt install python3-venv
+
+# Clone the repository
+git clone --branch dev --single-branch https://github.com/dimensionalOS/dimos.git
+cd dimos
+
+# Create and activate virtual environment
+python3 -m venv venv
+source venv/bin/activate
+
+sudo apt install portaudio19-dev python3-pyaudio
+
+# Install LFS
+sudo apt install git-lfs
+git lfs install
+
+# Install torch and torchvision if not already installed
+# Example CUDA 11.7, Pytorch 2.0.1 (replace with your required pytorch version if different)
+pip install torch==2.0.1 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+```
+
+#### Install dependencies
+```bash
+# CPU only (reccomended to attempt first)
+pip install -e '.[cpu,dev]'
+
+# CUDA install
+pip install -e '.[cuda,dev]'
+
+# Copy and configure environment variables
+cp default.env .env
+```
+
+#### Test the install
+```bash
+pytest -s dimos/
+```
 
 #### Test Dimensional with a replay UnitreeGo2 stream (no robot required)
 ```bash
@@ -97,7 +139,6 @@ dimos run unitree-go2
 export ROBOT_IP=192.168.X.XXX # Add the robot IP address
 dimos run unitree-go2-agentic
 ```
-
 ---
 
 ### Agent API keys
@@ -170,7 +211,50 @@ yarn install
 yarn dev # you may need to run sudo if previously built via Docker
 ```
 
-<!-- ## Building
+### Project Structure (OUT OF DATE)
+
+```
+.
+├── dimos/
+│   ├── agents/       # Agent implementations
+│   │   └── memory/   # Memory systems for agents, including semantic memory
+│   ├── environment/  # Environment context and sensing
+│   ├── hardware/     # Hardware abstraction and interfaces
+│   ├── models/       # ML model definitions and implementations
+│   │   ├── Detic/    # Detic object detection model
+│   │   ├── depth/    # Depth estimation models
+│   │   ├── segmentation/ # Image segmentation models
+│   ├── perception/   # Computer vision and sensing
+│   │   ├── detection2d/ # 2D object detection
+│   │   └── segmentation/ # Image segmentation pipelines
+│   ├── robot/        # Robot control and hardware interface
+│   │   ├── global_planner/ # Path planning at global scale
+│   │   ├── local_planner/  # Local navigation planning
+│   │   └── unitree/   # Unitree Go2 specific implementations
+│   ├── simulation/   # Robot simulation environments
+│   │   ├── genesis/  # Genesis simulation integration
+│   │   └── isaac/    # NVIDIA Isaac Sim integration
+│   ├── skills/       # Task-specific robot capabilities
+│   │   └── rest/     # REST API based skills
+│   ├── stream/       # WebRTC and data streaming
+│   │   ├── audio/    # Audio streaming components
+│   │   └── video_providers/ # Video streaming components
+│   ├── types/        # Type definitions and interfaces
+│   ├── utils/        # Utility functions and helpers
+│   └── web/          # DimOS development interface and API
+│       ├── dimos_interface/ # DimOS web interface
+│       └── websocket_vis/   # Websocket visualizations
+├── tests/            # Test files
+│   ├── genesissim/   # Genesis simulator tests
+│   └── isaacsim/     # Isaac Sim tests
+└── docker/           # Docker configuration files
+    ├── agent/        # Agent service containers
+    ├── interface/    # Interface containers
+    ├── simulation/   # Simulation environment containers
+    └── unitree/      # Unitree robot specific containers
+```
+
+## Building
 
 ### Simple DimOS Application (OUT OF DATE)
 
@@ -181,23 +265,21 @@ from dimos.robot.unitree.unitree_ros_control import UnitreeROSControl
 from dimos.agents_deprecated.agent import OpenAIAgent
 
 # Initialize robot
-robot = UnitreeGo2(
-    ip=robot_ip,
-    ros_control=UnitreeROSControl(),
-    skills=MyUnitreeSkills()
-)
+robot = UnitreeGo2(ip=robot_ip,
+                  ros_control=UnitreeROSControl(),
+                  skills=MyUnitreeSkills())
 
 # Initialize agent
 agent = OpenAIAgent(
-    dev_name="UnitreeExecutionAgent",
-    input_video_stream=robot.get_ros_video_stream(),
-    skills=robot.get_skills(),
-    system_query="Jump when you see a human! Front flip when you see a dog!",
-    model_name="gpt-4o"
-)
+            dev_name="UnitreeExecutionAgent",
+            input_video_stream=robot.get_ros_video_stream(),
+            skills=robot.get_skills(),
+            system_query="Jump when you see a human! Front flip when you see a dog!",
+            model_name="gpt-4o"
+        )
 
 while True: # keep process running
-    time.sleep(1)
+  time.sleep(1)
 ```
 
 
@@ -205,7 +287,7 @@ while True: # keep process running
 
 Let's build a simple DimOS application with Agent chaining. We define a ```planner``` as a ```PlanningAgent``` that takes in user input to devise a complex multi-step plan. This plan is passed step-by-step to an ```executor``` agent that can queue ```AbstractRobotSkill``` commands to the ```ROSCommandQueue```.
 
-Our reactive Pub/Sub data streaming architecture allows for chaining of ```Agent_0 -> Agent_1 -> ... -> Agent_n``` via the ```input_query_stream``` parameter in each which takes an ```Observable``` input from the previous Agent in the chain.
+Our reactive Pub/Sub data streaming architecture allows for chaining of ```Agent_0 --> Agent_1 --> ... --> Agent_n``` via the ```input_query_stream``` parameter in each which takes an ```Observable``` input from the previous Agent in the chain.
 
 **Via this method you can chain together any number of Agents() to create complex dimensional applications.**
 
@@ -254,8 +336,7 @@ robot.webrtc_req(api_id=1016) # "Hello" command
 # Call a ROS2 action primitive
 robot.move(distance=1.0, speed=0.5)
 ```
- -->
-<!--
+
 ### Creating Custom Skills (non-unitree specific)
 
 #### Create basic custom skills by inheriting from ```AbstractRobotSkill``` and implementing the ```__call__``` method.
@@ -392,11 +473,10 @@ performing_agent = OpenAIAgent(
 - **`tests/unitree/test_webrtc_queue.py`**: Tests `ROSCommandQueue` via a 20 back-to-back WebRTC requests to the robot
 - **`tests/test_planning_agent_web_interface.py`**: Tests a simple two-stage `PlanningAgent` chained to an `ExecutionAgent` with backend FastAPI interface.
 - **`tests/test_unitree_agent_queries_fastapi.py`**: Tests a zero-shot `ExecutionAgent` with backend FastAPI interface.
--->
 
 ## Documentation
 
-<!-- FIXME: -->
+For detailed documentation, please visit our [documentation site](#) (Coming Soon).
 
 ## Contributing
 
@@ -420,6 +500,5 @@ Huge thanks to!
 - Email: [build@dimensionalOS.com](mailto:build@dimensionalOS.com)
 
 ## Known Issues
-<!-- FIXME: update this section -->
-<!-- - Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. Reccomend restarting ROS2 or moving robot from objects to resolve.
-- ```docker-compose up --build``` does not fully initialize the ROS2 environment due to ```std::bad_alloc``` errors. This will occur during continuous docker development if the ```docker-compose down``` is not run consistently before rebuilding and/or you are on a machine with less RAM, as ROS is very memory intensive. Reccomend running to clear your docker cache/images/containers with ```docker system prune``` and rebuild. -->
+- Agent() failure to execute Nav2 action primitives (move, reverse, spinLeft, spinRight) is almost always due to the internal ROS2 collision avoidance, which will sometimes incorrectly display obstacles or be overly sensitive. Look for ```[behavior_server]: Collision Ahead - Exiting DriveOnHeading``` in the ROS logs. Reccomend restarting ROS2 or moving robot from objects to resolve.
+- ```docker-compose up --build``` does not fully initialize the ROS2 environment due to ```std::bad_alloc``` errors. This will occur during continuous docker development if the ```docker-compose down``` is not run consistently before rebuilding and/or you are on a machine with less RAM, as ROS is very memory intensive. Reccomend running to clear your docker cache/images/containers with ```docker system prune``` and rebuild.

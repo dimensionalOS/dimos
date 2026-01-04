@@ -17,13 +17,13 @@ from __future__ import annotations
 import time
 from typing import BinaryIO
 
-from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import (
     Transform as LCMTransform,
     TransformStamped as LCMTransformStamped,
 )
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
         Quaternion as ROSQuaternion,
         Transform as ROSTransform,
         TransformStamped as ROSTransformStamped,
@@ -34,6 +34,7 @@ except ImportError:
     ROSTransform = None  # type: ignore[assignment, misc]
     ROSVector3 = None  # type: ignore[assignment, misc]
     ROSQuaternion = None  # type: ignore[assignment, misc]
+import rerun as rr
 
 from dimos.msgs.geometry_msgs.Quaternion import Quaternion
 from dimos.msgs.geometry_msgs.Vector3 import Vector3
@@ -78,7 +79,7 @@ class Transform(Timestamped):
         return f"Transform(translation={self.translation!r}, rotation={self.rotation!r})"
 
     def __str__(self) -> str:
-        return f"Transform:\n {self.frame_id} -> {self.child_frame_id} Translation: {self.translation}\n  Rotation: {self.rotation}"
+        return f"{self.frame_id} -> {self.child_frame_id}\n  Translation: {self.translation}\n  Rotation: {self.rotation}"
 
     def __eq__(self, other) -> bool:  # type: ignore[no-untyped-def]
         """Check if two transforms are equal."""
@@ -327,7 +328,7 @@ class Transform(Timestamped):
     @classmethod
     def lcm_decode(cls, data: bytes | BinaryIO) -> Transform:
         """Decode from LCM TFMessage bytes."""
-        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
+        from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
         lcm_msg = LCMTFMessage.lcm_decode(data)
 
@@ -358,4 +359,19 @@ class Transform(Timestamped):
             frame_id=lcm_transform_stamped.header.frame_id,
             child_frame_id=lcm_transform_stamped.child_frame_id,
             ts=ts,
+        )
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Transform3D format with frame IDs.
+
+        Returns:
+            rr.Transform3D archetype for logging to rerun with parent/child frames
+        """
+        return rr.Transform3D(
+            translation=[self.translation.x, self.translation.y, self.translation.z],
+            rotation=rr.Quaternion(
+                xyzw=[self.rotation.x, self.rotation.y, self.rotation.z, self.rotation.w]
+            ),
+            parent_frame=self.frame_id,  # type: ignore[call-arg]
+            child_frame=self.child_frame_id,  # type: ignore[call-arg]
         )

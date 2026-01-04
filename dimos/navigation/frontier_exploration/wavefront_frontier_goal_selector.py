@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from enum import IntFlag
 import threading
 
-from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool
 import numpy as np
 from reactivex.disposable import Disposable
 

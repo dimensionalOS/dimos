@@ -22,7 +22,7 @@ import sys
 import time
 from typing import Any
 
-import mujoco  # type: ignore[import-untyped]
+import mujoco
 from mujoco import viewer
 import numpy as np
 from numpy.typing import NDArray

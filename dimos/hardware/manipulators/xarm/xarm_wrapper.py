@@ -16,7 +16,7 @@
 
 import logging
 import math
-from typing import Any, Optional
+from typing import Any
 
 from ..base.sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 
@@ -47,7 +47,7 @@ class XArmSDKWrapper(BaseManipulatorSDK):
             True if connection successful
         """
         try:
-            from xarm import XArmAPI  # type: ignore[import-untyped]
+            from xarm import XArmAPI
 
             ip = config.get("ip", "192.168.1.100")
             self.dof = config.get("dof", 7)

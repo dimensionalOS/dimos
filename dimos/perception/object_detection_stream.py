@@ -16,10 +16,12 @@
 import numpy as np
 from reactivex import Observable, operators as ops
 
-from dimos.perception.detection2d.yolo_2d_det import Yolo2DDetector  # type: ignore[import-untyped]
+from dimos.perception.detection2d.yolo_2d_det import (  # type: ignore[import-not-found, import-untyped]
+    Yolo2DDetector,
+)
 
 try:
-    from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-untyped]
+    from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-not-found, import-untyped]
         Detic2DDetector,
     )
 

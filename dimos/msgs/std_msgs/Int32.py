@@ -13,13 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 
 """Int32 message type."""
 
 from typing import ClassVar
 
-from dimos_lcm.std_msgs import Int32 as LCMInt32  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Int32 as LCMInt32
 
 
 class Int32(LCMInt32):  # type: ignore[misc]

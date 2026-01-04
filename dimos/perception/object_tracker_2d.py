@@ -20,7 +20,7 @@ import time
 import cv2
 
 # Import LCM messages
-from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import (
     BoundingBox2D,
     Detection2D,
     ObjectHypothesis,

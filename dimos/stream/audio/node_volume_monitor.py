@@ -169,7 +169,7 @@ def monitor(
 
 if __name__ == "__main__":
     from audio.node_simulated import SimulatedAudioSource  # type: ignore[import-not-found]
-    from utils import keepalive  # type: ignore[import-untyped]
+    from utils import keepalive  # type: ignore[import-not-found]
 
     # Use the monitor function to create and connect the nodes
     volume_monitor = monitor(SimulatedAudioSource().emit_audio())

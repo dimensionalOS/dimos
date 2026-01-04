@@ -19,7 +19,7 @@ Supports both eye-in-hand and eye-to-hand configurations.
 
 from collections import deque
 
-from dimos_lcm.vision_msgs import Detection3D  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import Detection3D
 import numpy as np
 from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]
 

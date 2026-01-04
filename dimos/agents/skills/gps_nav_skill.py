@@ -84,7 +84,7 @@ class GpsNavSkillContainer(SkillModule):
         logger.info(f"Set travel points: {new_points}")
 
         if self.gps_goal._transport is not None:
-            self.gps_goal.publish(new_points)
+            self.gps_goal.publish(new_points)  # type: ignore[arg-type]
 
         if self._set_gps_travel_goal_points:
             self._set_gps_travel_goal_points(new_points)

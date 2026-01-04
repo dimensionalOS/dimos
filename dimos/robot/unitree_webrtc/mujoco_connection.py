@@ -54,7 +54,7 @@ class MujocoConnection:
 
     def __init__(self, global_config: GlobalConfig) -> None:
         try:
-            import mujoco  # type: ignore[import-untyped]
+            import mujoco
         except ImportError:
             raise ImportError("'mujoco' is not installed. Use `pip install -e .[sim]`")
 

@@ -19,6 +19,7 @@ import inspect
 import sys
 import threading
 from typing import (
+    TYPE_CHECKING,
     Any,
     get_args,
     get_origin,
@@ -26,12 +27,16 @@ from typing import (
     overload,
 )
 
+if TYPE_CHECKING:
+    from dimos.core.introspection.module import ModuleInfo
+
 from dask.distributed import Actor, get_worker
 from reactivex.disposable import CompositeDisposable
 from typing_extensions import TypeVar
 
 from dimos.core import colors
 from dimos.core.core import T, rpc
+from dimos.core.introspection.module import INTERNAL_RPCS, extract_module_info, render_module_io
 from dimos.core.resource import Resource
 from dimos.core.rpc_client import RpcCall
 from dimos.core.stream import In, Out, RemoteIn, RemoteOut, Transport
@@ -198,64 +203,127 @@ class ModuleBase(Configurable[ModuleConfigT], SkillContainer, Resource):
             if isinstance(s, In) and not name.startswith("_")
         }
 
-    @classmethod  # type: ignore[misc]
-    @property
-    def rpcs(cls) -> dict[str, Callable]:  # type: ignore[type-arg]
+    @classproperty
+    def rpcs(self) -> dict[str, Callable[..., Any]]:
         return {
-            name: getattr(cls, name)
-            for name in dir(cls)
+            name: getattr(self, name)
+            for name in dir(self)
             if not name.startswith("_")
             and name != "rpcs"  # Exclude the rpcs property itself to prevent recursion
-            and callable(getattr(cls, name, None))
-            and hasattr(getattr(cls, name), "__rpc__")
+            and callable(getattr(self, name, None))
+            and hasattr(getattr(self, name), "__rpc__")
         }
 
     @rpc
-    def io(self) -> str:
-        def _box(name: str) -> str:
-            return [  # type: ignore[return-value]
-                "┌┴" + "─" * (len(name) + 1) + "┐",
-                f"│ {name} │",
-                "└┬" + "─" * (len(name) + 1) + "┘",
-            ]
+    def _io_instance(self, color: bool = True) -> str:
+        """Instance-level io() - shows actual running streams."""
+        return render_module_io(
+            name=self.__class__.__name__,
+            inputs=self.inputs,
+            outputs=self.outputs,
+            rpcs=self.rpcs,
+            color=color,
+        )
 
-        # can't modify __str__ on a function like we are doing for I/O
-        # so we have a separate repr function here
-        def repr_rpc(fn: Callable) -> str:  # type: ignore[type-arg]
-            sig = inspect.signature(fn)
-            # Remove 'self' parameter
-            params = [p for name, p in sig.parameters.items() if name != "self"]
+    @classmethod
+    def _io_class(cls, color: bool = True) -> str:
+        """Class-level io() - shows declared stream types from annotations."""
+        hints = get_type_hints(cls)
 
-            # Format parameters with colored types
-            param_strs = []
-            for param in params:
-                param_str = param.name
-                if param.annotation != inspect.Parameter.empty:
-                    type_name = getattr(param.annotation, "__name__", str(param.annotation))
-                    param_str += ": " + colors.green(type_name)
-                if param.default != inspect.Parameter.empty:
-                    param_str += f" = {param.default}"
-                param_strs.append(param_str)
+        _yellow = colors.yellow if color else (lambda x: x)
+        _green = colors.green if color else (lambda x: x)
 
-            # Format return type
-            return_annotation = ""
-            if sig.return_annotation != inspect.Signature.empty:
-                return_type = getattr(sig.return_annotation, "__name__", str(sig.return_annotation))
-                return_annotation = " -> " + colors.green(return_type)
+        def is_stream(hint: type, stream_type: type) -> bool:
+            origin = get_origin(hint)
+            if origin is stream_type:
+                return True
+            if isinstance(hint, type) and issubclass(hint, stream_type):
+                return True
+            return False
 
-            return (
-                "RPC " + colors.blue(fn.__name__) + f"({', '.join(param_strs)})" + return_annotation
+        def format_stream(name: str, hint: type) -> str:
+            args = get_args(hint)
+            type_name = args[0].__name__ if args else "?"
+            return f"{_yellow(name)}: {_green(type_name)}"
+
+        inputs = {
+            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, In)
+        }
+        outputs = {
+            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, Out)
+        }
+
+        return render_module_io(
+            name=cls.__name__,
+            inputs=inputs,
+            outputs=outputs,
+            rpcs=cls.rpcs,
+            color=color,
+        )
+
+    class _io_descriptor:
+        """Descriptor that makes io() work on both class and instance."""
+
+        def __get__(
+            self, obj: "ModuleBase | None", objtype: type["ModuleBase"]
+        ) -> Callable[[bool], str]:
+            if obj is None:
+                return objtype._io_class
+            return obj._io_instance
+
+    io = _io_descriptor()
+
+    @classmethod
+    def _module_info_class(cls) -> "ModuleInfo":
+        """Class-level module_info() - returns ModuleInfo from annotations."""
+        from dimos.core.introspection.module import ModuleInfo
+
+        hints = get_type_hints(cls)
+
+        def is_stream(hint: type, stream_type: type) -> bool:
+            origin = get_origin(hint)
+            if origin is stream_type:
+                return True
+            if isinstance(hint, type) and issubclass(hint, stream_type):
+                return True
+            return False
+
+        def format_stream(name: str, hint: type) -> str:
+            args = get_args(hint)
+            type_name = args[0].__name__ if args else "?"
+            return f"{name}: {type_name}"
+
+        inputs = {
+            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, In)
+        }
+        outputs = {
+            name: format_stream(name, hint) for name, hint in hints.items() if is_stream(hint, Out)
+        }
+
+        return extract_module_info(
+            name=cls.__name__,
+            inputs=inputs,
+            outputs=outputs,
+            rpcs=cls.rpcs,
+        )
+
+    class _module_info_descriptor:
+        """Descriptor that makes module_info() work on both class and instance."""
+
+        def __get__(
+            self, obj: "ModuleBase | None", objtype: type["ModuleBase"]
+        ) -> Callable[[], "ModuleInfo"]:
+            if obj is None:
+                return objtype._module_info_class
+            # For instances, extract from actual streams
+            return lambda: extract_module_info(
+                name=obj.__class__.__name__,
+                inputs=obj.inputs,
+                outputs=obj.outputs,
+                rpcs=obj.rpcs,
             )
 
-        ret = [
-            *(f" ├─ {stream}" for stream in self.inputs.values()),
-            *_box(self.__class__.__name__),
-            *(f" ├─ {stream}" for stream in self.outputs.values()),
-            " │",
-            *(f" ├─ {repr_rpc(rpc)}" for rpc in self.rpcs.values()),
-        ]
-
-        return "\n".join(ret)
+    module_info = _module_info_descriptor()
 
     @classproperty
     def blueprint(self):  # type: ignore[no-untyped-def]

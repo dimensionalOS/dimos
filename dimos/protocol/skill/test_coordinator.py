@@ -16,7 +16,7 @@ from collections.abc import Generator
 import datetime
 import time
 
-import pytest
+import pytest  # type: ignore[import-not-found]
 
 from dimos.core import Module, rpc
 from dimos.msgs.sensor_msgs import Image
@@ -88,15 +88,15 @@ class SkillContainerTest(Module):
         return str(datetime.datetime.now())
 
     @skill(output=Output.image)
-    def take_photo(self) -> Image:  # type: ignore[type-arg]
+    def take_photo(self) -> Image:
         """Takes a camera photo"""
         print("Taking photo...")
-        img = Image.from_file(str(get_data("cafe-smol.jpg")))  # type: ignore[arg-type]
+        img = Image.from_file(str(get_data("cafe-smol.jpg")))
         print("Photo taken.")
-        return img  # type: ignore[return-value]
+        return img
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_coordinator_parallel_calls() -> None:
     container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()
@@ -136,7 +136,7 @@ async def test_coordinator_parallel_calls() -> None:
     skillCoordinator.stop()
 
 
-@pytest.mark.asyncio
+@pytest.mark.asyncio  # type: ignore[untyped-decorator]
 async def test_coordinator_generator() -> None:
     container = SkillContainerTest()
     skillCoordinator = SkillCoordinator()

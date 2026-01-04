@@ -84,7 +84,7 @@ class GripperControlComponent:
         Returns:
             Tuple of (success, message)
         """
-        result: tuple[bool, str] = self.set_gripper(gripper_angle=1000, gripper_effort=effort)  # type: ignore[no-any-return]
+        result: tuple[bool, str] = self.set_gripper(gripper_angle=1000, gripper_effort=effort)
         return result
 
     @rpc
@@ -98,7 +98,7 @@ class GripperControlComponent:
         Returns:
             Tuple of (success, message)
         """
-        result: tuple[bool, str] = self.set_gripper(gripper_angle=0, gripper_effort=effort)  # type: ignore[no-any-return]
+        result: tuple[bool, str] = self.set_gripper(gripper_angle=0, gripper_effort=effort)
         return result
 
     @rpc

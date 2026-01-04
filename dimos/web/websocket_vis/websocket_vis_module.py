@@ -16,9 +16,13 @@
 
 """
 WebSocket Visualization Module for Dimos navigation and mapping.
+
+This module provides a WebSocket data server for real-time visualization.
+The frontend is served from a separate HTML file.
 """
 
 import asyncio
+from pathlib import Path as FilePath
 import threading
 import time
 from typing import Any
@@ -27,11 +31,20 @@ from dimos_lcm.std_msgs import Bool  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 import socketio  # type: ignore[import-untyped]
 from starlette.applications import Starlette
-from starlette.responses import HTMLResponse
-from starlette.routing import Route
+from starlette.responses import FileResponse, RedirectResponse, Response
+from starlette.routing import Mount, Route
+from starlette.staticfiles import StaticFiles
 import uvicorn
 
+# Path to the frontend HTML templates and command-center build
+_TEMPLATES_DIR = FilePath(__file__).parent.parent / "templates"
+_DASHBOARD_HTML = _TEMPLATES_DIR / "rerun_dashboard.html"
+_COMMAND_CENTER_DIR = (
+    FilePath(__file__).parent.parent / "command-center-extension" / "dist-standalone"
+)
+
 from dimos.core import In, Module, Out, rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.mapping.occupancy.gradient import gradient
 from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
@@ -77,13 +90,20 @@ class WebsocketVisModule(Module):
     cmd_vel: Out[Twist]
     movecmd_stamped: Out[TwistStamped]
 
-    def __init__(self, port: int = 7779, **kwargs) -> None:  # type: ignore[no-untyped-def]
+    def __init__(
+        self,
+        port: int = 7779,
+        global_config: GlobalConfig | None = None,
+        **kwargs: Any,
+    ) -> None:
         """Initialize the WebSocket visualization module.
 
         Args:
             port: Port to run the web server on
+            global_config: Optional global config for viewer backend settings
         """
         super().__init__(**kwargs)
+        self._global_config = global_config or GlobalConfig()
 
         self.port = port
         self._uvicorn_server_thread: threading.Thread | None = None
@@ -127,6 +147,9 @@ class WebsocketVisModule(Module):
 
         self._uvicorn_server_thread = threading.Thread(target=self._run_uvicorn_server, daemon=True)
         self._uvicorn_server_thread.start()
+
+        # Show control center link in terminal
+        logger.info(f"Command Center: http://localhost:{self.port}/command-center")
 
         try:
             unsub = self.odom.subscribe(self._on_robot_pose)
@@ -186,15 +209,45 @@ class WebsocketVisModule(Module):
         self.sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
         async def serve_index(request):  # type: ignore[no-untyped-def]
-            return HTMLResponse("<html><body>Use the extension.</body></html>")
+            """Serve appropriate HTML based on viewer mode."""
+            # If running native Rerun, redirect to standalone command center
+            if self._global_config.viewer_backend == "rerun-native":
+                return RedirectResponse(url="/command-center")
+            # Otherwise serve full dashboard with Rerun iframe
+            return FileResponse(_DASHBOARD_HTML, media_type="text/html")
 
-        routes = [Route("/", serve_index)]
+        async def serve_command_center(request):  # type: ignore[no-untyped-def]
+            """Serve the command center 2D visualization (built React app)."""
+            index_file = _COMMAND_CENTER_DIR / "index.html"
+            if index_file.exists():
+                return FileResponse(index_file, media_type="text/html")
+            else:
+                return Response(
+                    content="Command center not built. Run: cd dimos/web/command-center-extension && npm install && npm run build:standalone",
+                    status_code=503,
+                    media_type="text/plain",
+                )
+
+        routes = [
+            Route("/", serve_index),
+            Route("/command-center", serve_command_center),
+        ]
+
+        # Add static file serving for command-center assets if build exists
+        if _COMMAND_CENTER_DIR.exists():
+            routes.append(
+                Mount(  # type: ignore[arg-type]
+                    "/assets",
+                    app=StaticFiles(directory=_COMMAND_CENTER_DIR / "assets"),
+                    name="assets",
+                )
+            )
         starlette_app = Starlette(routes=routes)
 
         self.app = socketio.ASGIApp(self.sio, starlette_app)
 
         # Register SocketIO event handlers
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def connect(sid, environ) -> None:  # type: ignore[no-untyped-def]
             with self.state_lock:
                 current_state = dict(self.vis_state)
@@ -211,7 +264,7 @@ class WebsocketVisModule(Module):
                 f"Client {sid} connected, sent state with {len(self.gps_goal_points)} GPS goal points"
             )
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def click(sid, position) -> None:  # type: ignore[no-untyped-def]
             goal = PoseStamped(
                 position=(position[0], position[1], 0),
@@ -223,7 +276,7 @@ class WebsocketVisModule(Module):
                 "Click goal published", x=round(goal.position.x, 3), y=round(goal.position.y, 3)
             )
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def gps_goal(sid: str, goal: dict[str, float]) -> None:
             logger.info(f"Received GPS goal: {goal}")
 
@@ -241,17 +294,17 @@ class WebsocketVisModule(Module):
                 f"Emitted gps_travel_goal_points with {len(self.gps_goal_points)} points: {self.gps_goal_points}"
             )
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def start_explore(sid: str) -> None:
             logger.info("Starting exploration")
             self.explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def stop_explore(sid) -> None:  # type: ignore[no-untyped-def]
             logger.info("Stopping exploration")
             self.stop_explore_cmd.publish(Bool(data=True))
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def clear_gps_goals(sid: str) -> None:
             logger.info("Clearing all GPS goal points")
             self.gps_goal_points.clear()
@@ -259,7 +312,7 @@ class WebsocketVisModule(Module):
                 await self.sio.emit("gps_travel_goal_points", self.gps_goal_points)
             logger.info("GPS goal points cleared and updated clients")
 
-        @self.sio.event  # type: ignore[misc, untyped-decorator]
+        @self.sio.event  # type: ignore[untyped-decorator]
         async def move_command(sid: str, data: dict[str, Any]) -> None:
             # Publish Twist if transport is configured
             if self.cmd_vel and self.cmd_vel.transport:

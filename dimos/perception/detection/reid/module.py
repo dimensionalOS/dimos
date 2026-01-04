@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
     TextAnnotation,
 )
-from dimos_lcm.foxglove_msgs.Point2 import Point2  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.Point2 import Point2
 from reactivex import operators as ops
 from reactivex.observable import Observable
 

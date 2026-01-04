@@ -22,9 +22,10 @@ from typing import Any
 
 import cv2
 import numpy as np
+import rerun as rr
 
 try:
-    import cupy as cp  # type: ignore
+    import cupy as cp  # type: ignore[import-not-found]
 
     HAS_CUDA = True
 except Exception:  # pragma: no cover - optional dependency
@@ -36,7 +37,7 @@ USE_NVIMGCODEC = os.environ.get("USE_NVIMGCODEC", "0") == "1"
 NVIMGCODEC_LAST_USED = False
 try:  # pragma: no cover - optional dependency
     if HAS_CUDA and USE_NVIMGCODEC:
-        from nvidia import nvimgcodec  # type: ignore
+        from nvidia import nvimgcodec  # type: ignore[import-untyped]
 
         try:
             _enc_probe = nvimgcodec.Encoder()
@@ -108,6 +109,37 @@ def _encode_nvimgcodec_cuda(bgr_cu, quality: int = 80) -> bytes:  # type: ignore
     return bytes(bs0)
 
 
+def format_to_rerun(data, fmt: ImageFormat):  # type: ignore[no-untyped-def]
+    """Convert image data to Rerun archetype based on format.
+
+    Args:
+        data: Image data (numpy array or cupy array on CPU)
+        fmt: ImageFormat enum value
+
+    Returns:
+        Rerun archetype (rr.Image or rr.DepthImage)
+    """
+    match fmt:
+        case ImageFormat.RGB:
+            return rr.Image(data, color_model="RGB")
+        case ImageFormat.RGBA:
+            return rr.Image(data, color_model="RGBA")
+        case ImageFormat.BGR:
+            return rr.Image(data, color_model="BGR")
+        case ImageFormat.BGRA:
+            return rr.Image(data, color_model="BGRA")
+        case ImageFormat.GRAY:
+            return rr.Image(data, color_model="L")
+        case ImageFormat.GRAY16:
+            return rr.Image(data, color_model="L")
+        case ImageFormat.DEPTH:
+            return rr.DepthImage(data)
+        case ImageFormat.DEPTH16:
+            return rr.DepthImage(data)
+        case _:
+            raise ValueError(f"Unsupported format for Rerun: {fmt}")
+
+
 class AbstractImage(ABC):
     data: Any
     format: ImageFormat
@@ -166,13 +198,17 @@ class AbstractImage(ABC):
         ...
 
     @abstractmethod
+    def to_rerun(self) -> Any:  # pragma: no cover - abstract
+        ...
+
+    @abstractmethod
     def sharpness(self) -> float:  # pragma: no cover - abstract
         ...
 
     def copy(self) -> AbstractImage:
-        return self.__class__(
+        return self.__class__(  # type: ignore[call-arg]
             data=self.data.copy(), format=self.format, frame_id=self.frame_id, ts=self.ts
-        )  # type: ignore
+        )
 
     def save(self, filepath: str) -> bool:
         global NVIMGCODEC_LAST_USED

@@ -280,7 +280,7 @@ class PubSubRPCMixin(RPCSpec, PubSub[TopicT, MsgT], Generic[TopicT, MsgT]):
                         # Type ignore: SerializedException is compatible with dict[str, Any]
                         self.publish(
                             topic_res,
-                            self._encodeRPCRes({"id": req_id, "exception": exc_data}),  # type: ignore[typeddict-item, arg-type]
+                            self._encodeRPCRes({"id": req_id, "exception": exc_data}),  # type: ignore[arg-type, typeddict-item]
                         )
 
             # Always use thread pool to execute RPC handlers (prevents deadlock)

@@ -13,7 +13,7 @@
 # limitations under the License.
 
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
@@ -37,7 +37,7 @@ from dimos.utils.reactive import backpressure
 
 
 class Detection3DModule(Detection2DModule):
-    image: In[Image]
+    color_image: In[Image]
     pointcloud: In[PointCloud2]
 
     detections: Out[Detection2DArray]
@@ -113,10 +113,10 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.image.get_next()
+        image = self.color_image.get_next()
         return model.query(image, question)
 
-    # @skill  # type: ignore[arg-type]
+    # @skill
     @rpc
     def nav_vlm(self, question: str) -> str:
         """
@@ -130,7 +130,7 @@ class Detection3DModule(Detection2DModule):
         from dimos.models.vl.qwen import QwenVlModel
 
         model = QwenVlModel()
-        image = self.image.get_next()
+        image = self.color_image.get_next()
         result = model.query_detections(image, question)
 
         print("VLM result:", result, "for", image, "and question", question)

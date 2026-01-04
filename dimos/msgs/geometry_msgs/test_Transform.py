@@ -114,7 +114,6 @@ def test_transform_string_representations() -> None:
 
     # Test str
     str_str = str(tf)
-    assert "Transform:" in str_str
     assert "Translation:" in str_str
     assert "Rotation:" in str_str
 

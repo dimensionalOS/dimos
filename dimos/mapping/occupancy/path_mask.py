@@ -93,6 +93,6 @@ def make_path_mask(
 
     # Some of the points on the edge of the path may be occupied due to
     # rounding. Remove them.
-    bool_mask = bool_mask & ~occupied_mask
+    bool_mask = bool_mask & ~occupied_mask  # type: ignore[assignment]
 
     return bool_mask

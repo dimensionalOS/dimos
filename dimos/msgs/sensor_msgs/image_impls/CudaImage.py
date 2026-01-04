@@ -30,7 +30,7 @@ from dimos.msgs.sensor_msgs.image_impls.AbstractImage import (
 )
 
 try:
-    import cupy as cp  # type: ignore
+    import cupy as cp  # type: ignore[import-not-found]
     from cupyx.scipy import (  # type: ignore[import-not-found]
         ndimage as cndimage,
         signal as csignal,
@@ -571,11 +571,11 @@ class CudaImage(AbstractImage):
 
     def to_rgb(self) -> CudaImage:
         if self.format == ImageFormat.RGB:
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         if self.format == ImageFormat.BGR:
             return CudaImage(_bgr_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format == ImageFormat.RGBA:
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         if self.format == ImageFormat.BGRA:
             return CudaImage(
                 _bgra_to_rgba_cuda(self.data),  # type: ignore[no-untyped-call]
@@ -586,13 +586,13 @@ class CudaImage(AbstractImage):
         if self.format == ImageFormat.GRAY:
             return CudaImage(_gray_to_rgb_cuda(self.data), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
-            gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
+            gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore[attr-defined]
             return CudaImage(_gray_to_rgb_cuda(gray8), ImageFormat.RGB, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
-        return self.copy()  # type: ignore
+        return self.copy()  # type: ignore[return-value]
 
     def to_bgr(self) -> CudaImage:
         if self.format == ImageFormat.BGR:
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         if self.format == ImageFormat.RGB:
             return CudaImage(_rgb_to_bgr_cuda(self.data), ImageFormat.BGR, self.frame_id, self.ts)  # type: ignore[no-untyped-call]
         if self.format == ImageFormat.RGBA:
@@ -612,18 +612,18 @@ class CudaImage(AbstractImage):
                 self.ts,
             )
         if self.format in (ImageFormat.GRAY16, ImageFormat.DEPTH16):
-            gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore
+            gray8 = (self.data.astype(cp.float32) / 256.0).clip(0, 255).astype(cp.uint8)  # type: ignore[attr-defined]
             return CudaImage(
                 _rgb_to_bgr_cuda(_gray_to_rgb_cuda(gray8)),  # type: ignore[no-untyped-call]
                 ImageFormat.BGR,
                 self.frame_id,
                 self.ts,
             )
-        return self.copy()  # type: ignore
+        return self.copy()  # type: ignore[return-value]
 
     def to_grayscale(self) -> CudaImage:
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         if self.format == ImageFormat.BGR:
             return CudaImage(
                 _rgb_to_gray_cuda(_bgr_to_rgb_cuda(self.data)),  # type: ignore[no-untyped-call]
@@ -646,6 +646,20 @@ class CudaImage(AbstractImage):
         return CudaImage(
             _resize_bilinear_hwc_cuda(self.data, height, width), self.format, self.frame_id, self.ts
         )
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format.
+
+        Transfers data from GPU to CPU and converts to appropriate format.
+
+        Returns:
+            rr.Image or rr.DepthImage archetype for logging to rerun
+        """
+        from dimos.msgs.sensor_msgs.image_impls.AbstractImage import format_to_rerun
+
+        # Transfer to CPU
+        cpu_data = cp.asnumpy(self.data)
+        return format_to_rerun(cpu_data, self.format)
 
     def crop(self, x: int, y: int, width: int, height: int) -> CudaImage:
         """Crop the image to the specified region.

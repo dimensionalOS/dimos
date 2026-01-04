@@ -1,0 +1,18 @@
+<svg xmlns='http://www.w3.org/2000/svg' style='font-size:initial;' class="pikchr" viewBox="0 0 896.636 190.8">
+<path d="M9.66,87.84L126.069,87.84A7.5 7.5 0 0 0 133.569 80.34L133.569,9.66A7.5 7.5 0 0 0 126.069 2.16L9.66,2.16A7.5 7.5 0 0 0 2.16 9.66L2.16,80.34A7.5 7.5 0 0 0 9.66 87.84Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="67.8643" y="34.92" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Camera</text>
+<text x="67.8643" y="55.08" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">30 fps</text>
+<polygon points="248.769,95.4 237.249,99.72 237.249,91.08" style="fill:rgb(255,255,255)"/>
+<path d="M133.569,45L191.169,45L191.169,95.4L243.009,95.4"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<path d="M256.269,121.104L532.091,121.104A7.5 7.5 0 0 0 539.591 113.604L539.591,77.196A7.5 7.5 0 0 0 532.091 69.696L256.269,69.696A7.5 7.5 0 0 0 248.769 77.196L248.769,113.604A7.5 7.5 0 0 0 256.269 121.104Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="394.18" y="95.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">align_timestamped</text>
+<path d="M23.6626,188.64L112.066,188.64A7.5 7.5 0 0 0 119.566 181.14L119.566,110.46A7.5 7.5 0 0 0 112.066 102.96L23.6626,102.96A7.5 7.5 0 0 0 16.1626 110.46L16.1626,181.14A7.5 7.5 0 0 0 23.6626 188.64Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="67.8643" y="135.72" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">Lidar</text>
+<text x="67.8643" y="155.88" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">10 Hz</text>
+<polygon points="234.766,95.4 223.246,99.72 223.246,91.08" style="fill:rgb(255,255,255)"/>
+<path d="M119.566,145.8L177.166,145.8L177.166,95.4L229.006,95.4"  style="fill:none;stroke-width:2.16;stroke-linejoin:round;stroke:rgb(255,255,255);" />
+<polygon points="597.191,95.4 585.671,99.72 585.671,91.08" style="fill:rgb(255,255,255)"/>
+<path d="M539.591,95.4L591.431,95.4"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<path d="M604.691,121.104L886.976,121.104A7.5 7.5 0 0 0 894.476 113.604L894.476,77.196A7.5 7.5 0 0 0 886.976 69.696L604.691,69.696A7.5 7.5 0 0 0 597.191 77.196L597.191,113.604A7.5 7.5 0 0 0 604.691 121.104Z"  style="fill:none;stroke-width:2.16;stroke:rgb(255,255,255);" />
+<text x="745.834" y="95.4" text-anchor="middle" fill="rgb(255,255,255)" dominant-baseline="central">(image, pointcloud)</text>
+</svg>

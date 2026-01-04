@@ -14,19 +14,18 @@
 
 """Base manipulator driver with threading and component management."""
 
-from abc import ABC
 from dataclasses import dataclass
 import logging
 from queue import Empty, Queue
 from threading import Event, Thread
 import time
-from typing import Any, Optional
+from typing import Any
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import WrenchStamped
 from dimos.msgs.sensor_msgs import JointCommand, JointState, RobotState
 
-from .sdk_interface import BaseManipulatorSDK, ManipulatorInfo
+from .sdk_interface import BaseManipulatorSDK
 from .spec import ManipulatorCapabilities
 from .utils import SharedState
 

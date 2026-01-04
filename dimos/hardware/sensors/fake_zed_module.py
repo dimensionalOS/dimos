@@ -21,7 +21,7 @@ from dataclasses import dataclass
 import functools
 import logging
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 import numpy as np
 
 from dimos.core import Module, ModuleConfig, Out, rpc

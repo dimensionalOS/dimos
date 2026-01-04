@@ -19,18 +19,17 @@ import threading
 import time
 from typing import TypeAlias
 
-from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
 import numpy as np
 from numpy.typing import NDArray
 from reactivex import operators as ops
 from reactivex.observable import Observable
 from reactivex.subject import Subject
-from unitree_webrtc_connect.constants import (  # type: ignore[import-untyped]
+from unitree_webrtc_connect.constants import (
     RTC_TOPIC,
     SPORT_CMD,
     VUI_COLOR,
 )
-from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]  # type: ignore[import-untyped]
+from unitree_webrtc_connect.webrtc_driver import (  # type: ignore[import-untyped]
     UnitreeWebRTCConnection as LegionConnection,
     WebRTCConnectionMethod,
 )
@@ -39,6 +38,7 @@ from dimos.core import rpc
 from dimos.core.resource import Resource
 from dimos.msgs.geometry_msgs import Pose, Transform, Twist
 from dimos.msgs.sensor_msgs import Image
+from dimos.msgs.sensor_msgs.image_impls.AbstractImage import ImageFormat
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.robot.unitree_webrtc.type.lowstate import LowStateMsg
 from dimos.robot.unitree_webrtc.type.odometry import Odometry
@@ -268,6 +268,7 @@ class UnitreeWebRTCConnection(Resource):
                     lambda frame: Image.from_numpy(
                         # np.ascontiguousarray(frame.to_ndarray("rgb24")),
                         frame.to_ndarray(format="rgb24"),  # type: ignore[attr-defined]
+                        format=ImageFormat.RGB,  # Frame is RGB24, not BGR
                         frame_id="camera_optical",
                     )
                 ),
@@ -321,6 +322,8 @@ class UnitreeWebRTCConnection(Resource):
     def raw_video_stream(self) -> Observable[VideoMessage]:
         subject: Subject[VideoMessage] = Subject()
         stop_event = threading.Event()
+
+        from aiortc import MediaStreamTrack  # type: ignore[import-untyped]
 
         async def accept_track(track: MediaStreamTrack) -> None:
             while True:

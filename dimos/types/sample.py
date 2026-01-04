@@ -393,7 +393,7 @@ class Sample(BaseModel):
                 dtype,
             )
             try:
-                value = np.asfarray(value)
+                value = np.asfarray(value)  # type: ignore[attr-defined]
                 shape = shape or value.shape
                 dtype = dtype or value.dtype
                 le = le or -np.inf

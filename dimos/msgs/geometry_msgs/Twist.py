@@ -14,11 +14,11 @@
 
 from __future__ import annotations
 
-from dimos_lcm.geometry_msgs import Twist as LCMTwist  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import Twist as LCMTwist
 from plum import dispatch
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
         Twist as ROSTwist,
         Vector3 as ROSVector3,
     )

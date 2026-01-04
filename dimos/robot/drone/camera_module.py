@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 
 """Camera module for drone with depth estimation."""
 
@@ -21,7 +21,7 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs import CameraInfo
 
 from dimos.core import In, Module, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped

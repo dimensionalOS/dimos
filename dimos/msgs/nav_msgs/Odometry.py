@@ -17,12 +17,12 @@ from __future__ import annotations
 import time
 from typing import TYPE_CHECKING, TypeAlias
 
-from dimos_lcm.nav_msgs import Odometry as LCMOdometry  # type: ignore[import-untyped]
+from dimos_lcm.nav_msgs import Odometry as LCMOdometry
 import numpy as np
 from plum import dispatch
 
 try:
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined, import-untyped]
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
 except ImportError:
     ROSOdometry = None  # type: ignore[assignment, misc]
 

@@ -17,14 +17,13 @@ import threading
 import time
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from lcm_msgs.foxglove_msgs import SceneUpdate  # type: ignore[import-not-found]
 from reactivex.observable import Observable
 
-from dimos import spec
-from dimos.core import DimosCluster, In, Out, rpc
+from dimos.core import In, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
 from dimos.msgs.sensor_msgs import Image, PointCloud2
 from dimos.msgs.vision_msgs import Detection2DArray
@@ -36,8 +35,8 @@ from dimos.perception.detection.type.detection3d import Detection3DPC
 # Represents an object in space, as collection of 3d detections over time
 class Object3D(Detection3DPC):
     best_detection: Detection3DPC | None = None
-    center: Vector3 | None = None  # type: ignore
-    track_id: str | None = None  # type: ignore
+    center: Vector3 | None = None  # type: ignore[assignment]
+    track_id: str | None = None  # type: ignore[assignment]
     detections: int = 0
 
     def to_repr_dict(self) -> dict[str, Any]:
@@ -143,7 +142,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     goto: Callable[[PoseStamped], Any] | None = None
 
-    image: In[Image]
+    color_image: In[Image]
     pointcloud: In[PointCloud2]
 
     detections: Out[Detection2DArray]
@@ -238,7 +237,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return "\n".join(ret)
 
     # @rpc
-    # def vlm_query(self, description: str) -> Object3D | None:  # type: ignore[override]
+    # def vlm_query(self, description: str) -> Object3D | None:
     #     imageDetections2D = super().ask_vlm(description)
     #     print("VLM query found", imageDetections2D, "detections")
     #     time.sleep(3)
@@ -308,36 +307,6 @@ class ObjectDBModule(Detection3DModule, TableStr):
         return len(self.objects.values())
 
 
-def deploy(  # type: ignore[no-untyped-def]
-    dimos: DimosCluster,
-    lidar: spec.Pointcloud,
-    camera: spec.Camera,
-    prefix: str = "/detectorDB",
-    **kwargs,
-) -> Detection3DModule:
-    from dimos.core import LCMTransport
-
-    detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info_stream, **kwargs)  # type: ignore[attr-defined]
-
-    detector.image.connect(camera.color_image)
-    detector.pointcloud.connect(lidar.pointcloud)
-
-    detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
-    detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)
-    detector.scene_update.transport = LCMTransport(f"{prefix}/scene_update", SceneUpdate)
-
-    detector.detected_image_0.transport = LCMTransport(f"{prefix}/image/0", Image)
-    detector.detected_image_1.transport = LCMTransport(f"{prefix}/image/1", Image)
-    detector.detected_image_2.transport = LCMTransport(f"{prefix}/image/2", Image)
-
-    detector.detected_pointcloud_0.transport = LCMTransport(f"{prefix}/pointcloud/0", PointCloud2)
-    detector.detected_pointcloud_1.transport = LCMTransport(f"{prefix}/pointcloud/1", PointCloud2)
-    detector.detected_pointcloud_2.transport = LCMTransport(f"{prefix}/pointcloud/2", PointCloud2)
-
-    detector.start()
-    return detector  # type: ignore[no-any-return]
-
-
 detectionDB_module = ObjectDBModule.blueprint
 
-__all__ = ["ObjectDBModule", "deploy", "detectionDB_module"]
+__all__ = ["ObjectDBModule", "detectionDB_module"]

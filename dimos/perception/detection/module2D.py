@@ -15,7 +15,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from dimos_lcm.foxglove_msgs.ImageAnnotations import (  # type: ignore[import-untyped]
+from dimos_lcm.foxglove_msgs.ImageAnnotations import (
     ImageAnnotations,
 )
 from reactivex import operators as ops
@@ -41,7 +41,7 @@ class Config(ModuleConfig):
     max_freq: float = 10
     detector: Callable[[Any], Detector] | None = Yolo2DDetector
     publish_detection_images: bool = True
-    camera_info: CameraInfo = None  # type: ignore
+    camera_info: CameraInfo = None  # type: ignore[assignment]
     filter: list[Filter2D] | Filter2D | None = None
 
     def __post_init__(self) -> None:
@@ -56,7 +56,7 @@ class Detection2DModule(Module):
     config: Config
     detector: Detector
 
-    image: In[Image]
+    color_image: In[Image]
 
     detections: Out[Detection2DArray]
     annotations: Out[ImageAnnotations]
@@ -82,7 +82,7 @@ class Detection2DModule(Module):
     @simple_mcache
     def sharp_image_stream(self) -> Observable[Image]:
         return backpressure(
-            self.image.pure_observable().pipe(
+            self.color_image.pure_observable().pipe(
                 sharpness_barrier(self.config.max_freq),
             )
         )
@@ -112,7 +112,7 @@ class Detection2DModule(Module):
                 # Active detection - compute real position
                 detection = detections.detections[index]
                 position_3d = self.pixel_to_3d(  # type: ignore[attr-defined]
-                    detection.center_bbox,  # type: ignore[attr-defined]
+                    detection.center_bbox,
                     self.config.camera_info,
                     assumed_depth=1.0,
                 )
@@ -166,7 +166,7 @@ def deploy(  # type: ignore[no-untyped-def]
     from dimos.core import LCMTransport
 
     detector = Detection2DModule(**kwargs)
-    detector.image.connect(camera.color_image)
+    detector.color_image.connect(camera.color_image)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
     detector.detections.transport = LCMTransport(f"{prefix}/detections", Detection2DArray)

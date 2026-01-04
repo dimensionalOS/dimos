@@ -15,10 +15,10 @@
 
 """Bool message type."""
 
-from dimos_lcm.std_msgs import Bool as LCMBool  # type: ignore[import-untyped]
+from dimos_lcm.std_msgs import Bool as LCMBool
 
 try:
-    from std_msgs.msg import Bool as ROSBool  # type: ignore[attr-defined, import-untyped]
+    from std_msgs.msg import Bool as ROSBool  # type: ignore[attr-defined]
 except ImportError:
     ROSBool = None  # type: ignore[assignment, misc]
 

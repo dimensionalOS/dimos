@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.# You may obtain a copy of the License at
@@ -29,13 +29,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, BinaryIO
 
-from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage  # type: ignore[import-untyped]
+from dimos_lcm.tf2_msgs import TFMessage as LCMTFMessage
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
         TransformStamped as ROSTransformStamped,
     )
-    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
+    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 except ImportError:
     ROSTFMessage = None  # type: ignore[assignment, misc]
     ROSTransformStamped = None  # type: ignore[assignment, misc]
@@ -159,3 +159,22 @@ class TFMessage:
             ros_msg.transforms.append(transform.to_ros_transform_stamped())
 
         return ros_msg
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to a list of rerun Transform3D archetypes.
+
+        Returns a list of tuples (entity_path, Transform3D) for each transform
+        in the message. The entity_path is derived from the child_frame_id.
+
+        Returns:
+            List of (entity_path, rr.Transform3D) tuples
+
+        Example:
+            for path, transform in tf_msg.to_rerun():
+                rr.log(path, transform)
+        """
+        results = []
+        for transform in self.transforms:
+            entity_path = f"world/{transform.child_frame_id}"
+            results.append((entity_path, transform.to_rerun()))  # type: ignore[no-untyped-call]
+        return results

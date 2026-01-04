@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 
 """
 Unitree B1 quadruped robot with simplified UDP control.
@@ -42,11 +42,11 @@ from dimos.utils.logging_config import setup_logger
 
 # Handle ROS imports for environments where ROS is not available like CI
 try:
-    from geometry_msgs.msg import (  # type: ignore[import-untyped]
-        TwistStamped as ROSTwistStamped,  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+        TwistStamped as ROSTwistStamped,
     )
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined, import-untyped]
-    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined, import-untyped]
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
+    from tf2_msgs.msg import TFMessage as ROSTFMessage  # type: ignore[attr-defined]
 
     ROS_AVAILABLE = True
 except ImportError:

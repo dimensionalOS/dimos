@@ -16,7 +16,7 @@ from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from typing import Generic, TypeVar, Union
 
-from dimos_lcm.builtin_interfaces import Time as ROSTime  # type: ignore[import-untyped]
+from dimos_lcm.builtin_interfaces import Time as ROSTime
 from reactivex import create
 from reactivex.disposable import CompositeDisposable
 

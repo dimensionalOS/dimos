@@ -19,7 +19,7 @@ from io import BytesIO
 import struct
 from typing import BinaryIO, TypeAlias
 
-from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion  # type: ignore[import-untyped]
+from dimos_lcm.geometry_msgs import Quaternion as LCMQuaternion
 import numpy as np
 from plum import dispatch
 from scipy.spatial.transform import Rotation as R  # type: ignore[import-untyped]

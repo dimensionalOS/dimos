@@ -27,7 +27,7 @@ from dimos.perception.common.utils import (
     combine_object_data,
     detection_results_to_object_data,
 )
-from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-untyped]
+from dimos.perception.detection2d.detic_2d_det import (  # type: ignore[import-not-found, import-untyped]
     Detic2DDetector,
 )
 from dimos.perception.grasp_generation.grasp_generation import HostedGraspGenerator

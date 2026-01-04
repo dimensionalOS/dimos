@@ -25,7 +25,7 @@ Provides RPC methods for querying robot state including:
 """
 
 import threading
-from typing import Any, Optional
+from typing import Any
 
 from dimos.core import rpc
 from dimos.msgs.sensor_msgs import JointState, RobotState

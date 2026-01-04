@@ -18,7 +18,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-import mujoco  # type: ignore[import-untyped]
+import mujoco
 import numpy as np
 import onnxruntime as rt  # type: ignore[import-untyped]
 

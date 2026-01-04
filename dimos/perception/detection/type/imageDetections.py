@@ -18,7 +18,7 @@ from functools import reduce
 from operator import add
 from typing import TYPE_CHECKING, Generic, TypeVar
 
-from dimos_lcm.vision_msgs import Detection2DArray  # type: ignore[import-untyped]
+from dimos_lcm.vision_msgs import Detection2DArray
 
 from dimos.msgs.foxglove_msgs import ImageAnnotations
 from dimos.msgs.std_msgs import Header

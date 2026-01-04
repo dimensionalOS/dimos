@@ -9,7 +9,7 @@ repos:
       - id: remove-crlf
       - id: insert-license
         files: \.py$
-        exclude: __init__\.py$
+        exclude: (__init__\.py$)|(dimos/rxpy_backpressure/)
         args:
           # use if you want to remove licences from all files
           # (for globally changing wording or something)
@@ -63,9 +63,24 @@ repos:
 
   - repo: local
     hooks:
+      - id: uv-lock-check
+        name: Check uv.lock is up-to-date
+        entry: uv lock --check
+        language: system
+        files: ^pyproject\.toml$
+        pass_filenames: false
+
       - id: lfs_check
         name: LFS data
         always_run: true
         pass_filenames: false
         entry: bin/lfs_check
         language: script
+
+      - id: doclinks
+        name: Doclinks
+        always_run: true
+        pass_filenames: false
+        entry: python -m dimos.utils.docs.doclinks docs/
+        language: system
+        files: ^docs/.*\.md$

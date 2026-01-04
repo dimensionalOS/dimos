@@ -62,7 +62,7 @@ class NumpyImage(AbstractImage):
 
     def to_rgb(self) -> NumpyImage:
         if self.format == ImageFormat.RGB:
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         arr = self.data
         if self.format == ImageFormat.BGR:
             return NumpyImage(
@@ -77,11 +77,11 @@ class NumpyImage(AbstractImage):
             gray8 = (arr / 256).astype(np.uint8) if self.format != ImageFormat.GRAY else arr
             rgb = cv2.cvtColor(gray8, cv2.COLOR_GRAY2RGB)
             return NumpyImage(rgb, ImageFormat.RGB, self.frame_id, self.ts)
-        return self.copy()  # type: ignore
+        return self.copy()  # type: ignore[return-value]
 
     def to_bgr(self) -> NumpyImage:
         if self.format == ImageFormat.BGR:
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         arr = self.data
         if self.format == ImageFormat.RGB:
             return NumpyImage(
@@ -100,11 +100,11 @@ class NumpyImage(AbstractImage):
             return NumpyImage(
                 cv2.cvtColor(gray8, cv2.COLOR_GRAY2BGR), ImageFormat.BGR, self.frame_id, self.ts
             )
-        return self.copy()  # type: ignore
+        return self.copy()  # type: ignore[return-value]
 
     def to_grayscale(self) -> NumpyImage:
         if self.format in (ImageFormat.GRAY, ImageFormat.GRAY16, ImageFormat.DEPTH):
-            return self.copy()  # type: ignore
+            return self.copy()  # type: ignore[return-value]
         if self.format == ImageFormat.BGR:
             return NumpyImage(
                 cv2.cvtColor(self.data, cv2.COLOR_BGR2GRAY),
@@ -125,6 +125,12 @@ class NumpyImage(AbstractImage):
                 cv2.cvtColor(self.data, code), ImageFormat.GRAY, self.frame_id, self.ts
             )
         raise ValueError(f"Unsupported format: {self.format}")
+
+    def to_rerun(self):  # type: ignore[no-untyped-def]
+        """Convert to rerun Image format."""
+        from dimos.msgs.sensor_msgs.image_impls.AbstractImage import format_to_rerun
+
+        return format_to_rerun(self.data, self.format)
 
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> NumpyImage:
         return NumpyImage(

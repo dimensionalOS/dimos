@@ -16,11 +16,11 @@ from __future__ import annotations
 
 import base64
 import time
-from typing import TYPE_CHECKING, Literal, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, TypedDict
 
 import cv2
-from dimos_lcm.sensor_msgs.Image import Image as LCMImage  # type: ignore[import-untyped]
-from dimos_lcm.std_msgs.Header import Header  # type: ignore[import-untyped]
+from dimos_lcm.sensor_msgs.Image import Image as LCMImage
+from dimos_lcm.std_msgs.Header import Header
 import numpy as np
 import reactivex as rx
 from reactivex import operators as ops
@@ -47,12 +47,12 @@ if TYPE_CHECKING:
     )
 
 try:
-    import cupy as cp  # type: ignore
+    import cupy as cp  # type: ignore[import-not-found]
 except Exception:
     cp = None
 
 try:
-    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined, import-untyped]
+    from sensor_msgs.msg import Image as ROSImage  # type: ignore[attr-defined]
 except ImportError:
     ROSImage = None  # type: ignore[assignment, misc]
 
@@ -319,6 +319,10 @@ class Image(Timestamped):
     def to_grayscale(self) -> Image:
         return Image(self._impl.to_grayscale())
 
+    def to_rerun(self) -> Any:
+        """Convert to rerun Image format."""
+        return self._impl.to_rerun()
+
     def resize(self, width: int, height: int, interpolation: int = cv2.INTER_LINEAR) -> Image:
         return Image(self._impl.resize(width, height, interpolation))
 
@@ -538,19 +542,19 @@ class Image(Timestamped):
 
     # PnP wrappers
     def solve_pnp(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.solve_pnp(*args, **kwargs)  # type: ignore
+        return self._impl.solve_pnp(*args, **kwargs)  # type: ignore[attr-defined]
 
     def solve_pnp_ransac(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.solve_pnp_ransac(*args, **kwargs)  # type: ignore
+        return self._impl.solve_pnp_ransac(*args, **kwargs)  # type: ignore[attr-defined]
 
     def solve_pnp_batch(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.solve_pnp_batch(*args, **kwargs)  # type: ignore
+        return self._impl.solve_pnp_batch(*args, **kwargs)  # type: ignore[attr-defined]
 
     def create_csrt_tracker(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.create_csrt_tracker(*args, **kwargs)  # type: ignore
+        return self._impl.create_csrt_tracker(*args, **kwargs)  # type: ignore[attr-defined]
 
     def csrt_update(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        return self._impl.csrt_update(*args, **kwargs)  # type: ignore
+        return self._impl.csrt_update(*args, **kwargs)  # type: ignore[attr-defined]
 
     @classmethod
     def from_ros_msg(cls, ros_msg: ROSImage) -> Image:
