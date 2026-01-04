@@ -56,18 +56,24 @@ def build_occupancygrid_from_image(image: Image, resolution: float = 0.05) -> "O
     if image_arr.shape[2] == 4:
         image_arr = image_arr[:, :, :3]
 
+    # print(f"top left {image_arr[136:150, 215:250]}")
+
     # Define colors and threshold
     WHITE = np.array([255, 255, 255], dtype=np.float32)
-    color_threshold = 100
+    GRAY = np.array([127, 127, 127], dtype=np.float32)  # approx RGB for 127 gray
+    white_threshold = 30
+    gray_threshold = 10
 
     # Convert to float32 for distance calculations
     image_float = image_arr.astype(np.float32)
 
     # Calculate distances to target colors using broadcasting
     white_dist = np.sqrt(np.sum((image_float - WHITE) ** 2, axis=2))
+    gray_dist = np.sqrt(np.sum((image_float - GRAY) ** 2, axis=2))
 
     # Assign based on closest color within threshold
-    grid[white_dist <= color_threshold] = 0  # Free space
+    grid[white_dist <= white_threshold] = 0  # Free space
+    grid[gray_dist <= gray_threshold] = -1  # Unknown space
 
     occupancy_grid = OccupancyGrid()
     occupancy_grid.info.width = width
@@ -101,15 +107,12 @@ def extract_coordinates(point: dict | None) -> list | str:
 def goal_placement_prompt(description: str) -> str:
     prompt = (
         "Look at this image carefully \n"
-        "it represents a 2D occupancy grid map where,\n"
+        "it represents a noisy 2D occupancy grid map where,\n"
         " - white area is free space, \n"
-        " - yellow area is unknown space, \n"
+        " - gray area is unexplored space, \n"
         " - red areas are obstacles, \n"
-        " - green object represents the robot's position and points to the direction it is facing. \n"
+        " - green circle represents the robot's position and the attached arrow indicates its orientation. \n"
         f"Identify a location in free space based on the following description: {description}\n"
-        "Prioritize selecting a goal position in free space (white area) over exactly matching the description. \n"
-        "MAKE SURE there is a clear path from the robot's current position to the goal position without crossing any obstacles. \n"
-        "MAKE SURE the goal position is located in the white area (free space) of the map and few pixels away from obstacles or objects. \n"
         "Return ONLY a JSON object with this exact format:\n"
         '{"point": [x, y]}\n'
         f"where x,y are the pixel coordinates of the goal position in the image. \n"
@@ -121,11 +124,11 @@ def goal_placement_prompt(description: str) -> str:
 def interpretability_prompt(question: str) -> str:
     prompt = (
         "Look at this image carefully \n"
-        "it represents a 2D occupancy grid map where,\n"
+        "it represents a noisy 2D occupancy grid map where,\n"
         " - white area is free space, \n"
-        " - yellow area is unknown space, \n"
+        " - gray area is unknown space, \n"
         " - red areas are obstacles/walls, \n"
-        " - green object represents the robot's position and points to the direction it is facing. \n"
+        " - green circle represents the robot's position and the attached arrow indicates its orientation. \n"
         f"Answer the following question based on this image: {question}\n"
     )
     return prompt
@@ -154,27 +157,28 @@ def test_point_placement(test_map, vl_model):
     )
     image = og_image.image
 
+    score = 0
     for qna in test_map["questions"]:
         prompt = goal_placement_prompt(qna["query"])
         response = vl_model.query(image, prompt)
         point = extract_json_from_llm_response(response)
         x, y = extract_coordinates(point)
 
-        print(f"query {qna['query']} response {response}")
         # keep track of score
-        score = 0
         expected_area = qna["expected_range"]
         if (expected_area["x"][0] <= x <= expected_area["x"][1]) and (
             expected_area["y"][0] <= y <= expected_area["y"][1]
         ):
             score += 1
         else:
+            print(f"query {qna['query']} response {response}")
             debug_image_with_identified_point(
                 image.to_opencv(),
                 (x, y),
-                filepath=f"./debug_goal_placement_{test_map['map_id']}_{qna['query'].replace(' ', '_')}.png",
+                filepath=f"./{test_map['map_id']}_{qna['query'].replace(' ', '_')}.png",
             )
 
+    print(f"Map {test_map['map_id']} point placement score: {score}/{len(test_map['questions'])}")
     # TODO: adjust these thresholds after adding more qnas in dataset
     assert score >= len(test_map["questions"]) * 0.25, (
         f"Goal placement score too low: {score}/{len(test_map['questions'])}"

@@ -1,4 +1,6 @@
 point_placement_tests:
+
+# large office floor plan with noise to irl occupancy grid
   - map_id: "office_noise"
     image_path: "floorplan_office_noise.png"
     resolution: 0.05
@@ -22,31 +24,14 @@ point_placement_tests:
         expected_range:
           x: [30, 370]
           y: [5, 230]
+      - query: "smallest room"
+        expected_range:
+          x: [890, 1000]
+          y: [450, 570]
 
-  - map_id: "office"
-    image_path: "floorplan_office.png"
-    resolution: 0.05
-    robot_pose:
-      position: [25, 45, 0.0]
-      orientation: [0.0, 0.0,  0.7071068, 0.7071068]
-    questions:
-      - query: "which room would be the second room to the robot's left along the corridor?"
-        expected_range:
-          x: [19, 250]
-          y: [300, 570]
-      - query: "which would be the furthest room from the robot's current position"
-        expected_range:
-          x: [900, 1006]
-          y: [317, 570]
-      - query: "go to the conference table in the office"
-        expected_range:
-          x: [30, 370]
-          y: [5, 230]
-      - query: "a room to accommodate more that 10 people"
-        expected_range:
-          x: [30, 370]
-          y: [5, 230]
+# TODO: more qs on robot orientation / placement
 
+# small office + noise
 
   - map_id: "office_small_noise"
     image_path: "floorplan_office_small_noise.png"
@@ -68,6 +53,10 @@ point_placement_tests:
           x: [421, 1019]
           y: [23, 430]
 
+
+# small office + noise + rotated 90 deg
+# robot pointing upwards performs better for queries involving robot orientation
+
   - map_id: "office_small_noise_rotated"
     image_path: "floorplan_office_small_noise_rotated.png"
     resolution: 0.05
@@ -88,6 +77,53 @@ point_placement_tests:
           x: [421, 1019]
           y: [23, 430]
 
+# add an unknown / unexplored region to the office map
+
+  - map_id: "office_noise_unknwown"
+    image_path: "floorplan_office_noise_unknown.png"
+    resolution: 0.05
+    robot_pose:
+      position: [25, 45, 0.0]
+      orientation: [0.0, 0.0,  0.7071068, 0.7071068]
+    questions:
+      - query: "which room would be the second room to the robot's left along the corridor?"
+        expected_range:
+          x: [19, 250]
+          y: [300, 570]
+      - query: "which would be the furthest room from the robot's current position"
+        expected_range:
+          x: [900, 1006]
+          y: [317, 570]
+      - query: "go to the conference table in the office"
+        expected_range:
+          x: [30, 370]
+          y: [5, 230]
+      - query: "a room to accommodate more that 10 people"
+        expected_range:
+          x: [30, 370]
+          y: [5, 230]
+
+
+  - map_id: "office_noise_tilt"
+    image_path: "floorplan_office_noise_tilt.png"
+    resolution: 0.05
+    robot_pose:
+      position: [39, 61, 0.0]
+      orientation: [0.0, 0.0,  0.7071068, 0.7071068]
+    questions:
+      - query: "which would be the furthest room from the robot's current position"
+        expected_range:
+          x: [13, 483]
+          y: [90, 450]
+      - query: "go to the conference table in the office"
+        expected_range:
+          x: [455, 844]
+          y: [5, 450]
+      - query: "a room to accommodate more that 10 people"
+        expected_range:
+          x: [455, 844]
+          y: [5, 450]
+
 
 
 map_comprehension_tests:
@@ -106,9 +142,13 @@ map_comprehension_tests:
         expected_pattern: '\b(left|west)\b'
         category: "robot_awareness"
 
+      - question: "what does the robot see in it's field of view, from left to right?"
+        expected_pattern: '.+'
+        category: "spatial_understanding"
+
       - question: "how many rooms are there in the map? give a conservative estimate"
         expected_pattern: '\b(5|five)\b'
-        category: "spatial_understanding"
+        category: "robot_awareness"
 
       - question: "do all rooms have an entrance or doorway? yes or no?"
         expected_pattern: '\b(yes)\b'
@@ -129,12 +169,10 @@ map_comprehension_tests:
       - question: "describe the layout of the environment shown in the map."
         expected_pattern: '.+'
         category: "spatial_understanding"
-        difficulty: "medium"
 
       - question: "is the robot currently in a doorway, room or a corridor?"
         expected_pattern: '\b(corridor|hallway|passage)\b'
         category: "robot_awareness"
-        difficulty: "medium"
 
   - map_id: "office_noise"
     image_path: "floorplan_office_noise.png"
@@ -143,6 +181,62 @@ map_comprehension_tests:
       position: [25, 45, 0.0]
       orientation: [0.0, 0.0,  0.7071068, 0.7071068]
     questions:
+      - question: "is there any open area for the robot to move behind itself, yes or no?"
+        expected_pattern: '\b(no)\b'
+        category: "robot_awareness"
+
+      - question: "what direction is the robot facing in the map?"
+        expected_pattern: '\b(top|north|upwards)\b'
+        category: "robot_awareness"
+
+      - question: "is the robot currently in a doorway, room or a corridor?"
+        expected_pattern: '\b(corridor|hallway|passage)\b'
+        category: "robot_awareness"
+
+      - question: "how many conference rooms can accommodate more than 10 people? give a number"
+        expected_pattern: '\b(1)\b'
+        category: "spatial_understanding"
+
+      - question: "how many rooms are there along the left of the robot's current position?"
+        expected_pattern: '\b(3|three)\b'
+        category: "spatial_understanding"
+
+      - question: "is there a feasible path from the robot's position to the top right room? yes or no?"
+        expected_pattern: '\b(yes)\b'
+        category: "navigation_reasoning"
+
+      - question: "describe the layout of the environment shown in the map."
+        expected_pattern: '.+'
+        category: "spatial_understanding"
+
+      - question: "if the robot wants to go to the top left conference room, what command should it send? available commands are: 'go forward', 'turn left', 'turn right', 'stop'"
+        expected_pattern: '\b(go forward|stop)\b'
+        category: "navigation_reasoning"
+
+      - question: "what does the robot see in it's field of view, from left to right?"
+        expected_pattern: '\b(xyz)\b'
+        category: "spatial_understanding"
+
+
+  - map_id: "office_noise_unknown"
+    image_path: "floorplan_office_noise_unknown.png"
+    resolution: 0.05
+    robot_pose:
+      position: [25, 45, 0.0]
+      orientation: [0.0, 0.0,  0.7071068, 0.7071068]
+    questions:
+      - question: "do you see any unknown areas in the map? yes or no?"
+        expected_pattern: '\b(yes)\b'
+        category: "spatial_understanding"
+
+      - question: "which areas of the map are unknown?"
+        expected_pattern: '\b(one)\b'
+        category: "spatial_understanding"
+
+      - question: "how many conference rooms can accommodate more than 10 people? give a number"
+        expected_pattern: '\b(0|none|no)\b'
+        category: "spatial_understanding"
+
       - question: "is there any open area for the robot to move behind itself, yes or no?"
         expected_pattern: '\b(no)\b'
         category: "robot_awareness"

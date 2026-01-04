@@ -91,15 +91,12 @@ class InterpretMapSkill(SkillModule):
 
         prompt = (
             "Look at this image carefully \n"
-            "it represents a 2D occupancy grid map where,\n"
+            "it represents a noisy 2D occupancy grid map where,\n"
             " - white area is free space, \n"
-            " - yellow area is unknown space, \n"
+            " - gray area is unexplored space, \n"
             " - red areas are obstacles, \n"
-            " - green object represents the robot's position and points to the direction it is facing. \n"
+            " - green circle represents the robot's position and the attached arrow indicates its orientation. \n"
             f"Identify a location in free space based on the following description: {description}\n"
-            "Prioritize selecting a goal position in free space (white area) over exactly matching the description. \n"
-            "MAKE SURE there is a clear path from the robot's current position to the goal position without crossing any obstacles. \n"
-            "MAKE SURE the goal position is located in the white area (free space) of the map and few pixels away from obstacles or objects. \n"
             "Return ONLY a JSON object with this exact format:\n"
             '{"point": [x, y]}\n'
             f"where x,y are the pixel coordinates of the goal position in the image. \n"

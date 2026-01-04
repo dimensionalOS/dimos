@@ -84,8 +84,8 @@ class OccupancyGridImage:
         image_arr = np.zeros((*grid.shape, 3), dtype=np.uint8)
 
         unknown_mask = grid == CostValues.UNKNOWN
-        # unknown as yellow
-        image_arr[unknown_mask] = [255, 255, 0]
+        # unknown as gray
+        image_arr[unknown_mask] = [127, 127, 127]
 
         known_mask = grid != CostValues.UNKNOWN
         if np.any(known_mask):
