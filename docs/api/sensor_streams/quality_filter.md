@@ -113,76 +113,106 @@ Output: 3 frame(s) (selected sharpest per window)
   Frame 2: 0.360
 ```
 
-Visualizing which frames were selected:
+Visualization helpers:
 
-<details><summary>Python</summary>
-
-```python fold session=qb output=assets/frame_mosaic.jpg
+```python session=qb no-result
 import matplotlib
-matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import math
 
-cols, rows = 5, 4
-aspect = input_frames[0].width / input_frames[0].height
-fig_w = 12
-fig_h = fig_w * rows / (cols * aspect)
+def plot_mosaic(frames, selected, path, cols=5):
+    matplotlib.use('Agg')
+    rows = math.ceil(len(frames) / cols)
+    aspect = frames[0].width / frames[0].height
+    fig_w, fig_h = 12, 12 * rows / (cols * aspect)
 
-fig, axes = plt.subplots(rows, cols, figsize=(fig_w, fig_h))
-fig.patch.set_facecolor('black')
+    fig, axes = plt.subplots(rows, cols, figsize=(fig_w, fig_h))
+    fig.patch.set_facecolor('black')
+    for i, ax in enumerate(axes.flat):
+        if i < len(frames):
+            ax.imshow(frames[i].data)
+            for spine in ax.spines.values():
+                spine.set_color('lime' if frames[i] in selected else 'black')
+                spine.set_linewidth(4 if frames[i] in selected else 0)
+            ax.set_xticks([]); ax.set_yticks([])
+        else:
+            ax.axis('off')
+    plt.subplots_adjust(wspace=0.02, hspace=0.02, left=0, right=1, top=1, bottom=0)
+    plt.savefig(path, facecolor='black', dpi=100, bbox_inches='tight', pad_inches=0)
+    plt.close()
 
-for i, ax in enumerate(axes.flat):
-    if i < len(input_frames):
-        frame = input_frames[i]
-        ax.imshow(frame.data)
-        is_selected = frame in sharp_frames
-        for spine in ax.spines.values():
-            spine.set_color('lime' if is_selected else 'black')
-            spine.set_linewidth(4 if is_selected else 0)
-        ax.set_xticks([])
-        ax.set_yticks([])
-    else:
-        ax.axis('off')
+def plot_sharpness(frames, selected, path):
+    matplotlib.use('svg')
+    plt.style.use('dark_background')
+    sharpness = [f.sharpness for f in frames]
+    selected_idx = [i for i, f in enumerate(frames) if f in selected]
 
-plt.subplots_adjust(wspace=0.1, hspace=0.1, left=1, right=2, top=2, bottom=1)
-plt.savefig('{output}', facecolor='black', dpi=100, bbox_inches='tight', pad_inches=0)
+    plt.figure(figsize=(10, 3))
+    plt.plot(sharpness, 'o-', label='All frames', color='#b5e4f4', alpha=0.7)
+    for i, idx in enumerate(selected_idx):
+        plt.axvline(x=idx, color='lime', linestyle='--', label='Selected' if i == 0 else None)
+    plt.xlabel('Frame'); plt.ylabel('Sharpness')
+    plt.xticks(range(len(sharpness)))
+    plt.legend(); plt.grid(alpha=0.3); plt.tight_layout()
+    plt.savefig(path, transparent=True)
+    plt.close()
 ```
 
-</details>
+Visualizing which frames were selected (green border = selected as sharpest in window):
+
+```python session=qb output=assets/frame_mosaic.jpg
+plot_mosaic(input_frames, sharp_frames, '{output}')
+```
 
 <!--Result:-->
 ![output](assets/frame_mosaic.jpg)
 
-The green-bordered frames were selected by `sharpness_barrier` as the sharpest in their time windows.
-
-<details><summary>Python</summary>
-
-```python fold session=qb output=assets/sharpness_graph.svg
-import matplotlib
-matplotlib.use('svg')
-import matplotlib.pyplot as plt
-plt.style.use('dark_background')
-
-sharpness = [f.sharpness for f in input_frames]
-selected_idx = [i for i, f in enumerate(input_frames) if f in sharp_frames]
-
-plt.figure(figsize=(10, 3))
-plt.plot(sharpness, 'o-', label='All frames', color='#b5e4f4', alpha=0.7)
-for i, idx in enumerate(selected_idx):
-    plt.axvline(x=idx, color='lime', linestyle='--',
-                label='Selected' if i == 0 else None)
-plt.xlabel('Frame')
-plt.ylabel('Sharpness')
-plt.xticks(range(len(sharpness)))
-plt.legend()
-plt.grid(alpha=0.3)
-plt.tight_layout()
-plt.savefig('{output}', transparent=True)
+```python session=qb output=assets/sharpness_graph.svg
+plot_sharpness(input_frames, sharp_frames, '{output}')
 ```
-
-</details>
 
 <!--Result:-->
 ![output](assets/sharpness_graph.svg)
+
+Let's request higher frequency
+
+```python session=qb
+sharp_frames = video_replay.stream(seek=5.0, duration=1.5, speed=1.0).pipe(
+    sharpness_barrier(4.0),
+    ops.to_list()
+).run()
+
+print(f"Output: {len(sharp_frames)} frame(s) (selected sharpest per window)")
+show_frames(sharp_frames)
+```
+
+<!--Result:-->
+```
+Output: 6 frame(s) (selected sharpest per window)
+  Frame 0: 0.351
+  Frame 1: 0.348
+  Frame 2: 0.346
+  Frame 3: 0.352
+  Frame 4: 0.360
+  Frame 5: 0.329
+```
+
+```python session=qb output=assets/frame_mosaic2.jpg
+plot_mosaic(input_frames, sharp_frames, '{output}')
+```
+
+<!--Result:-->
+![output](assets/frame_mosaic2.jpg)
+
+
+```python session=qb output=assets/sharpness_graph2.svg
+plot_sharpness(input_frames, sharp_frames, '{output}')
+```
+
+<!--Result:-->
+![output](assets/sharpness_graph2.svg)
+
+As we can see the system is trying to strike a balance between requested frequency and quality that's available
 
 ### Usage in Camera Module
 
