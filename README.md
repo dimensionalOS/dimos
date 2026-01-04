@@ -34,17 +34,17 @@ We are shipping a first look at the DIMOS x Unitree Go2 integration, allowing fo
 - IMU data
 - State information
 - Lidar / PointCloud primitives
-- Any other generic Unitree ROS2 topics 
+- Any other generic Unitree ROS2 topics
 
 -->
 
-<!-- 
+<!--
 FIXME: add a list of features based on what we've actually documented
 
 ### Features
 
 - **DimOS Modules**
-    - 
+    -
 - **DimOS Agents**
   - Agent() classes with planning, spatial reasoning, and Robot.Skill() function calling abilities.
   - Integrate with any off-the-shelf hosted or local model: OpenAIAgent, ClaudeAgent, GeminiAgent 🚧, DeepSeekAgent 🚧, HuggingFaceRemoteAgent, HuggingFaceLocalAgent, etc.
@@ -57,7 +57,7 @@ FIXME: add a list of features based on what we've actually documented
   - Simulation bindings (Genesis, Isaacsim, etc.) to test your agentive application before deploying to a physical robot.
 
 - **DimOS Interface / Development Tools**
-  - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application. 
+  - Local development interface to control your robot, orchestrate agents, visualize camera/lidar streams, and debug your dimensional agentive application.
 -->
 
 ## How can I start using DimOS?
@@ -65,7 +65,7 @@ FIXME: add a list of features based on what we've actually documented
 ### Installation
 
 - **MacOS**: MacOS support is currently alpha. You can install the same as Linux, but know that you WILL get flakey behavior while running dimos.
-- **Linux**: 
+- **Linux**:
   1. Get a quick start with the [dimos-template](https://github.com/dimensionalOS/dimos-template) and follow the instructions in the README.
   2. If you have an existing python project, cd to it then run this: `sh <(curl -fsSL "https://raw.githubusercontent.com/dimensionalOS/dimos/refs/heads/main/bin/install")`
 
@@ -255,7 +255,7 @@ robot.webrtc_req(api_id=1016) # "Hello" command
 robot.move(distance=1.0, speed=0.5)
 ```
  -->
-<!-- 
+<!--
 ### Creating Custom Skills (non-unitree specific)
 
 #### Create basic custom skills by inheriting from ```AbstractRobotSkill``` and implementing the ```__call__``` method.
@@ -391,7 +391,7 @@ performing_agent = OpenAIAgent(
 - **`tests/simple_agent_test.py`**: Tests a simple zero-shot class `OpenAIAgent` example
 - **`tests/unitree/test_webrtc_queue.py`**: Tests `ROSCommandQueue` via a 20 back-to-back WebRTC requests to the robot
 - **`tests/test_planning_agent_web_interface.py`**: Tests a simple two-stage `PlanningAgent` chained to an `ExecutionAgent` with backend FastAPI interface.
-- **`tests/test_unitree_agent_queries_fastapi.py`**: Tests a zero-shot `ExecutionAgent` with backend FastAPI interface. 
+- **`tests/test_unitree_agent_queries_fastapi.py`**: Tests a zero-shot `ExecutionAgent` with backend FastAPI interface.
 -->
 
 ## Documentation

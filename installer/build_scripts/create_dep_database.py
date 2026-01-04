@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 """Generate dependency prompts for system package discovery using Claude."""
 
 import argparse
@@ -126,7 +140,9 @@ def _build_prompt(name: str, requirement: str) -> str:
     )
 
 
-async def _gather_prompts(project_dir: Path, dependencies: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
+async def _gather_prompts(
+    project_dir: Path, dependencies: list[str]
+) -> tuple[list[tuple[str, str]], list[str]]:
     """
     Build prompts for deps that are missing or incomplete.
 
@@ -159,7 +175,9 @@ async def _gather_prompts(project_dir: Path, dependencies: list[str]) -> tuple[l
 async def main(argv: list[str]) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true", help="List work without calling claude.")
-    parser.add_argument("--max-concurrent", type=int, default=5, help="Number of simultaneous claude prompts.")
+    parser.add_argument(
+        "--max-concurrent", type=int, default=5, help="Number of simultaneous claude prompts."
+    )
     parser.add_argument("--log-dir", default="./.claude", help="Where to store claude logs.")
     parser.add_argument("extra", nargs="*", help=argparse.SUPPRESS)
     args = parser.parse_args(argv)

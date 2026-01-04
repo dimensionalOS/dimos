@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-./build_scripts/build_pyz && python3 /Users/jeffhykin/repos/dimos/installer/installer.pyz      
+./build_scripts/build_pyz && python3 /Users/jeffhykin/repos/dimos/installer/installer.pyz

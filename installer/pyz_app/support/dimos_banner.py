@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -140,15 +140,50 @@ def _ansi_fg256_hue_shift(color_idx: int, shift_pct: float) -> str:
     new_idx = _rgb_to_idx((int(nr * 255), int(ng * 255), int(nb * 255)))
     return new_idx
 
+
 green_blue_array = [
-    [{"value":23, "x":1, "y":1}, {"value":24, "x":1, "y":2}, {"value":25, "x":1, "y":3}, {"value":26, "x":1, "y":4}, {"value":27, "x":1, "y":5},],
-    [{"value":29, "x":2, "y":1}, {"value":30, "x":2, "y":2}, {"value":31, "x":2, "y":3}, {"value":32, "x":2, "y":4}, {"value":33, "x":2, "y":5},],
-    [{"value":35, "x":3, "y":1}, {"value":36, "x":3, "y":2}, {"value":37, "x":3, "y":3}, {"value":38, "x":3, "y":4}, {"value":39, "x":3, "y":5},],
-    [{"value":41, "x":4, "y":1}, {"value":42, "x":4, "y":2}, {"value":43, "x":4, "y":3}, {"value":44, "x":4, "y":4}, {"value":45, "x":4, "y":5},],
-    [{"value":47, "x":5, "y":1}, {"value":48, "x":5, "y":2}, {"value":49, "x":5, "y":3}, {"value":50, "x":5, "y":4}, {"value":51, "x":5, "y":5},],
+    [
+        {"value": 23, "x": 1, "y": 1},
+        {"value": 24, "x": 1, "y": 2},
+        {"value": 25, "x": 1, "y": 3},
+        {"value": 26, "x": 1, "y": 4},
+        {"value": 27, "x": 1, "y": 5},
+    ],
+    [
+        {"value": 29, "x": 2, "y": 1},
+        {"value": 30, "x": 2, "y": 2},
+        {"value": 31, "x": 2, "y": 3},
+        {"value": 32, "x": 2, "y": 4},
+        {"value": 33, "x": 2, "y": 5},
+    ],
+    [
+        {"value": 35, "x": 3, "y": 1},
+        {"value": 36, "x": 3, "y": 2},
+        {"value": 37, "x": 3, "y": 3},
+        {"value": 38, "x": 3, "y": 4},
+        {"value": 39, "x": 3, "y": 5},
+    ],
+    [
+        {"value": 41, "x": 4, "y": 1},
+        {"value": 42, "x": 4, "y": 2},
+        {"value": 43, "x": 4, "y": 3},
+        {"value": 44, "x": 4, "y": 4},
+        {"value": 45, "x": 4, "y": 5},
+    ],
+    [
+        {"value": 47, "x": 5, "y": 1},
+        {"value": 48, "x": 5, "y": 2},
+        {"value": 49, "x": 5, "y": 3},
+        {"value": 50, "x": 5, "y": 4},
+        {"value": 51, "x": 5, "y": 5},
+    ],
 ]
+
+
 def flatten(*m):
     return (i for n in m for i in (flatten(*n) if isinstance(n, tuple | list) else (n,)))
+
+
 # note: returns a generator, not a list
 green_blue_dict = {}
 for each in flatten(green_blue_array):
@@ -161,26 +196,24 @@ ALLOWED_COLORS = [
     31,
     32,
     33,
-
     37,
     38,
     39,
-
     # 42,
     43,
     44,
     45,
-
     # 48,
     # 49,
     50,
     51,
 ]
 
+
 def adjust_color(color_idx: int) -> int:
     """Return the nearest allowed ANSI 256 color index to color_idx."""
     if color_idx < 27:
-        return 75 # purplish blue
+        return 75  # purplish blue
         # return 32 # Very blue
     try:
         color_idx = int(color_idx)
@@ -194,6 +227,7 @@ def adjust_color(color_idx: int) -> int:
             best = c
             best_dist = d
     return best
+
 
 ANSI_RESET = "\x1b[0m"
 ANSI_DIM = "\x1b[2m"
@@ -246,7 +280,9 @@ class RenderLogo:
         self.separator_char = separator_char
         self.wrap_long_words = wrap_long_words
         self.is_centered = is_centered
-        self.hue_range = max(0.0, min(1.0, float(hue_range)))  # 0..1 (0 ~ single hue, 1 = full spectrum)
+        self.hue_range = max(
+            0.0, min(1.0, float(hue_range))
+        )  # 0..1 (0 ~ single hue, 1 = full spectrum)
 
         self.frame_s = max(0.001, 1.0 / self.fps)
 
@@ -590,7 +626,9 @@ class RenderLogo:
 
         valid_keys = {f"{y},{x}" for y, x in self._mutable}
         self._glitches = {k: v for k, v in self._glitches.items() if k in valid_keys}
-        self._glitch_char_cache = {k: v for k, v in self._glitch_char_cache.items() if k in valid_keys}
+        self._glitch_char_cache = {
+            k: v for k, v in self._glitch_char_cache.items() if k in valid_keys
+        }
 
 
 # -----------------------

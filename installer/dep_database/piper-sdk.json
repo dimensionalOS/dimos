@@ -5,8 +5,7 @@
     "ethtool",
     "iproute2"
   ],
-  "brew_dependencies": [
-  ],
+  "brew_dependencies": [],
   "nix_dependencies": [
     "can-utils",
     "ethtool",
