@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import shutil
 
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
@@ -69,7 +70,6 @@ def phase2(system_analysis, selected_features):
         ensure_venv_active(python_cmd)
         
     except Exception as error:
-        raise error
         print("")
         print("")
         p.error("One of the vital dependencies was missing or had versioning issues")
@@ -79,6 +79,7 @@ def phase2(system_analysis, selected_features):
             "It is recommended to STOP here because of the error. Should I stop here? [y=stop,n=continue]"
         ):
             raise SystemExit(1)
+        raise error
     
     print(f'''✅ passed all checks for vital system dependencies''')
     p.confirm("Press enter to continue to next phase")
@@ -113,6 +114,14 @@ def ensure_venv_active(python_cmd: str):
                 "- ❌ A virtual environment is required to install dimos. Please set one up then rerun this command."
             )
         venv_dir = Path(project_directory) / DEFAULT_VENV_NAME
+        if venv_dir.exists():
+            p.warning(f'it appears there is a corrupt venv at {venv_dir}')
+            if p.ask_yes_no("Can I delete the corrupt venv?"):
+                p.boring_log(f"- deleting corrupt venv at {venv_dir}")
+                shutil.rmtree(venv_dir)
+            else:
+                p.warning(f'you are probably going to get an error if we continue but okay')
+        
         p.boring_log(f"- creating virtual environment at {venv_dir}")
         venv_res = run_command(
             [python_cmd, "-m", "venv", str(venv_dir)], dry_run=installer_status["dry_run"], print_command=True
