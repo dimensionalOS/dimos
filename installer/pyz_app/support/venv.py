@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import os
 from contextlib import contextmanager
+import os
 from pathlib import Path
-from typing import Iterator, List
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 
 def _remove_from_path(path_to_remove: Path) -> None:
@@ -51,7 +54,7 @@ def activate_venv(project_directory: str | Path):
 
     os.environ["VIRTUAL_ENV"] = str(project_directory)
     os.environ["_OLD_VIRTUAL_PATH"] = old_env.get("PATH", "")
-    os.environ["PATH"] = os.pathsep.join([str(bin_dir)] + [old_env.get("PATH", "")])
+    os.environ["PATH"] = os.pathsep.join([str(bin_dir), old_env.get("PATH", "")])
     if "PYTHONHOME" in os.environ:
         os.environ["_OLD_VIRTUAL_PYTHONHOME"] = os.environ["PYTHONHOME"]
         os.environ.pop("PYTHONHOME", None)
@@ -63,7 +66,7 @@ def activate_venv(project_directory: str | Path):
     return deactivate
 
 
-def get_venv_dirs_at(path: str | Path) -> List[str]:
+def get_venv_dirs_at(path: str | Path) -> list[str]:
     path = Path(path)
     valid_activate_paths: list[str] = []
     for activate_file in path.glob("*/bin/activate"):

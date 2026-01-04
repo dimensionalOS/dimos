@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable
+from typing import TYPE_CHECKING
 
 from . import prompt_tools as p
-from .shell_tooling import run_command
 from .bundled_data import DOCKERFILE_TEMPLATE
+from .shell_tooling import run_command
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 def _write_file(path: Path, content: str) -> None:
@@ -81,4 +84,4 @@ def setup_docker_env(project_dir: str | Path, features: Iterable[str]) -> dict[s
     }
 
 
-__all__ = ["setup_docker_env", "DOCKERFILE_TEMPLATE"]
+__all__ = ["DOCKERFILE_TEMPLATE", "setup_docker_env"]

@@ -18,9 +18,11 @@ from __future__ import annotations
 import time
 
 from ..support import prompt_tools as p
+from ..support.bundled_data import PROJECT_TOML
 from ..support.constants import PLACEHOLDERS
 from ..support.dimos_banner import RenderLogo
 from ..support.get_system_analysis import get_system_analysis
+from ..support.installer_status import installer_status
 from ..support.misc import (
     get_project_directory,
     replace_strings_in_directory,
@@ -28,14 +30,12 @@ from ..support.misc import (
 from ..support.setup_docker_env import setup_docker_env
 from ..support.setup_nix import setup_nix_flake
 from ..support.shell_tooling import run_command
-from ..support.installer_status import installer_status
-from ..support.bundled_data import PROJECT_TOML
 
 
 def phase0():
-    # 
+    #
     # provide animation while running system analysis
-    # 
+    #
     fps = 14
     logo = RenderLogo(
         glitchyness=0.45, # relative quantity of visual artifacting
@@ -59,10 +59,10 @@ def phase0():
         "cuda": cuda,
     }
     ordered_analysis["cuda"] = cuda
-    
-    # 
+
+    #
     # print system analysis
-    # 
+    #
     for key, result in (ordered_analysis.items()):
         name = result.get("name") or key
         exists = result.get("exists", False)
@@ -76,27 +76,27 @@ def phase0():
             logo.log(f"- {p.cyan(check)} {name}: {version} {note}".strip())
         time.sleep(timeout)
     logo.stop()
-    
+
     if installer_status.get("template_repo"):
         project_dir = get_project_directory()
         project_name = project_dir.name
         # fill out the directory
         replace_strings_in_directory(project_dir, PLACEHOLDERS, project_name)
-    
+
     optional = PROJECT_TOML["project"].get("optional-dependencies", {})
     features = [f for f in optional.keys() if f not in ["cpu"]]
     p.header("First Phase: Feature Selection")
     selected_features = p.pick_many(
-        "Which features do you want? (Pick any number of features)", options=["basics"]+features
+        "Which features do you want? (Pick any number of features)", options=["basics", *features]
     )
     # basics is just a dummy entry to make it more user friendly
     selected_features = [ each for each in selected_features if each != "basics" ]
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
-    
-    # 
+
+    #
     # pick install method
-    # 
+    #
     while True:
         choice = p.pick_one(
             "Choose install method",

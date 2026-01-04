@@ -26,9 +26,9 @@ from .phases.phase02_check_absolutely_necessary_tools import phase2
 from .phases.phase03_pip_install_dimos import phase3
 from .phases.phase04_dimos_check import phase4
 from .phases.phase05_env_setup import phase5
+from .support.bundled_data import PROJECT_TOML
 from .support.get_system_analysis import get_system_analysis
 from .support.installer_status import installer_status
-from .support.bundled_data import PROJECT_TOML
 
 # Simple ANSI helpers for help text
 RESET = "\x1b[0m"
@@ -45,7 +45,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
           {FG_CYAN}dimos_installer --non-interactive --features sim,cuda{RESET}
           {FG_CYAN}dimos_installer --no-system-install --no-check --no-env-setup{RESET}
           {FG_CYAN}dimos_installer --just-system-install{RESET}
-        
+
         v0.1.15
         """
     )

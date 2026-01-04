@@ -15,16 +15,20 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable as TypingIterable, Sequence as TypingSequence
 from dataclasses import dataclass
 from pathlib import Path
 import shlex
 import shutil
 import subprocess
-from typing import TYPE_CHECKING, Callable, Iterable as TypingIterable, Sequence as TypingSequence, Optional
 import sys
+from typing import (
+    TYPE_CHECKING,
+    Optional,
+)
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
+    from collections.abc import Callable, Iterable, Sequence
 
 
 @dataclass
@@ -52,7 +56,7 @@ class CommandResult:
 
 
 def _normalize_cmd(cmd: str | Sequence[str] | Iterable[str]) -> list[str]:
-    if isinstance(cmd, (list, tuple)):
+    if isinstance(cmd, list | tuple):
         return [str(part) for part in cmd]
     if isinstance(cmd, Path):
         return [str(cmd)]
@@ -126,7 +130,7 @@ def run_command(
             if not line and process.poll() is not None:
                 break
             if line:
-                for each_line in line.rstrip("\n").split("\n"):
+                for _each_line in line.rstrip("\n").split("\n"):
                     stream_callback(line)
                 if capture_output:
                     collected.append(line)

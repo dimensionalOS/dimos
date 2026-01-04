@@ -3,9 +3,8 @@
 
 import asyncio
 import hashlib
-import sys
 from pathlib import Path
-
+import sys
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 INSTALLER_ROOT = SCRIPT_DIR.parent

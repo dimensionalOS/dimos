@@ -21,7 +21,7 @@ import shutil
 
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
-from ..support.shell_tooling import command_exists, run_command
+from ..support.installer_status import installer_status
 from ..support.misc import (
     add_git_ignore_patterns,
     ensure_git_and_lfs,
@@ -29,29 +29,29 @@ from ..support.misc import (
     ensure_python,
     get_project_directory,
 )
-from ..support.installer_status import installer_status
+from ..support.shell_tooling import command_exists, run_command
 from ..support.venv import activate_venv, get_venv_dirs_at, purge_broken_external_venv
 
 
 def phase2(system_analysis, selected_features):
     p.header("Next Phase: Check Install of Vital System Dependencies")
     try:
-        
+
         if has_ifconfig:= command_exists("ifconfig"):
             p.boring_log("- ifconfig found")
         else:
             p.error("- ifconfig not found")
-        
+
         if has_route:= command_exists("route"):
             p.boring_log("- route found")
         else:
             p.error("- route not found")
-        
+
         if has_sysctl:= command_exists("sysctl"):
             p.boring_log("- sysctl found")
         else:
             p.error("- sysctl not found")
-        
+
         python_cmd = ensure_python()
         ensure_git_and_lfs()
         ensure_port_audio()
@@ -68,7 +68,7 @@ def phase2(system_analysis, selected_features):
                 p.error("you selected the CUDA feature but I don't see CUDA support in your system")
 
         ensure_venv_active(python_cmd)
-        
+
     except Exception as error:
         print("")
         print("")
@@ -80,8 +80,8 @@ def phase2(system_analysis, selected_features):
         ):
             raise SystemExit(1)
         raise error
-    
-    print(f'''✅ passed all checks for vital system dependencies''')
+
+    print('''✅ passed all checks for vital system dependencies''')
     p.confirm("Press enter to continue to next phase")
 
 
@@ -89,7 +89,7 @@ DEFAULT_VENV_NAME = "venv"
 
 
 def ensure_venv_active(python_cmd: str):
-    p.boring_log(f"- checking if in python virtual environment")
+    p.boring_log("- checking if in python virtual environment")
     active_venv = os.environ.get("VIRTUAL_ENV")
     if active_venv:
         p.boring_log(f"- detected active virtual environment: {active_venv}")
@@ -97,9 +97,9 @@ def ensure_venv_active(python_cmd: str):
 
     project_directory = get_project_directory()
     possible_venv_dirs = get_venv_dirs_at(project_directory)
-    
+
     purge_broken_external_venv()
-    
+
     if len(possible_venv_dirs) == 1:
         activate_venv(possible_venv_dirs[0])
     elif len(possible_venv_dirs) > 1:
@@ -120,8 +120,8 @@ def ensure_venv_active(python_cmd: str):
                 p.boring_log(f"- deleting corrupt venv at {venv_dir}")
                 shutil.rmtree(venv_dir)
             else:
-                p.warning(f'you are probably going to get an error if we continue but okay')
-        
+                p.warning('you are probably going to get an error if we continue but okay')
+
         p.boring_log(f"- creating virtual environment at {venv_dir}")
         venv_res = run_command(
             [python_cmd, "-m", "venv", str(venv_dir)], dry_run=installer_status["dry_run"], print_command=True

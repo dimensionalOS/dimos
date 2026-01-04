@@ -40,7 +40,7 @@ PLACEHOLDERS = ("YOUR_DIMOS_PROJECT_NAME", "YOUR_DIMOS_PROJECT_DESCRIPTION")
 #       THEN based on the features that a user picked, we find all the
 #       pip packages that are needed for those features
 #       then calculate the system dependencies needed for that set of packages
-#       This is actually already being done for apt-get and brew, 
+#       This is actually already being done for apt-get and brew,
 # however sometimes stuff is still missed from there, so we add those here
 dependency_human_names_set = set((
     "git",
@@ -82,7 +82,7 @@ dependency_brew_set_minimal = set((
     # "ninja",
     # "opencv",
     # "rust",
-    
+
     # "zlib", # the tools above are almost certainly going to download this anyways
     # "libpng", # opencv is almost certainly going to download this anyways
     # "libjpeg",# opencv is almost certainly going to download this anyways
@@ -122,7 +122,7 @@ dependency_nix_packages_set_minimal = set((
     # "pkgs.python312Packages.gst-python",
     # # "pkgs.pre-commit",
     # "pkgs.portaudio",
-    
+
     # "pkgs.mesa",
     # "pkgs.glfw",
     # "pkgs.udev",
@@ -177,7 +177,7 @@ dependency_apt_packages_set_minimal = set((
     # "gnupg2",
     # "python3-pip",
     # "mesa-utils",
-    
+
     # "rustc",
     # the remainder are a combination of ones from the docker file(s), from pip packages, and hand-picked ones
     # "lsb-release",
@@ -249,12 +249,3 @@ dependency_apt_packages_set_minimal = set((
     # "libsdl2-ttf-dev",
     # "libportmidi-dev",
 ))
-
-
-__all__ = [
-    "dependencies_nix_names",
-    "dependency_apt_packages_set_minimal",
-    "dependency_human_names_set",
-    "dimos_env_vars",
-    "discord_url",
-]

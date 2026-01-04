@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import asyncio
-import shutil
 from pathlib import Path
-from typing import Iterable
+import shutil
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 
 async def run_claude_named_prompts(

@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, List, Tuple, Union
+from typing import TYPE_CHECKING, Union
 
 from InquirerPy import inquirer
 
@@ -112,7 +112,7 @@ def pick_one(message: str, *, options: Iterable[str] | dict[str, str]):
         message=message,
         choices=values,
         cycle=True,
-        pointer="❯",
+        pointer="❯", # noqa: RUF001
         multiselect=False,
         border=True,
         qmark="?",
@@ -128,7 +128,7 @@ def pick_many(message: str, *, options: Iterable[str] | dict[str, str]) -> list[
         choices=values,
         cycle=True,
         border=True,
-        pointer="❯",
+        pointer="❯", # noqa: RUF001
         instruction="Space to toggle, Enter to confirm",
     ).execute()
     return [keys[values.index(v)] for v in selected]
@@ -144,7 +144,6 @@ __all__ = [
     "highlight",
     "pick_many",
     "pick_one",
-    "prompt",
     "sub_header",
     "warning",
 ]

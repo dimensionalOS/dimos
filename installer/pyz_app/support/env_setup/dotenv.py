@@ -72,7 +72,7 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
         p.boring_log(f"- appended {len(missing_env_vars)} env var(s) to .env")
     else:
         p.boring_log("- all required env vars already exist in .env")
-    
+
     return True
 
 

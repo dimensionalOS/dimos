@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import re
 from pathlib import Path
+import re
 
-from ..shell_tooling import command_exists
 from .. import prompt_tools as p
 from ..installer_status import installer_status
+from ..shell_tooling import command_exists
+
 
 def ask_if_not_template_repo(prompt: str) -> bool:
     if installer_status.get("template_repo"):
@@ -44,7 +45,7 @@ def setup_direnv(envrc_path: str | Path) -> bool:
     if not has_venv_activation:
         if not add_activation:
             print(f"It looks like there is a {p.highlight('.envrc')} file")
-            print(f"But it seems to not include auto venv activation.")
+            print("But it seems to not include auto venv activation.")
             add_activation = ask_if_not_template_repo(f"Is it okay if I add a python virtual env activation to the {p.highlight('.envrc')}?")
         if add_activation:
             block = "\n".join(
@@ -70,7 +71,7 @@ def setup_direnv(envrc_path: str | Path) -> bool:
             envrc_text = envrc_text + ("\n" if needs_newline else "") + "dotenv_if_exists\n"
             envrc_path.write_text(envrc_text)
             p.boring_log("- added dotenv_if_exists to .envrc")
-    
+
     p.sub_header(f"- Don't forget to call {p.highlight('direnv allow')} to enable the .envrc!")
     return True
 

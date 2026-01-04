@@ -15,22 +15,32 @@
 
 from __future__ import annotations
 
-from functools import cache, lru_cache
 from collections import deque
+from collections.abc import Callable
+from functools import cache, lru_cache
 import os
 from pathlib import Path
 import re
 import shutil
 import sys
 import threading
-from typing import Any, Callable, Deque, Iterable, List
+from typing import TYPE_CHECKING
+
 import requests
 
 from . import prompt_tools as p
-from .shell_tooling import command_exists, run_command
-from .constants import dependency_human_names_set, dependency_apt_packages_set_minimal, dependency_nix_packages_set_minimal, dependency_brew_set_minimal
+from .bundled_data import DEP_2_HUMAN_NAME, PIP_DEP_DATABASE, PROJECT_TOML
+from .constants import (
+    dependency_apt_packages_set_minimal,
+    dependency_brew_set_minimal,
+    dependency_human_names_set,
+    dependency_nix_packages_set_minimal,
+)
 from .installer_status import installer_status
-from .bundled_data import DEP_2_HUMAN_NAME, PROJECT_TOML, PIP_DEP_DATABASE
+from .shell_tooling import command_exists, run_command
+
+if TYPE_CHECKING:
+    from collections.abc import Iterable
 
 _project_directory: Path | None = None
 _already_called_apt_get_update = False
@@ -43,7 +53,7 @@ class ProgressRenderer:
     def __init__(self, total: int, *, buffer_lines: int = 5) -> None:
         # Temporarily disable interactive progress rendering due to display issues.
         self.total = max(total, 1)
-        self.buffer: Deque[str] = deque(maxlen=buffer_lines)
+        self.buffer: deque[str] = deque(maxlen=buffer_lines)
         self.current_index = 0
         self.current_name = ""
         self.rendered_lines = 0
@@ -93,7 +103,7 @@ class ProgressRenderer:
             return trimmed + " " * max(0, self.term_width - _visible_len(trimmed))
 
         max_lines = 1 + self.buffer.maxlen
-        lines: List[str] = [clip(progress_line)]
+        lines: list[str] = [clip(progress_line)]
         lines.extend(clip(l) for l in list(self.buffer)[-self.buffer.maxlen :])
         lines = lines[:max_lines]
 
@@ -131,7 +141,7 @@ def get_system_deps(feature: str | None):
 
     if feature is None:
         pip_deps = list(PROJECT_TOML["project"]["dependencies"])
-    elif isinstance(feature, (list, tuple, set)):
+    elif isinstance(feature, list | tuple | set):
         pip_deps = []
         for feat in feature:
             pip_deps.extend(PROJECT_TOML["project"]["optional-dependencies"].get(feat, []))
@@ -143,7 +153,7 @@ def get_system_deps(feature: str | None):
 
     for pip_dep in pip_deps:
         pip_dep = pip_dep.lower()
-        
+
         pip_dep_no_feature = re.sub(r"\[.+", "", pip_dep)
         system_dep_info = PIP_DEP_DATABASE.get(pip_dep) or PIP_DEP_DATABASE.get(pip_dep_no_feature)
         if not system_dep_info:

@@ -1,14 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, MutableMapping, Sequence
+
 # NOTE: this dependency mapping doesn't need to be perfect. It'd be nice if we could generate it from a
 #       package repo like apt or nix, but until then I just used chatGPT to estimate the obvious dependencies
 #       for each package. This is just to minimize this list of human-printed out dependencies.
-from typing import Dict, Iterable, List, Mapping, MutableMapping, Sequence, Set
-
 
 Graph = Mapping[str, Sequence[str]]
-MutableGraph = MutableMapping[str, List[str]]
-ClosureCache = MutableMapping[str, Set[str]]
+MutableGraph = MutableMapping[str, list[str]]
+ClosureCache = MutableMapping[str, set[str]]
 
 
 dependency_dag = {
@@ -85,10 +85,10 @@ dependency_dag = {
     "xft": ["fontconfig", "freetype", "xrender"],
     "xrender": ["xext"],
     "zlib": [],
-}  # type: Dict[str, List[str]]
+}  # type: dict[str, list[str]]
 
 
-def dependency_closure(name: str, graph: Graph, _cache: ClosureCache | None = None) -> Set[str]:
+def dependency_closure(name: str, graph: Graph, _cache: ClosureCache | None = None) -> set[str]:
     """
     Return the transitive dependency set for `name`, including `name` itself.
     Results are memoized in `_cache` when provided to avoid recomputation.
@@ -104,17 +104,17 @@ def dependency_closure(name: str, graph: Graph, _cache: ClosureCache | None = No
     return deps
 
 
-def find_cycle(graph: Graph) -> List[str] | None:
+def find_cycle(graph: Graph) -> list[str] | None:
     """
     Return a representative cycle as a list of nodes ending where it starts, or None if acyclic.
     Dependencies not present as keys are treated as leaves (ignored for cycles).
     """
-    visiting: Set[str] = set()
-    visited: Set[str] = set()
-    stack: List[str] = []
-    index: Dict[str, int] = {}
+    visiting: set[str] = set()
+    visited: set[str] = set()
+    stack: list[str] = []
+    index: dict[str, int] = {}
 
-    def dfs(node: str) -> List[str] | None:
+    def dfs(node: str) -> list[str] | None:
         visiting.add(node)
         index[node] = len(stack)
         stack.append(node)
@@ -142,7 +142,7 @@ def find_cycle(graph: Graph) -> List[str] | None:
     return None
 
 
-def topological_order(graph: Graph) -> List[str]:
+def topological_order(graph: Graph) -> list[str]:
     """
     Kahn topological sort; nodes with no prerequisites come first.
     Missing dependencies are ignored (treated as external roots). Raises with cycle details.
@@ -173,7 +173,7 @@ def topological_order(graph: Graph) -> List[str]:
     return order
 
 
-def minimize_deps_based_on_prerequisites(names: Iterable[str]) -> List[str]:
+def minimize_deps_based_on_prerequisites(names: Iterable[str]) -> list[str]:
     """
     Given a list of dependency names, return a minimal set of install targets
     whose prerequisites cover the full list. Uses a greedy reverse topological
@@ -186,11 +186,11 @@ def minimize_deps_based_on_prerequisites(names: Iterable[str]) -> List[str]:
             selected_graph[each] = []
         else:
             selected_graph[each] = dependency_dag[each]
-        
+
     order = topological_order(selected_graph)
     closures: ClosureCache = {}
-    covered: Set[str] = set()
-    chosen: List[str] = []
+    covered: set[str] = set()
+    chosen: list[str] = []
     for name in reversed(order):
         closure = dependency_closure(name, selected_graph, closures)
         if name in covered:
@@ -203,18 +203,18 @@ def minimize_deps_based_on_prerequisites(names: Iterable[str]) -> List[str]:
 
 
 __all__ = [
-    "dependency_dag",
     "dependency_closure",
-    "topological_order",
-    "minimize_deps_based_on_prerequisites",
+    "dependency_dag",
     "find_cycle",
+    "minimize_deps_based_on_prerequisites",
+    "topological_order",
 ]
 
 
 if __name__ == "__main__":
     roots = minimize_deps_based_on_prerequisites(dependency_dag.keys())
     closures: ClosureCache = {}
-    covered: Set[str] = set()
+    covered: set[str] = set()
     for name in roots:
         covered |= dependency_closure(name, dependency_dag, closures)
     assert len(covered) == len(dependency_dag), "Coverage check failed"

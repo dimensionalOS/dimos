@@ -2,16 +2,17 @@
 # Helper for generating a sample Nix flake for Dimos.
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Iterable
+from collections.abc import Iterable
 import json
+from pathlib import Path
 
 from . import prompt_tools as p
 from .bundled_data import FLAKE_TEMPLATE
+from .constants import minimum_nix_version
 from .installer_status import installer_status
 from .misc import ProgressRenderer, is_version_at_least, parse_version
 from .shell_tooling import command_exists, run_command
-from .constants import minimum_nix_version
+
 
 def setup_nix_flake(project_dir: str | Path) -> Path:
     """Write flake.example.nix with the installer flake contents."""
@@ -127,7 +128,7 @@ def nix_install(package_names: list[str]) -> None:
         # remove pkgs prefix
         if each_pkg.startswith("pkgs."):
             each_pkg = each_pkg.split(".", 1)[1]
-        
+
         install_cmd = ["nix", "profile", "install", f"nixpkgs#{each_pkg}"]
 
         if progress and progress.enabled:
@@ -168,4 +169,4 @@ def nix_install(package_names: list[str]) -> None:
         )
 
 
-__all__ = ["setup_nix_flake", "FLAKE_TEMPLATE", "ensure_nix_exists", "ensure_flakes_enabled", "nix_install"]
+__all__ = ["FLAKE_TEMPLATE", "ensure_flakes_enabled", "ensure_nix_exists", "nix_install", "setup_nix_flake"]

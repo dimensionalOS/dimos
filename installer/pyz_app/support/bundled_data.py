@@ -3,9 +3,9 @@
 
 from __future__ import annotations
 
+from importlib.resources import files
 import json
 import re
-from importlib.resources import files
 from typing import Any
 
 try:
@@ -378,7 +378,7 @@ def humanize_dependency(dep: str) -> str:
             name = name[:-4]
         if name in MANUAL_HUMAN_NAME_OVERRIDES:
             return MANUAL_HUMAN_NAME_OVERRIDES[name]
-    
+
     if name.startswith("xorg."):
         name = name.split(".", 1)[1]
     if name.startswith("gtk+"):

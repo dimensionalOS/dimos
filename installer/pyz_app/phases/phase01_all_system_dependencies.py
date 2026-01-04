@@ -15,12 +15,12 @@
 
 from __future__ import annotations
 
-import sys
 import os
+import sys
 import traceback
 
 from ..support import prompt_tools as p
-from ..support.shell_tooling import command_exists
+from ..support.dependency_minimizer import minimize_deps_based_on_prerequisites
 from ..support.get_system_analysis import get_system_analysis
 from ..support.misc import (
     apt_install,
@@ -28,8 +28,8 @@ from ..support.misc import (
     ensure_xcode_cli_tools,
     get_system_deps,
 )
-from ..support.dependency_minimizer import minimize_deps_based_on_prerequisites
 from ..support.setup_nix import nix_install
+from ..support.shell_tooling import command_exists
 
 
 def phase1(system_analysis, selected_features):
@@ -38,7 +38,7 @@ def phase1(system_analysis, selected_features):
         system_analysis = get_system_analysis()
 
     deps = get_system_deps(selected_features or None)
-    
+
     is_nixos = os.path.exists('/etc/NIXOS')
     if sys.platform == "darwin":
         mention_system_dependencies(deps["human_names_from_brew"])
@@ -46,15 +46,15 @@ def phase1(system_analysis, selected_features):
         mention_system_dependencies(deps["human_names_from_nix"])
     else:
         mention_system_dependencies(deps["human_names_from_apt"])
-    
+
     print()
     print()
 
     tools_were_auto_installed = False
     os_info = system_analysis.get("os", {})
-    # 
+    #
     # apt-get install
-    # 
+    #
     if os_info.get("name") == "debian_based":
         p.boring_log("Detected Debian-based OS")
         install_deps = p.ask_yes_no(
@@ -69,9 +69,9 @@ def phase1(system_analysis, selected_features):
                 traceback.print_exc()
                 p.error("Seems there was an issue installing at least one of the system dependencies")
                 p.error("Note: the install might still be okay, you'll have to determine that yourself")
-    # 
+    #
     # brew install
-    # 
+    #
     elif os_info.get("name") == "macos":
         p.boring_log("Detected macOS")
         try:
@@ -91,9 +91,9 @@ def phase1(system_analysis, selected_features):
                 traceback.print_exc()
                 p.error("Seems there was an issue installing at least one of the system dependencies")
                 p.error("Note: the install might still be okay, you'll have to determine that yourself")
-    # 
+    #
     # offer nix install
-    # 
+    #
     else:
         try_auto_nix_install = False
         if not is_nixos:
@@ -108,16 +108,16 @@ def phase1(system_analysis, selected_features):
             try_auto_nix_install = p.ask_yes_no("Would you like me to use nix to install the system dependencies for you?")
         else:
             try_auto_nix_install = p.ask_yes_no("Install these system dependencies for you via Nix flake install?")
-        
+
         if try_auto_nix_install:
             try:
                 nix_install(deps["nix_deps"])
                 tools_were_auto_installed = True
-            except Exception as err:
+            except Exception:
                 traceback.print_exc()
                 p.error("Seems there was an issue installing at least one of the system dependencies")
                 p.error("Note: the install might still be okay, you'll have to determine that yourself")
-        
+
         # FIXME: talk to Ivan about this -- Jeff
         print("NOTE: you will likely need to set ENV vars (CC, LD_LIBRARY_PATH, etc) for the pip install to work")
 

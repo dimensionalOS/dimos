@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+from ..support import prompt_tools as p
 from ..support.env_setup.direnv import setup_direnv
 from ..support.env_setup.dotenv import setup_dotenv
 from ..support.misc import get_project_directory
-from ..support import prompt_tools as p
 
 
 def phase5():

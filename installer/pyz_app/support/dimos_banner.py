@@ -28,8 +28,8 @@ from __future__ import annotations
 
 import atexit
 from collections.abc import Iterable
-from dataclasses import dataclass
 import colorsys
+from dataclasses import dataclass
 import json
 import math
 import random
@@ -148,7 +148,8 @@ green_blue_array = [
     [{"value":41, "x":4, "y":1}, {"value":42, "x":4, "y":2}, {"value":43, "x":4, "y":3}, {"value":44, "x":4, "y":4}, {"value":45, "x":4, "y":5},],
     [{"value":47, "x":5, "y":1}, {"value":48, "x":5, "y":2}, {"value":49, "x":5, "y":3}, {"value":50, "x":5, "y":4}, {"value":51, "x":5, "y":5},],
 ]
-flatten = lambda *m: (i for n in m for i in (flatten(*n) if isinstance(n, (tuple, list)) else (n,)))
+def flatten(*m):
+    return (i for n in m for i in (flatten(*n) if isinstance(n, tuple | list) else (n,)))
 # note: returns a generator, not a list
 green_blue_dict = {}
 for each in flatten(green_blue_array):
@@ -161,16 +162,16 @@ ALLOWED_COLORS = [
     31,
     32,
     33,
-    
+
     37,
     38,
     39,
-    
+
     # 42,
     43,
     44,
     45,
-    
+
     # 48,
     # 49,
     50,

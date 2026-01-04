@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import json
 import os
-import sys
 from pathlib import Path
+import sys
 
 installer_root = Path(__file__).resolve().parent.parent
 toml_source = installer_root.parent / "pyproject.toml"
@@ -31,16 +31,16 @@ def _read_dep_json(dep_dir: Path) -> dict:
 
 
 def main() -> None:
-    # 
+    #
     # make the aggregated json
-    # 
+    #
     aggregated_data = _read_dep_json(dep_dir)
     dependency_out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(dependency_out_path, 'w', encoding="utf-8") as outfile:
         json.dump(aggregated_data, outfile, indent=2, sort_keys=True)
-        
-    # 
-    # hardlink the pyproject.toml 
+
+    #
+    # hardlink the pyproject.toml
     #
     toml_link_path.parent.mkdir(parents=True, exist_ok=True)
     try:

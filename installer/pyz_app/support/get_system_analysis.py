@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 import platform
 import re
-from typing import Dict, Literal, TypedDict
+from typing import Literal, TypedDict
 
 from .shell_tooling import command_exists, run_quiet
 

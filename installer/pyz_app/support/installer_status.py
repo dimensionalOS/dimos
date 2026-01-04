@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Any
 
 # Defaults mirror previous behavior; can be updated at runtime.
-installer_status: Dict[str, Any] = {
+installer_status: dict[str, Any] = {
     "dry_run": False,  # can be set via CLI
     "dev": True,  # can be set via CLI in the future
     "non_interactive": False,  # set by __main__ when detected/passed
