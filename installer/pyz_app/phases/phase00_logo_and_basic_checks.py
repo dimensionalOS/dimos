@@ -33,6 +33,9 @@ from ..support.bundled_data import PROJECT_TOML
 
 
 def phase0():
+    # 
+    # provide animation while running system analysis
+    # 
     fps = 14
     logo = RenderLogo(
         glitchyness=0.45, # relative quantity of visual artifacting
@@ -46,8 +49,8 @@ def phase0():
 
     logo.log("- checking system")
     system_analysis = get_system_analysis()
-    # # visually we want cuda to be listed last and os to be first
-    timeout = 0.5
+    timeout = 0.7 # wait long enough so users can read what is happening and see logo
+    # visually we want cuda to be listed last and os to be first
     cuda = system_analysis["cuda"]
     del system_analysis["cuda"]
     ordered_analysis = {
@@ -57,6 +60,9 @@ def phase0():
     }
     ordered_analysis["cuda"] = cuda
     
+    # 
+    # print system analysis
+    # 
     for key, result in (ordered_analysis.items()):
         name = result.get("name") or key
         exists = result.get("exists", False)
@@ -87,19 +93,22 @@ def phase0():
     selected_features = [ each for each in selected_features if each != "basics" ]
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
-
-    # Install method selection
+    
+    # 
+    # pick install method
+    # 
     while True:
         choice = p.pick_one(
             "Choose install method",
             options={
                 "system": "Typical system install",
                 "docker": "Docker container setup",
-                "nix": "Nix flake setup",
+                "nix": "Nix flake",
                 # "nix_venv": "Fast venv setup (nix shell)",
             },
         )
         if choice == "system":
+            # continue as normal
             break
         if choice == "docker":
             if not system_analysis.get("docker", {}).get("exists"):
@@ -131,12 +140,9 @@ def phase0():
             print(f" - {example_path}")
             print("You can rename flake.example.nix to flake.nix or use it as a reference.")
             feat_str ="[" + (",".join(selected_features)) + "]" if selected_features else ""
-            print(f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}`.")
+            print(f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}` inside the nix flake.")
+            # TODO: ask if they would like us to setup .envrc for them
             raise SystemExit(0)
-        # if choice == "nix_venv":
-        #     # this will create the venv and install dimos, but trying to use the venv outside of nix will probably cause lots of problems
-        #     run_command(["bash", "-c", "echo 'python -m venv venv;. ./venv/bin/activate;pip install numpy; pip install dimos;exit' | nix develop --no-write-lock-file 'github:jeff-hykin/mystery_test_1#isolated'"])
-        #     raise SystemExit(0)
 
     return system_analysis, selected_features
 
