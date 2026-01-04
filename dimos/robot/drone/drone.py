@@ -390,7 +390,7 @@ class Drone(Robot):
             self.foxglove_bridge.stop()
 
         if self.dimos:
-            self.dimos.close_all()  # type: ignore[no-untyped-call]
+            self.dimos.close_all()  # type: ignore[attr-defined]
 
         logger.info("Drone system stopped")
 
