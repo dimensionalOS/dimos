@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 # Helper for generating a sample Nix flake for Dimos.
 from __future__ import annotations
 
@@ -31,9 +45,7 @@ def ensure_nix_exists(min_version: str = minimum_nix_version) -> None:
         p.sub_header("- nix not detected")
         if not p.ask_yes_no("Install nix now?"):
             raise RuntimeError("nix is required for this option.")
-        install_cmd = (
-            "curl -L https://nixos.org/nix/install | sh"
-        )
+        install_cmd = "curl -L https://nixos.org/nix/install | sh"
         res = run_command(
             ["sh", "-c", install_cmd],
             print_command=True,
@@ -170,4 +182,10 @@ def nix_install(package_names: list[str]) -> None:
         )
 
 
-__all__ = ["FLAKE_TEMPLATE", "ensure_flakes_enabled", "ensure_nix_exists", "nix_install", "setup_nix_flake"]
+__all__ = [
+    "FLAKE_TEMPLATE",
+    "ensure_flakes_enabled",
+    "ensure_nix_exists",
+    "nix_install",
+    "setup_nix_flake",
+]

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -79,7 +79,7 @@ def run_command(
     print_command: bool = False,
     dry_run: bool = False,
     output_preview: bool = False,
-    stream_callback: Optional[Callable[[str], None]] = None,
+    stream_callback: Callable[[str], None] | None = None,
     combine_streams: bool = True,
 ) -> CommandResult:
     cmd_list = _normalize_cmd(cmd)

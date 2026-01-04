@@ -243,7 +243,8 @@ def start(n_workers: int | None = None, memory_limit: str = "auto") -> DimosClus
     if not n_workers:
         n_workers = mp.cpu_count()
     with console.status(
-        f"[green]Initializing dimos local cluster with [bright_blue]{n_workers} workers", spinner="arc"
+        f"[green]Initializing dimos local cluster with [bright_blue]{n_workers} workers",
+        spinner="arc",
     ):
         cluster = LocalCluster(  # type: ignore[no-untyped-call]
             n_workers=n_workers,

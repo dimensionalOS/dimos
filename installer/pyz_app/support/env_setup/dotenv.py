@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -36,7 +36,7 @@ def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
     if not env_exists:
         print("Dimos involves setting several project specific environment variables.")
         print(f"We highly recommend having these in a git-ignored {p.highlight('.env')} file.")
-        print(f'''I don't see a {p.highlight('.env')} file''')
+        print(f"""I don't see a {p.highlight(".env")} file""")
         print()
         if template_repo or installer_status.get("non_interactive"):
             create_env = True

@@ -186,7 +186,7 @@
         groups = {
             inherit ldLibraryPackages giTypelibPackagesString packageConfPackagesString manualPythonPackages;
         };
-    
+
         # ------------------------------------------------------------
         # 3. Host interactive shell  →  `nix develop`
         # ------------------------------------------------------------

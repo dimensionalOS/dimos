@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -38,18 +38,18 @@ def phase0():
     #
     fps = 14
     logo = RenderLogo(
-        glitchyness=0.45, # relative quantity of visual artifacting
-        stickyness=fps * 0.75, # how many frames to keep an artifact
-        fps=fps, # at 30fps it flickers a lot in the MacOS stock terminal. Ironically its fine at 30fps in the VS Code terminal
-        color_wave_amplitude=10, # bigger = wider range of colors
-        wave_speed=0.01, # bigger = faster
-        wave_freq=0.01, # smaller = longer streaks of color
+        glitchyness=0.45,  # relative quantity of visual artifacting
+        stickyness=fps * 0.75,  # how many frames to keep an artifact
+        fps=fps,  # at 30fps it flickers a lot in the MacOS stock terminal. Ironically its fine at 30fps in the VS Code terminal
+        color_wave_amplitude=10,  # bigger = wider range of colors
+        wave_speed=0.01,  # bigger = faster
+        wave_freq=0.01,  # smaller = longer streaks of color
         scrollable=True,
     )
 
     logo.log("- checking system")
     system_analysis = get_system_analysis()
-    timeout = 0.7 # wait long enough so users can read what is happening and see logo
+    timeout = 0.7  # wait long enough so users can read what is happening and see logo
     # visually we want cuda to be listed last and os to be first
     cuda = system_analysis["cuda"]
     del system_analysis["cuda"]
@@ -63,7 +63,7 @@ def phase0():
     #
     # print system analysis
     #
-    for key, result in (ordered_analysis.items()):
+    for key, result in ordered_analysis.items():
         name = result.get("name") or key
         exists = result.get("exists", False)
         version = result.get("version", "") or ""
@@ -90,7 +90,7 @@ def phase0():
         "Which features do you want? (Pick any number of features)", options=["basics", *features]
     )
     # basics is just a dummy entry to make it more user friendly
-    selected_features = [ each for each in selected_features if each != "basics" ]
+    selected_features = [each for each in selected_features if each != "basics"]
     if "sim" in selected_features and "cuda" not in selected_features:
         selected_features.append("cpu")
 
@@ -126,7 +126,9 @@ def phase0():
             p.sub_header("Docker assets created/updated:")
             for key, path in paths.items():
                 print(f" - {key}: {path}")
-            print(f"Use {p.highlight('run/docker_build')} to build the image, and {p.highlight('run/docker_exec')} to start a shell in the container.")
+            print(
+                f"Use {p.highlight('run/docker_build')} to build the image, and {p.highlight('run/docker_exec')} to start a shell in the container."
+            )
             if p.ask_yes_no("Would you like me to build the image now?"):
                 run_command([str(paths["build_script"])], check=False)
             if p.ask_yes_no("Would you like me to start a container shell now?"):
@@ -139,8 +141,10 @@ def phase0():
             p.sub_header("Nix example flake created:")
             print(f" - {example_path}")
             print("You can rename flake.example.nix to flake.nix or use it as a reference.")
-            feat_str ="[" + (",".join(selected_features)) + "]" if selected_features else ""
-            print(f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}` inside the nix flake.")
+            feat_str = "[" + (",".join(selected_features)) + "]" if selected_features else ""
+            print(
+                f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}` inside the nix flake."
+            )
             # TODO: ask if they would like us to setup .envrc for them
             raise SystemExit(0)
 

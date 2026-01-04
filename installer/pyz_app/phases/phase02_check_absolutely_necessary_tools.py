@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,18 +37,17 @@ from ..support.venv import activate_venv, get_venv_dirs_at, purge_broken_externa
 def phase2(system_analysis, selected_features):
     p.header("Next Phase: Check Install of Vital System Dependencies")
     try:
-
-        if has_ifconfig:= command_exists("ifconfig"):
+        if has_ifconfig := command_exists("ifconfig"):
             p.boring_log("- ifconfig found")
         else:
             p.error("- ifconfig not found")
 
-        if has_route:= command_exists("route"):
+        if has_route := command_exists("route"):
             p.boring_log("- route found")
         else:
             p.error("- route not found")
 
-        if has_sysctl:= command_exists("sysctl"):
+        if has_sysctl := command_exists("sysctl"):
             p.boring_log("- sysctl found")
         else:
             p.error("- sysctl not found")
@@ -81,7 +80,7 @@ def phase2(system_analysis, selected_features):
         ):
             raise SystemExit(1)
 
-    print('''✅ passed all checks for vital system dependencies''')
+    print("""✅ passed all checks for vital system dependencies""")
     p.confirm("Press enter to continue to next phase")
 
 
@@ -115,16 +114,18 @@ def ensure_venv_active(python_cmd: str):
             )
         venv_dir = Path(project_directory) / DEFAULT_VENV_NAME
         if venv_dir.exists():
-            p.warning(f'it appears there is a corrupt venv at {venv_dir}')
+            p.warning(f"it appears there is a corrupt venv at {venv_dir}")
             if p.ask_yes_no("Can I delete the corrupt venv?"):
                 p.boring_log(f"- deleting corrupt venv at {venv_dir}")
                 shutil.rmtree(venv_dir)
             else:
-                p.warning('you are probably going to get an error if we continue but okay')
+                p.warning("you are probably going to get an error if we continue but okay")
 
         p.boring_log(f"- creating virtual environment at {venv_dir}")
         venv_res = run_command(
-            [python_cmd, "-m", "venv", str(venv_dir)], dry_run=installer_status["dry_run"], print_command=True
+            [python_cmd, "-m", "venv", str(venv_dir)],
+            dry_run=installer_status["dry_run"],
+            print_command=True,
         )
         if venv_res.code != 0:
             raise RuntimeError(

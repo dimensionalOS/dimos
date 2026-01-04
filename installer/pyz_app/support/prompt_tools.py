@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,15 +33,19 @@ FG_GREEN = "\x1b[32m"
 FG_YELLOW = "\x1b[33m"
 FG_CYAN = "\x1b[36m"
 
+
 def _color_help(text, style):
     # there is a smarter way to do this, but this works for now
-    return text.replace(RESET,RESET+style)
+    return text.replace(RESET, RESET + style)
+
 
 def red(text: str) -> str:
-    return f"{FG_RED}{_color_help(text,FG_RED)}{RESET}"
+    return f"{FG_RED}{_color_help(text, FG_RED)}{RESET}"
+
 
 def cyan(text: str) -> str:
-    return f"{FG_CYAN}{_color_help(text,FG_CYAN)}{RESET}"
+    return f"{FG_CYAN}{_color_help(text, FG_CYAN)}{RESET}"
+
 
 def clear_screen() -> None:
     print("\x1b[2J")
@@ -52,7 +56,7 @@ def header(text: str) -> None:
     content = f"{text}"
     width = len(content) + padding * 2
     top = f"{BOLD}{FG_GREEN}┌{'─' * width}┐{RESET}"
-    mid = f"{BOLD}{FG_GREEN}│{RESET}{' ' * padding}{_color_help(content,BOLD+FG_GREEN)}{' ' * padding}{BOLD}{FG_GREEN}│{RESET}"
+    mid = f"{BOLD}{FG_GREEN}│{RESET}{' ' * padding}{_color_help(content, BOLD + FG_GREEN)}{' ' * padding}{BOLD}{FG_GREEN}│{RESET}"
     bottom = f"{BOLD}{FG_GREEN}└{'─' * width}┘{RESET}"
     print("\n" * 2)
     print(top)
@@ -62,28 +66,28 @@ def header(text: str) -> None:
 
 
 def sub_header(text: str) -> None:
-    print(f"{BOLD}{FG_YELLOW}{_color_help(text,BOLD+FG_YELLOW)}{RESET}")
+    print(f"{BOLD}{FG_YELLOW}{_color_help(text, BOLD + FG_YELLOW)}{RESET}")
 
 
 def boring_log(text: str) -> None:
-    print(f"{DIM}{_color_help(text,DIM)}{RESET}")
+    print(f"{DIM}{_color_help(text, DIM)}{RESET}")
 
 
 def error(text: str) -> None:
-    print(f"{FG_RED}{_color_help(text,FG_RED)}{RESET}")
+    print(f"{FG_RED}{_color_help(text, FG_RED)}{RESET}")
 
 
 def warning(text: str) -> None:
-    print(f"{FG_YELLOW}Warning: {RESET}{_color_help(text,FG_YELLOW)}{RESET}")
+    print(f"{FG_YELLOW}Warning: {RESET}{_color_help(text, FG_YELLOW)}{RESET}")
 
 
 def highlight(text: str) -> str:
-    return f"{FG_CYAN}{_color_help(text,FG_CYAN)}{RESET}"
+    return f"{FG_CYAN}{_color_help(text, FG_CYAN)}{RESET}"
 
 
 def confirm(text: str) -> None:
     if installer_status.get("non_interactive"):
-        print(f'''- continuing past '{text}\'''')
+        print(f"""- continuing past '{text}\'""")
         return
     input(f"{FG_YELLOW}{text}{RESET}")
 
@@ -112,7 +116,7 @@ def pick_one(message: str, *, options: Iterable[str] | dict[str, str]):
         message=message,
         choices=values,
         cycle=True,
-        pointer="❯", # noqa: RUF001
+        pointer="❯",  # noqa: RUF001
         multiselect=False,
         border=True,
         qmark="?",
@@ -128,7 +132,7 @@ def pick_many(message: str, *, options: Iterable[str] | dict[str, str]) -> list[
         choices=values,
         cycle=True,
         border=True,
-        pointer="❯", # noqa: RUF001
+        pointer="❯",  # noqa: RUF001
         instruction="Space to toggle, Enter to confirm",
     ).execute()
     return [keys[values.index(v)] for v in selected]

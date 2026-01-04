@@ -68,7 +68,7 @@ if [ ! -x "$python_exe" ]; then
   mkdir -p "$PYTHON_INSTALL"
 
   tmp_tar="$PYTHON_INSTALL/python.tar.gz"
-  download "$python_uri" "$tmp_tar" 
+  download "$python_uri" "$tmp_tar"
 
   # The tarball contains a top-level "python/" directory; strip it into PYTHON_INSTALL
   # (works with GNU tar and BSD tar)

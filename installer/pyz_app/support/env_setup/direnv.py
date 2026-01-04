@@ -1,4 +1,18 @@
 #!/usr/bin/env python3
+# Copyright 2026 Dimensional Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,6 +27,7 @@ def ask_if_not_template_repo(prompt: str) -> bool:
     if installer_status.get("template_repo"):
         return True
     return p.ask_yes_no(prompt)
+
 
 def setup_direnv(envrc_path: str | Path) -> bool:
     envrc_path = Path(envrc_path)
@@ -32,7 +47,9 @@ def setup_direnv(envrc_path: str | Path) -> bool:
     add_activation = False
     if not envrc_exists:
         print(f"{p.highlight('direnv')} detected but no {p.highlight('.envrc')} file found.")
-        if not ask_if_not_template_repo("Can I create one for you? (for automatic venv activation)"):
+        if not ask_if_not_template_repo(
+            "Can I create one for you? (for automatic venv activation)"
+        ):
             add_activation = True
             p.boring_log("- skipping .envrc creation")
             return False
@@ -40,13 +57,17 @@ def setup_direnv(envrc_path: str | Path) -> bool:
         p.boring_log("- created .envrc")
 
     has_venv_activation = bool(
-        re.search(r"(^|;)\s*(source|\.)\s+.*[v]?env.*/bin/activate", envrc_text, flags=re.IGNORECASE)
+        re.search(
+            r"(^|;)\s*(source|\.)\s+.*[v]?env.*/bin/activate", envrc_text, flags=re.IGNORECASE
+        )
     )
     if not has_venv_activation:
         if not add_activation:
             print(f"It looks like there is a {p.highlight('.envrc')} file")
             print("But it seems to not include auto venv activation.")
-            add_activation = ask_if_not_template_repo(f"Is it okay if I add a python virtual env activation to the {p.highlight('.envrc')}?")
+            add_activation = ask_if_not_template_repo(
+                f"Is it okay if I add a python virtual env activation to the {p.highlight('.envrc')}?"
+            )
         if add_activation:
             block = "\n".join(
                 [

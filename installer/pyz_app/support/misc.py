@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -131,6 +131,7 @@ class ProgressRenderer:
         sys.stdout.write("\x1b[?25h\n")
         sys.stdout.flush()
 
+
 def get_system_deps(feature: str | None):
     apt_deps: set[str] = set()
     nix_deps: set[str] = set()
@@ -173,10 +174,18 @@ def get_system_deps(feature: str | None):
         "nix_deps": sorted(nix_deps),
         "brew_deps": sorted(brew_deps),
         "pip_deps": sorted(pip_deps),
-        "human_names_all": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in combined_deps }),
-        "human_names_from_apt": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in apt_deps }),
-        "human_names_from_brew": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in brew_deps }),
-        "human_names_from_nix": sorted(dependency_human_names_set | { DEP_2_HUMAN_NAME.get(dep, dep) for dep in nix_deps }),
+        "human_names_all": sorted(
+            dependency_human_names_set | {DEP_2_HUMAN_NAME.get(dep, dep) for dep in combined_deps}
+        ),
+        "human_names_from_apt": sorted(
+            dependency_human_names_set | {DEP_2_HUMAN_NAME.get(dep, dep) for dep in apt_deps}
+        ),
+        "human_names_from_brew": sorted(
+            dependency_human_names_set | {DEP_2_HUMAN_NAME.get(dep, dep) for dep in brew_deps}
+        ),
+        "human_names_from_nix": sorted(
+            dependency_human_names_set | {DEP_2_HUMAN_NAME.get(dep, dep) for dep in nix_deps}
+        ),
         "missing": missing,
     }
 
@@ -233,7 +242,9 @@ def ensure_python() -> str:
     python_cmd = detect_python_command()
     if not python_cmd:
         raise RuntimeError("- ❌ Python 3.10+ is required but was not found.")
-    version_res = run_command([python_cmd, "--version"], capture_output=True)  # intentionally not part of dry_run
+    version_res = run_command(
+        [python_cmd, "--version"], capture_output=True
+    )  # intentionally not part of dry_run
     version_text = (version_res.stdout or version_res.stderr or "").strip()
     parsed = parse_version(version_text)
     if not parsed or not is_version_at_least(parsed, "3.10.0"):
@@ -403,7 +414,9 @@ def brew_install(package_names: list[str]) -> None:
     ensure_homebrew()
     if not _already_called_brew_update:
         p.boring_log("Running brew update")
-        res = run_command(["brew", "update"], print_command=True, dry_run=installer_status["dry_run"])
+        res = run_command(
+            ["brew", "update"], print_command=True, dry_run=installer_status["dry_run"]
+        )
         if res.code != 0:
             raise RuntimeError(f"brew update failed: {res.code}")
         _already_called_brew_update = True
@@ -412,7 +425,7 @@ def brew_install(package_names: list[str]) -> None:
     for idx, pkg in enumerate(package_names, start=1):
         if progress and progress.enabled:
             progress.set_current(idx, pkg)
-        res = run_command(["brew", "list", pkg], capture_output=True) # intentionally not dry_run
+        res = run_command(["brew", "list", pkg], capture_output=True)  # intentionally not dry_run
         if res.code == 0:
             p.sub_header(f"- ✅ looks like {p.highlight(pkg)} is already installed")
             continue

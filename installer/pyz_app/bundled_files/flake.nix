@@ -66,7 +66,7 @@
             . venv/bin/activate
           fi
         '';
-        
+
         devShells = {
           # basic shell (blends with your current environment)
           default = pkgs.mkShell {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright 2025 Dimensional Inc.
+# Copyright 2025-2026 Dimensional Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -193,9 +193,7 @@ def get_system_analysis() -> dict[str, ToolResult]:
         )
         if val.get("exists") and not val.get("version"):
             note = val.get("note", "")
-            val["note"] = (
-                note + " " if note else ""
-            )
+            val["note"] = note + " " if note else ""
         tasks.append((name, val))
     else:
         results["git_lfs"] = {
