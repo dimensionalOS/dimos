@@ -18,19 +18,19 @@ if [[ -f "$HASH_FILE" ]]; then
     fi
 fi
 
-if [[ "$needs_build" == "true" ]]; then
-    echo "Building image $DOCKER_IMAGE_NAME..."
-    # FIXME: before final release change refs/heads/master to refs/heads/main  (along with mystery_test_1 repo)
-    docker build \
-        --build-arg "DIMOS_ENABLED_FEATURES=${DIMOS_ENABLED_FEATURES:-}" \
-        --build-arg "DIMOS_REF_FOR_DOCKER=${DIMOS_REF_FOR_DOCKER:-refs/heads/master}" \
-        -t "$DOCKER_IMAGE_NAME" \
-        -f "$DOCKERFILE" \
-        "$REPO_ROOT"
-    echo "$current_hash" > "$HASH_FILE"
-else
-    echo "Dockerfile unchanged; skipping build for $DOCKER_IMAGE_NAME."
-fi
+# if [[ "$needs_build" == "true" ]]; then
+#     echo "Building image $DOCKER_IMAGE_NAME..."
+#     # FIXME: before final release change refs/heads/master to refs/heads/main  (along with mystery_test_1 repo)
+#     docker build \
+#         --build-arg "DIMOS_ENABLED_FEATURES=${DIMOS_ENABLED_FEATURES:-}" \
+#         --build-arg "DIMOS_REF_FOR_DOCKER=${DIMOS_REF_FOR_DOCKER:-refs/heads/master}" \
+#         -t "$DOCKER_IMAGE_NAME" \
+#         -f "$DOCKERFILE" \
+#         "$REPO_ROOT"
+#     echo "$current_hash" > "$HASH_FILE"
+# else
+#     echo "Dockerfile unchanged; skipping build for $DOCKER_IMAGE_NAME."
+# fi
 
 docker run -it --rm \
     -e "DIMOS_ENABLED_FEATURES=${DIMOS_ENABLED_FEATURES:-}" \

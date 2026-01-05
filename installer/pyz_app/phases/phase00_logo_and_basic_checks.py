@@ -55,9 +55,10 @@ def phase0():
     logo.log("- checking system")
     system_analysis = get_system_analysis()
     if dimos_cache.exists():
+        logo.log("- creating dimos cache")
+        dimos_cache.mkdir(parents=True, exist_ok=True)
         timeout = 0.7  # wait long enough so users can read what is happening and see logo
     else:
-        dimos_cache.mkdir(parents=True, exist_ok=True)
         timeout = 0.2 # don't wait on second run
         
     # visually we want cuda to be listed last and os to be first

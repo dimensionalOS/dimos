@@ -2,14 +2,17 @@
   description = "YOUR_DIMOS_PROJECT_DESCRIPTION";
   
   inputs = {
-    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
+    nixpkgs.url      = "github:NixOS/nixpkgs/nixos-25.11";
+    home-manager.url = "github:nix-community/home-manager/release-25.11";
+    home-manager.inputs.nixpkgs.follows = "nixpkgs";
     flake-utils.url  = "github:numtide/flake-utils";
     dimos-flake.url  = "github:jeff-hykin/mystery_test_1/59acdf244148b879230aa1dd0dcb1e1191a50b72";
     dimos-flake.inputs.nixpkgs.follows     = "nixpkgs";
     dimos-flake.inputs.flake-utils.follows = "flake-utils";
     xome.url         = "github:jeff-hykin/xome";
-    xome.inputs.nixpkgs.follows     = "nixpkgs";
-    xome.inputs.flake-utils.follows = "flake-utils";
+    xome.inputs.nixpkgs.follows      = "nixpkgs";
+    xome.inputs.flake-utils.follows  = "flake-utils";
+    xome.inputs.home-manager.follows = "home-manager";
   };
 
   outputs = { self, nixpkgs, flake-utils, dimos-flake, xome, ... }:
