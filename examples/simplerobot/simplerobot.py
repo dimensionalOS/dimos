@@ -38,8 +38,8 @@ def apply_twist(pose: Pose, twist: Twist, dt: float) -> Pose:
     yaw = pose.yaw + twist.angular.z * dt
     return Pose(
         position=(
-            pose.x + twist.linear.x * math.cos(pose.yaw) * dt,
-            pose.y + twist.linear.x * math.sin(pose.yaw) * dt,
+            pose.x + twist.linear.x * math.cos(yaw) * dt,
+            pose.y + twist.linear.x * math.sin(yaw) * dt,
             pose.z,
         ),
         orientation=Quaternion.from_euler(Vector3(0, 0, yaw)),
