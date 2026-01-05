@@ -1,6 +1,6 @@
 {
-  description = "Project dev environment as Nix shell + DockerTools layered image";
-
+  description = "YOUR_DIMOS_PROJECT_DESCRIPTION";
+  
   inputs = {
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-unstable";
     flake-utils.url  = "github:numtide/flake-utils";
@@ -21,7 +21,10 @@
         # ------------------------------------------------------------
         # packages
         # ------------------------------------------------------------
-        devPackages = dimos.devPackages ++ [];
+        devPackages = dimos.devPackages ++ [
+            # add your nix packages here!
+            # ex: pkgs.cowsay
+        ];
 
         # ------------------------------------------------------------
         # shell setup (bashrc like)
@@ -89,7 +92,7 @@
               # https://deepwiki.com/nix-community/home-manager/5-configuration-examples
               # all home-manager options:
               # https://nix-community.github.io/home-manager/options.xhtml
-              home.homeDirectory = "/tmp/virtual_homes/dimos";
+              home.homeDirectory = "/tmp/virtual_homes/YOUR_DIMOS_PROJECT_NAME";
               home.stateVersion = "25.11";
               home.packages = devPackages;
 
