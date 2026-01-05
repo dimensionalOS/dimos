@@ -15,9 +15,9 @@
 
 from __future__ import annotations
 
+from os.path import expanduser
 from pathlib import Path
 import time
-from os.path import expanduser
 
 from ..support import prompt_tools as p
 from ..support.bundled_data import PROJECT_TOML
@@ -34,8 +34,9 @@ from ..support.setup_docker_env import setup_docker_env
 from ..support.setup_nix import ensure_flakes_enabled, nix_install, setup_nix_flake
 from ..support.shell_tooling import command_exists, run_command
 
-home = Path(expanduser('~'))
-dimos_cache = (home / ".cache" / "dimos")
+home = Path(expanduser("~"))
+dimos_cache = home / ".cache" / "dimos"
+
 
 def phase0():
     #
@@ -59,8 +60,8 @@ def phase0():
         dimos_cache.mkdir(parents=True, exist_ok=True)
         timeout = 0.7  # wait long enough so users can read what is happening and see logo
     else:
-        timeout = 0.2 # don't wait on second run
-        
+        timeout = 0.2  # don't wait on second run
+
     # visually we want cuda to be listed last and os to be first
     cuda = system_analysis["cuda"]
     del system_analysis["cuda"]
