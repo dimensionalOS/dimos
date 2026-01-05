@@ -287,7 +287,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                 )
                 self.color_image.publish(color_img)
 
-
             # Process depth
             depth_img = None
             if depth_frame:
@@ -305,7 +304,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                     ts=ts,
                 )
                 self.depth_image.publish(depth_img)
-
 
             # Store latest images for pointcloud generation
             if self.config.enable_pointcloud and color_img is not None and depth_img is not None:

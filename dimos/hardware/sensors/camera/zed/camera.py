@@ -20,8 +20,8 @@ import threading
 import time
 from typing import TYPE_CHECKING
 
-import numpy as np
 import cv2
+import numpy as np
 import pyzed.sl as sl
 import reactivex as rx
 from scipy.spatial.transform import Rotation
@@ -226,7 +226,9 @@ class ZEDCamera(Module[ZEDCameraConfig]):
             )
             self._depth_camera_info = self._intrinsics_to_camera_info(left_cam, depth_frame)
 
-    def _intrinsics_to_camera_info(self, intrinsics: sl.CameraParameters, frame_id: str) -> CameraInfo:
+    def _intrinsics_to_camera_info(
+        self, intrinsics: sl.CameraParameters, frame_id: str
+    ) -> CameraInfo:
         fx, fy = intrinsics.fx, intrinsics.fy
         cx, cy = intrinsics.cx, intrinsics.cy
 
