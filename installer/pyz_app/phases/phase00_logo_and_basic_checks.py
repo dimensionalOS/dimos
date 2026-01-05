@@ -140,7 +140,7 @@ def phase0():
             example_path = setup_nix_flake(project_dir)
             if not example_path:
                 continue
-            
+
             feat_str = "[" + (",".join(selected_features)) + "]" if selected_features else ""
             print(
                 f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}` inside the nix flake."

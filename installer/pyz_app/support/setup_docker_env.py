@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 
 from . import prompt_tools as p
 from .bundled_data import DOCKERFILE_TEMPLATE
-from .misc import maybe_write
 from .dotenv import setup_dotenv
+from .misc import maybe_write
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -54,6 +54,7 @@ docker run --rm -it \
     -w /app dimos-dev \
     bash -l
 """
+
 
 def setup_docker_env(project_dir: str | Path, features: Iterable[str]) -> dict[str, Path]:
     """Generate Dockerfile, run_build.sh, run_exec.sh, and .env with features."""
