@@ -34,7 +34,7 @@ except ModuleNotFoundError:  # pragma: no cover
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent.parent
 PYPROJECT_PATH = REPO_ROOT / "pyproject.toml"
-DEP_DB_DIR = REPO_ROOT / "installer" / "dep_database"
+DEP_DB_DIR = REPO_ROOT / "installer" / "dep_database.ignore"
 
 DEP_LIST_KEYS = ["apt_dependencies", "brew_dependencies", "nix_dependencies"]
 REQUIRED_KEYS = ["package", *DEP_LIST_KEYS]
@@ -136,7 +136,7 @@ def _build_prompt(name: str, requirement: str) -> str:
         f"list all apt-get dependencies, nix, and brew dependencies for the {requirement} "
         f"pip module. The result should be a json object with the following {key_list} "
         f'and optionally "description", "notes". These ({dep_keys}) should be list of '
-        f"strings. Store that resulting json inside ./installer/dep_database/{name}.json"
+        f"strings. Store that resulting json inside ./installer/dep_database.ignore/{name}.json"
     )
 
 
@@ -158,7 +158,7 @@ async def _gather_prompts(
         if name.startswith("types-") or name.endswith("-stubs") or name.startswith("pytest-"):
             continue
 
-        dest_path = project_dir / "installer" / "dep_database" / f"{name}.json"
+        dest_path = project_dir / "installer" / "dep_database.ignore" / f"{name}.json"
         if not dest_path.exists():
             missing.append(name)
             prompts.append((name, _build_prompt(name, requirement)))
