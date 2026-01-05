@@ -7,7 +7,7 @@ Demonstrates controlling a dimos robot from non-Python languages.
 1. Start the robot (in another terminal):
    ```bash
    cd ../simplerobot
-   python main.py
+   python simplerobot.py
    ```
 
 2. Run any language example:
