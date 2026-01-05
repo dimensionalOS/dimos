@@ -64,6 +64,10 @@
             python3 -m venv venv
             echo "Activating virtualenv..."
             . venv/bin/activate
+            # if uv doesnt exist
+            if [ -z "$(command -v "uv")" ]; then
+                pip install uv
+            fi
           fi
         '';
 
