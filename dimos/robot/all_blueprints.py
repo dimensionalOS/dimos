@@ -51,6 +51,8 @@ all_blueprints = {
     "piper-cartesian": "dimos.hardware.manipulators.piper.piper_blueprints:piper_cartesian",
     "piper-trajectory": "dimos.hardware.manipulators.piper.piper_blueprints:piper_trajectory",
     "piper-trajectory-sim": "dimos.hardware.manipulators.piper.piper_blueprints:piper_trajectory_sim",
+    # Piper manipulation (driver + planner + controller)
+    "piper-manipulation": "dimos.manipulation.manipulation_blueprints:piper_manipulation",
     # Demo blueprints
     "demo-osm": "dimos.mapping.osm.demo_osm:demo_osm",
     "demo-skill": "dimos.agents2.skills.demo_skill:demo_skill",
