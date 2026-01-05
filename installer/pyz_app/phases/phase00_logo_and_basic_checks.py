@@ -157,8 +157,10 @@ def phase0():
 
             ensure_flakes_enabled()
             print(
-                f"Once ready, git commit the flake.nix, run `nix develop`, then run `uv pip install dimos{feat_str}`"
+                f"Once ready, git commit the flake.nix, run `nix develop`, then run `pip install dimos{feat_str}`"
             )
+            # FIXME: dev 
+            print(f"because you're on dev run: pip install 'dimos{feat_str} @ git+https://github.com/dimensionalOS/dimos.git'")
             # TODO: ask if they would like us to setup .envrc for them
             raise SystemExit(0)
 

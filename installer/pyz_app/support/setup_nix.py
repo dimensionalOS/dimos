@@ -55,7 +55,7 @@ def setup_nix_flake(project_dir: str | Path) -> Path | None:
             print("- flake.example.nix created")
             return example_path
 
-        print("- okay, creation of flake.nix")
+        print("- okay, creation of flake.nix aborted")
         # abort
         return None
 

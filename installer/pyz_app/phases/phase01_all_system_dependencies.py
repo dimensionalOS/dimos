@@ -112,14 +112,14 @@ def phase1(system_analysis, selected_features):
             print(
                 "I can install nix (if needed) and then use nix to install the system dependencies for you."
             )
-            print("")
-            print("NOTE: if you get errors such as glibc.so VERSION issues or missing symbols")
-            print("      those are part of challenge of mixing native and nixpkgs.")
-            print("      Online answers will LIKELY MISLEAD YOU because the real cause")
-            print("")
             try_auto_nix_install = p.ask_yes_no(
                 "Would you like me to use nix to install the system dependencies for you?"
             )
+            # print("")
+            # print("NOTE: if you get errors such as glibc.so VERSION issues or missing symbols")
+            # print("      those are part of challenge of mixing native and nixpkgs.")
+            # print("      Online answers will LIKELY MISLEAD YOU because the real cause")
+            # print("")
         else:
             try_auto_nix_install = p.ask_yes_no(
                 "Install these system dependencies for you via Nix flake install?"
