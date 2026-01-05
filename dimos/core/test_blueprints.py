@@ -27,6 +27,7 @@ from dimos.core.blueprints import (
     autoconnect,
 )
 from dimos.core.core import rpc
+from dimos.core.global_config import GlobalConfig
 from dimos.core.module import Module
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.rpc_client import RpcCall
@@ -161,7 +162,10 @@ def test_build_happy_path() -> None:
 
     blueprint_set = autoconnect(module_a(), module_b(), module_c())
 
-    coordinator = blueprint_set.build()
+    # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
+    coordinator = blueprint_set.build(
+        global_config=GlobalConfig(rerun_enabled=False, viewer_backend="foxglove")
+    )
 
     try:
         assert isinstance(coordinator, ModuleCoordinator)
@@ -297,7 +301,10 @@ def test_remapping() -> None:
     assert ("color_image", Data1) not in blueprint_set._all_name_types
 
     # Build and verify connections work
-    coordinator = blueprint_set.build()
+    # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
+    coordinator = blueprint_set.build(
+        global_config=GlobalConfig(rerun_enabled=False, viewer_backend="foxglove")
+    )
 
     try:
         source_instance = coordinator.get_instance(SourceModule)
@@ -350,7 +357,10 @@ def test_future_annotations_autoconnect() -> None:
 
     blueprint_set = autoconnect(FutureModuleOut.blueprint(), FutureModuleIn.blueprint())
 
-    coordinator = blueprint_set.build()
+    # Disable Rerun for tests (prevents viewer spawn and gRPC flush errors)
+    coordinator = blueprint_set.build(
+        global_config=GlobalConfig(rerun_enabled=False, viewer_backend="foxglove")
+    )
 
     try:
         out_instance = coordinator.get_instance(FutureModuleOut)
