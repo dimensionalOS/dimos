@@ -45,6 +45,7 @@ from pathlib import Path
 
 from dimos.core.blueprints import autoconnect
 from dimos.core.transport import LCMTransport
+from dimos.hardware.manipulators.piper.piper_driver import piper_driver
 from dimos.hardware.manipulators.xarm.xarm_driver import xarm_driver
 from dimos.manipulation.control import joint_trajectory_controller
 from dimos.manipulation.manipulation_module import manipulation_module
@@ -63,6 +64,19 @@ def _get_xarm_package_paths() -> dict[str, str]:
     """Get package paths for xarm xacro resolution."""
     base = Path(__file__).parent.parent / "hardware" / "manipulators"
     return {"xarm_description": str(base / "xarm/xarm_description")}
+
+
+# Path to piper URDF
+def _get_piper_urdf_path() -> str:
+    """Get path to piper URDF."""
+    base = Path(__file__).parent.parent / "hardware" / "manipulators"
+    return str(base / "piper/piper_description/urdf/piper_description.xacro")
+
+
+def _get_piper_package_paths() -> dict[str, str]:
+    """Get package paths for piper xacro resolution."""
+    base = Path(__file__).parent.parent / "hardware" / "manipulators"
+    return {"piper_description": str(base / "piper/piper_description")}
 
 
 # =============================================================================
@@ -192,8 +206,63 @@ xarm6_planner_only = manipulation_module(
 )
 
 
+# =============================================================================
+# Piper Full Manipulation Stack (Simulation Mode)
+# =============================================================================
+# Combines:
+#   - PiperDriver: Hardware interface (simulation mode)
+#   - ManipulationModule: Motion planning (Drake RRT-Connect)
+#   - JointTrajectoryController: Trajectory execution at 100Hz
+#
+# Data flow:
+#   Driver.joint_state ──► ManipulationModule.joint_state (planning world sync)
+#   ManipulationModule.trajectory ──► Controller.trajectory (planned path)
+#   Controller.joint_position_command ──► Driver.joint_position_command (execution)
+# =============================================================================
+
+piper_manipulation = autoconnect(
+    piper_driver(
+        can_port="can0",
+        has_gripper=True,
+        enable_on_start=True,
+        control_rate=100,
+        monitor_rate=10,
+        connection_type="sim",  # Simulation mode
+    ),
+    manipulation_module(
+        robot_urdf_path=_get_piper_urdf_path(),
+        robot_name="piper",
+        joint_names=["joint1", "joint2", "joint3", "joint4", "joint5", "joint6"],
+        end_effector_link="link6",
+        base_link="arm_base",
+        max_velocity=1.0,
+        max_acceleration=2.0,
+        planning_timeout=10.0,
+        enable_viz=True,
+        package_paths=_get_piper_package_paths(),
+    ),
+    joint_trajectory_controller(
+        control_frequency=100.0,
+    ),
+).transports(
+    {
+        # Joint state from driver → ManipulationModule and Controller
+        ("joint_state", JointState): LCMTransport("/piper/joint_states", JointState),
+        # Robot state from driver
+        ("robot_state", RobotState): LCMTransport("/piper/robot_state", RobotState),
+        # Trajectory from ManipulationModule → Controller
+        ("trajectory", JointTrajectory): LCMTransport("/piper/trajectory", JointTrajectory),
+        # Commands from Controller → Driver
+        ("joint_position_command", JointCommand): LCMTransport(
+            "/piper/joint_position_command", JointCommand
+        ),
+    }
+)
+
+
 __all__ = [
     "xarm6_manipulation",
     "xarm6_planner_only",
     "xarm7_manipulation",
+    "piper_manipulation",
 ]
