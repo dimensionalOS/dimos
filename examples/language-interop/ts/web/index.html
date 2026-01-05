@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<!--
+  Browser-based robot control using LCM over WebSocket.
+
+  The browser imports @dimos/msgs via esm.sh and encodes/decodes LCM packets directly.
+  Server (server.ts) is a thin bridge that forwards raw binary between WebSocket and UDP.
+-->
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Robot Control</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      margin: 0;
+      padding: 20px;
+      background: #1a1a2e;
+      color: #eee;
+    }
+    h1 { margin: 0 0 20px; color: #00d9ff; }
+    .status {
+      padding: 8px 16px;
+      border-radius: 4px;
+      display: inline-block;
+      margin-bottom: 20px;
+    }
+    .status.connected { background: #0a3; }
+    .status.disconnected { background: #a30; }
+    .status.connecting { background: #a80; }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      max-width: 900px;
+    }
+    .panel {
+      background: #16213e;
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .panel h2 {
+      margin: 0 0 16px;
+      color: #00d9ff;
+      font-size: 16px;
+    }
+    .pose-value {
+      display: flex;
+      justify-content: space-between;
+      padding: 8px 0;
+      border-bottom: 1px solid #2a3a5e;
+    }
+    .pose-value:last-child { border: none; }
+    .pose-label { color: #888; }
+    .pose-num { font-family: 'Fira Code', monospace; color: #0f0; }
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(3, 60px);
+      gap: 8px;
+      justify-content: center;
+    }
+    .controls button {
+      width: 60px;
+      height: 60px;
+      font-size: 24px;
+      border: none;
+      border-radius: 8px;
+      background: #2a3a5e;
+      color: #fff;
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    .controls button:hover { background: #3a4a7e; }
+    .controls button:active { background: #00d9ff; }
+    .controls button:disabled { opacity: 0.3; cursor: not-allowed; }
+    .spacer { visibility: hidden; }
+    #messages {
+      grid-column: 1 / -1;
+      max-height: 200px;
+      overflow-y: auto;
+    }
+    .message {
+      font-family: 'Fira Code', monospace;
+      font-size: 12px;
+      padding: 4px 8px;
+      background: #0f0f23;
+      border-radius: 4px;
+      margin-bottom: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Robot Control</h1>
+  <div id="status" class="status connecting">Connecting...</div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Pose</h2>
+      <div class="pose-value"><span class="pose-label">X</span><span id="pose-x" class="pose-num">--</span></div>
+      <div class="pose-value"><span class="pose-label">Y</span><span id="pose-y" class="pose-num">--</span></div>
+      <div class="pose-value"><span class="pose-label">Z</span><span id="pose-z" class="pose-num">--</span></div>
+      <div class="pose-value"><span class="pose-label">Qw</span><span id="pose-qw" class="pose-num">--</span></div>
+    </div>
+
+    <div class="panel">
+      <h2>Controls</h2>
+      <div class="controls">
+        <div class="spacer"></div>
+        <button id="btn-fwd">&#8593;</button>
+        <div class="spacer"></div>
+        <button id="btn-left">&#8592;</button>
+        <button id="btn-stop">&#9632;</button>
+        <button id="btn-right">&#8594;</button>
+        <div class="spacer"></div>
+        <button id="btn-back">&#8595;</button>
+        <div class="spacer"></div>
+      </div>
+    </div>
+
+    <div id="messages" class="panel">
+      <h2>Log</h2>
+    </div>
+  </div>
+
+  <script type="module">
+    import { decodePacket, encodePacket, geometry_msgs } from "https://esm.sh/jsr/@dimos/msgs@0.1.3";
+
+    const statusEl = document.getElementById('status');
+    const messagesEl = document.getElementById('messages');
+    let ws = null;
+
+    function log(msg) {
+      const el = document.createElement('div');
+      el.className = 'message';
+      el.textContent = `${new Date().toLocaleTimeString()} ${msg}`;
+      messagesEl.appendChild(el);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+      while (messagesEl.children.length > 50) {
+        messagesEl.removeChild(messagesEl.children[1]); // Keep h2
+      }
+    }
+
+    function sendTwist(linear, angular) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        const twist = new geometry_msgs.Twist({
+          linear: new geometry_msgs.Vector3({ x: linear, y: 0, z: 0 }),
+          angular: new geometry_msgs.Vector3({ x: 0, y: 0, z: angular }),
+        });
+        const packet = encodePacket("/cmd_vel#geometry_msgs.Twist", twist);
+        ws.send(packet);
+        log(`[cmd] linear=${linear.toFixed(2)} angular=${angular.toFixed(2)}`);
+      }
+    }
+
+    document.getElementById('btn-fwd').onclick = () => sendTwist(0.5, 0);
+    document.getElementById('btn-back').onclick = () => sendTwist(-0.5, 0);
+    document.getElementById('btn-left').onclick = () => sendTwist(0, 0.5);
+    document.getElementById('btn-right').onclick = () => sendTwist(0, -0.5);
+    document.getElementById('btn-stop').onclick = () => sendTwist(0, 0);
+
+    // Keyboard controls
+    document.addEventListener('keydown', (e) => {
+      switch(e.key) {
+        case 'ArrowUp': case 'w': sendTwist(0.5, 0); break;
+        case 'ArrowDown': case 's': sendTwist(-0.5, 0); break;
+        case 'ArrowLeft': case 'a': sendTwist(0, 0.5); break;
+        case 'ArrowRight': case 'd': sendTwist(0, -0.5); break;
+        case ' ': sendTwist(0, 0); break;
+      }
+    });
+
+    function connect() {
+      const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${protocol}//${location.host}`);
+
+      ws.onopen = () => {
+        statusEl.textContent = 'Connected';
+        statusEl.className = 'status connected';
+        log('Connected to robot');
+      };
+
+      ws.onclose = () => {
+        statusEl.textContent = 'Disconnected';
+        statusEl.className = 'status disconnected';
+        setTimeout(connect, 2000);
+      };
+
+      ws.binaryType = 'arraybuffer';
+
+      ws.onmessage = (event) => {
+        try {
+          const { channel, data } = decodePacket(new Uint8Array(event.data));
+          console.log(`[${channel}]`, data);
+
+          if (channel === '/odom#geometry_msgs.PoseStamped') {
+            const pos = data.pose.position;
+            const ori = data.pose.orientation;
+            document.getElementById('pose-x').textContent = pos.x.toFixed(2);
+            document.getElementById('pose-y').textContent = pos.y.toFixed(2);
+            document.getElementById('pose-z').textContent = pos.z.toFixed(2);
+            document.getElementById('pose-qw').textContent = ori.w.toFixed(2);
+          }
+        } catch (e) {
+          console.error('Decode error:', e);
+        }
+      };
+    }
+
+    connect();
+  </script>
+</body>
+</html>
