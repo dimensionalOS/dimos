@@ -148,20 +148,26 @@ def phase0():
             if not command_exists("git"):
                 print("You need to install git for the flake.nix to work")
                 print("Should I install it for you? (y/n)")
-                nix_install(["git"]) # this will install nix if needed
+                nix_install(["git"])  # this will install nix if needed
 
             if not Path(project_dir / ".git").exists():
-                if p.ask_yes_no("Your project doesn't seem to have a (direct) git repo.\nFlakes require a git repo.\nShould I initialize a new git repo for this flake you? (y/n)"):
+                if p.ask_yes_no(
+                    "Your project doesn't seem to have a (direct) git repo.\nFlakes require a git repo.\nShould I initialize a new git repo for this flake you? (y/n)"
+                ):
                     init_repo_with_gitignore(project_dir)
                 else:
-                    print("Okay, but make sure to commit the flake.nix changes otherwise you won't be able to run `nix develop`")
+                    print(
+                        "Okay, but make sure to commit the flake.nix changes otherwise you won't be able to run `nix develop`"
+                    )
 
             ensure_flakes_enabled()
             print(
                 f"Once ready, git commit the flake.nix, run `nix develop`, then run `pip install dimos{feat_str}`"
             )
-            # FIXME: dev 
-            print(f"because you're on dev run: pip install 'dimos{feat_str} @ git+https://github.com/dimensionalOS/dimos.git'")
+            # FIXME: dev
+            print(
+                f"because you're on dev run: pip install 'dimos{feat_str} @ git+https://github.com/dimensionalOS/dimos.git'"
+            )
             # TODO: ask if they would like us to setup .envrc for them
             raise SystemExit(0)
 
