@@ -58,7 +58,7 @@ def phase0():
     if not dimos_cache.exists():
         logo.log("- creating dimos cache")
         dimos_cache.mkdir(parents=True, exist_ok=True)
-        timeout = 0.7  # wait long enough so users can read what is happening and see logo
+        timeout = 0.5  # wait long enough so users can read what is happening and see logo
     else:
         timeout = 0.2  # don't wait on second run
 
@@ -89,9 +89,10 @@ def phase0():
         time.sleep(timeout)
     logo.stop()
     p.clear_screen()
-
+    
+    # ask user project question up front
+    project_dir = get_project_directory()
     if installer_status.get("template_repo"):
-        project_dir = get_project_directory()
         project_name = project_dir.name
         # fill out the directory
         replace_strings_in_directory(project_dir, PLACEHOLDERS, project_name)
