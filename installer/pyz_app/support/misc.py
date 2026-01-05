@@ -320,7 +320,9 @@ def apt_install(package_names: list[str]) -> None:
     for idx, each_pkg in enumerate(package_names, start=1):
         if progress and progress.enabled:
             progress.set_current(idx, each_pkg)
-        res = run_command(["dpkg", "-s", each_pkg], dry_run=installer_status["dry_run"], capture_output=True)
+        res = run_command(
+            ["dpkg", "-s", each_pkg], dry_run=installer_status["dry_run"], capture_output=True
+        )
         if res.code == 0:
             if "Status: install ok" in res.stdout:
                 p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
