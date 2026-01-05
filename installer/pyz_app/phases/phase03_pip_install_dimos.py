@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
 from ..support.installer_status import installer_status
-from ..support.shell_tooling import run_command, command_exists
+from ..support.shell_tooling import command_exists, run_command
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -32,7 +32,7 @@ def phase3(selected_features: Iterable[str] | None) -> None:
     p.header("Next Phase: UV Pip Installing Dimos")
     if not command_exists("uv"):
         res = run_command(["pip", "install", "uv"], print_command=True)
-    
+
     # some setup.py's (contact_graspnet_pytorch) require numpy (so pip itself will fail while trying to install them)
     # so we preinstall numpy
     res = run_command(["uv", "pip", "install", "numpy"], print_command=True)
