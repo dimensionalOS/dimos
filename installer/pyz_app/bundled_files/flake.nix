@@ -6,7 +6,7 @@
     home-manager.url = "github:nix-community/home-manager/release-25.11";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     flake-utils.url  = "github:numtide/flake-utils";
-    dimos-flake.url  = "github:jeff-hykin/mystery_test_1/59acdf244148b879230aa1dd0dcb1e1191a50b72";
+    dimos-flake.url  = "github:jeff-hykin/mystery_test_1/5aeee8b5f6e60239380eb912ac5ec1825edefb4f";
     dimos-flake.inputs.nixpkgs.follows     = "nixpkgs";
     dimos-flake.inputs.flake-utils.follows = "flake-utils";
     xome.url         = "github:jeff-hykin/xome";

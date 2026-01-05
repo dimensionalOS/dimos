@@ -320,10 +320,15 @@ def apt_install(package_names: list[str]) -> None:
     for idx, each_pkg in enumerate(package_names, start=1):
         if progress and progress.enabled:
             progress.set_current(idx, each_pkg)
-        res = run_command(["dpkg", "-s", each_pkg], dry_run=installer_status["dry_run"])
+        res = run_command(["dpkg", "-s", each_pkg], dry_run=installer_status["dry_run"], capture_output=True)
         if res.code == 0:
-            p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
-            continue
+            if "Status: install ok" in res.stdout:
+                p.sub_header(f"- ✅ looks like {p.highlight(each_pkg)} is already installed")
+                continue
+            else:
+                # FIXME: make a list of all invalid apt-get package names
+                # p.sub_header(f"- 🟠 looks like {p.highlight(each_pkg)} doesn't")
+                continue
 
         p.sub_header(f"\n- installing {p.highlight(each_pkg)}")
         if progress and progress.enabled:
