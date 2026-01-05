@@ -222,12 +222,88 @@ class Agent(AgentSpec):
     def start(self) -> None:
         super().start()
         self.coordinator.start()
+        if self.config.mcp_port:
+            self.start_mcp_server(self.config.mcp_port)
 
     @rpc
     def stop(self) -> None:
         self.coordinator.stop()
         self._agent_stopped = True
         super().stop()
+
+    @rpc
+    def start_mcp_server(self, port: int = 9990) -> None:
+        """Start TCP server for MCP connections."""
+
+        async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+            logger.info("MCP client connected")
+            try:
+                while True:
+                    data = await reader.readline()
+                    if not data:
+                        break
+                    request = json.loads(data.decode())
+                    response = self._handle_mcp_request(request)
+                    writer.write(json.dumps(response).encode() + b"\n")
+                    await writer.drain()
+            finally:
+                writer.close()
+                logger.info("MCP client disconnected")
+
+        async def start_server() -> None:
+            server = await asyncio.start_server(handle_client, "0.0.0.0", port)
+            logger.info(f"MCP TCP server listening on port {port}")
+            await server.serve_forever()
+
+        asyncio.run_coroutine_threadsafe(start_server(), self._loop)
+
+    def _handle_mcp_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Handle MCP JSON-RPC request."""
+        method = request.get("method", "")
+        params = request.get("params", {}) or {}
+        req_id = request.get("id")
+
+        if method == "initialize":
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "dimensional", "version": "1.0.0"},
+                },
+            }
+
+        if method == "tools/list":
+            tools = [
+                {
+                    "name": c.name,
+                    "description": c.schema.get("function", {}).get("description", ""),
+                    "inputSchema": c.schema.get("function", {}).get("parameters", {}),
+                }
+                for c in self.coordinator.skills().values()
+                if not c.hide_skill
+            ]
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
+
+        if method == "tools/call":
+            name, args = params.get("name"), params.get("arguments") or {}
+            call_id = str(uuid.uuid4())
+            self.coordinator.call_skill(call_id, name, args)
+            snapshot = self.coordinator.generate_snapshot()
+            result = snapshot.get(call_id)
+            text = str(result.content()) if result and result.content() else "Skill started"
+            return {
+                "jsonrpc": "2.0",
+                "id": req_id,
+                "result": {"content": [{"type": "text", "text": text}]},
+            }
+
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "error": {"code": -32601, "message": f"Unknown: {method}"},
+        }
 
     def clear_history(self) -> None:
         self._history.clear()

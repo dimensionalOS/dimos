@@ -161,7 +161,7 @@ _common_agentic = autoconnect(
 
 agentic = autoconnect(
     spatial,
-    llm_agent(),
+    llm_agent(mcp_port=9990),
     _common_agentic,
 )
 
