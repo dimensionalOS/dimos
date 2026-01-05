@@ -19,17 +19,39 @@ print("Webcam pipeline running. Press Ctrl+C to stop.")
 coordinator.loop()
 ```
 
-Pick a layout,  `Dashboard`, to the autoconnected modules:
+
 
 ```py
 from dimos.core.blueprints import autoconnect
 from dimos.hardware.camera.module import CameraModule
 from dimos.manipulation.visual_servoing.manipulation_module import ManipulationModule
-from dimos.dashboard.module import Dashboard
-from dimos.dashboard.rerun import layouts, RerunHook
+from dimos.dashboard.module import Dashboard, RerunConnection
 from dimos.msgs.sensor_msgs import Image
 
-layout = layouts.AllTabs(collapse_panels=False)
+class CameraListener(Module):
+    color_image: In[Image] = None  # type: ignore[assignment]
+
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._count = 0
+
+    @rpc
+    def start(self) -> None:
+        super().start()
+        self.rc = RerunConnection() # one connection per process
+
+        def _on_frame(img: Image) -> None:
+            self._count += 1
+            if self._count % 20 == 0:
+                self.rc.log(f"/{self.__class__.__name__}/color_image", img.to_rerun())
+                print(
+                    f"[camera-listener] frame={self._count} ts={img.ts:.3f} "
+                    f"shape={img.height}x{img.width}"
+                )
+
+        print("camera subscribing")
+        unsub = self.color_image.subscribe(_on_frame)
+        self._disposables.add(Disposable(unsub))
 
 blueprint = (
     autoconnect(
@@ -42,18 +64,13 @@ blueprint = (
             ),
         ),
         CameraListener.blueprint(),
-        Dashboard(
-            layout=layout,
+        Dashboard.blueprint(
+            auto_open=True,
             terminal_commands={
                 "lcm-spy": "dimos lcmspy",
                 "skill-spy": "dimos skillspy",
             },
-        ).blueprint(),
-        RerunHook(
-            "color_image",
-            Image,
-            target_entity=layout.entities.spatial2d,
-        ).blueprint(),
+        ),
     )
     .transports({("color_image", Image): pSHMTransport("/cam/image")})
     .global_config(n_dask_workers=1)

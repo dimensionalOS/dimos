@@ -80,7 +80,8 @@ class Dashboard(Module):
         # init starts part 1 (needed before rr.log or rr.send_blueprint)
         # we manually start the gprc here (part 2)
         # we serve our own viewer via a webserver (part 3) which is why spawn=False (we don't want it to spawn its own viewer, although we could)
-        rr.init(rerun_info.logging_id, spawn=False, strict=True, recording_id=rerun_info.logging_id)
+        print("""[Dashboard] calling rr.init""")
+        rr.init(rerun_info.logging_id, spawn=False, recording_id=rerun_info.logging_id)
         # send (basically) an empty blueprint to at least show the user that something is happening
         default_blueprint = rrb.Blueprint(
             rrb.Tabs(
