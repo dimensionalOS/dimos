@@ -1,9 +1,0 @@
-{
-  "package": "types-PySocks",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for types-PySocks>=1.7.1.20251001,<2 pip package on Ubuntu/Debian systems",
-  "notes": "The types-PySocks package is a type stub package that provides type information for PySocks. It is a pure Python package with no compiled components or external system dependencies beyond Python itself. No build tools or additional libraries are required."
-}

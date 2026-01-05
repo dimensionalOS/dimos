@@ -1,9 +1,0 @@
-{
-  "package": "pytest-asyncio==0.26.0",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for pytest-asyncio==0.26.0 pip package on Ubuntu/Debian systems",
-  "notes": "pytest-asyncio is a pure Python plugin for pytest that provides asyncio support for testing async Python code. It has no C extensions or special system-level dependencies beyond Python itself and pip. The package requires pytest>=8.2 and Python>=3.8 as Python dependencies, but these don't introduce additional apt-get requirements. No build tools are needed as it installs from pure Python wheels."
-}

@@ -1,9 +1,0 @@
-{
-  "package": "ftfy",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for ftfy>=6.3.1 pip package on Ubuntu/Debian systems",
-  "notes": "ftfy is a pure Python package for fixing Unicode text encoding issues (mojibake). It only requires wcwidth as a Python dependency, which is also pure Python. No C extensions or system libraries are needed beyond the basic Python runtime environment. Pre-built wheels are available for all platforms."
-}

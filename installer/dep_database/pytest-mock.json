@@ -1,9 +1,0 @@
-{
-  "package": "pytest-mock==3.15.0",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for pytest-mock==3.15.0 pip package on Ubuntu/Debian systems",
-  "notes": "pytest-mock is a pure Python plugin that provides a mocker fixture for pytest. It wraps the mock package from the standard library (unittest.mock). As a pure Python package with only Python dependencies (pytest>=6.2.5), it does not require any additional system-level apt-get packages beyond Python itself and pip. The package is compatible with Python 3.8+."
-}

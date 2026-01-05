@@ -1,8 +1,0 @@
-{
-  "package": "sse-starlette>=2.2.1",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for sse-starlette>=2.2.1 pip package",
-  "notes": "sse-starlette is a pure Python package that provides Server-Sent Events (SSE) support for Starlette and FastAPI frameworks. It enables real-time server-to-client streaming using the SSE protocol. The package is implemented entirely in Python with no native extensions or compiled components. It depends on starlette>=0.49.1 and anyio>=4.7.0, both of which are also pure Python packages. Version 2.2.1+ requires Python 3.8+. There are no system-level library requirements beyond the base Python installation - no build tools, compilers, or additional system libraries are needed. All functionality is provided through pure Python code, making it portable across all platforms without any apt, brew, or nix dependencies."
-}

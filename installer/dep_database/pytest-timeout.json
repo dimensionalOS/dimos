@@ -1,6 +1,0 @@
-{
-  "package": "pytest-timeout",
-  "apt_dependencies": [],
-  "description": "System dependencies required for pytest-timeout==2.4.0 pip package on Ubuntu/Debian systems",
-  "notes": "pytest-timeout is a pure Python package with no native code or system library dependencies. It is a pytest plugin that adds timeout functionality to abort hanging tests. The package only requires Python >= 3.7 and pytest >= 7.0.0 to be installed. It has no apt-get dependencies as it's implemented entirely in Python without any C extensions or system library bindings."
-}

@@ -1,8 +1,0 @@
-{
-  "package": "wasmtime",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for wasmtime pip package",
-  "notes": "Wasmtime is a WebAssembly runtime that ships with pre-built binary wheels for all major platforms (Linux x86_64, Linux aarch64, macOS, Windows). The wheels contain the compiled Wasmtime runtime statically linked, so no external system libraries or compilation tools are required. The package is fully self-contained and works out of the box after pip installation on supported platforms (Python 3.9+ on Windows, macOS, and Linux for x86_64 and arm64 architectures). If building from source (uncommon), Rust toolchain would be required, but PyPI provides pre-compiled wheels for all standard platforms, making system dependencies unnecessary for typical usage."
-}

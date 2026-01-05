@@ -1,8 +1,0 @@
-{
-  "package": "reactivex",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for reactivex pip package",
-  "notes": "reactivex (ReactiveX for Python, also known as RxPY) is a pure Python package with no native code or system library dependencies. It implements reactive programming patterns using observables and requires only Python >= 3.8 to be installed. The package has no system-level dependencies as it's entirely implemented in Python without any C extensions or system library bindings. Installation via pip requires no compilation steps and works identically on all platforms (Linux, macOS, Windows) with just a Python interpreter."
-}

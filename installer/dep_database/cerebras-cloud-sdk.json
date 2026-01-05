@@ -1,8 +1,0 @@
-{
-  "package": "cerebras-cloud-sdk",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for cerebras-cloud-sdk pip package",
-  "notes": "The cerebras-cloud-sdk is a pure Python package that provides an API client for Cerebras Cloud services. It does not require any additional system-level packages beyond a standard Python installation. All dependencies are Python packages installed via pip. The SDK provides access to Cerebras inference API for fast LLM inference."
-}

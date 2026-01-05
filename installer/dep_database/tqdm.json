@@ -1,8 +1,0 @@
-{
-  "package": "tqdm>=4.65.0",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for tqdm>=4.65.0 pip package",
-  "notes": "tqdm is a pure Python package that provides fast, extensible progress bars for loops and command-line applications. It has no system-level dependencies because: (1) it's written entirely in Python with no C extensions or native code requiring compilation, (2) it uses only Python standard library features for terminal manipulation (sys, os, threading, time), (3) it works across all platforms (Linux, macOS, Windows) using Python's built-in terminal handling. The package creates progress bars using ANSI escape codes and terminal width detection through Python's standard shutil.get_terminal_size(). All dependencies (like colorama for Windows support) are Python packages installed via pip. No build tools, system libraries, or external utilities are required for installation or runtime operation."
-}

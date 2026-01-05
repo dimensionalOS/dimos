@@ -1,8 +1,0 @@
-{
-  "package": "plum-dispatch==2.5.7",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for plum-dispatch==2.5.7 pip package",
-  "notes": "plum-dispatch is a pure Python package that implements multiple dispatch (function overloading). It has no system-level dependencies beyond Python itself. The package only requires Python 3.8 or higher and has minimal Python dependencies (beartype>=0.11 for runtime type checking). No C extensions or external libraries are needed, so no apt, brew, or nix packages are required beyond the base Python installation already assumed to be present."
-}

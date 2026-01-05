@@ -1,8 +1,0 @@
-{
-  "package": "pyquaternion>=0.9.9",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for pyquaternion>=0.9.9 pip package",
-  "notes": "pyquaternion is a pure Python library for quaternion mathematics and 3D rotations. It has no native code or system-level dependencies beyond the standard Python runtime. The package depends on numpy for numerical operations, but pyquaternion itself is implemented entirely in Python without any C/C++/Fortran extensions or binary dependencies. Pre-built wheels are available on PyPI and work on all platforms without requiring compilation or system libraries. The only runtime requirement is a working Python installation with numpy (which has its own system dependencies documented separately)."
-}

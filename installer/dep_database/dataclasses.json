@@ -1,6 +1,0 @@
-{
-  "package": "dataclasses",
-  "type": "pip",
-  "apt_dependencies": [],
-  "notes": "Pure Python module with no system dependencies. Part of Python standard library since 3.7, only needed as backport for Python < 3.7"
-}

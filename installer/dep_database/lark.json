@@ -1,8 +1,0 @@
-{
-  "package": "lark",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for lark pip package",
-  "notes": "Lark is a pure Python parsing library that requires no system-level dependencies. It's a modern parsing library that can parse any context-free grammar and build a parse tree automatically. Since it's written entirely in Python with no C extensions or native code, it doesn't require any build tools, compilers, or external libraries. The package works out of the box with just Python and can be installed via pip without any additional system packages."
-}

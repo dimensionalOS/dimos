@@ -1,9 +1,0 @@
-{
-  "package": "types-PyYAML>=6.0.12.20250915,<7",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for types-PyYAML>=6.0.12.20250915,<7 pip package on Ubuntu/Debian systems",
-  "notes": "types-PyYAML is a type stubs package that provides type hints for the PyYAML library. It is used for static type checking with mypy, pyright, and other type checkers. As a pure Python package containing only type stub files (.pyi), it has no compiled components or system library dependencies beyond Python itself. The package is installed at development/type-checking time and has no runtime dependencies. Note that this package only provides type information and does not include the actual PyYAML implementation - you must install pyyaml separately for runtime YAML parsing functionality."
-}

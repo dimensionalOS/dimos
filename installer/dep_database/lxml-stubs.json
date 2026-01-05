@@ -1,9 +1,0 @@
-{
-  "package": "lxml-stubs>=0.5.1,<1",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for lxml-stubs>=0.5.1,<1 pip package on Ubuntu/Debian systems",
-  "notes": "lxml-stubs is a pure Python package containing only PEP 484 type stubs (.pyi files) for the lxml library. It has no compiled code and requires no system-level dependencies beyond Python itself. The package provides type annotations for static type checkers like mypy but does not include or require the actual lxml library. If you need the actual lxml library (which lxml-stubs provides types for), that package has additional system dependencies including libxml2-dev, libxslt1-dev, and their associated libraries."
-}

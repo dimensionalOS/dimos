@@ -1,9 +1,0 @@
-{
-  "package": "textual==3.7.1",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for textual==3.7.1 pip package on Ubuntu/Debian systems",
-  "notes": "Textual is a modern Text User Interface (TUI) framework for Python. It is distributed as a pure Python wheel (py3-none-any) and has no compiled extensions. The package only requires Python 3.8+ and pip for installation. All of its core dependencies (markdown-it-py, rich, typing-extensions, platformdirs) are also pure Python packages. The optional syntax highlighting features (textual[syntax]) use tree-sitter, which provides pre-compiled binary wheels for all major platforms with no additional system library dependencies. For basic installation, only python3 and python3-pip are required."
-}

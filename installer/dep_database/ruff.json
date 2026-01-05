@@ -1,6 +1,0 @@
-{
-  "package": "ruff==0.14.3",
-  "apt_dependencies": [],
-  "description": "System dependencies required for ruff==0.14.3 pip package on Ubuntu/Debian systems",
-  "notes": "Ruff is an extremely fast Python linter and code formatter written in Rust. It is distributed as pre-compiled platform-specific wheels that contain statically-linked binaries. Ruff has no system library dependencies or build requirements - it only requires Python itself to be installed. The wheel includes all necessary compiled code and runs out of the box without any additional apt packages."
-}

@@ -1,9 +1,0 @@
-{
-  "package": "pytest==8.3.5",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for pytest==8.3.5 pip package on Ubuntu/Debian systems",
-  "notes": "pytest is a pure Python testing framework and does not require additional system-level dependencies beyond Python itself. All of pytest's dependencies (iniconfig, packaging, pluggy) are also pure Python packages available via pip. The framework works on Python 3.8+ and only requires the base Python installation and pip package manager."
-}

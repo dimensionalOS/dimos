@@ -1,9 +1,0 @@
-{
-  "package": "nltk",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for nltk pip package on Ubuntu/Debian systems",
-  "notes": "NLTK (Natural Language Toolkit) is a pure Python library and does not require additional system libraries beyond Python itself. However, some NLTK data packages and optional features may benefit from additional tools like java (for Stanford NLP tools), perl, or specific tokenizers, but these are not required for basic NLTK functionality. The library primarily works with downloaded corpora and models accessed through nltk.download()."
-}

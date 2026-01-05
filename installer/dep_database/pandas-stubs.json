@@ -1,9 +1,0 @@
-{
-  "package": "pandas-stubs>=2.3.2.250926,<3",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for pandas-stubs>=2.3.2.250926,<3 pip package on Ubuntu/Debian systems",
-  "notes": "pandas-stubs is a type stubs package that provides type hints for the pandas library. It is used for static type checking with mypy and other type checkers. As a pure Python package containing only type stub files (.pyi), it has no compiled components or system library dependencies beyond Python itself. The package is installed at development/type-checking time and has no runtime dependencies."
-}

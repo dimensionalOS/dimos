@@ -1,9 +1,0 @@
-{
-  "package": "types-protobuf>=6.32.1.20250918,<7",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for types-protobuf>=6.32.1.20250918,<7 pip package on Ubuntu/Debian systems",
-  "notes": "types-protobuf is a type stubs package that provides type hints for the protobuf library. It is used for static type checking with mypy, pyright, and other type checkers. As a pure Python package containing only type stub files (.pyi), it has no compiled components or system library dependencies beyond Python itself. The package is installed at development/type-checking time and has no runtime dependencies. Note that this package only provides type information and does not include the actual protobuf implementation - you must install protobuf separately for runtime Protocol Buffers functionality."
-}

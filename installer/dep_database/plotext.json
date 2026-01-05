@@ -1,8 +1,0 @@
-{
-  "package": "plotext==5.3.2",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for plotext==5.3.2 pip package",
-  "notes": "plotext is a pure Python terminal plotting library that renders plots directly in the terminal using Unicode characters and ANSI colors. The base package (plotext==5.3.2) has no required dependencies and no system-level dependencies - it works out of the box with just Python 3. It doesn't require compilation or linking to system libraries. The package does have optional extras for advanced features: [image] extra requires Pillow for image plotting, [video] extra requires opencv-python, ffpyplayer, pafy, and youtube-dl for video frame plotting, [completion] extra requires shtab for shell completion. These optional features would inherit system dependencies from their respective packages (e.g., Pillow would need image libraries), but the base plotext package itself requires no system dependencies."
-}

@@ -1,8 +1,0 @@
-{
-  "package": "xarm-python-sdk>=1.17.0",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for xarm-python-sdk>=1.17.0 pip package",
-  "notes": "xarm-python-sdk is a pure Python package (py3-none-any wheel) that uses only Python standard library modules. It has no Python package dependencies (requirements.txt is empty) and requires no system-level packages (apt-get, brew, or nix). The SDK provides a Python interface for controlling UFACTORY robotic arms (850, xArm 5/6/7, and Lite6) over network socket connections."
-}

@@ -1,9 +1,0 @@
-{
-  "package": "terminaltexteffects",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for terminaltexteffects==0.12.2 pip package on Ubuntu/Debian systems",
-  "notes": "TerminalTextEffects is a pure Python package with no third-party dependencies. It requires only Python 3.8+ and uses standard ANSI terminal sequences. No additional system libraries or build tools are needed. The package works out of the box with just python3 and python3-pip for installation."
-}

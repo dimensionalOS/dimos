@@ -1,8 +1,0 @@
-{
-  "package": "rxpy-backpressure",
-  "apt_dependencies": [],
-  "brew_dependencies": [],
-  "nix_dependencies": [],
-  "description": "System dependencies required for rxpy-backpressure pip package",
-  "notes": "rxpy-backpressure is a pure Python package that provides simple add-ons to be used with RxPY (Reactive Extensions for Python) to support backpressure. It has no external dependencies and does not require any compiled extensions or system libraries. Therefore, no apt, brew, or nix system dependencies are needed - the package can be installed directly via pip without any system-level prerequisites beyond a Python installation."
-}

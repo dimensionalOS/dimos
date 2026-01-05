@@ -1,9 +1,0 @@
-{
-  "package": "requests-mock==1.12.1",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for requests-mock==1.12.1 pip package on Ubuntu/Debian systems",
-  "notes": "requests-mock is a pure Python library that provides a mock/stub implementation of the requests library for testing purposes. It has no compiled extensions or system-level dependencies beyond Python itself. The package depends on the 'requests' library (also pure Python) and 'six' for Python 2/3 compatibility. No additional apt packages are required beyond python3 and python3-pip."
-}

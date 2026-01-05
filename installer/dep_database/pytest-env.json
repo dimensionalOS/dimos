@@ -1,9 +1,0 @@
-{
-  "package": "pytest-env==1.1.5",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for pytest-env==1.1.5 pip package on Ubuntu/Debian systems",
-  "notes": "pytest-env is a pytest plugin for setting environment variables from pytest configuration files. It is a pure Python package that depends only on pytest. The package has no native extensions or system-level library requirements beyond the base Python installation and pip package manager. All dependencies (pytest and its dependencies) are available via pip."
-}

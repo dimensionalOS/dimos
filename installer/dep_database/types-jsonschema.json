@@ -1,9 +1,0 @@
-{
-  "package": "types-jsonschema",
-  "apt_dependencies": [
-    "python3",
-    "python3-pip"
-  ],
-  "description": "System dependencies required for types-jsonschema>=4.25.1.20251009,<5 pip package on Ubuntu/Debian systems",
-  "notes": "The types-jsonschema package is a pure Python type stub package from the typeshed project. It contains only type hint files (.pyi) with no compiled extensions or runtime code. Only python3 and python3-pip are required for installation."
-}
