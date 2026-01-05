@@ -15,6 +15,7 @@
 from dimos.hardware.sensors.camera.realsense.camera import (
     RealSenseCamera,
     RealSenseCameraConfig,
+    realsense_camera,
 )
 
-__all__ = ["RealSenseCamera", "RealSenseCameraConfig"]
+__all__ = ["RealSenseCamera", "RealSenseCameraConfig", "realsense_camera"]

@@ -477,3 +477,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+realsense_camera = RealSenseCamera.blueprint
+
+__all__ = ["RealSenseCamera", "RealSenseCameraConfig", "realsense_camera"]
