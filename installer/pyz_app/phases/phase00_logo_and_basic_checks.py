@@ -89,7 +89,7 @@ def phase0():
         time.sleep(timeout)
     logo.stop()
     p.clear_screen()
-    
+
     # ask user project question up front
     project_dir = get_project_directory()
     if installer_status.get("template_repo"):
