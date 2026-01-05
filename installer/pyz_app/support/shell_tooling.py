@@ -68,6 +68,8 @@ def _normalize_cmd(cmd: str | Sequence[str] | Iterable[str]) -> list[str]:
 def command_exists(name: str) -> bool:
     return shutil.which(name) is not None
 
+def shell_escape(cmd: str) -> str:
+    return "'" + cmd.replace("'", "'\"'\"'") + "'"
 
 def run_command(
     cmd: str | Sequence[str] | Iterable[str],
@@ -83,6 +85,7 @@ def run_command(
     combine_streams: bool = True,
 ) -> CommandResult:
     cmd_list = _normalize_cmd(cmd)
+    cmd_string = " ".join([ (each if ' ' not in each else shell_escape(each)) for each in cmd_list ])
 
     # If running as root, strip leading sudo to avoid nested privilege escalation issues (e.g., inside Docker).
     if cmd_list and cmd_list[0] == "sudo":
@@ -97,9 +100,9 @@ def run_command(
 
     if dry_run:
         if print_command:
-            print(f"DRY: $ {' '.join(cmd_list)}")
+            print(f"DRY: $ {cmd_string}")
         else:
-            print(f"DRY: > {' '.join(cmd_list)}")
+            print(f"DRY: > {cmd_string}")
         return CommandResult(
             code=0,
             _stdout="" if capture_output else None,
@@ -108,7 +111,7 @@ def run_command(
         )
 
     if print_command:
-        print(f"$ {' '.join(cmd_list)}")
+        print(f"$ {cmd_string}")
 
     if stream_callback and output_preview:
         raise ValueError("stream_callback and output_preview cannot be used together")
