@@ -547,6 +547,7 @@ def maybe_write(path: Path, content: str) -> bool:
     path.write_text(content)
     return True
 
+
 GITIGNORE_CONTENT = dedent("""\
 # generic ignore pattern
 **/*.ignore
@@ -766,6 +767,7 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 """)
+
 
 def init_repo_with_gitignore(repo_dir: str | Path) -> None:
     repo_dir = Path(repo_dir)

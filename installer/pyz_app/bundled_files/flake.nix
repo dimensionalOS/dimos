@@ -1,6 +1,6 @@
 {
   description = "YOUR_DIMOS_PROJECT_DESCRIPTION";
-  
+
   inputs = {
     nixpkgs.url      = "github:NixOS/nixpkgs/nixos-25.11";
     home-manager.url = "github:nix-community/home-manager/release-25.11";
