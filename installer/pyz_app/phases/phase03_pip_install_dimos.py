@@ -20,19 +20,22 @@ from typing import TYPE_CHECKING
 from ..support import prompt_tools as p
 from ..support.constants import discord_url
 from ..support.installer_status import installer_status
-from ..support.shell_tooling import run_command
+from ..support.shell_tooling import run_command, command_exists
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
 def phase3(selected_features: Iterable[str] | None) -> None:
-    """Install dimos via pip, handling selected feature extras."""
+    """Install dimos via uv pip, handling selected feature extras."""
     features = list(selected_features) if selected_features else []
-    p.header("Next Phase: Pip Installing Dimos")
+    p.header("Next Phase: UV Pip Installing Dimos")
+    if not command_exists("uv"):
+        res = run_command(["pip", "install", "uv"], print_command=True)
+    
     # some setup.py's (contact_graspnet_pytorch) require numpy (so pip itself will fail while trying to install them)
     # so we preinstall numpy
-    res = run_command(["pip", "install", "numpy"], print_command=True)
+    res = run_command(["uv", "pip", "install", "numpy"], print_command=True)
     selected_features_string = ""
     if features:
         selected_features_string = f"[{','.join(features)}]"
@@ -43,7 +46,7 @@ def phase3(selected_features: Iterable[str] | None) -> None:
     if installer_status.get("dev"):
         extra_args.append("--no-cache-dir")
 
-    res = run_command(["pip", "install", *extra_args, package_name], print_command=True)
+    res = run_command(["uv", "pip", "install", *extra_args, package_name], print_command=True)
     if res.code != 0:
         print("")
         p.error(
