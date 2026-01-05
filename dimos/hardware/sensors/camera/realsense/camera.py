@@ -61,6 +61,7 @@ class RealSenseCameraConfig(ModuleConfig):
     enable_depth: bool = True
     enable_pointcloud: bool = False
     pointcloud_fps: float = 5.0
+    camera_info_fps: float = 1.0
 
 
 class RealSenseCamera(Module[RealSenseCameraConfig]):
@@ -89,6 +90,7 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         self._latest_depth_img: Image | None = None
         self._pointcloud_lock = threading.Lock()
         self._pointcloud_disposable: Disposable | None = None
+        self._camera_info_disposable: Disposable | None = None
 
     @property
     def _camera_link(self) -> str:
@@ -162,7 +164,22 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                 on_error=lambda e: print(f"Pointcloud error: {e}"),
             )
 
+        interval_sec = 1.0 / self.config.camera_info_fps
+        self._camera_info_disposable = backpressure(rx.interval(interval_sec)).subscribe(
+            on_next=lambda _: self._publish_camera_info(),
+            on_error=lambda e: print(f"CameraInfo error: {e}"),
+        )
+
         return "started"
+
+    def _publish_camera_info(self) -> None:
+        ts = time.time()
+        if self._color_camera_info:
+            self._color_camera_info.ts = ts
+            self.camera_info.publish(self._color_camera_info)
+        if self._depth_camera_info:
+            self._depth_camera_info.ts = ts
+            self.depth_camera_info.publish(self._depth_camera_info)
 
     def _build_camera_info(self) -> None:
         if self._profile is None:
@@ -270,9 +287,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                 )
                 self.color_image.publish(color_img)
 
-                if self._color_camera_info:
-                    self._color_camera_info.ts = ts
-                    self.camera_info.publish(self._color_camera_info)
 
             # Process depth
             depth_img = None
@@ -292,9 +306,6 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                 )
                 self.depth_image.publish(depth_img)
 
-                if self._depth_camera_info:
-                    self._depth_camera_info.ts = ts
-                    self.depth_camera_info.publish(self._depth_camera_info)
 
             # Store latest images for pointcloud generation
             if self.config.enable_pointcloud and color_img is not None and depth_img is not None:
@@ -380,6 +391,7 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
                 camera_info=self._color_camera_info,
                 depth_scale=self._depth_scale,
             )
+            pcd = pcd.voxel_downsample(0.005)
             self.pointcloud.publish(pcd)
         except Exception as e:
             print(f"Pointcloud generation error: {e}")
@@ -392,6 +404,10 @@ class RealSenseCamera(Module[RealSenseCameraConfig]):
         if self._pointcloud_disposable:
             self._pointcloud_disposable.dispose()
             self._pointcloud_disposable = None
+
+        if self._camera_info_disposable:
+            self._camera_info_disposable.dispose()
+            self._camera_info_disposable = None
 
         # Stop pipeline first to unblock wait_for_frames()
         if self._pipeline:

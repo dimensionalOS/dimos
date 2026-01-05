@@ -12,861 +12,544 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from types import TracebackType
-from typing import Any
+from __future__ import annotations
 
-import cv2
-from dimos_lcm.sensor_msgs import CameraInfo
+import atexit
+from dataclasses import dataclass, field
+import threading
+import time
+from typing import TYPE_CHECKING
+
 import numpy as np
-import open3d as o3d  # type: ignore[import-untyped]
+import cv2
 import pyzed.sl as sl
-from reactivex import interval
-
-from dimos.core import Module, Out, rpc
-from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Transform, Vector3
-
-# Import LCM message types
-from dimos.msgs.sensor_msgs import Image, ImageFormat
-from dimos.msgs.std_msgs import Header
-from dimos.protocol.tf import TF
-from dimos.utils.logging_config import setup_logger
-
-logger = setup_logger()
-
-
-class ZEDCamera:
-    """ZED Camera capture node with neural depth processing."""
-
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        camera_id: int = 0,
-        resolution: sl.RESOLUTION = sl.RESOLUTION.HD720,
-        depth_mode: sl.DEPTH_MODE = sl.DEPTH_MODE.NEURAL,
-        fps: int = 30,
-        **kwargs,
-    ) -> None:
-        """
-        Initialize ZED Camera.
-
-        Args:
-            camera_id: Camera ID (0 for first ZED)
-            resolution: ZED camera resolution
-            depth_mode: Depth computation mode
-            fps: Camera frame rate (default: 30)
-        """
-        if sl is None:
-            raise ImportError("ZED SDK not installed. Please install pyzed package.")
-
-        super().__init__(**kwargs)
-
-        self.camera_id = camera_id
-        self.resolution = resolution
-        self.depth_mode = depth_mode
-        self.fps = fps
-
-        # Initialize ZED camera
-        self.zed = sl.Camera()
-        self.init_params = sl.InitParameters()
-        self.init_params.camera_resolution = resolution
-        self.init_params.depth_mode = depth_mode
-        self.init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
-        self.init_params.coordinate_units = sl.UNIT.METER
-        self.init_params.camera_fps = fps
-
-        # Set camera ID using the correct parameter name
-        if hasattr(self.init_params, "set_from_camera_id"):
-            self.init_params.set_from_camera_id(camera_id)
-        elif hasattr(self.init_params, "input"):
-            self.init_params.input.set_from_camera_id(camera_id)
-
-        # Use enable_fill_mode instead of SENSING_MODE.STANDARD
-        self.runtime_params = sl.RuntimeParameters()
-        self.runtime_params.enable_fill_mode = True  # False = STANDARD mode, True = FILL mode
-
-        # Image containers
-        self.image_left = sl.Mat()
-        self.image_right = sl.Mat()
-        self.depth_map = sl.Mat()
-        self.point_cloud = sl.Mat()
-        self.confidence_map = sl.Mat()
-
-        # Positional tracking
-        self.tracking_enabled = False
-        self.tracking_params = sl.PositionalTrackingParameters()
-        self.camera_pose = sl.Pose()
-        self.sensors_data = sl.SensorsData()
-
-        self.is_opened = False
-
-    def open(self) -> bool:
-        """Open the ZED camera."""
-        try:
-            err = self.zed.open(self.init_params)
-            if err != sl.ERROR_CODE.SUCCESS:
-                logger.error(f"Failed to open ZED camera: {err}")
-                return False
-
-            self.is_opened = True
-            logger.info("ZED camera opened successfully")
-
-            # Get camera information
-            info = self.zed.get_camera_information()
-            logger.info(f"ZED Camera Model: {info.camera_model}")
-            logger.info(f"Serial Number: {info.serial_number}")
-            logger.info(f"Firmware: {info.camera_configuration.firmware_version}")
-
-            return True
-
-        except Exception as e:
-            logger.error(f"Error opening ZED camera: {e}")
-            return False
-
-    def enable_positional_tracking(
-        self,
-        enable_area_memory: bool = False,
-        enable_pose_smoothing: bool = True,
-        enable_imu_fusion: bool = True,
-        set_floor_as_origin: bool = False,
-        initial_world_transform: sl.Transform | None = None,
-    ) -> bool:
-        """
-        Enable positional tracking on the ZED camera.
-
-        Args:
-            enable_area_memory: Enable area learning to correct tracking drift
-            enable_pose_smoothing: Enable pose smoothing
-            enable_imu_fusion: Enable IMU fusion if available
-            set_floor_as_origin: Set the floor as origin (useful for robotics)
-            initial_world_transform: Initial world transform
-
-        Returns:
-            True if tracking enabled successfully
-        """
-        if not self.is_opened:
-            logger.error("ZED camera not opened")
-            return False
-
-        try:
-            # Configure tracking parameters
-            self.tracking_params.enable_area_memory = enable_area_memory
-            self.tracking_params.enable_pose_smoothing = enable_pose_smoothing
-            self.tracking_params.enable_imu_fusion = enable_imu_fusion
-            self.tracking_params.set_floor_as_origin = set_floor_as_origin
-
-            if initial_world_transform is not None:
-                self.tracking_params.initial_world_transform = initial_world_transform
-
-            # Enable tracking
-            err = self.zed.enable_positional_tracking(self.tracking_params)
-            if err != sl.ERROR_CODE.SUCCESS:
-                logger.error(f"Failed to enable positional tracking: {err}")
-                return False
-
-            self.tracking_enabled = True
-            logger.info("Positional tracking enabled successfully")
-            return True
-
-        except Exception as e:
-            logger.error(f"Error enabling positional tracking: {e}")
-            return False
-
-    def disable_positional_tracking(self) -> None:
-        """Disable positional tracking."""
-        if self.tracking_enabled:
-            self.zed.disable_positional_tracking()
-            self.tracking_enabled = False
-            logger.info("Positional tracking disabled")
-
-    def get_pose(
-        self, reference_frame: sl.REFERENCE_FRAME = sl.REFERENCE_FRAME.WORLD
-    ) -> dict[str, Any] | None:
-        """
-        Get the current camera pose.
-
-        Args:
-            reference_frame: Reference frame (WORLD or CAMERA)
-
-        Returns:
-            Dictionary containing:
-                - position: [x, y, z] in meters
-                - rotation: [x, y, z, w] quaternion
-                - euler_angles: [roll, pitch, yaw] in radians
-                - timestamp: Pose timestamp in nanoseconds
-                - confidence: Tracking confidence (0-100)
-                - valid: Whether pose is valid
-        """
-        if not self.tracking_enabled:
-            logger.error("Positional tracking not enabled")
-            return None
-
-        try:
-            # Get current pose
-            tracking_state = self.zed.get_position(self.camera_pose, reference_frame)
-
-            if tracking_state == sl.POSITIONAL_TRACKING_STATE.OK:
-                # Extract translation
-                translation = self.camera_pose.get_translation().get()
-
-                # Extract rotation (quaternion)
-                rotation = self.camera_pose.get_orientation().get()
-
-                # Get Euler angles
-                euler = self.camera_pose.get_euler_angles()
-
-                return {
-                    "position": translation.tolist(),
-                    "rotation": rotation.tolist(),  # [x, y, z, w]
-                    "euler_angles": euler.tolist(),  # [roll, pitch, yaw]
-                    "timestamp": self.camera_pose.timestamp.get_nanoseconds(),
-                    "confidence": self.camera_pose.pose_confidence,
-                    "valid": True,
-                    "tracking_state": str(tracking_state),
-                }
-            else:
-                logger.warning(f"Tracking state: {tracking_state}")
-                return {"valid": False, "tracking_state": str(tracking_state)}
-
-        except Exception as e:
-            logger.error(f"Error getting pose: {e}")
-            return None
-
-    def get_imu_data(self) -> dict[str, Any] | None:
-        """
-        Get IMU sensor data if available.
-
-        Returns:
-            Dictionary containing:
-                - orientation: IMU orientation quaternion [x, y, z, w]
-                - angular_velocity: [x, y, z] in rad/s
-                - linear_acceleration: [x, y, z] in m/s²
-                - timestamp: IMU data timestamp
-        """
-        if not self.is_opened:
-            logger.error("ZED camera not opened")
-            return None
-
-        try:
-            # Get sensors data synchronized with images
-            if (
-                self.zed.get_sensors_data(self.sensors_data, sl.TIME_REFERENCE.IMAGE)
-                == sl.ERROR_CODE.SUCCESS
-            ):
-                imu = self.sensors_data.get_imu_data()
-
-                # Get IMU orientation
-                imu_orientation = imu.get_pose().get_orientation().get()
-
-                # Get angular velocity
-                angular_vel = imu.get_angular_velocity()
-
-                # Get linear acceleration
-                linear_accel = imu.get_linear_acceleration()
-
-                return {
-                    "orientation": imu_orientation.tolist(),
-                    "angular_velocity": angular_vel.tolist(),
-                    "linear_acceleration": linear_accel.tolist(),
-                    "timestamp": self.sensors_data.timestamp.get_nanoseconds(),
-                    "temperature": self.sensors_data.temperature.get(sl.SENSOR_LOCATION.IMU),
-                }
-            else:
-                return None
-
-        except Exception as e:
-            logger.error(f"Error getting IMU data: {e}")
-            return None
-
-    def capture_frame(
-        self,
-    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None]:  # type: ignore[type-arg]
-        """
-        Capture a frame from ZED camera.
-
-        Returns:
-            Tuple of (left_image, right_image, depth_map) as numpy arrays
-        """
-        if not self.is_opened:
-            logger.error("ZED camera not opened")
-            return None, None, None
-
-        try:
-            # Grab frame
-            if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
-                # Retrieve left image
-                self.zed.retrieve_image(self.image_left, sl.VIEW.LEFT)
-                left_img = self.image_left.get_data()[:, :, :3]  # Remove alpha channel
-
-                # Retrieve right image
-                self.zed.retrieve_image(self.image_right, sl.VIEW.RIGHT)
-                right_img = self.image_right.get_data()[:, :, :3]  # Remove alpha channel
-
-                # Retrieve depth map
-                self.zed.retrieve_measure(self.depth_map, sl.MEASURE.DEPTH)
-                depth = self.depth_map.get_data()
-
-                return left_img, right_img, depth
-            else:
-                logger.warning("Failed to grab frame from ZED camera")
-                return None, None, None
-
-        except Exception as e:
-            logger.error(f"Error capturing frame: {e}")
-            return None, None, None
-
-    def capture_pointcloud(self) -> o3d.geometry.PointCloud | None:
-        """
-        Capture point cloud from ZED camera.
-
-        Returns:
-            Open3D point cloud with XYZ coordinates and RGB colors
-        """
-        if not self.is_opened:
-            logger.error("ZED camera not opened")
-            return None
-
-        try:
-            if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
-                # Retrieve point cloud with RGBA data
-                self.zed.retrieve_measure(self.point_cloud, sl.MEASURE.XYZRGBA)
-                point_cloud_data = self.point_cloud.get_data()
-
-                # Convert to numpy array format
-                _height, _width = point_cloud_data.shape[:2]
-                points = point_cloud_data.reshape(-1, 4)
-
-                # Extract XYZ coordinates
-                xyz = points[:, :3]
-
-                # Extract and unpack RGBA color data from 4th channel
-                rgba_packed = points[:, 3].view(np.uint32)
-
-                # Unpack RGBA: each 32-bit value contains 4 bytes (R, G, B, A)
-                colors_rgba = np.zeros((len(rgba_packed), 4), dtype=np.uint8)
-                colors_rgba[:, 0] = rgba_packed & 0xFF  # R
-                colors_rgba[:, 1] = (rgba_packed >> 8) & 0xFF  # G
-                colors_rgba[:, 2] = (rgba_packed >> 16) & 0xFF  # B
-                colors_rgba[:, 3] = (rgba_packed >> 24) & 0xFF  # A
-
-                # Extract RGB (ignore alpha) and normalize to [0, 1]
-                colors_rgb = colors_rgba[:, :3].astype(np.float64) / 255.0
-
-                # Filter out invalid points (NaN or inf)
-                valid = np.isfinite(xyz).all(axis=1)
-                valid_xyz = xyz[valid]
-                valid_colors = colors_rgb[valid]
-
-                # Create Open3D point cloud
-                pcd = o3d.geometry.PointCloud()
-
-                if len(valid_xyz) > 0:
-                    pcd.points = o3d.utility.Vector3dVector(valid_xyz)
-                    pcd.colors = o3d.utility.Vector3dVector(valid_colors)
-
-                return pcd
-            else:
-                logger.warning("Failed to grab frame for point cloud")
-                return None
-
-        except Exception as e:
-            logger.error(f"Error capturing point cloud: {e}")
-            return None
-
-    def capture_frame_with_pose(
-        self,
-    ) -> tuple[np.ndarray | None, np.ndarray | None, np.ndarray | None, dict[str, Any] | None]:  # type: ignore[type-arg]
-        """
-        Capture a frame with synchronized pose data.
-
-        Returns:
-            Tuple of (left_image, right_image, depth_map, pose_data)
-        """
-        if not self.is_opened:
-            logger.error("ZED camera not opened")
-            return None, None, None, None
-
-        try:
-            # Grab frame
-            if self.zed.grab(self.runtime_params) == sl.ERROR_CODE.SUCCESS:
-                # Get images and depth
-                left_img, right_img, depth = self.capture_frame()
-
-                # Get synchronized pose if tracking is enabled
-                pose_data = None
-                if self.tracking_enabled:
-                    pose_data = self.get_pose()
-
-                return left_img, right_img, depth, pose_data
-            else:
-                logger.warning("Failed to grab frame from ZED camera")
-                return None, None, None, None
-
-        except Exception as e:
-            logger.error(f"Error capturing frame with pose: {e}")
-            return None, None, None, None
-
-    def close(self) -> None:
-        """Close the ZED camera."""
-        if self.is_opened:
-            # Disable tracking if enabled
-            if self.tracking_enabled:
-                self.disable_positional_tracking()
-
-            self.zed.close()
-            self.is_opened = False
-            logger.info("ZED camera closed")
-
-    def get_camera_info(self) -> dict[str, Any]:
-        """Get ZED camera information and calibration parameters."""
-        if not self.is_opened:
-            return {}
-
-        try:
-            info = self.zed.get_camera_information()
-            calibration = info.camera_configuration.calibration_parameters
-
-            # In ZED SDK 4.0+, the baseline calculation has changed
-            # Try to get baseline from the stereo parameters
-            try:
-                # Method 1: Try to get from stereo parameters if available
-                if hasattr(calibration, "getCameraBaseline"):
-                    baseline = calibration.getCameraBaseline()
-                else:
-                    # Method 2: Calculate from left and right camera positions
-                    # The baseline is the distance between left and right cameras
-
-                    # Try different ways to get baseline in SDK 4.0+
-                    if hasattr(info.camera_configuration, "calibration_parameters_raw"):
-                        # Use raw calibration if available
-                        raw_calib = info.camera_configuration.calibration_parameters_raw
-                        if hasattr(raw_calib, "T"):
-                            baseline = abs(raw_calib.T[0])
-                        else:
-                            baseline = 0.12  # Default ZED-M baseline approximation
-                    else:
-                        # Use default baseline for ZED-M
-                        baseline = 0.12  # ZED-M baseline is approximately 120mm
-            except:
-                baseline = 0.12  # Fallback to approximate ZED-M baseline
-
-            return {
-                "model": str(info.camera_model),
-                "serial_number": info.serial_number,
-                "firmware": info.camera_configuration.firmware_version,
-                "resolution": {
-                    "width": info.camera_configuration.resolution.width,
-                    "height": info.camera_configuration.resolution.height,
-                },
-                "fps": info.camera_configuration.fps,
-                "left_cam": {
-                    "fx": calibration.left_cam.fx,
-                    "fy": calibration.left_cam.fy,
-                    "cx": calibration.left_cam.cx,
-                    "cy": calibration.left_cam.cy,
-                    "k1": calibration.left_cam.disto[0],
-                    "k2": calibration.left_cam.disto[1],
-                    "p1": calibration.left_cam.disto[2],
-                    "p2": calibration.left_cam.disto[3],
-                    "k3": calibration.left_cam.disto[4],
-                },
-                "right_cam": {
-                    "fx": calibration.right_cam.fx,
-                    "fy": calibration.right_cam.fy,
-                    "cx": calibration.right_cam.cx,
-                    "cy": calibration.right_cam.cy,
-                    "k1": calibration.right_cam.disto[0],
-                    "k2": calibration.right_cam.disto[1],
-                    "p1": calibration.right_cam.disto[2],
-                    "p2": calibration.right_cam.disto[3],
-                    "k3": calibration.right_cam.disto[4],
-                },
-                "baseline": baseline,
-            }
-        except Exception as e:
-            logger.error(f"Error getting camera info: {e}")
-            return {}
-
-    def calculate_intrinsics(self):  # type: ignore[no-untyped-def]
-        """Calculate camera intrinsics from ZED calibration."""
-        info = self.get_camera_info()
-        if not info:
-            return super().calculate_intrinsics()  # type: ignore[misc]
-
-        left_cam = info.get("left_cam", {})
-        resolution = info.get("resolution", {})
-
-        return {
-            "focal_length_x": left_cam.get("fx", 0),
-            "focal_length_y": left_cam.get("fy", 0),
-            "principal_point_x": left_cam.get("cx", 0),
-            "principal_point_y": left_cam.get("cy", 0),
-            "baseline": info.get("baseline", 0),
-            "resolution_width": resolution.get("width", 0),
-            "resolution_height": resolution.get("height", 0),
-        }
-
-    def __enter__(self):  # type: ignore[no-untyped-def]
-        """Context manager entry."""
-        if not self.open():
-            raise RuntimeError("Failed to open ZED camera")
-        return self
-
-    def __exit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc_val: BaseException | None,
-        exc_tb: TracebackType | None,
-    ) -> None:
-        """Context manager exit."""
-        self.close()
-
-
-class ZEDModule(Module):
-    """
-    Dask module for ZED camera that publishes sensor data via LCM.
-
-    Publishes:
-        - /zed/color_image: RGB camera images
-        - /zed/depth_image: Depth images
-        - /zed/camera_info: Camera calibration information
-        - /zed/pose: Camera pose (if tracking enabled)
-    """
-
-    # Define LCM outputs
+import reactivex as rx
+from scipy.spatial.transform import Rotation
+
+from dimos.core import Module, ModuleConfig, Out, rpc
+from dimos.core.module_coordinator import ModuleCoordinator
+from dimos.core.transport import LCMTransport
+from dimos.msgs.geometry_msgs import Quaternion, Transform, Vector3
+from dimos.msgs.sensor_msgs import CameraInfo
+from dimos.msgs.sensor_msgs.Image import Image, ImageFormat
+from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
+from dimos.robot.foxglove_bridge import FoxgloveBridge
+from dimos.utils.reactive import backpressure
+
+if TYPE_CHECKING:
+    from reactivex.disposable import Disposable
+
+OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
+
+
+def default_base_transform() -> Transform:
+    return Transform(
+        translation=Vector3(0.0, 0.0, 0.0),
+        rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+        frame_id="base_link",
+        child_frame_id="camera_link",
+    )
+
+
+@dataclass
+class ZEDExtrinsics:
+    rotation: np.ndarray
+    translation: np.ndarray
+
+
+@dataclass
+class ZEDCameraConfig(ModuleConfig):
+    width: int = 1280
+    height: int = 720
+    fps: int = 15
+    camera_name: str = "camera"
+    base_transform: Transform | None = field(default_factory=default_base_transform)
+    camera_id: int = 0
+    serial_number: int | str | None = None
+    resolution: str | None = None
+    depth_mode: str | sl.DEPTH_MODE = "NEURAL"
+    align_depth_to_color: bool = True
+    enable_depth: bool = True
+    enable_pointcloud: bool = False
+    pointcloud_fps: float = 5.0
+    camera_info_fps: float = 1.0
+    enable_fill_mode: bool = False
+    enable_tracking: bool = True
+    enable_imu_fusion: bool = True
+    enable_pose_smoothing: bool = True
+    enable_area_memory: bool = False
+    set_floor_as_origin: bool = True
+    world_frame: str = "world"
+
+
+class ZEDCamera(Module[ZEDCameraConfig]):
     color_image: Out[Image]
     depth_image: Out[Image]
+    pointcloud: Out[PointCloud2]
     camera_info: Out[CameraInfo]
-    pose: Out[PoseStamped]
+    depth_camera_info: Out[CameraInfo]
 
-    def __init__(  # type: ignore[no-untyped-def]
-        self,
-        camera_id: int = 0,
-        resolution: str = "HD720",
-        depth_mode: str = "NEURAL",
-        fps: int = 30,
-        enable_tracking: bool = True,
-        enable_imu_fusion: bool = True,
-        set_floor_as_origin: bool = True,
-        publish_rate: float = 30.0,
-        recording_path: str | None = None,
-        **kwargs,
-    ) -> None:
-        """
-        Initialize ZED Module.
+    config: ZEDCameraConfig
+    default_config = ZEDCameraConfig
 
-        Args:
-            camera_id: Camera ID (0 for first ZED)
-            resolution: Resolution string ("HD720", "HD1080", "HD2K", "VGA")
-            depth_mode: Depth mode string ("NEURAL", "ULTRA", "QUALITY", "PERFORMANCE")
-            fps: Camera frame rate
-            enable_tracking: Enable positional tracking
-            enable_imu_fusion: Enable IMU fusion for tracking
-            set_floor_as_origin: Set floor as origin for tracking
-            publish_rate: Rate to publish messages (Hz)
-            frame_id: TF frame ID for messages
-            recording_path: Path to save recorded data
-        """
-        super().__init__(**kwargs)
-
-        self.camera_id = camera_id
-        self.fps = fps
-        self.enable_tracking = enable_tracking
-        self.enable_imu_fusion = enable_imu_fusion
-        self.set_floor_as_origin = set_floor_as_origin
-        self.publish_rate = publish_rate
-        self.recording_path = recording_path
-
-        # Convert string parameters to ZED enums
-        self.resolution = getattr(sl.RESOLUTION, resolution, sl.RESOLUTION.HD720)
-        self.depth_mode = getattr(sl.DEPTH_MODE, depth_mode, sl.DEPTH_MODE.NEURAL)
-
-        # Internal state
-        self.zed_camera = None
+    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
+        super().__init__(*args, **kwargs)
+        self._zed: sl.Camera | None = None
+        self._init_params: sl.InitParameters | None = None
+        self._runtime_params: sl.RuntimeParameters | None = None
         self._running = False
-        self._subscription = None
-        self._sequence = 0
+        self._thread: threading.Thread | None = None
+        self._color_camera_info: CameraInfo | None = None
+        self._depth_camera_info: CameraInfo | None = None
+        self._depth_scale: float = 1.0
+        self._color_to_depth_extrinsics: ZEDExtrinsics | None = None
+        self._latest_color_img: Image | None = None
+        self._latest_depth_img: Image | None = None
+        self._pointcloud_lock = threading.Lock()
+        self._pointcloud_disposable: Disposable | None = None
+        self._image_left: sl.Mat | None = None
+        self._depth_map: sl.Mat | None = None
+        self._pose: sl.Pose | None = None
+        self._tracking_enabled = False
+        self._stream_width = self.config.width
+        self._stream_height = self.config.height
+        self._camera_info: sl.CameraInformation | None = None
+        self._camera_info_disposable: Disposable | None = None
 
-        # Initialize TF publisher
-        self.tf = TF()
+    def _publish_camera_info(self) -> None:
+        ts = time.time()
+        if self._color_camera_info:
+            self._color_camera_info.ts = ts
+            self.camera_info.publish(self._color_camera_info)
+        if self._depth_camera_info:
+            self._depth_camera_info.ts = ts
+            self.depth_camera_info.publish(self._depth_camera_info)
 
-        # Initialize storage for recording if path provided
-        self.storages: dict[str, Any] | None = None
-        if self.recording_path:
-            from dimos.utils.testing import TimedSensorStorage
+    @property
+    def _camera_link(self) -> str:
+        return f"{self.config.camera_name}_link"
 
-            self.storages = {
-                "color": TimedSensorStorage(f"{self.recording_path}/color"),
-                "depth": TimedSensorStorage(f"{self.recording_path}/depth"),
-                "pose": TimedSensorStorage(f"{self.recording_path}/pose"),
-                "camera_info": TimedSensorStorage(f"{self.recording_path}/camera_info"),
-            }
-            logger.info(f"Recording enabled - saving to {self.recording_path}")
+    @property
+    def _color_frame(self) -> str:
+        return f"{self.config.camera_name}_color_frame"
 
-        logger.info(f"ZEDModule initialized for camera {camera_id}")
+    @property
+    def _color_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_color_optical_frame"
+
+    @property
+    def _depth_frame(self) -> str:
+        return f"{self.config.camera_name}_depth_frame"
+
+    @property
+    def _depth_optical_frame(self) -> str:
+        return f"{self.config.camera_name}_depth_optical_frame"
+
+    @property
+    def _aligned_depth_to_color_frame(self) -> str:
+        return f"{self.config.camera_name}_aligned_depth_to_color_frame"
 
     @rpc
-    def start(self) -> None:
-        """Start the ZED module and begin publishing data."""
-        if self._running:
-            logger.warning("ZED module already running")
+    def start(self) -> str:
+        self._zed = sl.Camera()
+        self._init_params = sl.InitParameters()
+        if self.config.resolution:
+            self._init_params.camera_resolution = getattr(sl.RESOLUTION, self.config.resolution)
+        else:
+            self._init_params.camera_resolution = sl.RESOLUTION.HD720
+        self._init_params.camera_fps = self.config.fps
+        self._init_params.depth_mode = sl.DEPTH_MODE.NEURAL
+        self._init_params.coordinate_system = sl.COORDINATE_SYSTEM.RIGHT_HANDED_Z_UP_X_FWD
+        self._init_params.coordinate_units = sl.UNIT.METER
+        if self.config.serial_number is not None:
+            self._init_params.set_from_serial_number(int(self.config.serial_number))
+        else:
+            self._init_params.set_from_camera_id(self.config.camera_id)
+
+        err = self._zed.open(self._init_params)
+        if err != sl.ERROR_CODE.SUCCESS:
+            print(f"Failed to open ZED camera: {err}")
+            self._zed = None
+            return "failed"
+
+        self._runtime_params = sl.RuntimeParameters()
+        self._runtime_params.enable_fill_mode = self.config.enable_fill_mode
+        self._image_left = sl.Mat()
+        self._depth_map = sl.Mat()
+        self._pose = sl.Pose()
+
+        self._camera_info = self._zed.get_camera_information()
+        if self._camera_info is not None:
+            self._stream_width = self._camera_info.camera_configuration.resolution.width
+            self._stream_height = self._camera_info.camera_configuration.resolution.height
+
+        self._build_camera_info()
+        self._get_extrinsics()
+
+        if self.config.enable_tracking:
+            self._enable_tracking()
+
+        interval_sec = 1.0 / self.config.camera_info_fps
+        self._camera_info_disposable = backpressure(rx.interval(interval_sec)).subscribe(
+            on_next=lambda _: self._publish_camera_info(),
+            on_error=lambda e: print(f"CameraInfo error: {e}"),
+        )
+
+        self._running = True
+        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread.start()
+
+        if self.config.enable_pointcloud and self.config.enable_depth:
+            interval_sec = 1.0 / self.config.pointcloud_fps
+            self._pointcloud_disposable = backpressure(rx.interval(interval_sec)).subscribe(
+                on_next=lambda _: self._generate_pointcloud(),
+                on_error=lambda e: print(f"Pointcloud error: {e}"),
+            )
+
+        return "started"
+
+    def _build_camera_info(self) -> None:
+        if self._camera_info is None:
+            return
+        calib = self._camera_info.camera_configuration.calibration_parameters
+        left_cam = calib.left_cam
+
+        self._color_camera_info = self._intrinsics_to_camera_info(
+            left_cam, self._color_optical_frame
+        )
+
+        if self.config.enable_depth:
+            depth_frame = (
+                self._color_optical_frame
+                if self.config.align_depth_to_color
+                else self._depth_optical_frame
+            )
+            self._depth_camera_info = self._intrinsics_to_camera_info(left_cam, depth_frame)
+
+    def _intrinsics_to_camera_info(self, intrinsics: sl.CameraParameters, frame_id: str) -> CameraInfo:
+        fx, fy = intrinsics.fx, intrinsics.fy
+        cx, cy = intrinsics.cx, intrinsics.cy
+
+        K = [fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0]
+        P = [fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0]
+        D = list(intrinsics.disto)
+
+        return CameraInfo(
+            height=self._stream_height,
+            width=self._stream_width,
+            distortion_model="plumb_bob",
+            D=D,
+            K=K,
+            P=P,
+            frame_id=frame_id,
+        )
+
+    def _get_extrinsics(self) -> None:
+        self._color_to_depth_extrinsics = ZEDExtrinsics(
+            rotation=np.eye(3, dtype=np.float64),
+            translation=np.zeros(3, dtype=np.float64),
+        )
+
+    def _extrinsics_to_transform(
+        self,
+        extrinsics: ZEDExtrinsics,
+        frame_id: str,
+        child_frame_id: str,
+        ts: float,
+    ) -> Transform:
+        rotation_matrix = np.asarray(extrinsics.rotation).reshape(3, 3)
+        quat = Rotation.from_matrix(rotation_matrix).as_quat()  # [x, y, z, w]
+        return Transform(
+            translation=Vector3(*extrinsics.translation),
+            rotation=Quaternion(quat[0], quat[1], quat[2], quat[3]),
+            frame_id=frame_id,
+            child_frame_id=child_frame_id,
+            ts=ts,
+        )
+
+    def _enable_tracking(self) -> None:
+        if self._zed is None:
+            return
+        tracking_params = sl.PositionalTrackingParameters()
+        tracking_params.enable_area_memory = self.config.enable_area_memory
+        tracking_params.enable_pose_smoothing = self.config.enable_pose_smoothing
+        tracking_params.enable_imu_fusion = self.config.enable_imu_fusion
+        tracking_params.set_floor_as_origin = self.config.set_floor_as_origin
+        err = self._zed.enable_positional_tracking(tracking_params)
+        if err != sl.ERROR_CODE.SUCCESS:
+            print(f"Failed to enable positional tracking: {err}")
+            self._tracking_enabled = False
+            return
+        self._tracking_enabled = True
+
+    def _capture_loop(self) -> None:
+        while self._running and self._zed is not None:
+            try:
+                err = self._zed.grab(self._runtime_params)
+            except Exception:
+                break
+
+            if err != sl.ERROR_CODE.SUCCESS:
+                if not self._running:
+                    break
+                time.sleep(0.001)
+                continue
+
+            ts = time.time()
+
+            color_img = None
+            if self._image_left is not None:
+                self._zed.retrieve_image(self._image_left, sl.VIEW.LEFT)
+                color_data = self._image_left.get_data()
+                if color_data.ndim == 3 and color_data.shape[2] == 4:
+                    color_data = color_data[:, :, :3]
+                color_data = cv2.cvtColor(color_data, cv2.COLOR_BGR2RGB)
+                color_img = Image(
+                    data=color_data,
+                    format=ImageFormat.RGB,
+                    frame_id=self._color_optical_frame,
+                    ts=ts,
+                )
+                self.color_image.publish(color_img)
+
+            depth_img = None
+            if self.config.enable_depth and self._depth_map is not None:
+                self._zed.retrieve_measure(self._depth_map, sl.MEASURE.DEPTH)
+                depth_data = self._depth_map.get_data()
+                if depth_data.ndim == 3:
+                    depth_data = depth_data[:, :, 0]
+                depth_frame_id = (
+                    self._color_optical_frame
+                    if self.config.align_depth_to_color
+                    else self._depth_optical_frame
+                )
+                depth_img = Image(
+                    data=depth_data,
+                    format=ImageFormat.DEPTH,
+                    frame_id=depth_frame_id,
+                    ts=ts,
+                )
+                self.depth_image.publish(depth_img)
+
+            if self.config.enable_pointcloud and color_img is not None and depth_img is not None:
+                with self._pointcloud_lock:
+                    self._latest_color_img = color_img
+                    self._latest_depth_img = depth_img
+
+            self._publish_tf(ts)
+
+    def _tracking_transform(self, ts: float) -> Transform | None:
+        if not self._tracking_enabled or self._zed is None or self._pose is None:
+            return None
+        state = self._zed.get_position(self._pose, sl.REFERENCE_FRAME.WORLD)
+        if state != sl.POSITIONAL_TRACKING_STATE.OK:
+            return None
+
+        translation = self._pose.get_translation().get().tolist()
+        rotation = self._pose.get_orientation().get().tolist()
+        world_to_camera = Transform(
+            translation=Vector3(*translation),
+            rotation=Quaternion(*rotation),
+            frame_id=self.config.world_frame,
+            child_frame_id=self._camera_link,
+            ts=ts,
+        )
+        if self.config.base_transform is None:
+            return world_to_camera
+
+        base_to_camera = Transform(
+            translation=self.config.base_transform.translation,
+            rotation=self.config.base_transform.rotation,
+            frame_id=self.config.base_transform.frame_id,
+            child_frame_id=self._camera_link,
+            ts=ts,
+        )
+        camera_to_base = base_to_camera.inverse()
+        world_to_base = world_to_camera + camera_to_base
+        world_to_base.frame_id = self.config.world_frame
+        world_to_base.child_frame_id = base_to_camera.frame_id
+        world_to_base.ts = ts
+        return world_to_base
+
+    def _publish_tf(self, ts: float) -> None:
+        transforms = []
+
+        if self.config.base_transform is not None:
+            base_to_camera = Transform(
+                translation=self.config.base_transform.translation,
+                rotation=self.config.base_transform.rotation,
+                frame_id=self.config.base_transform.frame_id,
+                child_frame_id=self._camera_link,
+                ts=ts,
+            )
+            transforms.append(base_to_camera)
+
+        camera_link_to_depth = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+            frame_id=self._camera_link,
+            child_frame_id=self._depth_frame,
+            ts=ts,
+        )
+        transforms.append(camera_link_to_depth)
+
+        depth_to_depth_optical = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=OPTICAL_ROTATION,
+            frame_id=self._depth_frame,
+            child_frame_id=self._depth_optical_frame,
+            ts=ts,
+        )
+        transforms.append(depth_to_depth_optical)
+
+        if self._color_to_depth_extrinsics is not None:
+            color_tf = self._extrinsics_to_transform(
+                self._color_to_depth_extrinsics,
+                self._camera_link,
+                self._color_frame,
+                ts,
+            )
+            color_tf = color_tf.inverse()
+            color_tf.frame_id = self._camera_link
+            color_tf.child_frame_id = self._color_frame
+            color_tf.ts = ts
+        else:
+            color_tf = Transform(
+                translation=Vector3(0.0, 0.0, 0.0),
+                rotation=Quaternion(0.0, 0.0, 0.0, 1.0),
+                frame_id=self._camera_link,
+                child_frame_id=self._color_frame,
+                ts=ts,
+            )
+        transforms.append(color_tf)
+
+        color_to_color_optical = Transform(
+            translation=Vector3(0.0, 0.0, 0.0),
+            rotation=OPTICAL_ROTATION,
+            frame_id=self._color_frame,
+            child_frame_id=self._color_optical_frame,
+            ts=ts,
+        )
+        transforms.append(color_to_color_optical)
+
+        tracking_tf = self._tracking_transform(ts)
+        if tracking_tf is not None:
+            transforms.append(tracking_tf)
+
+        self.tf.publish(*transforms)
+
+    def _generate_pointcloud(self) -> None:
+        with self._pointcloud_lock:
+            color_img = self._latest_color_img
+            depth_img = self._latest_depth_img
+
+        if color_img is None or depth_img is None or self._color_camera_info is None:
             return
 
-        super().start()
-
         try:
-            # Initialize ZED camera
-            self.zed_camera = ZEDCamera(  # type: ignore[assignment]
-                camera_id=self.camera_id,
-                resolution=self.resolution,
-                depth_mode=self.depth_mode,
-                fps=self.fps,
+            pcd = PointCloud2.from_rgbd(
+                color_image=color_img,
+                depth_image=depth_img,
+                camera_info=self._color_camera_info,
+                depth_scale=self._depth_scale,
             )
-
-            # Open camera
-            if not self.zed_camera.open():  # type: ignore[attr-defined]
-                logger.error("Failed to open ZED camera")
-                return
-
-            # Enable tracking if requested
-            if self.enable_tracking:
-                success = self.zed_camera.enable_positional_tracking(  # type: ignore[attr-defined]
-                    enable_imu_fusion=self.enable_imu_fusion,
-                    set_floor_as_origin=self.set_floor_as_origin,
-                    enable_pose_smoothing=True,
-                    enable_area_memory=True,
-                )
-                if not success:
-                    logger.warning("Failed to enable positional tracking")
-                    self.enable_tracking = False
-
-            # Publish camera info once at startup
-            self._publish_camera_info()
-
-            # Start periodic frame capture and publishing
-            self._running = True
-            publish_interval = 1.0 / self.publish_rate
-
-            self._subscription = interval(publish_interval).subscribe(  # type: ignore[assignment]
-                lambda _: self._capture_and_publish()
-            )
-
-            logger.info(f"ZED module started, publishing at {self.publish_rate} Hz")
-
+            pcd = pcd.voxel_downsample(0.005)
+            self.pointcloud.publish(pcd)
         except Exception as e:
-            logger.error(f"Error starting ZED module: {e}")
-            self._running = False
+            print(f"Pointcloud generation error: {e}")
 
     @rpc
     def stop(self) -> None:
-        """Stop the ZED module."""
-        if not self._running:
-            return
-
         self._running = False
 
-        # Stop subscription
-        if self._subscription:
-            self._subscription.dispose()
-            self._subscription = None
+        if self._pointcloud_disposable:
+            self._pointcloud_disposable.dispose()
+            self._pointcloud_disposable = None
 
-        # Close camera
-        if self.zed_camera:
-            self.zed_camera.close()
-            self.zed_camera = None
+        if self._camera_info_disposable:
+            self._camera_info_disposable.dispose()
+            self._camera_info_disposable = None
 
+        if self._zed:
+            if self._tracking_enabled:
+                try:
+                    self._zed.disable_positional_tracking()
+                except Exception:
+                    pass
+            try:
+                self._zed.close()
+            except Exception:
+                pass
+            self._zed = None
+
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+            if self._thread.is_alive():
+                self._thread = None
+
+        self._color_camera_info = None
+        self._depth_camera_info = None
+        self._color_to_depth_extrinsics = None
+        self._latest_color_img = None
+        self._latest_depth_img = None
+        self._image_left = None
+        self._depth_map = None
+        self._pose = None
+        self._camera_info = None
+        self._tracking_enabled = False
         super().stop()
 
-    def _capture_and_publish(self) -> None:
-        """Capture frame and publish all data."""
-        if not self._running or not self.zed_camera:
-            return
-
-        try:
-            # Capture frame with pose
-            left_img, _, depth, pose_data = self.zed_camera.capture_frame_with_pose()
-
-            if left_img is None or depth is None:
-                return
-
-            # Save raw color data if recording
-            if self.storages and left_img is not None:
-                self.storages["color"].save_one(left_img)
-
-            # Save raw depth data if recording
-            if self.storages and depth is not None:
-                self.storages["depth"].save_one(depth)
-
-            # Save raw pose data if recording
-            if self.storages and pose_data:
-                self.storages["pose"].save_one(pose_data)
-
-            # Create header
-            header = Header(self.frame_id)
-            self._sequence += 1
-
-            # Publish color image
-            self._publish_color_image(left_img, header)
-
-            # Publish depth image
-            self._publish_depth_image(depth, header)
-
-            # Publish camera info periodically
-            self._publish_camera_info()
-
-            # Publish pose if tracking enabled and valid
-            if self.enable_tracking and pose_data and pose_data.get("valid", False):
-                self._publish_pose(pose_data, header)
-
-        except Exception as e:
-            logger.error(f"Error in capture and publish: {e}")
-
-    def _publish_color_image(self, image: np.ndarray, header: Header) -> None:  # type: ignore[type-arg]
-        """Publish color image as LCM message."""
-        try:
-            # Convert BGR to RGB if needed
-            if len(image.shape) == 3 and image.shape[2] == 3:
-                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            else:
-                image_rgb = image
-
-            # Create LCM Image message
-            msg = Image(
-                data=image_rgb,
-                format=ImageFormat.RGB,
-                frame_id=header.frame_id,
-                ts=header.ts,
-            )
-
-            self.color_image.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing color image: {e}")
-
-    def _publish_depth_image(self, depth: np.ndarray, header: Header) -> None:  # type: ignore[type-arg]
-        """Publish depth image as LCM message."""
-        try:
-            # Depth is float32 in meters
-            msg = Image(
-                data=depth,
-                format=ImageFormat.DEPTH,
-                frame_id=header.frame_id,
-                ts=header.ts,
-            )
-            self.depth_image.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing depth image: {e}")
-
-    def _publish_camera_info(self) -> None:
-        """Publish camera calibration information."""
-        try:
-            info = self.zed_camera.get_camera_info()  # type: ignore[attr-defined]
-            if not info:
-                return
-
-            # Save raw camera info if recording
-            if self.storages:
-                self.storages["camera_info"].save_one(info)
-
-            # Get calibration parameters
-            left_cam = info.get("left_cam", {})
-            resolution = info.get("resolution", {})
-
-            # Create CameraInfo message
-            header = Header(self.frame_id)
-
-            # Create camera matrix K (3x3)
-            K = [
-                left_cam.get("fx", 0),
-                0,
-                left_cam.get("cx", 0),
-                0,
-                left_cam.get("fy", 0),
-                left_cam.get("cy", 0),
-                0,
-                0,
-                1,
-            ]
-
-            # Distortion coefficients
-            D = [
-                left_cam.get("k1", 0),
-                left_cam.get("k2", 0),
-                left_cam.get("p1", 0),
-                left_cam.get("p2", 0),
-                left_cam.get("k3", 0),
-            ]
-
-            # Identity rotation matrix
-            R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-            # Projection matrix P (3x4)
-            P = [
-                left_cam.get("fx", 0),
-                0,
-                left_cam.get("cx", 0),
-                0,
-                0,
-                left_cam.get("fy", 0),
-                left_cam.get("cy", 0),
-                0,
-                0,
-                0,
-                1,
-                0,
-            ]
-
-            msg = CameraInfo(
-                D_length=len(D),
-                header=header,
-                height=resolution.get("height", 0),
-                width=resolution.get("width", 0),
-                distortion_model="plumb_bob",
-                D=D,
-                K=K,
-                R=R,
-                P=P,
-                binning_x=0,
-                binning_y=0,
-            )
-
-            self.camera_info.publish(msg)
-
-        except Exception as e:
-            logger.error(f"Error publishing camera info: {e}")
-
-    def _publish_pose(self, pose_data: dict[str, Any], header: Header) -> None:
-        """Publish camera pose as PoseStamped message and TF transform."""
-        try:
-            position = pose_data.get("position", [0, 0, 0])
-            rotation = pose_data.get("rotation", [0, 0, 0, 1])  # quaternion [x,y,z,w]
-
-            # Create PoseStamped message
-            msg = PoseStamped(ts=header.ts, position=position, orientation=rotation)
-            self.pose.publish(msg)
-
-            # Publish TF transform
-            camera_tf = Transform(
-                translation=Vector3(position),
-                rotation=Quaternion(rotation),
-                frame_id="zed_world",
-                child_frame_id="zed_camera_link",
-                ts=header.ts,
-            )
-            self.tf.publish(camera_tf)
-
-        except Exception as e:
-            logger.error(f"Error publishing pose: {e}")
+    @rpc
+    def get_color_camera_info(self) -> CameraInfo | None:
+        return self._color_camera_info
 
     @rpc
-    def get_camera_info(self) -> dict[str, Any]:
-        """Get camera information and calibration parameters."""
-        if self.zed_camera:
-            return self.zed_camera.get_camera_info()
-        return {}
+    def get_depth_camera_info(self) -> CameraInfo | None:
+        return self._depth_camera_info
 
     @rpc
-    def get_pose(self) -> dict[str, Any] | None:
-        """Get current camera pose if tracking is enabled."""
-        if self.zed_camera and self.enable_tracking:
-            return self.zed_camera.get_pose()
-        return None
+    def get_depth_scale(self) -> float:
+        return self._depth_scale
+
+
+def main() -> None:
+    dimos = ModuleCoordinator(n=2)
+    dimos.start()
+
+    camera = dimos.deploy(ZEDCamera, enable_pointcloud=True, pointcloud_fps=5.0)
+    foxglove_bridge = FoxgloveBridge()
+    foxglove_bridge.start()
+
+    camera.color_image.transport = LCMTransport("/camera/color", Image)
+    camera.depth_image.transport = LCMTransport("/camera/depth", Image)
+    camera.pointcloud.transport = LCMTransport("/camera/pointcloud", PointCloud2)
+    camera.camera_info.transport = LCMTransport("/camera/color_info", CameraInfo)
+    camera.depth_camera_info.transport = LCMTransport("/camera/depth_info", CameraInfo)
+
+    def cleanup() -> None:
+        try:
+            dimos.stop()
+        except Exception:
+            pass
+
+    atexit.register(cleanup)
+    dimos.start_all_modules()
+
+    try:
+        while True:
+            time.sleep(0.1)
+    except (KeyboardInterrupt, SystemExit):
+        pass
+    finally:
+        atexit.unregister(cleanup)
+        cleanup()
+
+
+if __name__ == "__main__":
+    main()
+
+
+ZEDModule = ZEDCamera
+zed_camera = ZEDCamera.blueprint
+
+__all__ = ["ZEDCamera", "ZEDCameraConfig", "ZEDModule", "zed_camera"]
