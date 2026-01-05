@@ -98,9 +98,8 @@ class PiperSimBridge:
 
     def __init__(
         self,
-        control_frequency: float = 100.0,  # control frequency in Hz
+        control_frequency: float = 100.0,
     ):
-        # Path: dimos/hardware/manipulators/piper/ -> dimos/simulation/data/piper/
         self._model_path = (
             Path(__file__).parent.parent.parent.parent
             / "simulation"
@@ -109,7 +108,7 @@ class PiperSimBridge:
             / "scene.xml"
         )
 
-        self._num_joints = 6  # Piper is always 6-DOF
+        self._num_joints = 6
         self._control_frequency = control_frequency if control_frequency > 0 else 100.0
 
         # --- mujoco model & data --- #
@@ -126,15 +125,14 @@ class PiperSimBridge:
         self._stop_event = threading.Event()
         self._sim_thread: threading.Thread | None = None
 
-        # Joint state (in Piper units: 0.001 degrees)
+        # Joint state in Piper units (0.001 degrees) for SDK compatibility
         self._joint_positions_piper = [0.0] * self._num_joints
-        # Joint targets (in radians, for MuJoCo control)
+        # Joint targets in radians for MuJoCo control
         self._joint_position_targets = [0.0] * self._num_joints
 
-        # Initialize position targets to current joint positions at startup
+        # Initialize targets to current positions to prevent falling due to gravity
         for i in range(min(self._num_joints, self._model.nq)):
             self._joint_position_targets[i] = self._data.qpos[i]
-            # Convert to Piper units for state
             self._joint_positions_piper[i] = self._data.qpos[i] * RAD_TO_PIPER
 
     # ============= Connection Management =============
@@ -169,11 +167,16 @@ class PiperSimBridge:
 
     def EnablePiper(self) -> bool:
         """Enable the arm (mimics C_PiperInterface_V2.EnablePiper)."""
+        # Read current positions outside lock (_data is only modified by sim loop thread)
+        current_positions = []
+        for i in range(min(self._num_joints, self._model.nq)):
+            current_positions.append(self._data.qpos[i])
+
         with self._lock:
             self._enabled = True
-            # Lock current positions when enabling
-            for i in range(min(self._num_joints, self._model.nq)):
-                self._joint_position_targets[i] = self._data.qpos[i]
+            # Lock current positions when enabling to prevent movement
+            for i, pos in enumerate(current_positions):
+                self._joint_position_targets[i] = pos
         logger.info("PiperSimBridge: Arm enabled")
         return True
 
@@ -193,7 +196,6 @@ class PiperSimBridge:
         is_mit_mode: int = 0x00,
     ) -> None:
         """Set motion control parameters (mimics C_PiperInterface_V2.MotionCtrl_2)."""
-        # In simulation, we just acknowledge the mode settings
         logger.debug(f"PiperSimBridge: MotionCtrl_2(ctrl_mode={ctrl_mode}, move_mode={move_mode})")
 
     def JointCtrl(
@@ -211,7 +213,7 @@ class PiperSimBridge:
             joint_1-6: Target positions in Piper units (0.001 degrees)
         """
         with self._lock:
-            # Convert from Piper units to radians for MuJoCo
+            # Convert from Piper units (0.001 degrees) to radians for MuJoCo
             self._joint_position_targets[0] = joint_1 * PIPER_TO_RAD
             self._joint_position_targets[1] = joint_2 * PIPER_TO_RAD
             self._joint_position_targets[2] = joint_3 * PIPER_TO_RAD
@@ -223,10 +225,15 @@ class PiperSimBridge:
 
     def EmergencyStop(self) -> None:
         """Emergency stop (mimics C_PiperInterface_V2.EmergencyStop)."""
+        # Read current positions outside lock (_data is only modified by sim loop thread)
+        current_positions = []
+        for i in range(min(self._num_joints, self._model.nq)):
+            current_positions.append(self._data.qpos[i])
+
         with self._lock:
-            # Lock current positions
-            for i in range(min(self._num_joints, self._model.nq)):
-                self._joint_position_targets[i] = self._data.qpos[i]
+            # Lock current positions to stop immediately
+            for i, pos in enumerate(current_positions):
+                self._joint_position_targets[i] = pos
         logger.info("PiperSimBridge: Emergency stop")
 
     # ============= State Query =============
@@ -283,7 +290,6 @@ class PiperSimBridge:
         Args:
             percentage: Gripper opening 0-100
         """
-        # TODO: Implement gripper control if model has gripper
         logger.debug(f"PiperSimBridge: GripperCtrl({percentage})")
 
     def GetGripperState(self) -> int:
@@ -292,7 +298,6 @@ class PiperSimBridge:
         Returns:
             Gripper position 0-100
         """
-        # TODO: Return actual gripper state if model has gripper
         return 0
 
     # ============= Simulation Loop =============
@@ -306,28 +311,30 @@ class PiperSimBridge:
             self._model, self._data, show_left_ui=False, show_right_ui=False
         ) as m_viewer:
             while m_viewer.is_running() and not self._stop_event.is_set():
-                # Get current targets
+                loop_start = time.time()
+
                 with self._lock:
                     pos_targets = list(self._joint_position_targets)
                     enabled = self._enabled
 
-                # Apply control if enabled
                 if enabled:
                     for i in range(self._num_joints):
                         if i < self._model.nu:
                             self._data.ctrl[i] = pos_targets[i]
 
-                # Step simulation
                 mujoco.mj_step(self._model, self._data)
                 m_viewer.sync()
 
-                # Update joint state from simulation
+                # Update joint state from simulation (thread-safe)
                 with self._lock:
                     for i in range(min(self._num_joints, self._model.nq)):
-                        # Store in Piper units (0.001 degrees)
+                        # Convert from radians to Piper units (0.001 degrees)
                         self._joint_positions_piper[i] = self._data.qpos[i] * RAD_TO_PIPER
 
-                # Control timing
-                time.sleep(dt)
+                # Maintain accurate control frequency by accounting for execution time
+                elapsed = time.time() - loop_start
+                sleep_time = dt - elapsed
+                if sleep_time > 0:
+                    time.sleep(sleep_time)
 
         logger.info("PiperSimBridge: sim loop stopped")
