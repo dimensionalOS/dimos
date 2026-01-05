@@ -78,6 +78,7 @@ def phase0():
             logo.log(f"- {p.cyan(check)} {name}: {version} {note}".strip())
         time.sleep(timeout)
     logo.stop()
+    p.clear_screen()
 
     if installer_status.get("template_repo"):
         project_dir = get_project_directory()
