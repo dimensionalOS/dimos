@@ -28,15 +28,37 @@ from .misc import ProgressRenderer, is_version_at_least, parse_version
 from .shell_tooling import command_exists, run_command
 
 
-def setup_nix_flake(project_dir: str | Path) -> Path:
+def setup_nix_flake(project_dir: str | Path) -> Path | None:
     """Write flake.example.nix with the installer flake contents."""
     project_dir = Path(project_dir)
-    example_path = project_dir / "flake.example.nix"
-    if example_path.exists():
-        if not p.ask_yes_no(f"{example_path.name} exists. Overwrite?"):
+    flake_path = project_dir / "flake.nix"
+    if not flake_path.exists():
+        flake_path.parent.mkdir(parents=True, exist_ok=True)
+        flake_path.write_text(FLAKE_TEMPLATE)
+        print("- flake.nix created")
+        return flake_path
+    else:
+        choice = p.pick_one(
+            "flake.nix already exists. Please pick the action you prefer",
+            options=[
+                "overwrite the existing flake.nix",
+                "create a flake.example.nix for reference",
+                "abort (just don't create a flake.nix)"
+            ],
+        )
+        if choice.startswith("overwrite"):
+            print("- flake.nix overwritten")
+            flake_path.write_text(FLAKE_TEMPLATE)
+            return flake_path
+        if choice.startswith("create a flake.example.nix"):
+            example_path = project_dir / "flake.example.nix"
+            example_path.write_text(FLAKE_TEMPLATE)
+            print("- flake.example.nix created")
             return example_path
-    example_path.write_text(FLAKE_TEMPLATE)
-    return example_path
+        
+        print("- okay, creation of flake.nix")
+        # abort
+        return None
 
 
 def ensure_nix_exists(min_version: str = minimum_nix_version) -> None:

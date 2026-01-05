@@ -138,9 +138,9 @@ def phase0():
         if choice == "nix":
             project_dir = get_project_directory()
             example_path = setup_nix_flake(project_dir)
-            p.sub_header("Nix example flake created:")
-            print(f" - {example_path}")
-            print("You can rename flake.example.nix to flake.nix or use it as a reference.")
+            if not example_path:
+                continue
+            
             feat_str = "[" + (",".join(selected_features)) + "]" if selected_features else ""
             print(
                 f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}` inside the nix flake."
