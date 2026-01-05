@@ -12,7 +12,7 @@
     xome.inputs.flake-utils.follows = "flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils, dimos-flake xome, ... }:
+  outputs = { self, nixpkgs, flake-utils, dimos-flake, xome, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
