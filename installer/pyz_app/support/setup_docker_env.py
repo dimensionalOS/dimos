@@ -19,7 +19,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from . import prompt_tools as p
 from .bundled_data import DOCKERFILE_TEMPLATE
 from .dotenv import setup_dotenv
 from .misc import maybe_write
@@ -28,8 +27,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
 
 
-_build_script = r"""
-#!/usr/bin/env bash
+_build_script = r"""#!/usr/bin/env bash
 set -e
 
 if [ -f ".env" ]; then
@@ -43,8 +41,7 @@ docker build \
     .
 """
 
-_exec_script = r"""
-#!/usr/bin/env bash
+_exec_script = r"""#!/usr/bin/env bash
 set -e
 
 export DIMOS_ENABLED_FEATURES="${DIMOS_ENABLED_FEATURES:-}"
@@ -63,7 +60,8 @@ def setup_docker_env(project_dir: str | Path, features: Iterable[str]) -> dict[s
     env_path = project_dir / ".env"
     build_script_path = project_dir / "run" / "docker_build"
     exec_script_path = project_dir / "run" / "docker_exec"
-
+    
+    print("")
     setup_dotenv(project_dir, env_path)
     maybe_write(dockerfile_path, DOCKERFILE_TEMPLATE)
     maybe_write(build_script_path, _build_script)
