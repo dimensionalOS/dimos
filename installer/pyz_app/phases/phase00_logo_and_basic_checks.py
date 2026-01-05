@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 import time
 
 from ..support import prompt_tools as p
@@ -25,11 +26,12 @@ from ..support.get_system_analysis import get_system_analysis
 from ..support.installer_status import installer_status
 from ..support.misc import (
     get_project_directory,
+    init_repo_with_gitignore,
     replace_strings_in_directory,
 )
 from ..support.setup_docker_env import setup_docker_env
-from ..support.setup_nix import setup_nix_flake
-from ..support.shell_tooling import run_command
+from ..support.setup_nix import ensure_flakes_enabled, nix_install, setup_nix_flake
+from ..support.shell_tooling import command_exists, run_command
 
 
 def phase0():
@@ -142,8 +144,20 @@ def phase0():
                 continue
 
             feat_str = "[" + (",".join(selected_features)) + "]" if selected_features else ""
+            if not command_exists("git"):
+                print("You need to install git for the flake.nix to work")
+                print("Should I install it for you? (y/n)")
+                nix_install(["git"]) # this will install nix if needed
+
+            if not Path(project_dir / ".git").exists():
+                if p.ask_yes_no("Your project doesn't seem to have a (direct) git repo.\nFlakes require a git repo.\nShould I initialize a new git repo for this flake you? (y/n)"):
+                    init_repo_with_gitignore(project_dir)
+                else:
+                    print("Okay, but make sure to commit the flake.nix changes otherwise you won't be able to run `nix develop`")
+
+            ensure_flakes_enabled()
             print(
-                f"Once ready, run `nix develop`, create a python virtualenv, and `pip install dimos{feat_str}` inside the nix flake."
+                f"Once ready, git commit the flake.nix, run `nix develop`, then run `uv pip install dimos{feat_str}`"
             )
             # TODO: ask if they would like us to setup .envrc for them
             raise SystemExit(0)

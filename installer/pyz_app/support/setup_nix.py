@@ -16,7 +16,6 @@
 # Helper for generating a sample Nix flake for Dimos.
 from __future__ import annotations
 
-from collections.abc import Iterable
 import json
 from pathlib import Path
 

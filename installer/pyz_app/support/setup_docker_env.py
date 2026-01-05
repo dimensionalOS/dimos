@@ -60,7 +60,7 @@ def setup_docker_env(project_dir: str | Path, features: Iterable[str]) -> dict[s
     env_path = project_dir / ".env"
     build_script_path = project_dir / "run" / "docker_build"
     exec_script_path = project_dir / "run" / "docker_exec"
-    
+
     print("")
     setup_dotenv(project_dir, env_path)
     maybe_write(dockerfile_path, DOCKERFILE_TEMPLATE)

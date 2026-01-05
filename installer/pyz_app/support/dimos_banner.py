@@ -351,14 +351,6 @@ class RenderLogo:
             except Exception:
                 pass
 
-        # Clear animation artifacts and restore cursor.
-        if self._enabled:
-            try:
-                sys.stdout.write(ANSI_CURSOR_SHOW + ANSI_RESET + "\n")
-                sys.stdout.flush()
-            except Exception:
-                pass
-
     # -----------------------
     # Loop + rendering
     # -----------------------
