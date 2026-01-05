@@ -18,9 +18,9 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-from .. import prompt_tools as p
-from ..installer_status import installer_status
-from ..shell_tooling import command_exists
+from . import prompt_tools as p
+from .installer_status import installer_status
+from .shell_tooling import command_exists
 
 
 def ask_if_not_template_repo(prompt: str) -> bool:

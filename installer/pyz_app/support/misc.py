@@ -535,3 +535,11 @@ def add_git_ignore_patterns(
         "already_present": already_present,
         "ignore_did_not_exist": False,
     }
+
+def maybe_write(path: Path, content: str) -> bool:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if not p.ask_yes_no(f"{path.name} already exists. Overwrite?"):
+            return False
+    path.write_text(content)
+    return True

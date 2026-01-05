@@ -18,10 +18,10 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
-from .. import prompt_tools as p
-from ..constants import dimos_env_vars
-from ..installer_status import installer_status
-from ..misc import add_git_ignore_patterns
+from . import prompt_tools as p
+from .constants import dimos_env_vars
+from .installer_status import installer_status
+from .misc import add_git_ignore_patterns
 
 
 def setup_dotenv(project_path: str | Path, env_path: str | Path) -> bool:
