@@ -66,7 +66,7 @@ def setup_direnv(envrc_path: str | Path) -> bool:
             print(f"It looks like there is a {p.highlight('.envrc')} file")
             print("But it seems to not include auto venv activation.")
             add_activation = ask_if_not_template_repo(
-                f"Is it okay if I add a python virtual env activation to the {p.highlight('.envrc')}?"
+                f"Is it okay if I add a python virtual env activation to the .envrc?"
             )
         if add_activation:
             block = "\n".join(
