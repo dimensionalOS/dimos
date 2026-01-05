@@ -360,6 +360,12 @@ extra-build-dependencies = { detectron2 = ["torch"], contact-graspnet-pytorch = 
 # Default dependency groups to install
 default-groups = ["dev"]
 
+# Override transitive dependencies that don't support Python 3.12
+override-dependencies = [
+    "numba>=0.59.0",    # First version supporting Python 3.12
+    "llvmlite>=0.42.0", # Required by numba 0.59+
+]
+
 
 [tool.uv.sources]
 rxpy-backpressure = { git = "https://github.com/dimensionalOS/rxpy-backpressure.git" }
