@@ -43,7 +43,7 @@ def setup_nix_flake(project_dir: str | Path) -> Path | None:
             options=[
                 "overwrite the existing flake.nix",
                 "create a flake.example.nix for reference",
-                "abort (just don't create a flake.nix)"
+                "abort (just don't create a flake.nix)",
             ],
         )
         if choice.startswith("overwrite"):
@@ -55,7 +55,7 @@ def setup_nix_flake(project_dir: str | Path) -> Path | None:
             example_path.write_text(FLAKE_TEMPLATE)
             print("- flake.example.nix created")
             return example_path
-        
+
         print("- okay, creation of flake.nix")
         # abort
         return None
