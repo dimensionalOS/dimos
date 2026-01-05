@@ -255,8 +255,6 @@ When secondary messages arrive:
 <details>
 <summary>diagram source</summary>
 
-<details><summary>Pikchr</summary>
-
 ```pikchr fold output=assets/alignment_flow.svg
 color = white
 fill = none
@@ -279,8 +277,6 @@ text "waiting..." at (Buffer.w.x - 0.4in, Buffer.w.y - 0.15in)
 
 <!--Result:-->
 ![output](assets/alignment_flow.svg)
-
-</details>
 
 ## Parameters
 
