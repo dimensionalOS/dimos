@@ -18,6 +18,8 @@ ENV PATH="/root/.local/bin:$PATH"
 # RUN bash -lc 'sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/refs/heads/master/install") --non-interactive --no-env-setup'
 ARG DIMOS_FEATURES_FOR_DOCKER=""
 ARG DIMOS_REF_FOR_DOCKER="refs/heads/master"
+ENV DIMOS_REF_FOR_DOCKER="$DIMOS_REF_FOR_DOCKER"
+ENV DIMOS_FEATURES_FOR_DOCKER="$DIMOS_FEATURES_FOR_DOCKER"
 RUN bash -lc 'sh <(curl -fsSL "https://raw.githubusercontent.com/jeff-hykin/mystery_test_1/$DIMOS_REF_FOR_DOCKER/install") --just-system-install --non-interactive --features "$DIMOS_FEATURES_FOR_DOCKER"'
 
 RUN echo '# Dimos auto-setup'                                                                                                                                                                                                >> "$HOME/.bashrc" && \
