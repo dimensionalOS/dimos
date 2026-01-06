@@ -12,9 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable
 from dataclasses import dataclass, field
-import functools
 import time
 
 import numpy as np
@@ -23,17 +21,13 @@ import open3d.core as o3c  # type: ignore[import-untyped]
 from reactivex import interval
 from reactivex.disposable import Disposable
 
-from dimos.core import DimosCluster, In, LCMTransport, Module, Out, rpc
-from dimos.core.global_config import GlobalConfig
+from dimos.core import In, Module, Out, rpc
 from dimos.core.module import ModuleConfig
 from dimos.mapping.pointclouds.occupancy import height_cost_occupancy
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
-from dimos.robot.unitree.connection.go2 import Go2ConnectionProtocol
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
-from dimos.spec.map import Global3DMap, GlobalCostmap
 from dimos.utils.decorators import simple_mcache
-from dimos.utils.metrics import timed
 
 
 @dataclass
