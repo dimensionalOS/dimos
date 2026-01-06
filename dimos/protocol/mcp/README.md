@@ -6,7 +6,7 @@ Expose DimOS robot skills to Claude Code via Model Context Protocol.
 
 Add to Claude Code (one command):
 ```bash
-claude mcp add --transport stdio dimos --scope project -- python -m dimos.protocol.mcp.cli --bridge
+claude mcp add --transport stdio dimos --scope project -- python -m dimos.protocol.mcp
 ```
 
 ## Usage
