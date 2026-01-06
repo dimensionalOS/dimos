@@ -1,4 +1,5 @@
 default_stages: [pre-commit]
+default_install_hook_types: [pre-commit, commit-msg]
 exclude: (dimos/models/.*)|(deprecated)
 repos:
 
@@ -84,3 +85,9 @@ repos:
         entry: python -m dimos.utils.docs.doclinks docs/
         language: system
         files: ^docs/.*\.md$
+
+      - id: filter-commit-message
+        name: Filter generated signatures from commit message
+        entry: sed -i '/^.*Generated with/,$d'
+        language: system
+        stages: [commit-msg]
