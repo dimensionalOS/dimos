@@ -29,7 +29,7 @@ Standard Units:
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
+from typing import Any
 
 
 @dataclass
@@ -54,7 +54,7 @@ class BaseManipulatorSDK(ABC):
     # ============= Connection Management =============
 
     @abstractmethod
-    def connect(self, config: dict) -> bool:
+    def connect(self, config: dict[str, Any]) -> bool:
         """Establish connection to the manipulator.
 
         Args:
@@ -200,7 +200,7 @@ class BaseManipulatorSDK(ABC):
     # ============= System State =============
 
     @abstractmethod
-    def get_robot_state(self) -> dict:
+    def get_robot_state(self) -> dict[str, Any]:
         """Get current robot state information.
 
         Returns:
@@ -289,7 +289,7 @@ class BaseManipulatorSDK(ABC):
     # ============= Optional Methods (Override if Supported) =============
     # These have default implementations that indicate feature not available
 
-    def get_cartesian_position(self) -> dict | None:
+    def get_cartesian_position(self) -> dict[str, float] | None:
         """Get current end-effector pose.
 
         Returns:
@@ -299,7 +299,11 @@ class BaseManipulatorSDK(ABC):
         return None
 
     def set_cartesian_position(
-        self, pose: dict, velocity: float = 1.0, acceleration: float = 1.0, wait: bool = False
+        self,
+        pose: dict[str, float],
+        velocity: float = 1.0,
+        acceleration: float = 1.0,
+        wait: bool = False,
     ) -> bool:
         """Move end-effector to target pose.
 
@@ -314,7 +318,7 @@ class BaseManipulatorSDK(ABC):
         """
         return False
 
-    def get_cartesian_velocity(self) -> dict | None:
+    def get_cartesian_velocity(self) -> dict[str, float] | None:
         """Get current end-effector velocity.
 
         Returns:
@@ -323,7 +327,7 @@ class BaseManipulatorSDK(ABC):
         """
         return None
 
-    def set_cartesian_velocity(self, twist: dict) -> bool:
+    def set_cartesian_velocity(self, twist: dict[str, float]) -> bool:
         """Set end-effector velocity.
 
         Args:
@@ -363,7 +367,7 @@ class BaseManipulatorSDK(ABC):
         """
         return False
 
-    def get_digital_inputs(self) -> dict | None:
+    def get_digital_inputs(self) -> dict[str, bool] | None:
         """Get digital input states.
 
         Returns:
@@ -372,7 +376,7 @@ class BaseManipulatorSDK(ABC):
         """
         return None
 
-    def set_digital_outputs(self, outputs: dict) -> bool:
+    def set_digital_outputs(self, outputs: dict[str, bool]) -> bool:
         """Set digital output states.
 
         Args:
@@ -383,7 +387,7 @@ class BaseManipulatorSDK(ABC):
         """
         return False
 
-    def get_analog_inputs(self) -> dict | None:
+    def get_analog_inputs(self) -> dict[str, float] | None:
         """Get analog input values.
 
         Returns:
@@ -392,7 +396,7 @@ class BaseManipulatorSDK(ABC):
         """
         return None
 
-    def set_analog_outputs(self, outputs: dict) -> bool:
+    def set_analog_outputs(self, outputs: dict[str, float]) -> bool:
         """Set analog output values.
 
         Args:
@@ -403,7 +407,7 @@ class BaseManipulatorSDK(ABC):
         """
         return False
 
-    def execute_trajectory(self, trajectory: list[dict], wait: bool = True) -> bool:
+    def execute_trajectory(self, trajectory: list[dict[str, Any]], wait: bool = True) -> bool:
         """Execute a joint trajectory.
 
         Args:
