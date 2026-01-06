@@ -18,6 +18,7 @@ from dimos.core.blueprints import ModuleBlueprintSet
 all_blueprints = {
     "unitree-go2": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard",
     "unitree-go2-basic": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:basic",
+    "unitree-go2-test-nav": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:test_new_nav",
     "unitree-go2-shm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_shm",
     "unitree-go2-jpegshm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpegshm",
     "unitree-go2-jpeglcm": "dimos.robot.unitree_webrtc.unitree_go2_blueprints:standard_with_jpeglcm",
@@ -64,6 +65,7 @@ all_modules = {
     "navigation_skill": "dimos.agents2.skills.navigation",
     "object_tracking": "dimos.perception.object_tracker",
     "osm_skill": "dimos.agents2.skills.osm",
+    "replanning_a_star_planner": "dimos.navigation.replanning_a_star.module",
     "ros_nav": "dimos.navigation.rosnav",
     "spatial_memory": "dimos.perception.spatial_perception",
     "speak_skill": "dimos.agents2.skills.speak_skill",

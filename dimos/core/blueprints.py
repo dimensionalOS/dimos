@@ -29,6 +29,9 @@ from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.stream import In, Out
 from dimos.core.transport import LCMTransport, pLCMTransport
 from dimos.utils.generic import short_id
+from dimos.utils.logging_config import setup_logger
+
+logger = setup_logger()
 
 
 @dataclass(frozen=True)
@@ -205,6 +208,15 @@ class ModuleBlueprintSet:
             for module, original_name in connections[(remapped_name, type)]:
                 instance = module_coordinator.get_instance(module)
                 instance.set_transport(original_name, transport)  # type: ignore[union-attr]
+                logger.info(
+                    "Transport",
+                    name=remapped_name,
+                    original_name=original_name,
+                    topic=str(getattr(transport, "topic", None)),
+                    type=f"{type.__module__}.{type.__qualname__}",
+                    module=module.__name__,
+                    transport=transport.__class__.__name__,
+                )
 
     def _connect_rpc_methods(self, module_coordinator: ModuleCoordinator) -> None:
         # Gather all RPC methods.

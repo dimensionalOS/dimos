@@ -21,7 +21,7 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-def astar(
+def general_astar(
     costmap: OccupancyGrid,
     goal: VectorLike,
     start: VectorLike = (0.0, 0.0),

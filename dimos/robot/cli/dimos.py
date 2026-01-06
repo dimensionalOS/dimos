@@ -23,6 +23,7 @@ from dimos.core.blueprints import autoconnect
 from dimos.core.global_config import GlobalConfig
 from dimos.protocol import pubsub
 from dimos.robot.all_blueprints import all_blueprints, get_blueprint_by_name, get_module_by_name
+from dimos.robot.cli.topic import topic_echo, topic_send
 from dimos.utils.logging_config import setup_exception_handler
 
 RobotType = Enum("RobotType", {key.replace("-", "_").upper(): key for key in all_blueprints.keys()})  # type: ignore[misc]
@@ -174,6 +175,26 @@ def humancli(ctx: typer.Context) -> None:
 
     sys.argv = ["humancli", *ctx.args]
     humancli_main()
+
+
+topic_app = typer.Typer(help="Topic commands for pub/sub")
+main.add_typer(topic_app, name="topic")
+
+
+@topic_app.command()
+def echo(
+    topic: str = typer.Argument(..., help="Topic name to listen on (e.g., /goal_request)"),
+    type_name: str = typer.Argument(..., help="Message type (e.g., PoseStamped)"),
+) -> None:
+    topic_echo(topic, type_name)
+
+
+@topic_app.command()
+def send(
+    topic: str = typer.Argument(..., help="Topic name to send to (e.g., /goal_request)"),
+    message_expr: str = typer.Argument(..., help="Python expression for the message"),
+) -> None:
+    topic_send(topic, message_expr)
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ from dimos.models.vl.qwen import QwenVlModel
 __all__ = [
     "Captioner",
     "Florence2Model",
-    "VlModel",
-    "MoondreamVlModel",
     "MoondreamHostedVlModel",
+    "MoondreamVlModel",
     "QwenVlModel",
+    "VlModel",
 ]

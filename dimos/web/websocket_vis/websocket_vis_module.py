@@ -32,6 +32,8 @@ from starlette.routing import Route
 import uvicorn
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.mapping.types import LatLon
 from dimos.msgs.geometry_msgs import PoseStamped, Twist, TwistStamped, Vector3
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
@@ -217,7 +219,9 @@ class WebsocketVisModule(Module):
                 frame_id="world",
             )
             self.goal_request.publish(goal)
-            logger.info(f"Click goal published: ({goal.position.x:.2f}, {goal.position.y:.2f})")
+            logger.info(
+                "Click goal published", x=round(goal.position.x, 3), y=round(goal.position.y, 3)
+            )
 
         @self.sio.event  # type: ignore[misc, untyped-decorator]
         async def gps_goal(sid: str, goal: dict[str, float]) -> None:
@@ -312,7 +316,7 @@ class WebsocketVisModule(Module):
 
     def _process_costmap(self, costmap: OccupancyGrid) -> dict[str, Any]:
         """Convert OccupancyGrid to visualization format."""
-        costmap = costmap.inflate(0.1).gradient(max_distance=1.0)
+        costmap = gradient(simple_inflate(costmap, 0.1), max_distance=1.0)
         grid_data = self.costmap_encoder.encode_costmap(costmap.grid)
 
         return {

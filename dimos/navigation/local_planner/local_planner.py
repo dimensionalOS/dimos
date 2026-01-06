@@ -26,8 +26,11 @@ import time
 from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
+from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.pointclouds.occupancy import general_occupancy
 from dimos.msgs.geometry_msgs import PoseStamped, Twist
 from dimos.msgs.nav_msgs import OccupancyGrid, Path
+from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import get_distance, normalize_angle, quaternion_to_euler
 
@@ -39,7 +42,7 @@ class BaseLocalPlanner(Module):
     local planner module for obstacle avoidance and path following.
 
     Subscribes to:
-        - /local_costmap: Local occupancy grid for obstacle detection
+        - /lidar: Local lidar for obstacle detection
         - /odom: Robot odometry for current pose
         - /path: Path to follow (continuously updated at ~1Hz)
 
@@ -48,7 +51,7 @@ class BaseLocalPlanner(Module):
     """
 
     # LCM inputs
-    local_costmap: In[OccupancyGrid]
+    lidar: In[LidarMessage]
     odom: In[PoseStamped]
     path: In[Path]
 
@@ -92,22 +95,25 @@ class BaseLocalPlanner(Module):
     def start(self) -> None:
         super().start()
 
-        unsub = self.local_costmap.subscribe(self._on_costmap)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.odom.subscribe(self._on_odom)
-        self._disposables.add(Disposable(unsub))
-
-        unsub = self.path.subscribe(self._on_path)
-        self._disposables.add(Disposable(unsub))
+        self._disposables.add(Disposable(self.lidar.subscribe(self._on_lidar)))
+        self._disposables.add(Disposable(self.odom.subscribe(self._on_odom)))
+        self._disposables.add(Disposable(self.path.subscribe(self._on_path)))
 
     @rpc
     def stop(self) -> None:
         self.cancel_planning()
         super().stop()
 
-    def _on_costmap(self, msg: OccupancyGrid) -> None:
-        self.latest_costmap = msg
+    def _on_lidar(self, msg: LidarMessage) -> None:
+        self.latest_costmap = gradient(
+            general_occupancy(
+                msg,
+                resolution=0.05,
+                min_height=0.15,
+                max_height=0.6,
+            ),
+            max_distance=0.25,
+        )
 
     def _on_odom(self, msg: PoseStamped) -> None:
         self.latest_odom = msg
@@ -120,14 +126,11 @@ class BaseLocalPlanner(Module):
                 self._start_planning_thread()
 
     def _start_planning_thread(self) -> None:
-        """Start the planning thread."""
         self.stop_planning.clear()
         self.planning_thread = threading.Thread(target=self._follow_path_loop, daemon=True)
         self.planning_thread.start()
-        logger.debug("Started follow path thread")
 
     def _follow_path_loop(self) -> None:
-        """Main planning loop that runs in a separate thread."""
         while not self.stop_planning.is_set():
             if self.is_goal_reached():
                 self.stop_planning.set()
