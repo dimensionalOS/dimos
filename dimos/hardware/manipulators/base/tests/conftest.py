@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Mock SDK for unit testing manipulator drivers.
+"""Pytest fixtures and mocks for manipulator driver tests.
 
-This MockSDK implements BaseManipulatorSDK with controllable behavior
-for testing driver logic without requiring hardware.
+This module contains MockSDK which implements BaseManipulatorSDK with controllable
+behavior for testing driver logic without requiring hardware.
 
 Features:
 - Configurable initial state (positions, DOF, vendor, model)
@@ -26,7 +26,8 @@ Features:
 
 from dataclasses import dataclass, field
 import math
-from typing import Any
+
+import pytest
 
 from ..sdk_interface import BaseManipulatorSDK, ManipulatorInfo
 
@@ -343,3 +344,19 @@ class MockSDK(BaseManipulatorSDK):
     def get_acceleration_limits(self) -> list[float]:
         self._record_call("get_acceleration_limits")
         return [math.pi * 2] * self._dof
+
+
+# ============= Pytest Fixtures =============
+
+
+@pytest.fixture
+def mock_sdk():
+    """Create a basic MockSDK."""
+    return MockSDK(dof=6)
+
+
+@pytest.fixture
+def mock_sdk_with_positions():
+    """Create MockSDK with initial positions."""
+    positions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    return MockSDK(positions=positions)

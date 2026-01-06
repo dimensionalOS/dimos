@@ -29,24 +29,12 @@ from ..components import (
     StandardStatusComponent,
 )
 from ..driver import BaseManipulatorDriver
-from .mock_sdk import MockSDK, MockSDKConfig
+from .conftest import MockSDK, MockSDKConfig
 
 # =============================================================================
 # Fixtures
 # =============================================================================
-
-
-@pytest.fixture
-def mock_sdk():
-    """Create a basic MockSDK."""
-    return MockSDK(dof=6)
-
-
-@pytest.fixture
-def mock_sdk_with_positions():
-    """Create MockSDK with initial positions."""
-    positions = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
-    return MockSDK(positions=positions)
+# Note: mock_sdk and mock_sdk_with_positions fixtures are defined in conftest.py
 
 
 @pytest.fixture
