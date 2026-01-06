@@ -23,7 +23,6 @@ from dimos.msgs.sensor_msgs.Image import Image
 from dimos.msgs.sensor_msgs.PointCloud2 import PointCloud2
 from dimos.protocol.service import Configurable
 
-
 OPTICAL_ROTATION = Quaternion(-0.5, 0.5, -0.5, 0.5)
 
 

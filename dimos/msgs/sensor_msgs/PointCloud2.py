@@ -361,7 +361,10 @@ class PointCloud2(Timestamped):
 
     def as_numpy(
         self,
-    ) -> tuple[np.ndarray[tuple[int, int], np.dtype[np.floating[object]]], np.ndarray[tuple[int, int], np.dtype[np.floating[object]]] | None]:
+    ) -> tuple[
+        np.ndarray[tuple[int, int], np.dtype[np.floating[object]]],
+        np.ndarray[tuple[int, int], np.dtype[np.floating[object]]] | None,
+    ]:
         """Get points and colors as numpy arrays.
 
         Returns:
