@@ -63,6 +63,7 @@ all_blueprints = {
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
     # Manipulation skills blueprints
     "greetings": "dimos.agents2.skills.manipulation:greetings_skill_blueprint",
+    "xarm6-manipulation-agent": "dimos.agents2.skills.manipulation:xarm6_manipulation_agent",
     "xarm7-manipulation-agent": "dimos.agents2.skills.manipulation:xarm7_manipulation_agent",
 }
 
