@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import datetime
 import difflib
+import math
 import time
 from typing import TYPE_CHECKING
 
@@ -23,7 +24,8 @@ from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-un
 
 from dimos.core.core import rpc
 from dimos.core.skill_module import SkillModule
-from dimos.msgs.geometry_msgs import Twist, Vector3
+from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Twist, Vector3
+from dimos.navigation.base import NavigationState
 from dimos.protocol.skill.skill import skill
 from dimos.protocol.skill.type import Reducer, Stream
 from dimos.robot.unitree_webrtc.unitree_skills import UNITREE_WEBRTC_CONTROLS
@@ -48,9 +50,18 @@ class UnitreeSkillContainer(SkillModule):
     _move: RpcCall | None = None
     _publish_request: RpcCall | None = None
 
+    rpc_calls: list[str] = [
+        "NavigationInterface.set_goal",
+        "NavigationInterface.get_state",
+        "NavigationInterface.is_goal_reached",
+        "NavigationInterface.cancel_goal",
+    ]
+
     @rpc
     def start(self) -> None:
         super().start()
+        # Initialize TF early so it can start receiving transforms.
+        _ = self.tf
 
     @rpc
     def stop(self) -> None:
@@ -67,25 +78,72 @@ class UnitreeSkillContainer(SkillModule):
         self._publish_request.set_rpc(self.rpc)  # type: ignore[arg-type]
 
     @skill()
-    def move(self, x: float, y: float = 0.0, yaw: float = 0.0, duration: float = 0.0) -> str:
-        """Move the robot using direct velocity commands. Determine duration required based on user distance instructions.
+    def relative_move(self, forward: float = 0.0, left: float = 0.0, degrees: float = 0.0) -> str:
+        """Move the robot relative to its current position.
 
-        Example call:
-            args = { "x": 0.5, "y": 0.0, "yaw": 0.0, "duration": 2.0 }
-            move(**args)
+        The `degrees` arguments refers to the rotation the robot should be at the end, relative to its current rotation.
 
-        Args:
-            x: Forward velocity (m/s)
-            y: Left/right velocity (m/s)
-            yaw: Rotational velocity (rad/s)
-            duration: How long to move (seconds)
+        Example calls:
+
+            # Move to a point that's 2 meters forward and 1 to the right.
+            relative_move(forward=2, left=-1, degrees=0)
+
+            # Move back 1 meter, while still facing the same direction.
+            relative_move(forward=-1, left=0, degrees=0)
+
+            # Rotate 90 degrees to the right (in place)
+            relative_move(forward=0, left=0, degrees=-90)
+
+            # Move 3 meters left, and face that direction
+            relative_move(forward=0, left=3, degrees=90)
         """
-        if self._move is None:
-            return "Error: Robot not connected"
 
-        twist = Twist(linear=Vector3(x, y, 0), angular=Vector3(0, 0, yaw))
-        self._move(twist, duration=duration)
-        return f"Started moving with velocity=({x}, {y}, {yaw}) for {duration} seconds"
+        tf = self.tf.get("world", "base_link")
+        if tf is None:
+            return "Failed to get the position of the robot."
+
+        current_pose = tf.to_pose()
+
+        try:
+            set_goal_rpc, get_state_rpc, is_goal_reached_rpc = self.get_rpc_calls(
+                "NavigationInterface.set_goal",
+                "NavigationInterface.get_state",
+                "NavigationInterface.is_goal_reached",
+            )
+        except Exception:
+            logger.error("Navigation module not connected properly")
+            return "Failed to connect to navigation module."
+
+        # Create local offset (forward is x, left is y in robot frame)
+        local_offset = Vector3(forward, left, 0)
+
+        # Rotate the offset by the robot's current orientation to get it in the map frame
+        global_offset = current_pose.orientation.rotate_vector(local_offset)
+
+        # Calculate goal position
+        goal_position = current_pose.position + global_offset
+
+        # Calculate goal orientation by adding the rotation to the current yaw
+        current_euler = current_pose.orientation.to_euler()
+        goal_yaw = current_euler.yaw + math.radians(degrees)
+        goal_euler = Vector3(current_euler.roll, current_euler.pitch, goal_yaw)
+        goal_orientation = Quaternion.from_euler(goal_euler)
+
+        goal_pose = PoseStamped(position=goal_position, orientation=goal_orientation)
+
+        set_goal_rpc(goal_pose)
+
+        time.sleep(1.0)
+
+        while get_state_rpc() == NavigationState.FOLLOWING_PATH:
+            time.sleep(0.25)
+
+        time.sleep(1.0)
+
+        if not is_goal_reached_rpc():
+            return "Navigation was cancelled or failed"
+        else:
+            return "Navigation goal reached"
 
     @skill()
     def wait(self, seconds: float) -> str:
