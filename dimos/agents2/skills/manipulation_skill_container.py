@@ -12,20 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""DimOS skill tutorial: module definitions.
-
-This file contains the module classes for the skill basics tutorial.
-
-Note that these classes cannot be defined in the __main__ of the script
-that's used to orchestrate the DimOS run,
-because DimOS uses Dask with process-based workers,
-and classes defined in __main__
-(notebooks, scripts) cannot be pickled to other processes.
-
-See: https://distributed.dask.org/en/stable/api.html
 """
+Manipulation Skill Container
 
-import time
+High-level manipulation skills for LLM agents, built on top of the
+MoveAxisModule, ManipulationModule, and RobotCapabilities.
+"""
 
 from dimos.core.core import rpc
 from dimos.core.module import Module
@@ -37,105 +29,288 @@ from dimos.utils.logging_config import setup_logger
 logger = setup_logger()
 
 
-# --8<-- [start:RobotCapabilities]
-class RobotCapabilities(Module):
-    """Low-level capabilities that our (mock) robot possesses.
+# ============================================================================
+# Manipulation Skill Container
+# ============================================================================
 
-    In a real setting, there would be a ConnectionModule for the robot platform you are using,
-    as well as a wrapper module over that that hides platform-specific details.
-    But to keep things simple here, we won't have anything like a ConnectionModule.
+
+class ManipulationSkillContainer(SkillModule):
+    """High-level manipulation skills for LLM agents.
+
+    This skill container provides directional movement skills and other
+    manipulation capabilities by using RPC methods from MoveAxisModule
+    and ManipulationModule.
     """
 
-    # In a real setting, you would see dependencies on methods of a 'ConnectionModule' here.
-    # See, e.g., dimos/robot/unitree_webrtc/unitree_g1_skill_container.py
-    rpc_calls = []
-
-    @rpc
-    def speak(self, text: str) -> str:
-        """Speak text out loud through the robot's speakers.
-
-        Args:
-            text: The text to speak.
-
-        Returns:
-            Status message.
-        """
-        time.sleep(0.1)  # Simulate execution time
-        logger.info(f"[Skill] RobotCapabilities.speak called: {text}")
-        return f"SPEAK: {text}"
-
-    @rpc
-    def start(self) -> None:
-        super().start()
-
-    @rpc
-    def stop(self) -> None:
-        super().stop()
-
-    # The following dunder methods are for Dask serialization:
-    # Module instances are serialized when deployed to worker processes.
-    # We return {} in __getstate__ since this class has no custom state to preserve.
-    def __getstate__(self):
-        return {}
-
-    def __setstate__(self, state):
-        pass
-
-
-# --8<-- [end:RobotCapabilities]
-
-
-# --8<-- [start:Greeter]
-class Greeter(Module):
-    """High-level Greeter skill built on lower-level RobotCapabilities.
-
-    Does *not* include LLM agent auto-registration -- see the skill_with_agent tutorial.
-    """
-
-    # Declares what this module needs from other modules
-    rpc_calls = [
-        "RobotCapabilities.speak",  # For speaking greetings
+    # Declare RPC dependencies from other modules
+    rpc_calls: list[str] = [
+        # From MoveAxisModule
+        "MoveAxisModule.move_up",
+        "MoveAxisModule.move_down",
+        "MoveAxisModule.move_left",
+        "MoveAxisModule.move_right",
+        "MoveAxisModule.move_forward",
+        "MoveAxisModule.move_backward",
+        # From ManipulationModule
+        "ManipulationModule.get_ee_pose",
+        "ManipulationModule.move_to_pose",
+        "ManipulationModule.get_current_joints",
+        "ManipulationModule.move_to_joints",
+        "ManipulationModule.get_state",
+        "ManipulationModule.cancel",
+        # From RobotCapabilities (for greet skill)
+        "RobotCapabilities.speak",
     ]
 
+    # =========================================================================
+    # Directional Movement Skills
+    # =========================================================================
+
     @skill()
-    # Note: Can't combine @skill and @rpc on one method (see multi_agent tutorial for details)
-    def greet(self, name: str = "friend") -> str:
-        """Greet someone by name.
+    def move_arm_up(self, distance: float = 0.05) -> str:
+        """Move the robot arm upward.
 
         Args:
-            name: Name of person to greet (default: "friend").
+            distance: Distance to move in meters (default: 0.05m = 5cm)
 
         Returns:
-            Status message with greeting details.
+            Status message describing the result
         """
-        # Skills need to have descriptive docstrings
-        # when working with llm agents -- more on this in the skill_with_agent tutorial
+        try:
+            move_up = self.get_rpc_calls("MoveAxisModule.move_up")
+            success = move_up(distance)
+            if success:
+                return f"Successfully moved arm up by {distance:.3f} meters"
+            else:
+                return f"Failed to move arm up by {distance:.3f} meters"
+        except Exception as e:
+            logger.error(f"move_arm_up failed: {e}")
+            return f"Error: {e}"
 
-        # Get the RPC method reference we need
-        speak = self.get_rpc_calls("RobotCapabilities.speak")
+    @skill()
+    def move_arm_down(self, distance: float = 0.05) -> str:
+        """Move the robot arm downward.
 
-        # Create and deliver the greeting
-        greeting_text = f"Hello, {name}! Nice to meet you!"
-        logger.info(f"[Skill] Greeter.greet executing for: {name}")
-        speak(greeting_text)
+        Args:
+            distance: Distance to move in meters (default: 0.05m = 5cm)
 
-        return f"Successfully greeted {name}"
+        Returns:
+            Status message describing the result
+        """
+        try:
+            move_down = self.get_rpc_calls("MoveAxisModule.move_down")
+            success = move_down(distance)
+            if success:
+                return f"Successfully moved arm down by {distance:.3f} meters"
+            else:
+                return f"Failed to move arm down by {distance:.3f} meters"
+        except Exception as e:
+            logger.error(f"move_arm_down failed: {e}")
+            return f"Error: {e}"
 
-    def __getstate__(self):
-        return {}
+    @skill()
+    def move_arm_left(self, distance: float = 0.05) -> str:
+        """Move the robot arm to the left.
 
-    def __setstate__(self, state):
-        pass
+        Args:
+            distance: Distance to move in meters (default: 0.05m = 5cm)
 
+        Returns:
+            Status message describing the result
+        """
+        try:
+            move_left = self.get_rpc_calls("MoveAxisModule.move_left")
+            success = move_left(distance)
+            if success:
+                return f"Successfully moved arm left by {distance:.3f} meters"
+            else:
+                return f"Failed to move arm left by {distance:.3f} meters"
+        except Exception as e:
+            logger.error(f"move_arm_left failed: {e}")
+            return f"Error: {e}"
 
-# --8<-- [start:GreeterForAgents]
-class GreeterForAgents(Greeter):
-    """Greeter with automatic LLM agent registration.
+    @skill()
+    def move_arm_right(self, distance: float = 0.05) -> str:
+        """Move the robot arm to the right.
 
-    Extends Greeter to enable skill auto-discovery by agents.
-    When composed with llm_agent() via autoconnect(), the framework calls
-    set_LlmAgent_register_skills to register this module's skills.
-    """
+        Args:
+            distance: Distance to move in meters (default: 0.05m = 5cm)
+
+        Returns:
+            Status message describing the result
+        """
+        try:
+            move_right = self.get_rpc_calls("MoveAxisModule.move_right")
+            success = move_right(distance)
+            if success:
+                return f"Successfully moved arm right by {distance:.3f} meters"
+            else:
+                return f"Failed to move arm right by {distance:.3f} meters"
+        except Exception as e:
+            logger.error(f"move_arm_right failed: {e}")
+            return f"Error: {e}"
+
+    @skill()
+    def move_arm_forward(self, distance: float = 0.05) -> str:
+        """Move the robot arm forward.
+
+        Args:
+            distance: Distance to move in meters (default: 0.05m = 5cm)
+
+        Returns:
+            Status message describing the result
+        """
+        try:
+            move_forward = self.get_rpc_calls("MoveAxisModule.move_forward")
+            success = move_forward(distance)
+            if success:
+                return f"Successfully moved arm forward by {distance:.3f} meters"
+            else:
+                return f"Failed to move arm forward by {distance:.3f} meters"
+        except Exception as e:
+            logger.error(f"move_arm_forward failed: {e}")
+            return f"Error: {e}"
+
+    @skill()
+    def move_arm_backward(self, distance: float = 0.05) -> str:
+        """Move the robot arm backward.
+
+        Args:
+            distance: Distance to move in meters (default: 0.05m = 5cm)
+
+        Returns:
+            Status message describing the result
+        """
+        try:
+            move_backward = self.get_rpc_calls("MoveAxisModule.move_backward")
+            success = move_backward(distance)
+            if success:
+                return f"Successfully moved arm backward by {distance:.3f} meters"
+            else:
+                return f"Failed to move arm backward by {distance:.3f} meters"
+        except Exception as e:
+            logger.error(f"move_arm_backward failed: {e}")
+            return f"Error: {e}"
+
+    # =========================================================================
+    # Additional Manipulation Skills
+    # =========================================================================
+
+    @skill()
+    def move_arm_to_pose(
+        self,
+        x: float,
+        y: float,
+        z: float,
+        roll: float = 0.0,
+        pitch: float = 0.0,
+        yaw: float = 0.0,
+    ) -> str:
+        """Move the robot arm end-effector to a specific pose.
+
+        Args:
+            x: X position in meters (forward/backward from base)
+            y: Y position in meters (left/right from base)
+            z: Z position in meters (up/down from base)
+            roll: Rotation about X axis in radians (default: 0.0)
+            pitch: Rotation about Y axis in radians (default: 0.0)
+            yaw: Rotation about Z axis in radians (default: 0.0)
+
+        Returns:
+            Status message describing the result
+        """
+        try:
+            move_to_pose = self.get_rpc_calls("ManipulationModule.move_to_pose")
+            success = move_to_pose(x, y, z, roll, pitch, yaw)
+            if success:
+                return (
+                    f"Successfully moved arm to pose: "
+                    f"position=({x:.3f}, {y:.3f}, {z:.3f})m, "
+                    f"orientation=({roll:.2f}, {pitch:.2f}, {yaw:.2f})rad"
+                )
+            else:
+                return "Failed to move arm to target pose"
+        except Exception as e:
+            logger.error(f"move_arm_to_pose failed: {e}")
+            return f"Error: {e}"
+
+    @skill()
+    def get_arm_position(self) -> str:
+        """Get the current position of the robot arm end-effector.
+
+        Returns:
+            Current end-effector pose as a formatted string
+        """
+        try:
+            get_ee_pose = self.get_rpc_calls("ManipulationModule.get_ee_pose")
+            pose = get_ee_pose()
+            if pose is None:
+                return "End-effector pose not available (no feedback received)"
+            x, y, z, roll, pitch, yaw = pose
+            return (
+                f"End-effector pose: position=({x:.4f}, {y:.4f}, {z:.4f})m, "
+                f"orientation=({roll:.3f}, {pitch:.3f}, {yaw:.3f})rad"
+            )
+        except Exception as e:
+            logger.error(f"get_arm_position failed: {e}")
+            return f"Error: {e}"
+
+    @skill()
+    def stop_arm_movement(self) -> str:
+        """Stop the current arm movement immediately.
+
+        Returns:
+            Status message
+        """
+        try:
+            cancel = self.get_rpc_calls("ManipulationModule.cancel")
+            success = cancel()
+            if success:
+                return "Successfully stopped arm movement"
+            else:
+                return "Failed to stop arm movement"
+        except Exception as e:
+            logger.error(f"stop_arm_movement failed: {e}")
+            return f"Error: {e}"
+
+    # =========================================================================
+    # Greet Skill (responds with user's name)
+    # =========================================================================
+
+    @skill()
+    def greet(self, name: str = "friend") -> str:
+        """Greet someone by name using the robot's voice.
+
+        This skill makes the robot say hello to a person. If you provide their name,
+        the robot will greet them personally. For example, if the user says "My name
+        is Alice", you should call greet("Alice").
+
+        Args:
+            name: Name of person to greet (default: "friend")
+
+        Returns:
+            Status message with greeting details
+        """
+        try:
+            speak = self.get_rpc_calls("RobotCapabilities.speak")
+
+            # Create personalized greeting
+            if name and name.lower() != "friend":
+                greeting_text = f"Hello, {name}! It's nice to meet you!"
+            else:
+                greeting_text = "Hello! Nice to meet you!"
+
+            logger.info(f"[Skill] Greeting: {name}")
+            speak(greeting_text)
+
+            return f"Successfully greeted {name}"
+        except Exception as e:
+            logger.error(f"greet failed: {e}")
+            return f"Error: {e}"
+
+    # =========================================================================
+    # Agent Registration
+    # =========================================================================
 
     @rpc
     def set_LlmAgent_register_skills(self, register_skills: RpcCall) -> None:
@@ -145,10 +320,16 @@ class GreeterForAgents(Greeter):
         It receives a callback to register this module's skills with the agent.
 
         Args:
-            register_skills: Callback to register this module's skills with the agent.
+            register_skills: Callback to register skills with the agent
         """
         register_skills.set_rpc(self.rpc)
         register_skills(RPCClient(self, self.__class__))
 
 
-# --8<-- [end:Greeter]
+# Expose blueprint for declarative composition
+manipulation_skill_container = ManipulationSkillContainer.blueprint
+
+__all__ = [
+    "ManipulationSkillContainer",
+    "manipulation_skill_container",
+]
