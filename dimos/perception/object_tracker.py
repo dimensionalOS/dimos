@@ -12,11 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from dataclasses import dataclass
 import threading
 import time
 
 import cv2
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 
 # Import LCM messages
 from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
@@ -27,10 +27,14 @@ from dimos_lcm.vision_msgs import (  # type: ignore[import-untyped]
 import numpy as np
 from reactivex.disposable import Disposable
 
-from dimos.core import In, Module, Out, rpc
+from dimos.core import In, Module, ModuleConfig, Out, rpc
 from dimos.manipulation.visual_servoing.utils import visualize_detections_3d
 from dimos.msgs.geometry_msgs import Pose, Quaternion, Transform, Vector3
-from dimos.msgs.sensor_msgs import Image, ImageFormat
+from dimos.msgs.sensor_msgs import (
+    CameraInfo,  # type: ignore[import-untyped]
+    Image,
+    ImageFormat,
+)
 from dimos.msgs.std_msgs import Header
 from dimos.msgs.vision_msgs import Detection2DArray, Detection3DArray
 from dimos.protocol.tf import TF
@@ -45,7 +49,12 @@ from dimos.utils.transform_utils import (
 logger = setup_logger()
 
 
-class ObjectTracking(Module):
+@dataclass
+class ObjectTrackingConfig(ModuleConfig):
+    frame_id: str = "camera_link"
+
+
+class ObjectTracking(Module[ObjectTrackingConfig]):
     """Module for object tracking with LCM input/output."""
 
     # LCM inputs
@@ -58,11 +67,11 @@ class ObjectTracking(Module):
     detection3darray: Out[Detection3DArray]
     tracked_overlay: Out[Image]  # Visualization output
 
+    default_config = ObjectTrackingConfig
+    config: ObjectTrackingConfig
+
     def __init__(
-        self,
-        reid_threshold: int = 10,
-        reid_fail_tolerance: int = 5,
-        frame_id: str = "camera_link",
+        self, reid_threshold: int = 10, reid_fail_tolerance: int = 5, **kwargs: object
     ) -> None:
         """
         Initialize an object tracking module using OpenCV's CSRT tracker with ORB re-ID.
@@ -73,15 +82,13 @@ class ObjectTracking(Module):
             reid_threshold: Minimum good feature matches needed to confirm re-ID.
             reid_fail_tolerance: Number of consecutive frames Re-ID can fail before
                                  tracking is stopped.
-            frame_id: TF frame ID for the camera (default: "camera_link")
         """
         # Call parent Module init
-        super().__init__()
+        super().__init__(**kwargs)
 
         self.camera_intrinsics = None
         self.reid_threshold = reid_threshold
         self.reid_fail_tolerance = reid_fail_tolerance
-        self.frame_id = frame_id
 
         self.tracker = None
         self.tracking_bbox = None  # Stores (x, y, w, h) for tracker initialization

@@ -27,7 +27,7 @@ from dimos.msgs.geometry_msgs import Pose
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.protocol.pubsub.lcmpubsub import LCM, Topic
-from dimos.utils.testing import get_data
+from dimos.utils.data import get_data
 
 
 def test_empty_grid() -> None:

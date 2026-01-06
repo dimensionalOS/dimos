@@ -28,6 +28,7 @@ from reactivex import operators as ops
 from reactivex.disposable import Disposable
 
 import dimos.core.colors as colors
+from dimos.core.resource import Resource
 from dimos.utils.logging_config import setup_logger
 import dimos.utils.reactive as reactive
 from dimos.utils.reactive import backpressure
@@ -79,7 +80,7 @@ class State(enum.Enum):
     FLOWING = "flowing"  # runtime: data observed
 
 
-class Transport(ObservableMixin[T]):
+class Transport(Resource, ObservableMixin[T]):
     # used by local Output
     def broadcast(self, selfstream: Out[T], value: T) -> None: ...
 

@@ -350,7 +350,7 @@ class UnitreeWebRTCConnection(Resource):
 
         return subject.pipe(ops.finally_action(stop))
 
-    def get_video_stream(self, fps: int = 30) -> Observable[VideoMessage]:
+    def get_video_stream(self, fps: int = 30) -> Observable[Image]:
         """Get the video stream from the robot's camera.
 
         Implements the AbstractRobot interface method.

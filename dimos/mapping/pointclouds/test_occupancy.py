@@ -18,10 +18,18 @@ import numpy as np
 from open3d.geometry import PointCloud  # type: ignore[import-untyped]
 import pytest
 
-from dimos.mapping.pointclouds.occupancy import general_occupancy, simple_occupancy
+from dimos.core import LCMTransport
+from dimos.mapping.pointclouds.occupancy import (
+    general_occupancy,
+    height_cost_occupancy,
+    simple_occupancy,
+)
 from dimos.mapping.pointclouds.util import read_pointcloud
+from dimos.msgs.nav_msgs.OccupancyGrid import OccupancyGrid
 from dimos.msgs.sensor_msgs import PointCloud2
 from dimos.utils.data import get_data
+from dimos.utils.testing.moment import OutputMoment
+from dimos.utils.testing.test_moment import Go2Moment
 
 
 @pytest.fixture
@@ -46,3 +54,52 @@ def test_occupancy(apartment: PointCloud, occupancy_fn, output_name: str) -> Non
     computed_image = (occupancy_grid.grid + 1).astype(np.uint8)
 
     np.testing.assert_array_equal(computed_image, expected_image)
+
+
+class HeightCostMoment(Go2Moment):
+    costmap: OutputMoment[OccupancyGrid] = OutputMoment(LCMTransport("/costmap", OccupancyGrid))
+
+
+@pytest.fixture
+def height_cost_moment():
+    moment = HeightCostMoment()
+
+    def get_moment(ts: float, publish: bool = True) -> HeightCostMoment:
+        moment.seek(ts)
+        if moment.lidar.value is not None:
+            costmap = height_cost_occupancy(
+                moment.lidar.value,
+                resolution=0.05,
+                can_pass_under=0.6,
+                can_climb=0.15,
+            )
+            moment.costmap.set(costmap)
+        if publish:
+            moment.publish()
+        return moment
+
+    yield get_moment
+
+    moment.stop()
+
+
+def test_height_cost_occupancy_from_lidar(height_cost_moment) -> None:
+    """Test height_cost_occupancy with real lidar data."""
+    moment = height_cost_moment(1.0)
+
+    costmap = moment.costmap.value
+    assert costmap is not None
+
+    # Basic sanity checks
+    assert costmap.grid is not None
+    assert costmap.width > 0
+    assert costmap.height > 0
+
+    # Costs should be in range -1 to 100 (-1 = unknown)
+    assert costmap.grid.min() >= -1
+    assert costmap.grid.max() <= 100
+
+    # Check we have some unknown, some known
+    known_mask = costmap.grid >= 0
+    assert known_mask.sum() > 0, "Expected some known cells"
+    assert (~known_mask).sum() > 0, "Expected some unknown cells"

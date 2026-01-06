@@ -17,7 +17,6 @@ from threading import Thread
 import time
 from typing import Any, Protocol
 
-from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 from reactivex.disposable import Disposable
 from reactivex.observable import Observable
 
@@ -31,7 +30,7 @@ from dimos.msgs.geometry_msgs import (
     Twist,
     Vector3,
 )
-from dimos.msgs.sensor_msgs import Image, PointCloud2
+from dimos.msgs.sensor_msgs import CameraInfo, Image, PointCloud2
 from dimos.msgs.std_msgs import Header
 from dimos.robot.unitree.connection.connection import UnitreeWebRTCConnection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
@@ -61,32 +60,18 @@ def _camera_info_static() -> CameraInfo:
     fx, fy, cx, cy = (819.553492, 820.646595, 625.284099, 336.808987)
     width, height = (1280, 720)
 
-    # Camera matrix K (3x3)
-    K = [fx, 0, cx, 0, fy, cy, 0, 0, 1]
-
-    # No distortion coefficients for now
-    D = [0.0, 0.0, 0.0, 0.0, 0.0]
-
-    # Identity rotation matrix
-    R = [1, 0, 0, 0, 1, 0, 0, 0, 1]
-
-    # Projection matrix P (3x4)
-    P = [fx, 0, cx, 0, 0, fy, cy, 0, 0, 0, 1, 0]
-
-    base_msg = {
-        "D_length": len(D),
-        "height": height,
-        "width": width,
-        "distortion_model": "plumb_bob",
-        "D": D,
-        "K": K,
-        "R": R,
-        "P": P,
-        "binning_x": 0,
-        "binning_y": 0,
-    }
-
-    return CameraInfo(**base_msg, header=Header("camera_optical"))
+    return CameraInfo(
+        frame_id="camera_optical",
+        height=height,
+        width=width,
+        distortion_model="plumb_bob",
+        D=[0.0, 0.0, 0.0, 0.0, 0.0],
+        K=[fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0],
+        R=[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0],
+        P=[fx, 0.0, cx, 0.0, 0.0, fy, cy, 0.0, 0.0, 0.0, 1.0, 0.0],
+        binning_x=0,
+        binning_y=0,
+    )
 
 
 class ReplayConnection(UnitreeWebRTCConnection):

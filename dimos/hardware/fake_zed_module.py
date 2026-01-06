@@ -17,13 +17,14 @@
 FakeZEDModule - Replays recorded ZED data for testing without hardware.
 """
 
+from dataclasses import dataclass
 import functools
 import logging
 
 from dimos_lcm.sensor_msgs import CameraInfo  # type: ignore[import-untyped]
 import numpy as np
 
-from dimos.core import Module, Out, rpc
+from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.sensor_msgs import Image, ImageFormat
 from dimos.msgs.std_msgs import Header
@@ -34,7 +35,12 @@ from dimos.utils.testing import TimedSensorReplay
 logger = setup_logger(level=logging.INFO)
 
 
-class FakeZEDModule(Module):
+@dataclass
+class FakeZEDModuleConfig(ModuleConfig):
+    frame_id: str = "zed_camera"
+
+
+class FakeZEDModule(Module[FakeZEDModuleConfig]):
     """
     Fake ZED module that replays recorded data instead of real camera.
     """
@@ -45,18 +51,19 @@ class FakeZEDModule(Module):
     camera_info: Out[CameraInfo]
     pose: Out[PoseStamped]
 
-    def __init__(self, recording_path: str, frame_id: str = "zed_camera", **kwargs) -> None:  # type: ignore[no-untyped-def]
+    default_config = FakeZEDModuleConfig
+    config: FakeZEDModuleConfig
+
+    def __init__(self, recording_path: str, **kwargs: object) -> None:
         """
         Initialize FakeZEDModule with recording path.
 
         Args:
             recording_path: Path to recorded data directory
-            frame_id: TF frame ID for messages
         """
         super().__init__(**kwargs)
 
         self.recording_path = recording_path
-        self.frame_id = frame_id
         self._running = False
 
         # Initialize TF publisher
