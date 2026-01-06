@@ -19,7 +19,6 @@ from typing import Any
 
 import reactivex as rx
 from reactivex import operators as ops
-from reactivex.observable import Observable
 
 from dimos.agents import Output, Reducer, Stream, skill
 from dimos.core import Module, ModuleConfig, Out, rpc

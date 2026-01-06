@@ -133,7 +133,7 @@ class TestProcessMarkdown:
         content = "The `Configurable` class is in [`service/spec.py`]()"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -151,7 +151,7 @@ class TestProcessMarkdown:
         content = "See [`service/spec.py`](#L99)"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, _errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -187,7 +187,7 @@ class TestProcessMarkdown:
         content = "The `MyClass` is documented at [`MyClass`]()"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        _new_content, changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -205,7 +205,7 @@ class TestProcessMarkdown:
         content = "See [`spec.py`]() for details"  # Multiple spec.py files
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        _new_content, _changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -223,7 +223,7 @@ class TestProcessMarkdown:
         content = "See [`nonexistent/file.py`]() for details"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        _new_content, _changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -241,7 +241,7 @@ class TestProcessMarkdown:
         content = "See [`service/spec.py`]()"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, _errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -258,7 +258,7 @@ class TestProcessMarkdown:
         content = "See [`service/spec.py`]()"
         doc_path = REPO_ROOT / "docs/concepts/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, _errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -313,7 +313,7 @@ class TestDocLinking:
         content = "See [CONFIGURATION](.md) for details"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -333,7 +333,7 @@ class TestDocLinking:
         content = "See [Configuration](.md)"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, _errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -352,7 +352,7 @@ class TestDocLinking:
         content = "See [Development](.md)"
         doc_path = REPO_ROOT / "docs/concepts/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -372,7 +372,7 @@ class TestDocLinking:
         content = "See [NonexistentDoc](.md)"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        _new_content, _changes, errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
@@ -391,7 +391,7 @@ class TestDocLinking:
         content = "See [regular link](https://example.com) here"
         doc_path = REPO_ROOT / "docs/test.md"
 
-        new_content, changes, errors = process_markdown(
+        new_content, _changes, _errors = process_markdown(
             content,
             REPO_ROOT,
             doc_path,
