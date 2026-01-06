@@ -22,7 +22,7 @@ import numpy as np
 from plum import dispatch
 
 try:
-    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined]
+    from nav_msgs.msg import Odometry as ROSOdometry  # type: ignore[attr-defined, import-untyped]
 except ImportError:
     ROSOdometry = None  # type: ignore[assignment, misc]
 

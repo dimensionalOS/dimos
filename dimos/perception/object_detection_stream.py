@@ -45,7 +45,7 @@ if TYPE_CHECKING:
     from dimos.types.manipulation import ObjectData
 
 # Initialize logger for the ObjectDetectionStream
-logger = setup_logger("dimos.perception.object_detection_stream")
+logger = setup_logger()
 
 
 class ObjectDetectionStream:
@@ -116,7 +116,7 @@ class ObjectDetectionStream:
         self.depth_model = None
         if not disable_depth:
             try:
-                self.depth_model = Metric3D(gt_depth_scale)
+                self.depth_model = Metric3D(gt_depth_scale=gt_depth_scale)
 
                 if camera_intrinsics is not None:
                     self.depth_model.update_intrinsic(camera_intrinsics)  # type: ignore[no-untyped-call]

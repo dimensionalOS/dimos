@@ -85,7 +85,7 @@ The frontend will be available at http://localhost:3000
 ### Unitree Go2 Example
 
 ```python
-from dimos.agents.agent import OpenAIAgent
+from dimos.agents_deprecated.agent import OpenAIAgent
 from dimos.robot.unitree.unitree_go2 import UnitreeGo2
 from dimos.robot.unitree.unitree_skills import MyUnitreeSkills
 from dimos.web.robot_web_interface import RobotWebInterface

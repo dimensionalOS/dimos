@@ -27,6 +27,8 @@ from reactivex.disposable import Disposable
 
 from dimos.core import In, Module, Out, rpc
 from dimos.core.rpc_client import RpcCall
+from dimos.mapping.occupancy.gradient import gradient
+from dimos.mapping.occupancy.inflation import simple_inflate
 from dimos.msgs.geometry_msgs import PoseStamped
 from dimos.msgs.nav_msgs import OccupancyGrid
 from dimos.navigation.base import NavigationInterface, NavigationState
@@ -36,7 +38,7 @@ from dimos.protocol.tf import TF
 from dimos.utils.logging_config import setup_logger
 from dimos.utils.transform_utils import apply_transform
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class BehaviorTreeNavigator(Module, NavigationInterface):
@@ -54,14 +56,14 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
     """
 
     # LCM inputs
-    odom: In[PoseStamped] = None  # type: ignore[assignment]
-    goal_request: In[PoseStamped] = None  # type: ignore[assignment]  # Input for receiving goal requests
-    global_costmap: In[OccupancyGrid] = None  # type: ignore[assignment]
+    odom: In[PoseStamped]
+    goal_request: In[PoseStamped]  # Input for receiving goal requests
+    global_costmap: In[OccupancyGrid]
 
     # LCM outputs
-    target: Out[PoseStamped] = None  # type: ignore[assignment]
-    goal_reached: Out[Bool] = None  # type: ignore[assignment]
-    navigation_state: Out[String] = None  # type: ignore[assignment]
+    target: Out[PoseStamped]
+    goal_reached: Out[Bool]
+    navigation_state: Out[String]
 
     def __init__(  # type: ignore[no-untyped-def]
         self,
@@ -271,7 +273,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
         while not self.stop_event.is_set():
             with self.state_lock:
                 current_state = self.state
-                self.navigation_state.publish(String(data=current_state.value))  # type: ignore[no-untyped-call]
+                self.navigation_state.publish(String(data=current_state.value))
 
             if current_state == NavigationState.FOLLOWING_PATH:
                 with self.goal_lock:
@@ -285,7 +287,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                         self.cancel_goal()
                         continue
 
-                    costmap = self.latest_costmap.inflate(0.1).gradient(max_distance=1.0)
+                    costmap = gradient(simple_inflate(self.latest_costmap, 0.1), max_distance=1.0)
 
                     # Find safe goal position
                     safe_goal_pos = find_safe_goal(
@@ -305,7 +307,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                             frame_id=goal.frame_id,
                             ts=goal.ts,
                         )
-                        self.target.publish(safe_goal)  # type: ignore[no-untyped-call]
+                        self.target.publish(safe_goal)
                         self.current_goal = safe_goal
                     else:
                         logger.warning("Could not find safe goal position, cancelling goal")
@@ -315,7 +317,7 @@ class BehaviorTreeNavigator(Module, NavigationInterface):
                     if self.check_goal_reached():  # type: ignore[misc]
                         reached_msg = Bool()
                         reached_msg.data = True
-                        self.goal_reached.publish(reached_msg)  # type: ignore[no-untyped-call]
+                        self.goal_reached.publish(reached_msg)
                         self.stop_navigation()
                         self._goal_reached = True
                         logger.info("Goal reached, resetting local planner")

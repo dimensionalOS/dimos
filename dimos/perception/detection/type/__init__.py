@@ -2,6 +2,7 @@ from dimos.perception.detection.type.detection2d import (  # type: ignore[attr-d
     Detection2D,
     Detection2DBBox,
     Detection2DPerson,
+    Detection2DPoint,
     Filter2D,
     ImageDetections2D,
 )
@@ -24,6 +25,7 @@ __all__ = [
     "Detection2D",
     "Detection2DBBox",
     "Detection2DPerson",
+    "Detection2DPoint",
     # 3D Detection types
     "Detection3D",
     "Detection3DBBox",

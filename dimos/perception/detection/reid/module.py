@@ -38,9 +38,9 @@ class Config(ModuleConfig):
 class ReidModule(Module):
     default_config = Config
 
-    detections: In[Detection2DArray] = None  # type: ignore
-    image: In[Image] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
+    detections: In[Detection2DArray]
+    image: In[Image]
+    annotations: Out[ImageAnnotations]
 
     def __init__(self, idsystem: IDSystem | None = None, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(**kwargs)
@@ -59,8 +59,8 @@ class ReidModule(Module):
     def detections_stream(self) -> Observable[ImageDetections2D]:
         return backpressure(
             align_timestamped(
-                self.image.pure_observable(),  # type: ignore[no-untyped-call]
-                self.detections.pure_observable().pipe(  # type: ignore[no-untyped-call]
+                self.image.pure_observable(),
+                self.detections.pure_observable().pipe(
                     ops.filter(lambda d: d.detections_length > 0)  # type: ignore[attr-defined]
                 ),
                 match_tolerance=0.0,
@@ -109,4 +109,4 @@ class ReidModule(Module):
             points=[],
             points_length=0,
         )
-        self.annotations.publish(annotations)  # type: ignore[no-untyped-call]
+        self.annotations.publish(annotations)

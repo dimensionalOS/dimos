@@ -23,7 +23,7 @@ from reactivex import operators as ops
 from reactivex.observable import Observable
 
 from dimos import spec
-from dimos.agents2 import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
+from dimos.agents import Output, Reducer, Stream, skill  # type: ignore[attr-defined]
 from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.hardware.camera.spec import CameraHardware
 from dimos.hardware.camera.webcam import Webcam
@@ -49,17 +49,15 @@ class CameraModuleConfig(ModuleConfig):
     frequency: float = 5.0
 
 
-class CameraModule(Module, spec.Camera):
-    image: Out[Image] = None  # type: ignore[assignment]
-    camera_info: Out[CameraInfo] = None  # type: ignore[assignment]
+class CameraModule(Module[CameraModuleConfig], spec.Camera):
+    color_image: Out[Image]
+    camera_info: Out[CameraInfo]
 
     hardware: Callable[[], CameraHardware] | CameraHardware = None  # type: ignore[assignment, type-arg]
     _skill_stream: Observable[Image] | None = None
 
+    config: CameraModuleConfig
     default_config = CameraModuleConfig
-
-    def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        super().__init__(*args, **kwargs)
 
     @property
     def hardware_camera_info(self) -> CameraInfo:
@@ -75,7 +73,7 @@ class CameraModule(Module, spec.Camera):
         self._disposables.add(self.camera_info_stream().subscribe(self.publish_info))
 
         stream = self.hardware.image_stream().pipe(sharpness_barrier(self.config.frequency))  # type: ignore[attr-defined, union-attr]
-        self._disposables.add(stream.subscribe(self.image.publish))
+        self._disposables.add(stream.subscribe(self.color_image.publish))
 
     @rpc
     def stop(self) -> None:
@@ -92,7 +90,7 @@ class CameraModule(Module, spec.Camera):
         yield from iter(_queue.get, None)
 
     def publish_info(self, camera_info: CameraInfo) -> None:
-        self.camera_info.publish(camera_info)  # type: ignore[no-untyped-call]
+        self.camera_info.publish(camera_info)
 
         if self.config.transform is None:  # type: ignore[attr-defined]
             return

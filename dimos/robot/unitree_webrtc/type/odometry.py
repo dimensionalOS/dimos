@@ -11,13 +11,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import time
 from typing import Literal, TypedDict
 
 from dimos.msgs.geometry_msgs import PoseStamped, Quaternion, Vector3
 from dimos.robot.unitree_webrtc.type.timeseries import (
     Timestamped,
 )
+from dimos.types.timestamped import to_timestamp
 
 raw_odometry_msg_sample = {
     "type": "msg",
@@ -95,10 +95,7 @@ class Odometry(PoseStamped, Timestamped):  # type: ignore[misc]
             pose["orientation"].get("w"),
         )
 
-        # ts = to_timestamp(msg["data"]["header"]["stamp"])
-        # lidar / video timestamps are not available from the robot
-        # so we are deferring to local time for everything
-        ts = time.time()
+        ts = to_timestamp(msg["data"]["header"]["stamp"])
         return Odometry(position=pos, orientation=rot, ts=ts, frame_id="world")
 
     def __repr__(self) -> str:

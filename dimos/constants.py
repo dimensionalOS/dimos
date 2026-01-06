@@ -16,6 +16,8 @@ from pathlib import Path
 
 DIMOS_PROJECT_ROOT = Path(__file__).parent.parent
 
+DIMOS_LOG_DIR = DIMOS_PROJECT_ROOT / "logs"
+
 """
 Constants for shared memory
 Usually, auto-detection for size would be preferred. Sadly, though, channels are made

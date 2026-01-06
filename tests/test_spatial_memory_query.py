@@ -28,7 +28,7 @@ import chromadb
 import cv2
 import matplotlib.pyplot as plt
 
-from dimos.agents.memory.visual_memory import VisualMemory
+from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.perception.spatial_perception import SpatialMemory
 
 

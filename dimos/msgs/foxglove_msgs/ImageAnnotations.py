@@ -21,12 +21,15 @@ class ImageAnnotations(FoxgloveImageAnnotations):  # type: ignore[misc]
     def __add__(self, other: "ImageAnnotations") -> "ImageAnnotations":
         points = self.points + other.points
         texts = self.texts + other.texts
+        circles = self.circles + other.circles
 
         return ImageAnnotations(
             texts=texts,
             texts_length=len(texts),
             points=points,
             points_length=len(points),
+            circles=circles,
+            circles_length=len(circles),
         )
 
     def agent_encode(self) -> str:

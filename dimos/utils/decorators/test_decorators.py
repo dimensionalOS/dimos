@@ -16,7 +16,7 @@ import time
 
 import pytest
 
-from dimos.utils.decorators import RollingAverageAccumulator, limit, retry
+from dimos.utils.decorators import RollingAverageAccumulator, limit, retry, simple_mcache
 
 
 def test_limit() -> None:
@@ -260,3 +260,59 @@ def test_retry_with_methods() -> None:
     result = obj2.instance_method()
     assert result == "instance success with value 100"
     assert len(obj2.instance_attempts) == 3
+
+
+def test_simple_mcache() -> None:
+    """Test simple_mcache decorator caches and can be invalidated."""
+    call_count = 0
+
+    class Counter:
+        @simple_mcache
+        def expensive(self) -> int:
+            nonlocal call_count
+            call_count += 1
+            return call_count
+
+    obj = Counter()
+
+    # First call computes
+    assert obj.expensive() == 1
+    assert call_count == 1
+
+    # Second call returns cached
+    assert obj.expensive() == 1
+    assert call_count == 1
+
+    # Invalidate and call again
+    obj.expensive.invalidate_cache(obj)
+    assert obj.expensive() == 2
+    assert call_count == 2
+
+    # Cached again
+    assert obj.expensive() == 2
+    assert call_count == 2
+
+
+def test_simple_mcache_separate_instances() -> None:
+    """Test that simple_mcache caches per instance."""
+    call_count = 0
+
+    class Counter:
+        @simple_mcache
+        def expensive(self) -> int:
+            nonlocal call_count
+            call_count += 1
+            return call_count
+
+    obj1 = Counter()
+    obj2 = Counter()
+
+    assert obj1.expensive() == 1
+    assert obj2.expensive() == 2  # separate cache
+    assert obj1.expensive() == 1  # still cached
+    assert call_count == 2
+
+    # Invalidating one doesn't affect the other
+    obj1.expensive.invalidate_cache(obj1)
+    assert obj1.expensive() == 3
+    assert obj2.expensive() == 2  # still cached

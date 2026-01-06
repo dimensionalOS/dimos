@@ -28,9 +28,9 @@ from reactivex import Observable, interval, operators as ops
 from reactivex.disposable import Disposable
 
 from dimos import spec
-from dimos.agents.memory.image_embedding import ImageEmbeddingProvider
-from dimos.agents.memory.spatial_vector_db import SpatialVectorDB
-from dimos.agents.memory.visual_memory import VisualMemory
+from dimos.agents_deprecated.memory.image_embedding import ImageEmbeddingProvider
+from dimos.agents_deprecated.memory.spatial_vector_db import SpatialVectorDB
+from dimos.agents_deprecated.memory.visual_memory import VisualMemory
 from dimos.constants import DIMOS_PROJECT_ROOT
 from dimos.core import DimosCluster, In, Module, rpc
 from dimos.msgs.sensor_msgs import Image
@@ -47,7 +47,7 @@ _DB_PATH = _SPATIAL_MEMORY_DIR / "chromadb_data"
 _VISUAL_MEMORY_PATH = _SPATIAL_MEMORY_DIR / "visual_memory.pkl"
 
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 
 class SpatialMemory(Module):
@@ -61,7 +61,7 @@ class SpatialMemory(Module):
     """
 
     # LCM inputs
-    color_image: In[Image] = None  # type: ignore[assignment]
+    color_image: In[Image]
 
     def __init__(
         self,
@@ -577,7 +577,7 @@ def deploy(  # type: ignore[no-untyped-def]
     camera: spec.Camera,
 ):
     spatial_memory = dimos.deploy(SpatialMemory, db_path="/tmp/spatial_memory_db")  # type: ignore[attr-defined]
-    spatial_memory.color_image.connect(camera.image)
+    spatial_memory.color_image.connect(camera.color_image)
     spatial_memory.start()
     return spatial_memory
 

@@ -59,7 +59,7 @@ class SubscriberBase(Module):
 
 
 class ClassicSubscriber(SubscriberBase):
-    odom: In[Odometry] = None
+    odom: In[Odometry]
     unsub: Callable[[], None] | None = None
     unsub2: Callable[[], None] | None = None
 
@@ -82,7 +82,7 @@ class ClassicSubscriber(SubscriberBase):
 
 
 class RXPYSubscriber(SubscriberBase):
-    odom: In[Odometry] = None
+    odom: In[Odometry]
     unsub: Callable[[], None] | None = None
     unsub2: Callable[[], None] | None = None
 

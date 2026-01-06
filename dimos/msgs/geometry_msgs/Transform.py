@@ -23,7 +23,7 @@ from dimos_lcm.geometry_msgs import (  # type: ignore[import-untyped]
 )
 
 try:
-    from geometry_msgs.msg import (  # type: ignore[attr-defined]
+    from geometry_msgs.msg import (  # type: ignore[attr-defined, import-untyped]
         Quaternion as ROSQuaternion,
         Transform as ROSTransform,
         TransformStamped as ROSTransformStamped,

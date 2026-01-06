@@ -122,14 +122,14 @@ def extract_function_info(filename):
 
 
 # Usage:
-file_path = "./dimos/agents/memory/base.py"
+file_path = "./dimos/agents_deprecated/memory/base.py"
 extracted_info = extract_function_info(file_path)
 print(extracted_info)
 
-file_path = "./dimos/agents/memory/chroma_impl.py"
+file_path = "./dimos/agents_deprecated/memory/chroma_impl.py"
 extracted_info = extract_function_info(file_path)
 print(extracted_info)
 
-file_path = "./dimos/agents/agent.py"
+file_path = "./dimos/agents_deprecated/agent.py"
 extracted_info = extract_function_info(file_path)
 print(extracted_info)

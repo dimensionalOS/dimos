@@ -39,7 +39,7 @@ import open3d as o3d
 from dimos.manipulation.manip_aio_processer import ManipulationProcessor
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger("test_pipeline_lcm")
+logger = setup_logger()
 
 
 class LCMDataCollector:

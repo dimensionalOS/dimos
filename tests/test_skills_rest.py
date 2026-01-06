@@ -18,7 +18,7 @@ from dotenv import load_dotenv
 import reactivex as rx
 import reactivex.operators as ops
 
-from dimos.agents.claude_agent import ClaudeAgent
+from dimos.agents_deprecated.claude_agent import ClaudeAgent
 from dimos.skills.rest.rest import GenericRestSkill
 from dimos.skills.skills import SkillLibrary
 from dimos.web.robot_web_interface import RobotWebInterface

@@ -26,7 +26,7 @@ MsgT = TypeVar("MsgT")
 TopicT = TypeVar("TopicT")
 
 
-logger = setup_logger(__name__)
+logger = setup_logger()
 
 
 class PubSub(Generic[TopicT, MsgT], ABC):

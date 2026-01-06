@@ -25,7 +25,7 @@ from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 from dimos.simulation.mujoco.constants import VIDEO_HEIGHT, VIDEO_WIDTH
 from dimos.utils.logging_config import setup_logger
 
-logger = setup_logger(__file__)
+logger = setup_logger()
 
 # Video buffer: VIDEO_WIDTH x VIDEO_HEIGHT x 3 RGB
 _video_size = VIDEO_WIDTH * VIDEO_HEIGHT * 3

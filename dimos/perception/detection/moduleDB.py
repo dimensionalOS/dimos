@@ -143,23 +143,23 @@ class ObjectDBModule(Detection3DModule, TableStr):
 
     goto: Callable[[PoseStamped], Any] | None = None
 
-    image: In[Image] = None  # type: ignore
-    pointcloud: In[PointCloud2] = None  # type: ignore
+    image: In[Image]
+    pointcloud: In[PointCloud2]
 
-    detections: Out[Detection2DArray] = None  # type: ignore
-    annotations: Out[ImageAnnotations] = None  # type: ignore
+    detections: Out[Detection2DArray]
+    annotations: Out[ImageAnnotations]
 
-    detected_pointcloud_0: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_1: Out[PointCloud2] = None  # type: ignore
-    detected_pointcloud_2: Out[PointCloud2] = None  # type: ignore
+    detected_pointcloud_0: Out[PointCloud2]
+    detected_pointcloud_1: Out[PointCloud2]
+    detected_pointcloud_2: Out[PointCloud2]
 
-    detected_image_0: Out[Image] = None  # type: ignore
-    detected_image_1: Out[Image] = None  # type: ignore
-    detected_image_2: Out[Image] = None  # type: ignore
+    detected_image_0: Out[Image]
+    detected_image_1: Out[Image]
+    detected_image_2: Out[Image]
 
-    scene_update: Out[SceneUpdate] = None  # type: ignore
+    scene_update: Out[SceneUpdate]
 
-    target: Out[PoseStamped] = None  # type: ignore
+    target: Out[PoseStamped]
 
     remembered_locations: dict[str, PoseStamped]
 
@@ -174,7 +174,7 @@ class ObjectDBModule(Detection3DModule, TableStr):
         def scene_thread() -> None:
             while True:
                 scene_update = self.to_foxglove_scene_update()
-                self.scene_update.publish(scene_update)  # type: ignore[no-untyped-call]
+                self.scene_update.publish(scene_update)
                 time.sleep(1.0)
 
         threading.Thread(target=scene_thread, daemon=True).start()
@@ -319,7 +319,7 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector = dimos.deploy(ObjectDBModule, camera_info=camera.camera_info_stream, **kwargs)  # type: ignore[attr-defined]
 
-    detector.image.connect(camera.image)
+    detector.image.connect(camera.color_image)
     detector.pointcloud.connect(lidar.pointcloud)
 
     detector.annotations.transport = LCMTransport(f"{prefix}/annotations", ImageAnnotations)
@@ -336,3 +336,8 @@ def deploy(  # type: ignore[no-untyped-def]
 
     detector.start()
     return detector  # type: ignore[no-any-return]
+
+
+detectionDB_module = ObjectDBModule.blueprint
+
+__all__ = ["ObjectDBModule", "deploy", "detectionDB_module"]
