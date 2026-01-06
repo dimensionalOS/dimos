@@ -15,7 +15,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 from pathlib import Path
+import socket
+import subprocess
+import sys
+import threading
+
+import pytest
 
 from dimos.protocol.mcp.mcp import MCPModule
 from dimos.protocol.skill.coordinator import SkillStateEnum
@@ -71,3 +79,55 @@ def test_mcp_module_request_flow() -> None:
         )
     )
     assert response["result"]["content"][0]["text"] == "5"
+
+
+def test_mcp_module_handles_hidden_and_errors() -> None:
+    class DummySkill:
+        def __init__(self, name: str, hide_skill: bool) -> None:
+            self.name = name
+            self.hide_skill = hide_skill
+            self.schema = {"function": {"description": "", "parameters": {"type": "object"}}}
+
+    class DummyState:
+        def __init__(self, state: SkillStateEnum, content: str | None) -> None:
+            self.state = state
+            self._content = content
+
+        def content(self) -> str | None:
+            return self._content
+
+    class DummyCoordinator:
+        def __init__(self) -> None:
+            self._skill_state: dict[str, DummyState] = {}
+            self._skills = {
+                "visible": DummySkill("visible", False),
+                "hidden": DummySkill("hidden", True),
+                "fail": DummySkill("fail", False),
+            }
+
+        def skills(self) -> dict[str, DummySkill]:
+            return self._skills
+
+        def call_skill(self, call_id: str, name: str, _args: dict[str, int]) -> None:
+            if name == "fail":
+                self._skill_state[call_id] = DummyState(SkillStateEnum.error, "boom")
+            elif name in self._skills:
+                self._skill_state[call_id] = DummyState(SkillStateEnum.running, None)
+
+        async def wait_for_updates(self) -> bool:
+            return True
+
+    mcp = MCPModule.__new__(MCPModule)
+    mcp.coordinator = DummyCoordinator()
+
+    response = asyncio.run(mcp._handle_request({"method": "tools/list", "id": 1}))
+    tool_names = {tool["name"] for tool in response["result"]["tools"]}
+    assert "visible" in tool_names
+    assert "hidden" not in tool_names
+
+    response = asyncio.run(
+        mcp._handle_request(
+            {"method": "tools/call", "id": 2, "params": {"name": "fail", "arguments": {}}}
+        )
+    )
+    assert "Error:" in response["result"]["content"][0]["text"]
