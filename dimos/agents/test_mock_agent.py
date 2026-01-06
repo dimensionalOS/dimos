@@ -26,7 +26,7 @@ from dimos.core import LCMTransport, start
 from dimos.msgs.geometry_msgs import PoseStamped, Vector3
 from dimos.msgs.sensor_msgs import Image
 from dimos.protocol.skill.test_coordinator import SkillContainerTest
-from dimos.robot.unitree_webrtc.modular.connection_module import ConnectionModule
+from dimos.robot.unitree.connection.go2 import GO2Connection
 from dimos.robot.unitree_webrtc.type.lidar import LidarMessage
 
 
@@ -157,11 +157,11 @@ def test_tool_call_implicit_detections() -> None:
         system_prompt="You are a helpful robot assistant with camera capabilities.",
     )
 
-    robot_connection = dimos.deploy(ConnectionModule, connection_type="fake")
+    robot_connection = dimos.deploy(GO2Connection, connection_type="fake")
     robot_connection.lidar.transport = LCMTransport("/lidar", LidarMessage)
     robot_connection.odom.transport = LCMTransport("/odom", PoseStamped)
     robot_connection.video.transport = LCMTransport("/image", Image)
-    robot_connection.movecmd.transport = LCMTransport("/cmd_vel", Vector3)
+    robot_connection.cmd_vel.transport = LCMTransport("/cmd_vel", Vector3)
     robot_connection.camera_info.transport = LCMTransport("/camera_info", CameraInfo)
     robot_connection.start()
 
