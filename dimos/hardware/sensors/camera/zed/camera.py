@@ -26,10 +26,9 @@ import pyzed.sl as sl
 import reactivex as rx
 from scipy.spatial.transform import Rotation
 
-from dimos.core import rpc
+from dimos.core import Module, ModuleConfig, Out, rpc
 from dimos.core.module_coordinator import ModuleCoordinator
 from dimos.core.transport import LCMTransport
-from dimos.core import Module, ModuleConfig, Out
 from dimos.hardware.sensors.camera.spec import (
     OPTICAL_ROTATION,
     SensorStatus,
