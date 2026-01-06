@@ -32,6 +32,6 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
     #     lidar=connection,
     # )
 
-    # agent = agents2.deploy(dimos)
+    # agent = agents.deploy(dimos)
     # agent.register_skills(detector)
     return connection

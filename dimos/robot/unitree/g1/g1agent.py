@@ -12,8 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dimos import agents2
-from dimos.agents2.skills.navigation import NavigationSkillContainer
+from dimos import agents
+from dimos.agents.skills.navigation import NavigationSkillContainer
 from dimos.core import DimosCluster
 from dimos.perception import spatial_perception
 from dimos.robot.unitree.g1 import g1detector
@@ -37,7 +37,7 @@ def deploy(dimos: DimosCluster, ip: str):  # type: ignore[no-untyped-def]
     )
     navskills.start()
 
-    agent = agents2.deploy(  # type: ignore[attr-defined]
+    agent = agents.deploy(  # type: ignore[attr-defined]
         dimos,
         "You are controling a humanoid robot",
         skill_containers=[connection, nav, camera, spatialmem, navskills],
