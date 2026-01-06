@@ -29,6 +29,8 @@ class MCPModule(Module):
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
         self.coordinator = SkillCoordinator()
+        self._server: asyncio.AbstractServer | None = None
+        self._server_future: asyncio.Future | None = None
 
     @rpc
     def start(self) -> None:
@@ -38,12 +40,23 @@ class MCPModule(Module):
 
     @rpc
     def stop(self) -> None:
+        if self._server:
+            asyncio.run_coroutine_threadsafe(self._stop_server(), self._loop).result()
+        if self._server_future and not self._server_future.done():
+            self._server_future.cancel()
         self.coordinator.stop()
         super().stop()
 
     @rpc
     def register_skills(self, container) -> None:  # type: ignore[no-untyped-def]
         self.coordinator.register_skills(container)
+
+    async def _stop_server(self) -> None:
+        if not self._server:
+            return
+        self._server.close()
+        await self._server.wait_closed()
+        self._server = None
 
     def _start_server(self, port: int = 9990) -> None:
         async def handle_client(reader, writer) -> None:  # type: ignore[no-untyped-def]
@@ -59,9 +72,10 @@ class MCPModule(Module):
 
         async def start_server() -> None:
             server = await asyncio.start_server(handle_client, "0.0.0.0", port)
+            self._server = server
             await server.serve_forever()
 
-        asyncio.run_coroutine_threadsafe(start_server(), self._loop)
+        self._server_future = asyncio.run_coroutine_threadsafe(start_server(), self._loop)
 
     async def _handle_request(self, request: dict[str, Any]) -> dict[str, Any]:
         method = request.get("method", "")

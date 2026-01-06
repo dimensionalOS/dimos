@@ -27,6 +27,7 @@ import pytest
 
 from dimos.protocol.mcp.mcp import MCPModule
 from dimos.protocol.skill.coordinator import SkillStateEnum
+from dimos.protocol.skill.skill import SkillContainer, skill
 
 
 def test_unitree_blueprint_has_mcp() -> None:
@@ -131,3 +132,77 @@ def test_mcp_module_handles_hidden_and_errors() -> None:
         )
     )
     assert "Error:" in response["result"]["content"][0]["text"]
+
+
+def test_mcp_end_to_end_lcm_bridge() -> None:
+    try:
+        import lcm  # type: ignore[import-untyped]
+
+        lcm.LCM()
+    except Exception as exc:
+        if os.environ.get("CI"):
+            pytest.fail(f"LCM unavailable for MCP end-to-end test: {exc}")
+        pytest.skip("LCM unavailable for MCP end-to-end test.")
+
+    try:
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).close()
+    except PermissionError:
+        if os.environ.get("CI"):
+            pytest.fail("Socket creation not permitted in CI environment.")
+        pytest.skip("Socket creation not permitted in this environment.")
+
+    class TestSkills(SkillContainer):
+        @skill()
+        def add(self, x: int, y: int) -> int:
+            return x + y
+
+    mcp = MCPModule()
+    mcp.start()
+
+    try:
+        mcp.register_skills(TestSkills())
+
+        env = {"MCP_HOST": "127.0.0.1", "MCP_PORT": "9990"}
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "dimos.protocol.mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **env},
+            text=True,
+        )
+        try:
+            request = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+            proc.stdin.write(json.dumps(request) + "\n")
+            proc.stdin.flush()
+            stdout = proc.stdout.readline()
+            assert '"tools"' in stdout
+            assert '"add"' in stdout
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "dimos.protocol.mcp"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            env={**os.environ, **env},
+            text=True,
+        )
+        try:
+            request = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "add", "arguments": {"x": 2, "y": 3}},
+            }
+            proc.stdin.write(json.dumps(request) + "\n")
+            proc.stdin.flush()
+            stdout = proc.stdout.readline()
+            assert "5" in stdout
+        finally:
+            proc.terminate()
+            proc.wait(timeout=5)
+    finally:
+        mcp.stop()
