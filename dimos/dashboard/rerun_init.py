@@ -64,7 +64,7 @@ _connected = False
 _rerun_init_lock = threading.Lock()
 
 
-def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
+def init_rerun_server(viewer_mode: str = "rerun-web", memory_limit: str = "4GB") -> str:
     """Initialize Rerun server in the main process.
 
     Starts the gRPC server and optionally the web/native viewer.
@@ -72,6 +72,7 @@ def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
 
     Args:
         viewer_mode: One of "rerun-web", "rerun-native", or "rerun-grpc-only"
+        memory_limit: Maximum memory for Rerun viewer (e.g., "16GB", "25%"). Default 16GB.
 
     Returns:
         Server address for workers to connect to.
@@ -89,8 +90,8 @@ def init_rerun_server(viewer_mode: str = "rerun-web") -> str:
 
     if viewer_mode == "rerun-native":
         # Spawn native viewer (requires display)
-        rr.spawn(port=RERUN_GRPC_PORT, connect=True)
-        logger.info("Rerun: spawned native viewer", port=RERUN_GRPC_PORT)
+        rr.spawn(port=RERUN_GRPC_PORT, connect=True, memory_limit=memory_limit)
+        logger.info("Rerun: spawned native viewer", port=RERUN_GRPC_PORT, memory_limit=memory_limit)
     elif viewer_mode == "rerun-web":
         # Start gRPC + web viewer (headless friendly)
         server_uri = rr.serve_grpc(grpc_port=RERUN_GRPC_PORT)
