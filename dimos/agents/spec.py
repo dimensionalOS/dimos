@@ -17,7 +17,10 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Union
+from typing import TYPE_CHECKING, Any, Union
+
+if TYPE_CHECKING:
+    from dimos.protocol.skill.skill import SkillContainer
 
 from langchain.chat_models.base import _SUPPORTED_PROVIDERS
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -179,7 +182,9 @@ class AgentSpec(Service[AgentConfig], Module, ABC):
 
     @rpc
     @abstractmethod
-    def register_skills(self, container, run_implicit_name: str | None = None): ...
+    def register_skills(
+        self, container: "SkillContainer", run_implicit_name: str | None = None
+    ) -> None: ...
 
     @rpc
     @abstractmethod
