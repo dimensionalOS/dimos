@@ -37,6 +37,7 @@ from dimos.protocol.skill.coordinator import (
     SkillCoordinator,
     SkillState,
     SkillStateDict,
+    SkillStateEnum,
 )
 from dimos.protocol.skill.skill import SkillContainer
 from dimos.protocol.skill.type import Output
@@ -243,7 +244,7 @@ class Agent(AgentSpec):
                     if not data:
                         break
                     request = json.loads(data.decode())
-                    response = self._handle_mcp_request(request)
+                    response = await self._handle_mcp_request(request)
                     writer.write(json.dumps(response).encode() + b"\n")
                     await writer.drain()
             finally:
@@ -257,7 +258,7 @@ class Agent(AgentSpec):
 
         asyncio.run_coroutine_threadsafe(start_server(), self._loop)
 
-    def _handle_mcp_request(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def _handle_mcp_request(self, request: dict[str, Any]) -> dict[str, Any]:
         """Handle MCP JSON-RPC request."""
         method = request.get("method", "")
         params = request.get("params", {}) or {}
@@ -290,9 +291,27 @@ class Agent(AgentSpec):
             name, args = params.get("name"), params.get("arguments") or {}
             call_id = str(uuid.uuid4())
             self.coordinator.call_skill(call_id, name, args)
-            snapshot = self.coordinator.generate_snapshot()
-            result = snapshot.get(call_id)
-            text = str(result.content()) if result and result.content() else "Skill started"
+
+            # Wait for skill completion (up to 5s for immediate skills)
+            # TODO: Fix: This is a hack and bad pracice, but currently we don't have a way to
+            # access specific skill responses once its sent from the Coordinator into the threadpool for execution
+            try:
+                await asyncio.wait_for(self.coordinator.wait_for_updates(), timeout=5.0)
+            except asyncio.TimeoutError:
+                pass  # Skill still running, return current state
+
+            snapshot: SkillStateDict = self.coordinator.generate_snapshot(clear=False)
+            result: SkillState | None = snapshot.get(call_id)
+
+            if result is None:
+                text = "Skill not found"
+            elif result.state == SkillStateEnum.completed:
+                text = str(result.content()) if result.content() else "Completed"
+            elif result.state == SkillStateEnum.error:
+                text = f"Error: {result.content()}"
+            else:
+                text = f"Started ({result.state.name})"
+
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,
