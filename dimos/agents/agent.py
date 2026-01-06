@@ -292,16 +292,19 @@ class Agent(AgentSpec):
             call_id = str(uuid.uuid4())
             self.coordinator.call_skill(call_id, name, args)
 
+            # Grab reference immediately (survives dict deletion by agent loop)
+            result: SkillState | None = self.coordinator._skill_state.get(call_id)
+            logger.info(f"MCP: Called skill '{name}', got result ref: {result is not None}")
+
             # Wait for skill completion (up to 5s for immediate skills)
-            # TODO: Fix: This is a hack and bad pracice, but currently we don't have a way to
-            # access specific skill responses once its sent from the Coordinator into the threadpool for execution
             try:
                 await asyncio.wait_for(self.coordinator.wait_for_updates(), timeout=5.0)
             except asyncio.TimeoutError:
                 pass  # Skill still running, return current state
 
-            snapshot: SkillStateDict = self.coordinator.generate_snapshot(clear=False)
-            result: SkillState | None = snapshot.get(call_id)
+            logger.info(
+                f"MCP: After wait - state: {result.state if result else None}, content: {result.content() if result else None}"
+            )
 
             if result is None:
                 text = "Skill not found"
