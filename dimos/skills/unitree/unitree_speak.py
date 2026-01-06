@@ -19,11 +19,11 @@ import os
 import tempfile
 import time
 
-from go2_webrtc_driver.constants import RTC_TOPIC  # type: ignore[import-untyped]
 import numpy as np
 from openai import OpenAI
 from pydantic import Field
 import soundfile as sf  # type: ignore[import-untyped]
+from unitree_webrtc_connect.constants import RTC_TOPIC  # type: ignore[import-untyped]
 
 from dimos.skills.skills import AbstractRobotSkill
 from dimos.utils.logging_config import setup_logger
