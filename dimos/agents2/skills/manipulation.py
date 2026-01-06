@@ -33,7 +33,7 @@ from dimos.agents2.agent import llm_agent
 from dimos.agents2.cli.human import human_input
 from dimos.agents2.skills.manipulation_skill_container import ManipulationSkillContainer
 from dimos.core.blueprints import autoconnect
-from dimos.manipulation.manipulation_blueprints import xarm7_manipulation
+from dimos.manipulation.manipulation_blueprints import xarm6_manipulation, xarm7_manipulation
 from dimos.manipulation.modules.move_axis import MoveAxisModule
 from dimos.manipulation.modules.robot_capabilities import RobotCapabilities
 
@@ -88,6 +88,13 @@ greetings_skill_blueprint = autoconnect(
 # Complete System Blueprint (Hardware + Skills + Agent)
 # ============================================================================
 
+# XArm6 complete system: hardware + skills + agent
+# This is the primary blueprint for full manipulation capabilities with XArm6
+xarm6_manipulation_agent = autoconnect(
+    xarm6_manipulation,  # Hardware: driver + planner + controller
+    manipulation_skills,  # Skills: directional movement + agent
+)
+
 # XArm7 complete system: hardware + skills + agent
 # This is the primary blueprint for full manipulation capabilities
 xarm7_manipulation_agent = autoconnect(
@@ -102,5 +109,6 @@ xarm7_manipulation_agent = autoconnect(
 __all__ = [
     "greetings_skill_blueprint",
     "manipulation_skills",
+    "xarm6_manipulation_agent",
     "xarm7_manipulation_agent",
 ]
