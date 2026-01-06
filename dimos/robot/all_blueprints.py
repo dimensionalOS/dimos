@@ -61,6 +61,7 @@ all_blueprints = {
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
+    "greetings": "dimos.agents2.skills.manipulation:greetings_skill_blueprint",
 }
 
 
@@ -82,6 +83,7 @@ all_modules = {
     "llm_agent": "dimos.agents2.agent",
     "mapper": "dimos.robot.unitree_webrtc.type.map",
     "navigation_skill": "dimos.agents2.skills.navigation",
+    "manipulation_skill": "dimos.agents2.skills.manipulation",
     "object_tracking": "dimos.perception.object_tracker",
     "osm_skill": "dimos.agents2.skills.osm",
     "ros_nav": "dimos.navigation.rosnav",
