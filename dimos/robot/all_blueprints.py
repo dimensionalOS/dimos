@@ -61,7 +61,9 @@ all_blueprints = {
     "demo-remapping": "dimos.robot.unitree_webrtc.demo_remapping:remapping",
     "demo-remapping-transport": "dimos.robot.unitree_webrtc.demo_remapping:remapping_and_transport",
     "demo-error-on-name-conflicts": "dimos.robot.unitree_webrtc.demo_error_on_name_conflicts:blueprint",
+    # Manipulation skills blueprints
     "greetings": "dimos.agents2.skills.manipulation:greetings_skill_blueprint",
+    "xarm7-manipulation-agent": "dimos.agents2.skills.manipulation:xarm7_manipulation_agent",
 }
 
 
@@ -99,6 +101,10 @@ all_modules = {
     "cartesian_motion_controller": "dimos.manipulation.control.servo_control.cartesian_motion_controller",
     "joint_trajectory_controller": "dimos.manipulation.control.trajectory_controller.joint_trajectory_controller",
     "manipulation_module": "dimos.manipulation.manipulation_module",
+    # Manipulation skill modules
+    "move_axis_module": "dimos.manipulation.modules.move_axis",
+    "manipulation_skill_container": "dimos.agents2.skills.manipulation_skill_container",
+    "robot_capabilities": "dimos.manipulation.modules.robot_capabilities",
 }
 
 
