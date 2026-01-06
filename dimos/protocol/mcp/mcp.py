@@ -15,35 +15,35 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 import uuid
 
 from dimos.core import Module, rpc
-from dimos.protocol.skill.coordinator import SkillStateEnum
+from dimos.protocol.skill.coordinator import SkillCoordinator, SkillStateEnum
+
+if TYPE_CHECKING:
+    from dimos.protocol.skill.coordinator import SkillState
 
 
 class MCPModule(Module):
-    rpc_calls = (
-        "Agent.list_skills",
-        "Agent.call_skill",
-        "Agent.wait_for_skill_updates",
-        "Agent.get_skill_state",
-    )
-
     def __init__(self, *args, **kwargs) -> None:  # type: ignore[no-untyped-def]
         super().__init__(*args, **kwargs)
-        self._list_skills = self._call_skill = self._wait_for_updates = self._get_skill_state = None
+        self.coordinator = SkillCoordinator()
 
     @rpc
     def start(self) -> None:
         super().start()
-        (
-            self._list_skills,
-            self._call_skill,
-            self._wait_for_updates,
-            self._get_skill_state,
-        ) = self.get_rpc_calls(*self.rpc_calls)
+        self.coordinator.start()
         self._start_server()
+
+    @rpc
+    def stop(self) -> None:
+        self.coordinator.stop()
+        super().stop()
+
+    @rpc
+    def register_skills(self, container) -> None:  # type: ignore[no-untyped-def]
+        self.coordinator.register_skills(container)
 
     def _start_server(self, port: int = 9990) -> None:
         async def handle_client(reader, writer) -> None:  # type: ignore[no-untyped-def]
@@ -78,24 +78,33 @@ class MCPModule(Module):
                 },
             }
         if method == "tools/list":
-            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": self._list_skills()}}
+            tools = [
+                {
+                    "name": c.name,
+                    "description": c.schema.get("function", {}).get("description", ""),
+                    "inputSchema": c.schema.get("function", {}).get("parameters", {}),
+                }
+                for c in self.coordinator.skills().values()
+                if not c.hide_skill
+            ]
+            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": tools}}
         if method == "tools/call":
             name, args = params.get("name"), params.get("arguments") or {}
             call_id = str(uuid.uuid4())
-            self._call_skill(call_id, name, args)
+            self.coordinator.call_skill(call_id, name, args)
+            result: SkillState | None = self.coordinator._skill_state.get(call_id)
             try:
-                await asyncio.wait_for(asyncio.to_thread(self._wait_for_updates, 5.0), timeout=6.0)
+                await asyncio.wait_for(self.coordinator.wait_for_updates(), timeout=5.0)
             except asyncio.TimeoutError:
                 pass
-            result = self._get_skill_state(call_id)
-            if not result:
+            if result is None:
                 text = "Skill not found"
-            elif result["state"] == SkillStateEnum.completed.name:
-                text = str(result["content"]) if result["content"] else "Completed"
-            elif result["state"] == SkillStateEnum.error.name:
-                text = f"Error: {result['content']}"
+            elif result.state == SkillStateEnum.completed:
+                text = str(result.content()) if result.content() else "Completed"
+            elif result.state == SkillStateEnum.error:
+                text = f"Error: {result.content()}"
             else:
-                text = f"Started ({result['state']})"
+                text = f"Started ({result.state.name})"
             return {
                 "jsonrpc": "2.0",
                 "id": req_id,

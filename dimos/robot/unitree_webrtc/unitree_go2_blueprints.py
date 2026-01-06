@@ -167,10 +167,8 @@ agentic = autoconnect(
 )
 
 agentic_mcp = autoconnect(
-    spatial,
-    llm_agent(),
+    agentic,
     MCPModule.blueprint(),
-    _common_agentic,
 )
 
 agentic_ollama = autoconnect(

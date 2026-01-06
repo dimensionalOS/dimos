@@ -228,35 +228,6 @@ class Agent(AgentSpec):
     def clear_history(self) -> None:
         self._history.clear()
 
-    @rpc
-    def list_skills(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "name": c.name,
-                "description": c.schema.get("function", {}).get("description", ""),
-                "inputSchema": c.schema.get("function", {}).get("parameters", {}),
-            }
-            for c in self.coordinator.skills().values()
-            if not c.hide_skill
-        ]
-
-    @rpc
-    def call_skill(self, call_id: str, name: str, args: dict[str, Any]) -> None:
-        self.coordinator.call_skill(call_id, name, args)
-
-    @rpc
-    def wait_for_skill_updates(self, timeout: float | None = None) -> bool:
-        return asyncio.run_coroutine_threadsafe(
-            self.coordinator.wait_for_updates(timeout=timeout), self._loop
-        ).result()
-
-    @rpc
-    def get_skill_state(self, call_id: str) -> dict[str, Any] | None:
-        state: SkillState | None = self.coordinator._skill_state.get(call_id)
-        if state is None:
-            return None
-        return {"state": state.state.name, "content": state.content()}
-
     def append_history(self, *msgs: list[AIMessage | HumanMessage]) -> None:
         for msg in msgs:
             self.publish(msg)  # type: ignore[arg-type]
